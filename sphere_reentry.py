@@ -473,3 +473,141 @@ def compute_stats(run, rows, fragments, log_info):
     if reason == "unknown":
         warnings.append("end-of-life reason not found in sesam.log")
     return results, warnings
+
+
+# =============================================================================
+# 6. Running SESAM through pyDRAMA (spec 4.5 / 4.9 / 4.10)
+# =============================================================================
+
+class DramaNotAvailable(RuntimeError):
+    """pyDRAMA (package 'drama') cannot be imported."""
+
+
+def _import_sara():
+    os.environ.setdefault("DRAMA_INSTALL_PATH", DRAMA_INSTALL_PATH)
+    try:
+        import drama
+        from drama import sara
+    except ImportError as exc:
+        raise DramaNotAvailable(
+            "pyDRAMA not importable ({}). Install it into this interpreter with:\n"
+            "    pip install '{}/TOOLS/drama_python_package'".format(exc, DRAMA_INSTALL_PATH))
+    return sara, getattr(drama, "__version__", None)
+
+
+def _log_tail(text, n=40):
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode(errors="replace")
+    return "\n".join(str(text).splitlines()[-n:])
+
+
+def _base_document(run, cfg, name, csv_path, run_raw, pydrama_version):
+    settings = {k: v for k, v in cfg.items() if k != "objects"}
+    return {
+        "schema_version": 1,
+        "run_name": name,
+        "status": None,
+        "error": None,
+        "inputs": {
+            "diameter_mm": run.diameter_mm,
+            "radius_m": run.radius_m,
+            "initial_mass_kg": run.mass_kg,
+            "cross_section_m2": run.cross_section_m2,
+            "initial_temperature_K": run.temperature_K,
+            "initial_velocity_kms": run.velocity_kms,
+            "initial_altitude_km": run.altitude_km,
+            "flight_path_angle_deg": run.flight_path_deg,
+            "heading_deg": run.heading_deg % 360.0,
+            "latitude_deg": run.lat_deg,
+            "longitude_deg": run.lon_deg,
+            "epoch_utc": run.epoch.strftime("%Y-%m-%dT%H:%M:%S"),
+            "material": MATERIAL_NAME,
+            "material_density_kgm3": RHO_AA7075,
+            "melting_temperature_K": T_MELT_AA7075,
+            "melt_tolerance_K": MELT_TOLERANCE_K,
+            "energy_threshold_J": ENERGY_THRESHOLD_J,
+            "sesam_settings": json.loads(json.dumps(settings, default=str)),
+        },
+        "results": None,
+        "warnings": [],
+        "files": {"csv": os.path.abspath(csv_path), "raw_dir": run_raw},
+        "provenance": {
+            "drama_install_path": os.environ.get("DRAMA_INSTALL_PATH", DRAMA_INSTALL_PATH),
+            "sesam_version": None,
+            "pydrama_version": pydrama_version,
+            "script_version": SCRIPT_VERSION,
+            "wall_time_s": None,
+            "created_utc": None,
+            "hostname": socket.gethostname(),
+        },
+    }
+
+
+def _finish(doc, json_path, status, t0, error=None):
+    doc["status"] = status
+    doc["error"] = error
+    doc["provenance"]["wall_time_s"] = round(time.time() - t0, 3)
+    doc["provenance"]["created_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(json_path, "w") as fh:
+        json.dump(doc, fh, indent=2, default=str)
+    return doc
+
+
+def run_sphere(run, outdir, raw_dir, timeout, keep_raw, fap_day_lines, fap_mon_lines):
+    """Run SESAM for `run`; write <outdir>/<run_name>.csv and .json; return the JSON document."""
+    sara, pydrama_version = _import_sara()
+    name = run_name(run)
+    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(raw_dir, exist_ok=True)
+    csv_path = os.path.join(outdir, name + ".csv")
+    json_path = os.path.join(outdir, name + ".json")
+    run_raw = os.path.join(raw_dir, name)
+    if os.path.isdir(run_raw):
+        shutil.rmtree(run_raw)          # pyDRAMA's copytree refuses an existing destination
+    if os.path.isfile(csv_path):
+        os.remove(csv_path)
+    cfg = build_config(run)
+    doc = _base_document(run, cfg, name, csv_path, run_raw, pydrama_version)
+    t0 = time.time()
+    try:
+        results = sara.run(config=[cfg], save_output_dirs=run_raw, keep_output_files="all",
+                           fap_day_content=fap_day_lines, fap_mon_content=fap_mon_lines,
+                           parallel=False, timeout=timeout, log_level="ERROR", spell_check=False)
+    except Exception as exc:  # noqa: BLE001 -- anything pyDRAMA raises is a failed run
+        return _finish(doc, json_path, "error", t0, "pyDRAMA raised {!r}".format(exc))
+
+    errors = results.get("errors") or []
+    if errors or not results.get("results"):
+        status, messages = "error", []
+        for err in errors:
+            text = str(err.get("status"))
+            if "timeout" in text.lower():
+                status = "timeout"
+            messages.append(text + "\n" + _log_tail(err.get("reentry_logfile") or err.get("logfile")))
+        if not errors:
+            messages.append("pyDRAMA returned no result")
+        return _finish(doc, json_path, status, t0, "\n".join(messages))
+
+    files = find_output_files(run_raw)
+    if not files["aero"] or not files["traj"]:
+        return _finish(doc, json_path, "error", t0, "history files not found under {}\n{}".format(
+            run_raw, _log_tail(results["results"][0].get("reentry_logfile"))))
+
+    aero = read_sara_table(files["aero"], AERO_COLUMNS)
+    traj = read_sara_table(files["traj"], TRAJ_COLUMNS)
+    rows, warnings = merge_histories(aero, traj)
+    fragments = parse_impacting_fragments(files["fragments"])
+    log_info = parse_sesam_log(files["log"])
+    stats, more_warnings = compute_stats(run, rows, fragments, log_info)
+    write_csv(csv_path, rows)
+    doc["results"] = stats
+    doc["warnings"] = warnings + more_warnings
+    doc["provenance"]["sesam_version"] = parse_sesam_version(files["aero"])
+    if keep_raw:
+        doc["files"]["raw_dir"] = run_raw
+    else:
+        shutil.rmtree(run_raw, ignore_errors=True)
+        doc["files"]["raw_dir"] = None
+    return _finish(doc, json_path, "ok", t0)

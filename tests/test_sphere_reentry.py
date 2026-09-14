@@ -440,3 +440,140 @@ class TestWarnings:
         assert any("single row" in x for x in w)
         _, w = stats_for("T1_demised_50mm")
         assert not any("ImpactingFragments" in x for x in w)
+
+
+import os
+import shutil
+import sys
+import types
+
+
+def install_fake_drama(monkeypatch, run_impl, version="stub-4.1.4"):
+    drama = types.ModuleType("drama")
+    drama.__version__ = version
+    sara = types.ModuleType("drama.sara")
+    sara.run = run_impl
+    drama.sara = sara
+    monkeypatch.setitem(sys.modules, "drama", drama)
+    monkeypatch.setitem(sys.modules, "drama.sara", sara)
+
+
+def fake_sara_run(case=None, mode="ok", calls=None):
+    """A stand-in for drama.sara.run: copies fixture `case` where pyDRAMA would write its output."""
+    def run(config, save_output_dirs, keep_output_files, fap_day_content, fap_mon_content,
+            parallel, timeout, log_level, spell_check):
+        if calls is not None:
+            calls.append(dict(config=config, save_output_dirs=save_output_dirs,
+                              keep_output_files=keep_output_files, fap_day_content=fap_day_content,
+                              fap_mon_content=fap_mon_content, parallel=parallel, timeout=timeout,
+                              log_level=log_level, spell_check=spell_check))
+        dest = os.path.join(save_output_dirs, "run_0", "reentry")
+        if mode == "raise":
+            raise RuntimeError("boom")
+        if mode == "error":
+            os.makedirs(dest)
+            return {"config": config, "errors": [{"status": "error in reentry", "reentry_logfile": "line1\nline2\nfatal"}], "results": []}
+        if mode == "timeout":
+            os.makedirs(dest)
+            return {"config": config, "errors": [{"status": "error: timeout in reentry (600s)", "reentry_logfile": ""}], "results": []}
+        if mode == "empty":
+            os.makedirs(dest)
+            return {"config": config, "errors": [], "results": []}
+        if mode == "nofiles":
+            os.makedirs(dest)
+            return {"config": config, "errors": [], "results": [{"status": "success", "reentry_logfile": "no files"}]}
+        shutil.copytree(fixture_dir(case), dest)
+        return {"config": config, "errors": [], "results": [{"status": "success", "reentry_logfile": "", "config": {"output_dir": dest}}]}
+    return run
+
+
+T3_RUN = dict(velocity_kms=0.5, altitude_km=39.94, temperature_K=300.0, diameter_mm=50.0,
+              flight_path_deg=-32.79047, heading_deg=347.12153, lat_deg=35.911, lon_deg=-83.878,
+              epoch=datetime(2024, 8, 1, 12, 55, 51))
+
+
+class TestRunSphereOk:
+    def test_writes_csv_and_json_and_deletes_raw_tree(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm"))
+        run = make_run(**T3_RUN)
+        outdir, raw = tmp_path / "runs", tmp_path / "raw"
+        doc = sr.run_sphere(run, str(outdir), str(raw), 600, False, ["# fap day"], ["# fap mon"])
+        name = sr.run_name(run)
+        assert doc["status"] == "ok" and doc["error"] is None and doc["run_name"] == name
+        assert doc["schema_version"] == 1
+        assert (outdir / (name + ".csv")).is_file() and (outdir / (name + ".json")).is_file()
+        assert not (raw / name).exists() and doc["files"]["raw_dir"] is None
+        assert doc["files"]["csv"] == os.path.abspath(str(outdir / (name + ".csv")))
+        r = doc["results"]
+        assert r["outcome"] == "survived" and r["final_mass_source"] == "impacting_fragments_xml"
+        assert doc["inputs"]["initial_mass_kg"] == pytest.approx(0.18411, rel=1e-4)
+        assert doc["inputs"]["epoch_utc"] == "2024-08-01T12:55:51"
+        assert doc["inputs"]["sesam_settings"]["energyThreshold"] == 1e-9
+        assert "objects" not in doc["inputs"]["sesam_settings"]
+        assert doc["inputs"]["material"] == "drama-AA7075" and doc["inputs"]["melting_temperature_K"] == 850.0
+        assert doc["provenance"]["sesam_version"] == "2.3.0"
+        assert doc["provenance"]["pydrama_version"] == "stub-4.1.4"
+        assert doc["provenance"]["script_version"] == sr.SCRIPT_VERSION
+        assert doc["provenance"]["wall_time_s"] >= 0.0 and doc["provenance"]["created_utc"].endswith("Z")
+        on_disk = json.load(open(outdir / (name + ".json")))
+        assert on_disk["results"]["final_mass_kg"] == r["final_mass_kg"] and on_disk["status"] == "ok"
+        with open(outdir / (name + ".csv")) as fh:
+            header, first = fh.readline().strip(), fh.readline().strip().split(",")
+        assert header == ",".join(sr.CSV_COLUMNS)
+        assert first[:4] == ["0.0", "39.94", "0.5", "300.0"]
+
+    def test_keep_raw(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run("T1_demised_50mm"))
+        run = make_run(velocity_kms=7.907, altitude_km=101.247)
+        raw = tmp_path / "raw"
+        (raw / sr.run_name(run)).mkdir(parents=True)
+        (raw / sr.run_name(run) / "stale.txt").write_text("old")
+        doc = sr.run_sphere(run, str(tmp_path / "runs"), str(raw), 600, True, [], [])
+        assert doc["status"] == "ok"
+        assert doc["files"]["raw_dir"] == str(raw / sr.run_name(run))
+        assert (raw / sr.run_name(run) / "run_0" / "reentry" / "sesam.log").is_file()
+        assert not (raw / sr.run_name(run) / "stale.txt").exists()
+        assert doc["results"]["outcome"] == "demised"
+
+    def test_pydrama_call_arguments(self, tmp_path, monkeypatch):
+        calls = []
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm", calls=calls))
+        sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 123, False, ["d1", "d2"], ["m1"])
+        call = calls[0]
+        assert isinstance(call["config"], list) and len(call["config"]) == 1
+        assert call["config"][0]["element1"] == 39.94 and call["config"][0]["objects"][0]["solid"] is True
+        assert call["save_output_dirs"] == str(tmp_path / "raw" / sr.run_name(make_run(**T3_RUN)))
+        assert call["keep_output_files"] == "all" and call["parallel"] is False
+        assert call["fap_day_content"] == ["d1", "d2"] and call["fap_mon_content"] == ["m1"]
+        assert call["timeout"] == 123 and call["log_level"] == "ERROR" and call["spell_check"] is False
+        assert os.environ.get("DRAMA_INSTALL_PATH")
+
+
+class TestRunSphereErrors:
+    @pytest.mark.parametrize("mode, status, needle", [
+        ("error", "error", "error in reentry"),
+        ("timeout", "timeout", "timeout in reentry"),
+        ("empty", "error", "no result"),
+        ("raise", "error", "pyDRAMA raised"),
+        ("nofiles", "error", "history files not found"),
+    ])
+    def test_failure_modes_write_error_json_and_keep_raw(self, tmp_path, monkeypatch, mode, status, needle):
+        install_fake_drama(monkeypatch, fake_sara_run(mode=mode))
+        run = make_run(**T3_RUN)
+        doc = sr.run_sphere(run, str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
+        assert doc["status"] == status and needle in doc["error"]
+        assert doc["results"] is None
+        assert doc["files"]["raw_dir"] == str(tmp_path / "raw" / sr.run_name(run))
+        on_disk = json.load(open(tmp_path / "runs" / (sr.run_name(run) + ".json")))
+        assert on_disk["status"] == status
+        assert not (tmp_path / "runs" / (sr.run_name(run) + ".csv")).exists()
+
+    def test_error_includes_log_tail(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run(mode="error"))
+        doc = sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
+        assert "fatal" in doc["error"]
+
+    def test_pydrama_not_importable(self, tmp_path, monkeypatch):
+        monkeypatch.setitem(sys.modules, "drama", None)
+        with pytest.raises(sr.DramaNotAvailable):
+            sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
