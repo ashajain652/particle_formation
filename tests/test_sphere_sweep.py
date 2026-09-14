@@ -355,3 +355,169 @@ class TestSummary:
         assert row["status"] == "pending"
         for col in sw._RESULT_COLUMNS:
             assert row[col] == "", f"Expected {col} to be blank for pending status, got {row[col]!r}"
+
+
+import subprocess
+import sys
+
+
+class TestCommand:
+    def test_build_command(self, parent):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        cmd = sw.build_command(point, "/out/runs", "/out/raw", 600)
+        assert cmd[0] == sys.executable and cmd[1] == sw.SPHERE_REENTRY
+        assert cmd[2:] == [
+            "--velocity", "7.400000", "--altitude", "90.000000", "--temperature", "300.000000",
+            "--diameter", "5.000000", "--flight-path-angle", "-0.750000", "--heading", sw.format_arg(point.heading_deg),
+            "--lat", "-5.000000", "--lon", "149.000000", "--epoch", "2024-08-01T12:09:10",
+            "--outdir", "/out/runs", "--raw-dir", "/out/raw", "--timeout", "600", "--quiet"]
+        assert sw.build_command(point, "/o", "/r", 5, python="/usr/bin/python3")[0] == "/usr/bin/python3"
+
+
+class TestRunPoint:
+    def fake_subprocess(self, monkeypatch, runs_dir, returncode=0, stderr="", json_status="ok", raise_timeout=False):
+        calls = []
+
+        def fake_run(cmd, capture_output, text, timeout):
+            calls.append(cmd)
+            if raise_timeout:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            if json_status is not None:                       # imitate sphere_reentry writing its JSON
+                write_run_json(runs_dir, self.current_name, json_status, results={})
+            return subprocess.CompletedProcess(cmd, returncode, stdout="", stderr=stderr)
+
+        monkeypatch.setattr(sw.subprocess, "run", fake_run)
+        return calls
+
+    def test_success(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        self.current_name = point.run_name
+        calls = self.fake_subprocess(monkeypatch, str(tmp_path / "runs"))
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600)
+        assert point.status == "done" and point.returncode == 0 and point.wall_time_s >= 0.0
+        assert point.stderr_tail is None
+        assert calls[0][:2] == [sys.executable, sw.SPHERE_REENTRY]
+
+    def test_nonzero_return_code_is_failed_with_stderr_tail(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        self.current_name = point.run_name
+        stderr = "\n".join("line %d" % i for i in range(30))
+        self.fake_subprocess(monkeypatch, str(tmp_path / "runs"), returncode=1, stderr=stderr, json_status="error")
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600)
+        assert point.status == "failed" and point.returncode == 1
+        assert point.stderr_tail.splitlines() == ["line %d" % i for i in range(10, 30)]
+
+    def test_timeout_is_failed(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        self.current_name = point.run_name
+        self.fake_subprocess(monkeypatch, str(tmp_path / "runs"), raise_timeout=True, json_status=None)
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600)
+        assert point.status == "failed" and point.returncode == -1 and "timed out" in point.stderr_tail
+
+    def test_zero_return_code_but_json_not_ok_is_failed(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        self.current_name = point.run_name
+        self.fake_subprocess(monkeypatch, str(tmp_path / "runs"), returncode=0, json_status="error")
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600)
+        assert point.status == "failed"
+
+    def test_zero_return_code_without_json_is_failed(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        self.current_name = point.run_name
+        self.fake_subprocess(monkeypatch, str(tmp_path / "runs"), returncode=0, json_status=None)
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600)
+        assert point.status == "failed"
+
+
+class TestBatchesAndPrompts:
+    def test_split_batches(self):
+        pts = list(range(7))
+        assert sw.split_batches(pts, None) == [pts]
+        assert sw.split_batches(pts, 3) == [[0, 1, 2], [3, 4, 5], [6]]
+        assert sw.split_batches([], None) == [] and sw.split_batches([], 3) == []
+
+    def test_format_duration_and_default_cores(self):
+        assert sw.format_duration(3661) == "1:01:01" and sw.format_duration(0.4) == "0:00:00"
+        assert 1 <= sw.default_cores() <= (os.cpu_count() or 1)
+
+    def test_confirm_batch(self, parent, caplog):
+        batch = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0])
+        answers = iter(["n"])
+        assert sw.confirm_batch(1, 3, batch, 0.3, 7, False, ask=lambda prompt: next(answers)) is False
+        answers = iter([""])
+        assert sw.confirm_batch(1, 3, batch, 0.3, 7, False, ask=lambda prompt: next(answers)) is True
+        answers = iter(["maybe", "y"])
+        assert sw.confirm_batch(2, 3, batch, 0.3, 7, False, ask=lambda prompt: next(answers)) is True
+
+        def never(prompt):
+            raise AssertionError("must not prompt with --yes")
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.confirm_batch(3, 3, batch, 0.3, 7, True, ask=never) is True
+        assert "batch 3/3: 2 runs" in caplog.text and batch[0].run_name in caplog.text
+
+    def test_ask_cores(self):
+        assert sw.ask_cores(7, preset=3) == 3
+        with pytest.raises(ValueError):
+            sw.ask_cores(7, preset=0)
+        answers = iter(["abc", "99999", "2"])
+        assert sw.ask_cores(7, ask=lambda prompt: next(answers)) == 2
+        answers = iter([""])
+        assert sw.ask_cores(5, ask=lambda prompt: next(answers)) == 5
+
+
+class FakeProgress:
+    def __init__(self):
+        self.updates = 0
+        self.postfixes = []
+
+    def update(self, n):
+        self.updates += n
+
+    def set_postfix_str(self, s, refresh=True):
+        self.postfixes.append(s)
+
+    def close(self):
+        pass
+
+
+class TestRunBatch:
+    def test_counts_and_progress(self, parent):
+        batch = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0, 2.0])
+
+        def runner(point, runs_dir, raw_dir, timeout):
+            point.status = "failed" if point.velocity_kms == 5.0 else "done"
+            point.returncode = 1 if point.status == "failed" else 0
+            return point
+
+        progress = FakeProgress()
+        n_ok, n_failed, wall = sw.run_batch(batch, 2, "/r", "/w", 600, progress=progress, runner=runner)
+        assert (n_ok, n_failed) == (2, 1) and wall >= 0.0
+        assert progress.updates == 3 and len(progress.postfixes) == 3
+        assert "d=5mm T=300K v=7.40000km/s" in progress.postfixes
+
+    def test_default_runner_is_looked_up_at_call_time(self, parent, monkeypatch):
+        batch = sw.build_points(parent, [5.0], [300.0], [7.4])
+        seen = []
+
+        def fake_run_point(point, runs_dir, raw_dir, timeout):
+            seen.append(point.run_name)
+            point.status = "done"
+            return point
+
+        monkeypatch.setattr(sw, "run_point", fake_run_point)
+        assert sw.run_batch(batch, 1, "/r", "/w", 600)[:2] == (1, 0)
+        assert seen == [batch[0].run_name]
+
+    def test_keyboard_interrupt_propagates_after_shutdown(self, parent):
+        batch = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0])
+
+        def runner(point, runs_dir, raw_dir, timeout):
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            sw.run_batch(batch, 1, "/r", "/w", 600, runner=runner)
+
+    def test_make_progress_is_a_tqdm_bar(self):
+        bar = sw.make_progress(total=10, initial=3)
+        assert bar.n == 3 and bar.total == 10
+        bar.close()

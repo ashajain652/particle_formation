@@ -396,3 +396,153 @@ def write_summary(path, points, runs_dir):
         for point in points:
             writer.writerow(summary_row(point, runs_dir))
     os.replace(tmp, path)
+
+
+# =============================================================================
+# 5. Execution: one subprocess per point, batches, prompts, progress (spec 5.5)
+# =============================================================================
+
+def build_command(point, runs_dir, raw_dir, timeout, python=None):
+    return [python or sys.executable, SPHERE_REENTRY,
+            "--velocity", format_arg(point.velocity_kms),
+            "--altitude", format_arg(point.altitude_km),
+            "--temperature", format_arg(point.temperature_K),
+            "--diameter", format_arg(point.diameter_mm),
+            "--flight-path-angle", format_arg(point.flight_path_deg),
+            "--heading", format_arg(point.heading_deg),
+            "--lat", format_arg(point.lat_deg),
+            "--lon", format_arg(point.lon_deg),
+            "--epoch", point.epoch_utc,
+            "--outdir", runs_dir,
+            "--raw-dir", raw_dir,
+            "--timeout", str(int(timeout)),
+            "--quiet"]
+
+
+def run_point(point, runs_dir, raw_dir, timeout):
+    """Run sphere_reentry.py for one point; mark it done/failed from the exit code and its JSON."""
+    cmd = build_command(point, runs_dir, raw_dir, timeout)
+    t0 = time.time()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60)
+        point.returncode = proc.returncode
+        stderr = proc.stderr or ""
+    except subprocess.TimeoutExpired:
+        point.returncode = -1
+        stderr = "sweep: subprocess timed out after {} s".format(timeout + 60)
+    point.wall_time_s = round(time.time() - t0, 3)
+    tail = "\n".join(stderr.splitlines()[-STDERR_TAIL_LINES:])
+    point.stderr_tail = tail or None
+    json_ok = _json_status(os.path.join(runs_dir, point.run_name + ".json")) == "ok"
+    point.status = "done" if (point.returncode == 0 and json_ok) else "failed"
+    return point
+
+
+def split_batches(points, batch_size):
+    points = list(points)
+    if not points:
+        return []
+    if not batch_size:
+        return [points]
+    return [points[i:i + batch_size] for i in range(0, len(points), batch_size)]
+
+
+def default_cores():
+    return max(1, (os.cpu_count() or 2) - 1)
+
+
+def format_duration(seconds):
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return "{:d}:{:02d}:{:02d}".format(hours, minutes, secs)
+
+
+def confirm_batch(k, n_batches, batch, seconds_per_run, cores_for_estimate, assume_yes, ask=None):
+    """Describe the batch, then ask 'Run this batch? [Y/n]' unless assume_yes."""
+    ask = ask or input        # resolved at call time (tests monkeypatch builtins.input)
+    estimate = len(batch) * seconds_per_run / max(1, cores_for_estimate)
+    log.info("batch %d/%d: %d runs, %s .. %s, estimated %s at %d cores",
+             k, n_batches, len(batch), batch[0].run_name, batch[-1].run_name,
+             format_duration(estimate), cores_for_estimate)
+    if assume_yes:
+        return True
+    while True:
+        answer = ask("Run this batch? [Y/n] ").strip().lower()
+        if answer in ("", "y", "yes"):
+            log.info("user confirmed batch %d", k)
+            return True
+        if answer in ("n", "no", "q", "quit"):
+            log.info("user declined batch %d", k)
+            return False
+
+
+def ask_cores(default, preset=None, ask=None):
+    """Cores for the next batch: --cores preset, or a prompt with `default` (1..cpu_count)."""
+    ask = ask or input        # resolved at call time (tests monkeypatch builtins.input)
+    max_cores = os.cpu_count() or 1
+    if preset is not None:
+        if 1 <= preset <= max_cores:
+            return preset
+        raise ValueError("--cores must be between 1 and {}".format(max_cores))
+    while True:
+        answer = ask("Cores for this batch [{}]: ".format(default)).strip()
+        if answer == "":
+            return default
+        try:
+            cores = int(answer)
+        except ValueError:
+            cores = 0
+        if 1 <= cores <= max_cores:
+            return cores
+        print("please enter an integer between 1 and {}".format(max_cores))
+
+
+class TqdmHandler(logging.Handler):
+    """Console log handler that writes through tqdm so the progress bar is not garbled."""
+
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record))
+        except Exception:  # noqa: BLE001
+            self.handleError(record)
+
+
+def make_progress(total, initial):
+    return tqdm(total=total, initial=initial, desc="sweep", unit="run", dynamic_ncols=True)
+
+
+def _run_and_mark(point, runs_dir, raw_dir, timeout, progress, runner):
+    if progress is not None:
+        progress.set_postfix_str("d={:g}mm T={:g}K v={:.5f}km/s".format(
+            point.diameter_mm, point.temperature_K, point.velocity_kms), refresh=False)
+    return runner(point, runs_dir, raw_dir, timeout)
+
+
+def run_batch(batch, cores, runs_dir, raw_dir, timeout, progress=None, runner=None):
+    """Run one batch on `cores` worker threads. Returns (n_ok, n_failed, wall_seconds).
+
+    KeyboardInterrupt cancels queued points (they stay pending), lets the running
+    subprocesses finish, then propagates.
+    """
+    runner = runner or run_point
+    t0 = time.time()
+    n_ok = n_failed = 0
+    executor = ThreadPoolExecutor(max_workers=cores)
+    try:
+        futures = [executor.submit(_run_and_mark, p, runs_dir, raw_dir, timeout, progress, runner)
+                   for p in batch]
+        for future in as_completed(futures):
+            point = future.result()
+            if point.status == "done":
+                n_ok += 1
+            else:
+                n_failed += 1
+                log.warning("FAILED %s (rc=%s): %s", point.run_name, point.returncode, point.stderr_tail)
+            if progress is not None:
+                progress.update(1)
+    except KeyboardInterrupt:
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+    executor.shutdown(wait=True)
+    return n_ok, n_failed, time.time() - t0
