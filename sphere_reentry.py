@@ -289,3 +289,66 @@ def find_output_files(raw_dir):
         "fragments": first("*ImpactingFragments.xml"),
         "log": first("sesam.log"),
     }
+
+
+# =============================================================================
+# 4. Merge + CSV (spec 4.6 / 4.7)
+# =============================================================================
+
+CSV_COLUMNS = [
+    "time_s", "altitude_km", "velocity_kms", "temperature_K", "mass_kg", "thick_mm",
+    "lat_deg", "lon_deg", "downrange_km", "flight_path_deg", "heading_deg",
+    "drag", "lift", "side", "knudsen", "mach", "density_kgm3", "dynamic_pressure_Pa",
+    "load_factor_g", "convective_heat_W", "radiative_heat_W", "oxidation_heat_W",
+    "rad_cooling_W", "integrated_heat_J", "visibility_factor",
+]
+# CSV column -> trajectory-file column ("time_s" / "altitude_km" handled explicitly)
+_TRAJ_MAP = {"velocity_kms": "velocity", "lat_deg": "lat", "lon_deg": "lon",
+             "downrange_km": "downrange", "flight_path_deg": "path", "heading_deg": "heading",
+             "drag": "drag", "lift": "lift", "side": "side", "knudsen": "knudsen", "mach": "mach",
+             "density_kgm3": "density", "dynamic_pressure_Pa": "dynamicPressure",
+             "load_factor_g": "loadFactor"}
+# CSV column -> aerothermal-file column
+_AERO_MAP = {"temperature_K": "temp", "mass_kg": "mass", "thick_mm": "thick",
+             "convective_heat_W": "convectiveHeat", "radiative_heat_W": "radiativeHeat",
+             "oxidation_heat_W": "oxidationHeat", "rad_cooling_W": "radCooling",
+             "integrated_heat_J": "integratedHeat", "visibility_factor": "visibilityFactor"}
+
+
+def _merged_row(t, aero, traj):
+    row = {c: None for c in CSV_COLUMNS}
+    row["time_s"] = t
+    if traj is not None:
+        row["altitude_km"] = traj["altitude"]
+        for col, src in _TRAJ_MAP.items():
+            row[col] = traj[src]
+    if aero is not None:
+        if row["altitude_km"] is None:
+            row["altitude_km"] = aero["altitude"]
+        for col, src in _AERO_MAP.items():
+            row[col] = aero[src]
+    return row
+
+
+def merge_histories(aero_rows, traj_rows):
+    """Join the two SESAM histories on time. Identical grids zip; otherwise outer-join + warning."""
+    warnings = []
+    a_times = [r["time"] for r in aero_rows]
+    t_times = [r["time"] for r in traj_rows]
+    if a_times == t_times:
+        rows = [_merged_row(t, a, tr) for t, a, tr in zip(a_times, aero_rows, traj_rows)]
+    else:
+        warnings.append("time grids differ (aero {} rows, traj {} rows)".format(len(aero_rows), len(traj_rows)))
+        by_aero = {r["time"]: r for r in aero_rows}
+        by_traj = {r["time"]: r for r in traj_rows}
+        rows = [_merged_row(t, by_aero.get(t), by_traj.get(t)) for t in sorted(set(by_aero) | set(by_traj))]
+    return rows, warnings
+
+
+def write_csv(path, rows):
+    """One row per time step; floats via str() (shortest round-trip repr), None as empty."""
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({c: ("" if row.get(c) is None else row[c]) for c in CSV_COLUMNS})

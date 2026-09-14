@@ -218,3 +218,74 @@ class TestFindOutputFiles:
 
     def test_missing_files_are_none(self, tmp_path):
         assert sr.find_output_files(str(tmp_path)) == {"aero": None, "traj": None, "fragments": None, "log": None}
+
+
+def aero_row(t, temp=300.0, mass=0.184, alt=100.0, thick=25.0):
+    return {"time": t, "altitude": alt, "temp": temp, "mass": mass, "thick": thick,
+            "convectiveHeat": 1.0, "radiativeHeat": 0.0, "oxidationHeat": 0.0,
+            "radCooling": -1.0, "integratedHeat": 10.0, "visibilityFactor": 1.0}
+
+
+def traj_row(t, v=7.5, alt=100.0, lat=1.0, lon=2.0, downrange=3.0, path=-1.0, heading=350.0):
+    return {"time": t, "altitude": alt, "lat": lat, "lon": lon, "velocity": v,
+            "downrange": downrange, "drag": 2.2, "lift": 0.0, "side": 0.0, "knudsen": 0.1,
+            "mach": 20.0, "path": path, "heading": heading, "density": 1e-6,
+            "dynamicPressure": 100.0, "loadFactor": 0.5}
+
+
+def load_fixture_rows(case):
+    aero = sr.read_sara_table(fixture_file(case, "_AeroThermalHistory.txt"), sr.AERO_COLUMNS)
+    traj = sr.read_sara_table(fixture_file(case, "_Trajectory.txt"), sr.TRAJ_COLUMNS)
+    return aero, traj
+
+
+class TestMergeHistories:
+    def test_csv_columns_are_the_spec_list(self):
+        assert sr.CSV_COLUMNS == [
+            "time_s", "altitude_km", "velocity_kms", "temperature_K", "mass_kg", "thick_mm",
+            "lat_deg", "lon_deg", "downrange_km", "flight_path_deg", "heading_deg",
+            "drag", "lift", "side", "knudsen", "mach", "density_kgm3", "dynamic_pressure_Pa",
+            "load_factor_g", "convective_heat_W", "radiative_heat_W", "oxidation_heat_W",
+            "rad_cooling_W", "integrated_heat_J", "visibility_factor"]
+
+    def test_identical_time_grids_zip_T1(self):
+        aero, traj = load_fixture_rows("T1_demised_50mm")
+        rows, warnings = sr.merge_histories(aero, traj)
+        assert warnings == []
+        assert len(rows) == 373
+        assert set(rows[0]) == set(sr.CSV_COLUMNS)
+        first = rows[0]
+        assert (first["time_s"], first["altitude_km"], first["velocity_kms"]) == (0.0, 101.247, 7.907)
+        assert (first["temperature_K"], first["mass_kg"], first["thick_mm"]) == (300.0, 0.184, 25.0)
+        assert (first["flight_path_deg"], first["heading_deg"], first["density_kgm3"]) == (-0.18985, 347.95995, 4.493e-07)
+        assert rows[-1]["velocity_kms"] == 6.467 and rows[-1]["mass_kg"] == 0.0
+
+    def test_mismatched_grids_outer_join_with_warning(self):
+        aero = [aero_row(0.0), aero_row(1.0, temp=400.0), aero_row(2.0)]
+        traj = [traj_row(0.0), traj_row(2.0, v=7.0), traj_row(3.0, v=6.0)]
+        rows, warnings = sr.merge_histories(aero, traj)
+        assert warnings == ["time grids differ (aero 3 rows, traj 3 rows)"]
+        assert [r["time_s"] for r in rows] == [0.0, 1.0, 2.0, 3.0]
+        assert rows[1]["temperature_K"] == 400.0 and rows[1]["velocity_kms"] is None
+        assert rows[3]["velocity_kms"] == 6.0 and rows[3]["temperature_K"] is None
+        assert rows[1]["altitude_km"] == 100.0  # falls back to the aero altitude
+
+
+class TestWriteCsv:
+    def test_header_and_first_row_T5(self, tmp_path):
+        aero, traj = load_fixture_rows("T5_5mm_750K")
+        rows, _ = sr.merge_histories(aero, traj)
+        path = tmp_path / "out.csv"
+        sr.write_csv(str(path), rows)
+        lines = path.read_text().splitlines()
+        assert lines[0] == ",".join(sr.CSV_COLUMNS)
+        assert lines[1].startswith("0.0,77.5,7.5,750.0,0.0,2.5,29.546,-82.134,")
+        assert ",2.727e-05," in lines[1]
+        assert len(lines) == 1 + 16
+
+    def test_none_is_written_as_empty_field(self, tmp_path):
+        rows, _ = sr.merge_histories([aero_row(0.0)], [traj_row(1.0)])
+        path = tmp_path / "out.csv"
+        sr.write_csv(str(path), rows)
+        line = path.read_text().splitlines()[1]
+        assert line.startswith("0.0,100.0,,300.0,0.184,25.0,,,")
