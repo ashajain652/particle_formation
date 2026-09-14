@@ -319,3 +319,39 @@ class TestSummary:
         assert f["status"] == "failed" and f["max_temperature_K"] == "" and f["outcome"] == "" and f["run_name"] == failed.run_name
         assert rows[3]["status"] == "pending" and rows[3]["final_mass_kg"] == ""
         assert not os.path.exists(path + ".tmp")
+
+    def test_stale_json_ignored_for_non_done_status(self, parent, tmp_path):
+        """Verify status gate prevents stale JSON results from populating stats for non-done points."""
+        runs = str(tmp_path / "runs")
+        points = sw.build_points(parent, [5.0], [300.0], [7.4])
+        point = points[0]
+        point.status = "failed"
+        # Write a stale JSON file (leftover from previous attempt) with results
+        write_run_json(runs, point.run_name, "ok", results={
+            "max_temperature_K": 850.0, "final_mass_kg": 3e-06, "final_mass_source": "sesam_log_event_end",
+            "mass_loss_fraction": 0.98, "time_at_melting_temperature_s": 6.774, "final_velocity_kms": 2.998,
+            "final_radius_mm": 0.633, "final_altitude_km": 76.548, "end_of_life_reason": "uncritical",
+            "outcome": "demised"})
+        # Summary row should ignore the stale JSON because status is "failed", not "done"
+        row = sw.summary_row(point, runs)
+        assert row["status"] == "failed"
+        assert row["run_name"] == point.run_name  # run_name is always populated
+        for col in sw._RESULT_COLUMNS:
+            assert row[col] == "", f"Expected {col} to be blank for non-done status, got {row[col]!r}"
+
+    def test_pending_with_stale_json_also_ignores_results(self, parent, tmp_path):
+        """Verify the gate also works for pending status."""
+        runs = str(tmp_path / "runs")
+        points = sw.build_points(parent, [5.0], [300.0], [5.0])
+        point = points[0]
+        point.status = "pending"
+        # Write a stale JSON file with results
+        write_run_json(runs, point.run_name, "ok", results={
+            "max_temperature_K": 1000.0, "final_mass_kg": 1e-06, "final_mass_source": "sesam",
+            "mass_loss_fraction": 0.95, "time_at_melting_temperature_s": 10.0, "final_velocity_kms": 3.0,
+            "final_radius_mm": 1.0, "final_altitude_km": 50.0, "end_of_life_reason": "critical",
+            "outcome": "fragmented"})
+        row = sw.summary_row(point, runs)
+        assert row["status"] == "pending"
+        for col in sw._RESULT_COLUMNS:
+            assert row[col] == "", f"Expected {col} to be blank for pending status, got {row[col]!r}"
