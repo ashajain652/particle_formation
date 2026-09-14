@@ -73,6 +73,15 @@ class TestDescendingBranch:
         assert sw.descending_branch_start([7.9, 7.95, 7.8, 7.85, 7.7]) == 3
         assert sw.descending_branch_start([1.0]) == 0
 
+    def test_plateau_is_not_mistaken_for_an_increase(self):
+        # A trailing plateau (equal consecutive velocities, as SESAM prints to 3
+        # decimals near terminal velocity) must never register as an "increase":
+        # with a strict `>` comparison the whole non-increasing list is one branch.
+        assert sw.descending_branch_start([7.9, 7.8, 7.7, 0.05, 0.05, 0.05]) == 0
+        # A genuine increase earlier still moves branch_start forward as usual,
+        # and a plateau right after it must not push branch_start any further.
+        assert sw.descending_branch_start([7.9, 7.95, 7.8, 7.7, 7.7, 7.7]) == 1
+
 
 class TestInterpolation:
     def test_angle_lerp_and_wrap(self):
@@ -117,3 +126,32 @@ class TestInterpolation:
         # only the branch is used: altitude between 128 and 120, not between 124 and 126.
         st = sw.interpolate_state(parent, 7.902)
         assert 120.0 < st["altitude_km"] < 128.0 and st["time_s"] > 300.0
+
+    def test_velocity_plateau_maps_to_the_first_highest_altitude_row(self):
+        # Mimics the real parent's terminal-velocity plateau: SESAM prints velocity
+        # to 3 decimals, so several consecutive rows near impact share one value
+        # (here 0.028 km/s, rows 1-3). interpolate_state must take the FIRST
+        # bracketing pair, i.e. resolve to the plateau's highest-altitude / earliest
+        # row (row 1: altitude 0.153, t=100), not a later row of the same plateau
+        # (row 2: altitude 0.080, t=110) or the last one (row 3: altitude 0.012, t=120).
+        rows = [
+            {"time": 0.0,   "altitude": 1.000, "lat": 10.0, "lon": 20.0, "velocity": 0.030, "path": -80.0, "heading": 40.0},
+            {"time": 100.0, "altitude": 0.153, "lat": 10.1, "lon": 20.1, "velocity": 0.028, "path": -85.0, "heading": 41.0},
+            {"time": 110.0, "altitude": 0.080, "lat": 10.2, "lon": 20.2, "velocity": 0.028, "path": -86.0, "heading": 42.0},
+            {"time": 120.0, "altitude": 0.012, "lat": 10.3, "lon": 20.3, "velocity": 0.028, "path": -87.0, "heading": 43.0},
+            {"time": 130.0, "altitude": 0.000, "lat": 10.4, "lon": 20.4, "velocity": 0.012, "path": -90.0, "heading": 44.0},
+        ]
+        assert sw.descending_branch_start([r["velocity"] for r in rows]) == 0
+        plateau_parent = sw.ParentTrajectory(
+            path="synthetic", sha256="deadbeef", object_name="Synthetic",
+            epoch=datetime(2024, 1, 1, 0, 0, 0), rows=rows, branch_start=0)
+
+        st = sw.interpolate_state(plateau_parent, 0.028)
+
+        assert st["altitude_km"] == pytest.approx(0.153)
+        assert st["lat_deg"] == pytest.approx(10.1)
+        assert st["lon_deg"] == pytest.approx(20.1)
+        assert st["flight_path_deg"] == pytest.approx(-85.0)
+        assert st["heading_deg"] == pytest.approx(41.0)
+        assert st["time_s"] == pytest.approx(100.0)
+        assert st["epoch"] == datetime(2024, 1, 1, 0, 1, 40)
