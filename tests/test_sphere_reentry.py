@@ -577,3 +577,113 @@ class TestRunSphereErrors:
         monkeypatch.setitem(sys.modules, "drama", None)
         with pytest.raises(sr.DramaNotAvailable):
             sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
+import subprocess
+from helpers import REPO_ROOT, PY
+
+BASE_ARGS = ["--velocity", "7.5", "--altitude", "77.5", "--temperature", "300", "--diameter", "50"]
+
+
+def fap_files(tmp_path):
+    day, mon = tmp_path / "fap_day.dat", tmp_path / "fap_mon.dat"
+    day.write_text("# fap day\n01/08/2024 170 170 100 8 3 3 3 3 3 3 3 3\n")
+    mon.write_text("# fap mon\n")
+    return ["--fap-day", str(day), "--fap-mon", str(mon)]
+
+
+class TestCli:
+    def test_dry_run_prints_config_and_creates_nothing(self, tmp_path, capsys):
+        rc = sr.main(BASE_ARGS + ["--dry-run", "--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert '"coordinateSystem": "geodetic"' in out
+        assert "run name: sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km" in out
+        assert not (tmp_path / "runs").exists() and not (tmp_path / "raw").exists()
+
+    @pytest.mark.parametrize("argv", [
+        ["--velocity", "7.5"],                                   # missing required
+        BASE_ARGS[:6] + ["--diameter", "-5"],                    # negative diameter
+        BASE_ARGS[:6] + ["--diameter", "50", "--epoch", "yesterday"],
+        ["--velocity", "0", "--altitude", "77.5", "--temperature", "300", "--diameter", "50"],
+    ])
+    def test_bad_arguments_exit_2(self, argv):
+        with pytest.raises(SystemExit) as exc:
+            sr.main(argv)
+        assert exc.value.code == 2
+
+    def test_missing_fap_file_exits_2(self, tmp_path):
+        with pytest.raises(SystemExit) as exc:
+            sr.main(BASE_ARGS + ["--fap-day", str(tmp_path / "nope.dat"), "--outdir", str(tmp_path)])
+        assert exc.value.code == 2
+
+    def test_parse_epoch(self):
+        assert sr.parse_epoch("2024-08-01T12:53:07Z") == datetime(2024, 8, 1, 12, 53, 7)
+        assert sr.parse_epoch("2024-08-01T12:53:07") == datetime(2024, 8, 1, 12, 53, 7)
+
+    def test_defaults_of_optional_state(self):
+        args = sr.build_parser().parse_args(BASE_ARGS)
+        assert (args.flight_path_angle, args.heading, args.lat, args.lon) == (0.0, 0.0, 0.0, 0.0)
+        assert args.epoch == sr.PARENT_EPOCH and args.timeout == 600
+        assert args.outdir == sr.DEFAULT_OUTDIR and args.raw_dir == sr.DEFAULT_RAW_DIR
+
+    def test_ok_run_returns_0_and_prints_summary(self, tmp_path, monkeypatch, capsys):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm"))
+        rc = sr.main(["--velocity", "0.5", "--altitude", "39.94", "--temperature", "300", "--diameter", "50",
+                      "--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "survived" in out and "csv  ->" in out
+        assert (tmp_path / "runs" / "sphere_d050.00mm_T0300.0K_v00.50000kms_h039.940km.json").is_file()
+
+    def test_quiet_prints_nothing_on_success(self, tmp_path, monkeypatch, capsys):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm"))
+        rc = sr.main(["--velocity", "0.5", "--altitude", "39.94", "--temperature", "300", "--diameter", "50", "--quiet",
+                      "--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 0 and capsys.readouterr().out == ""
+
+    def test_failed_run_returns_1(self, tmp_path, monkeypatch, capsys):
+        install_fake_drama(monkeypatch, fake_sara_run(mode="error"))
+        rc = sr.main(BASE_ARGS + ["--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 1 and "error in reentry" in capsys.readouterr().err
+
+    def test_drama_not_importable_returns_2(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.setitem(sys.modules, "drama", None)
+        rc = sr.main(BASE_ARGS + ["--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 2 and "pyDRAMA not importable" in capsys.readouterr().err
+
+
+FAKE_DRAMA_SARA = '''
+import os, shutil
+
+def run(config, save_output_dirs, **kwargs):
+    dest = os.path.join(save_output_dirs, "run_0", "reentry")
+    if os.environ.get("FAKE_DRAMA_MODE") == "error":
+        os.makedirs(dest, exist_ok=True)
+        return {"config": config, "errors": [{"status": "error in reentry", "reentry_logfile": "boom"}], "results": []}
+    shutil.copytree(os.environ["FAKE_DRAMA_FIXTURE"], dest)
+    return {"config": config, "errors": [], "results": [{"status": "success", "reentry_logfile": ""}]}
+'''
+
+
+class TestCliSubprocess:
+    def make_fake_package(self, tmp_path):
+        pkg = tmp_path / "fakepkg" / "drama"
+        pkg.mkdir(parents=True, exist_ok=True)
+        (pkg / "__init__.py").write_text('__version__ = "fake"\n')
+        (pkg / "sara.py").write_text(FAKE_DRAMA_SARA)
+        return str(tmp_path / "fakepkg")
+
+    def run_cli(self, tmp_path, extra, mode="ok"):
+        env = dict(os.environ, PYTHONPATH=self.make_fake_package(tmp_path),
+                   FAKE_DRAMA_FIXTURE=fixture_dir("T3_survivor_50mm"), FAKE_DRAMA_MODE=mode)
+        cmd = [sys.executable, os.path.join(REPO_ROOT, "sphere_reentry.py")] + extra
+        return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(tmp_path))
+
+    def test_exit_codes(self, tmp_path):
+        common = ["--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path)
+        ok = self.run_cli(tmp_path, ["--velocity", "0.5", "--altitude", "39.94", "--temperature", "300", "--diameter", "50"] + common)
+        assert ok.returncode == 0, ok.stderr
+        assert (tmp_path / "runs" / "sphere_d050.00mm_T0300.0K_v00.50000kms_h039.940km.csv").is_file()
+        failed = self.run_cli(tmp_path, BASE_ARGS + common, mode="error")
+        assert failed.returncode == 1
+        usage = self.run_cli(tmp_path, ["--velocity", "7.5"])
+        assert usage.returncode == 2

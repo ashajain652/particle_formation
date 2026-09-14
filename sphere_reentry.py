@@ -611,3 +611,87 @@ def run_sphere(run, outdir, raw_dir, timeout, keep_raw, fap_day_lines, fap_mon_l
         shutil.rmtree(run_raw, ignore_errors=True)
         doc["files"]["raw_dir"] = None
     return _finish(doc, json_path, "ok", t0)
+
+# =============================================================================
+# 7. Command line (spec 4.1)
+# =============================================================================
+
+def parse_epoch(text):
+    """ISO-8601 UTC timestamp (a trailing 'Z' is accepted) -> naive datetime."""
+    text = text.strip()
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("invalid epoch {!r}: {}".format(text, exc))
+
+
+def build_parser():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--velocity", type=float, required=True, help="initial velocity [km/s]")
+    p.add_argument("--altitude", type=float, required=True, help="initial geodetic altitude [km]")
+    p.add_argument("--temperature", type=float, required=True, help="initial bulk temperature [K]")
+    p.add_argument("--diameter", type=float, required=True, help="sphere diameter [mm]")
+    p.add_argument("--flight-path-angle", type=float, default=0.0, help="[deg], negative = descending (default 0)")
+    p.add_argument("--heading", type=float, default=0.0, help="[deg] (default 0)")
+    p.add_argument("--lat", type=float, default=0.0, help="geodetic latitude [deg] (default 0)")
+    p.add_argument("--lon", type=float, default=0.0, help="longitude [deg] (default 0)")
+    p.add_argument("--epoch", type=parse_epoch, default=PARENT_EPOCH,
+                   help="ISO-8601 UTC (default %(default)s, the parent run's epoch)")
+    p.add_argument("--outdir", default=DEFAULT_OUTDIR, help="CSV/JSON directory (default %(default)s)")
+    p.add_argument("--raw-dir", default=DEFAULT_RAW_DIR, help="raw DRAMA trees root (default %(default)s)")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S, help="SESAM timeout [s] (default %(default)s)")
+    p.add_argument("--keep-raw", action="store_true", help="keep the raw DRAMA tree on success")
+    p.add_argument("--dry-run", action="store_true", help="print the config and run name; run nothing")
+    p.add_argument("--quiet", action="store_true", help="no console output except errors")
+    p.add_argument("--fap-day", default=DEFAULT_FAP_DAY, help="DRAMA fap_day.dat (default %(default)s)")
+    p.add_argument("--fap-mon", default=DEFAULT_FAP_MON, help="DRAMA fap_mon.dat (default %(default)s)")
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.velocity <= 0.0:
+        parser.error("--velocity must be > 0")
+    if args.altitude < 0.0:
+        parser.error("--altitude must be >= 0")
+    if args.temperature <= 0.0:
+        parser.error("--temperature must be > 0")
+    if args.diameter <= 0.0:
+        parser.error("--diameter must be > 0")
+    run = SphereRun(velocity_kms=args.velocity, altitude_km=args.altitude,
+                    temperature_K=args.temperature, diameter_mm=args.diameter,
+                    flight_path_deg=args.flight_path_angle, heading_deg=args.heading,
+                    lat_deg=args.lat, lon_deg=args.lon, epoch=args.epoch)
+    if args.dry_run:
+        print(json.dumps(build_config(run), indent=2, default=str))
+        print("run name: " + run_name(run))
+        return 0
+    for label, path in (("--fap-day", args.fap_day), ("--fap-mon", args.fap_mon)):
+        if not os.path.isfile(path):
+            parser.error("{} file not found: {}".format(label, path))
+    try:
+        doc = run_sphere(run, args.outdir, args.raw_dir, args.timeout, args.keep_raw,
+                         read_lines(args.fap_day), read_lines(args.fap_mon))
+    except DramaNotAvailable as exc:
+        print("ERROR: {}".format(exc), file=sys.stderr)
+        return 2
+    if doc["status"] != "ok":
+        print("ERROR ({}): {}".format(doc["status"], doc["error"]), file=sys.stderr)
+        return 1
+    if not args.quiet:
+        r = doc["results"]
+        print("{}: {} after {:.1f} s ({}); Tmax {:.1f} K, {:.1f} s at melt, final mass {:.6g} kg "
+              "(r = {:.3f} mm), final velocity {:.4f} km/s".format(
+                  doc["run_name"], r["outcome"], r["final_time_s"], r["end_of_life_reason"],
+                  r["max_temperature_K"], r["time_at_melting_temperature_s"], r["final_mass_kg"],
+                  r["final_radius_mm"], r["final_velocity_kms"]))
+        print("  csv  -> {}".format(doc["files"]["csv"]))
+        print("  json -> {}".format(os.path.abspath(os.path.join(args.outdir, doc["run_name"] + ".json"))))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
