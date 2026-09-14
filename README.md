@@ -27,7 +27,7 @@ PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python
 ```
 
 Required: `--velocity` km/s, `--altitude` km, `--temperature` K, `--diameter` mm.
-Optional state values default to 0°/0°/0° and the parent epoch. `--dry-run` prints the SESAM
+Optional state values default to 0°/0°/0°/0° and the parent epoch. `--dry-run` prints the SESAM
 configuration; `--keep-raw` keeps the raw DRAMA tree under `sphere_sweep_output/raw/<run_name>/`.
 Exit codes: 0 ok, 1 the run failed (see the JSON's `error`), 2 bad arguments or pyDRAMA missing.
 
