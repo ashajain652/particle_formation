@@ -178,3 +178,114 @@ def build_config(run: SphereRun) -> dict:
         # ---- the model (built-in materials.xml is used: no materialList) ----
         "objects": [obj],
     }
+
+
+# =============================================================================
+# 3. SESAM output parsing (spec 4.6)
+# =============================================================================
+
+AERO_COLUMNS = ["time", "altitude", "temp", "mass", "thick", "convectiveHeat",
+                "radiativeHeat", "oxidationHeat", "radCooling", "integratedHeat",
+                "visibilityFactor"]
+TRAJ_COLUMNS = ["time", "altitude", "lat", "lon", "velocity", "downrange", "drag",
+                "lift", "side", "knudsen", "mach", "path", "heading", "density",
+                "dynamicPressure", "loadFactor"]
+
+
+def read_sara_table(path: str, columns: list) -> list:
+    """Rows of a SESAM whitespace table; '#' lines and rows with the wrong width are skipped."""
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) != len(columns):
+                continue
+            try:
+                rows.append({c: float(p) for c, p in zip(columns, parts)})
+            except ValueError:
+                continue
+    return rows
+
+
+_SESAM_VERSION_RE = re.compile(r"SESAM\s+([0-9][0-9.]*[0-9])")
+
+
+def parse_sesam_version(path):
+    """SESAM version from the '#  ---- DRAMA ( SESAM 2.3.0 ) ----' header line, or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                break
+            m = _SESAM_VERSION_RE.search(line)
+            if m:
+                return m.group(1)
+    return None
+
+
+def parse_impacting_fragments(path):
+    """First <fragment> of PySara.ImpactingFragments.xml (full-precision impact state), or None."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError:
+        return None
+    frag = root.find("fragment")
+    if frag is None:
+        return None
+
+    def number(tag):
+        el = frag.find(tag)
+        return float(el.text) if el is not None and el.text else None
+
+    velocity_ms = number("velocity")
+    epoch = frag.find("epoch")
+    return {
+        "mass_kg": number("mass"),
+        "velocity_kms": velocity_ms / 1000.0 if velocity_ms is not None else None,
+        "lat_deg": number("latitude"),
+        "lon_deg": number("longitude"),
+        "epoch": epoch.text if epoch is not None else None,
+    }
+
+
+_EOL_RE = re.compile(r"reached end of life because (?:of )?(.+?)\.")
+_EVENT_END_RE = re.compile(r"EVENT end \S+ ([0-9.eE+-]+)")
+_EVENT_START_RE = re.compile(r"EVENT start \S+ ([0-9.eE+-]+)")
+
+
+def parse_sesam_log(path):
+    """End-of-life reason and the 6-decimal EVENT start/end masses from sesam.log."""
+    info = {"end_of_life_reason": "unknown", "event_end_mass_kg": None, "event_start_mass_kg": None}
+    if not path or not os.path.isfile(path):
+        return info
+    with open(path, errors="replace") as fh:
+        text = fh.read()
+    m = _EOL_RE.search(text)
+    if m:
+        info["end_of_life_reason"] = m.group(1).strip()
+    m = _EVENT_END_RE.search(text)
+    if m:
+        info["event_end_mass_kg"] = float(m.group(1))
+    m = _EVENT_START_RE.search(text)
+    if m:
+        info["event_start_mass_kg"] = float(m.group(1))
+    return info
+
+
+def find_output_files(raw_dir):
+    """Locate the four SESAM files anywhere under raw_dir (pyDRAMA writes run_0/reentry/)."""
+    def first(pattern):
+        hits = sorted(glob.glob(os.path.join(raw_dir, "**", pattern), recursive=True))
+        return hits[0] if hits else None
+    return {
+        "aero": first("*_AeroThermalHistory.txt"),
+        "traj": first("*_Trajectory.txt"),
+        "fragments": first("*ImpactingFragments.xml"),
+        "log": first("sesam.log"),
+    }

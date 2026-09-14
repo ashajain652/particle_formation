@@ -124,3 +124,97 @@ class TestBuildConfig:
 
     def test_config_is_json_serialisable_with_default_str(self):
         json.dumps(sr.build_config(make_run()), default=str)
+
+
+class TestReadSaraTable:
+    def test_aero_rows_T1(self):
+        rows = sr.read_sara_table(fixture_file("T1_demised_50mm", "_AeroThermalHistory.txt"), sr.AERO_COLUMNS)
+        assert len(rows) == 373
+        assert list(rows[0].keys()) == sr.AERO_COLUMNS
+        first, last = rows[0], rows[-1]
+        assert (first["time"], first["altitude"], first["temp"], first["mass"], first["thick"]) == (0.0, 101.247, 300.0, 0.184, 25.0)
+        assert (last["time"], last["altitude"], last["temp"], last["mass"], last["thick"]) == (370.55, 80.14, 850.0, 0.0, 0.0)
+
+    def test_traj_rows_T1(self):
+        rows = sr.read_sara_table(fixture_file("T1_demised_50mm", "_Trajectory.txt"), sr.TRAJ_COLUMNS)
+        assert len(rows) == 373
+        first = rows[0]
+        assert (first["velocity"], first["path"], first["heading"], first["density"]) == (7.907, -0.18985, 347.95995, 4.493e-07)
+        assert (first["lat"], first["lon"]) == (-3.749, -74.64)
+        assert rows[-1]["velocity"] == 6.467
+
+    def test_comment_and_malformed_lines_are_skipped(self, tmp_path):
+        p = tmp_path / "t.txt"
+        p.write_text("# header\n#  Time [s]  x  y\n1.0 2.0 3.0\n4.0 5.0\nabc 1.0 2.0\n\n7.0 8.0 9.0\n")
+        rows = sr.read_sara_table(str(p), ["t", "x", "y"])
+        assert rows == [{"t": 1.0, "x": 2.0, "y": 3.0}, {"t": 7.0, "x": 8.0, "y": 9.0}]
+
+    def test_empty_file(self, tmp_path):
+        p = tmp_path / "e.txt"
+        p.write_text("")
+        assert sr.read_sara_table(str(p), ["t"]) == []
+
+
+class TestParseSesamVersion:
+    def test_version_from_history_header(self):
+        assert sr.parse_sesam_version(fixture_file("T1_demised_50mm", "_AeroThermalHistory.txt")) == "2.3.0"
+
+    def test_no_header_or_missing_file(self, tmp_path):
+        p = tmp_path / "x.txt"
+        p.write_text("1 2 3\n")
+        assert sr.parse_sesam_version(str(p)) is None
+        assert sr.parse_sesam_version(str(tmp_path / "nope.txt")) is None
+
+
+class TestParseImpactingFragments:
+    def test_survivor_T3(self):
+        frag = sr.parse_impacting_fragments(fixture_file("T3_survivor_50mm", "ImpactingFragments.xml"))
+        assert frag["mass_kg"] == 0.18411041946975187
+        assert frag["velocity_kms"] == pytest.approx(0.058229426237796787)
+        assert frag["lat_deg"] == pytest.approx(36.041459697933099)
+        assert frag["lon_deg"] == pytest.approx(-83.913412639736748)
+        assert frag["epoch"] == "2024-08-01T13:00:12.080"
+
+    def test_no_fragment_T1(self):
+        assert sr.parse_impacting_fragments(fixture_file("T1_demised_50mm", "ImpactingFragments.xml")) is None
+
+    def test_missing_or_malformed_file(self, tmp_path):
+        assert sr.parse_impacting_fragments(str(tmp_path / "nope.xml")) is None
+        assert sr.parse_impacting_fragments(None) is None
+        bad = tmp_path / "bad.xml"
+        bad.write_text("<fragments><fragment>")
+        assert sr.parse_impacting_fragments(str(bad)) is None
+
+
+class TestParseSesamLog:
+    @pytest.mark.parametrize("case, reason, end_mass, start_mass", [
+        ("T1_demised_50mm", "uncritical", 0.0, 0.18411),
+        ("T3_survivor_50mm", "ground impact", 0.18411, 0.18411),
+        ("T5_5mm_750K", "uncritical", 3e-06, 0.000184),
+        ("E1_ballooning_5mm", "ballooning", 3e-06, 0.000184),
+    ])
+    def test_fixture_logs(self, case, reason, end_mass, start_mass):
+        info = sr.parse_sesam_log(fixture_file(case, "sesam.log"))
+        assert info["end_of_life_reason"] == reason
+        assert info["event_end_mass_kg"] == pytest.approx(end_mass, abs=1e-12)
+        assert info["event_start_mass_kg"] == pytest.approx(start_mass, abs=1e-12)
+
+    def test_missing_file(self, tmp_path):
+        assert sr.parse_sesam_log(str(tmp_path / "nope.log")) == {
+            "end_of_life_reason": "unknown", "event_end_mass_kg": None, "event_start_mass_kg": None}
+        assert sr.parse_sesam_log(None)["end_of_life_reason"] == "unknown"
+
+
+class TestFindOutputFiles:
+    def test_finds_files_recursively(self, tmp_path):
+        import shutil
+        dest = tmp_path / "raw" / "run_0" / "reentry"
+        shutil.copytree(fixture_dir("T3_survivor_50mm"), dest)
+        files = sr.find_output_files(str(tmp_path / "raw"))
+        assert files["aero"].endswith("_AeroThermalHistory.txt")
+        assert files["traj"].endswith("_Trajectory.txt")
+        assert files["fragments"].endswith("ImpactingFragments.xml")
+        assert files["log"].endswith("sesam.log")
+
+    def test_missing_files_are_none(self, tmp_path):
+        assert sr.find_output_files(str(tmp_path)) == {"aero": None, "traj": None, "fragments": None, "log": None}
