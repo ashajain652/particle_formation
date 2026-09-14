@@ -1,0 +1,14 @@
+# DRAMA-managed GUI project folders (rewritten by DRAMA on every GUI run)
+Generic_Satellite Reentry/
+Generic Satellite/
+
+# sweep outputs (tens of GB)
+sphere_sweep_output/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
