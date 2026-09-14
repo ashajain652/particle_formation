@@ -113,3 +113,68 @@ def read_lines(path: str) -> list:
     """Non-blank lines of a text file without trailing newlines (DRAMA fap_day/fap_mon content)."""
     with open(path) as fh:
         return [ln.rstrip("\n") for ln in fh if ln.strip()]
+
+
+# =============================================================================
+# 2. SESAM configuration (spec 4.4) -- mirrors the parent satellite run except energyThreshold
+# =============================================================================
+
+def build_config(run: SphereRun) -> dict:
+    """The complete pyDRAMA SARA configuration for one sphere (pass it as config=[cfg])."""
+    obj = {
+        "name": OBJECT_NAME,
+        "uniqueID": OBJECT_UUID,
+        "primitive": {"sphere": {"radius": run.radius_m}},
+        "mass": run.mass_kg,
+        "material": MATERIAL_NAME,
+        "solid": True,
+        "relativePosition": {"cartX": 0.0, "cartY": 0.0, "cartZ": 0.0,
+                             "yaw": 0.0, "pitch": 0.0, "roll": 0.0},
+        "scalingFactors": {"drag": 1.0, "lift": 1.0, "sideForce": 1.0,
+                           "averageHeatFlux": 1.0, "averageHeatFluxCT": 1.0,
+                           "averageHeatFluxTR": 1.0, "averageHeatFluxFM": 1.0},
+        "attitude": "tumbling",
+        "quantity": 1,
+        "temperature": run.temperature_K,
+    }
+    return {
+        # ---- general -------------------------------------------------------
+        "runID": "SPHERE",
+        "comment1": run_name(run),
+        "comment2": "solid AA7075 sphere fragment",
+        "beginDate": run.epoch,
+        "runMode": "reentry-only",
+        "monteCarlo": False,
+        # ---- initial state: geodetic = altitude, lat, lon, velocity, flight path, heading
+        "coordinateSystem": "geodetic",
+        "initialDate": run.epoch,
+        "element1": run.altitude_km,
+        "element2": run.lat_deg,
+        "element3": run.lon_deg,
+        "element4": run.velocity_kms,
+        "element5": run.flight_path_deg,
+        "element6": run.heading_deg % 360.0,
+        # ---- spacecraft-level aerodynamics / attitude ----------------------
+        "assumedCrossSection": run.cross_section_m2,
+        "dragCoefficient": 2.2,
+        "reflectivityCoefficient": 1.3,
+        "attitude": "tumbling",
+        "fragmentsAttitudeAfterBreakup": "inherited",
+        "globalSpacecraftTemperature": run.temperature_K,
+        # ---- environment (same keys/values as the parent run) ---------------
+        "densityScalingFactor": 1.0,
+        "dynamicEnvironment": True,
+        "useWind": True,
+        "solarActivityFromFile": True,
+        "useEnvironmentCSV": False,
+        "ap": 8,
+        "f107a": 170,
+        # ---- numerics / output ----------------------------------------------
+        "voxelatorMode": 1,
+        "energyThreshold": ENERGY_THRESHOLD_J,   # parent used 15 J; see spec section 2
+        "plotVisibilityMaps": False,
+        "plotObjectTrajectories": False,
+        "propagationWithOscar": False,
+        # ---- the model (built-in materials.xml is used: no materialList) ----
+        "objects": [obj],
+    }

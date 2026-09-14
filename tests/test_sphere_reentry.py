@@ -70,3 +70,57 @@ def test_read_lines_drops_blank_lines_and_newlines(tmp_path):
     p = tmp_path / "f.dat"
     p.write_text("# header\n\n01/08/2024 170 170 100 8 3 3 3 3 3 3 3 3\n   \n")
     assert sr.read_lines(str(p)) == ["# header", "01/08/2024 170 170 100 8 3 3 3 3 3 3 3 3"]
+
+
+class TestBuildConfig:
+    def test_geodetic_elements_in_order(self):
+        run = make_run(flight_path_deg=-0.959, heading_deg=347.168, lat_deg=29.546, lon_deg=-82.134)
+        cfg = sr.build_config(run)
+        assert cfg["coordinateSystem"] == "geodetic"
+        assert (cfg["element1"], cfg["element2"], cfg["element3"]) == (77.5, 29.546, -82.134)
+        assert (cfg["element4"], cfg["element5"], cfg["element6"]) == (7.5, -0.959, 347.168)
+
+    def test_heading_is_normalised_to_0_360(self):
+        assert sr.build_config(make_run(heading_deg=-10.0))["element6"] == pytest.approx(350.0)
+        assert sr.build_config(make_run(heading_deg=370.0))["element6"] == pytest.approx(10.0)
+
+    def test_object_definition(self):
+        cfg = sr.build_config(make_run())
+        assert isinstance(cfg["objects"], list) and len(cfg["objects"]) == 1
+        obj = cfg["objects"][0]
+        assert obj["primitive"] == {"sphere": {"radius": 0.025}}
+        assert obj["solid"] is True
+        assert obj["material"] == "drama-AA7075"
+        assert obj["mass"] == pytest.approx(sr.sphere_mass_kg(50.0))
+        assert obj["attitude"] == "tumbling"
+        assert obj["quantity"] == 1
+        assert obj["name"] == sr.OBJECT_NAME and obj["uniqueID"] == sr.OBJECT_UUID
+        assert "wallThickness" not in obj
+        assert "materialList" not in cfg
+
+    def test_temperatures_and_epoch(self):
+        epoch = datetime(2024, 8, 1, 12, 53, 7)
+        cfg = sr.build_config(make_run(temperature_K=450.0, epoch=epoch))
+        assert cfg["objects"][0]["temperature"] == 450.0
+        assert cfg["globalSpacecraftTemperature"] == 450.0
+        assert cfg["beginDate"] == epoch and cfg["initialDate"] == epoch
+        assert isinstance(cfg["beginDate"], datetime)
+
+    def test_run_control_settings_mirror_parent_except_energy_threshold(self):
+        cfg = sr.build_config(make_run())
+        assert cfg["runMode"] == "reentry-only"
+        assert cfg["monteCarlo"] is False
+        assert cfg["energyThreshold"] == 1e-9
+        assert cfg["assumedCrossSection"] == pytest.approx(sr.sphere_cross_section_m2(50.0))
+        assert cfg["comment1"] == sr.run_name(make_run())
+        expected = {"dragCoefficient": 2.2, "reflectivityCoefficient": 1.3, "attitude": "tumbling",
+                    "fragmentsAttitudeAfterBreakup": "inherited", "densityScalingFactor": 1.0,
+                    "dynamicEnvironment": True, "useWind": True, "solarActivityFromFile": True,
+                    "useEnvironmentCSV": False, "ap": 8, "f107a": 170, "voxelatorMode": 1,
+                    "plotVisibilityMaps": False, "plotObjectTrajectories": False,
+                    "propagationWithOscar": False, "runID": "SPHERE"}
+        for key, value in expected.items():
+            assert cfg[key] == value, key
+
+    def test_config_is_json_serialisable_with_default_str(self):
+        json.dumps(sr.build_config(make_run()), default=str)
