@@ -289,3 +289,154 @@ class TestWriteCsv:
         sr.write_csv(str(path), rows)
         line = path.read_text().splitlines()[1]
         assert line.startswith("0.0,100.0,,300.0,0.184,25.0,,,")
+
+
+FIXTURE_RUNS = {
+    "T1_demised_50mm": dict(velocity_kms=7.907, altitude_km=101.247, temperature_K=300.0, diameter_mm=50.0),
+    "T3_survivor_50mm": dict(velocity_kms=0.5, altitude_km=39.94, temperature_K=300.0, diameter_mm=50.0),
+    "T5_5mm_750K": dict(velocity_kms=7.5, altitude_km=77.5, temperature_K=750.0, diameter_mm=5.0),
+    "E1_ballooning_5mm": dict(velocity_kms=7.5, altitude_km=77.5, temperature_K=750.0, diameter_mm=5.0),
+}
+
+
+def stats_for(case):
+    aero, traj = load_fixture_rows(case)
+    rows, _ = sr.merge_histories(aero, traj)
+    fragments = sr.parse_impacting_fragments(fixture_file(case, "ImpactingFragments.xml"))
+    log_info = sr.parse_sesam_log(fixture_file(case, "sesam.log"))
+    return sr.compute_stats(make_run(**FIXTURE_RUNS[case]), rows, fragments, log_info)
+
+
+def synthetic_stats(temps, dt=1.0, mass=0.184, fragments=None, reason="ground impact", event_end=None):
+    aero = [aero_row(i * dt, temp=T, mass=mass) for i, T in enumerate(temps)]
+    traj = [traj_row(i * dt) for i in range(len(temps))]
+    rows, _ = sr.merge_histories(aero, traj)
+    log_info = {"end_of_life_reason": reason, "event_end_mass_kg": event_end, "event_start_mass_kg": None}
+    return sr.compute_stats(make_run(), rows, fragments, log_info)
+
+
+class TestMaxTemperature:
+    def test_T1_first_occurrence_of_maximum(self):
+        r, _ = stats_for("T1_demised_50mm")
+        assert (r["max_temperature_K"], r["time_of_max_temperature_s"], r["altitude_of_max_temperature_km"]) == (850.0, 337.55, 84.46)
+
+    def test_T3_survivor(self):
+        r, _ = stats_for("T3_survivor_50mm")
+        assert (r["max_temperature_K"], r["time_of_max_temperature_s"], r["altitude_of_max_temperature_km"]) == (304.178, 86.08, 15.424)
+
+
+class TestMeltDuration:
+    def test_T1_sums_the_1s_steps_at_850K(self):
+        r, _ = stats_for("T1_demised_50mm")
+        assert r["time_at_melting_temperature_s"] == pytest.approx(33.0)
+        assert r["n_rows_at_melt"] == 34
+        assert (r["first_time_at_melt_s"], r["last_time_at_melt_s"]) == (337.55, 370.55)
+        assert (r["altitude_first_melt_km"], r["altitude_last_melt_km"]) == (84.46, 80.14)
+        assert (r["melting_temperature_K"], r["melt_tolerance_K"]) == (850.0, 0.5)
+
+    def test_T3_never_melts(self):
+        r, _ = stats_for("T3_survivor_50mm")
+        assert r["time_at_melting_temperature_s"] == 0.0 and r["n_rows_at_melt"] == 0
+        assert r["first_time_at_melt_s"] is None and r["altitude_last_melt_km"] is None
+
+    def test_T5_variable_steps(self):
+        r, _ = stats_for("T5_5mm_750K")
+        assert r["time_at_melting_temperature_s"] == pytest.approx(6.774)
+        assert r["n_rows_at_melt"] == 13
+
+    def test_remelt_sums_both_intervals(self):
+        r, _ = synthetic_stats([300.0, 850.0, 850.0, 850.0, 700.0, 850.0, 850.0])
+        assert r["time_at_melting_temperature_s"] == pytest.approx(3.0)
+        assert (r["first_time_at_melt_s"], r["last_time_at_melt_s"]) == (1.0, 6.0)
+
+    def test_tolerance_boundary(self):
+        r, _ = synthetic_stats([849.4, 849.6])
+        assert r["time_at_melting_temperature_s"] == 0.0 and r["n_rows_at_melt"] == 1
+        r, _ = synthetic_stats([849.6, 850.4])
+        assert r["time_at_melting_temperature_s"] == pytest.approx(1.0) and r["n_rows_at_melt"] == 2
+
+    def test_single_row_at_melt_has_zero_duration(self):
+        r, _ = synthetic_stats([850.0])
+        assert r["time_at_melting_temperature_s"] == 0.0 and r["n_rows_at_melt"] == 1
+
+
+class TestFinalMassAndRadius:
+    def test_T3_from_xml(self):
+        r, _ = stats_for("T3_survivor_50mm")
+        assert r["final_mass_kg"] == 0.18411041946975187
+        assert r["final_mass_source"] == "impacting_fragments_xml"
+        assert r["final_radius_mm"] == pytest.approx(25.0, abs=1e-6)
+        assert r["mass_loss_fraction"] == pytest.approx(0.0, abs=1e-9)
+        assert r["final_thick_mm"] == 25.0
+        assert r["initial_mass_kg"] == pytest.approx(0.18411041946975187)
+
+    def test_T1_from_log(self):
+        r, _ = stats_for("T1_demised_50mm")
+        assert r["final_mass_kg"] == 0.0 and r["final_mass_source"] == "sesam_log_event_end"
+        assert r["final_radius_mm"] == 0.0 and r["mass_loss_fraction"] == 1.0
+        assert r["final_thick_mm"] == 0.0
+
+    def test_T5_residual_from_log(self):
+        r, _ = stats_for("T5_5mm_750K")
+        assert r["final_mass_kg"] == pytest.approx(3e-6)
+        assert r["final_mass_source"] == "sesam_log_event_end"
+        assert r["final_radius_mm"] == pytest.approx(0.633, abs=0.005)
+
+    def test_source_priority(self):
+        r, _ = synthetic_stats([300.0], mass=0.123, fragments={"mass_kg": 0.1, "velocity_kms": None}, event_end=0.11)
+        assert (r["final_mass_kg"], r["final_mass_source"]) == (0.1, "impacting_fragments_xml")
+        r, _ = synthetic_stats([300.0], mass=0.123, fragments=None, event_end=0.11)
+        assert (r["final_mass_kg"], r["final_mass_source"]) == (0.11, "sesam_log_event_end")
+        r, _ = synthetic_stats([300.0], mass=0.123, fragments=None, event_end=None)
+        assert (r["final_mass_kg"], r["final_mass_source"]) == (0.123, "history_file")
+
+    def test_radius_from_mass_round_trips(self):
+        assert sr.radius_mm_from_mass(sr.sphere_mass_kg(37.0)) == pytest.approx(18.5)
+        assert sr.radius_mm_from_mass(0.0) == 0.0
+
+
+class TestFinalVelocityAndTrajectoryEnd:
+    def test_T3_velocity_from_xml(self):
+        r, _ = stats_for("T3_survivor_50mm")
+        assert r["final_velocity_kms"] == pytest.approx(0.058229426237796787)
+        assert r["final_velocity_source"] == "impacting_fragments_xml"
+        assert r["final_altitude_km"] == 0.0 and r["final_time_s"] == 261.08
+
+    def test_T1_velocity_from_trajectory(self):
+        r, _ = stats_for("T1_demised_50mm")
+        assert (r["final_velocity_kms"], r["final_velocity_source"]) == (6.467, "trajectory_file")
+        assert (r["final_time_s"], r["final_altitude_km"]) == (370.55, 80.14)
+        assert (r["final_latitude_deg"], r["final_longitude_deg"], r["downrange_km"]) == (21.297, -80.098, 2850.943)
+        assert r["n_rows"] == 373
+
+
+class TestOutcome:
+    def test_fixture_outcomes(self):
+        assert stats_for("T3_survivor_50mm")[0]["outcome"] == "survived"
+        assert stats_for("E1_ballooning_5mm")[0]["outcome"] == "demised"
+        assert stats_for("T5_5mm_750K")[0]["outcome"] == "demised"      # uncritical, 1.6 % residual
+        assert stats_for("T1_demised_50mm")[0]["outcome"] == "demised"
+        assert stats_for("E1_ballooning_5mm")[0]["end_of_life_reason"] == "ballooning"
+
+    def test_classify_outcome_rules(self):
+        assert sr.classify_outcome("ground impact", 0.0, 0.1) == "survived"
+        assert sr.classify_outcome("ballooning", 0.09, 0.1) == "demised"
+        assert sr.classify_outcome("uncritical", 0.184, 0.184) == "other"
+        assert sr.classify_outcome("uncritical", 0.004, 0.1) == "demised"
+        assert sr.classify_outcome("unknown", None, 0.1) == "other"
+
+
+class TestWarnings:
+    def test_coarse_csv_mass_warning_only_for_small_spheres(self):
+        assert any("coarse" in w for w in stats_for("T5_5mm_750K")[1])
+        assert not any("coarse" in w for w in stats_for("T1_demised_50mm")[1])
+
+    def test_survivor_without_xml_and_unknown_reason_and_single_row(self):
+        _, w = synthetic_stats([300.0, 300.0], fragments=None, reason="ground impact")
+        assert any("ImpactingFragments" in x for x in w)
+        _, w = synthetic_stats([300.0, 300.0], reason="unknown")
+        assert any("end-of-life reason" in x for x in w)
+        _, w = synthetic_stats([300.0])
+        assert any("single row" in x for x in w)
+        _, w = stats_for("T1_demised_50mm")
+        assert not any("ImpactingFragments" in x for x in w)

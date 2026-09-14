@@ -352,3 +352,124 @@ def write_csv(path, rows):
         writer.writeheader()
         for row in rows:
             writer.writerow({c: ("" if row.get(c) is None else row[c]) for c in CSV_COLUMNS})
+
+
+# =============================================================================
+# 5. Statistics (spec 4.8)
+# =============================================================================
+
+def radius_mm_from_mass(mass_kg):
+    """Radius of a solid AA7075 sphere of the given mass; 0 for zero mass."""
+    if mass_kg is None or mass_kg <= 0.0:
+        return 0.0
+    return 1000.0 * (3.0 * mass_kg / (4.0 * math.pi * RHO_AA7075)) ** (1.0 / 3.0)
+
+
+def classify_outcome(reason, final_mass_kg, initial_mass_kg):
+    if reason == "ground impact":
+        return "survived"
+    if reason == "ballooning":
+        return "demised"
+    if (final_mass_kg is not None and initial_mass_kg > 0.0
+            and final_mass_kg < DEMISE_MASS_FRACTION * initial_mass_kg):
+        return "demised"
+    return "other"
+
+
+def _at_melt(temp):
+    return temp is not None and abs(temp - T_MELT_AA7075) <= MELT_TOLERANCE_K
+
+
+def _last_with(rows, key):
+    for row in reversed(rows):
+        if row.get(key) is not None:
+            return row
+    return None
+
+
+def compute_stats(run, rows, fragments, log_info):
+    """The statistics block of the JSON plus a list of warning strings."""
+    results = {}
+    warnings = []
+
+    # -- maximum temperature (first occurrence) ------------------------------------
+    with_temp = [r for r in rows if r["temperature_K"] is not None]
+    if with_temp:
+        hottest = max(with_temp, key=lambda r: r["temperature_K"])   # max() keeps the first maximum
+        results["max_temperature_K"] = hottest["temperature_K"]
+        results["time_of_max_temperature_s"] = hottest["time_s"]
+        results["altitude_of_max_temperature_km"] = hottest["altitude_km"]
+    else:
+        results["max_temperature_K"] = None
+        results["time_of_max_temperature_s"] = None
+        results["altitude_of_max_temperature_km"] = None
+
+    # -- time at melting temperature -------------------------------------------------
+    melt_rows = [r for r in rows if _at_melt(r["temperature_K"])]
+    duration = 0.0
+    for prev, cur in zip(rows, rows[1:]):
+        if _at_melt(prev["temperature_K"]) and _at_melt(cur["temperature_K"]):
+            duration += cur["time_s"] - prev["time_s"]
+    results["melting_temperature_K"] = T_MELT_AA7075
+    results["melt_tolerance_K"] = MELT_TOLERANCE_K
+    results["time_at_melting_temperature_s"] = duration
+    results["n_rows_at_melt"] = len(melt_rows)
+    results["first_time_at_melt_s"] = melt_rows[0]["time_s"] if melt_rows else None
+    results["last_time_at_melt_s"] = melt_rows[-1]["time_s"] if melt_rows else None
+    results["altitude_first_melt_km"] = melt_rows[0]["altitude_km"] if melt_rows else None
+    results["altitude_last_melt_km"] = melt_rows[-1]["altitude_km"] if melt_rows else None
+
+    # -- final mass: XML -> log -> history file ---------------------------------------
+    initial_mass = run.mass_kg
+    last_mass_row = _last_with(rows, "mass_kg")
+    if fragments is not None and fragments.get("mass_kg") is not None:
+        final_mass, source = fragments["mass_kg"], "impacting_fragments_xml"
+    elif log_info.get("event_end_mass_kg") is not None:
+        final_mass, source = log_info["event_end_mass_kg"], "sesam_log_event_end"
+    elif last_mass_row is not None:
+        final_mass, source = last_mass_row["mass_kg"], "history_file"
+    else:
+        final_mass, source = None, None
+    results["initial_mass_kg"] = initial_mass
+    results["final_mass_kg"] = final_mass
+    results["final_mass_source"] = source
+    results["mass_loss_fraction"] = (1.0 - final_mass / initial_mass) if final_mass is not None else None
+    results["final_radius_mm"] = radius_mm_from_mass(final_mass) if final_mass is not None else None
+    last_thick_row = _last_with(rows, "thick_mm")
+    results["final_thick_mm"] = last_thick_row["thick_mm"] if last_thick_row else None
+
+    # -- final velocity and trajectory end -------------------------------------------
+    last_traj = _last_with(rows, "velocity_kms")
+    if fragments is not None and fragments.get("velocity_kms") is not None:
+        results["final_velocity_kms"] = fragments["velocity_kms"]
+        results["final_velocity_source"] = "impacting_fragments_xml"
+    elif last_traj is not None:
+        results["final_velocity_kms"] = last_traj["velocity_kms"]
+        results["final_velocity_source"] = "trajectory_file"
+    else:
+        results["final_velocity_kms"] = None
+        results["final_velocity_source"] = None
+    last = rows[-1] if rows else None
+    results["final_time_s"] = last["time_s"] if last else None
+    results["final_altitude_km"] = last["altitude_km"] if last else None
+    results["final_latitude_deg"] = last_traj["lat_deg"] if last_traj else None
+    results["final_longitude_deg"] = last_traj["lon_deg"] if last_traj else None
+    results["downrange_km"] = last_traj["downrange_km"] if last_traj else None
+
+    # -- end of life --------------------------------------------------------------------
+    reason = log_info.get("end_of_life_reason", "unknown")
+    results["end_of_life_reason"] = reason
+    results["outcome"] = classify_outcome(reason, final_mass, initial_mass)
+    results["n_rows"] = len(rows)
+
+    # -- warnings -----------------------------------------------------------------------
+    if initial_mass < COARSE_MASS_LIMIT_KG:
+        warnings.append("CSV mass column ({:g} kg resolution) is coarse for initial mass {:.6g} kg".format(
+            CSV_MASS_RESOLUTION_KG, initial_mass))
+    if len(rows) == 1:
+        warnings.append("history has a single row")
+    if reason == "ground impact" and fragments is None:
+        warnings.append("ground impact reported but no ImpactingFragments.xml entry")
+    if reason == "unknown":
+        warnings.append("end-of-life reason not found in sesam.log")
+    return results, warnings
