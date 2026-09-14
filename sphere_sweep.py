@@ -546,3 +546,166 @@ def run_batch(batch, cores, runs_dir, raw_dir, timeout, progress=None, runner=No
         raise
     executor.shutdown(wait=True)
     return n_ok, n_failed, time.time() - t0
+
+
+# =============================================================================
+# 6. Command line (spec 5.1, 5.5, 5.7)
+# =============================================================================
+
+def build_parser():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--parent", default=DEFAULT_PARENT, help="parent dmf_output.json (default %(default)s)")
+    p.add_argument("--parent-object", default=DEFAULT_PARENT_OBJECT, help="object whose trajectory is used")
+    p.add_argument("--outdir", default=DEFAULT_OUTDIR, help="sweep output directory (default %(default)s)")
+    p.add_argument("--batch-size", type=int, default=None, help="runs per batch (default: all pending runs in one batch)")
+    p.add_argument("--cores", type=int, default=None, help="cores for every batch (default: ask before each batch)")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation before a batch")
+    p.add_argument("--diameters", type=parse_float_list, default=None, help="comma-separated diameters [mm]")
+    p.add_argument("--temperatures", type=parse_float_list, default=None, help="comma-separated temperatures [K]")
+    p.add_argument("--velocities", type=parse_float_list, default=None, help="comma-separated velocities [km/s]")
+    p.add_argument("--limit", type=int, default=None, help="only the first N points of the matrix")
+    p.add_argument("--dry-run", action="store_true", help="show the matrix and batch plan; run nothing")
+    p.add_argument("--force", action="store_true", help="re-run every point, even completed ones")
+    p.add_argument("--retry-failed", action="store_true", help="re-run points that failed before")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S, help="per-run SESAM timeout [s]")
+    return p
+
+
+def setup_logging(outdir, dry_run):
+    log.setLevel(logging.INFO)
+    for handler in list(log.handlers):
+        handler.close()
+    log.handlers.clear()
+    log.propagate = True
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    console = TqdmHandler()
+    console.setFormatter(fmt)
+    log.addHandler(console)
+    if not dry_run:
+        os.makedirs(outdir, exist_ok=True)
+        file_handler = logging.FileHandler(os.path.join(outdir, "sweep.log"))
+        file_handler.setFormatter(fmt)
+        log.addHandler(file_handler)
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    max_cores = os.cpu_count() or 1
+    if args.batch_size is not None and args.batch_size < 1:
+        parser.error("--batch-size must be >= 1")
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit must be >= 1")
+    if args.cores is not None and not 1 <= args.cores <= max_cores:
+        parser.error("--cores must be between 1 and {}".format(max_cores))
+
+    runs_dir = os.path.join(args.outdir, "runs")
+    raw_dir = os.path.join(args.outdir, "raw")
+    setup_logging(args.outdir, args.dry_run)
+    log.info("sphere_sweep start: parent=%s object=%r outdir=%s batch_size=%s cores=%s yes=%s force=%s retry_failed=%s",
+             args.parent, args.parent_object, args.outdir, args.batch_size, args.cores, args.yes,
+             args.force, args.retry_failed)
+
+    # -- parent trajectory and the velocity grid's lower bound ------------------------
+    try:
+        parent = load_parent(args.parent, args.parent_object)
+    except (OSError, ValueError, KeyError) as exc:
+        log.error("cannot load parent trajectory from %s: %s", args.parent, exc)
+        return 2
+    log.info("parent %s (sha256 %s) object %r epoch %s; descending branch rows %d..%d, v_max %.6f km/s",
+             parent.path, parent.sha256[:12], parent.object_name,
+             parent.epoch.strftime(EPOCH_ARG_FORMAT), parent.branch_start, len(parent.rows) - 1, parent.v_max)
+    log.info("%s", parent.describe_v_min())
+
+    diameters = args.diameters or DIAMETERS_MM
+    temperatures = args.temperatures or TEMPERATURES_K
+    velocities = args.velocities or velocity_grid(parent.v_min)
+    if args.velocities is None:
+        log.info("velocity grid: linspace(%.6f, %.6f, %d) km/s (lower bound = parent v_min)",
+                 V_TOP_KMS, parent.v_min, N_VELOCITIES)
+    grid = {"diameters_mm": diameters, "temperatures_K": temperatures, "velocities_kms": velocities}
+
+    # -- matrix and resume ------------------------------------------------------------
+    points = build_points(parent, diameters, temperatures, velocities, limit=args.limit)
+    if not args.dry_run:
+        os.makedirs(runs_dir, exist_ok=True)
+        os.makedirs(raw_dir, exist_ok=True)
+    apply_resume(points, runs_dir, force=args.force, retry_failed=args.retry_failed)
+    skipped = [p for p in points if p.status == "skipped"]
+    pending = [p for p in points if p.status == "pending"]
+    n_done = sum(p.status == "done" for p in points)
+    n_failed_before = sum(p.status == "failed" for p in points)
+    batches = split_batches(pending, args.batch_size)
+    log.info("matrix: %d points = %d diameters x %d temperatures x %d velocities%s; "
+             "%d skipped, %d done, %d failed (not retried), %d pending in %d batch(es)",
+             len(points), len(diameters), len(temperatures), len(velocities),
+             " (limited to {})".format(args.limit) if args.limit else "",
+             len(skipped), n_done, n_failed_before, len(pending), len(batches))
+    for velocity in sorted({p.velocity_kms for p in skipped}, reverse=True):
+        count = sum(p.velocity_kms == velocity for p in skipped)
+        log.info("skipped v=%.6f km/s for %d point(s): parent never reaches velocity (range %.6f..%.6f)",
+                 velocity, count, parent.v_min, parent.v_max)
+
+    if args.dry_run:
+        for k, batch in enumerate(batches, 1):
+            log.info("batch %d/%d: %d runs, %s .. %s", k, len(batches), len(batch),
+                     batch[0].run_name, batch[-1].run_name)
+        log.info("dry run: nothing executed, nothing written")
+        return 0
+
+    manifest_path = os.path.join(args.outdir, "sweep_manifest.json")
+    summary_path = os.path.join(args.outdir, "sweep_summary.csv")
+    settings = {"timeout_s": args.timeout, "batch_size": args.batch_size,
+                "sphere_reentry_version": sr.SCRIPT_VERSION}
+    created = utc_now_str()
+
+    def save():
+        write_manifest(manifest_path, manifest_document(parent, grid, settings, points, created))
+        write_summary(summary_path, points, runs_dir)
+
+    save()
+    if not pending:
+        log.info("nothing to do: %d done, %d failed, %d skipped (use --retry-failed / --force to re-run)",
+                 n_done, n_failed_before, len(skipped))
+        return 0
+
+    # -- batches ------------------------------------------------------------------------
+    completed = 0
+    total_ok = total_failed = 0
+    total_wall = 0.0
+    seconds_per_run = SECONDS_PER_RUN_ESTIMATE      # per run per core
+    exit_code = 0
+    try:
+        for k, batch in enumerate(batches, 1):
+            if not confirm_batch(k, len(batches), batch, seconds_per_run,
+                                 args.cores or default_cores(), args.yes):
+                log.info("stopped before batch %d by user", k)
+                break
+            cores = ask_cores(default_cores(), preset=args.cores)
+            log.info("batch %d/%d: %d runs on %d cores", k, len(batches), len(batch), cores)
+            progress = make_progress(total=len(pending), initial=completed)
+            try:
+                n_ok, n_failed, wall = run_batch(batch, cores, runs_dir, raw_dir, args.timeout, progress)
+            finally:
+                progress.close()
+            completed += n_ok + n_failed
+            total_ok += n_ok
+            total_failed += n_failed
+            total_wall += wall
+            if n_ok + n_failed:
+                seconds_per_run = wall * cores / (n_ok + n_failed)
+            log.info("batch %d/%d done: %d ok, %d failed, %s (%.2f s/run/core)",
+                     k, len(batches), n_ok, n_failed, format_duration(wall), seconds_per_run)
+            save()
+    except KeyboardInterrupt:
+        log.warning("interrupted: saving manifest and summary; re-run to resume")
+        exit_code = 130
+    save()
+    still_pending = sum(p.status == "pending" for p in points)
+    log.info("sweep finished: %d ok, %d failed, %d pending, total run time %s",
+             total_ok, total_failed, still_pending, format_duration(total_wall))
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

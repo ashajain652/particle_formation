@@ -521,3 +521,137 @@ class TestRunBatch:
         bar = sw.make_progress(total=10, initial=3)
         assert bar.n == 3 and bar.total == 10
         bar.close()
+
+
+def fake_run_point_factory(fail_velocities=()):
+    """A run_point stand-in that writes an ok JSON (or an error JSON) like sphere_reentry would."""
+    def fake_run_point(point, runs_dir, raw_dir, timeout):
+        if point.velocity_kms in fail_velocities:
+            write_run_json(runs_dir, point.run_name, "error")
+            point.status, point.returncode, point.stderr_tail = "failed", 1, "ERROR (error): boom"
+        else:
+            write_run_json(runs_dir, point.run_name, "ok", results={
+                "max_temperature_K": 850.0, "final_mass_kg": 0.1, "final_mass_source": "history_file",
+                "mass_loss_fraction": 0.5, "time_at_melting_temperature_s": 3.0, "final_velocity_kms": 1.0,
+                "final_radius_mm": 20.0, "final_altitude_km": 0.0, "end_of_life_reason": "ground impact",
+                "outcome": "survived"})
+            point.status, point.returncode = "done", 0
+        point.wall_time_s = 0.01
+        return point
+    return fake_run_point
+
+
+SUBSET = ["--diameters", "5", "--temperatures", "300", "--velocities", "7.4,5.0,9.0"]
+
+
+class TestMain:
+    def test_dry_run_logs_v_min_and_writes_nothing(self, tmp_path, caplog):
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out), "--dry-run"] + SUBSET)
+        assert rc == 0
+        assert "v_min = 0.050000 km/s at t = 1300.000 s, altitude 0.000 km (parent row 13)" in caplog.text
+        assert "3 points" in caplog.text and "1 skipped" in caplog.text and "2 pending" in caplog.text
+        assert "batch 1/1: 2 runs" in caplog.text and "dry run" in caplog.text
+        assert not out.exists()
+
+    def test_full_run_with_yes_and_cores(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "2"] + SUBSET)
+        assert rc == 0
+        manifest = sw.load_manifest(str(out / "sweep_manifest.json"))
+        statuses = [p["status"] for p in manifest["points"]]
+        assert sorted(statuses) == ["done", "done", "skipped"]
+        assert manifest["parent"]["v_min_kms"] == 0.05 and manifest["settings"]["batch_size"] is None
+        assert manifest["grid"]["velocities_kms"] == [7.4, 5.0, 9.0]
+        with open(out / "sweep_summary.csv", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+        assert len(rows) == 3 and sum(r["outcome"] == "survived" for r in rows) == 2
+        log_text = (out / "sweep.log").read_text()
+        assert "v_min = 0.050000 km/s" in log_text and "batch 1/1: 2 runs on 2 cores" in log_text
+        assert "sweep finished: 2 ok, 0 failed, 0 pending" in caplog.text
+
+    def test_second_invocation_has_nothing_to_do(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        out = tmp_path / "out"
+        assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET) == 0
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET) == 0
+        assert "nothing to do" in caplog.text
+
+    def test_failed_runs_are_retried_only_with_retry_failed(self, tmp_path, monkeypatch, caplog):
+        out = tmp_path / "out"
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory(fail_velocities=(5.0,)))
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET) == 0
+        assert "1 ok, 1 failed" in caplog.text and "FAILED" in caplog.text
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        caplog.clear()
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET) == 0
+        assert "nothing to do" in caplog.text
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1", "--retry-failed"] + SUBSET) == 0
+        manifest = sw.load_manifest(str(out / "sweep_manifest.json"))
+        assert sorted(p["status"] for p in manifest["points"]) == ["done", "done", "skipped"]
+
+    def test_batches_prompt_for_confirmation_and_cores(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        answers = iter(["", "3", "y", ""])          # batch 1: confirm, 3 cores; batch 2: confirm, default cores
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out), "--batch-size", "1"] + SUBSET)
+        assert rc == 0
+        assert "batch 1/2: 1 runs on 3 cores" in caplog.text
+        assert "batch 2/2: 1 runs on {} cores".format(sw.default_cores()) in caplog.text
+        assert sw.load_manifest(str(out / "sweep_manifest.json"))["settings"]["batch_size"] == 1
+
+    def test_user_declines_first_batch(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out)] + SUBSET)
+        assert rc == 0 and "stopped before batch 1" in caplog.text
+        statuses = [p["status"] for p in sw.load_manifest(str(out / "sweep_manifest.json"))["points"]]
+        assert sorted(statuses) == ["pending", "pending", "skipped"]
+
+    def test_yes_without_cores_still_asks_for_cores(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        asked = []
+        monkeypatch.setattr("builtins.input", lambda prompt="": asked.append(prompt) or "2")
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes"] + SUBSET) == 0
+        assert asked == ["Cores for this batch [{}]: ".format(sw.default_cores())]
+        assert "on 2 cores" in caplog.text
+
+    def test_keyboard_interrupt_saves_state_and_returns_130(self, tmp_path, monkeypatch):
+        def interrupt(*args, **kwargs):
+            raise KeyboardInterrupt
+        monkeypatch.setattr(sw, "run_batch", interrupt)
+        out = tmp_path / "out"
+        rc = sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET)
+        assert rc == 130
+        assert (out / "sweep_manifest.json").is_file() and (out / "sweep_summary.csv").is_file()
+
+    @pytest.mark.parametrize("extra", [["--batch-size", "0"], ["--limit", "0"], ["--cores", "0"], ["--cores", "100000"]])
+    def test_bad_arguments_exit_2(self, tmp_path, extra):
+        with pytest.raises(SystemExit) as exc:
+            sw.main(["--parent", MINI, "--outdir", str(tmp_path / "out")] + extra)
+        assert exc.value.code == 2
+
+    def test_missing_parent_returns_2(self, tmp_path, caplog):
+        with caplog.at_level("ERROR", logger="sweep"):
+            rc = sw.main(["--parent", str(tmp_path / "nope.json"), "--outdir", str(tmp_path / "out"), "--dry-run"])
+        assert rc == 2 and "cannot load parent" in caplog.text
+
+    def test_limit(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1", "--limit", "2"] + SUBSET) == 0
+        assert len(sw.load_manifest(str(out / "sweep_manifest.json"))["points"]) == 2
