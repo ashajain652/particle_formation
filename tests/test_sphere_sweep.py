@@ -155,3 +155,63 @@ class TestInterpolation:
         assert st["heading_deg"] == pytest.approx(41.0)
         assert st["time_s"] == pytest.approx(100.0)
         assert st["epoch"] == datetime(2024, 1, 1, 0, 1, 40)
+
+
+class TestGrid:
+    def test_velocity_grid(self):
+        grid = sw.velocity_grid(0.05)
+        assert len(grid) == 100 and grid[0] == 7.5 and grid[-1] == pytest.approx(0.05)
+        assert all(a > b for a, b in zip(grid, grid[1:]))
+        assert grid[0] - grid[1] == pytest.approx((7.5 - 0.05) / 99)
+        assert all(isinstance(v, float) for v in grid)
+
+    def test_default_diameters_and_temperatures(self):
+        assert sw.DIAMETERS_MM == [float(d) for d in range(5, 101, 5)] and len(sw.DIAMETERS_MM) == 20
+        assert sw.TEMPERATURES_K[0] == 300.0 and sw.TEMPERATURES_K[-1] == 750.0 and len(sw.TEMPERATURES_K) == 46
+        assert sw.V_TOP_KMS == 7.5 and sw.N_VELOCITIES == 100
+
+    def test_parse_float_list(self):
+        assert sw.parse_float_list("5, 10,15") == [5.0, 10.0, 15.0]
+        with pytest.raises(Exception):
+            sw.parse_float_list("")
+
+    def test_format_arg(self):
+        assert sw.format_arg(7.5) == "7.500000"
+        assert sw.format_arg(0.0283333333) == "0.028333"
+        assert sw.format_arg(-82.134) == "-82.134000"
+
+
+class TestBuildPoints:
+    def test_states_skips_and_ordering(self, parent):
+        points = sw.build_points(parent, [10.0, 5.0], [310.0, 300.0], [7.4, 9.0, 0.01])
+        assert [(p.diameter_mm, p.temperature_K, p.velocity_kms) for p in points] == [
+            (5.0, 300.0, 9.0), (5.0, 300.0, 7.4), (5.0, 300.0, 0.01),
+            (5.0, 310.0, 9.0), (5.0, 310.0, 7.4), (5.0, 310.0, 0.01),
+            (10.0, 300.0, 9.0), (10.0, 300.0, 7.4), (10.0, 300.0, 0.01),
+            (10.0, 310.0, 9.0), (10.0, 310.0, 7.4), (10.0, 310.0, 0.01)]
+        skipped, ok = points[0], points[1]
+        assert skipped.status == "skipped" and skipped.skip_reason == "parent never reaches velocity"
+        assert skipped.run_name is None and skipped.altitude_km is None and skipped.epoch_utc is None
+        assert ok.status == "pending" and ok.skip_reason is None
+        assert ok.altitude_km == pytest.approx(90.0) and ok.flight_path_deg == pytest.approx(-0.75)
+        assert ok.lat_deg == pytest.approx(-5.0) and ok.lon_deg == pytest.approx(149.0)
+        assert min(ok.heading_deg, 360.0 - ok.heading_deg) == pytest.approx(0.0, abs=1e-9)
+        assert ok.epoch_utc == "2024-08-01T12:09:10"
+        assert ok.run_name == "sphere_d005.00mm_T0300.0K_v07.40000kms_h090.000km"
+        assert points[2].status == "skipped"
+
+    def test_run_name_matches_script1_on_formatted_args(self, parent):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        run = sw.sphere_run_for(point)
+        assert run.velocity_kms == 7.4 and run.altitude_km == 90.0 and run.epoch == datetime(2024, 8, 1, 12, 9, 10)
+        assert run.flight_path_deg == float("-0.750000") and run.heading_deg % 360.0 == 0.0
+        assert sr.run_name(run) == point.run_name
+
+    def test_limit(self, parent):
+        assert len(sw.build_points(parent, [5.0, 10.0], [300.0], [7.4, 5.0], limit=3)) == 3
+
+    def test_full_default_matrix_size(self, parent):
+        points = sw.build_points(parent, sw.DIAMETERS_MM, sw.TEMPERATURES_K, sw.velocity_grid(parent.v_min))
+        assert len(points) == 20 * 46 * 100
+        assert sum(p.status == "skipped" for p in points) == 0
+        assert len({p.run_name for p in points}) == len(points)

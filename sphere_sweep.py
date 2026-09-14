@@ -189,3 +189,83 @@ def interpolate_state(parent, v_kms):
                 "epoch": parent.epoch + timedelta(seconds=t),
             }
     return None
+
+
+# =============================================================================
+# 2. Grid and matrix (spec 5.3)
+# =============================================================================
+
+def velocity_grid(v_min_parent):
+    """100 velocities from 7.5 km/s down to the parent's minimum velocity, both included."""
+    return [float(v) for v in np.linspace(V_TOP_KMS, v_min_parent, N_VELOCITIES)]
+
+
+def parse_float_list(text):
+    values = [float(x) for x in text.split(",") if x.strip()]
+    if not values:
+        raise argparse.ArgumentTypeError("expected a comma-separated list of numbers")
+    return values
+
+
+def format_arg(x):
+    """How every numeric argument is passed to sphere_reentry.py."""
+    return "{:.6f}".format(x)
+
+
+@dataclass
+class Point:
+    diameter_mm: float
+    temperature_K: float
+    velocity_kms: float
+    altitude_km: float = None
+    flight_path_deg: float = None
+    heading_deg: float = None
+    lat_deg: float = None
+    lon_deg: float = None
+    epoch_utc: str = None
+    run_name: str = None
+    status: str = "pending"        # pending | skipped | done | failed
+    skip_reason: str = None
+    returncode: int = None
+    wall_time_s: float = None
+    stderr_tail: str = None
+
+
+def sphere_run_for(point):
+    """The SphereRun script 1 will construct from the formatted CLI strings (so run names agree)."""
+    return sr.SphereRun(
+        velocity_kms=float(format_arg(point.velocity_kms)),
+        altitude_km=float(format_arg(point.altitude_km)),
+        temperature_K=float(format_arg(point.temperature_K)),
+        diameter_mm=float(format_arg(point.diameter_mm)),
+        flight_path_deg=float(format_arg(point.flight_path_deg)),
+        heading_deg=float(format_arg(point.heading_deg)),
+        lat_deg=float(format_arg(point.lat_deg)),
+        lon_deg=float(format_arg(point.lon_deg)),
+        epoch=datetime.strptime(point.epoch_utc, EPOCH_ARG_FORMAT),
+    )
+
+
+def build_points(parent, diameters, temperatures, velocities, limit=None):
+    """All matrix points ordered diameter -> temperature -> velocity (descending), with parent states."""
+    points = []
+    for d in sorted(diameters):
+        for T in sorted(temperatures):
+            for v in sorted(velocities, reverse=True):
+                point = Point(diameter_mm=d, temperature_K=T, velocity_kms=v)
+                state = interpolate_state(parent, v)
+                if state is None:
+                    point.status = "skipped"
+                    point.skip_reason = "parent never reaches velocity"
+                else:
+                    point.altitude_km = state["altitude_km"]
+                    point.flight_path_deg = state["flight_path_deg"]
+                    point.heading_deg = state["heading_deg"]
+                    point.lat_deg = state["lat_deg"]
+                    point.lon_deg = state["lon_deg"]
+                    point.epoch_utc = state["epoch"].strftime(EPOCH_ARG_FORMAT)
+                    point.run_name = sr.run_name(sphere_run_for(point))
+                points.append(point)
+    if limit is not None:
+        points = points[:limit]
+    return points
