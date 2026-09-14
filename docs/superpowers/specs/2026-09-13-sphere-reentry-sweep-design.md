@@ -322,12 +322,15 @@ prompts on, `--outdir sphere_sweep_output` relative to the script.
 3. **Descending branch**: with `v[i]` the velocity column, let `j` be one past
    the last index where `v[i+1] > v[i]` (`j = 0` if velocity never increases).
    The branch is `rows[j:]`; it must have at least two rows, and velocity is
-   strictly decreasing on it.
+   non-increasing on it (SESAM prints velocity with 3 decimals, so consecutive
+   rows can share a value — e.g. the terminal-velocity plateau just above the
+   ground). Where several consecutive rows share the target velocity, the
+   first (highest-altitude) of them is used.
 4. `v_min_parent = branch[-1].velocity`, `v_max_parent = branch[0].velocity`.
    **Log** (console, `sweep.log`, manifest): the parent file, object, epoch,
    the branch's row range, and
    `v_min = <v> km/s at t = <t> s, altitude <h> km (parent row <index>)`.
-5. State at grid velocity `v`: find `i` with `v[i] >= v >= v[i+1]`,
+5. State at grid velocity `v`: find the first `i` with `v[i] >= v >= v[i+1]`,
    `f = (v[i] - v) / (v[i] - v[i+1])` (0 when the denominator is 0); linear
    interpolation of `altitude`, `lat`, `path`, `time`; angle-aware
    interpolation of `heading` and `lon` (interpolate sin and cos, then
