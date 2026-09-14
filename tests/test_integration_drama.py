@@ -83,3 +83,46 @@ def test_cli_real_run_and_keep_raw(tmp_path):
     assert doc["status"] == "ok" and doc["files"]["raw_dir"] == str(tmp_path / "raw" / name)
     assert (tmp_path / "raw" / name / "run_0" / "reentry" / "sesam.log").is_file()
     assert "survived" in proc.stdout
+
+
+REAL_PARENT = os.path.join(REPO_ROOT, "Generic_Satellite Reentry", "output", "dmf_output.json")
+
+
+def sweep(tmp_out, *extra):
+    cmd = [PY, os.path.join(REPO_ROOT, "sphere_sweep.py"), "--parent", REAL_PARENT, "--outdir", str(tmp_out),
+           "--diameters", "50", "--temperatures", "300", "--velocities", "7.5,0.5,9.0"] + list(extra)
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(not os.path.isfile(REAL_PARENT), reason="parent dmf_output.json not present")
+def test_sweep_end_to_end_with_real_parent(tmp_path):
+    out = tmp_path / "out"
+    proc = sweep(out, "--yes", "--cores", "2")
+    assert proc.returncode == 0, proc.stderr
+    manifest = json.load(open(out / "sweep_manifest.json"))
+    assert manifest["parent"]["v_min_kms"] == pytest.approx(0.028, abs=1e-6)
+    by_velocity = {p["velocity_kms"]: p for p in manifest["points"]}
+    assert by_velocity[9.0]["status"] == "skipped"
+    assert by_velocity[7.5]["status"] == "done" and by_velocity[0.5]["status"] == "done"
+    assert by_velocity[7.5]["altitude_km"] == pytest.approx(77.5, abs=0.5)
+    assert by_velocity[0.5]["altitude_km"] == pytest.approx(39.9, abs=0.5)
+    with open(out / "sweep_summary.csv", newline="") as fh:
+        rows = {float(r["initial_velocity_kms"]): r for r in csv.DictReader(fh)}
+    assert rows[7.5]["outcome"] == "demised" and rows[0.5]["outcome"] == "survived"
+    assert rows[9.0]["status"] == "skipped" and rows[9.0]["outcome"] == ""
+    assert float(rows[0.5]["final_radius_mm"]) == pytest.approx(25.0, abs=1e-3)
+    for p in manifest["points"]:
+        if p["status"] == "done":
+            assert (out / "runs" / (p["run_name"] + ".csv")).is_file()
+            assert (out / "runs" / (p["run_name"] + ".json")).is_file()
+            assert not (out / "raw" / p["run_name"]).exists()
+    log_text = (out / "sweep.log").read_text()
+    assert "v_min = 0.028000 km/s" in log_text and "batch 1/1: 2 runs on 2 cores" in log_text
+
+    again = sweep(out, "--yes", "--cores", "2")
+    assert again.returncode == 0 and "nothing to do" in (again.stdout + again.stderr)
+
+    fresh = tmp_path / "fresh"
+    dry = sweep(fresh, "--dry-run")
+    assert dry.returncode == 0 and not fresh.exists()
+    assert "v_min = 0.028000 km/s at t = 3870.071 s" in (dry.stdout + dry.stderr)
