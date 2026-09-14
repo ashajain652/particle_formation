@@ -1,6 +1,5 @@
 """Unit tests for sphere_reentry.py (no DRAMA needed)."""
 import json
-import math
 from datetime import datetime
 
 import pytest
@@ -483,6 +482,16 @@ def fake_sara_run(case=None, mode="ok", calls=None):
             os.makedirs(dest)
             return {"config": config, "errors": [], "results": [{"status": "success", "reentry_logfile": "no files"}]}
         shutil.copytree(fixture_dir(case), dest)
+        if mode == "headeronly":
+            # Strip all data rows from the aero/traj history files, leaving only '#' header lines
+            # (simulates SESAM writing header-only history files with zero data rows).
+            for fname in os.listdir(dest):
+                if fname.endswith(("_AeroThermalHistory.txt", "_Trajectory.txt")):
+                    fpath = os.path.join(dest, fname)
+                    with open(fpath) as fh:
+                        header_lines = [ln for ln in fh if ln.startswith("#")]
+                    with open(fpath, "w") as fh:
+                        fh.writelines(header_lines)
         return {"config": config, "errors": [], "results": [{"status": "success", "reentry_logfile": "", "config": {"output_dir": dest}}]}
     return run
 
@@ -573,12 +582,24 @@ class TestRunSphereErrors:
         doc = sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
         assert "fatal" in doc["error"]
 
+    def test_header_only_history_is_an_error_not_a_silent_ok(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm", mode="headeronly"))
+        run = make_run(**T3_RUN)
+        doc = sr.run_sphere(run, str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
+        assert doc["status"] == "error"
+        assert "no data rows" in doc["error"]
+        assert doc["results"] is None
+        assert doc["files"]["raw_dir"] == str(tmp_path / "raw" / sr.run_name(run))
+        on_disk = json.load(open(tmp_path / "runs" / (sr.run_name(run) + ".json")))
+        assert on_disk["status"] == "error"
+        assert not (tmp_path / "runs" / (sr.run_name(run) + ".csv")).exists()
+
     def test_pydrama_not_importable(self, tmp_path, monkeypatch):
         monkeypatch.setitem(sys.modules, "drama", None)
         with pytest.raises(sr.DramaNotAvailable):
             sr.run_sphere(make_run(**T3_RUN), str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, [], [])
 import subprocess
-from helpers import REPO_ROOT, PY
+from helpers import REPO_ROOT
 
 BASE_ARGS = ["--velocity", "7.5", "--altitude", "77.5", "--temperature", "300", "--diameter", "50"]
 

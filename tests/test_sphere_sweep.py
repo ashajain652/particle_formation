@@ -216,6 +216,15 @@ class TestBuildPoints:
         assert sum(p.status == "skipped" for p in points) == 0
         assert len({p.run_name for p in points}) == len(points)
 
+    def test_colliding_run_names_from_close_velocity_overrides_raise(self, parent):
+        # 7.4 and 7.4000001 round to the same run_name under format_arg's 6-decimal / run_name's
+        # 5-decimal rounding, but interpolate_state() is called with the raw, un-rounded velocities
+        # -- so under the thread-pool executor these two points would run CONCURRENTLY and clobber
+        # each other's output files instead of a safe sequential overwrite.
+        with pytest.raises(ValueError) as excinfo:
+            sw.build_points(parent, [5.0], [300.0], [7.4, 7.4000001])
+        assert "sphere_d005.00mm_T0300.0K_v07.40000kms_h090.000km" in str(excinfo.value)
+
 
 def write_run_json(runs_dir, run_name, status="ok", results=None):
     os.makedirs(runs_dir, exist_ok=True)

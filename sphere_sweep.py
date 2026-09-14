@@ -266,6 +266,21 @@ def build_points(parent, diameters, temperatures, velocities, limit=None):
                     point.epoch_utc = state["epoch"].strftime(EPOCH_ARG_FORMAT)
                     point.run_name = sr.run_name(sphere_run_for(point))
                 points.append(point)
+    # Two points that round to the same run_name would run concurrently under the thread-pool
+    # executor and clobber each other's output files (run A's JSON paired with run B's CSV),
+    # not just harmlessly overwrite each other sequentially. Unreachable on the default grid;
+    # reachable via close-together explicit --velocities overrides after format_arg's rounding.
+    seen = {}
+    for p in points:
+        if p.run_name is not None:
+            if p.run_name in seen:
+                other = seen[p.run_name]
+                raise ValueError(
+                    "duplicate run_name {!r}: points ({}, {}, {}) and ({}, {}, {}) would run "
+                    "concurrently and clobber each other's output files".format(
+                        p.run_name, other.diameter_mm, other.temperature_K, other.velocity_kms,
+                        p.diameter_mm, p.temperature_K, p.velocity_kms))
+            seen[p.run_name] = p
     if limit is not None:
         points = points[:limit]
     return points

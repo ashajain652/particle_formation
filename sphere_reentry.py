@@ -598,6 +598,8 @@ def run_sphere(run, outdir, raw_dir, timeout, keep_raw, fap_day_lines, fap_mon_l
     aero = read_sara_table(files["aero"], AERO_COLUMNS)
     traj = read_sara_table(files["traj"], TRAJ_COLUMNS)
     rows, warnings = merge_histories(aero, traj)
+    if not rows:
+        return _finish(doc, json_path, "error", t0, "history files contain no data rows")
     fragments = parse_impacting_fragments(files["fragments"])
     log_info = parse_sesam_log(files["log"])
     stats, more_warnings = compute_stats(run, rows, fragments, log_info)
