@@ -338,3 +338,61 @@ def apply_resume(points, runs_dir, force=False, retry_failed=False):
             point.status = "pending" if force else "done"
         else:
             point.status = "pending" if (force or retry_failed) else "failed"
+
+
+# =============================================================================
+# 4. Aggregate summary (spec 5.6)
+# =============================================================================
+
+SUMMARY_COLUMNS = [
+    "diameter_mm", "initial_temperature_K", "initial_velocity_kms", "initial_altitude_km",
+    "flight_path_angle_deg", "heading_deg", "latitude_deg", "longitude_deg", "epoch_utc",
+    "status", "skip_reason", "max_temperature_K", "final_mass_kg", "final_mass_source",
+    "mass_loss_fraction", "time_at_melting_temperature_s", "final_velocity_kms",
+    "final_radius_mm", "final_altitude_km", "end_of_life_reason", "outcome", "wall_time_s", "run_name",
+]
+_RESULT_COLUMNS = ["max_temperature_K", "final_mass_kg", "final_mass_source", "mass_loss_fraction",
+                   "time_at_melting_temperature_s", "final_velocity_kms", "final_radius_mm",
+                   "final_altitude_km", "end_of_life_reason", "outcome"]
+
+
+def _blank(value):
+    return "" if value is None else value
+
+
+def summary_row(point, runs_dir):
+    row = {c: "" for c in SUMMARY_COLUMNS}
+    row.update({
+        "diameter_mm": point.diameter_mm,
+        "initial_temperature_K": point.temperature_K,
+        "initial_velocity_kms": point.velocity_kms,
+        "initial_altitude_km": _blank(point.altitude_km),
+        "flight_path_angle_deg": _blank(point.flight_path_deg),
+        "heading_deg": _blank(point.heading_deg),
+        "latitude_deg": _blank(point.lat_deg),
+        "longitude_deg": _blank(point.lon_deg),
+        "epoch_utc": _blank(point.epoch_utc),
+        "status": point.status,
+        "skip_reason": _blank(point.skip_reason),
+        "wall_time_s": _blank(point.wall_time_s),
+        "run_name": _blank(point.run_name),
+    })
+    if point.status == "done":
+        try:
+            with open(os.path.join(runs_dir, point.run_name + ".json")) as fh:
+                results = json.load(fh).get("results") or {}
+        except (OSError, ValueError):
+            results = {}
+        for column in _RESULT_COLUMNS:
+            row[column] = _blank(results.get(column))
+    return row
+
+
+def write_summary(path, points, runs_dir):
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=SUMMARY_COLUMNS)
+        writer.writeheader()
+        for point in points:
+            writer.writerow(summary_row(point, runs_dir))
+    os.replace(tmp, path)

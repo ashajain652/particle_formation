@@ -276,3 +276,46 @@ class TestResume:
         (runs / (points[0].run_name + ".json")).write_text("{not json")
         sw.apply_resume(points, str(runs))
         assert points[0].status == "failed"
+
+
+class TestSummary:
+    def test_columns_are_the_spec_list(self):
+        assert sw.SUMMARY_COLUMNS == [
+            "diameter_mm", "initial_temperature_K", "initial_velocity_kms", "initial_altitude_km",
+            "flight_path_angle_deg", "heading_deg", "latitude_deg", "longitude_deg", "epoch_utc",
+            "status", "skip_reason", "max_temperature_K", "final_mass_kg", "final_mass_source",
+            "mass_loss_fraction", "time_at_melting_temperature_s", "final_velocity_kms",
+            "final_radius_mm", "final_altitude_km", "end_of_life_reason", "outcome", "wall_time_s", "run_name"]
+
+    def test_rows_for_each_status(self, parent, tmp_path):
+        runs = str(tmp_path / "runs")
+        points = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0, 2.0, 9.0])   # ordered 9.0, 7.4, 5.0, 2.0
+        skipped, done, failed, pending = points
+        write_run_json(runs, done.run_name, "ok", results={
+            "max_temperature_K": 850.0, "final_mass_kg": 3e-06, "final_mass_source": "sesam_log_event_end",
+            "mass_loss_fraction": 0.98, "time_at_melting_temperature_s": 6.774, "final_velocity_kms": 2.998,
+            "final_radius_mm": 0.633, "final_altitude_km": 76.548, "end_of_life_reason": "uncritical",
+            "outcome": "demised"})
+        done.status, done.wall_time_s = "done", 0.31
+        failed.status, failed.returncode = "failed", 1
+        path = str(tmp_path / "sweep_summary.csv")
+        sw.write_summary(path, points, runs)
+        with open(path, newline="") as fh:
+            reader = csv.DictReader(fh)
+            assert reader.fieldnames == sw.SUMMARY_COLUMNS
+            rows = list(reader)
+        assert len(rows) == 4
+        s = rows[0]
+        assert s["status"] == "skipped" and s["skip_reason"] == "parent never reaches velocity"
+        assert s["run_name"] == "" and s["initial_altitude_km"] == "" and s["initial_velocity_kms"] == "9.0"
+        d = rows[1]
+        assert d["status"] == "done" and d["run_name"] == done.run_name and d["wall_time_s"] == "0.31"
+        assert d["diameter_mm"] == "5.0" and d["initial_velocity_kms"] == "7.4"
+        assert float(d["initial_altitude_km"]) == pytest.approx(90.0)
+        assert d["epoch_utc"] == "2024-08-01T12:09:10"
+        assert d["max_temperature_K"] == "850.0" and d["final_mass_source"] == "sesam_log_event_end"
+        assert d["outcome"] == "demised" and d["final_radius_mm"] == "0.633"
+        f = rows[2]
+        assert f["status"] == "failed" and f["max_temperature_K"] == "" and f["outcome"] == "" and f["run_name"] == failed.run_name
+        assert rows[3]["status"] == "pending" and rows[3]["final_mass_kg"] == ""
+        assert not os.path.exists(path + ".tmp")
