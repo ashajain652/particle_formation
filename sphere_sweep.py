@@ -269,3 +269,72 @@ def build_points(parent, diameters, temperatures, velocities, limit=None):
     if limit is not None:
         points = points[:limit]
     return points
+
+
+# =============================================================================
+# 3. Manifest and resume (spec 5.4)
+# =============================================================================
+
+def utc_now_str():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def manifest_document(parent, grid, settings, points, created_utc=None):
+    now = utc_now_str()
+    last = parent.branch[-1]
+    return {
+        "created_utc": created_utc or now,
+        "updated_utc": now,
+        "parent": {
+            "path": os.path.abspath(parent.path),
+            "sha256": parent.sha256,
+            "object": parent.object_name,
+            "epoch_utc": parent.epoch.strftime(EPOCH_ARG_FORMAT),
+            "branch_first_row": parent.branch_start,
+            "branch_last_row": len(parent.rows) - 1,
+            "v_min_kms": parent.v_min,
+            "v_min_time_s": last["time"],
+            "v_min_altitude_km": last["altitude"],
+            "v_max_kms": parent.v_max,
+        },
+        "grid": grid,
+        "settings": settings,
+        "points": [asdict(p) for p in points],
+    }
+
+
+def write_manifest(path, doc):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(doc, fh, indent=2)
+    os.replace(tmp, path)
+
+
+def load_manifest(path):
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def _json_status(path):
+    """status field of a run JSON, or None when the file is missing/unreadable."""
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("status") or "unreadable"
+    except (OSError, ValueError):
+        return "unreadable"
+
+
+def apply_resume(points, runs_dir, force=False, retry_failed=False):
+    """Mark points done/failed/pending from the run JSONs already in runs_dir."""
+    for point in points:
+        if point.status == "skipped":
+            continue
+        status = _json_status(os.path.join(runs_dir, point.run_name + ".json"))
+        if status is None:
+            point.status = "pending"
+        elif status == "ok":
+            point.status = "pending" if force else "done"
+        else:
+            point.status = "pending" if (force or retry_failed) else "failed"

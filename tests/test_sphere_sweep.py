@@ -215,3 +215,64 @@ class TestBuildPoints:
         assert len(points) == 20 * 46 * 100
         assert sum(p.status == "skipped" for p in points) == 0
         assert len({p.run_name for p in points}) == len(points)
+
+
+def write_run_json(runs_dir, run_name, status="ok", results=None):
+    os.makedirs(runs_dir, exist_ok=True)
+    doc = {"schema_version": 1, "run_name": run_name, "status": status, "results": results}
+    with open(os.path.join(runs_dir, run_name + ".json"), "w") as fh:
+        json.dump(doc, fh)
+
+
+class TestManifest:
+    def test_manifest_document(self, parent):
+        points = sw.build_points(parent, [5.0], [300.0], [7.4, 9.0])
+        grid = {"diameters_mm": [5.0], "temperatures_K": [300.0], "velocities_kms": [7.4, 9.0]}
+        settings = {"timeout_s": 600, "batch_size": None, "sphere_reentry_version": sr.SCRIPT_VERSION}
+        doc = sw.manifest_document(parent, grid, settings, points, created_utc="2026-09-14T00:00:00Z")
+        assert doc["created_utc"] == "2026-09-14T00:00:00Z" and doc["updated_utc"].endswith("Z")
+        assert doc["parent"] == {
+            "path": os.path.abspath(MINI), "sha256": parent.sha256, "object": "Main Body",
+            "epoch_utc": "2024-08-01T12:00:00", "branch_first_row": 3, "branch_last_row": 13,
+            "v_min_kms": 0.05, "v_min_time_s": 1300.0, "v_min_altitude_km": 0.0, "v_max_kms": 7.905}
+        assert doc["grid"] == grid and doc["settings"] == settings
+        assert [p["status"] for p in doc["points"]] == ["skipped", "pending"]
+        assert doc["points"][1]["run_name"] == "sphere_d005.00mm_T0300.0K_v07.40000kms_h090.000km"
+        assert set(doc["points"][1]) == set(sw.Point.__dataclass_fields__)
+
+    def test_write_and_load_round_trip(self, parent, tmp_path):
+        points = sw.build_points(parent, [5.0], [300.0], [7.4])
+        doc = sw.manifest_document(parent, {}, {}, points)
+        path = str(tmp_path / "sweep_manifest.json")
+        sw.write_manifest(path, doc)
+        assert sw.load_manifest(path) == json.loads(json.dumps(doc))
+        assert not os.path.exists(path + ".tmp")
+
+
+class TestResume:
+    def test_statuses_from_existing_json(self, parent, tmp_path):
+        runs = str(tmp_path / "runs")
+        points = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0, 2.0, 9.0])   # ordered 9.0, 7.4, 5.0, 2.0
+        skipped, ok, failed, fresh = points
+        write_run_json(runs, ok.run_name, "ok")
+        write_run_json(runs, failed.run_name, "error")
+        sw.apply_resume(points, runs)
+        assert (ok.status, failed.status, fresh.status, skipped.status) == ("done", "failed", "pending", "skipped")
+
+    def test_force_and_retry_failed(self, parent, tmp_path):
+        runs = str(tmp_path / "runs")
+        points = sw.build_points(parent, [5.0], [300.0], [7.4, 5.0, 2.0])
+        write_run_json(runs, points[0].run_name, "ok")
+        write_run_json(runs, points[1].run_name, "timeout")
+        sw.apply_resume(points, runs, retry_failed=True)
+        assert [p.status for p in points] == ["done", "pending", "pending"]
+        sw.apply_resume(points, runs, force=True)
+        assert [p.status for p in points] == ["pending", "pending", "pending"]
+
+    def test_corrupt_json_counts_as_failed(self, parent, tmp_path):
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        points = sw.build_points(parent, [5.0], [300.0], [7.4])
+        (runs / (points[0].run_name + ".json")).write_text("{not json")
+        sw.apply_resume(points, str(runs))
+        assert points[0].status == "failed"
