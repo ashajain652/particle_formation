@@ -15,8 +15,14 @@ Usage
     python sphere_reentry.py ... --flight-path-angle -0.96 --heading 347.2 --lat 29.5 --lon -82.1 \
                                  --epoch 2024-08-01T12:53:07
     python sphere_reentry.py ... --dry-run          # print the SESAM config and run name, run nothing
+    python sphere_reentry.py ... --material drama-TiAl6v4              # any metal in DRAMA's database
+    python sphere_reentry.py ... --material-file examples/material_al_li_2195.json   # custom metal
 
 Units: velocity km/s, altitude km, temperature K, diameter mm, angles deg.
+Material: drama-AA7075 by default. --material picks another metal from DRAMA's own
+material_database.xml (density and melting point are read from there); --material-file
+supplies a custom metal as JSON in DRAMA's material format. Non-default materials add a
+"_m<name>" suffix to the run name so they never overwrite AA7075 results.
 Requires DRAMA 4.1.4 and pyDRAMA (conda env drama_env); see README.md.
 Design: docs/superpowers/specs/2026-09-13-sphere-reentry-sweep-design.md
 """
@@ -637,9 +643,11 @@ def _base_document(run, cfg, name, csv_path, run_raw, pydrama_version):
             "latitude_deg": run.lat_deg,
             "longitude_deg": run.lon_deg,
             "epoch_utc": run.epoch.strftime("%Y-%m-%dT%H:%M:%S"),
-            "material": MATERIAL_NAME,
-            "material_density_kgm3": RHO_AA7075,
-            "melting_temperature_K": T_MELT_AA7075,
+            "material": run.material.name,
+            "material_source": run.material.source,
+            "material_density_kgm3": run.material.density_kgm3,
+            "melting_temperature_K": run.material.melting_temperature_K,
+            "material_definition": run.material.definition,
             "melt_tolerance_K": MELT_TOLERANCE_K,
             "energy_threshold_J": ENERGY_THRESHOLD_J,
             "sesam_settings": json.loads(json.dumps(settings, default=str)),
@@ -763,7 +771,21 @@ def build_parser():
     p.add_argument("--quiet", action="store_true", help="no console output except errors")
     p.add_argument("--fap-day", default=DEFAULT_FAP_DAY, help="DRAMA fap_day.dat (default %(default)s)")
     p.add_argument("--fap-mon", default=DEFAULT_FAP_MON, help="DRAMA fap_mon.dat (default %(default)s)")
+    material = p.add_mutually_exclusive_group()
+    material.add_argument("--material", default=MATERIAL_NAME,
+                          help="a metal from DRAMA's material database, e.g. drama-TiAl6v4 (default %(default)s)")
+    material.add_argument("--material-file", default=None,
+                          help="JSON file defining a custom metal in DRAMA's material format (see examples/)")
     return p
+
+
+def resolve_material(material_name, material_file):
+    """The Material for the CLI's --material / --material-file pair (MaterialError on a bad one)."""
+    if material_file:
+        return load_material_file(material_file)
+    if material_name == MATERIAL_NAME:
+        return DEFAULT_MATERIAL
+    return load_builtin_material(material_name, MATERIAL_DB_PATH)
 
 
 def main(argv=None):
@@ -777,10 +799,14 @@ def main(argv=None):
         parser.error("--temperature must be > 0")
     if args.diameter <= 0.0:
         parser.error("--diameter must be > 0")
+    try:
+        material = resolve_material(args.material, args.material_file)
+    except MaterialError as exc:
+        parser.error(str(exc))
     run = SphereRun(velocity_kms=args.velocity, altitude_km=args.altitude,
                     temperature_K=args.temperature, diameter_mm=args.diameter,
                     flight_path_deg=args.flight_path_angle, heading_deg=args.heading,
-                    lat_deg=args.lat, lon_deg=args.lon, epoch=args.epoch)
+                    lat_deg=args.lat, lon_deg=args.lon, epoch=args.epoch, material=material)
     if args.dry_run:
         print(json.dumps(build_config(run), indent=2, default=str))
         print("run name: " + run_name(run))

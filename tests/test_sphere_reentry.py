@@ -900,3 +900,72 @@ class TestMaterialInRun:
         r, _ = sr.compute_stats(run, rows, fragments, log_info)
         assert r["final_radius_mm"] == pytest.approx(25.0)
         assert r["initial_mass_kg"] == pytest.approx(run.mass_kg)
+
+
+class TestMaterialCli:
+    def test_default_is_aa7075(self):
+        args = sr.build_parser().parse_args(BASE_ARGS)
+        assert args.material == "drama-AA7075" and args.material_file is None
+
+    def test_material_and_material_file_are_mutually_exclusive(self, tmp_path, capsys):
+        path = write_material_file(tmp_path, CUSTOM_MATERIAL)
+        with pytest.raises(SystemExit) as exc:
+            sr.main(BASE_ARGS + ["--material", "drama-TiAl6v4", "--material-file", path, "--dry-run"])
+        assert exc.value.code == 2
+        assert "not allowed with" in capsys.readouterr().err        # argparse's mutual-exclusion message
+
+    def test_unknown_builtin_name_exits_2_with_the_list(self, capsys, mini_db, monkeypatch):
+        monkeypatch.setattr(sr, "MATERIAL_DB_PATH", mini_db)
+        with pytest.raises(SystemExit) as exc:
+            sr.main(BASE_ARGS + ["--material", "drama-Unobtainium", "--dry-run"])
+        assert exc.value.code == 2
+        assert "drama-TiAl6v4" in capsys.readouterr().err
+
+    def test_bad_material_file_exits_2_naming_the_missing_fields(self, tmp_path, capsys):
+        bad = write_material_file(tmp_path, {"name": "x"})
+        with pytest.raises(SystemExit) as exc:
+            sr.main(BASE_ARGS + ["--material-file", bad, "--dry-run"])
+        assert exc.value.code == 2
+        assert "meltingTemperature" in capsys.readouterr().err
+
+    def test_dry_run_uses_the_builtin_material(self, capsys, mini_db, monkeypatch):
+        monkeypatch.setattr(sr, "MATERIAL_DB_PATH", mini_db)
+        assert sr.main(BASE_ARGS + ["--material", "drama-TiAl6v4", "--dry-run"]) == 0
+        out = capsys.readouterr().out
+        assert '"material": "drama-TiAl6v4"' in out
+        assert "run name: sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_mdrama-TiAl6v4" in out
+        assert "materialList" not in out
+
+    def test_dry_run_injects_the_custom_material(self, capsys, tmp_path):
+        path = write_material_file(tmp_path, CUSTOM_MATERIAL)
+        assert sr.main(BASE_ARGS + ["--material-file", path, "--dry-run"]) == 0
+        out = capsys.readouterr().out
+        assert '"material": "user-AlLi2195"' in out and '"materialList"' in out
+        assert "run name: sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_muser-AlLi2195" in out
+
+    def test_json_records_the_custom_material(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm"))
+        path = write_material_file(tmp_path, CUSTOM_MATERIAL)
+        rc = sr.main(["--velocity", "0.5", "--altitude", "39.94", "--temperature", "300", "--diameter", "50",
+                      "--material-file", path, "--quiet",
+                      "--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 0
+        doc = json.load(open(tmp_path / "runs" / "sphere_d050.00mm_T0300.0K_v00.50000kms_h039.940km_muser-AlLi2195.json"))
+        inputs = doc["inputs"]
+        assert inputs["material"] == "user-AlLi2195" and inputs["material_source"] == "custom_file"
+        assert inputs["material_density_kgm3"] == 2700.0 and inputs["melting_temperature_K"] == 823.0
+        assert inputs["material_definition"] == CUSTOM_MATERIAL
+        assert inputs["initial_mass_kg"] == pytest.approx(sr.sphere_mass_kg(50.0, 2700.0))
+        # the fixture's 0.18411 kg impact mass is an AA7075 sphere; as Al-Li it is 4 % heavier than
+        # the initial mass, so the statistics must still be computed with the custom density
+        assert doc["results"]["final_radius_mm"] == pytest.approx(sr.radius_mm_from_mass(0.18411041946975187, sr.Material("x", 2700.0, 823.0)))
+
+    def test_json_records_the_builtin_material_source(self, tmp_path, monkeypatch):
+        install_fake_drama(monkeypatch, fake_sara_run("T3_survivor_50mm"))
+        rc = sr.main(["--velocity", "0.5", "--altitude", "39.94", "--temperature", "300", "--diameter", "50", "--quiet",
+                      "--outdir", str(tmp_path / "runs"), "--raw-dir", str(tmp_path / "raw")] + fap_files(tmp_path))
+        assert rc == 0
+        doc = json.load(open(tmp_path / "runs" / "sphere_d050.00mm_T0300.0K_v00.50000kms_h039.940km.json"))
+        assert doc["inputs"]["material"] == "drama-AA7075"
+        assert doc["inputs"]["material_source"] == "builtin"
+        assert doc["inputs"]["material_definition"] is None
