@@ -17,6 +17,13 @@ DEFAULT_PLOT_DIR = os.path.join(REPO_ROOT, "sphere_sweep_output", "plots")
 BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 SEQ_BLUE = LinearSegmentedColormap.from_list("seq_blue", BLUE_RAMP, N=256)
 
+# --- diverging blue <-> red through the palette's neutral midpoint (#f0efec): a cool->warm
+#     thermal map -- blue = cooler, red = hotter -- with equal steps per arm ----------------
+COOL_WARM_STEPS = ["#0d366b", "#256abf", "#6da7ec", "#cde2fb",   # blue arm (cool)
+                   "#f0efec",                                     # neutral midpoint
+                   "#edc6c3", "#e99492", "#e34948", "#882c2b"]    # red arm (warm)
+COOL_WARM = LinearSegmentedColormap.from_list("cool_warm", COOL_WARM_STEPS, N=256)
+
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
 SECOND = "#52514e"

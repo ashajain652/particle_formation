@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 plot_max_temperature_by_diameter.py -- small multiples: one panel per sphere diameter,
-x = initial temperature, y = initial velocity, color = the run's maximum temperature,
-shown ONLY where the sphere lost no mass (mass_loss_fraction == 0). Every cell whose
-sphere did lose mass is drawn black.
+x = initial temperature, y = initial velocity, color = the run's maximum temperature
+(blue = cooler, red = hotter), shown ONLY where the sphere lost no mass
+(mass_loss_fraction == 0). Every cell whose sphere did lose mass is drawn black. The
+colorbar's top tick is the hottest value actually shown.
 
 Reads a sweep summary CSV. Because sphere_sweep.py rewrites sweep_summary.csv on every
 invocation, point --summary at a per-material file built by analysis/summary_from_runs.py
@@ -28,7 +29,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_style import (SEQ_BLUE, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
+from plot_style import (COOL_WARM, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
                         apply_rcparams, strip_top_right_spines, style_colorbar)
 
 ZERO_LOSS_TOLERANCE = 1e-9      # |mass_loss_fraction| below this counts as "no mass lost"
@@ -75,7 +76,7 @@ def main(argv=None):
     vmin = float(np.nanmin(df["value"]))
     vmax = float(np.nanmax(df["value"]))
     print("max temperature among no-loss runs: {:.1f} .. {:.1f} K".format(vmin, vmax))
-    cmap = SEQ_BLUE.copy()
+    cmap = COOL_WARM.copy()
     cmap.set_bad(MASS_LOSS_COLOR)
 
     dt, dv = t_arr[1] - t_arr[0], v_arr[1] - v_arr[0]
@@ -115,6 +116,12 @@ def main(argv=None):
     cax = fig.add_axes([0.925, 0.22, 0.015, 0.58])
     cbar = fig.colorbar(im, cax=cax)
     cbar.set_label("maximum temperature  [K]  (no mass lost)", color=SECOND, fontsize=10)
+    regular = [t for t in np.arange(300.0, vmax, 100.0) if t > vmin and vmax - t > 25.0]
+    ticks = [vmin] + regular + [vmax]
+    cbar.set_ticks(ticks)
+    cbar.set_ticklabels(["{:.0f} (coolest shown)".format(vmin)]
+                        + ["{:.0f}".format(t) for t in regular]
+                        + ["{:.1f} (hottest shown)".format(vmax)])
     style_colorbar(cbar)
     fig.legend(handles=[Patch(facecolor=MASS_LOSS_COLOR, label="mass loss > 0")],
                loc="lower left", bbox_to_anchor=(0.918, 0.12), frameon=False, fontsize=9.5,
