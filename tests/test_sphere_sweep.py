@@ -508,7 +508,7 @@ class TestRunBatch:
         batch = sw.build_points(parent, [5.0], [300.0], [7.4])
         seen = []
 
-        def fake_run_point(point, runs_dir, raw_dir, timeout):
+        def fake_run_point(point, runs_dir, raw_dir, timeout, material_args=()):
             seen.append(point.run_name)
             point.status = "done"
             return point
@@ -534,7 +534,7 @@ class TestRunBatch:
 
 def fake_run_point_factory(fail_velocities=()):
     """A run_point stand-in that writes an ok JSON (or an error JSON) like sphere_reentry would."""
-    def fake_run_point(point, runs_dir, raw_dir, timeout):
+    def fake_run_point(point, runs_dir, raw_dir, timeout, material_args=()):
         if point.velocity_kms in fail_velocities:
             write_run_json(runs_dir, point.run_name, "error")
             point.status, point.returncode, point.stderr_tail = "failed", 1, "ERROR (error): boom"
@@ -664,3 +664,148 @@ class TestMain:
         with caplog.at_level("INFO", logger="sweep"):
             assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1", "--limit", "2"] + SUBSET) == 0
         assert len(sw.load_manifest(str(out / "sweep_manifest.json"))["points"]) == 2
+
+
+# =============================================================================
+# Materials (--material / --material-file, one per sweep invocation)
+# =============================================================================
+
+TITANIUM = sr.Material("drama-TiAl6v4", 4417.0, 1905.0)
+CUSTOM_MATERIAL = {
+    "name": "user-AlLi2195", "materialType": "metal", "catalycity": 1.0, "density": 2700.0,
+    "specificHeatCapacity": [[293.0, 900.0], [823.0, 1140.0]], "meltingHeat": 390000.0,
+    "meltingTemperature": 823.0, "emissivity": [[50.0, 0.3]],
+    "heatConductivity": [[293.0, 130.0], [823.0, 129.5]], "oxideActivationTemperature": 0.0,
+    "oxideEmissivity": [[50.0, 0.3]], "oxideHeatOfFormation": 0.0, "oxideReactionProbability": 0.0,
+}
+
+
+def write_material_file(tmp_path, data=CUSTOM_MATERIAL):
+    path = tmp_path / "material.json"
+    path.write_text(json.dumps(data))
+    return str(path)
+
+
+class TestMaterialArgs:
+    def test_default_material_forwards_nothing(self):
+        assert sw.material_cli_args("drama-AA7075", None) == []
+
+    def test_builtin_material_is_forwarded_by_name(self):
+        assert sw.material_cli_args("drama-TiAl6v4", None) == ["--material", "drama-TiAl6v4"]
+
+    def test_material_file_is_forwarded_as_an_absolute_path(self, tmp_path):
+        path = write_material_file(tmp_path)
+        assert sw.material_cli_args("drama-AA7075", path) == ["--material-file", os.path.abspath(path)]
+
+
+class TestMaterialInPoints:
+    def test_default_run_names_are_unchanged(self, parent):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        assert point.run_name == "sphere_d005.00mm_T0300.0K_v07.40000kms_h090.000km"
+
+    def test_non_default_material_suffixes_every_run_name(self, parent):
+        points = sw.build_points(parent, [5.0, 10.0], [300.0], [7.4, 5.0], material=TITANIUM)
+        assert all(p.run_name.endswith("_mdrama-TiAl6v4") for p in points)
+        assert sw.sphere_run_for(points[0], material=TITANIUM).material == TITANIUM
+        assert sr.run_name(sw.sphere_run_for(points[0], material=TITANIUM)) == points[0].run_name
+
+    def test_skipped_points_still_have_no_run_name(self, parent):
+        point = sw.build_points(parent, [5.0], [300.0], [9.0], material=TITANIUM)[0]
+        assert point.status == "skipped" and point.run_name is None
+
+
+class TestMaterialInCommand:
+    def test_build_command_forwards_material_args(self, parent):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4])[0]
+        cmd = sw.build_command(point, "/out/runs", "/out/raw", 600, material_args=["--material", "drama-TiAl6v4"])
+        assert cmd[-3:] == ["--material", "drama-TiAl6v4", "--quiet"] or cmd[-2:] == ["--material", "drama-TiAl6v4"]
+        assert "--material" in cmd and cmd[cmd.index("--material") + 1] == "drama-TiAl6v4"
+        assert sw.build_command(point, "/out/runs", "/out/raw", 600) == \
+            sw.build_command(point, "/out/runs", "/out/raw", 600, material_args=[])
+
+    def test_run_point_forwards_material_args_to_the_subprocess(self, parent, tmp_path, monkeypatch):
+        point = sw.build_points(parent, [5.0], [300.0], [7.4], material=TITANIUM)[0]
+        seen = {}
+
+        def fake_run(cmd, capture_output, text, timeout):
+            seen["cmd"] = cmd
+            write_run_json(str(tmp_path / "runs"), point.run_name, "ok", results={})
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(sw.subprocess, "run", fake_run)
+        sw.run_point(point, str(tmp_path / "runs"), str(tmp_path / "raw"), 600,
+                     material_args=["--material", "drama-TiAl6v4"])
+        assert point.status == "done"
+        assert seen["cmd"][seen["cmd"].index("--material") + 1] == "drama-TiAl6v4"
+
+
+class TestMaterialInMain:
+    def test_builtin_material_flows_into_names_subprocess_args_and_manifest(self, tmp_path, monkeypatch, caplog):
+        received = []
+
+        def fake_run_point(point, runs_dir, raw_dir, timeout, material_args=()):
+            received.append(list(material_args))
+            write_run_json(runs_dir, point.run_name, "ok", results={"outcome": "survived"})
+            point.status, point.returncode, point.wall_time_s = "done", 0, 0.01
+            return point
+
+        monkeypatch.setattr(sw, "run_point", fake_run_point)
+        out = tmp_path / "out"
+        with caplog.at_level("INFO", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1",
+                          "--material", "drama-TiAl6v4"] + SUBSET)
+        assert rc == 0
+        assert received and all(a == ["--material", "drama-TiAl6v4"] for a in received)
+        manifest = sw.load_manifest(str(out / "sweep_manifest.json"))
+        assert manifest["settings"]["material"] == {
+            "name": "drama-TiAl6v4", "source": "builtin", "density_kgm3": 4417.0,
+            "melting_temperature_K": 1905.0, "file": None, "file_sha256": None}
+        done = [p for p in manifest["points"] if p["status"] == "done"]
+        assert done and all(p["run_name"].endswith("_mdrama-TiAl6v4") for p in done)
+        assert (out / "runs" / (done[0]["run_name"] + ".json")).is_file()
+        assert "material drama-TiAl6v4 (builtin" in caplog.text
+
+    def test_material_file_is_recorded_with_its_hash(self, tmp_path, monkeypatch):
+        path = write_material_file(tmp_path)
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        out = tmp_path / "out"
+        assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1",
+                        "--material-file", path] + SUBSET) == 0
+        material = sw.load_manifest(str(out / "sweep_manifest.json"))["settings"]["material"]
+        assert material["name"] == "user-AlLi2195" and material["source"] == "custom_file"
+        assert material["density_kgm3"] == 2700.0 and material["melting_temperature_K"] == 823.0
+        assert material["file"] == os.path.abspath(path)
+        assert material["file_sha256"] == sw.sha256_of_file(path)
+
+    def test_default_material_is_recorded_too(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sw, "run_point", fake_run_point_factory())
+        out = tmp_path / "out"
+        assert sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1"] + SUBSET) == 0
+        material = sw.load_manifest(str(out / "sweep_manifest.json"))["settings"]["material"]
+        assert material["name"] == "drama-AA7075" and material["source"] == "builtin"
+
+    def test_unknown_material_returns_2_before_anything_runs(self, tmp_path, monkeypatch, caplog):
+        called = []
+        monkeypatch.setattr(sw, "run_point", lambda *a, **k: called.append(1))
+        monkeypatch.setattr(sr, "MATERIAL_DB_PATH", str(tmp_path / "nope.xml"))   # no database at all
+        out = tmp_path / "out"
+        with caplog.at_level("ERROR", logger="sweep"):
+            rc = sw.main(["--parent", MINI, "--outdir", str(out), "--yes", "--cores", "1",
+                          "--material", "drama-TiAl6v4"] + SUBSET)
+        assert rc == 2 and not called
+        assert "material" in caplog.text.lower()
+        assert not (out / "sweep_manifest.json").exists()
+
+    def test_material_flags_are_mutually_exclusive(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            sw.main(["--parent", MINI, "--outdir", str(tmp_path / "out"), "--material", "drama-TiAl6v4",
+                     "--material-file", write_material_file(tmp_path), "--dry-run"])
+        assert exc.value.code == 2
+        assert "not allowed with" in capsys.readouterr().err
+
+    def test_dry_run_logs_the_material(self, tmp_path, caplog):
+        with caplog.at_level("INFO", logger="sweep"):
+            assert sw.main(["--parent", MINI, "--outdir", str(tmp_path / "out"), "--dry-run",
+                            "--material-file", write_material_file(tmp_path)] + SUBSET) == 0
+        assert "material user-AlLi2195 (custom_file" in caplog.text
+        assert "_muser-AlLi2195" in caplog.text

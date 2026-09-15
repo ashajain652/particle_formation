@@ -15,6 +15,12 @@ Usage
     python sphere_sweep.py                                 # everything pending in one confirmed batch
     python sphere_sweep.py --batch-size 5000               # confirm + choose cores before every batch
     python sphere_sweep.py --diameters 50 --temperatures 300 --velocities 7.5,0.5 --yes --cores 2
+    python sphere_sweep.py --material drama-TiAl6v4          # every sphere in another DRAMA metal
+    python sphere_sweep.py --material-file examples/material_al_li_2195.json   # or a custom metal
+
+The material is one setting for the whole sweep (it is not a grid axis). A non-default
+material adds a "_m<name>" suffix to every run name, so sweeps of different materials can
+share an output directory without overwriting each other; it is recorded in the manifest.
 
 Outputs (under --outdir, default sphere_sweep_output/):
     runs/<run_name>.csv|.json   per run (written by sphere_reentry.py)
@@ -30,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import hashlib
 import json
 import logging
@@ -231,7 +238,7 @@ class Point:
     stderr_tail: str = None
 
 
-def sphere_run_for(point):
+def sphere_run_for(point, material=sr.DEFAULT_MATERIAL):
     """The SphereRun script 1 will construct from the formatted CLI strings (so run names agree)."""
     return sr.SphereRun(
         velocity_kms=float(format_arg(point.velocity_kms)),
@@ -243,11 +250,16 @@ def sphere_run_for(point):
         lat_deg=float(format_arg(point.lat_deg)),
         lon_deg=float(format_arg(point.lon_deg)),
         epoch=datetime.strptime(point.epoch_utc, EPOCH_ARG_FORMAT),
+        material=material,
     )
 
 
-def build_points(parent, diameters, temperatures, velocities, limit=None):
-    """All matrix points ordered diameter -> temperature -> velocity (descending), with parent states."""
+def build_points(parent, diameters, temperatures, velocities, limit=None, material=sr.DEFAULT_MATERIAL):
+    """All matrix points ordered diameter -> temperature -> velocity (descending), with parent states.
+
+    `material` is the sweep's single material; it only affects the run names (a non-default
+    material gets a suffix so it can never share output files with another material).
+    """
     points = []
     for d in sorted(diameters):
         for T in sorted(temperatures):
@@ -264,7 +276,7 @@ def build_points(parent, diameters, temperatures, velocities, limit=None):
                     point.lat_deg = state["lat_deg"]
                     point.lon_deg = state["lon_deg"]
                     point.epoch_utc = state["epoch"].strftime(EPOCH_ARG_FORMAT)
-                    point.run_name = sr.run_name(sphere_run_for(point))
+                    point.run_name = sr.run_name(sphere_run_for(point, material))
                 points.append(point)
     # Two points that round to the same run_name would run concurrently under the thread-pool
     # executor and clobber each other's output files (run A's JSON paired with run B's CSV),
@@ -417,7 +429,16 @@ def write_summary(path, points, runs_dir):
 # 5. Execution: one subprocess per point, batches, prompts, progress (spec 5.5)
 # =============================================================================
 
-def build_command(point, runs_dir, raw_dir, timeout, python=None):
+def material_cli_args(material_name, material_file):
+    """The sphere_reentry.py arguments that select the sweep's material ([] for the default)."""
+    if material_file:
+        return ["--material-file", os.path.abspath(material_file)]
+    if material_name != sr.MATERIAL_NAME:
+        return ["--material", material_name]
+    return []
+
+
+def build_command(point, runs_dir, raw_dir, timeout, python=None, material_args=()):
     return [python or sys.executable, SPHERE_REENTRY,
             "--velocity", format_arg(point.velocity_kms),
             "--altitude", format_arg(point.altitude_km),
@@ -431,12 +452,13 @@ def build_command(point, runs_dir, raw_dir, timeout, python=None):
             "--outdir", runs_dir,
             "--raw-dir", raw_dir,
             "--timeout", str(int(timeout)),
+            *material_args,
             "--quiet"]
 
 
-def run_point(point, runs_dir, raw_dir, timeout):
+def run_point(point, runs_dir, raw_dir, timeout, material_args=()):
     """Run sphere_reentry.py for one point; mark it done/failed from the exit code and its JSON."""
-    cmd = build_command(point, runs_dir, raw_dir, timeout)
+    cmd = build_command(point, runs_dir, raw_dir, timeout, material_args=material_args)
     t0 = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60)
@@ -583,7 +605,24 @@ def build_parser():
     p.add_argument("--force", action="store_true", help="re-run every point, even completed ones")
     p.add_argument("--retry-failed", action="store_true", help="re-run points that failed before")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S, help="per-run SESAM timeout [s]")
+    material = p.add_mutually_exclusive_group()
+    material.add_argument("--material", default=sr.MATERIAL_NAME,
+                          help="a metal from DRAMA's material database for every sphere (default %(default)s)")
+    material.add_argument("--material-file", default=None,
+                          help="JSON file defining a custom metal (DRAMA material format) for every sphere")
     return p
+
+
+def material_settings(material, material_file):
+    """The manifest's record of the sweep's material (name, source, numbers, file + hash)."""
+    return {
+        "name": material.name,
+        "source": material.source,
+        "density_kgm3": material.density_kgm3,
+        "melting_temperature_K": material.melting_temperature_K,
+        "file": os.path.abspath(material_file) if material_file else None,
+        "file_sha256": sha256_of_file(material_file) if material_file else None,
+    }
 
 
 def setup_logging(outdir, dry_run):
@@ -632,6 +671,16 @@ def main(argv=None):
              parent.epoch.strftime(EPOCH_ARG_FORMAT), parent.branch_start, len(parent.rows) - 1, parent.v_max)
     log.info("%s", parent.describe_v_min())
 
+    try:
+        material = sr.resolve_material(args.material, args.material_file)
+    except sr.MaterialError as exc:
+        log.error("cannot use material: %s", exc)
+        return 2
+    material_args = material_cli_args(args.material, args.material_file)
+    log.info("material %s (%s): density %.1f kg/m3, melting temperature %.1f K%s",
+             material.name, material.source, material.density_kgm3, material.melting_temperature_K,
+             " from {}".format(os.path.abspath(args.material_file)) if args.material_file else "")
+
     diameters = args.diameters or DIAMETERS_MM
     temperatures = args.temperatures or TEMPERATURES_K
     velocities = args.velocities or velocity_grid(parent.v_min)
@@ -641,7 +690,7 @@ def main(argv=None):
     grid = {"diameters_mm": diameters, "temperatures_K": temperatures, "velocities_kms": velocities}
 
     # -- matrix and resume ------------------------------------------------------------
-    points = build_points(parent, diameters, temperatures, velocities, limit=args.limit)
+    points = build_points(parent, diameters, temperatures, velocities, limit=args.limit, material=material)
     if not args.dry_run:
         os.makedirs(runs_dir, exist_ok=True)
         os.makedirs(raw_dir, exist_ok=True)
@@ -671,7 +720,8 @@ def main(argv=None):
     manifest_path = os.path.join(args.outdir, "sweep_manifest.json")
     summary_path = os.path.join(args.outdir, "sweep_summary.csv")
     settings = {"timeout_s": args.timeout, "batch_size": args.batch_size,
-                "sphere_reentry_version": sr.SCRIPT_VERSION}
+                "sphere_reentry_version": sr.SCRIPT_VERSION,
+                "material": material_settings(material, args.material_file)}
     created = utc_now_str()
 
     def save():
@@ -700,7 +750,8 @@ def main(argv=None):
             log.info("batch %d/%d: %d runs on %d cores", k, len(batches), len(batch), cores)
             progress = make_progress(total=len(pending), initial=completed)
             try:
-                n_ok, n_failed, wall = run_batch(batch, cores, runs_dir, raw_dir, args.timeout, progress)
+                n_ok, n_failed, wall = run_batch(batch, cores, runs_dir, raw_dir, args.timeout, progress,
+                                                 runner=functools.partial(run_point, material_args=material_args))
             finally:
                 progress.close()
             completed += n_ok + n_failed
