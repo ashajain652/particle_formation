@@ -94,12 +94,26 @@ recorded in `sweep_manifest.json` under `settings.material`.
 "$PY" analysis/plot_outcome_by_diameter.py --metric mass_loss
 ```
 
-Both scripts read `sphere_sweep_output/sweep_summary.csv` and write PNGs to
-`sphere_sweep_output/plots/` by default (`--summary`/`--out` override either
-path). `--metric outcome` (default) is the binary `outcome == "demised"` result
-per run; `--metric mass_loss` uses the continuous `mass_loss_fraction` column
-instead — see the module docstrings for what each represents. `analysis/plot_style.py`
-holds the shared chart palette (dataviz skill's validated sequential blue ramp).
+```bash
+"$PY" analysis/summary_from_runs.py                             # rebuild sweep_summary_AA7075.csv from runs/*.json
+"$PY" analysis/summary_from_runs.py --material user-moltenAA7075  # ... or any other material's
+"$PY" analysis/plot_max_temperature_by_diameter.py --summary sphere_sweep_output/sweep_summary_AA7075.csv
+```
+
+The plot scripts read `sphere_sweep_output/sweep_summary.csv` by default and write PNGs to
+`sphere_sweep_output/plots/` (`--summary`/`--out` override either path). `--metric outcome`
+(default) is the binary `outcome == "demised"` result per run; `--metric mass_loss` uses the
+continuous `mass_loss_fraction` column instead — see the module docstrings for what each
+represents. `plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum
+temperature reached by spheres that lost no mass, with every mass-losing cell black.
+
+**Several materials in one output directory:** `sphere_sweep.py` rewrites `sweep_summary.csv`
+and `sweep_manifest.json` on every invocation, so those only describe the most recent sweep.
+The per-run JSONs are never overwritten (a non-default material has its own run-name suffix);
+`summary_from_runs.py` rebuilds a per-material summary from them as
+`sweep_summary_<material>.csv` (`sweep_summary_AA7075.csv` for the default) — point the plot
+scripts at that file. `analysis/plot_style.py` holds the shared chart palette (dataviz skill's
+validated sequential blue ramp).
 
 ## Tests
 
