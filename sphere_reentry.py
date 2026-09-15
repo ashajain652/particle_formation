@@ -147,7 +147,7 @@ def load_material_file(path: str) -> Material:
     if missing:
         raise MaterialError("material file {} is missing required fields: {}".format(
             path, ", ".join(missing)))
-    definition = dict(data)
+    definition = {k: v for k, v in data.items() if not k.startswith("_")}   # "_comment" etc. are notes
     definition.setdefault("materialType", "metal")
     if definition["materialType"] != "metal":
         raise MaterialError("material file {}: only materialType 'metal' is supported for a solid "

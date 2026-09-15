@@ -50,6 +50,40 @@ exits with code 130. Outputs in `sphere_sweep_output/`: `runs/`, `raw/` (failed 
 The velocity grid's lower bound is the parent's minimum velocity, read from the parent file and
 logged as `v_min = ... km/s at t = ... s, altitude ... km (parent row N)`.
 
+## Materials
+
+Every sphere is `drama-AA7075` unless you say otherwise. Both scripts accept the same
+pair of mutually exclusive flags:
+
+```bash
+"$PY" sphere_reentry.py ... --material drama-TiAl6v4                       # another DRAMA metal
+"$PY" sphere_reentry.py ... --material-file examples/material_al_li_2195.json   # a custom metal
+"$PY" sphere_sweep.py --material drama-TiAl6v4 --yes --cores 6              # whole sweep in titanium
+```
+
+`--material NAME` must be one of the 21 metals in DRAMA's own database
+(`/Applications/DRAMA-4.1.4/TOOLS/material_database.xml`); the sphere's density and melting
+temperature are read from there, so mass, final radius and the time-at-melting-temperature
+statistic follow the material. A typo lists the valid names: drama-A316, drama-A316_Semi-Empirical,
+drama-AA7075, drama-Bat-Li, drama-Bat-NiCd, drama-Beryllium, drama-Carbon-Carbon, drama-Copper,
+drama-El-Mat, drama-HC-AA7075, drama-HC-CFRP-4ply, drama-HC-CFRP-8ply, drama-HiperCo,
+drama-Inconel718, drama-Inermet, drama-Invar, drama-Iron, drama-SiC, drama-SolarPanel-Mat,
+drama-TiAl6v4, drama-Tungsten.
+
+`--material-file PATH` supplies a custom metal as JSON in DRAMA's material format — see
+[examples/material_al_li_2195.json](examples/material_al_li_2195.json) (the Al-Li alloy of the
+Falcon 9 study) for a complete template. Required fields: `name, density, specificHeatCapacity,
+meltingHeat, meltingTemperature, emissivity, heatConductivity, oxideActivationTemperature,
+oxideEmissivity, oxideHeatOfFormation, oxideReactionProbability`; curves are `[temperature K, value]`
+pairs, a single pair means constant; keys starting with `_` are ignored (use them for notes).
+The definition is injected into SESAM as its `materialList` and recorded in the run JSON.
+
+A non-default material appends `_m<name>` to every run name
+(`..._h077.500km_mdrama-TiAl6v4`), so sweeps of different materials can share
+`sphere_sweep_output/` without overwriting each other and the finished AA7075 sweep stays
+resumable. The sweep's material is one setting per invocation (it is not a grid axis) and is
+recorded in `sweep_manifest.json` under `settings.material`.
+
 ## Analysis / plotting
 
 ```bash

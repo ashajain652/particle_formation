@@ -825,6 +825,11 @@ class TestMaterialFile:
         with pytest.raises(sr.MaterialError, match="meltingTemperature"):
             sr.load_material_file(write_material_file(tmp_path, dict(CUSTOM_MATERIAL, meltingTemperature=-5)))
 
+    def test_underscore_keys_are_comments_and_dropped(self, tmp_path):
+        data = dict(CUSTOM_MATERIAL, _comment="provenance notes", _source="MakeItFrom")
+        m = sr.load_material_file(write_material_file(tmp_path, data))
+        assert m.definition == CUSTOM_MATERIAL          # nothing DRAMA does not know about is forwarded
+
     def test_missing_file_and_bad_json_are_material_errors(self, tmp_path):
         with pytest.raises(sr.MaterialError):
             sr.load_material_file(str(tmp_path / "nope.json"))

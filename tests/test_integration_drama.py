@@ -125,3 +125,70 @@ def test_sweep_end_to_end_with_real_parent(tmp_path):
     dry = sweep(fresh, "--dry-run")
     assert dry.returncode == 0 and not fresh.exists()
     assert "v_min = 0.028000 km/s at t = 3870.071 s" in (dry.stdout + dry.stderr)
+
+
+# --- materials ------------------------------------------------------------------------------
+
+def _pairs(values_text):
+    """DRAMA's 'T,v;T,v;' curve text -> [[T, v], ...]."""
+    return [[float(t), float(v)] for t, v in
+            (item.split(",") for item in values_text.strip().strip(";").split(";") if item.strip())]
+
+
+def builtin_material_as_custom_json(name, new_name):
+    """The full DRAMA definition of a built-in metal, re-expressed in the JSON material format."""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(sr.MATERIAL_DB_PATH).getroot()
+    el = next(m for m in root.findall("metalMaterial") if m.findtext("name") == name)
+    return {
+        "name": new_name,
+        "materialType": "metal",
+        "catalycity": float(el.findtext("catalycity")),
+        "density": float(el.findtext("density")),
+        "specificHeatCapacity": _pairs(el.find("specificHeatCapacity/values").text),
+        "meltingHeat": float(el.findtext("meltingHeat")),
+        "meltingTemperature": float(el.findtext("meltingTemperature")),
+        "emissivity": _pairs(el.find("emissivity/values").text),
+        "heatConductivity": _pairs(el.find("heatConductivity/values").text),
+        "oxideActivationTemperature": float(el.findtext("oxideActivationTemperature")),
+        "oxideEmissivity": _pairs(el.find("oxideEmissivity/values").text),
+        "oxideHeatOfFormation": float(el.findtext("oxideHeatOfFormation")),
+        "oxideReactionProbability": float(el.findtext("oxideReactionProbability")),
+    }
+
+
+def test_real_run_titanium_sphere_uses_its_own_melting_point(tmp_path):
+    titanium = sr.load_builtin_material("drama-TiAl6v4")
+    run = sr.SphereRun(velocity_kms=7.5, temperature_K=300.0, diameter_mm=50.0, material=titanium, **ENTRY_STATE)
+    doc = sr.run_sphere(run, str(tmp_path / "runs"), str(tmp_path / "raw"), 600, False, FAP_DAY, FAP_MON)
+    assert doc["status"] == "ok", doc["error"]
+    assert doc["run_name"].endswith("_mdrama-TiAl6v4")
+    assert doc["inputs"]["material"] == "drama-TiAl6v4" and doc["inputs"]["material_source"] == "builtin"
+    assert doc["inputs"]["initial_mass_kg"] == pytest.approx(sr.sphere_mass_kg(50.0, 4417.0))
+    r = doc["results"]
+    assert r["melting_temperature_K"] == 1905.0
+    assert r["max_temperature_K"] > 850.0            # no AA7075-style clamp at 850 K for titanium
+    assert r["final_mass_source"] in ("impacting_fragments_xml", "sesam_log_event_end", "history_file")
+    assert r["final_radius_mm"] == pytest.approx(sr.radius_mm_from_mass(r["final_mass_kg"], titanium))
+
+
+def test_real_run_custom_copy_of_aa7075_reproduces_the_builtin(tmp_path):
+    custom = builtin_material_as_custom_json("drama-AA7075", "user-AA7075-copy")
+    path = tmp_path / "aa7075_copy.json"
+    path.write_text(json.dumps(custom))
+    material = sr.load_material_file(str(path))
+    assert (material.density_kgm3, material.melting_temperature_K) == (2813.0, 850.0)
+
+    base = dict(velocity_kms=7.5, temperature_K=300.0, diameter_mm=50.0, **ENTRY_STATE)
+    builtin_doc = sr.run_sphere(sr.SphereRun(**base), str(tmp_path / "runs"), str(tmp_path / "raw"),
+                                600, False, FAP_DAY, FAP_MON)
+    custom_doc = sr.run_sphere(sr.SphereRun(material=material, **base), str(tmp_path / "runs"),
+                               str(tmp_path / "raw"), 600, False, FAP_DAY, FAP_MON)
+    assert builtin_doc["status"] == "ok" and custom_doc["status"] == "ok"
+    assert custom_doc["run_name"] == builtin_doc["run_name"] + "_muser-AA7075-copy"
+    assert custom_doc["inputs"]["material_source"] == "custom_file"
+    assert custom_doc["inputs"]["material_definition"] == custom
+    b, c = builtin_doc["results"], custom_doc["results"]
+    for key in ("max_temperature_K", "time_at_melting_temperature_s", "final_mass_kg",
+                "final_velocity_kms", "final_radius_mm", "final_time_s", "n_rows", "outcome"):
+        assert c[key] == pytest.approx(b[key]) if isinstance(b[key], float) else c[key] == b[key], key
