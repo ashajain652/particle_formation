@@ -708,3 +708,195 @@ class TestCliSubprocess:
         assert failed.returncode == 1
         usage = self.run_cli(tmp_path, ["--velocity", "7.5"])
         assert usage.returncode == 2
+
+
+# =============================================================================
+# Materials (--material / --material-file)
+# =============================================================================
+
+MINI_MATERIAL_DB = """<?xml version="1.0"?>
+<materialList>
+  <creationDate>2023-06-28</creationDate>
+  <metalMaterial>
+    <name>drama-AA7075</name>
+    <density>2813.0</density>
+    <meltingTemperature>850.0</meltingTemperature>
+  </metalMaterial>
+  <metalMaterial>
+    <name>drama-TiAl6v4</name>
+    <density>4417.0</density>
+    <meltingTemperature>1905</meltingTemperature>
+  </metalMaterial>
+  <cfrpMaterial>
+    <name>drama-CFRP</name>
+    <densityFibre>1800.0</densityFibre>
+  </cfrpMaterial>
+</materialList>
+"""
+
+
+@pytest.fixture
+def mini_db(tmp_path):
+    path = tmp_path / "material_database.xml"
+    path.write_text(MINI_MATERIAL_DB)
+    return str(path)
+
+
+class TestBuiltinMaterials:
+    def test_default_material_is_aa7075_from_the_module_constants(self):
+        m = sr.DEFAULT_MATERIAL
+        assert (m.name, m.density_kgm3, m.melting_temperature_K) == ("drama-AA7075", 2813.0, 850.0)
+        assert m.source == "builtin" and m.definition is None
+
+    def test_list_builtin_materials_is_metals_only(self, mini_db):
+        names = sorted(sr.list_builtin_materials(mini_db))
+        assert names == ["drama-AA7075", "drama-TiAl6v4"]      # the cfrpMaterial is excluded
+
+    def test_load_builtin_material_reads_density_and_melting_point(self, mini_db):
+        m = sr.load_builtin_material("drama-TiAl6v4", mini_db)
+        assert m == sr.Material("drama-TiAl6v4", 4417.0, 1905.0)
+        assert m.source == "builtin" and m.definition is None
+
+    def test_unknown_name_lists_the_valid_ones(self, mini_db):
+        with pytest.raises(sr.MaterialError) as exc:
+            sr.load_builtin_material("drama-Unobtainium", mini_db)
+        assert "drama-Unobtainium" in str(exc.value)
+        assert "drama-AA7075" in str(exc.value) and "drama-TiAl6v4" in str(exc.value)
+
+    def test_missing_database_is_a_material_error(self, tmp_path):
+        with pytest.raises(sr.MaterialError, match="material database"):
+            sr.load_builtin_material("drama-AA7075", str(tmp_path / "nope.xml"))
+
+    @pytest.mark.skipif(not os.path.isfile(getattr(sr, "MATERIAL_DB_PATH", "")), reason="DRAMA install not present")
+    def test_real_database_agrees_with_the_hardcoded_default(self):
+        assert sr.load_builtin_material("drama-AA7075") == sr.DEFAULT_MATERIAL
+        assert len(sr.list_builtin_materials()) == 21
+
+
+CUSTOM_MATERIAL = {
+    "name": "user-AlLi2195",
+    "materialType": "metal",
+    "catalycity": 1.0,
+    "density": 2700.0,
+    "specificHeatCapacity": [[293.0, 900.0], [823.0, 1140.0]],
+    "meltingHeat": 390000.0,
+    "meltingTemperature": 823.0,
+    "emissivity": [[50.0, 0.3]],
+    "heatConductivity": [[293.0, 130.0], [823.0, 129.5]],
+    "oxideActivationTemperature": 0.0,
+    "oxideEmissivity": [[50.0, 0.3]],
+    "oxideHeatOfFormation": 0.0,
+    "oxideReactionProbability": 0.0,
+}
+
+
+def write_material_file(tmp_path, data, name="material.json"):
+    path = tmp_path / name
+    path.write_text(json.dumps(data))
+    return str(path)
+
+
+class TestMaterialFile:
+    def test_loads_a_complete_definition(self, tmp_path):
+        m = sr.load_material_file(write_material_file(tmp_path, CUSTOM_MATERIAL))
+        assert (m.name, m.density_kgm3, m.melting_temperature_K) == ("user-AlLi2195", 2700.0, 823.0)
+        assert m.source == "custom_file"
+        assert m.definition == CUSTOM_MATERIAL
+
+    def test_missing_required_fields_are_named(self, tmp_path):
+        data = {k: v for k, v in CUSTOM_MATERIAL.items() if k not in ("meltingHeat", "oxideEmissivity")}
+        with pytest.raises(sr.MaterialError) as exc:
+            sr.load_material_file(write_material_file(tmp_path, data))
+        assert "meltingHeat" in str(exc.value) and "oxideEmissivity" in str(exc.value)
+
+    def test_non_metal_type_is_rejected(self, tmp_path):
+        data = dict(CUSTOM_MATERIAL, materialType="cfrp")
+        with pytest.raises(sr.MaterialError, match="metal"):
+            sr.load_material_file(write_material_file(tmp_path, data))
+
+    def test_material_type_defaults_to_metal_when_omitted(self, tmp_path):
+        data = {k: v for k, v in CUSTOM_MATERIAL.items() if k != "materialType"}
+        m = sr.load_material_file(write_material_file(tmp_path, data))
+        assert m.definition["materialType"] == "metal"
+
+    def test_non_positive_density_or_melting_point_is_rejected(self, tmp_path):
+        with pytest.raises(sr.MaterialError, match="density"):
+            sr.load_material_file(write_material_file(tmp_path, dict(CUSTOM_MATERIAL, density=0)))
+        with pytest.raises(sr.MaterialError, match="meltingTemperature"):
+            sr.load_material_file(write_material_file(tmp_path, dict(CUSTOM_MATERIAL, meltingTemperature=-5)))
+
+    def test_missing_file_and_bad_json_are_material_errors(self, tmp_path):
+        with pytest.raises(sr.MaterialError):
+            sr.load_material_file(str(tmp_path / "nope.json"))
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not json")
+        with pytest.raises(sr.MaterialError):
+            sr.load_material_file(str(bad))
+        top_level_list = tmp_path / "list.json"
+        top_level_list.write_text("[1, 2]")
+        with pytest.raises(sr.MaterialError):
+            sr.load_material_file(str(top_level_list))
+
+
+TITANIUM = sr.Material("drama-TiAl6v4", 4417.0, 1905.0)
+
+
+class TestMaterialInRun:
+    def test_run_defaults_to_aa7075(self):
+        assert make_run().material == sr.DEFAULT_MATERIAL
+
+    def test_mass_uses_the_material_density(self):
+        run = make_run(material=TITANIUM)
+        assert run.mass_kg == pytest.approx(sr.sphere_mass_kg(50.0, 4417.0))
+        assert run.mass_kg == pytest.approx(0.289092, rel=1e-5)   # 4417 kg/m3 * 4/3 pi (0.025 m)^3
+        assert make_run().mass_kg == pytest.approx(sr.sphere_mass_kg(50.0))          # unchanged default
+
+    def test_radius_from_mass_uses_the_material_density(self):
+        run = make_run(material=TITANIUM)
+        assert sr.radius_mm_from_mass(run.mass_kg, run.material) == pytest.approx(25.0)
+        assert sr.radius_mm_from_mass(sr.sphere_mass_kg(50.0)) == pytest.approx(25.0)     # default still works
+
+    def test_build_config_names_the_builtin_material_without_a_material_list(self):
+        cfg = sr.build_config(make_run(material=TITANIUM))
+        assert cfg["objects"][0]["material"] == "drama-TiAl6v4"
+        assert cfg["objects"][0]["mass"] == pytest.approx(make_run(material=TITANIUM).mass_kg)
+        assert "materialList" not in cfg
+
+    def test_build_config_injects_a_custom_material_list(self):
+        custom = sr.Material("user-AlLi2195", 2700.0, 823.0, source="custom_file", definition=CUSTOM_MATERIAL)
+        cfg = sr.build_config(make_run(material=custom))
+        assert cfg["objects"][0]["material"] == "user-AlLi2195"
+        assert cfg["materialList"] == [CUSTOM_MATERIAL]
+        assert cfg["materialList"][0] is not CUSTOM_MATERIAL     # a copy, so pyDRAMA cannot mutate ours
+
+    def test_run_name_unchanged_for_the_default_material(self):
+        assert sr.run_name(make_run()) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km"
+
+    def test_run_name_gets_a_material_suffix_otherwise(self):
+        assert sr.run_name(make_run(material=TITANIUM)) == \
+            "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_mdrama-TiAl6v4"
+        custom = sr.Material("user AlLi 2195/T8", 2700.0, 823.0, source="custom_file", definition=CUSTOM_MATERIAL)
+        assert sr.run_name(make_run(material=custom)).endswith("_muser_AlLi_2195_T8")   # filename-safe slug
+
+    def test_melt_duration_uses_the_material_melting_point(self):
+        # 1905 K plateau: at melt for titanium, never at melt for the AA7075 default
+        aero = [aero_row(i, temp=T) for i, T in enumerate([300.0, 1905.0, 1905.0, 1905.0, 900.0])]
+        traj = [traj_row(i) for i in range(5)]
+        rows, _ = sr.merge_histories(aero, traj)
+        log_info = {"end_of_life_reason": "ground impact", "event_end_mass_kg": None, "event_start_mass_kg": None}
+        r_ti, _ = sr.compute_stats(make_run(material=TITANIUM), rows, None, log_info)
+        assert r_ti["time_at_melting_temperature_s"] == pytest.approx(2.0)
+        assert r_ti["melting_temperature_K"] == 1905.0
+        r_al, _ = sr.compute_stats(make_run(), rows, None, log_info)
+        assert r_al["time_at_melting_temperature_s"] == 0.0 and r_al["melting_temperature_K"] == 850.0
+
+    def test_final_radius_statistic_uses_the_material_density(self):
+        run = make_run(material=TITANIUM)
+        aero = [aero_row(0.0, mass=run.mass_kg), aero_row(1.0, mass=run.mass_kg)]
+        traj = [traj_row(0.0), traj_row(1.0)]
+        rows, _ = sr.merge_histories(aero, traj)
+        fragments = {"mass_kg": run.mass_kg, "velocity_kms": 0.05, "lat_deg": 0.0, "lon_deg": 0.0, "epoch": None}
+        log_info = {"end_of_life_reason": "ground impact", "event_end_mass_kg": None, "event_start_mass_kg": None}
+        r, _ = sr.compute_stats(run, rows, fragments, log_info)
+        assert r["final_radius_mm"] == pytest.approx(25.0)
+        assert r["initial_mass_kg"] == pytest.approx(run.mass_kg)

@@ -41,11 +41,13 @@ SCRIPT_VERSION = "1.0.0"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DRAMA_INSTALL_PATH = "/Applications/DRAMA-4.1.4"
 
-# --- material: drama-AA7075 exactly as shipped in DRAMA 4.1.4 -----------------
+# --- material: drama-AA7075 exactly as shipped in DRAMA 4.1.4 (the default) ----
 MATERIAL_NAME = "drama-AA7075"
 RHO_AA7075 = 2813.0            # [kg/m3]
 T_MELT_AA7075 = 850.0          # [K]
 MELT_TOLERANCE_K = 0.5         # |T - T_melt| <= tol counts as "at melting temperature"
+# DRAMA's own material database; --material NAME is looked up here (metals only)
+MATERIAL_DB_PATH = os.path.join(DRAMA_INSTALL_PATH, "TOOLS", "material_database.xml")
 
 # --- run control ------------------------------------------------------------------
 ENERGY_THRESHOLD_J = 1e-9      # SESAM drops fragments below this kinetic energy; parent run used 15 J
@@ -66,10 +68,100 @@ DEFAULT_FAP_MON = os.path.join(SCRIPT_DIR, "data", "fap_mon.dat")
 # 1. Inputs
 # =============================================================================
 
-def sphere_mass_kg(diameter_mm: float) -> float:
-    """Mass of a solid AA7075 sphere: rho * 4/3 * pi * r^3."""
+class MaterialError(ValueError):
+    """A material name or definition that cannot be used."""
+
+
+@dataclass(frozen=True)
+class Material:
+    """The sphere's material: what SESAM is told, plus the two numbers this script needs itself.
+
+    density_kgm3 sets the sphere's mass and final radius; melting_temperature_K sets the
+    "time at melting temperature" statistic. For a built-in DRAMA material `definition`
+    is None (SESAM resolves the name from its own materials.xml); for a custom material
+    it holds the full DRAMA material dict that is injected as materialList.
+    """
+    name: str
+    density_kgm3: float
+    melting_temperature_K: float
+    source: str = "builtin"          # "builtin" | "custom_file"
+    definition: dict = None
+
+
+DEFAULT_MATERIAL = Material(MATERIAL_NAME, RHO_AA7075, T_MELT_AA7075)
+
+
+def list_builtin_materials(db_path: str = MATERIAL_DB_PATH) -> dict:
+    """{name: Material} for every <metalMaterial> in DRAMA's material database."""
+    if not os.path.isfile(db_path):
+        raise MaterialError("DRAMA material database not found: {}".format(db_path))
+    try:
+        root = ET.parse(db_path).getroot()
+    except ET.ParseError as exc:
+        raise MaterialError("cannot parse DRAMA material database {}: {}".format(db_path, exc))
+    materials = {}
+    for el in root.findall("metalMaterial"):
+        name = (el.findtext("name") or "").strip()
+        density = el.findtext("density")
+        melting = el.findtext("meltingTemperature")
+        if not name or density is None or melting is None:
+            continue
+        materials[name] = Material(name, float(density), float(melting))
+    return materials
+
+
+def load_builtin_material(name: str, db_path: str = MATERIAL_DB_PATH) -> Material:
+    """The built-in DRAMA metal called `name`; MaterialError listing the valid names otherwise."""
+    materials = list_builtin_materials(db_path)
+    if name not in materials:
+        raise MaterialError("unknown built-in material {!r}; DRAMA's metals are: {}".format(
+            name, ", ".join(sorted(materials))))
+    return materials[name]
+
+
+# the required keys of a metal in pyDRAMA's sara_materials.schema.json
+CUSTOM_MATERIAL_REQUIRED = ("name", "density", "specificHeatCapacity", "meltingHeat",
+                            "meltingTemperature", "emissivity", "heatConductivity",
+                            "oxideActivationTemperature", "oxideEmissivity",
+                            "oxideHeatOfFormation", "oxideReactionProbability")
+
+
+def load_material_file(path: str) -> Material:
+    """A custom metal from a JSON file in DRAMA's material format (see examples/)."""
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        raise MaterialError("cannot read material file {}: {}".format(path, exc))
+    except ValueError as exc:
+        raise MaterialError("material file {} is not valid JSON: {}".format(path, exc))
+    if not isinstance(data, dict):
+        raise MaterialError("material file {} must contain one JSON object".format(path))
+    missing = [k for k in CUSTOM_MATERIAL_REQUIRED if k not in data]
+    if missing:
+        raise MaterialError("material file {} is missing required fields: {}".format(
+            path, ", ".join(missing)))
+    definition = dict(data)
+    definition.setdefault("materialType", "metal")
+    if definition["materialType"] != "metal":
+        raise MaterialError("material file {}: only materialType 'metal' is supported for a solid "
+                            "sphere, got {!r}".format(path, definition["materialType"]))
+    try:
+        density = float(definition["density"])
+        melting = float(definition["meltingTemperature"])
+    except (TypeError, ValueError) as exc:
+        raise MaterialError("material file {}: density/meltingTemperature must be numbers ({})".format(path, exc))
+    if density <= 0.0:
+        raise MaterialError("material file {}: density must be > 0, got {}".format(path, density))
+    if melting <= 0.0:
+        raise MaterialError("material file {}: meltingTemperature must be > 0, got {}".format(path, melting))
+    return Material(str(definition["name"]), density, melting, source="custom_file", definition=definition)
+
+
+def sphere_mass_kg(diameter_mm: float, density_kgm3: float = RHO_AA7075) -> float:
+    """Mass of a solid sphere: rho * 4/3 * pi * r^3 (AA7075 density unless given)."""
     r = diameter_mm / 2000.0
-    return RHO_AA7075 * 4.0 / 3.0 * math.pi * r ** 3
+    return density_kgm3 * 4.0 / 3.0 * math.pi * r ** 3
 
 
 def sphere_cross_section_m2(diameter_mm: float) -> float:
@@ -89,6 +181,7 @@ class SphereRun:
     lat_deg: float = 0.0
     lon_deg: float = 0.0
     epoch: datetime = PARENT_EPOCH
+    material: Material = DEFAULT_MATERIAL
 
     @property
     def radius_m(self) -> float:
@@ -96,17 +189,29 @@ class SphereRun:
 
     @property
     def mass_kg(self) -> float:
-        return sphere_mass_kg(self.diameter_mm)
+        return sphere_mass_kg(self.diameter_mm, self.material.density_kgm3)
 
     @property
     def cross_section_m2(self) -> float:
         return sphere_cross_section_m2(self.diameter_mm)
 
 
+def material_slug(name: str) -> str:
+    """Filename-safe form of a material name (letters, digits, '-' and '.' kept; the rest -> '_')."""
+    return "".join(c if c.isalnum() or c in "-." else "_" for c in name)
+
+
 def run_name(run: SphereRun) -> str:
-    """Fixed-width name so that lexicographic order equals parameter order (spec 4.3)."""
-    return "sphere_d{:06.2f}mm_T{:06.1f}K_v{:08.5f}kms_h{:07.3f}km".format(
+    """Fixed-width name so that lexicographic order equals parameter order (spec 4.3).
+
+    The default material keeps the original name (so existing sweeps stay resumable);
+    any other material appends "_m<slug>" so two materials can never share output files.
+    """
+    name = "sphere_d{:06.2f}mm_T{:06.1f}K_v{:08.5f}kms_h{:07.3f}km".format(
         run.diameter_mm, run.temperature_K, run.velocity_kms, run.altitude_km)
+    if run.material.name != DEFAULT_MATERIAL.name:
+        name += "_m" + material_slug(run.material.name)
+    return name
 
 
 def read_lines(path: str) -> list:
@@ -121,12 +226,19 @@ def read_lines(path: str) -> list:
 
 def build_config(run: SphereRun) -> dict:
     """The complete pyDRAMA SARA configuration for one sphere (pass it as config=[cfg])."""
+    cfg = _build_config(run)
+    if run.material.definition is not None:
+        cfg["materialList"] = [json.loads(json.dumps(run.material.definition))]
+    return cfg
+
+
+def _build_config(run: SphereRun) -> dict:
     obj = {
         "name": OBJECT_NAME,
         "uniqueID": OBJECT_UUID,
         "primitive": {"sphere": {"radius": run.radius_m}},
         "mass": run.mass_kg,
-        "material": MATERIAL_NAME,
+        "material": run.material.name,
         "solid": True,
         "relativePosition": {"cartX": 0.0, "cartY": 0.0, "cartZ": 0.0,
                              "yaw": 0.0, "pitch": 0.0, "roll": 0.0},
@@ -175,7 +287,8 @@ def build_config(run: SphereRun) -> dict:
         "plotVisibilityMaps": False,
         "plotObjectTrajectories": False,
         "propagationWithOscar": False,
-        # ---- the model (built-in materials.xml is used: no materialList) ----
+        # ---- the model: a built-in material is resolved from DRAMA's own materials.xml;
+        #      a custom one is injected as materialList (which REPLACES that table for the run)
         "objects": [obj],
     }
 
@@ -358,11 +471,11 @@ def write_csv(path, rows):
 # 5. Statistics (spec 4.8)
 # =============================================================================
 
-def radius_mm_from_mass(mass_kg):
-    """Radius of a solid AA7075 sphere of the given mass; 0 for zero mass."""
+def radius_mm_from_mass(mass_kg, material: Material = DEFAULT_MATERIAL):
+    """Radius of a solid sphere of the given mass and material; 0 for zero mass."""
     if mass_kg is None or mass_kg <= 0.0:
         return 0.0
-    return 1000.0 * (3.0 * mass_kg / (4.0 * math.pi * RHO_AA7075)) ** (1.0 / 3.0)
+    return 1000.0 * (3.0 * mass_kg / (4.0 * math.pi * material.density_kgm3)) ** (1.0 / 3.0)
 
 
 def classify_outcome(reason, final_mass_kg, initial_mass_kg):
@@ -376,8 +489,8 @@ def classify_outcome(reason, final_mass_kg, initial_mass_kg):
     return "other"
 
 
-def _at_melt(temp):
-    return temp is not None and abs(temp - T_MELT_AA7075) <= MELT_TOLERANCE_K
+def _at_melt(temp, melting_temperature_K=T_MELT_AA7075):
+    return temp is not None and abs(temp - melting_temperature_K) <= MELT_TOLERANCE_K
 
 
 def _last_with(rows, key):
@@ -405,12 +518,13 @@ def compute_stats(run, rows, fragments, log_info):
         results["altitude_of_max_temperature_km"] = None
 
     # -- time at melting temperature -------------------------------------------------
-    melt_rows = [r for r in rows if _at_melt(r["temperature_K"])]
+    t_melt = run.material.melting_temperature_K
+    melt_rows = [r for r in rows if _at_melt(r["temperature_K"], t_melt)]
     duration = 0.0
     for prev, cur in zip(rows, rows[1:]):
-        if _at_melt(prev["temperature_K"]) and _at_melt(cur["temperature_K"]):
+        if _at_melt(prev["temperature_K"], t_melt) and _at_melt(cur["temperature_K"], t_melt):
             duration += cur["time_s"] - prev["time_s"]
-    results["melting_temperature_K"] = T_MELT_AA7075
+    results["melting_temperature_K"] = t_melt
     results["melt_tolerance_K"] = MELT_TOLERANCE_K
     results["time_at_melting_temperature_s"] = duration
     results["n_rows_at_melt"] = len(melt_rows)
@@ -434,7 +548,7 @@ def compute_stats(run, rows, fragments, log_info):
     results["final_mass_kg"] = final_mass
     results["final_mass_source"] = source
     results["mass_loss_fraction"] = (1.0 - final_mass / initial_mass) if final_mass is not None else None
-    results["final_radius_mm"] = radius_mm_from_mass(final_mass) if final_mass is not None else None
+    results["final_radius_mm"] = radius_mm_from_mass(final_mass, run.material) if final_mass is not None else None
     last_thick_row = _last_with(rows, "thick_mm")
     results["final_thick_mm"] = last_thick_row["thick_mm"] if last_thick_row else None
 
