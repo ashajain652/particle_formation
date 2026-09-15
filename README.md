@@ -50,6 +50,23 @@ exits with code 130. Outputs in `sphere_sweep_output/`: `runs/`, `raw/` (failed 
 The velocity grid's lower bound is the parent's minimum velocity, read from the parent file and
 logged as `v_min = ... km/s at t = ... s, altitude ... km (parent row N)`.
 
+## Analysis / plotting
+
+```bash
+"$PY" -m pip install pandas   # once; not needed by the two main scripts, only by analysis/
+"$PY" analysis/plot_outcome_vs_diameter_velocity.py                    # demise fraction, diameter x velocity
+"$PY" analysis/plot_outcome_vs_diameter_velocity.py --metric mass_loss # mean mass-loss fraction instead
+"$PY" analysis/plot_outcome_by_diameter.py                             # one panel per sphere size (temperature x velocity)
+"$PY" analysis/plot_outcome_by_diameter.py --metric mass_loss
+```
+
+Both scripts read `sphere_sweep_output/sweep_summary.csv` and write PNGs to
+`sphere_sweep_output/plots/` by default (`--summary`/`--out` override either
+path). `--metric outcome` (default) is the binary `outcome == "demised"` result
+per run; `--metric mass_loss` uses the continuous `mass_loss_fraction` column
+instead — see the module docstrings for what each represents. `analysis/plot_style.py`
+holds the shared chart palette (dataviz skill's validated sequential blue ramp).
+
 ## Tests
 
 ```bash
