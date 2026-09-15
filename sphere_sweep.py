@@ -25,9 +25,12 @@ share an output directory without overwriting each other; it is recorded in the 
 Outputs (under --outdir, default sphere_sweep_output/):
     runs/<run_name>.csv|.json   per run (written by sphere_reentry.py)
     raw/<run_name>/             raw DRAMA tree, failed runs only
-    sweep_manifest.json         every matrix point with its state and status
-    sweep_summary.csv           one row per point with the statistics
-    sweep.log                   log of prompts, answers, failures
+    sweep_manifest_<material>.json   every matrix point with its state and status
+    sweep_summary_<material>.csv     one row per point with the statistics
+    sweep.log                        log of prompts, answers, failures (all invocations)
+
+<material> is the sweep's material with DRAMA's "drama-" prefix dropped (sweep_summary_AA7075.csv
+by default), so sweeps of different materials never overwrite each other's manifest or summary.
 
 Requires conda env drama_env (pyDRAMA, numpy, tqdm); see README.md.
 Design: docs/superpowers/specs/2026-09-13-sphere-reentry-sweep-design.md
@@ -613,6 +616,20 @@ def build_parser():
     return p
 
 
+def summary_slug(material_name):
+    """Filename part for a material: 'drama-AA7075' -> 'AA7075', 'user-moltenAA7075' unchanged."""
+    name = material_name[len("drama-"):] if material_name.startswith("drama-") else material_name
+    return sr.material_slug(name)
+
+
+def manifest_path(outdir, material_name):
+    return os.path.join(outdir, "sweep_manifest_{}.json".format(summary_slug(material_name)))
+
+
+def summary_path(outdir, material_name):
+    return os.path.join(outdir, "sweep_summary_{}.csv".format(summary_slug(material_name)))
+
+
 def material_settings(material, material_file):
     """The manifest's record of the sweep's material (name, source, numbers, file + hash)."""
     return {
@@ -717,16 +734,16 @@ def main(argv=None):
         log.info("dry run: nothing executed, nothing written")
         return 0
 
-    manifest_path = os.path.join(args.outdir, "sweep_manifest.json")
-    summary_path = os.path.join(args.outdir, "sweep_summary.csv")
+    manifest_file = manifest_path(args.outdir, material.name)
+    summary_file = summary_path(args.outdir, material.name)
     settings = {"timeout_s": args.timeout, "batch_size": args.batch_size,
                 "sphere_reentry_version": sr.SCRIPT_VERSION,
                 "material": material_settings(material, args.material_file)}
     created = utc_now_str()
 
     def save():
-        write_manifest(manifest_path, manifest_document(parent, grid, settings, points, created))
-        write_summary(summary_path, points, runs_dir)
+        write_manifest(manifest_file, manifest_document(parent, grid, settings, points, created))
+        write_summary(summary_file, points, runs_dir)
 
     save()
     if not pending:

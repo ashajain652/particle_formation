@@ -361,7 +361,11 @@ therefore `run_name` and the inherited state fields are `null`.
 
 ### 5.4 Manifest and resume
 
-`sweep_manifest.json` is written before any run and rewritten after every batch:
+`sweep_manifest.json` is written before any run and rewritten after every batch
+(amended 2026-09-15: the file is `sweep_manifest_<material>.json` and the summary of §5.6
+`sweep_summary_<material>.csv`, `<material>` being the sweep's material without DRAMA's
+`drama-` prefix — `_AA7075` by default — so materials sharing an output directory never
+overwrite each other's aggregates):
 
 ```json
 {

@@ -2,11 +2,12 @@
 """
 summary_from_runs.py -- rebuild a sweep summary CSV for ONE material from the per-run JSONs.
 
-sphere_sweep.py rewrites sphere_sweep_output/sweep_summary.csv on every invocation, so
-when two materials share an output directory the CSV only ever describes the most recent
-sweep. The per-run JSONs are never overwritten (a non-default material has its own run-name
-suffix), so this script reconstructs the same 23-column summary for a chosen material
-from runs/<run_name>.json.
+sphere_sweep.py writes sweep_summary_<material>.csv itself, so this is only needed to
+recover a summary that was lost or written by an older version of the sweep (which used
+one generic sweep_summary.csv for every material). The per-run JSONs are never overwritten
+(a non-default material has its own run-name suffix), so the same 23-column summary can
+always be reconstructed from runs/<run_name>.json. Writes to the same file name the sweep
+uses, so a rebuild simply replaces it.
 
 Usage
 -----
@@ -41,12 +42,6 @@ def run_json_paths(runs_dir, material_name):
     else:
         pattern = "sphere_*km_m{}.json".format(sr.material_slug(material_name))
     return sorted(glob.glob(os.path.join(runs_dir, pattern)))
-
-
-def summary_slug(material_name):
-    """Filename part for a material: 'drama-AA7075' -> 'AA7075', 'user-moltenAA7075' unchanged."""
-    name = material_name[len("drama-"):] if material_name.startswith("drama-") else material_name
-    return sr.material_slug(name)
 
 
 def summary_row_from_json(doc):
@@ -86,8 +81,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    out = args.out or os.path.join(os.path.dirname(args.runs_dir.rstrip(os.sep)),
-                                   "sweep_summary_{}.csv".format(summary_slug(args.material)))
+    out = args.out or sw.summary_path(os.path.dirname(args.runs_dir.rstrip(os.sep)), args.material)
     paths = run_json_paths(args.runs_dir, args.material)
     if not paths:
         sys.exit("no run JSONs for material {!r} under {}".format(args.material, args.runs_dir))

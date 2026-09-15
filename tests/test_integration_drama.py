@@ -98,14 +98,14 @@ def test_sweep_end_to_end_with_real_parent(tmp_path):
     out = tmp_path / "out"
     proc = sweep(out, "--yes", "--cores", "2")
     assert proc.returncode == 0, proc.stderr
-    manifest = json.load(open(out / "sweep_manifest.json"))
+    manifest = json.load(open(out / "sweep_manifest_AA7075.json"))
     assert manifest["parent"]["v_min_kms"] == pytest.approx(0.028, abs=1e-6)
     by_velocity = {p["velocity_kms"]: p for p in manifest["points"]}
     assert by_velocity[9.0]["status"] == "skipped"
     assert by_velocity[7.5]["status"] == "done" and by_velocity[0.5]["status"] == "done"
     assert by_velocity[7.5]["altitude_km"] == pytest.approx(77.5, abs=0.5)
     assert by_velocity[0.5]["altitude_km"] == pytest.approx(39.9, abs=0.5)
-    with open(out / "sweep_summary.csv", newline="") as fh:
+    with open(out / "sweep_summary_AA7075.csv", newline="") as fh:
         rows = {float(r["initial_velocity_kms"]): r for r in csv.DictReader(fh)}
     assert rows[7.5]["outcome"] == "demised" and rows[0.5]["outcome"] == "survived"
     assert rows[9.0]["status"] == "skipped" and rows[9.0]["outcome"] == ""

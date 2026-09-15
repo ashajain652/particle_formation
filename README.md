@@ -45,7 +45,10 @@ Every point's `runs/<run_name>.json` makes it resumable: re-running skips comple
 `--retry-failed` re-runs failed ones, `--force` re-runs everything. A tqdm bar shows the current
 run, elapsed time, rate and ETA. Ctrl-C finishes the running subprocesses, saves the manifest and
 exits with code 130. Outputs in `sphere_sweep_output/`: `runs/`, `raw/` (failed runs only),
-`sweep_manifest.json`, `sweep_summary.csv` (one row per matrix point), `sweep.log`.
+`sweep_manifest_<material>.json`, `sweep_summary_<material>.csv` (one row per matrix point) and
+`sweep.log`. `<material>` is the sweep's material without DRAMA's `drama-` prefix —
+`sweep_summary_AA7075.csv` by default — so sweeps of different materials never overwrite each
+other's manifest or summary.
 
 The velocity grid's lower bound is the parent's minimum velocity, read from the parent file and
 logged as `v_min = ... km/s at t = ... s, altitude ... km (parent row N)`.
@@ -82,7 +85,7 @@ A non-default material appends `_m<name>` to every run name
 (`..._h077.500km_mdrama-TiAl6v4`), so sweeps of different materials can share
 `sphere_sweep_output/` without overwriting each other and the finished AA7075 sweep stays
 resumable. The sweep's material is one setting per invocation (it is not a grid axis) and is
-recorded in `sweep_manifest.json` under `settings.material`.
+recorded in `sweep_manifest_<material>.json` under `settings.material`.
 
 ## Analysis / plotting
 
@@ -95,25 +98,21 @@ recorded in `sweep_manifest.json` under `settings.material`.
 ```
 
 ```bash
-"$PY" analysis/summary_from_runs.py                             # rebuild sweep_summary_AA7075.csv from runs/*.json
-"$PY" analysis/summary_from_runs.py --material user-moltenAA7075  # ... or any other material's
-"$PY" analysis/plot_max_temperature_by_diameter.py --summary sphere_sweep_output/sweep_summary_AA7075.csv
+"$PY" analysis/plot_max_temperature_by_diameter.py                                  # AA7075 by default
+"$PY" analysis/plot_outcome_by_diameter.py --summary sphere_sweep_output/sweep_summary_user-moltenAA7075.csv
+"$PY" analysis/summary_from_runs.py --material user-moltenAA7075   # rebuild a summary from runs/*.json if ever lost
 ```
 
-The plot scripts read `sphere_sweep_output/sweep_summary.csv` by default and write PNGs to
-`sphere_sweep_output/plots/` (`--summary`/`--out` override either path). `--metric outcome`
-(default) is the binary `outcome == "demised"` result per run; `--metric mass_loss` uses the
-continuous `mass_loss_fraction` column instead — see the module docstrings for what each
-represents. `plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum
-temperature reached by spheres that lost no mass, with every mass-losing cell black.
-
-**Several materials in one output directory:** `sphere_sweep.py` rewrites `sweep_summary.csv`
-and `sweep_manifest.json` on every invocation, so those only describe the most recent sweep.
-The per-run JSONs are never overwritten (a non-default material has its own run-name suffix);
-`summary_from_runs.py` rebuilds a per-material summary from them as
-`sweep_summary_<material>.csv` (`sweep_summary_AA7075.csv` for the default) — point the plot
-scripts at that file. `analysis/plot_style.py` holds the shared chart palette (dataviz skill's
-validated sequential blue ramp).
+The plot scripts read `sphere_sweep_output/sweep_summary_AA7075.csv` by default and write PNGs
+to `sphere_sweep_output/plots/` (`--summary`/`--out` override either path — pass another
+material's `sweep_summary_<material>.csv` to plot it). `--metric outcome` (default) is the
+binary `outcome == "demised"` result per run; `--metric mass_loss` uses the continuous
+`mass_loss_fraction` column instead — see the module docstrings for what each represents.
+`plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum temperature reached
+by spheres that lost no mass, with every mass-losing cell black. `summary_from_runs.py`
+reconstructs any material's summary from the per-run JSONs (same file name the sweep writes),
+for summaries produced by older versions of the sweep or otherwise lost. `analysis/plot_style.py`
+holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 
 ## Tests
 

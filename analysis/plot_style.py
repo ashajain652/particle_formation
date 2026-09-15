@@ -10,7 +10,7 @@ import os
 from matplotlib.colors import LinearSegmentedColormap
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_SUMMARY = os.path.join(REPO_ROOT, "sphere_sweep_output", "sweep_summary.csv")
+DEFAULT_SUMMARY = os.path.join(REPO_ROOT, "sphere_sweep_output", "sweep_summary_AA7075.csv")
 DEFAULT_PLOT_DIR = os.path.join(REPO_ROOT, "sphere_sweep_output", "plots")
 
 # --- validated sequential "blue" ramp, dataviz skill references/palette.md -------
