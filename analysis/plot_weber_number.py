@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 plot_weber_number.py -- Weber number of every sphere at its initial state,
-diameter (y) x initial velocity (x), color = We on a log scale.
+diameter (y) x initial velocity (x), color = We on a log scale with a diverging
+blue-white-red map centred on We = 12 (blue below, red above) and a reference
+contour at We = 1 (drawn only where the grid actually crosses it).
 
     We = rho_air * v^2 * d / sigma
 
@@ -33,14 +35,16 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+from matplotlib.colors import TwoSlopeNorm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_style import (SEQ_BLUE, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
+from plot_style import (COOL_WARM, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
                         apply_rcparams, strip_top_right_spines, style_colorbar)
 
 DEFAULT_SIGMA = 0.809          # N/m, surface tension of the molten sphere
-CRITICAL_WE = 12.0             # classic bag-breakup threshold, drawn as a reference contour
+REFERENCE_WE = 1.0             # inertial ~ capillary pressure; drawn as a contour where the grid crosses it
+CENTER_WE = 12.0               # colormap's neutral centre (bag-breakup onset): blue below, red above
+CONTOUR_COLOR = "#0b0b0b"
 
 
 def build_parser():
@@ -105,26 +109,44 @@ def main(argv=None):
 
     apply_rcparams(plt)
     fig, ax = plt.subplots(figsize=(10.5, 6.2))
-    im = ax.imshow(grid, origin="lower", aspect="auto", extent=extent, cmap=SEQ_BLUE,
-                   norm=LogNorm(vmin=table["weber"].min(), vmax=table["weber"].max()), interpolation="nearest")
-    cs = ax.contour(v_arr, d_arr, grid, levels=[CRITICAL_WE], colors=["#e34948"], linewidths=1.4)
-    ax.clabel(cs, fmt={CRITICAL_WE: "We = {:g}".format(CRITICAL_WE)}, fontsize=9, colors=["#e34948"])
+    we_min, we_max = float(table["weber"].min()), float(table["weber"].max())
+    # log10(We) on a diverging scale whose neutral centre is CENTER_WE
+    lo, hi, mid = np.log10(we_min), np.log10(we_max), np.log10(CENTER_WE)
+    norm = TwoSlopeNorm(vcenter=mid, vmin=min(lo, mid - 1e-6), vmax=max(hi, mid + 1e-6))
+    im = ax.imshow(np.log10(grid), origin="lower", aspect="auto", extent=extent, cmap=COOL_WARM,
+                   norm=norm, interpolation="nearest")
+    if we_min < REFERENCE_WE < we_max:
+        cs = ax.contour(v_arr, d_arr, grid, levels=[REFERENCE_WE], colors=[CONTOUR_COLOR], linewidths=1.4)
+        ax.clabel(cs, fmt={REFERENCE_WE: "We = {:g}".format(REFERENCE_WE)}, fontsize=9, colors=[CONTOUR_COLOR])
+        contour_note = "black line: We = {:g}".format(REFERENCE_WE)
+    else:
+        contour_note = "We = {:g} contour not drawn: every point is {} it (min We = {:.3g}, max {:.3g})".format(
+            REFERENCE_WE, "above" if we_min >= REFERENCE_WE else "below", we_min, we_max)
     ax.set_xlabel("initial velocity  [km/s]")
     ax.set_ylabel("initial sphere diameter  [mm]")
     ax.set_yticks(diameters[::2])
     strip_top_right_spines(ax)
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
-    cbar.set_label("Weber number  We = rho v^2 d / sigma  (log scale)", color=SECOND, fontsize=9.5)
+    ticks = [t for t in (1, 2, 5, 12, 20, 50, 100, 200, 500, 1000, 2000)
+             if we_min <= t <= we_max and min(abs(np.log10(t / we_min)), abs(np.log10(t / we_max))) > 0.08]
+    if CENTER_WE not in ticks and we_min <= CENTER_WE <= we_max:
+        ticks.append(CENTER_WE)
+    ticks = sorted(set(ticks) | {we_min, we_max})
+    cbar.set_ticks(np.log10(ticks))
+    cbar.set_ticklabels(["{:g}{}".format(round(t, 1) if t in (we_min, we_max) else t,
+                                         "  (centre)" if t == CENTER_WE else "") for t in ticks])
+    cbar.set_label("Weber number  We = rho v^2 d / sigma  (log scale; white = {:g})".format(CENTER_WE),
+                   color=SECOND, fontsize=9.5)
     style_colorbar(cbar)
 
     fig.suptitle("Weber number of each sphere at its initial state", fontsize=13.5, color=INK,
                  x=0.06, ha="left", y=0.995, fontweight="bold")
     ax.set_title("sigma = {} N/m; rho = DRAMA atmosphere at the initial altitude, inherited from the parent "
                  "trajectory at that velocity\n({:.1f} km at {:.1f} km/s down to {:.2f} km at {:.3f} km/s); "
-                 "red line: We = {:g}".format(
+                 "blue: We < {:g}, red: We > {:g}; {}".format(
                      args.sigma, table.loc[table["initial_velocity_kms"].idxmax(), "initial_altitude_km"],
                      v_arr[-1], table.loc[table["initial_velocity_kms"].idxmin(), "initial_altitude_km"], v_arr[0],
-                     CRITICAL_WE),
+                     CENTER_WE, CENTER_WE, contour_note),
                  fontsize=9, color=MUTED, loc="left", pad=8)
 
     fig.savefig(out, dpi=170, bbox_inches="tight", facecolor="#fcfcfb")
