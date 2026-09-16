@@ -93,6 +93,7 @@ recorded in `sweep_manifest_<material>.json` under `settings.material`.
 "$PY" -m pip install pandas   # once; not needed by the two main scripts, only by analysis/
 "$PY" analysis/plot_outcome_vs_diameter_velocity.py                    # demise fraction, diameter x velocity
 "$PY" analysis/plot_outcome_vs_diameter_velocity.py --metric mass_loss # mean mass-loss fraction instead
+"$PY" analysis/plot_outcome_vs_diameter_velocity.py --metric mass_loss --vmax auto   # color range = data range, not 0-1
 "$PY" analysis/plot_outcome_by_diameter.py                             # one panel per sphere size (temperature x velocity)
 "$PY" analysis/plot_outcome_by_diameter.py --metric mass_loss
 ```
@@ -108,6 +109,11 @@ to `sphere_sweep_output/plots/` (`--summary`/`--out` override either path — pa
 material's `sweep_summary_<material>.csv` to plot it). `--metric outcome` (default) is the
 binary `outcome == "demised"` result per run; `--metric mass_loss` uses the continuous
 `mass_loss_fraction` column instead — see the module docstrings for what each represents.
+`plot_outcome_vs_diameter_velocity.py` averages over however many initial temperatures the
+summary holds (a single-temperature sweep such as `--temperatures 850` is plotted as-is) and
+`--vmax auto` stretches its color scale to the data instead of the fixed 0–1 that keeps
+materials comparable. To keep a re-run's aggregates separate from an earlier sweep of the same
+material, give it its own `--outdir` (e.g. `sphere_sweep_output/T850_moltenAA7075`).
 `plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum temperature reached
 by spheres that lost no mass, with every mass-losing cell black. `summary_from_runs.py`
 reconstructs any material's summary from the per-run JSONs (same file name the sweep writes),
