@@ -117,7 +117,8 @@ materials comparable. To keep a re-run's aggregates separate from an earlier swe
 material, give it its own `--outdir` (e.g. `sphere_sweep_output/T850_moltenAA7075`).
 `plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum temperature reached
 by spheres that lost no mass, with every mass-losing cell black. `plot_weber_number.py` maps
-We = ρ v² d / σ at each sphere's initial state (diameter × velocity, log color), with ρ taken from
+We = ρ v² d / σ at each sphere's initial state (diameter × velocity, log color banded by the breakup
+regimes We < 12 / 12–50 / 50–100 / 100–350 / ≥ 350 in blue / yellow / orange / red / pink), with ρ taken from
 SESAM's trajectory density at t = 0 of each run history and σ from `--sigma`; it also writes
 `weber_numbers.csv` next to the plot. `summary_from_runs.py`
 reconstructs any material's summary from the per-run JSONs (same file name the sweep writes),
