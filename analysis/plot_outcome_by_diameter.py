@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from plot_style import (SEQ_BLUE, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
-                        apply_rcparams, strip_top_right_spines, style_colorbar)
+                        apply_rcparams, strip_top_right_spines, style_colorbar, material_from_run_name)
 
 METRIC_LABEL = {"outcome": "demised (1) vs. survived (0)", "mass_loss": "mass-loss fraction"}
 METRIC_NOTE = {
@@ -104,7 +104,8 @@ def main(argv=None):
             ax.set_ylabel("initial velocity  [km/s]", fontsize=9, color=SECOND)
         ax.tick_params(labelsize=8)
 
-    fig.suptitle("AA7075 sphere fragments: {} by initial temperature and velocity, per sphere size".format(
+    fig.suptitle("{} sphere fragments: {} by initial temperature and velocity, per sphere size".format(
+                 material_from_run_name(df["run_name"].iloc[0]),
                  "demise outcome" if args.metric == "outcome" else "mass-loss fraction"),
                 fontsize=15, color=INK, x=0.055, ha="left", y=0.99, fontweight="bold")
     fig.text(0.055, 0.965,

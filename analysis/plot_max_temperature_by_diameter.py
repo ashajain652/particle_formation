@@ -6,9 +6,8 @@ x = initial temperature, y = initial velocity, color = the run's maximum tempera
 (mass_loss_fraction == 0). Every cell whose sphere did lose mass is drawn black. The
 colorbar's top tick is the hottest value actually shown.
 
-Reads a sweep summary CSV. Because sphere_sweep.py rewrites sweep_summary.csv on every
-invocation, point --summary at a per-material file built by analysis/summary_from_runs.py
-when several materials share the output directory.
+Reads a sweep summary CSV (sphere_sweep.py writes one per material,
+sweep_summary_<material>.csv); the material named in the title is taken from the run names.
 
 Usage
 -----
@@ -30,7 +29,7 @@ from matplotlib.patches import Patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from plot_style import (COOL_WARM, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
-                        apply_rcparams, strip_top_right_spines, style_colorbar)
+                        apply_rcparams, strip_top_right_spines, style_colorbar, material_from_run_name)
 
 ZERO_LOSS_TOLERANCE = 1e-9      # |mass_loss_fraction| below this counts as "no mass lost"
 MASS_LOSS_COLOR = "#0b0b0b"     # cells whose sphere lost mass
@@ -102,7 +101,7 @@ def main(argv=None):
             ax.set_ylabel("initial velocity  [km/s]", fontsize=9, color=SECOND)
         ax.tick_params(labelsize=8)
 
-    material = df["run_name"].iloc[0].split("_m")[1] if "_m" in df["run_name"].iloc[0] else "drama-AA7075"
+    material = material_from_run_name(df["run_name"].iloc[0])
     fig.suptitle("{} sphere fragments: maximum temperature reached by spheres that lost no mass, per sphere size".format(material),
                 fontsize=14.5, color=INK, x=0.055, ha="left", y=0.99, fontweight="bold")
     fig.text(0.055, 0.965,

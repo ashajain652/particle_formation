@@ -54,3 +54,13 @@ def strip_top_right_spines(ax):
 def style_colorbar(cbar):
     cbar.outline.set_visible(False)
     cbar.ax.tick_params(color=MUTED, labelcolor=MUTED)
+
+
+def material_from_run_name(run_name, default="drama-AA7075"):
+    """Material name a sweep summary was produced with, taken from the run-name suffix.
+
+    sphere_reentry.run_name appends ``_m<material>`` only for non-default materials
+    (``..._h077.500km_mdrama-TiAl6v4``); a run name with no suffix is the default AA7075.
+    """
+    tail = run_name.rsplit("km", 1)[-1]
+    return tail[2:] if tail.startswith("_m") else default

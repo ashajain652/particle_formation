@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from plot_style import (BLUE_RAMP, SEQ_BLUE, INK, SECOND, MUTED, GRID,
                         DEFAULT_SUMMARY, DEFAULT_PLOT_DIR, apply_rcparams,
-                        strip_top_right_spines, style_colorbar)
+                        strip_top_right_spines, style_colorbar, material_from_run_name)
 
 METRIC_COLUMN = {"outcome": None, "mass_loss": "mass_loss_fraction"}
 METRIC_LABEL = {"outcome": "demise fraction", "mass_loss": "mean mass-loss fraction"}
@@ -134,7 +134,8 @@ def main(argv=None):
     ax_vel.set_axisbelow(True)
     strip_top_right_spines(ax_vel)
 
-    fig.suptitle("AA7075 sphere fragments: {} across the sweep".format(METRIC_LABEL[args.metric]),
+    fig.suptitle("{} sphere fragments: {} across the sweep".format(
+                 material_from_run_name(df["run_name"].iloc[0]), METRIC_LABEL[args.metric]),
                 fontsize=13.5, color=INK, x=0.06, ha="left", y=1.03, fontweight="bold")
     metric_note = ("outcome == \"demised\" per run (ground impact always counts as survived)"
                   if args.metric == "outcome" else
