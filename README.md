@@ -102,6 +102,7 @@ recorded in `sweep_manifest_<material>.json` under `settings.material`.
 "$PY" analysis/plot_max_temperature_by_diameter.py                                  # AA7075 by default
 "$PY" analysis/plot_outcome_by_diameter.py --summary sphere_sweep_output/sweep_summary_user-moltenAA7075.csv
 "$PY" analysis/summary_from_runs.py --material user-moltenAA7075   # rebuild a summary from runs/*.json if ever lost
+"$PY" analysis/plot_weber_number.py --summary sphere_sweep_output/T850_moltenAA7075/sweep_summary_user-moltenAA7075.csv --sigma 0.809
 ```
 
 The plot scripts read `sphere_sweep_output/sweep_summary_AA7075.csv` by default and write PNGs
@@ -115,7 +116,10 @@ summary holds (a single-temperature sweep such as `--temperatures 850` is plotte
 materials comparable. To keep a re-run's aggregates separate from an earlier sweep of the same
 material, give it its own `--outdir` (e.g. `sphere_sweep_output/T850_moltenAA7075`).
 `plot_max_temperature_by_diameter.py` shows, per sphere size, the maximum temperature reached
-by spheres that lost no mass, with every mass-losing cell black. `summary_from_runs.py`
+by spheres that lost no mass, with every mass-losing cell black. `plot_weber_number.py` maps
+We = ρ v² d / σ at each sphere's initial state (diameter × velocity, log color), with ρ taken from
+SESAM's trajectory density at t = 0 of each run history and σ from `--sigma`; it also writes
+`weber_numbers.csv` next to the plot. `summary_from_runs.py`
 reconstructs any material's summary from the per-run JSONs (same file name the sweep writes),
 for summaries produced by older versions of the sweep or otherwise lost. `analysis/plot_style.py`
 holds the shared chart palette (dataviz skill's validated sequential blue ramp).
