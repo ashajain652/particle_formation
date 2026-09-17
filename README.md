@@ -104,6 +104,7 @@ recorded in `sweep_manifest_<material>.json` under `settings.material`.
 "$PY" analysis/summary_from_runs.py --material user-moltenAA7075   # rebuild a summary from runs/*.json if ever lost
 "$PY" analysis/plot_weber_number.py --summary sphere_sweep_output/T850_moltenAA7075/sweep_summary_user-moltenAA7075.csv --sigma 0.809
 "$PY" analysis/plot_ohnesorge_number.py --summary sphere_sweep_output/T850_moltenAA7075/sweep_summary_user-moltenAA7075.csv --mu 1.2e-3 --rho-liquid 2400
+"$PY" analysis/plot_knudsen_number.py --summary sphere_sweep_output/T850_moltenAA7075/sweep_summary_user-moltenAA7075.csv
 ```
 
 The plot scripts read `sphere_sweep_output/sweep_summary_AA7075.csv` by default and write PNGs
@@ -123,7 +124,10 @@ regimes We < 12 / 12–50 / 50–100 / 100–350 / ≥ 350 in blue / yellow / or
 SESAM's trajectory density at t = 0 of each run history and σ from `--sigma`; it also writes
 `weber_numbers.csv` next to the plot. `plot_ohnesorge_number.py` does the same for the liquid-drop
 Ohnesorge number Oh = μ_liq / √(ρ_liq σ d) (`--mu`, `--rho-liquid`, `--sigma`), which depends on the
-diameter only, and writes `ohnesorge_numbers.csv` pairing every point's We with its Oh. `summary_from_runs.py`
+diameter only, and writes `ohnesorge_numbers.csv` pairing every point's We with its Oh. `plot_knudsen_number.py` maps
+Kn = λ / d at the initial state, banded by flow regime (continuum / slip / transitional / free
+molecular at Kn = 0.01 / 0.1 / 10); λ = C / ρ_air with C calibrated on SESAM's own Knudsen column
+(reference length = diameter), which the history files only print to 5 decimals. Writes `knudsen_numbers.csv`. `summary_from_runs.py`
 reconstructs any material's summary from the per-run JSONs (same file name the sweep writes),
 for summaries produced by older versions of the sweep or otherwise lost. `analysis/plot_style.py`
 holds the shared chart palette (dataviz skill's validated sequential blue ramp).
