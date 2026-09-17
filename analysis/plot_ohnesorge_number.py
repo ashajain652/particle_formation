@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
 plot_ohnesorge_number.py -- Ohnesorge number of every sphere at its initial state,
-diameter (y) x initial velocity (x), color = Oh.
+x = initial diameter, y = Oh.
 
     Oh = mu_liq / sqrt(rho_liq * sigma * d)      (= sqrt(We_liq) / Re_liq)
 
 the standard liquid-drop definition used in breakup regime maps, with the molten
 sphere's viscosity mu_liq, density rho_liq and surface tension sigma and the initial
-diameter d [m]. It contains no velocity and no air property, so Oh varies along the
-diameter axis only; the velocity axis is kept so the plot lines up with the Weber map
-(plot_weber_number.py), and the table written next to the plot pairs every (diameter,
-velocity) point's Weber number with its Ohnesorge number.
+diameter d [m]. It contains no velocity and no air property, so it is one curve in d.
+The table written next to the plot still pairs every (diameter, velocity) point's
+Weber number (plot_weber_number.py) with its Ohnesorge number.
 
 Usage
 -----
@@ -29,8 +28,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from plot_style import (SEQ_BLUE, INK, SECOND, MUTED, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
-                        apply_rcparams, strip_top_right_spines, style_colorbar)
+from plot_style import (BLUE_RAMP, INK, SECOND, MUTED, GRID, DEFAULT_SUMMARY, DEFAULT_PLOT_DIR,
+                        apply_rcparams, strip_top_right_spines)
 from plot_weber_number import DEFAULT_SIGMA, weber_table
 
 DEFAULT_MU_LIQUID = 1.2e-3        # Pa s, liquid aluminium near its melting point
@@ -69,36 +68,31 @@ def main(argv=None):
     print("{} points; Oh {:.3g} .. {:.3g} (mu = {} Pa s, rho_liq = {} kg/m3, sigma = {} N/m)".format(
         len(table), oh_min, oh_max, args.mu, args.rho_liquid, args.sigma))
 
-    diameters = sorted(table["diameter_mm"].unique())
-    velocities = sorted(table["initial_velocity_kms"].unique())
-    d_index = {d: i for i, d in enumerate(diameters)}
-    v_index = {v: i for i, v in enumerate(velocities)}
-    grid = np.full((len(diameters), len(velocities)), np.nan)
-    for r in table.itertuples():
-        grid[d_index[r.diameter_mm], v_index[r.initial_velocity_kms]] = r.ohnesorge
-    d_arr, v_arr = np.array(diameters), np.array(velocities)
-    dv, dd = v_arr[1] - v_arr[0], d_arr[1] - d_arr[0]
-    extent = [v_arr[0] - dv / 2, v_arr[-1] + dv / 2, d_arr[0] - dd / 2, d_arr[-1] + dd / 2]
+    curve = table.groupby("diameter_mm")["ohnesorge"].first().sort_index()
+    d_arr, oh_arr = curve.index.to_numpy(), curve.to_numpy()
 
     apply_rcparams(plt)
-    fig, ax = plt.subplots(figsize=(10.5, 6.2))
-    im = ax.imshow(grid, origin="lower", aspect="auto", extent=extent, cmap=SEQ_BLUE,
-                   vmin=0.0, vmax=oh_max, interpolation="nearest")
-    ax.set_xlabel("initial velocity  [km/s]")
-    ax.set_ylabel("initial sphere diameter  [mm]")
-    ax.set_yticks(diameters[::2])
+    fig, ax = plt.subplots(figsize=(9.5, 5.6))
+    ax.plot(d_arr, oh_arr, color=BLUE_RAMP[4], lw=2, marker="o", ms=5, markerfacecolor=BLUE_RAMP[4],
+            markeredgewidth=0, zorder=3)
+    for d, oh in zip(d_arr, oh_arr):
+        ax.annotate("{:.2e}".format(oh), (d, oh), textcoords="offset points", xytext=(0, 7),
+                    ha="center", fontsize=7, color=SECOND, rotation=45)
+    ax.set_xlabel("initial sphere diameter  [mm]")
+    ax.set_ylabel("Ohnesorge number  Oh = mu / sqrt(rho_liq sigma d)")
+    ax.set_xticks(d_arr[::2])
+    ax.set_xlim(0, d_arr[-1] + 5)
+    ax.set_ylim(0, oh_max * 1.18)
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+    ax.grid(True, color=GRID, lw=0.8, zorder=0)
+    ax.set_axisbelow(True)
     strip_top_right_spines(ax)
-    for d, oh in zip(d_arr, grid[:, 0]):               # value beside each row: Oh depends on d only
-        ax.text(v_arr[-1] + dv, d, "{:.2e}".format(oh), va="center", ha="left", fontsize=7.5, color=SECOND)
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.11, format="%.1e")
-    cbar.set_label("Ohnesorge number  Oh = mu / sqrt(rho_liq sigma d)", color=SECOND, fontsize=9.5)
-    style_colorbar(cbar)
 
     fig.suptitle("Ohnesorge number of each sphere at its initial state", fontsize=13.5, color=INK,
-                 x=0.06, ha="left", y=0.995, fontweight="bold")
+                 x=0.06, ha="left", y=1.04, fontweight="bold")
     ax.set_title("mu = {:g} Pa s, rho_liq = {:g} kg/m3, sigma = {:g} N/m; Oh depends on the diameter only "
-                 "(no velocity or air property enters),\nso every row is uniform; all values are far below "
-                 "Oh = {:g}, where viscosity would start to raise the critical Weber number".format(
+                 "(no velocity or air property enters);\nall values are far below Oh = {:g}, where viscosity "
+                 "would start to raise the critical Weber number".format(
                      args.mu, args.rho_liquid, args.sigma, VISCOUS_OH),
                  fontsize=9, color=MUTED, loc="left", pad=8)
 
