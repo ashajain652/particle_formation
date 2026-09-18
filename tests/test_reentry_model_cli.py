@@ -139,3 +139,20 @@ def test_compare_subcommand_with_thermal_columns(tmp_path):
     assert rc == 0
     doc = json.load(open(tmp_path / "cmp" / "m_vs_reference.json"))
     assert "thermal_metrics" in doc and os.path.isfile(tmp_path / "cmp" / "heating_time.png")
+
+
+def test_thermal_run_physics_mode(tmp_path):
+    rc = cli.main(BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
+                         "--t-max", "5", "--dt", "0.5", "--outdir", str(tmp_path), "--name", "fem_physics", "--quiet"])
+    assert rc == 0
+    doc = json.load(open(tmp_path / "fem_physics.json"))
+    s = doc["settings"]
+    assert s["heating"] == "physics" and s["stagnation"] == "fay-riddell" and s["bridging_heat"] == "matting"
+    assert s["catalycity"] == 1.0 and s["accommodation"] == 0.8 and s["matting_n"] == 1.0
+    assert doc["provenance"]["cantera"]
+    rows = list(csv.DictReader(open(tmp_path / "fem_physics.csv")))
+    assert len(rows) == 11
+    assert float(rows[-1]["q_stag_Wm2"]) > 1e6
+    assert 0.0 < float(rows[-1]["heating_blend_f"]) < 0.2
+    assert float(rows[-1]["T_stagnation_K"]) > float(rows[-1]["T_back_K"])
+    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics").endswith("_fem-physics")
