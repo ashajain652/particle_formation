@@ -89,6 +89,17 @@ def test_us76_flight_ends_on_the_ground_and_samples_as_requested():
     assert 6.0 < hist.results["max_deceleration_g"] < 10.0 and 35.0 < hist.results["altitude_of_max_deceleration_km"] < 50.0   # SESAM: 8.2 g at 41 km
 
 
+def test_escape_event_ends_the_flight_at_the_escape_altitude():
+    climbing = tj.InitialState(7800.0, 140e3, math.radians(2.0), math.radians(90.0), 0.0, 0.0, EPOCH)
+    sim = make(climbing, atmosphere.VacuumAtmosphere(), cadence=5.0, t_max=600.0)
+    hist = sim.run()
+    assert hist.end_reason == "escape"
+    assert abs(hist.columns["altitude_km"][-1] - 150.0) < 1e-6          # within 1 mm of h = 150 km
+    assert 20.0 < hist.columns["time_s"][-1] < 60.0                     # climb rate ~= 272 m/s
+    assert hist.results["impact_time_s"] is None
+    assert hist.results["final_altitude_km"] == pytest.approx(150.0, abs=1e-6)
+
+
 def test_aero_state_tolerates_trial_stage_altitudes_outside_the_table():
     # DOP853's adaptive RK stages can trial-evaluate the RHS a little beyond the ground or the top
     # of a hard-bounded table (e.g. US76's [0, 150000] m) before backing off; aero_state must not

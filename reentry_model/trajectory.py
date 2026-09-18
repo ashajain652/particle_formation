@@ -154,6 +154,10 @@ class Simulator:
             r, v = y[:3], y[3:]
             a = self.aero_state(t, r, v)
             self.body.on_step(t, y, a.freestream, a)
+            # velocity_kms/flight_path_deg/heading_deg are kinematic and use the ground-relative
+            # (rotating-frame) velocity v -- the quantity SESAM reports relative to the rotating
+            # atmosphere -- while mach/knudsen/drag/dynamic_pressure_Pa below use aero_state's
+            # wind-relative v_rel; the two coincide unless a wind model is active.
             V, gamma, heading = earth.flight_angles(v, a.lat, a.lon)
             cols["time_s"].append(t)
             cols["altitude_km"].append(a.h / 1e3)
