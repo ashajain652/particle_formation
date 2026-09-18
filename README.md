@@ -171,6 +171,33 @@ reconstructs any material's summary from the per-run JSONs (same file name the s
 for summaries produced by older versions of the sweep or otherwise lost. `analysis/plot_style.py`
 holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 
+## Physics model — `reentry_model` (Step 1: trajectory)
+
+A first-principles re-entry model of a solid sphere, built to be verified against SESAM. Step 1 integrates the
+trajectory only (constant mass): rotating-Earth 3-DOF in ECEF coordinates with J2 gravity, NRLMSISE-00 (pymsis)
+with the fap-file solar activity or the US76 table SESAM ships, SESAM's sphere drag tables blended by a Knudsen
+bridging function measured from SESAM's own output, DOP853 integration. Design:
+`docs/superpowers/specs/2026-09-17-reentry-trajectory-model-design.md`; the SESAM facts it relies on:
+`Literature Review/Sphere Demise Model - Planning References/sesam_facts/sesam_verified_facts.md`.
+
+```bash
+"$PY" -m pip install "pymsis==0.13.0" scipy     # once, in drama_env
+"$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
+    --reference data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind.csv
+"$PY" -m reentry_model run --diameter 50 --velocity 7.5 --altitude 115 --flight-path-angle -0.959331 \
+    --atmosphere replay:data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv \
+    --reference data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv
+"$PY" -m reentry_model compare --model reentry_model_output/<run>.csv --reference data/reference_runs/<sesam run>.csv
+```
+
+Heading, latitude, longitude and epoch default to the reference cases' break-off state. `--atmosphere` is
+`nrlmsise` (default), `us76`, or `replay:<sesam.csv>` (SESAM's own density/temperature, to isolate the dynamics);
+`--wind none|static`; `--bridging sesam-table|sesam-erf|sin2|textbook`; `--gravity point|j2|j2j4`. Outputs go to
+`reentry_model_output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
+(inputs, settings, results, comparison metrics, provenance), and with `--reference` a folder of six plots
+(V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `data/reference_runs/` holds the
+four committed SESAM references (100 mm from 77.5 km, 50 mm from 115 km, winds on/off).
+
 ## Tests
 
 ```bash
