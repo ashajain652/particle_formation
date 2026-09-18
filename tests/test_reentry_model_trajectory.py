@@ -26,8 +26,9 @@ def make(initial, atm, mass=MASS_100MM, **settings):
 def test_constant_body():
     assert body.sphere_mass(0.1, 2813.0) == pytest.approx(MASS_100MM)
     b = body.ConstantBody(1.5, 310.0)
-    assert b.mass(0.0) == 1.5 and b.mass(100.0) == 1.5 and b.temperature(5.0) == 310.0
-    assert b.on_step(0.0, None, None, None) is None
+    assert b.mass(0.0) == 1.5 and b.mass(100.0) == 1.5 and b.mean_temperature() == 310.0
+    assert b.advance(0.0, 0.5, None) is None and b.field() is None and b.energy() == 0.0
+    assert b.surface_temperature().tolist() == [310.0]
 
 
 def test_initial_state_vector_round_trips_the_inputs():
@@ -133,3 +134,38 @@ def test_csv_and_json_round_trip(tmp_path):
     tj.write_run_json(str(tmp_path / "h.json"), {"results": hist.results, "epoch": EPOCH})
     doc = json.load(open(tmp_path / "h.json"))
     assert doc["results"]["end_reason"] == "t_max" and doc["epoch"].startswith("2024-08-01")
+
+
+def test_advance_reproduces_run_and_truncates_at_the_ground():
+    """The stepper (a fresh DOP853 solve per macro step) vs the single dense-output solve of run(): < 0.01 m/s, < 0.1 m."""
+    atm = atmosphere.US76TableAtmosphere()
+    hist = make(R100, atm, cadence=0.5, t_max=60.0).run()
+    sim = make(R100, atm, t_max=60.0)
+    assert sim.t == 0.0 and sim.end_reason is None
+    rows = [sim.sample_row(sim.t, sim.y, sim.aero_state(sim.t, sim.y[:3], sim.y[3:]))]
+    while sim.end_reason is None:
+        assert sim.advance(0.5) == pytest.approx(0.5)
+        rows.append(sim.sample_row(sim.t, sim.y, sim.aero_state(sim.t, sim.y[:3], sim.y[3:])))
+    assert sim.end_reason == "t_max" and sim.t == 60.0 and len(rows) == len(hist) and sim.nfev > 0
+    V = np.array([r["velocity_kms"] for r in rows]) * 1e3
+    h = np.array([r["altitude_km"] for r in rows]) * 1e3
+    assert np.abs(V - hist.columns["velocity_kms"] * 1e3).max() < 0.01
+    assert np.abs(h - hist.columns["altitude_km"] * 1e3).max() < 0.1
+    with pytest.raises(RuntimeError):
+        sim.advance(0.5)
+    # ground event truncates the final step
+    low = tj.InitialState(300.0, 200.0, math.radians(-60.0), R100.heading, R100.lat, R100.lon, EPOCH)
+    sim = make(low, atm)
+    advanced = sim.advance(10.0)
+    assert sim.end_reason == "ground" and 0.5 < advanced < 1.5 and abs(earth.ecef_to_geodetic(sim.y[:3])[0]) < 1e-3
+
+
+def test_history_csv_round_trips_extra_columns(tmp_path):
+    hist = make(R100, atmosphere.US76TableAtmosphere(), cadence=5.0, t_max=10.0).run()
+    hist.columns["convective_heat_W"] = np.array([1.0, 2.0, 3.0])
+    tj.write_history_csv(hist, tmp_path / "h.csv")
+    with open(tmp_path / "h.csv") as fh:
+        header = fh.readline().strip().split(",")
+    assert header[:len(tj.CSV_COLUMNS)] == tj.CSV_COLUMNS and header[-1] == "convective_heat_W"
+    back = tj.read_history_csv(tmp_path / "h.csv")
+    assert back.columns["convective_heat_W"].tolist() == [1.0, 2.0, 3.0] and len(back) == 3

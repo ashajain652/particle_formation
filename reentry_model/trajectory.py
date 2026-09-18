@@ -85,6 +85,8 @@ class Simulator:
         self.r0 = earth.geodetic_to_ecef(initial.altitude, initial.lat, initial.lon)
         self.v0 = earth.velocity_from_flight_angles(initial.velocity, initial.flight_path, initial.heading,
                                                     initial.lat, initial.lon)
+        # stepper state (advance): time, ECEF state vector, end reason once an event or t_max is reached
+        self.t, self.y, self.end_reason, self.nfev = 0.0, self.initial_state_vector(), None, 0
 
     def initial_state_vector(self):
         return np.concatenate([self.r0, self.v0])
@@ -133,6 +135,49 @@ class Simulator:
         escape.terminal, escape.direction = True, -1
         return [ground, escape]
 
+    def advance(self, dt):
+        """One macro step from the stored state: DOP853 over [t, t + dt] at the Step 1 tolerances, a fresh solve_ivp
+        per step (spec section 7). A ground/escape event or t_max truncates the step and sets `end_reason`.
+        Returns the time actually advanced."""
+        if self.end_reason is not None:
+            raise RuntimeError("the flight already ended ({})".format(self.end_reason))
+        s = self.settings
+        t_target = min(self.t + dt, s.t_max)
+        sol = solve_ivp(self.rhs, (self.t, t_target), self.y, method="DOP853", rtol=s.rtol,
+                        atol=[s.atol_position] * 3 + [s.atol_velocity] * 3, events=self._events())
+        if not sol.success:
+            raise RuntimeError("integration failed: {}".format(sol.message))
+        self.nfev += int(sol.nfev)
+        t_new, self.y = float(sol.t[-1]), sol.y[:, -1].copy()
+        if sol.t_events[0].size:
+            self.end_reason = "ground"
+        elif sol.t_events[1].size:
+            self.end_reason = "escape"
+        elif t_new >= s.t_max:
+            self.end_reason = "t_max"
+        advanced, self.t = t_new - self.t, t_new
+        return advanced
+
+    def sample_row(self, t, y, a):
+        """The Step 1 history columns for state y at time t with its AeroState a (the body supplies temperature/mass)."""
+        r, v = y[:3], y[3:]
+        # velocity_kms/flight_path_deg/heading_deg are kinematic and use the ground-relative
+        # (rotating-frame) velocity v -- the quantity SESAM reports relative to the rotating
+        # atmosphere -- while mach/knudsen/drag/dynamic_pressure_Pa use aero_state's
+        # wind-relative v_rel; the two coincide unless a wind model is active.
+        V, gamma, heading = earth.flight_angles(v, a.lat, a.lon)
+        return {
+            "time_s": t, "altitude_km": a.h / 1e3, "velocity_kms": V / 1e3,
+            "temperature_K": self.body.mean_temperature(), "mass_kg": self.body.mass(t),
+            "thick_mm": self.settings.diameter * 500.0,
+            "lat_deg": math.degrees(a.lat), "lon_deg": math.degrees(a.lon),
+            "downrange_km": earth.great_circle_distance(self.initial.lat, self.initial.lon, a.lat, a.lon) / 1e3,
+            "flight_path_deg": math.degrees(gamma), "heading_deg": math.degrees(heading),
+            "drag": a.cd, "lift": 0.0, "side": 0.0, "knudsen": a.kn, "mach": a.ma,
+            "density_kgm3": a.freestream.rho, "dynamic_pressure_Pa": a.q_dyn,
+            "load_factor_g": float(np.linalg.norm(a.a_drag)) / G0,     # = SESAM's column (drag / m g0, verified)
+        }
+
     def run(self, extra_times=None):
         s = self.settings
         started = time.perf_counter()
@@ -157,40 +202,16 @@ class Simulator:
         states = []
         for t in times:
             y = sol.sol(t)
-            r, v = y[:3], y[3:]
-            a = self.aero_state(t, r, v)
-            self.body.on_step(t, y, a.freestream, a)
-            # velocity_kms/flight_path_deg/heading_deg are kinematic and use the ground-relative
-            # (rotating-frame) velocity v -- the quantity SESAM reports relative to the rotating
-            # atmosphere -- while mach/knudsen/drag/dynamic_pressure_Pa below use aero_state's
-            # wind-relative v_rel; the two coincide unless a wind model is active.
-            V, gamma, heading = earth.flight_angles(v, a.lat, a.lon)
-            cols["time_s"].append(t)
-            cols["altitude_km"].append(a.h / 1e3)
-            cols["velocity_kms"].append(V / 1e3)
-            cols["temperature_K"].append(self.body.temperature(t))
-            cols["mass_kg"].append(self.body.mass(t))
-            cols["thick_mm"].append(s.diameter * 500.0)
-            cols["lat_deg"].append(math.degrees(a.lat))
-            cols["lon_deg"].append(math.degrees(a.lon))
-            cols["downrange_km"].append(earth.great_circle_distance(self.initial.lat, self.initial.lon, a.lat, a.lon) / 1e3)
-            cols["flight_path_deg"].append(math.degrees(gamma))
-            cols["heading_deg"].append(math.degrees(heading))
-            cols["drag"].append(a.cd)
-            cols["lift"].append(0.0)
-            cols["side"].append(0.0)
-            cols["knudsen"].append(a.kn)
-            cols["mach"].append(a.ma)
-            cols["density_kgm3"].append(a.freestream.rho)
-            cols["dynamic_pressure_Pa"].append(a.q_dyn)
-            cols["load_factor_g"].append(float(np.linalg.norm(a.a_drag)) / G0)     # = SESAM's column (drag / m g0, verified)
+            row = self.sample_row(t, y, self.aero_state(t, y[:3], y[3:]))
+            for k in CSV_COLUMNS:
+                cols[k].append(row[k])
             states.append(y)
         columns = {k: np.array(v, dtype=float) for k, v in cols.items()}
         history = History(columns, np.array(states), end_reason)
-        history.results = self._results(history, sol, time.perf_counter() - started)
+        history.results = self.results(history, int(sol.nfev), time.perf_counter() - started)
         return history
 
-    def _results(self, history, sol, runtime):
+    def results(self, history, nfev, runtime):
         c = history.columns
         i_dec = int(np.argmax(c["load_factor_g"]))
         crossings = {}
@@ -210,24 +231,26 @@ class Simulator:
             "knudsen_start": float(c["knudsen"][0]),
             "knudsen_crossings": crossings,
             "n_samples": len(history),
-            "rhs_evaluations": int(sol.nfev),
+            "rhs_evaluations": nfev,
             "runtime_s": runtime,
         }
         return results
 
 
 def write_history_csv(history, path):
+    """All of the history's columns, the Step 1 columns first, then any thermal columns (coupled runs)."""
+    names = CSV_COLUMNS + [k for k in history.columns if k not in CSV_COLUMNS]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(CSV_COLUMNS)
+        w.writerow(names)
         for i in range(len(history)):
-            w.writerow(["{:.9g}".format(history.columns[k][i]) for k in CSV_COLUMNS])
+            w.writerow(["{:.9g}".format(history.columns[k][i]) for k in names])
 
 
 def read_history_csv(path):
     with open(path) as fh:
         rows = list(csv.DictReader(fh))
-    columns = {k: np.array([float(r[k]) for r in rows]) for k in CSV_COLUMNS if k in rows[0]}
+    columns = {k: np.array([float(r[k]) for r in rows]) for k in rows[0]}
     return History(columns, np.zeros((len(rows), 6)), "unknown")
 
 
