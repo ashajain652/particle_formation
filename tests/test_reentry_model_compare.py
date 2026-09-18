@@ -69,3 +69,33 @@ def test_plots_are_written(ref, tmp_path):
     assert [os.path.basename(p) for p in paths] == list(compare.PLOT_NAMES)
     for p in paths:
         assert os.path.getsize(p) > 5000
+
+
+def _thermal_history_like(reference, factor=1.0, dT=0.0):
+    """A model history built from the reference's own heat columns (scaled), at half its time stamps."""
+    from reentry_model import trajectory as tj
+    t = reference.time[::2]
+    pick = lambda arr: np.interp(t, reference.time, arr)
+    columns = {"time_s": t, "velocity_kms": pick(reference.velocity) / 1e3, "altitude_km": pick(reference.altitude) / 1e3,
+               "knudsen": pick(reference.knudsen), "convective_heat_W": factor * pick(reference.convective_heat),
+               "integrated_heat_J": factor * pick(reference.integrated_heat), "rad_cooling_W": pick(reference.rad_cooling),
+               "temperature_K": pick(reference.temperature) + dT, "surface_T_max_K": pick(reference.temperature) + dT + 50.0,
+               "surface_T_min_K": pick(reference.temperature) + dT - 20.0}
+    return tj.History(columns, np.zeros((t.size, 6)), "ground")
+
+
+def test_reference_carries_the_heat_columns(ref):
+    assert ref.convective_heat[0] == pytest.approx(15819.606) and ref.rad_cooling[0] == pytest.approx(-5.772)
+    assert ref.integrated_heat[0] == 0.0 and ref.integrated_heat[-1] > 1e5
+
+
+def test_thermal_metrics_of_a_scaled_copy_and_plots(ref, tmp_path):
+    hist = _thermal_history_like(ref, factor=1.02, dT=3.0)
+    assert compare.has_thermal(hist, ref) and not compare.has_thermal(synthetic_history(ref), ref)
+    m = compare.thermal_metrics(hist, ref)
+    assert m["Q_conv"]["max"] == pytest.approx(0.02, abs=2e-3) and 0.015 < m["Q_conv"]["continuum_rel_max"] < 0.04   # + interpolation at half the stamps
+    assert m["integrated_heat"]["rel_error_end"] == pytest.approx(0.02, abs=1e-3) and m["integrated_heat"]["ratio_end"] == pytest.approx(1.02, abs=1e-3)
+    assert m["temperature"]["dT_max_K"] == pytest.approx(3.0, abs=0.5) and m["radiated"]["max"] < 0.05
+    assert m["n_continuum_points"] > 100 and m["integrated_heat"]["rel_error_end_of_hypersonic"] == pytest.approx(0.02, abs=2e-3)
+    paths = compare.plot_thermal(hist, ref, str(tmp_path), "scaled copy")
+    assert [os.path.basename(p) for p in paths] == list(compare.THERMAL_PLOT_NAMES) and all(os.path.getsize(p) > 5000 for p in paths)

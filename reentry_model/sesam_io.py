@@ -49,6 +49,9 @@ class Reference:
     density: np.ndarray
     dynamic_pressure: np.ndarray
     temperature: np.ndarray
+    convective_heat: np.ndarray = None      # W (SESAM's convective_heat_W), None if the CSV lacks the column
+    rad_cooling: np.ndarray = None          # W, negative (SESAM's rad_cooling_W)
+    integrated_heat: np.ndarray = None      # J, integral of the convective heat (SESAM's integrated_heat_J)
 
 
 def _sha256(path):
@@ -80,6 +83,7 @@ def load_reference(csv_path, json_path=None):
     with open(csv_path) as fh:
         rows = list(csv.DictReader(fh))
     col = lambda key, scale=1.0: np.array([float(r[key]) for r in rows]) * scale
+    optional = lambda key: col(key) if key in rows[0] else None
     return Reference(
         name=doc["run_name"], csv_path=os.path.abspath(csv_path), json_path=os.path.abspath(json_path),
         sha256=_sha256(csv_path),
@@ -91,4 +95,5 @@ def load_reference(csv_path, json_path=None):
         flight_path=np.radians(col("flight_path_deg")), heading=np.radians(col("heading_deg")),
         downrange=col("downrange_km", 1e3), drag=col("drag"), knudsen=col("knudsen"), mach=col("mach"),
         density=col("density_kgm3"), dynamic_pressure=col("dynamic_pressure_Pa"), temperature=col("temperature_K"),
+        convective_heat=optional("convective_heat_W"), rad_cooling=optional("rad_cooling_W"), integrated_heat=optional("integrated_heat_J"),
     )
