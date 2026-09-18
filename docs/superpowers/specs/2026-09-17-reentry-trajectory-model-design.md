@@ -89,7 +89,7 @@ reentry_model/                      importable package (Python 3.12, drama_env; 
   data/atdb_sphere.json             the 6-Mach tables copied from ATDB_SPHERE.nc (provenance in the file)
   data/us76_static_environment.csv  copy of DRAMA's StaticEnvironmentData.csv (provenance in a header line)
 data/reference_runs/                the four SESAM reference CSV+JSON pairs (committed by plan task 1)
-tests/test_reentry_model_*.py       unit tests; `-m drama_reference` integration test
+tests/test_reentry_model_*.py       unit tests; `-m reference` integration test (eight flights, ~15 min)
 reentry_model_output/               git-ignored: histories, comparison plots and metrics
 docs/superpowers/specs/2026-09-17-reentry-trajectory-model-design.md   this file
 ```
