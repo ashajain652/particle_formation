@@ -2,7 +2,11 @@
 
     python -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+        [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+
+Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+(cantera for --heating physics, dolfinx for --thermal-solver fenicsx: create the fenicsx_env environment).
 """
 import argparse
 import math
@@ -13,9 +17,10 @@ from datetime import datetime
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, fap, sesam_io
+from . import __version__, aero, atmosphere, body, compare, coupled, fap, heating, material, mesh, sesam_io, thermal, viz
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
+from .thermal import MissingBackend
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUTDIR = os.path.join(REPO_ROOT, "reentry_model_output")
@@ -27,6 +32,7 @@ DEFAULT_EPOCH = "2024-08-01T12:53:07"
 DEFAULT_MATERIAL_DENSITY = 2813.0          # drama-AA7075
 ATMOSPHERES = ("nrlmsise", "us76")         # plus replay:<path>
 WINDS = ("none", "static")
+THERMAL_MODES = ("none", "fem")
 
 
 def parse_epoch(text):
@@ -36,9 +42,10 @@ def parse_epoch(text):
         raise argparse.ArgumentTypeError("epoch must be YYYY-MM-DDTHH:MM:SS, got {!r}".format(text))
 
 
-def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name):
-    return "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None):
+    name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+    return name + ("_fem-" + heating_name if heating_name else "")
 
 
 def make_atmosphere(spec, epoch, wind_name):
@@ -70,8 +77,14 @@ def provenance():
         pymsis_version = pymsis.__version__
     except ImportError:
         pymsis_version = None
+    versions = {}
+    for name in ("skfem", "gmsh", "pyamg", "pyvista", "cantera", "dolfinx"):
+        try:
+            versions[name] = __import__(name).__version__
+        except Exception:
+            versions[name] = None
     return {"package_version": __version__, "git_commit": git_commit(), "numpy": np.__version__,
-            "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0]}
+            "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0], **versions}
 
 
 def build_parser():
@@ -98,8 +111,30 @@ def build_parser():
     r.add_argument("--t-max", type=float, default=3600.0, help="[s] (default %(default)s)")
     r.add_argument("--reference", default=None, help="SESAM run CSV to compare against (also samples the model at its times)")
     r.add_argument("--outdir", default=DEFAULT_OUTDIR)
-    r.add_argument("--name", default=None, help="run name (default: model_d..mm_v..kms_h..km_<atmosphere>_<bridging>_<wind>)")
+    r.add_argument("--name", default=None, help="run name (default: model_d..mm_v..kms_h..km_<atmosphere>_<bridging>_<wind>[_fem-<heating>])")
     r.add_argument("--quiet", action="store_true")
+    th = r.add_argument_group("thermal model (Step 2)")
+    th.add_argument("--thermal", choices=THERMAL_MODES, default="none", help="none: Step 1 trajectory only (default); fem: coupled 3D conduction")
+    th.add_argument("--heating", choices=heating.HEATING_NAMES, default="physics",
+                    help="physics (default) or sesam: SESAM's uniform 0.27471 x q_stag on every patch -- a verification device, not physical")
+    th.add_argument("--stagnation", choices=heating.STAGNATION_NAMES, default="fay-riddell")
+    th.add_argument("--bridging-heat", choices=heating.BRIDGING_HEAT_NAMES, default="matting")
+    th.add_argument("--matting-n", type=float, default=1.0, help="Matting exponent n (default %(default)s)")
+    th.add_argument("--accommodation", type=float, default=0.8, help="free-molecular energy accommodation A_cq (default %(default)s)")
+    th.add_argument("--catalycity", type=float, default=1.0, help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
+    th.add_argument("--material", default=material.DEFAULT_MATERIAL, help="DRAMA material JSON (default: packaged AA7075_nomelt)")
+    th.add_argument("--emissivity", type=float, default=None, help="override the material's emissivity")
+    th.add_argument("--t-ambient", type=float, default=0.0, help="radiation background [K] (default %(default)s, SESAM's)")
+    th.add_argument("--mesh-size", type=float, default=1.0, help="multiplies --h-surface and --h-core (default %(default)s)")
+    th.add_argument("--h-surface", type=float, default=mesh.DEFAULT_H_SURFACE * 1e3, help="surface element size [mm] (default %(default)s)")
+    th.add_argument("--h-core", type=float, default=mesh.DEFAULT_H_CORE * 1e3, help="core element size [mm] (default %(default)s)")
+    th.add_argument("--thermal-solver", choices=thermal.SOLVER_NAMES, default="skfem")
+    th.add_argument("--linear-solver", choices=("direct", "amg"), default="amg")
+    th.add_argument("--lumped-mass", action="store_true")
+    th.add_argument("--dt", type=float, default=0.5, help="macro step [s] (default %(default)s)")
+    th.add_argument("--frames-every", type=int, default=0, help="VTK frame every n macro steps (default 0: none; 10 with --animate/--stills)")
+    th.add_argument("--animate", action="store_true", help="MP4/GIF of the surface temperature plus stills")
+    th.add_argument("--stills", action="store_true", help="only the four stills (start, peak heating, peak surface T, end)")
 
     c = sub.add_parser("compare", help="metrics and plots for an existing model history")
     c.add_argument("--model", required=True, help="model history CSV")
@@ -108,6 +143,29 @@ def build_parser():
     c.add_argument("--title", default=None)
     c.add_argument("--quiet", action="store_true")
     return p
+
+
+def build_thermal(args, settings, mass):
+    """(ThermalBody, HeatingModel, settings-provenance dict) for --thermal fem."""
+    radius = settings.diameter / 2.0
+    h_surface, h_core = args.h_surface * 1e-3 * args.mesh_size, args.h_core * 1e-3 * args.mesh_size
+    the_mesh = mesh.sphere_mesh(radius, h_surface, h_core)
+    mat = material.Material.from_drama_json(args.material)
+    solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=args.lumped_mass)
+    the_body = body.ThermalBody(the_mesh, mat, solver, mass, T0=args.temperature, emissivity=args.emissivity, T_ambient=args.t_ambient)
+    if args.heating == "sesam":
+        heating_model = heating.SesamEquivalentHeating()
+    else:
+        heating_model = heating.PhysicsHeating(stagnation=args.stagnation, bridging=args.bridging_heat, matting_n=args.matting_n,
+                                               accommodation=args.accommodation, catalycity=args.catalycity)
+    info = {"heating": args.heating, "material": mat.name, "material_file": os.path.abspath(args.material), "emissivity": the_body.emissivity,
+            "t_ambient_K": args.t_ambient, "mesh_file": the_mesh.params["path"], "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3,
+            "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
+            "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": args.lumped_mass}
+    if args.heating == "physics":
+        info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                     "accommodation": args.accommodation, "catalycity": args.catalycity})
+    return the_body, heating_model, info
 
 
 def cmd_run(args, parser):
@@ -119,6 +177,13 @@ def cmd_run(args, parser):
         parser.error("--altitude must be >= 0")
     if args.atmosphere not in ATMOSPHERES and not args.atmosphere.startswith("replay:"):
         parser.error("--atmosphere must be one of {} or replay:<sesam.csv>".format(ATMOSPHERES))
+    for label, value in (("--dt", args.dt), ("--mesh-size", args.mesh_size), ("--h-surface", args.h_surface), ("--h-core", args.h_core)):
+        if value <= 0.0:
+            parser.error("{} must be > 0".format(label))
+    if not 0.0 <= args.catalycity <= 1.0:
+        parser.error("--catalycity must be within [0, 1]")
+    if args.thermal == "none" and (args.animate or args.stills or args.frames_every):
+        parser.error("--animate/--stills/--frames-every need --thermal fem")
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
@@ -128,12 +193,22 @@ def cmd_run(args, parser):
     mass = body.sphere_mass(settings.diameter, args.material_density)
     atm, atm_name, atm_info = make_atmosphere(args.atmosphere, args.epoch, args.wind)
     reference = sesam_io.load_reference(args.reference) if args.reference else None
-    sim = tj.Simulator(initial, body.ConstantBody(mass, args.temperature), atm,
-                       aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
-    history = sim.run(extra_times=reference.time if reference is not None else None)
-
-    name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind)
+    name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                       args.heating if args.thermal == "fem" else None)
+    run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
+    thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+    if args.thermal == "fem":
+        the_body, heating_model, thermal_info = build_thermal(args, settings, mass)
+    sim = tj.Simulator(initial, the_body, atm, aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
+    if args.thermal == "fem":
+        frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
+        run = coupled.CoupledRun(sim, the_body, heating_model,
+                                 coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk")))
+        history = run.run()
+        thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
+    else:
+        history = sim.run(extra_times=reference.time if reference is not None else None)
     csv_path = os.path.join(args.outdir, name + ".csv")
     json_path = os.path.join(args.outdir, name + ".json")
     tj.write_history_csv(history, csv_path)
@@ -151,27 +226,46 @@ def cmd_run(args, parser):
                    "material_density_kgm3": args.material_density, "mass_kg": mass, "initial_temperature_K": args.temperature},
         "settings": {"atmosphere": atm_name, "wind": args.wind, "bridging": args.bridging, "gravity": args.gravity,
                      "rtol": args.rtol, "atol_position_m": settings.atol_position, "atol_velocity_ms": settings.atol_velocity,
-                     "cadence_s": args.cadence, "t_max_s": args.t_max, **atm_info},
+                     "cadence_s": args.cadence, "t_max_s": args.t_max, **atm_info, "thermal": args.thermal, **thermal_info},
         "results": history.results,
         "comparison": None,
         "provenance": prov,
         "files": {"csv": os.path.abspath(csv_path)},
     }
     if reference is not None:
-        plots = compare.plot_all(history, reference, os.path.join(args.outdir, name), name)
+        plots = compare.plot_all(history, reference, run_dir, name)
         doc["comparison"] = {"reference": reference.name, "reference_csv": reference.csv_path,
                              "reference_sha256": reference.sha256, "metrics": compare.metrics(history, reference),
                              "plots": [os.path.abspath(p) for p in plots]}
+        if compare.has_thermal(history, reference):
+            doc["comparison"]["thermal_metrics"] = compare.thermal_metrics(history, reference)
+            doc["comparison"]["plots"] += [os.path.abspath(p) for p in compare.plot_thermal(history, reference, run_dir, name)]
+    if args.thermal == "fem" and (args.animate or args.stills):
+        out = viz.animate(os.path.join(run_dir, "vtk"), history, settings.diameter / 2.0, animation=args.animate)
+        doc["files"]["animation"], doc["files"]["stills"] = out.get("animation"), out["stills"]
+    if args.thermal == "fem":
+        doc["files"]["vtk_dir"] = os.path.abspath(os.path.join(run_dir, "vtk")) if history.results.get("n_frames") else None
     tj.write_run_json(json_path, doc)
     if not args.quiet:
         res = history.results
         print("{}: {} at t = {:.1f} s, final V {:.4f} km/s, Kn {:.3g} -> {:.3g}, {} RHS evaluations in {:.1f} s".format(
             name, res["end_reason"], res["final_time_s"], res["final_velocity_kms"], res["knudsen_start"],
             history.columns["knudsen"][-1], res["rhs_evaluations"], res["runtime_s"]))
+        if args.thermal == "fem":
+            print("  thermal: peak surface T {:.0f} K at t = {:.0f} s, peak mean T {:.0f} K, integrated heat {:.3g} J, "
+                  "energy balance residual {:.1e}, {} macro steps, {:.1f} Newton iterations/step".format(
+                      res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
+                      res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
         if reference is not None:
             hyp = doc["comparison"]["metrics"]["hypersonic"]
             print("  vs {}: hypersonic max |dV| {:.1f} m/s ({:.3%}), max |dh| {:.0f} m; end time {:+.1f} s".format(
                 reference.name, hyp["dV_max_ms"], hyp["dV_rel_max"], hyp["dh_max_m"], doc["comparison"]["metrics"]["d_end_time_s"]))
+            if "thermal_metrics" in doc["comparison"]:
+                tm = doc["comparison"]["thermal_metrics"]
+                print("  heat vs SESAM: Q_conv max {:.2%} of peak ({:.2%} point-wise, continuum), integrated heat {:+.2%} (hypersonic) "
+                      "{:+.2%} (end), |dT_eq| max {:.1f} K ({:.2%}), radiated max {:.2%} of peak".format(
+                          tm["Q_conv"]["max"], tm["Q_conv"]["continuum_rel_max"], tm["integrated_heat"]["rel_error_end_of_hypersonic"],
+                          tm["integrated_heat"]["rel_error_end"], tm["temperature"]["dT_max_K"], tm["temperature"]["dT_rel_max"], tm["radiated"]["max"]))
         print("  csv  -> {}\n  json -> {}".format(os.path.abspath(csv_path), os.path.abspath(json_path)))
     # spec section 7: exit 1 when the flight escaped rather than reaching the ground or t_max;
     # the CSV/JSON are already written above so the escaped trajectory is still available.
@@ -189,6 +283,9 @@ def cmd_compare(args, parser):
     plots = compare.plot_all(history, reference, args.outdir, title)
     doc = {"model": os.path.abspath(args.model), "reference": reference.name, "reference_sha256": reference.sha256,
            "metrics": compare.metrics(history, reference), "plots": [os.path.abspath(p) for p in plots]}
+    if compare.has_thermal(history, reference):
+        doc["thermal_metrics"] = compare.thermal_metrics(history, reference)
+        doc["plots"] += [os.path.abspath(p) for p in compare.plot_thermal(history, reference, args.outdir, title)]
     out = os.path.join(args.outdir, stem + "_vs_reference.json")
     tj.write_run_json(out, doc)
     if not args.quiet:
@@ -213,6 +310,13 @@ def main(argv=None):
         return 2
     except (ValueError, FileNotFoundError) as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)
+        return 2
+    except MissingBackend as exc:
+        print("ERROR: {}".format(exc), file=sys.stderr)
+        return 2
+    except ModuleNotFoundError as exc:
+        print("ERROR: missing optional library {!r}: install requirements-step2.txt into drama_env (dolfinx: the separate "
+              "fenicsx_env environment)".format(exc.name), file=sys.stderr)
         return 2
     except RuntimeError as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)

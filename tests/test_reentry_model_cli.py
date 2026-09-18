@@ -83,3 +83,59 @@ def test_start_above_escape_altitude_exits_2(tmp_path):
     rc = cli.main(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "200",
                    "--flight-path-angle", "-1", "--atmosphere", "us76", "--outdir", str(tmp_path)])
     assert rc == 2
+
+
+US76_100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv")
+FEM = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "sesam", "--h-surface", "4", "--h-core", "20", "--quiet"]
+
+
+def test_run_name_with_heating():
+    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam").endswith("_none_fem-sesam")
+
+
+def test_thermal_run_writes_columns_plots_and_json(tmp_path):
+    rc = cli.main(FEM + ["--t-max", "20", "--dt", "0.5", "--reference", US76_100, "--outdir", str(tmp_path), "--name", "fem_short",
+                         "--frames-every", "10", "--stills"])
+    assert rc == 0
+    rows = list(csv.DictReader(open(tmp_path / "fem_short.csv")))
+    assert len(rows) == 41 and float(rows[-1]["time_s"]) == 20.0 and "surface_T_max_K" in rows[0] and "convective_heat_W" in rows[0]
+    assert float(rows[-1]["temperature_K"]) > 300.0 and float(rows[0]["convective_heat_W"]) > 1e4
+    doc = json.load(open(tmp_path / "fem_short.json"))
+    s = doc["settings"]
+    assert s["thermal"] == "fem" and s["heating"] == "sesam" and s["n_nodes"] > 2000 and s["macro_step_s"] == 0.5 and s["frames_every"] == 10
+    assert s["material"] == "AA7075_nomelt" and s["emissivity"] == 0.4 and s["thermal_solver"] == "skfem"
+    assert doc["results"]["n_macro_steps"] == 40 and abs(doc["results"]["energy_balance_residual"]) < 1e-6
+    assert "thermal_metrics" in doc["comparison"] and doc["comparison"]["thermal_metrics"]["Q_conv"]["max"] < 0.3
+    for plot in compare.PLOT_NAMES + compare.THERMAL_PLOT_NAMES:
+        assert os.path.isfile(tmp_path / "fem_short" / plot)
+    assert os.path.isfile(tmp_path / "fem_short" / "vtk" / "field.pvd") and doc["files"]["vtk_dir"].endswith("vtk")
+    assert doc["files"]["animation"] is None and len(doc["files"]["stills"]) == 4 and all(os.path.isfile(p) for p in doc["files"]["stills"])
+    assert doc["provenance"]["skfem"] and doc["provenance"]["gmsh"]
+
+
+def test_thermal_none_is_step_one(tmp_path):
+    rc = cli.main(BASE + ["--atmosphere", "us76", "--t-max", "10", "--cadence", "5", "--outdir", str(tmp_path), "--name", "plain", "--quiet"])
+    assert rc == 0
+    rows = list(csv.DictReader(open(tmp_path / "plain.csv")))
+    assert "convective_heat_W" not in rows[0] and json.load(open(tmp_path / "plain.json"))["settings"]["thermal"] == "none"
+    with pytest.raises(SystemExit) as exc:                                                    # parser.error: needs --thermal fem
+        cli.main(BASE + ["--atmosphere", "us76", "--animate", "--outdir", str(tmp_path), "--quiet"])
+    assert exc.value.code == 2
+
+
+def test_missing_fenicsx_exits_2(tmp_path, capsys):
+    try:
+        import dolfinx  # noqa: F401
+        pytest.skip("dolfinx is importable here")
+    except ImportError:
+        pass
+    rc = cli.main(FEM + ["--thermal-solver", "fenicsx", "--t-max", "5", "--outdir", str(tmp_path)])
+    assert rc == 2 and "fenicsx_env" in capsys.readouterr().err
+
+
+def test_compare_subcommand_with_thermal_columns(tmp_path):
+    cli.main(FEM + ["--t-max", "10", "--outdir", str(tmp_path), "--name", "m"])
+    rc = cli.main(["compare", "--model", str(tmp_path / "m.csv"), "--reference", US76_100, "--outdir", str(tmp_path / "cmp"), "--quiet"])
+    assert rc == 0
+    doc = json.load(open(tmp_path / "cmp" / "m_vs_reference.json"))
+    assert "thermal_metrics" in doc and os.path.isfile(tmp_path / "cmp" / "heating_time.png")
