@@ -19,3 +19,17 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "drama" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(scope="session")
+def coarse_sphere_mesh(tmp_path_factory):
+    """100 mm sphere, 4 mm surface / 20 mm core (~2.9 k nodes): the mesh for the fast solver tests."""
+    from reentry_model import mesh
+    return mesh.sphere_mesh(0.05, 4e-3, 20e-3, str(tmp_path_factory.mktemp("meshes")))
+
+
+@pytest.fixture(scope="session")
+def uniform_test_mesh(tmp_path_factory):
+    """100 mm sphere, uniform 4 mm elements (~6.7 k nodes): resolves the centre for the Carslaw-Jaeger test."""
+    from reentry_model import mesh
+    return mesh.sphere_mesh(0.05, 4e-3, 4e-3, str(tmp_path_factory.mktemp("meshes")))
