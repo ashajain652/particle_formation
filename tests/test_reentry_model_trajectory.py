@@ -46,8 +46,9 @@ def test_vacuum_point_mass_non_rotating_conserves_energy_and_angular_momentum():
     r, v = hist.states[:, :3], hist.states[:, 3:]
     energy = 0.5 * np.sum(v * v, axis=1) - MU_EARTH / np.linalg.norm(r, axis=1)
     momentum = np.linalg.norm(np.cross(r, v), axis=1)
-    assert np.max(np.abs(energy - energy[0]) / abs(energy[0])) < 1e-9
-    assert np.max(np.abs(momentum - momentum[0]) / momentum[0]) < 1e-9
+    # samples come from DOP853's dense output, whose interpolation error at rtol 1e-9 is ~2e-9
+    assert np.max(np.abs(energy - energy[0]) / abs(energy[0])) < 1e-8
+    assert np.max(np.abs(momentum - momentum[0]) / momentum[0]) < 1e-8
 
 
 def test_vacuum_rotating_frame_conserves_the_jacobi_integral():
@@ -57,7 +58,8 @@ def test_vacuum_rotating_frame_conserves_the_jacobi_integral():
     r, v = hist.states[:, :3], hist.states[:, 3:]
     jacobi = 0.5 * np.sum(v * v, axis=1) - MU_EARTH / np.linalg.norm(r, axis=1) \
         - 0.5 * OMEGA_EARTH ** 2 * (r[:, 0] ** 2 + r[:, 1] ** 2)
-    assert np.max(np.abs(jacobi - jacobi[0]) / abs(jacobi[0])) < 1e-9
+    # samples come from DOP853's dense output, whose interpolation error at rtol 1e-9 is ~2e-9
+    assert np.max(np.abs(jacobi - jacobi[0]) / abs(jacobi[0])) < 1e-8
 
 
 def test_flight_path_angle_rate_matches_sesam_and_vinh():
@@ -85,6 +87,19 @@ def test_us76_flight_ends_on_the_ground_and_samples_as_requested():
     assert hist.columns["drag"][0] == pytest.approx(aero.drag_coefficient(hist.columns["knudsen"][0], hist.columns["mach"][0],
                                                                             aero.SphereDragTables.from_json(), aero.SesamTable()))
     assert 6.0 < hist.results["max_deceleration_g"] < 10.0 and 35.0 < hist.results["altitude_of_max_deceleration_km"] < 50.0   # SESAM: 8.2 g at 41 km
+
+
+def test_aero_state_tolerates_trial_stage_altitudes_outside_the_table():
+    # DOP853's adaptive RK stages can trial-evaluate the RHS a little beyond the ground or the top
+    # of a hard-bounded table (e.g. US76's [0, 150000] m) before backing off; aero_state must not
+    # raise on those excursions, and must still report the TRUE (unclamped) altitude.
+    sim = make(R100, atmosphere.US76TableAtmosphere())
+    v = earth.velocity_from_flight_angles(R100.velocity, R100.flight_path, R100.heading, R100.lat, R100.lon)
+    for h in (-5.0, 150_500.0):
+        r = earth.geodetic_to_ecef(h, R100.lat, R100.lon)
+        a = sim.aero_state(0.0, r, v)
+        assert a.h == pytest.approx(h, abs=1e-3)
+        assert np.all(np.isfinite(a.a_drag))
 
 
 def test_csv_and_json_round_trip(tmp_path):

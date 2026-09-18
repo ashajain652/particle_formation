@@ -88,9 +88,11 @@ class Simulator:
 
     def aero_state(self, t, r, v):
         h, lat, lon = earth.ecef_to_geodetic(r)
-        # DOP853's adaptive stages can trial-evaluate the RHS a little beyond the ground/escape
-        # events before backing off; clamp only the atmosphere query to the settings' physical
-        # envelope so a hard-bounded table (e.g. US76) doesn't raise on a transient excursion.
+        # DOP853's adaptive stages can trial-evaluate the RHS a little beyond the ground or the
+        # top of a hard-bounded table (e.g. US76's [0, 150000] m) before backing off. Clamp ONLY
+        # the altitude used for the atmosphere.state() lookup to [ground_altitude, escape_altitude]
+        # so that transient excursion doesn't raise; `h` itself (and thus AeroState.h, used for
+        # the reported/history altitude) stays the TRUE, unclamped geodetic altitude.
         h_atm = min(max(h, self.settings.ground_altitude), self.settings.escape_altitude)
         fs = self.atmosphere.state(t, h_atm, lat, lon)
         e, n, u = earth.enu_basis(lat, lon)
