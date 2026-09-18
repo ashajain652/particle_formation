@@ -192,7 +192,8 @@ bridging function measured from SESAM's own output, DOP853 integration. Design:
 
 Heading, latitude, longitude and epoch default to the reference cases' break-off state. `--atmosphere` is
 `nrlmsise` (default), `us76`, or `replay:<sesam.csv>` (SESAM's own density/temperature, to isolate the dynamics);
-`--wind none|static`; `--bridging sesam-table|sesam-erf|sin2|textbook`; `--gravity point|j2|j2j4`. Outputs go to
+`--wind none|static`; `--bridging sesam-table|sesam-erf|sin2|textbook` (matting is reserved and not yet
+implemented — selecting it exits 1); `--gravity point|j2|j2j4`. Outputs go to
 `reentry_model_output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
 (inputs, settings, results, comparison metrics, provenance), and with `--reference` a folder of six plots
 (V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `data/reference_runs/` holds the

@@ -26,6 +26,7 @@ def test_run_us76_short_flight(tmp_path):
     assert doc["settings"]["atmosphere"] == "us76" and doc["results"]["end_reason"] == "t_max"
     assert doc["inputs"]["mass_kg"] == pytest.approx(1.4728833557580150) and doc["comparison"] is None
     assert doc["provenance"]["package_version"] and "git_commit" in doc["provenance"]
+    assert doc["provenance"]["reference_sha256"] is None and doc["provenance"]["replay_sha256"] is None
 
 
 def test_run_replay_with_reference_writes_comparison_and_plots(tmp_path):
@@ -36,6 +37,8 @@ def test_run_replay_with_reference_writes_comparison_and_plots(tmp_path):
     m = doc["comparison"]["metrics"]
     assert doc["settings"]["atmosphere"] == "replay" and doc["settings"]["replay_reference"].endswith("_nowind")
     assert m["all"]["n_points"] >= 25 and m["hypersonic"]["dV_max_ms"] < 50.0     # 30 s of a matched flight
+    assert doc["provenance"]["reference_sha256"] == doc["comparison"]["reference_sha256"]
+    assert doc["provenance"]["replay_sha256"] == doc["settings"]["replay_sha256"]
     for plot in compare.PLOT_NAMES:
         assert os.path.isfile(tmp_path / "r100_short" / plot)
 
@@ -46,6 +49,11 @@ def test_compare_subcommand(tmp_path):
     assert rc == 0
     doc = json.load(open(tmp_path / "cmp" / "m_vs_reference.json"))
     assert doc["reference"].endswith("_nowind") and "hypersonic" in doc["metrics"]
+
+
+def test_unimplemented_bridging_exits_1(tmp_path):
+    rc = cli.main(BASE + ["--atmosphere", "us76", "--bridging", "matting", "--t-max", "1", "--outdir", str(tmp_path), "--quiet"])
+    assert rc == 1
 
 
 @pytest.mark.parametrize("argv", [

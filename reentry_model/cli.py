@@ -137,6 +137,11 @@ def cmd_run(args, parser):
     csv_path = os.path.join(args.outdir, name + ".csv")
     json_path = os.path.join(args.outdir, name + ".json")
     tj.write_history_csv(history, csv_path)
+    prov = provenance()
+    # spec section 8: the reference file(s)' SHA-256 also live under provenance, alongside the copies
+    # already recorded under "comparison" (--reference) and "settings" (replay_reference/replay_sha256).
+    prov["reference_sha256"] = reference.sha256 if reference is not None else None
+    prov["replay_sha256"] = atm_info.get("replay_sha256")
     doc = {
         "schema_version": 1,
         "run_name": name,
@@ -145,10 +150,11 @@ def cmd_run(args, parser):
                    "longitude_deg": args.lon, "epoch_utc": args.epoch.strftime("%Y-%m-%dT%H:%M:%S"),
                    "material_density_kgm3": args.material_density, "mass_kg": mass, "initial_temperature_K": args.temperature},
         "settings": {"atmosphere": atm_name, "wind": args.wind, "bridging": args.bridging, "gravity": args.gravity,
-                     "rtol": args.rtol, "cadence_s": args.cadence, "t_max_s": args.t_max, **atm_info},
+                     "rtol": args.rtol, "atol_position_m": settings.atol_position, "atol_velocity_ms": settings.atol_velocity,
+                     "cadence_s": args.cadence, "t_max_s": args.t_max, **atm_info},
         "results": history.results,
         "comparison": None,
-        "provenance": provenance(),
+        "provenance": prov,
         "files": {"csv": os.path.abspath(csv_path)},
     }
     if reference is not None:
