@@ -121,6 +121,8 @@ class FenicsxThermalSolver:
             g.x.array[dofs] = dirichlet[1]
             bcs = [fem.dirichletbc(g, dofs.astype(np.int32))]
         T_new, iteration = fem.Function(self.V), 0
+        converged = False
+        last_relative_change = None
         for iteration in range(1, self.max_iterations + 1):
             self.T_k.x.array[:] = T_k
             self._coefficients(T_k, T_old)
@@ -134,9 +136,14 @@ class FenicsxThermalSolver:
             self.ksp.setOperators(A)
             self.ksp.solve(b, T_new.x.petsc_vec)
             T_new.x.scatter_forward()
-            if np.linalg.norm(T_new.x.array - T_k) <= self.newton_tol * np.linalg.norm(T_new.x.array):
+            last_relative_change = np.linalg.norm(T_new.x.array - T_k) / np.linalg.norm(T_new.x.array)
+            if last_relative_change <= self.newton_tol:
+                converged = True
                 break
             T_k = T_new.x.array.copy()
+        if not converged:
+            raise RuntimeError("Newton did not converge in {} iterations (last relative change {:.2e}, tol {:.1e})".format(
+                self.max_iterations, last_relative_change, self.newton_tol))
         self._T_prev = T_old
         self.T.x.array[:] = T_new.x.array
         return StepResult(self.temperature(), float(F_conv.sum()), self.radiated_power(T_amb), iteration)

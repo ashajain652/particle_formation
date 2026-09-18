@@ -25,7 +25,7 @@ def solver(name, mesh, mat, **options):
     return s
 
 
-def test_missing_backend_message_is_not_raised_here():
+def test_constructor_options():
     assert thermal.thermal_solver("fenicsx").linear_solver == "amg"
     with pytest.raises(ValueError):
         thermal.thermal_solver("fenicsx", lumped_mass=True)
