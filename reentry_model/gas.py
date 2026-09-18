@@ -99,7 +99,7 @@ class EquilibriumAir:
         equilibrate = T_inf + 0.5 * V * V / CP_AIR > T_EQUILIBRATE     # frozen air below ~1500 K (subsonic/low supersonic states)
         eps = 0.1                                                     # rho_inf / rho_2, Rankine-Hugoniot fixed point
         converged = False
-        for _ in range(3000):
+        for _ in range(3000):                                           # damped fixed point converges linearly; contraction factor -> 1 as Ma -> 1 (subsonic), ~600 iters needed (0.12 s); hypersonic ~30
             u2 = eps * V
             p2 = p_inf + rho_inf * V * (V - u2)
             g.HPX = h_inf + 0.5 * (V * V - u2 * u2), p2, AIR

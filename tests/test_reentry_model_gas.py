@@ -59,4 +59,4 @@ def test_stagnation_converges_across_the_flight_envelope(air):
             s = air.stagnation(rho, T_inf, V)
             assert s.p > 0.0
             assert s.rho > rho
-            assert s.h == pytest.approx(float(air.air_enthalpy(T_inf)) + 0.5 * V * V, rel=1e-6)
+            assert s.h == pytest.approx(float(air.air_enthalpy(T_inf)) + 0.5 * V * V, rel=1e-6, abs=5.0)   # abs: the 25 K air-enthalpy table's interpolation error
