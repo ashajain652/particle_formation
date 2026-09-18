@@ -49,3 +49,14 @@ def test_fay_riddell_against_sutton_graves(air):
     assert 1.2 < q_fr / gas.sutton_graves(RHO, V, R) < 1.4
     assert 1.05 < gas.fay_riddell(s, air.wall(300.0, s.p), fs.p, R, catalycity=0.0) / gas.sutton_graves(RHO, V, R) < 1.25
     assert gas.fay_riddell(s, air.wall(2000.0, s.p), fs.p, R) < 0.9 * q_fr                     # hot wall
+
+
+def test_stagnation_converges_across_the_flight_envelope(air):
+    """Verify normal shock iteration converges across rho and V space."""
+    T_inf = 220.0
+    for rho in (1e-9, 1e-7, 1e-5, 1e-3, 1e-1):
+        for V in (300.0, 1000.0, 3000.0, 7500.0, 12000.0):
+            s = air.stagnation(rho, T_inf, V)
+            assert s.p > 0.0
+            assert s.rho > rho
+            assert s.h == pytest.approx(float(air.air_enthalpy(T_inf)) + 0.5 * V * V, rel=1e-6)

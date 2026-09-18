@@ -98,7 +98,8 @@ class EquilibriumAir:
         p_inf, h_inf = float(g.P), float(g.enthalpy_mass)
         equilibrate = T_inf + 0.5 * V * V / CP_AIR > T_EQUILIBRATE     # frozen air below ~1500 K (subsonic/low supersonic states)
         eps = 0.1                                                     # rho_inf / rho_2, Rankine-Hugoniot fixed point
-        for _ in range(100):
+        converged = False
+        for _ in range(3000):
             u2 = eps * V
             p2 = p_inf + rho_inf * V * (V - u2)
             g.HPX = h_inf + 0.5 * (V * V - u2 * u2), p2, AIR
@@ -106,8 +107,11 @@ class EquilibriumAir:
                 g.equilibrate("HP")
             eps_new = rho_inf / float(g.density)
             if abs(eps_new - eps) < 1e-10:
+                converged = True
                 break
             eps = 0.5 * (eps + eps_new)
+        if not converged:
+            raise RuntimeError(f"normal shock iteration did not converge in 3000 iterations (rho {rho_inf:.3e} kg/m3, T {T_inf:.1f} K, V {V:.0f} m/s, last change {abs(eps_new - eps):.2e})")
         s2, h_s = float(g.entropy_mass), h_inf + 0.5 * V * V             # isentropic compression to rest
 
         def residual(log_p):
