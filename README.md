@@ -29,6 +29,45 @@ PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python
 Required: `--velocity` km/s, `--altitude` km, `--temperature` K, `--diameter` mm.
 Optional state values default to 0°/0°/0°/0° and the parent epoch. `--dry-run` prints the SESAM
 configuration; `--keep-raw` keeps the raw DRAMA tree under `sphere_sweep_output/raw/<run_name>/`.
+`--atmosphere static|nrlmsise` selects SESAM's environment (default `static` = DRAMA's US76 table;
+`nrlmsise` = NRLMSISE-00 with F10.7/Ap from the fap files and appends `_msis` to the run name).
+`--no-wind` runs SESAM without HWM14 winds and appends `_nowind`.
+
+**Environment actually used by SESAM.** pyDRAMA copies boolean settings into `sara.xml` as `True`/`False`,
+but SESAM only understands `yes`/`no`, so the parent's `dynamicEnvironment: True` was never honoured: every
+run of the sweep used DRAMA's **static environment table** (`TOOLS/SARA/REENTRY/data/StaticEnvironmentData.csv`
+= US Standard Atmosphere 1976 with a few m/s of fixed wind; `sesam.log` says "Using static environment from
+CSV file") and **no winds** (SESAM's fallback for the unparseable flag; verified 2026-09-17 by identical
+histories). The three switches (`dynamicEnvironment`, `useWind`, and `useEnvironmentCSV`, which pyDRAMA
+writes as `solarActivity/valuesFromFile`) are now written as `yes`/`no` strings, and the default keeps the
+sweep's static, wind-free behaviour explicitly. `sesam.log` reports the choice
+("Using dynamic atmosphere model NRLMSISI-00 with dynamic solar activity", "Using dynamic wind model HWM14",
+"Simulating without wind").
+
+## Reference runs for the physics model (`sphere_sweep_output/reference_AA7075_nomelt/`)
+
+`data/user_materials/AA7075_nomelt.json` is `drama-AA7075` with the melting temperature raised to 1e5 K
+(cp and k tables held at their 850 K values above 850 K), so SESAM never removes mass. Two spheres, both
+300 K, 7.5 km/s, γ = −0.959°, heading 347.2°, 29.55° N, 82.13° W, epoch 2024-08-01T12:53:07 (the parent's
+break-off state), NRLMSISE-00, winds on and off:
+
+- **100 mm from 77.5 km** — continuum-dominated (Kn 0.03 → 0); ground impact at 368 s.
+- **50 mm from 115 km** — starts free-molecular (Kn = 41), Kn < 10 at 106.5 km, < 1 at 93.8 km, < 0.1 at 80.4 km,
+  < 0.01 at 65 km; peak heating 9.2 kW at 63 km; ground impact at 561 s.
+
+```bash
+"$PY" sphere_reentry.py --velocity 7.5 --altitude 77.500133 --temperature 300 --diameter 100 \
+    --flight-path-angle -0.959331 --heading 347.168296 --lat 29.546067 --lon -82.134333 \
+    --epoch 2024-08-01T12:53:07 --material-file data/user_materials/AA7075_nomelt.json --atmosphere nrlmsise \
+    --outdir sphere_sweep_output/reference_AA7075_nomelt/runs --raw-dir sphere_sweep_output/reference_AA7075_nomelt/raw --keep-raw [--no-wind]
+"$PY" sphere_reentry.py --velocity 7.5 --altitude 115 --temperature 300 --diameter 50  ...same options...
+```
+
+Run names: `sphere_d100.00mm_..._h077.500km_mAA7075_nomelt_msis[_nowind]` and
+`sphere_d050.00mm_..._h115.000km_mAA7075_nomelt_msis[_nowind]`; raw DRAMA trees kept under `raw/`.
+The same 100 mm case on the static US76 table (`..._mAA7075_nomelt[_nowind]`) is kept for comparison:
+NRLMSISE-00 differs from US76 by −4 % to +4 % in density along that flight (≤ 57 m/s in velocity,
+≤ 0.4 km in altitude); HWM14 winds change either sphere's trajectory by ≤ 8 m/s and ≤ 20 m.
 Exit codes: 0 ok, 1 the run failed (see the JSON's `error`), 2 bad arguments or pyDRAMA missing.
 
 ## The sweep

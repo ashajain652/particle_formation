@@ -114,8 +114,8 @@ class TestBuildConfig:
         assert cfg["comment1"] == sr.run_name(make_run())
         expected = {"dragCoefficient": 2.2, "reflectivityCoefficient": 1.3, "attitude": "tumbling",
                     "fragmentsAttitudeAfterBreakup": "inherited", "densityScalingFactor": 1.0,
-                    "dynamicEnvironment": True, "useWind": True, "solarActivityFromFile": True,
-                    "useEnvironmentCSV": False, "ap": 8, "f107a": 170, "voxelatorMode": 1,
+                    "dynamicEnvironment": "no", "useWind": "yes", "solarActivityFromFile": True,
+                    "useEnvironmentCSV": "no", "ap": 8, "f107a": 170, "voxelatorMode": 1,
                     "plotVisibilityMaps": False, "plotObjectTrajectories": False,
                     "propagationWithOscar": False, "runID": "SPHERE"}
         for key, value in expected.items():
@@ -974,3 +974,70 @@ class TestMaterialCli:
         assert doc["inputs"]["material"] == "drama-AA7075"
         assert doc["inputs"]["material_source"] == "builtin"
         assert doc["inputs"]["material_definition"] is None
+
+
+class TestWindOption:
+    """--no-wind: SESAM's HWM14 winds off, recorded in the run name so the two runs never collide."""
+
+    def test_winds_on_by_default_and_name_unchanged(self):
+        run = make_run()
+        assert run.use_wind is True
+        assert sr.build_config(run)["useWind"] == "yes"      # SESAM parses yes/no; pyDRAMA passes the value through verbatim
+        assert sr.run_name(run) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km"
+
+    def test_no_wind_sets_use_wind_false_and_suffixes_the_run_name(self):
+        run = make_run(use_wind=False)
+        assert sr.build_config(run)["useWind"] == "no"
+        assert sr.run_name(run) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_nowind"
+
+    def test_no_wind_suffix_follows_the_material_suffix(self):
+        run = make_run(material=TITANIUM, use_wind=False)
+        assert sr.run_name(run) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_mdrama-TiAl6v4_nowind"
+
+    def test_cli_flag_reaches_the_config_and_the_run_name(self, capsys):
+        rc = sr.main(BASE_ARGS + ["--no-wind", "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert '"useWind": "no"' in out
+        assert "run name: sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_nowind" in out
+
+
+class TestAtmosphereOption:
+    """--atmosphere static|nrlmsise: SESAM's dynamic (NRLMSISE-00 + fap-file solar activity) environment
+    versus its static US76 table; written as the yes/no strings SESAM parses; recorded in the run name."""
+
+    def test_static_is_the_default_and_writes_explicit_no(self):
+        run = make_run()
+        assert run.atmosphere == "static"
+        cfg = sr.build_config(run)
+        assert cfg["dynamicEnvironment"] == "no"
+        assert cfg["useEnvironmentCSV"] == "no"           # pyDRAMA writes this key as solarActivity/valuesFromFile
+        assert sr.run_name(run) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km"
+
+    def test_nrlmsise_turns_on_the_dynamic_environment_and_the_fap_files(self):
+        run = make_run(atmosphere="nrlmsise")
+        cfg = sr.build_config(run)
+        assert cfg["dynamicEnvironment"] == "yes"
+        assert cfg["useEnvironmentCSV"] == "yes"
+        assert sr.run_name(run) == "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_msis"
+
+    def test_suffix_order_is_material_then_atmosphere_then_wind(self):
+        run = make_run(material=TITANIUM, atmosphere="nrlmsise", use_wind=False)
+        assert sr.run_name(run) == \
+            "sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_mdrama-TiAl6v4_msis_nowind"
+
+    def test_unknown_atmosphere_is_rejected(self):
+        with pytest.raises(ValueError):
+            make_run(atmosphere="msis2")
+
+    def test_cli_option(self, capsys):
+        rc = sr.main(BASE_ARGS + ["--atmosphere", "nrlmsise", "--dry-run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert '"dynamicEnvironment": "yes"' in out
+        assert "run name: sphere_d050.00mm_T0300.0K_v07.50000kms_h077.500km_msis" in out
+
+    def test_cli_rejects_unknown_atmosphere(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            sr.main(BASE_ARGS + ["--atmosphere", "gram", "--dry-run"])
+        assert exc.value.code == 2

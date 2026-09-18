@@ -175,6 +175,9 @@ def sphere_cross_section_m2(diameter_mm: float) -> float:
     return math.pi * r * r
 
 
+ATMOSPHERES = ("static", "nrlmsise")
+
+
 @dataclass(frozen=True)
 class SphereRun:
     """All inputs of one sphere run (CLI units)."""
@@ -188,6 +191,12 @@ class SphereRun:
     lon_deg: float = 0.0
     epoch: datetime = PARENT_EPOCH
     material: Material = DEFAULT_MATERIAL
+    use_wind: bool = True            # SESAM's HWM14 winds (the parent run had them on)
+    atmosphere: str = "static"       # "static" (DRAMA's US76 table) | "nrlmsise" (NRLMSISE-00, fap-file solar activity)
+
+    def __post_init__(self):
+        if self.atmosphere not in ATMOSPHERES:
+            raise ValueError("atmosphere must be one of {}, got {!r}".format(ATMOSPHERES, self.atmosphere))
 
     @property
     def radius_m(self) -> float:
@@ -211,12 +220,17 @@ def run_name(run: SphereRun) -> str:
     """Fixed-width name so that lexicographic order equals parameter order (spec 4.3).
 
     The default material keeps the original name (so existing sweeps stay resumable);
-    any other material appends "_m<slug>" so two materials can never share output files.
+    any other material appends "_m<slug>" so two materials can never share output files;
+    the NRLMSISE-00 atmosphere appends "_msis" and winds off appends "_nowind" for the same reason.
     """
     name = "sphere_d{:06.2f}mm_T{:06.1f}K_v{:08.5f}kms_h{:07.3f}km".format(
         run.diameter_mm, run.temperature_K, run.velocity_kms, run.altitude_km)
     if run.material.name != DEFAULT_MATERIAL.name:
         name += "_m" + material_slug(run.material.name)
+    if run.atmosphere == "nrlmsise":
+        name += "_msis"
+    if not run.use_wind:
+        name += "_nowind"
     return name
 
 
@@ -281,10 +295,20 @@ def _build_config(run: SphereRun) -> dict:
         "globalSpacecraftTemperature": run.temperature_K,
         # ---- environment (same keys/values as the parent run) ---------------
         "densityScalingFactor": 1.0,
-        "dynamicEnvironment": True,
-        "useWind": True,
+        # pyDRAMA copies these values into SESAM's sara.xml verbatim (dict2xml), but SESAM only
+        # understands "yes"/"no": a Python bool arrives as "True"/"False" and is not honoured
+        # (verified 2026-09-17: with the parent's booleans every run used the STATIC US76 table,
+        # data/StaticEnvironmentData.csv -- sesam.log "Using static environment from CSV file" --
+        # and no winds). The three switches are therefore written as the strings SESAM parses:
+        #   dynamicEnvironment  "yes" = NRLMSISE-00 (+ HWM winds when useWind), "no" = static table
+        #   useWind             HWM14 winds
+        #   useEnvironmentCSV   pyDRAMA writes THIS key as solarActivity/valuesFromFile (not
+        #                       solarActivityFromFile, which it ignores): "yes" = F10.7/Ap from the
+        #                       fap_day/fap_mon files, "no" = the constants ap/f107a below
+        "dynamicEnvironment": "yes" if run.atmosphere == "nrlmsise" else "no",
+        "useWind": "yes" if run.use_wind else "no",
         "solarActivityFromFile": True,
-        "useEnvironmentCSV": False,
+        "useEnvironmentCSV": "yes" if run.atmosphere == "nrlmsise" else "no",
         "ap": 8,
         "f107a": 170,
         # ---- numerics / output ----------------------------------------------
@@ -648,6 +672,8 @@ def _base_document(run, cfg, name, csv_path, run_raw, pydrama_version):
             "material_density_kgm3": run.material.density_kgm3,
             "melting_temperature_K": run.material.melting_temperature_K,
             "material_definition": run.material.definition,
+            "atmosphere": run.atmosphere,
+            "use_wind": run.use_wind,
             "melt_tolerance_K": MELT_TOLERANCE_K,
             "energy_threshold_J": ENERGY_THRESHOLD_J,
             "sesam_settings": json.loads(json.dumps(settings, default=str)),
@@ -766,6 +792,11 @@ def build_parser():
     p.add_argument("--outdir", default=DEFAULT_OUTDIR, help="CSV/JSON directory (default %(default)s)")
     p.add_argument("--raw-dir", default=DEFAULT_RAW_DIR, help="raw DRAMA trees root (default %(default)s)")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S, help="SESAM timeout [s] (default %(default)s)")
+    p.add_argument("--atmosphere", choices=ATMOSPHERES, default="static",
+                   help="SESAM environment: static = DRAMA's US76 table (default), nrlmsise = NRLMSISE-00 with "
+                        "F10.7/Ap from the fap files; nrlmsise appends _msis to the run name")
+    p.add_argument("--no-wind", action="store_true",
+                   help="run SESAM without HWM14 winds (useWind false); appends _nowind to the run name")
     p.add_argument("--keep-raw", action="store_true", help="keep the raw DRAMA tree on success")
     p.add_argument("--dry-run", action="store_true", help="print the config and run name; run nothing")
     p.add_argument("--quiet", action="store_true", help="no console output except errors")
@@ -806,7 +837,8 @@ def main(argv=None):
     run = SphereRun(velocity_kms=args.velocity, altitude_km=args.altitude,
                     temperature_K=args.temperature, diameter_mm=args.diameter,
                     flight_path_deg=args.flight_path_angle, heading_deg=args.heading,
-                    lat_deg=args.lat, lon_deg=args.lon, epoch=args.epoch, material=material)
+                    lat_deg=args.lat, lon_deg=args.lon, epoch=args.epoch, material=material,
+                    use_wind=not args.no_wind, atmosphere=args.atmosphere)
     if args.dry_run:
         print(json.dumps(build_config(run), indent=2, default=str))
         print("run name: " + run_name(run))
