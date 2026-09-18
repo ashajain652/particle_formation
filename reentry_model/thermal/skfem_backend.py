@@ -118,6 +118,8 @@ class SkfemThermalSolver:
         T_k = T_old + (T_old - self._T_prev) if self._T_prev is not None and dirichlet is None else T_old.copy()
         F_conv = self.facet_load(np.asarray(q_conv, dtype=float))
         T_new, iteration = T_k, 0
+        converged = False
+        last_relative_change = None
         for iteration in range(1, self.max_iterations + 1):
             K, M = self.operators(T_k, T_old)
             Tf = self.facet_temperature(T_k)
@@ -126,9 +128,14 @@ class SkfemThermalSolver:
             A = (M / dt + K + B).tocsr()
             b = M @ T_old / dt + F_conv - F_rad + B @ T_k
             T_new = self._solve_with_dirichlet(A, b, T_k, dirichlet)
-            if np.linalg.norm(T_new - T_k) <= self.newton_tol * np.linalg.norm(T_new):
+            last_relative_change = np.linalg.norm(T_new - T_k) / np.linalg.norm(T_new)
+            if last_relative_change <= self.newton_tol:
+                converged = True
                 break
             T_k = T_new
+        if not converged:
+            raise RuntimeError("Newton did not converge in {} iterations (last relative change {:.2e}, tol {:.1e})".format(
+                self.max_iterations, last_relative_change, self.newton_tol))
         self._T_prev, self.T = T_old, T_new
         return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration)
 

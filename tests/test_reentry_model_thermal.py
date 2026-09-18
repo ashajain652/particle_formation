@@ -147,3 +147,16 @@ def test_step_result_and_temperature_setters(coarse_sphere_mesh):
     res = s.step(0.5, np.zeros(len(s.faces)), 200.0)
     assert isinstance(res, thermal.StepResult) and res.T.shape == (coarse_sphere_mesh.n_nodes,)
     assert res.Q_rad == pytest.approx(s.radiated_power(200.0)) and res.Q_conv == 0.0
+
+
+def test_newton_non_convergence_raises(coarse_sphere_mesh):
+    """Newton loop limited to 1 iteration must fail on a nonlinear step with significant flux."""
+    s = solver(coarse_sphere_mesh, constant_material(), max_iterations=1)
+    s.set_temperature(300.0)
+    with pytest.raises(RuntimeError, match="Newton did not converge"):
+        s.step(0.5, np.full(len(s.faces), 1e6), 0.0)
+    # Verify that with default max_iterations the same step succeeds and takes >1 iteration
+    s2 = solver(coarse_sphere_mesh, constant_material())
+    s2.set_temperature(300.0)
+    res = s2.step(0.5, np.full(len(s2.faces), 1e6), 0.0)
+    assert res.iterations >= 2
