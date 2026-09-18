@@ -141,9 +141,9 @@ def plot_all(history, reference, outdir, title):
 
 
 def has_thermal(history, reference=None):
-    """True when the model history carries the coupled run's heat columns (and the reference has SESAM's)."""
+    """True when the model history carries the coupled run's heat columns (and the reference has all three of SESAM's heat columns)."""
     ok = "convective_heat_W" in history.columns
-    return ok and (reference is None or reference.convective_heat is not None)
+    return ok and (reference is None or all(x is not None for x in (reference.convective_heat, reference.rad_cooling, reference.integrated_heat)))
 
 
 def align_thermal(history, reference):

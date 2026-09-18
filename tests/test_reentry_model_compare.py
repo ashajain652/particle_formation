@@ -1,4 +1,5 @@
 """compare.py: model-vs-SESAM metrics and plots on a synthetic history with known offsets."""
+import dataclasses
 import math
 import os
 
@@ -99,3 +100,12 @@ def test_thermal_metrics_of_a_scaled_copy_and_plots(ref, tmp_path):
     assert m["n_continuum_points"] > 100 and m["integrated_heat"]["rel_error_end_of_hypersonic"] == pytest.approx(0.02, abs=2e-3)
     paths = compare.plot_thermal(hist, ref, str(tmp_path), "scaled copy")
     assert [os.path.basename(p) for p in paths] == list(compare.THERMAL_PLOT_NAMES) and all(os.path.getsize(p) > 5000 for p in paths)
+
+
+def test_has_thermal_needs_all_reference_heat_columns(ref):
+    hist = _thermal_history_like(ref)
+    assert compare.has_thermal(hist, ref) is True
+    for name in ("convective_heat", "rad_cooling", "integrated_heat"):
+        partial = dataclasses.replace(ref, **{name: None})
+        assert compare.has_thermal(hist, partial) is False
+    assert compare.has_thermal(hist, None) is True
