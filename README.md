@@ -193,7 +193,9 @@ bridging function measured from SESAM's own output, DOP853 integration. Design:
 Heading, latitude, longitude and epoch default to the reference cases' break-off state. `--atmosphere` is
 `nrlmsise` (default), `us76`, or `replay:<sesam.csv>` (SESAM's own density/temperature, to isolate the dynamics);
 `--wind none|static`; `--bridging sesam-table|sesam-erf|sin2|textbook` (matting is reserved and not yet
-implemented — selecting it exits 1); `--gravity point|j2|j2j4`. Outputs go to
+implemented — selecting it exits 1); `--gravity point|j2|j2j4`. Both SESAM bridgings were fitted to
+SESAM's own output, which includes these four reference runs, so the C_D agreement in the verification
+is in-sample by design; the trajectory comparison is the independent check. Outputs go to
 `reentry_model_output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
 (inputs, settings, results, comparison metrics, provenance), and with `--reference` a folder of six plots
 (V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `data/reference_runs/` holds the
@@ -229,9 +231,7 @@ Notes:
   precision, not by the model; `dh_max_m` <= 27 m and `d_end_time_rel` <= 0.30 % confirm the dynamics.
   Threshold set to 1 %. A replay that reconstructs density as `2 x dynamic_pressure / V^2` from the
   reference's own columns would remove this artefact (not implemented).
-- NRLMSISE-00 mode: SESAM's built-in NRLMSISE-00 differs from the reference implementation (pymsis) by 5-15 % in
-  density independent of solar inputs (Task 6); thresholds set to the measured residual × 1.5 (`dV_rel_max`
-  only — `dh_max_m` and `d_end_time_rel` already pass the spec's original values).
+- NRLMSISE-00 mode: the model's density (pymsis, the NRL reference implementation) differs from the density SESAM's built-in NRLMSISE-00 produced for the same epoch, place and solar inputs by an altitude-structured ratio: pymsis/SESAM = 0.70 at 110 km, 0.63 at 105 km, 0.63 at 100 km, 0.71 at 95 km, 0.85 at 90 km, 0.99 at 85 km, 1.06 at 80 km, 1.05 at 70 km, 1.07 at 60 km, 1.09 at 50 km, 1.07 at 40 km, 1.02 at 20 km (1 Aug 2024 12:53 UT, 29.5° N 82.1° W, F10.7 234 / 194, Ap 19). The solar inputs are not the cause (F10.7 170–246, Ap 8–56, storm mode and pymsis's historical indices move the ratio by < 2 %). A SESAM epoch experiment (same state, 1 Feb vs 1 Aug 2024) shows SESAM's density does respond to the date — Feb/Aug = 1.18–1.26 at 95–110 km, 1.04 at 70–80 km, 0.97–0.98 at 40–50 km — but with roughly half the seasonal amplitude of the reference implementation (pymsis: 1.29–1.71 and 0.91–0.92), and it responds to local time (00 UT/12 UT = 0.93 at 110 km). The gap is therefore in SESAM's NRLMSISE-00 configuration (model variant or variation switches; the SARA modelling report would say which), and it is unresolved on the SESAM side. The `dV_rel_max` threshold for this mode (10 %) is a regression guard set at the measured residual × 1.5, not a verification of the atmosphere; the dynamics are verified by the replay mode.
 
 ## Tests
 

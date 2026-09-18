@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from reentry_model import aero, atmosphere, body, cli, fap, sesam_io
+from reentry_model import aero, atmosphere, body, fap, sesam_io
 from reentry_model import compare
 from reentry_model import trajectory as tj
 

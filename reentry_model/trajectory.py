@@ -75,6 +75,9 @@ class History:
 
 class Simulator:
     def __init__(self, initial, body, atmosphere, tables, bridging, settings):
+        if initial.altitude >= settings.escape_altitude:
+            raise ValueError("initial altitude {:.0f} m must be below the escape altitude {:.0f} m".format(
+                initial.altitude, settings.escape_altitude))
         self.initial, self.body, self.atmosphere = initial, body, atmosphere
         self.tables, self.bridging, self.settings = tables, bridging, settings
         self.area = math.pi * settings.diameter ** 2 / 4.0
@@ -93,6 +96,9 @@ class Simulator:
         # the altitude used for the atmosphere.state() lookup to [ground_altitude, escape_altitude]
         # so that transient excursion doesn't raise; `h` itself (and thus AeroState.h, used for
         # the reported/history altitude) stays the TRUE, unclamped geodetic altitude.
+        # The upper clamp only ever sees this trial-stage overshoot: __init__ rejects any initial
+        # altitude at or above escape_altitude, so a real (non-trial) state can't reach here already
+        # past the top of the table.
         h_atm = min(max(h, self.settings.ground_altitude), self.settings.escape_altitude)
         fs = self.atmosphere.state(t, h_atm, lat, lon)
         e, n, u = earth.enu_basis(lat, lon)

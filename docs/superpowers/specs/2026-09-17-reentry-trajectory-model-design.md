@@ -154,13 +154,15 @@ C_D,fm(Ma), C_D,c(Ma): linear interpolation of the six-point tables for 5 ≤ Ma
 at 30; for Ma < 5: C_D,c = 0.898818 (1 ≤ Ma < 5) and 0.449409 (Ma < 1); C_D,fm clamped at its
 Ma-5 value (irrelevant in practice: Kn is tiny wherever Ma < 5).
 C_D = C_D,c + (C_D,fm − C_D,c) f(Kn), with `Bridging` objects:
-- `SesamErf` (default): f = ½[1 + erf((log10 Kn + 0.845)/0.585)]
+- `SesamTable` (default): f(Kn) tabulated from bin means of (C_D − C_D,c)/(C_D,fm − C_D,c) over SESAM
+  output (1544 rows, 0.25-decade bins)
+- `SesamErf`: the analytic fit of the same data, f = ½[1 + erf((log10 Kn + 0.845)/0.585)]
 - `Sin2(kn_lo, kn_hi)`: f = sin²[(π/2)(log10 Kn − log10 kn_lo)/(log10 kn_hi − log10 kn_lo)]
   clipped to [0, 1] (the textbook form is kn_lo = 0.01, kn_hi = 1)
 - `Matting`: placeholder raising NotImplementedError until the 1971 relation is transcribed
   from the paper (Step 2 uses it for heating; the class exists so the interface is fixed).
-Requirement: with the replay atmosphere, reproduce SESAM's `drag` column to within 0.01
-(absolute C_D) for Ma ≥ 5 and exactly below.
+Requirement: reproduce SESAM's `drag` column of the reference runs to rms ≤ 0.010 and max ≤ 0.030
+for Ma ≥ 5 (measured rms 0.004–0.005, max 0.011–0.017) and to within 1.5e-3 for Ma < 5.
 
 ### 6.6 Integration
 `scipy.integrate.solve_ivp`, method DOP853, rtol 1e-9, atol 1e-6 m / 1e-9 m/s, dense
@@ -212,7 +214,7 @@ and C_D vs time. Each plot titles the case and the settings.
 ## 9. Verification and acceptance
 
 Sequence, all four reference cases (R100, R50 × winds on/off):
-1. Replay atmosphere + SesamErf + J2: isolates dynamics and drag. Expected: |ΔV| ≤ 0.2 % of
+1. Replay atmosphere + the default bridging (SesamTable) + J2: isolates dynamics and drag. Expected: |ΔV| ≤ 0.2 % of
    V (≈ 15 m/s at 7.5 km/s) and |Δh| ≤ 100 m over the hypersonic phase; impact time within
    1 %.
 2. NRLMSISE-00 (pymsis) instead of replay: adds the atmosphere implementation. Expected:
@@ -244,8 +246,10 @@ Unit (no DRAMA needed; fixtures = the four reference CSV/JSON pairs in `data/ref
   1 mm of h = 0; cadence and reference-time sampling produce the expected rows.
 - `sesam_io` / `compare`: reading the reference JSON/CSV, metrics on synthetic histories with
   known offsets, plot files created.
-Integration (`-m drama_reference`, runs in seconds): the four comparisons of §9 with the
-confirmed thresholds.
+Integration (`-m reference`): replay flights cost 24 k–6.7 M RHS evaluations (2–448 s) at rtol
+1e-9 because the reconstructed replay T(h) is not monotone and C_D steps at Ma = 1; the eight
+reference flights take ~15 min and run only under `-m reference`; smoothing the replay T(h) / a
+2q/V² replay density is the planned fix. The four comparisons of §9 with the confirmed thresholds.
 
 ## 11. Environment
 

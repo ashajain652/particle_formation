@@ -173,6 +173,10 @@ def cmd_run(args, parser):
             print("  vs {}: hypersonic max |dV| {:.1f} m/s ({:.3%}), max |dh| {:.0f} m; end time {:+.1f} s".format(
                 reference.name, hyp["dV_max_ms"], hyp["dV_rel_max"], hyp["dh_max_m"], doc["comparison"]["metrics"]["d_end_time_s"]))
         print("  csv  -> {}\n  json -> {}".format(os.path.abspath(csv_path), os.path.abspath(json_path)))
+    # spec section 7: exit 1 when the flight escaped rather than reaching the ground or t_max;
+    # the CSV/JSON are already written above so the escaped trajectory is still available.
+    if history.end_reason == "escape":
+        return 1
     return 0
 
 
@@ -200,7 +204,14 @@ def main(argv=None):
         if args.command == "run":
             return cmd_run(args, parser)
         return cmd_compare(args, parser)
-    except (ValueError, FileNotFoundError, KeyError) as exc:
+    except KeyError as exc:
+        # e.g. fap.solar_indices(): the run epoch (or the day before it) has no record in
+        # data/fap_day.dat; could also be a reference CSV missing an expected column.
+        key = exc.args[0] if exc.args else exc
+        print("ERROR: missing key {!r} (epoch outside the fap file, or a reference CSV without that column)".format(key),
+              file=sys.stderr)
+        return 2
+    except (ValueError, FileNotFoundError) as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)
         return 2
     except RuntimeError as exc:

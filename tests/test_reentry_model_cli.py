@@ -56,6 +56,16 @@ def test_unimplemented_bridging_exits_1(tmp_path):
     assert rc == 1
 
 
+def test_escape_exits_1_but_still_writes_outputs(tmp_path):
+    rc = cli.main(["run", "--diameter", "100", "--velocity", "7.8", "--altitude", "140", "--flight-path-angle", "2",
+                   "--lat", "0", "--lon", "0", "--heading", "90", "--atmosphere", "us76", "--t-max", "100",
+                   "--cadence", "5", "--outdir", str(tmp_path), "--name", "esc", "--quiet"])
+    assert rc == 1
+    doc = json.load(open(tmp_path / "esc.json"))
+    assert doc["results"]["end_reason"] == "escape"
+    assert doc["results"]["final_altitude_km"] == pytest.approx(150.0, abs=1e-6)
+
+
 @pytest.mark.parametrize("argv", [
     BASE + ["--atmosphere", "gram"],
     BASE + ["--bridging", "legge"],
@@ -67,3 +77,9 @@ def test_bad_arguments_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv + ["--outdir", str(tmp_path)])
     assert exc.value.code == 2
+
+
+def test_start_above_escape_altitude_exits_2(tmp_path):
+    rc = cli.main(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "200",
+                   "--flight-path-angle", "-1", "--atmosphere", "us76", "--outdir", str(tmp_path)])
+    assert rc == 2

@@ -100,6 +100,13 @@ def test_escape_event_ends_the_flight_at_the_escape_altitude():
     assert hist.results["final_altitude_km"] == pytest.approx(150.0, abs=1e-6)
 
 
+def test_start_at_or_above_escape_altitude_is_rejected():
+    for h in (150e3, 200e3):
+        above = tj.InitialState(7800.0, h, math.radians(2.0), math.radians(90.0), 0.0, 0.0, EPOCH)
+        with pytest.raises(ValueError):
+            make(above, atmosphere.VacuumAtmosphere())
+
+
 def test_aero_state_tolerates_trial_stage_altitudes_outside_the_table():
     # DOP853's adaptive RK stages can trial-evaluate the RHS a little beyond the ground or the top
     # of a hard-bounded table (e.g. US76's [0, 150000] m) before backing off; aero_state must not
