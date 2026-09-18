@@ -1222,7 +1222,7 @@ class NRLMSISE00Atmosphere:
 
 class ReplayAtmosphere:
     """rho(h), m_bar(h), T(h) reconstructed from a SESAM run: rho from its density column; m_bar = air below
-    100 km and, above, back-solved from the Knudsen column (lambda = Kn D, n = 1/(sqrt2 pi d^2 lambda));
+    90 km and, above, back-solved from the Knudsen column (lambda = Kn D, n = 1/(sqrt2 pi d^2 lambda));
     T from Ma and V (T = (V/Ma)^2 m_bar / (gamma k_B)) on rows with Ma > 0.3. Interpolated in altitude."""
 
     def __init__(self, reference, wind=None):
@@ -1235,7 +1235,7 @@ class ReplayAtmosphere:
         keep = np.concatenate([[True], np.diff(h) > 0])          # strictly increasing altitude nodes
         h, rho, kn, ma, V = h[keep], rho[keep], kn[keep], ma[keep], V[keep]
         m_bar = np.full_like(h, M_BAR_AIR)
-        high = (h >= 100e3) & (kn > 0)
+        high = (h >= 90e3) & (kn > 0)
         lam = kn[high] * reference.diameter
         n = 1.0 / (math.sqrt(2.0) * math.pi * HARD_SPHERE_DIAMETER ** 2 * lam)
         m_bar[high] = np.clip(rho[high] / n, 16.0 * ATOMIC_MASS_UNIT, 30.0 * ATOMIC_MASS_UNIT)
@@ -1283,7 +1283,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `earth`, `aero`, `atmosphere` (any object with `.state(t, h, lat, lon) -> Freestream`), `constants`.
 - Produces:
-  - `body.Body` protocol (`mass(t)`, `temperature(t)`, `on_step(t, state, freestream, aero)`), `body.ConstantBody(mass_kg, temperature_K=300.0)`
+  - `body.Body` protocol (`mass(t)`, `temperature(t)`, `on_step(t, state, freestream, aero)`), `body.ConstantBody(mass_kg, temperature_K=300.0)`, `body.sphere_mass(diameter_m, density_kgm3) -> float`
   - `trajectory.InitialState(velocity, altitude, flight_path, heading, lat, lon, epoch)` (SI, rad)
   - `trajectory.Settings(diameter, gravity="j2", rotating_frame=True, rtol=1e-9, atol_position=1e-6, atol_velocity=1e-9, cadence=1.0, t_max=3600.0, ground_altitude=0.0, escape_altitude=150e3)`
   - `trajectory.AeroState(h, lat, lon, freestream, v_rel, V, kn, ma, cd, a_drag, q_dyn)`
@@ -1321,6 +1321,7 @@ def make(initial, atm, mass=MASS_100MM, **settings):
 
 
 def test_constant_body():
+    assert body.sphere_mass(0.1, 2813.0) == pytest.approx(MASS_100MM)
     b = body.ConstantBody(1.5, 310.0)
     assert b.mass(0.0) == 1.5 and b.mass(100.0) == 1.5 and b.temperature(5.0) == 310.0
     assert b.on_step(0.0, None, None, None) is None
@@ -1408,6 +1409,7 @@ Expected: ERROR `cannot import name 'body'`
 ```python
 """The body the trajectory carries. Step 1: constant mass and temperature. Step 2 replaces
 ConstantBody with a thermal model whose on_step advances the temperature field."""
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -1416,6 +1418,11 @@ class Body(Protocol):
     def mass(self, t: float) -> float: ...
     def temperature(self, t: float) -> float: ...
     def on_step(self, t, state, freestream, aero) -> None: ...
+
+
+def sphere_mass(diameter_m, density_kgm3):
+    """Mass of a solid sphere [kg]."""
+    return density_kgm3 * 4.0 / 3.0 * math.pi * (diameter_m / 2.0) ** 3
 
 
 @dataclass
@@ -2123,7 +2130,7 @@ def cmd_run(args, parser):
                               lat=math.radians(args.lat), lon=math.radians(args.lon), epoch=args.epoch)
     settings = tj.Settings(diameter=args.diameter * 1e-3, gravity=args.gravity, rtol=args.rtol,
                            cadence=args.cadence, t_max=args.t_max)
-    mass = args.material_density * 4.0 / 3.0 * math.pi * (settings.diameter / 2.0) ** 3
+    mass = body.sphere_mass(settings.diameter, args.material_density)
     atm, atm_name, atm_info = make_atmosphere(args.atmosphere, args.epoch, args.wind)
     reference = sesam_io.load_reference(args.reference) if args.reference else None
     sim = tj.Simulator(initial, body.ConstantBody(mass, args.temperature), atm,
@@ -2389,7 +2396,7 @@ def simulate(ref, mode):
     else:
         solar = fap.solar_indices(fap.load_fap_day(fap.DEFAULT_FAP_DAY), ref.initial.epoch.date())
         atm = atmosphere.NRLMSISE00Atmosphere(ref.initial.epoch, solar)
-    mass = ref.material_density * 4.0 / 3.0 * 3.141592653589793 * (ref.diameter / 2.0) ** 3
+    mass = body.sphere_mass(ref.diameter, ref.material_density)
     sim = tj.Simulator(initial, body.ConstantBody(mass), atm, aero.SphereDragTables.from_json(), aero.SesamTable(),
                        tj.Settings(diameter=ref.diameter, cadence=5.0))
     return sim.run(extra_times=ref.time)
