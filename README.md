@@ -199,7 +199,16 @@ is in-sample by design; the trajectory comparison is the independent check. Outp
 `reentry_model_output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
 (inputs, settings, results, comparison metrics, provenance), and with `--reference` a folder of six plots
 (V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `data/reference_runs/` holds the
-four committed SESAM references (100 mm from 77.5 km, 50 mm from 115 km, winds on/off).
+four committed NRLMSISE-00 SESAM references (100 mm from 77.5 km, 50 mm from 115 km, winds on/off, `_msis`) and the
+same two spheres run on SESAM's static US76 table (winds off, no `_msis` in the name). The US76 pairs give the
+like-for-like check — SESAM and the model on the identical atmosphere table (`--atmosphere us76`) — and agree over
+the hypersonic phase to 3.9 m/s (0.24 %) / 18 m for the 100 mm sphere and 3.6 m/s (0.06 %) / 4 m for the 50 mm sphere,
+impact times within 0.2 s and 0.8 s:
+
+```bash
+"$PY" -m reentry_model run --diameter 50 --velocity 7.5 --altitude 115 --flight-path-angle -0.959331 --atmosphere us76 \
+    --reference data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_nowind.csv
+```
 
 ### Verification (Task 10, `analysis/reentry_model_verification.py`)
 
