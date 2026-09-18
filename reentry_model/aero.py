@@ -77,6 +77,27 @@ class SesamTable:
         return float(np.interp(math.log10(kn), self.LOG10_KN, self.F, left=0.0, right=1.0))
 
 
+class SesamHeatTable:
+    """SESAM's convective-heat factor F_h(Kn) = Q / (A x 0.27471 x q_DKR x hot-wall factor), measured on the two no-melt
+    US76 reference runs (2026-09-18; 371 rows with Ma >= 5, hot-wall factor > 0.3) in 0.125-decade bins of log10 Kn;
+    linear in log10 Kn between bin centres, clamped outside. It is NOT the drag's f(Kn) blend with a free-molecular
+    flux: SESAM's transitional heating lies far below both the DKR and the textbook free-molecular values (0.14 x
+    continuum at Kn 1, where the drag blend would give 0.5), decaying like Kn^-0.24 in the free-molecular tail
+    (0.059 at Kn 40 = 0.78 x the cos-theta average of 1/2 rho V^3). Reproduces the measured rows to rms 0.7 %,
+    max 3.4 %. Used only by the SESAM-equivalent verification heating."""
+    LOG10_KN = np.array([-2.688, -2.562, -2.438, -2.312, -2.188, -2.062, -1.938, -1.812, -1.688, -1.562, -1.438, -1.312,
+                         -1.188, -1.062, -0.938, -0.812, -0.688, -0.562, -0.438, -0.312, -0.188, -0.062, 0.062, 0.188,
+                         0.312, 0.438, 0.562, 0.688, 0.812, 0.938, 1.062, 1.188, 1.312, 1.438, 1.562])
+    F = np.array([1.0077, 1.0073, 1.0066, 1.0062, 1.0056, 1.0053, 1.0050, 1.0020, 0.9923, 0.9734, 0.9390, 0.8909,
+                  0.8228, 0.7405, 0.6548, 0.5639, 0.4645, 0.3673, 0.2868, 0.2176, 0.1693, 0.1442, 0.1371, 0.1334,
+                  0.1289, 0.1233, 0.1169, 0.1102, 0.1029, 0.0949, 0.0868, 0.0792, 0.0715, 0.0641, 0.0594])
+
+    def __call__(self, kn):
+        if kn <= 0.0:
+            return float(self.F[0])
+        return float(np.interp(math.log10(kn), self.LOG10_KN, self.F))
+
+
 class SesamErf:
     """Analytic fit of the same data: f = 1/2 [1 + erf((log10 Kn - center)/width)] (rms 0.0065, max error 0.027 near Kn 0.75)."""
 
