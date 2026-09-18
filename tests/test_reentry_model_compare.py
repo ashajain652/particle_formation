@@ -1,4 +1,5 @@
 """compare.py: model-vs-SESAM metrics and plots on a synthetic history with known offsets."""
+import math
 import os
 
 import numpy as np
@@ -40,6 +41,7 @@ def test_metrics_recover_known_offsets(ref):
     assert m["hypersonic"]["n_points"] < m["all"]["n_points"]
     assert m["hypersonic"]["dV_rel_max"] == pytest.approx(5.0 / 1000.0, abs=3e-4)   # worst at the last V_ref > 1 km/s
     assert m["d_end_time_s"] == 0.0 and m["final_velocity_model_ms"] == pytest.approx(ref.velocity[-1] + 5.0)
+    assert m["d_final_velocity_ms"] == pytest.approx(5.0)
 
 
 def test_alignment_uses_only_reference_times_inside_the_model_flight(ref):
@@ -48,6 +50,18 @@ def test_alignment_uses_only_reference_times_inside_the_model_flight(ref):
     assert a["t"][-1] <= short.columns["time_s"][-1] and len(a["t"]) == 100
     m = compare.metrics(short, ref)
     assert m["d_end_time_s"] < 0.0
+
+
+def test_phase_metrics_are_nan_when_the_phase_is_empty(ref):
+    a = compare.align(synthetic_history(ref), ref)
+    phase = compare._phase(a, np.zeros(len(a["t"]), dtype=bool))
+    assert phase["n_points"] == 0
+    assert math.isnan(phase["dV_max_ms"])
+    assert math.isnan(phase["dV_rms_ms"])
+    assert math.isnan(phase["dV_rel_max"])
+    assert math.isnan(phase["dV_rel_rms"])
+    assert math.isnan(phase["dh_max_m"])
+    assert math.isnan(phase["dh_rms_m"])
 
 
 def test_plots_are_written(ref, tmp_path):
