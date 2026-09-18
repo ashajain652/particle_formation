@@ -15,3 +15,6 @@ objects.xml
 
 # macOS
 .DS_Store
+
+# harness-managed git worktrees
+.claude/worktrees/
