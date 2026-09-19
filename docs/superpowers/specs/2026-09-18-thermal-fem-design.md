@@ -102,14 +102,16 @@ field() -> np.ndarray | None           # nodal temperatures (None for ConstantBo
   `angles_to(v_hat)` gives θ per patch each step. Heating and radiation are applied per facet.
 - The loader accepts any gmsh volume mesh with one tagged outer surface (Step 3 prism layers and
   other shapes are drop-ins). Node coordinates are stored as a mutable array (later recession).
-- Convergence is a test: halving `h_surface` changes the surface-temperature history by < 1 %.
+- Convergence is a test: halving `h_surface` changes the surface-temperature history by < 1 % (measured ≤ 0.03 %
+  in SESAM-equivalent mode and ≤ 0.11 % in physics mode, stagnation temperature ≤ 0.11 %; §14).
 
 ## 6. Physics
 
 ### 6.1 Heating interface
-`HeatingModel.evaluate(freestream, V, patches, T_wall, radius) -> q_conv` (W/m², positive into the
-body, one value per patch). Inputs per macro step: ρ∞, T∞, m̄, airspeed V, Kn, Ma, nose radius R,
-the wall temperature of every patch; θ per patch from the velocity vector.
+`evaluate(state, theta, T_wall, radius, T_mean=None) -> HeatingResult(q_conv, q_stag, q_stag_c, q_stag_fm, blend)`
+(q_conv in W/m², positive into the body, one value per patch). Inputs per macro step: the aero `state`
+(ρ∞, T∞, m̄, airspeed V, Kn, Ma), nose radius R, the wall temperature of every patch, θ per patch from
+the velocity vector, and the body's mean temperature (physics mode's hot-wall factor).
 
 ### 6.2 SESAM-equivalent mode (`--heating sesam`)
 q_DKR = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15; F_h(Kn) the measured bridging (`aero.SesamHeatTable`,
@@ -189,7 +191,9 @@ must say so (the README paragraph is part of the acceptance of this step).
   `convective_heat_W, rad_cooling_W, integrated_heat_J, absorbed_heat_J, temperature_K` (= T_eq),
   `surface_T_max_K, surface_T_min_K, surface_T_mean_K, T_stagnation_K, T_back_K, T_centre_K,
   q_stag_Wm2, heating_blend_f`; sampled every macro step. Existing column names keep the wrapper's
-  meaning so `compare` and the plots work unchanged.
+  meaning so `compare` and the plots work unchanged. `heating_blend_f`: SESAM-equivalent mode — the
+  measured heat factor F_h(Kn); physics mode — the free-molecular weight w of the distribution
+  (1 − q_stag/q_c under Matting, f(Kn) under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c).
 - Measured (Task 12, 2026-09-18, this machine): 100 mm reference, default mesh, 732 steps, ~158 s
   (SESAM-equivalent), ~182 s including the surface-temperature animation (physics mode; both modes
   run the same 732 steps to the ground); 50 mm from 115 km, 1117 steps, ~47 s (SESAM-equivalent),
@@ -199,13 +203,17 @@ must say so (the README paragraph is part of the acceptance of this step).
 
 ## 8. Solver backends (`thermal/`)
 
-- Protocol `ThermalSolver`: `setup(mesh, material, emissivity)`, `step(dt, q_conv, T_amb) -> T`,
-  `energy() -> float`, `temperature() -> np.ndarray`; factory `thermal_solver(name)`.
+- Protocol `ThermalSolver`: `setup(mesh, material, emissivity)`, `set_temperature(T)`,
+  `step(dt, q_conv, T_amb, dirichlet=None) -> StepResult(T, Q_conv, Q_rad, iterations)`, `temperature()`,
+  `energy()`, `radiated_power(T_amb)`; factory `thermal_solver(name)`.
 - `skfem_backend` (default `--thermal-solver skfem`): scikit-fem `MeshTet` + `ElementTetP1`,
   `Basis`/`FacetBasis` on the tagged boundary, unit element stiffness/mass matrices precomputed once
   and rescaled into a fixed CSR pattern per iterate (20 ms vs 230 ms for scikit-fem's generic `asm`
   at 12.6 k nodes, which is kept as the reference operator in the conformance test); radiation from
-  the facet-mean temperature with its exact Jacobian; solvers as in §7.
+  the facet-mean temperature with its exact Jacobian; solvers as in §7. Production assembly uses
+  precomputed P1 element matrices in numpy; scikit-fem's `MeshTet`/`Basis`/`asm` are used as the
+  reference operators in the conformance test, so "scikit-fem backend" names the reference, not the
+  per-step assembly.
 - `fenicsx_backend` (`--thermal-solver fenicsx`): the same weak form in UFL on the same gmsh mesh
   (`dolfinx.io.gmshio`), backward Euler with `dolfinx.nls.petsc.NewtonSolver`, PETSc LU or CG +
   hypre/gamg; serial by default, MPI-parallel under `mpirun` by construction (not exercised here).
@@ -339,3 +347,14 @@ Measured facts and spec amendments applied by Task 12 (verification against SESA
     < 0.1 %) and compresses isentropically from the freestream instead, fixing the stall the fixed
     point hit as its contraction factor → 1 near Ma 1 (facts §16); both references' `--heating physics`
     runs now reach the ground.
+14. §6.1 (fix round 2, 2026-09-18): heating interface signature corrected to match the implementation:
+    `evaluate(state, theta, T_wall, radius, T_mean=None) -> HeatingResult(q_conv, q_stag, q_stag_c, q_stag_fm, blend)`.
+15. §8 (fix round 2): `ThermalSolver` protocol corrected to match the implementation: `setup(mesh, material,
+    emissivity)`, `set_temperature(T)`, `step(dt, q_conv, T_amb, dirichlet=None) -> StepResult(T, Q_conv, Q_rad,
+    iterations)`, `temperature()`, `energy()`, `radiated_power(T_amb)`.
+16. §8 (fix round 2): `skfem_backend` clarified — production assembly uses precomputed P1 element matrices in
+    numpy; scikit-fem's `MeshTet`/`Basis`/`asm` are used as the reference operators in the conformance test, so
+    "scikit-fem backend" names the reference, not the per-step assembly.
+17. §5 (fix round 2): the `h_surface`-halving convergence check was previously measured only under
+    SESAM-equivalent heating; extended to physics-mode heating on the same 100 mm case (measured ≤ 0.03 % in
+    SESAM-equivalent mode, ≤ 0.11 % in physics mode including the stagnation temperature).

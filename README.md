@@ -246,7 +246,7 @@ Notes:
 
 Step 2 solves the trajectory and the temperature field inside the sphere together: every 0.5 s macro step the
 trajectory advances (DOP853, Step 1 tolerances), an aerothermal model turns the freestream state into a convective
-flux on each of the ~19 000 surface patches (100 mm sphere, 2 mm surface elements), and a finite-element conduction step (P1 tetrahedra, backward Euler,
+flux on each of the ~18 000 surface patches (18 078) (100 mm sphere, 2 mm surface elements), and a finite-element conduction step (P1 tetrahedra, backward Euler,
 Newton on the ε σ T⁴ radiation term, energy-exact secant heat capacity) advances the field. Design:
 `docs/superpowers/specs/2026-09-18-thermal-fem-design.md`; plan: `docs/superpowers/plans/2026-09-18-thermal-fem.md`.
 
@@ -268,10 +268,12 @@ matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity`
 `--linear-solver amg|direct`, `--lumped-mass`; `--dt 0.5`; `--frames-every`, `--animate`, `--stills`. Outputs:
 `<run>.csv` gains `convective_heat_W, rad_cooling_W, integrated_heat_J, absorbed_heat_J, surface_T_max/min/mean_K,
 T_stagnation_K, T_back_K, T_centre_K, q_stag_Wm2, heating_blend_f` (`temperature_K` is the energy-equivalent mean
-temperature, the quantity SESAM's lumped model reports); `<run>/vtk/` holds `field.pvd` + `field_<k>.vtu` (nodal T) and
+temperature, the quantity SESAM's lumped model reports; `heating_blend_f`: SESAM-equivalent mode — the measured heat
+factor F_h(Kn); physics mode — the free-molecular weight w of the distribution (1 − q_stag/q_c under Matting, f(Kn)
+under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c)); `<run>/vtk/` holds `field.pvd` + `field_<k>.vtu` (nodal T) and
 `surface.pvd` + `surface_<k>.vtp` (per-patch q_conv, q_rad, T), `<run>/vtk/animation.mp4` (GIF fallback), `frames/`,
 `stills/`; with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
-`comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3.3 min (physics with
+`comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3 min (182 s with the
 animation); the FEniCSx backend needs the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested
 until that environment exists (selecting it in `drama_env` exits 2).
 
@@ -305,8 +307,13 @@ integrated-heat ratio is reported, per spec section 10.
 Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat
 3 %, T_eq 2 %, radiated power 8 % (= 4 × the temperature margin: the resolved surface radiates at its own, hotter
 temperature — measured 6.65 % while T_eq was within 1.20 %). Refinement (100 mm, to 200 s): halving `h_surface`
-(1 mm / 8 mm, 76 k nodes) changes the surface-temperature history by ≤ 0.03 %, halving Δt changes the peak surface
-temperature by 0.04 %. Energy balance closes to 1e-8 over every flight.
+(1 mm / 8 mm, 76 k nodes) changes the surface-temperature history by ≤ 0.03 % in SESAM-equivalent mode and ≤ 0.11 %
+in physics mode (stagnation temperature ≤ 0.11 %); halving Δt changes the peak surface temperature by 0.04 %.
+Energy balance closes to 1e-7 or better over every flight.
+
+Note that F_h(Kn) and the hot-wall c_p were measured on these same two references, so the Q_conv and integrated-heat
+rows measure the fit's residual (2.6 % / 1.4 % point-wise when the formula is applied to SESAM's own state columns);
+the independent content of the verification is the temperature (T_eq within 1.2 %) and the radiated power.
 
 Findings recorded while building this step (details in `sesam_verified_facts.md` §§15–16 and the spec's amendments):
 - SESAM's convective heating carries a hot-wall factor max(0, 1 − c_p(T − T∞)/(V²/2)) with c_p ≈ 1004.5 J/kg/K
