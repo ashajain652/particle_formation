@@ -1,7 +1,7 @@
 # Coupled trajectory + 3D FEM heat transfer of a sphere (Step 2 of the physics model) — Design
 
 Date: 2026-09-18
-Status: design for review, awaiting implementation plan
+Status: implemented (plan docs/superpowers/plans/2026-09-18-thermal-fem.md); amended with the measurements listed in section 14
 Builds on: `docs/superpowers/specs/2026-09-17-reentry-trajectory-model-design.md` (Step 1, merged at df8aa65)
 
 ## 1. Purpose
@@ -29,8 +29,8 @@ Reference material: `Literature Review/Sphere Demise Model - Planning References
 
 | Topic | Fact |
 |---|---|
-| SESAM heating | Total convective power Q = A_sphere · [(1 − f(Kn))·0.27471·q_DKR + f(Kn)·q_FM]; q_DKR = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15 W/m² reproduces SESAM within 2 % at Kn ≤ 0.02; f(Kn) is the same measured blend as the drag (`aero.SesamTable`); SESAM's own q_FM is ~13× below the textbook ½ρV³ (Klett coefficient), which matters only where Kn > 0.1 and the absolute heating is negligible. |
-| SESAM shape factor | 0.27471 = surface-average ÷ stagnation flux, constant in Mach in the ATDB; applied to the whole surface area of a lumped mass under the "random tumbling" attitude assumption. No hot-wall correction detectable. |
+| SESAM heating | Total convective power Q = A_sphere · 0.27471 · q_DKR · F_h(Kn) · max(0, 1 − c_p(T − T∞)/(V²/2)) for Ma ≥ 1 (½ · 0.27471 · q_DKR below Ma 1), q_DKR = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15 W/m², c_p = 1004.5 J/kg/K, F_h measured in 0.125-decade Kn bins (aero.SesamHeatTable: 1.005 continuum, 0.14 at Kn 1, 0.059 at Kn 40 = 0.78 × the free-molecular cos θ average). Supersedes the (1 − f)·q_DKR + f·q_FM decomposition of facts §4 (measured 2026-09-18, facts §15). |
+| SESAM shape factor | 0.27471 = surface-average ÷ stagnation flux, constant in Mach in the ATDB; applied to the whole surface area of a lumped mass under the "random tumbling" attitude assumption. Hot-wall factor 1 − c_p(T − T∞)/(V²/2), clamped at 0 (facts §15). |
 | Lees integral | Lees' laminar sphere distribution over the windward hemisphere, divided by the whole sphere area: 0.196 (M→∞), 0.200 (M=10), 0.209 (M=5). A fixed-attitude, windward-only model delivers ~28 % less total heat than SESAM at the same stagnation flux. |
 | SESAM radiation | rad_cooling = −ε σ A T⁴ with T_ambient = 0 K, ε = 0.40 (`drama-AA7075`). |
 | SESAM thermal | Lumped (one temperature), c_p(T) and k(T) tables of `drama-AA7075`; the committed `AA7075_nomelt` material holds those curves at their 850 K values above 850 K. |
@@ -95,8 +95,8 @@ field() -> np.ndarray | None           # nodal temperatures (None for ConstantBo
 
 - gmsh OCC `addSphere(0,0,0,R)`; a Distance-from-boundary/Threshold size field grading element size
   from `h_surface` at the surface to `h_core` at the centre; linear tetrahedra; the outer boundary is
-  one physical surface. Defaults for the 100 mm sphere: `h_surface` = 1.0 mm, `h_core` = 8 mm
-  (≈ 40 k nodes); `--mesh-size s` multiplies both. Generated in-process, written as `.msh`, cached
+  one physical surface. Defaults: `h_surface` = 2.0 mm, `h_core` = 8 mm (18.9 k nodes on the 100 mm sphere; 1 mm/8 mm is 76 k
+  nodes and is the convergence mesh); a node is embedded at the centre; `--mesh-size s` multiplies both. Generated in-process, written as `.msh`, cached
   by (R, h_surface, h_core) under `reentry_model_output/meshes/`.
 - `SurfaceMesh`: for every boundary triangle its centroid, outward unit normal, area and node ids;
   `angles_to(v_hat)` gives θ per patch each step. Heating and radiation are applied per facet.
@@ -112,9 +112,10 @@ body, one value per patch). Inputs per macro step: ρ∞, T∞, m̄, airspeed V,
 the wall temperature of every patch; θ per patch from the velocity vector.
 
 ### 6.2 SESAM-equivalent mode (`--heating sesam`)
-q_stag,c = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15; q_stag,fm = ½ α ρ V³ with α = 1;
-q_stag = (1 − f)·q_stag,c + f·q_stag,fm with f = `aero.SesamTable()(Kn)`; **q = 0.27471·q_stag on
-every patch, front and back**; no hot-wall factor.
+q_DKR = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15; F_h(Kn) the measured bridging (`aero.SesamHeatTable`,
+facts §15); hot-wall factor max(0, 1 − c_p(T_eq − T∞)/(V²/2)) for Ma ≥ 1 (½, no hot-wall term, below Ma 1),
+c_p = 1004.5 J/kg/K, using the body's energy-equivalent temperature T_eq (`T_mean`) exactly as SESAM's
+lumped model does; **q = 0.27471 · q_DKR · F_h(Kn) · hot-wall on every patch, front and back**.
 
 *This distribution is a verification device, not a physical model.* It reproduces SESAM's
 tumbling-average assumption so that our resolved conduction, time stepping, material curves and
@@ -126,11 +127,16 @@ must say so (the README paragraph is part of the acceptance of this step).
 - Stagnation, continuum: Fay–Riddell
   q_s = 0.763 Pr^-0.6 (ρ_w μ_w)^0.1 (ρ_s μ_s)^0.4 √(du_e/dx) (h_s − h_w) [1 + (Le^0.52 − 1) γ_cat h_D/h_s],
   du_e/dx = (1/R) √(2 (p_s − p∞)/ρ_s), Pr = 0.71, Le = 1.4; the stagnation state from a normal shock
-  followed by isentropic compression to rest in equilibrium air (Cantera, `airNASA9.yaml`), which also
-  gives μ_s, μ_w (at T_w) and the dissociation enthalpy fraction h_D/h_s from the equilibrium
-  composition; γ_cat ∈ [0, 1] scales the recombination term (1 fully catalytic — SESAM's assumption;
-  0 non-catalytic). `--stagnation sutton-graves` (1.7415e-4 √(ρ/R) V³) and `dkr` are the cheap
-  alternatives; all three carry the hot-wall factor (1 − h_w/h_s) where the correlation is cold-wall.
+  followed by isentropic compression to rest in equilibrium air (Cantera, `airNASA9.yaml`) for the
+  thermodynamics and composition; that mechanism has no transport data, so μ_s and μ_w come from
+  Blottner's curve fits (N2, O2, NO, N, O) with Wilke's mixing rule; the equilibrium solver is used
+  only where T∞ + V²/(2c_p) > 1500 K, which also gives μ_s, μ_w (at T_w) and the dissociation
+  enthalpy fraction h_D/h_s from the equilibrium composition; γ_cat ∈ [0, 1] scales the recombination
+  term (1 fully catalytic — SESAM's assumption; 0 non-catalytic); γ_cat scales the Lewis-number term
+  of the equilibrium form (γ_cat = 0 gives the Le = 1 value; the frozen non-catalytic reduction
+  1 − h_D/h_s is a Step 3 option). `--stagnation sutton-graves` (1.7415e-4 √(ρ/R) V³) and `dkr` are the
+  cheap alternatives; all three carry the hot-wall factor (1 − h_w/h_s) where the correlation is
+  cold-wall; each patch's flux is scaled by its own (h_s − h_w)/(h_s − h_w,stag).
 - Stagnation, free-molecular: q_fm = A_cq ρ V (h_s − h_w) (Matting Eq. 1, ≈ ½ A_cq ρ V³); A_cq default
   0.8, range 0.8–1.0 (`--accommodation`).
 - Bridging: Matting Eq. (18) with `--matting-n` (default 1 → q = q_c [1 − exp(−q_fm/q_c)]; general n
@@ -156,8 +162,9 @@ must say so (the README paragraph is part of the acceptance of this step).
 - Outputs per step: nodal T; surface T per patch; **energy-equivalent mean temperature** T_eq defined
   by H(T_eq) = (1/V) ∫ H(T) dV — the temperature of a lumped body holding the same enthalpy, the
   quantity compared with SESAM's lumped `temperature_K`; total convective power Σ q_conv A_patch;
-  total radiated power; integrated absorbed heat ∫(Q_conv − Q_rad) dt; stagnation-point and
-  back-point surface temperatures; surface max/min/mean.
+  total radiated power; `integrated_heat_J` = ∫Q_conv dt (SESAM's meaning: convective input only, not
+  net of radiation); `absorbed_heat_J` = ∫(Q_conv − Q_rad) dt; stagnation-point, back-point and
+  `T_centre_K` (nodal temperature at the mesh centre) surface/volume temperatures; surface max/min/mean.
 
 ## 7. Coupling and numerics (`coupled.py`, `trajectory.py`)
 
@@ -170,78 +177,96 @@ must say so (the README paragraph is part of the acceptance of this step).
   `solve_ivp` call per step; continuity of the state; events as before); `run()` becomes the
   uncoupled wrapper (inert body, `cadence` sampling) and must reproduce the current results to
   < 0.01 m/s and < 0.1 m; the CSV/JSON writers and `read_history_csv` are unchanged.
-- Thermal step: backward Euler; k(T), c_p(T) lagged from the previous Newton iterate (Picard), the
-  radiation term by Newton with its Jacobian 4εσT³ on the boundary mass — the system stays symmetric
-  positive definite; 2–4 iterations to 1e-6 relative; consistent mass by default (`--lumped-mass`).
-  Linear solver: SciPy sparse direct (`--linear-solver direct`, default up to ~50 k nodes) or CG with
-  a pyamg smoothed-aggregation preconditioner (`amg`).
+- Thermal step: backward Euler; k(T) at the element-mean temperature of the previous iterate and the
+  secant heat capacity [h(T_k) − h(T_old)]/(T_k − T_old), so the discrete energy balance is exact to
+  the Newton tolerance for the tabulated c_p; the radiation term by Newton with its Jacobian 4εσT³ on
+  the boundary mass — the system stays symmetric positive definite; 2–4 iterations to 1e-6 relative;
+  consistent mass by default (`--lumped-mass`). Linear solver: CG with a pyamg smoothed-aggregation
+  preconditioner rebuilt every 30 solves (`amg`, default; 0.03 s per solve at 19 k nodes) or SciPy
+  SuperLU (`direct`, 0.4–24 s per solve at 12–76 k nodes, tests only); Newton starts from the
+  extrapolated previous step (2.0–2.1 iterations per step).
 - History columns: the Step 1 columns (unchanged meaning; `mass_kg` constant) plus
-  `convective_heat_W, rad_cooling_W, integrated_heat_J, temperature_K` (= T_eq), `surface_T_max_K,
-  surface_T_min_K, surface_T_mean_K, T_stagnation_K, T_back_K, q_stag_Wm2, heating_blend_f`;
-  sampled every macro step. Existing column names keep the wrapper's meaning so `compare` and the
-  plots work unchanged.
-- Cost target: 100 mm reference at the default mesh ≈ 750 steps × (assembly ≈ 0.2 s + 2–3 solves
-  ≈ 0.1 s) ≈ 4–6 min; pymsis is called once per macro step.
+  `convective_heat_W, rad_cooling_W, integrated_heat_J, absorbed_heat_J, temperature_K` (= T_eq),
+  `surface_T_max_K, surface_T_min_K, surface_T_mean_K, T_stagnation_K, T_back_K, T_centre_K,
+  q_stag_Wm2, heating_blend_f`; sampled every macro step. Existing column names keep the wrapper's
+  meaning so `compare` and the plots work unchanged.
+- Measured (Task 12, 2026-09-18, this machine): 100 mm reference, default mesh, 732 steps, ~151 s
+  (SESAM-equivalent); 50 mm from 115 km, 1117 steps, ~46 s (SESAM-equivalent). Physics mode does not
+  complete to ground on either reference — the shock iteration behind Fay–Riddell fails near Mach 1
+  during descent (facts §16) — so no physics-mode full-flight or animation runtime is measured; a
+  200 s/320 s truncated run (before the Mach 1 band, past peak heating) took ~99 s / ~33 s.
 
 ## 8. Solver backends (`thermal/`)
 
 - Protocol `ThermalSolver`: `setup(mesh, material, emissivity)`, `step(dt, q_conv, T_amb) -> T`,
   `energy() -> float`, `temperature() -> np.ndarray`; factory `thermal_solver(name)`.
 - `skfem_backend` (default `--thermal-solver skfem`): scikit-fem `MeshTet` + `ElementTetP1`,
-  `Basis`/`FacetBasis` on the tagged boundary, assembly per Newton iterate, solvers as in §7.
+  `Basis`/`FacetBasis` on the tagged boundary, unit element stiffness/mass matrices precomputed once
+  and rescaled into a fixed CSR pattern per iterate (20 ms vs 230 ms for scikit-fem's generic `asm`
+  at 12.6 k nodes, which is kept as the reference operator in the conformance test); radiation from
+  the facet-mean temperature with its exact Jacobian; solvers as in §7.
 - `fenicsx_backend` (`--thermal-solver fenicsx`): the same weak form in UFL on the same gmsh mesh
   (`dolfinx.io.gmshio`), backward Euler with `dolfinx.nls.petsc.NewtonSolver`, PETSc LU or CG +
   hypre/gamg; serial by default, MPI-parallel under `mpirun` by construction (not exercised here).
   `dolfinx` is imported lazily; selecting the backend without it exits 2 with a message naming the
-  `fenicsx_env` environment.
+  `fenicsx_env` environment. Written against dolfinx 0.9/0.10; untested until `fenicsx_env` exists;
+  lumped mass not implemented there.
 - Conformance: both backends pass the same analytic tests (§10) and a cross-check on one mesh and
   load history to 0.1 %. FEniCSx tests are skipped automatically when `dolfinx` is not importable.
 
 ## 9. Outputs and visualization
 
-- Run directory `reentry_model_output/<name>/`: `<name>.csv`, `<name>.json` (settings incl. heating
-  mode and parameters, mesh parameters and node count, solver, Δt; results incl. peak surface and
-  mean temperatures with times/altitudes, total absorbed heat, run time), `field.pvd` + `field_<k>.vtu`
-  (nodal T; surface q_conv, q_rad, T), `frames/` and `animation.mp4` (GIF fallback), `stills/`.
+- Run directory: `<outdir>/<name>.csv/.json` as in Step 1; plots, `vtk/` (field.pvd + field_<k>.vtu,
+  surface.pvd + surface_<k>.vtp), `vtk/animation.mp4`, `vtk/frames/`, `vtk/stills/` under
+  `<outdir>/<name>/`.
 - Animation (`--animate`): PyVista off-screen, one frame per `--frames-every` macro steps; sphere
   coloured by surface temperature on a fixed scale (T₀ … run maximum); three-quarter front camera;
   title with t, altitude, velocity; colour bar; stills at start, peak heating, peak temperature,
   impact. Headless rendering of one frame is a unit test.
 - `compare` with a SESAM reference: the six Step 1 plots plus `heating_time.png` (Q_conv model vs
   SESAM, residual), `temperature_time.png` (T_eq, surface max/min, SESAM lumped), `integrated_heat.png`;
-  metrics: max/rms relative error of Q_conv over the hypersonic phase, relative error of integrated
-  heat at the end of the hypersonic phase and at impact, max |T_eq − T_SESAM| and its relative value,
-  max/rms relative error of the radiated power.
+  metrics: power errors relative to SESAM's peak over the hypersonic phase; point-wise Q_conv error
+  over Kn_ref < 0.01 and Q_ref > 10 % of peak; integrated heat at the end of the hypersonic phase and
+  at the end; max |T_eq − T_SESAM| and relative.
 
 ## 10. Verification and acceptance
 
 **Thermal solver, analytic (unit tests, coarse mesh, both backends):**
-1. Lumped limit: k × 1e6, uniform flux → T_eq vs the lumped ODE, 0.1 %.
-2. Radiative cooling of an isothermal sphere: no flux, k → ∞ → T(t) = [T₀⁻³ + 3εσA t/(m c_p)]⁻¹ᐟ³, 0.1 %
+1. Lumped limit: k × 1e4, uniform flux → T_eq vs the lumped ODE, 0.1 %.
+2. Radiative cooling of an isothermal sphere: no flux, k × 1e4 → T(t) = [T₀⁻³ + 3εσA t/(m c_p)]⁻¹ᐟ³, 0.1 %
    (constant c_p).
 3. Transient conduction: surface temperature stepped and held (Dirichlet variant of the solver used
-   only in the test) → centre temperature vs the Carslaw–Jaeger series, 1 %, constant properties.
+   only in the test) → centre temperature vs the Carslaw–Jaeger series on a uniform 4 mm test mesh
+   (centre 0.5 %, volume mean 0.2 %), constant properties.
 4. Energy balance each step: ΔH = (Q_conv − Q_rad) Δt to 1e-6 relative.
 5. Mesh halving < 1 % on the surface-temperature history; Δt halving < 0.5 % on peak surface T.
 6. Backend cross-check 0.1 %.
 
 **Heating model (unit tests):** DKR, Sutton–Graves and Fay–Riddell at the 100 mm start state
 (ρ = 2.727e-5 kg/m³, V = 7.5 km/s, R = 0.05 m) against hand-computed values: DKR = 1.96e6 W/m²,
-Sutton–Graves = 1.72e6 W/m² (ratio 0.875), Fay–Riddell within 15 % of Sutton–Graves (its fit);
-Lees windward integral 0.196 (M→∞) / 0.209 (M=5); Matting limits and n = 1 closed form
-vs the incomplete-gamma form; SESAM-equivalent total = 0.27471·q_stag·4πR² to 1e-6; the
-free-molecular shape cosθ integrates to 0.25.
+Sutton–Graves = 1.72e6 W/m² (ratio 0.875), Fay–Riddell 2.22e6 W/m² = 1.2–1.4 × Sutton–Graves
+(measured 1.29; 1.14 with the Lewis term off); Lees windward integral 0.196 (M→∞) / 0.209 (M=5);
+Matting limits and n = 1 closed form vs the incomplete-gamma form; SESAM-equivalent total =
+0.27471·q_stag·4πR² to 1e-6; the free-molecular shape cosθ integrates to 0.25.
 
 **Coupling:** inert-body regression vs Step 1 (< 0.01 m/s, < 0.1 m); `reference`-marked comparisons
 of the coupled run (`--heating sesam`, `--atmosphere us76`) against both US76 SESAM references:
-- Q_conv within 3 % (max relative error over the hypersonic phase),
-- integrated heat within 3 % at the end of the hypersonic phase,
-- T_eq within 2 % (in kelvin) of SESAM's lumped temperature over the whole flight,
-- radiated power within 3 %,
-and the physics-mode run reported (integrated-heat ratio to SESAM, expected ≈ 0.7, with the
-0.196/0.2747 and Fay–Riddell/DKR explanation) but not thresholded. As in Step 1, thresholds are
-expectations: the plan's last task measures, records the numbers in the README, and changes a
-threshold only with the measured value and the reason beside it.
+- Q_conv within 3 % of peak over the hypersonic phase (measured 0.46 % / 0.37 %) and 3 % point-wise
+  in the continuum (measured 2.24 % / 2.36 %),
+- integrated heat within 3 % at the end of the hypersonic phase (measured +0.31 % / +0.03 %),
+- T_eq within 2 % (in kelvin) of SESAM's lumped temperature over the whole flight (measured
+  1.20 % / 1.22 %),
+- radiated power within 8 % (= 4 × the temperature margin: the resolved surface radiates at its own,
+  hotter temperature; measured 6.65 % / 3.40 %),
+and the physics-mode run reported (integrated-heat ratio to SESAM at the end of the hypersonic phase,
+measured 0.744 / 0.77, matching the 0.196/0.2747 × Fay–Riddell/DKR × hot-wall estimate) but not
+thresholded — neither reference's `--heating physics` run reaches the ground: the Fay–Riddell shock
+iteration (`gas.EquilibriumAir.stagnation`) does not converge within its cap in the Mach ≈ 1.00–1.01
+band both references cross during descent (facts §16, discovered running this verification); the
+ratio above is measured on a truncated run past peak heating and the end of the hypersonic phase, well
+clear of that band. As in Step 1, thresholds are expectations: the plan's last task measures, records
+the numbers in the README, and changes a threshold only with the measured value and the reason beside
+it.
 
 ## 11. CLI
 
@@ -254,8 +279,9 @@ threshold only with the measured value and the reason beside it.
 
 ## 12. Environment
 
-`drama_env` (`/Users/ashajain/miniforge3/envs/drama_env/bin/python`, Python 3.12, arm64) gains
-`scikit-fem`, `gmsh`, `pyamg`, `pyvista`, `imageio[ffmpeg]`, `cantera` (all pip wheels available).
+`drama_env` (`/Users/ashajain/miniforge3/envs/drama_env/bin/python`, Python 3.12, arm64) gains, pinned
+in `requirements-step2.txt`: `scikit-fem==12.0.2`, `gmsh==4.15.2`, `meshio==5.3.5`, `pyamg==5.3.0`,
+`pyvista==0.49.0`, `imageio==2.37.4`, `imageio-ffmpeg==0.6.0`, `cantera==3.2.0` (all pip wheels).
 FEniCSx: a separate conda-forge environment `fenicsx_env` (`fenics-dolfinx`, `mpich`, `gmsh`,
 plus this package's pip dependencies), created only after explicit go-ahead; its tests run with that
 interpreter and are skipped elsewhere.
@@ -273,3 +299,40 @@ interpreter and are skipped elsewhere.
 6. First-order operator splitting with Δt = 0.5 s; backward Euler in time; P1 tetrahedra.
 7. The SESAM-equivalent heating distribution is uniform over the surface by construction and is not
    a physical model (see §6.2).
+
+## 14. Amendments (2026-09-18)
+
+Measured facts and spec amendments applied by Task 12 (verification against SESAM; facts note §§15–16):
+
+1. Status line updated to "implemented", pointing at this section.
+2. §2 SESAM heating: total power is A·0.27471·q_DKR·F_h(Kn)·hot-wall (max(0, 1 − c_p(T − T∞)/(V²/2))
+   for Ma ≥ 1, half that with no hot-wall term below Ma 1); supersedes the (1 − f)·q_DKR + f·q_FM
+   decomposition of facts §4.
+3. §2 SESAM shape factor: the hot-wall factor is present and quantified (c_p = 1004.5 J/kg/K), clamped
+   at 0, not "no hot-wall correction detectable".
+4. §5 mesh defaults: `h_surface` = 2.0 mm / `h_core` = 8 mm (18.9 k nodes) is the default; 1.0 mm/8 mm
+   (76 k nodes) is the convergence mesh, not the default.
+5. §6.2 SESAM-equivalent formula rewritten to the measured q_DKR · F_h(Kn) · hot-wall form, the
+   hot-wall factor using the body's energy-equivalent temperature T_eq.
+6. §6.3 Fay–Riddell: Cantera supplies thermodynamics/composition only (no transport data); μ_s, μ_w
+   from Blottner + Wilke; the equilibrium solver activates only above ~1500 K stagnation enthalpy;
+   γ_cat's role in the Lewis-number term clarified; each patch scaled by its own hot-wall ratio.
+7. §6.4 outputs: `integrated_heat_J` is ∫Q_conv dt (SESAM's meaning, not net of radiation);
+   `absorbed_heat_J` and `T_centre_K` added to the documented outputs.
+8. §7 numerics: element-mean k(T) with the secant heat capacity (energy-exact), not a Picard-lagged
+   c_p; solver performance (amg 0.03 s/solve at 19 k nodes, direct 0.4–24 s at 12–76 k nodes, 2.0–2.1
+   Newton iterations/step) and measured step counts/runtimes for both references recorded.
+9. §8 backends: `skfem_backend`'s custom assembly measured at 20 ms vs 230 ms for scikit-fem's generic
+   `asm` (12.6 k nodes); `fenicsx_backend`'s dolfinx version target and untested/no-lumped-mass status
+   noted.
+10. §9: run-directory layout and comparison-metric definitions corrected to match the implementation
+    (`vtk/` subdirectory; point-wise continuum Q_conv error; heat at end of hypersonic phase and at
+    the end).
+11. §10 acceptance: Fay–Riddell/Sutton–Graves ratio measured (1.29; 1.14 with the Lewis term off,
+    both at 2.22e6 W/m² catalytic); the Carslaw–Jaeger check uses a uniform 4 mm mesh (measured 0.5 %
+    centre, 0.2 % volume mean); the lumped/radiative-cooling checks use k × 1e4, not 1e6; the
+    radiated-power threshold widened to 8 % (reason: the resolved surface radiates at its own, hotter
+    temperature); the measured values of the README's verification table recorded; the physics-mode
+    run does not reach the ground on either reference (facts §16) — its reported ratio is measured on
+    a truncated run past the hypersonic phase instead.
+12. §12 environment: `requirements-step2.txt` versions pinned and listed explicitly.

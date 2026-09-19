@@ -174,7 +174,7 @@ holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 ## Physics model — `reentry_model` (Step 1: trajectory)
 
 A first-principles re-entry model of a solid sphere, built to be verified against SESAM. Step 1 integrates the
-trajectory only (constant mass): rotating-Earth 3-DOF in ECEF coordinates with J2 gravity, NRLMSISE-00 (pymsis)
+trajectory only (constant mass; Step 2, coupled 3D heat transfer, follows below): rotating-Earth 3-DOF in ECEF coordinates with J2 gravity, NRLMSISE-00 (pymsis)
 with the fap-file solar activity or the US76 table SESAM ships, SESAM's sphere drag tables blended by a Knudsen
 bridging function measured from SESAM's own output, DOP853 integration. Design:
 `docs/superpowers/specs/2026-09-17-reentry-trajectory-model-design.md`; the SESAM facts it relies on:
@@ -242,13 +242,104 @@ Notes:
   reference's own columns would remove this artefact (not implemented).
 - NRLMSISE-00 mode: the model's density (pymsis, the NRL reference implementation) differs from the density SESAM's built-in NRLMSISE-00 produced for the same epoch, place and solar inputs by an altitude-structured ratio: pymsis/SESAM = 0.70 at 110 km, 0.63 at 105 km, 0.63 at 100 km, 0.71 at 95 km, 0.85 at 90 km, 0.99 at 85 km, 1.06 at 80 km, 1.05 at 70 km, 1.07 at 60 km, 1.09 at 50 km, 1.07 at 40 km, 1.02 at 20 km (1 Aug 2024 12:53 UT, 29.5° N 82.1° W, F10.7 234 / 194, Ap 19). The solar inputs are not the cause (F10.7 170–246, Ap 8–56, storm mode and pymsis's historical indices move the ratio by < 2 %). A SESAM epoch experiment (same state, 1 Feb vs 1 Aug 2024) shows SESAM's density does respond to the date — Feb/Aug = 1.18–1.26 at 95–110 km, 1.04 at 70–80 km, 0.97–0.98 at 40–50 km — but with roughly half the seasonal amplitude of the reference implementation (pymsis: 1.29–1.71 and 0.91–0.92), and it responds to local time (00 UT/12 UT = 0.93 at 110 km). The gap is therefore in SESAM's NRLMSISE-00 configuration (model variant or variation switches; the SARA modelling report would say which), and it is unresolved on the SESAM side. The `dV_rel_max` threshold for this mode (10 %) is a regression guard set at the measured residual × 1.5, not a verification of the atmosphere; the dynamics are verified by the replay mode.
 
+## Physics model — `reentry_model` (Step 2: coupled 3D heat transfer)
+
+Step 2 solves the trajectory and the temperature field inside the sphere together: every 0.5 s macro step the
+trajectory advances (DOP853, Step 1 tolerances), an aerothermal model turns the freestream state into a convective
+flux on each of the ~19 000 surface patches (100 mm sphere, 2 mm surface elements), and a finite-element conduction step (P1 tetrahedra, backward Euler,
+Newton on the ε σ T⁴ radiation term, energy-exact secant heat capacity) advances the field. Design:
+`docs/superpowers/specs/2026-09-18-thermal-fem-design.md`; plan: `docs/superpowers/plans/2026-09-18-thermal-fem.md`.
+
+```bash
+"$PY" -m pip install -r requirements-step2.txt          # once, in drama_env (scikit-fem, gmsh, pyamg, pyvista, imageio-ffmpeg, cantera)
+# verification mode: SESAM's own heat input, uniform over the surface (NOT physical, see below), vs the US76 SESAM reference
+"$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
+    --thermal fem --heating sesam --reference data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
+# physics mode: Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution, with the surface-temperature animation
+# (does not reach the ground on either reference sphere -- see the "physics mode" finding below; --t-max lets it
+# run far enough to pass peak heating and the animation's interesting part)
+"$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
+    --thermal fem --heating physics --t-max 200 --animate
+"$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> reentry_model_output/verification_thermal/summary.md
+```
+
+Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
+matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1); `--material` (packaged
+`AA7075_nomelt`), `--emissivity` (material's 0.40), `--t-ambient` (0 K, SESAM's; 200 K optional); `--h-surface 2`,
+`--h-core 8` (mm; 18.9 k nodes on the 100 mm sphere), `--mesh-size` (multiplier); `--thermal-solver skfem|fenicsx`,
+`--linear-solver amg|direct`, `--lumped-mass`; `--dt 0.5`; `--frames-every`, `--animate`, `--stills`. Outputs:
+`<run>.csv` gains `convective_heat_W, rad_cooling_W, integrated_heat_J, absorbed_heat_J, surface_T_max/min/mean_K,
+T_stagnation_K, T_back_K, T_centre_K, q_stag_Wm2, heating_blend_f` (`temperature_K` is the energy-equivalent mean
+temperature, the quantity SESAM's lumped model reports); `<run>/vtk/` holds `field.pvd` + `field_<k>.vtu` (nodal T) and
+`surface.pvd` + `surface_<k>.vtp` (per-patch q_conv, q_rad, T), `<run>/vtk/animation.mp4` (GIF fallback), `frames/`,
+`stills/`; with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
+`comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent); the FEniCSx backend needs
+the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested until that environment exists (selecting
+it in `drama_env` exits 2).
+
+**`--heating sesam` is a verification device, not a physical model.** It applies SESAM's tumbling-average heat input —
+0.27471 × q_DKR × F_h(Kn) × hot-wall factor — uniformly to every patch, front and back, so that the conduction,
+time stepping, material curves and coupling can be compared with SESAM's lumped temperature and heat totals with no
+distribution question in between. Real heating is concentrated on the windward face (`--heating physics`: Lees'
+laminar distribution integrates to 0.196 of the stagnation flux over the sphere, zero leeward).
+
+### Verification (`analysis/reentry_model_thermal_verification.py`, `tests/test_reentry_model_reference_thermal.py`)
+
+Coupled model vs the no-melt US76 SESAM references (winds off), default mesh, Δt 0.5 s. Errors over the hypersonic
+phase (V > 1 km/s); power errors are relative to SESAM's peak (its hot-wall factor clamps the heating to zero late in
+the flight, where relative errors are unbounded); the point-wise error is over the continuum part (Kn < 0.01, Q > 10 %
+of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped temperature over the whole flight.
+
+| case | heating | Q_conv max (of peak) | Q_conv point-wise (continuum) | integrated heat (end of hypersonic / end) | max ΔT_eq | radiated (of peak) | peak surface T | runtime |
+|---|---|---|---|---|---|---|---|---|
+| d100.00mm_h077.500km | sesam | 0.46 % | 2.24 % | +0.31 % / +0.30 % | 24.5 K (1.20 %) | 6.65 % | 2089 K at 139 s (SESAM lumped peak 2104 K at 143 s) | 151 s, 732 steps |
+| d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 46 s, 1117 steps |
+| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 (end of hypersonic phase)¹ | — | — | 2319 K stagnation, mean 1717 K | does not reach ground¹ |
+| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.771 (end of hypersonic phase)¹ | — | — | 2493 K stagnation, mean 2151 K | does not reach ground¹ |
+
+¹ Neither reference's `--heating physics` run reaches the ground (`end_reason == "ground"`): the Fay–Riddell
+stagnation state (`gas.EquilibriumAir.stagnation`) fails to converge within its 3000-iteration cap while the sphere
+crosses Ma ≈ 1.00–1.01 during descent (100 mm: t ≈ 221 s, well after peak heating at 94.5 s and the hypersonic phase's
+end at 185.5 s; 50 mm: t ≈ 341.5 s, hypersonic phase ends at 301.5 s) — a fact from the review loop this task's brief
+predates (facts note §16). The peak temperatures and the integrated-heat ratio above are measured on a run truncated
+before that band (100 mm to 200 s, 50 mm to 320 s), which fully covers peak heating and the hypersonic phase; both
+`tests/test_reentry_model_reference_thermal.py::test_physics_mode_is_reported` cases and the unmodified verification
+script (which does not truncate) reproduce the same `RuntimeError` deterministically.
+
+Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat
+3 %, T_eq 2 %, radiated power 8 % (= 4 × the temperature margin: the resolved surface radiates at its own, hotter
+temperature — measured 6.65 % while T_eq was within 1.20 %). Refinement (100 mm, to 200 s): halving `h_surface`
+(1 mm / 8 mm, 76 k nodes) changes the surface-temperature history by ≤ 0.03 %, halving Δt changes the peak surface
+temperature by 0.04 %. Energy balance closes to 1e-8 over every flight.
+
+Findings recorded while building this step (details in `sesam_verified_facts.md` §§15–16 and the spec's amendments):
+- SESAM's convective heating carries a hot-wall factor max(0, 1 − c_p(T − T∞)/(V²/2)) with c_p ≈ 1004.5 J/kg/K
+  (invisible below 850 K, where the earlier facts were measured; it makes SESAM's heating vanish below ~1.8 km/s once
+  the no-melt sphere is at 2000 K), and it halves the continuum heating below Mach 1.
+- SESAM's transitional heating is not its drag blend: relative to 0.27471 × q_DKR it is 0.94 at Kn 0.04, 0.46 at
+  Kn 0.2, 0.14 at Kn 1 and 0.059 at Kn 40 — the last being 0.78 × the textbook free-molecular cos θ average, so SESAM's
+  free-molecular limit is the ordinary ½ρV³ with α ≈ 0.8 (the "13× too low q_FM" of the Step 1 facts was the
+  transitional deficit misread at Kn 0.03). The measured factor F_h(Kn) (`aero.SesamHeatTable`) is what the
+  verification mode uses; a first attempt with the textbook blend gave +12 % / +17 % integrated heat.
+- Fay–Riddell with Cantera's equilibrium air is 1.29 × Sutton–Graves at the 100 mm start (72 % of the stagnation
+  enthalpy is dissociation at 1.5 kPa; Sutton–Graves is a Le = 1 fit), 1.14 × with the Lewis-number term off
+  (independently re-measured this task: q_FR = 2.22e6 W/m², q_SG = 1.72e6 W/m²); `airNASA9.yaml` has no
+  transport data, so viscosity comes from Blottner fits with Wilke mixing.
+- Physics mode delivers 0.74–0.77 × SESAM's integrated heat (0.196/0.2747 × Fay–Riddell/DKR × hot wall) with a
+  600 K stagnation-to-mean temperature difference at peak heating — the reason Step 3 needs the resolved field.
+- Both thermal backends raise `RuntimeError` when their Newton iteration fails to converge, and
+  `EquilibriumAir.stagnation` raises `RuntimeError` when its shock iteration doesn't converge in 3000 iterations
+  (slow near Mach 1, facts §16); the CLI catches all three and exits 1 with the message, rather than hanging or
+  producing a silently wrong result. This is why the physics-mode rows above are capped before the ground.
+
 ## Tests
 
 ```bash
-"$PY" -m pytest -m "not drama and not reference" -q   # unit tests (seconds)
+"$PY" -m pytest -m "not drama and not reference" -q   # unit tests (~4 min; the thermal solver and coupled tests dominate)
 "$PY" -m pytest -m "not drama"     # unit tests, no DRAMA needed (real SESAM outputs in tests/fixtures/)
 "$PY" -m pytest                    # also the integration tests that run SESAM
-"$PY" -m pytest -m reference -q   # the eight reference flights (~15 min)
+"$PY" -m pytest -m reference -q   # the Step 1 reference flights (~15 min) and the Step 2 coupled runs (~35 min)
 ```
 
-To refresh a fixture see `tests/fixtures/README.md`.
+`tests/test_reentry_model_fenicsx.py` runs only with an interpreter that can import `dolfinx` (the `fenicsx_env`
+environment); elsewhere it is skipped. To refresh a fixture see `tests/fixtures/README.md`.
