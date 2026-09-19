@@ -8,8 +8,10 @@ c = [h(T_k) - h(T_old)] / (T_k - T_old) are DG0 cell coefficients refreshed ever
 backend, so both backends discretise the volume terms identically; the radiation term is integrated by quadrature
 on nodal T (skfem uses the facet mean) and the convective load is the same nodal vector A_f/3 per facet node.
 dolfinx renumbers vertices: `node_of_dof`/`dof_of_node` map between the VolumeMesh's node ids and the P1 dofs.
-Serial by default; every dolfinx/PETSc call is MPI-aware by construction (not exercised here). Lumped mass is not
-implemented in this backend. `dolfinx` is imported lazily: the constructor raises MissingBackend without it."""
+Serial by default; written for serial runs against dolfinx 0.10 (the nodal-load addition and the dof/node maps
+assume one process; an MPI version would scatter the loads and map ghost dofs); untested until fenicsx_env exists.
+Lumped mass is not implemented in this backend. `dolfinx` is imported lazily: the constructor raises MissingBackend
+without it."""
 import numpy as np
 
 from . import SIGMA_SB, MissingBackend, StepResult
@@ -29,6 +31,8 @@ class FenicsxThermalSolver:
             raise ValueError("lumped mass is not implemented in the fenicsx backend")
         if linear_solver not in ("direct", "amg"):
             raise ValueError("linear_solver must be direct or amg, got {!r}".format(linear_solver))
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be >= 1")
         self.linear_solver, self.newton_tol, self.max_iterations, self.cg_tol = linear_solver, newton_tol, max_iterations, cg_tol
 
     def setup(self, mesh, material, emissivity):

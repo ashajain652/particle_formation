@@ -172,8 +172,8 @@ def _peak_relative(delta, ref, mask):
 
 def thermal_metrics(history, reference):
     """Spec section 9 metrics. Convective and radiated power: max/rms error relative to SESAM's peak over the hypersonic
-    phase (SESAM's free-molecular heating is ~13x below the textbook value, facts note s.4, so a point-wise relative
-    error would be dominated by the high-Kn start where the absolute heat is negligible); point-wise relative error
+    phase (SESAM's hot-wall factor clamps its heating to zero late in the flight (facts note s.15), so a point-wise
+    relative error next to the clamp is unbounded and the high-Kn start carries negligible absolute heat); point-wise relative error
     of Q_conv restricted to the continuum part (Kn_ref < 0.01 and Q_ref above 10 % of its peak); integrated heat at the end of the hypersonic phase and
     at the end; energy-equivalent temperature vs SESAM's lumped temperature over the whole flight."""
     a = align_thermal(history, reference)

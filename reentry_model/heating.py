@@ -161,7 +161,7 @@ class PhysicsHeating:
             w = 1.0 - q_stag / q_c if q_c > 0.0 else 1.0
         else:
             w = self.sesam_table(state.kn) if np.isfinite(state.kn) else 1.0
-            q_stag = (1.0 - w) * q_c + w * q_fm
+            q_stag = max(0.0, (1.0 - w) * q_c + w * q_fm)
         shape = (1.0 - w) * lees_shape(theta, state.ma) + w * cosine_shape(theta)
         h_w = self.air.air_enthalpy(T_wall)
         per_patch_hot_wall = (h_s - h_w) / (h_s - h_w[i_stag])

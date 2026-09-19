@@ -55,6 +55,8 @@ class SkfemThermalSolver:
                  amg_rebuild_every=30, cg_tol=1e-10):
         if linear_solver not in ("direct", "amg"):
             raise ValueError("linear_solver must be direct or amg, got {!r}".format(linear_solver))
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be >= 1")
         self.linear_solver, self.lumped_mass = linear_solver, lumped_mass
         self.newton_tol, self.max_iterations = newton_tol, max_iterations
         self.amg_rebuild_every, self.cg_tol = amg_rebuild_every, cg_tol

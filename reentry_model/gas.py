@@ -116,12 +116,13 @@ class EquilibriumAir:
                 if equilibrate:
                     g.equilibrate("HP")
                 eps_new = rho_inf / float(g.density)
-                if abs(eps_new - eps) < 1e-10:
+                change = abs(eps_new - eps)
+                if change < 1e-10:
                     converged = True
                     break
                 eps = 0.5 * (eps + eps_new)
             if not converged:
-                raise RuntimeError(f"normal shock iteration did not converge in 3000 iterations (rho {rho_inf:.3e} kg/m3, T {T_inf:.1f} K, V {V:.0f} m/s, last change {abs(eps_new - eps):.2e})")
+                raise RuntimeError(f"normal shock iteration did not converge in 3000 iterations (rho {rho_inf:.3e} kg/m3, T {T_inf:.1f} K, V {V:.0f} m/s, last change {change:.2e})")
             s2 = float(g.entropy_mass)
         h_s = h_inf + 0.5 * V * V                                        # isentropic compression to rest
 
@@ -138,7 +139,7 @@ class EquilibriumAir:
         return self._state()
 
     def wall(self, T_w, p):
-        """Air at the wall temperature and stagnation pressure (equilibrium; molecular below ~2500 K)."""
+        """Air at the wall temperature and stagnation pressure (equilibrium; equilibrated only above T_EQUILIBRATE (1500 K); molecular below)."""
         self.gas.TPX = T_w, p, AIR
         if T_w > T_EQUILIBRATE:
             self.gas.equilibrate("TP")

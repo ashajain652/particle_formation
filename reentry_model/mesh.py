@@ -143,9 +143,11 @@ def generate_sphere_mesh(radius, h_surface=DEFAULT_H_SURFACE, h_core=DEFAULT_H_C
             gmsh.option.setNumber(option, 0)
         gmsh.option.setNumber("Mesh.Algorithm3D", 10)          # HXT
         gmsh.model.mesh.generate(3)
-        gmsh.write(path)
+        tmp = path[:-4] + ".tmp.msh"           # gmsh.write needs the .msh extension to pick the format
+        gmsh.write(tmp)
     finally:
         gmsh.finalize()
+    os.replace(tmp, path)                      # atomic: an interrupted generation never leaves a reusable partial .msh
     return path
 
 

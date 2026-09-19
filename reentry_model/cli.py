@@ -9,6 +9,7 @@ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a mi
 (cantera for --heating physics, dolfinx for --thermal-solver fenicsx: create the fenicsx_env environment).
 """
 import argparse
+import importlib.metadata
 import math
 import os
 import subprocess
@@ -77,12 +78,14 @@ def provenance():
         pymsis_version = pymsis.__version__
     except ImportError:
         pymsis_version = None
+    package_names = {"skfem": "scikit-fem", "gmsh": "gmsh", "pyamg": "pyamg", "pyvista": "pyvista",
+                      "cantera": "cantera", "dolfinx": "fenics-dolfinx"}
     versions = {}
-    for name in ("skfem", "gmsh", "pyamg", "pyvista", "cantera", "dolfinx"):
+    for key, pkg in package_names.items():
         try:
-            versions[name] = __import__(name).__version__
-        except Exception:
-            versions[name] = None
+            versions[key] = importlib.metadata.version(pkg)
+        except importlib.metadata.PackageNotFoundError:
+            versions[key] = None
     return {"package_version": __version__, "git_commit": git_commit(), "numpy": np.__version__,
             "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0], **versions}
 
@@ -101,7 +104,8 @@ def build_parser():
     r.add_argument("--lon", type=float, default=DEFAULT_LON_DEG, help="longitude [deg] (default %(default)s)")
     r.add_argument("--epoch", type=parse_epoch, default=parse_epoch(DEFAULT_EPOCH), help="UTC YYYY-MM-DDTHH:MM:SS (default {})".format(DEFAULT_EPOCH))
     r.add_argument("--material-density", type=float, default=DEFAULT_MATERIAL_DENSITY, help="[kg/m3] (default %(default)s)")
-    r.add_argument("--temperature", type=float, default=300.0, help="initial temperature [K], recorded only (default %(default)s)")
+    r.add_argument("--temperature", type=float, default=300.0,
+                   help="initial temperature [K]: recorded only with --thermal none, the field's initial condition with --thermal fem (default %(default)s)")
     r.add_argument("--atmosphere", default="nrlmsise", help="nrlmsise (default) | us76 | replay:<sesam.csv>")
     r.add_argument("--wind", choices=WINDS, default="none")
     r.add_argument("--bridging", choices=aero.BRIDGING_NAMES, default="sesam-table")
@@ -109,7 +113,9 @@ def build_parser():
     r.add_argument("--rtol", type=float, default=1e-9)
     r.add_argument("--cadence", type=float, default=1.0, help="history sample spacing [s] (default %(default)s)")
     r.add_argument("--t-max", type=float, default=3600.0, help="[s] (default %(default)s)")
-    r.add_argument("--reference", default=None, help="SESAM run CSV to compare against (also samples the model at its times)")
+    r.add_argument("--reference", default=None,
+                   help="SESAM run CSV to compare against (with --thermal none the model is also sampled at its times; "
+                        "with --thermal fem the macro-step history is interpolated)")
     r.add_argument("--outdir", default=DEFAULT_OUTDIR)
     r.add_argument("--name", default=None, help="run name (default: model_d..mm_v..kms_h..km_<atmosphere>_<bridging>_<wind>[_fem-<heating>])")
     r.add_argument("--quiet", action="store_true")

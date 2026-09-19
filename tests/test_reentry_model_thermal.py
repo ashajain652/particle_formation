@@ -36,6 +36,8 @@ def test_factory_and_options():
         thermal.thermal_solver("nope")
     with pytest.raises(ValueError):
         thermal.thermal_solver("skfem", linear_solver="magic")
+    with pytest.raises(ValueError):
+        thermal.thermal_solver("skfem", max_iterations=0)
 
 
 def test_operators_match_scikit_fem_assembly(coarse_sphere_mesh):

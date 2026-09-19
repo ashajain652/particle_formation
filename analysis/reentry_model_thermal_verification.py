@@ -80,6 +80,9 @@ def main(argv=None):
         json.dump(rows, fh, indent=2)
     lines = ["| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
     lines += ["| " + " | ".join(str(r[c]) for c in COLUMNS) + " |" for r in rows]
+    if any(r["mode"] == "physics" for r in rows):
+        lines.append("")
+        lines.append("physics-mode power errors are differences from SESAM's tumbling-average model, not thresholds")
     with open(os.path.join(args.outdir, "summary.md"), "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print("\n".join(lines))

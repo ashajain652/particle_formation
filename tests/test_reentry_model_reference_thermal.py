@@ -18,9 +18,9 @@ NAMES = {
 }
 OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reentry_model_output", "verification_thermal", "reference_tests")
 # Spec section 10 expectations, except the radiated power: the resolved surface radiates at its own (hotter)
-# temperature, so a 2 % temperature margin is a 4 x 2 % = 8 % margin on eps sigma T^4 (measured 6.7 % / 3.4 % on
-# 2026-09-18 while T_eq was within 1.2 %). Task 12 may revise a value only together with the measured number and
-# the reason, recorded in the README verification table.
+# temperature, so a 2 % temperature margin is a 4 x 2 % = 8 % margin on eps sigma T^4 (measured 6.65 % / 3.40 % per
+# the README verification table, T_eq within 1.20 % / 1.22 %). Task 12 may revise a value only together with the
+# measured number and the reason, recorded in the README verification table.
 THRESHOLDS = {"Q_conv_peak_rel_max": 0.03, "Q_conv_continuum_rel_max": 0.03, "integrated_heat_rel_hypersonic": 0.03,
               "dT_rel_max": 0.02, "radiated_peak_rel_max": 0.08}
 
@@ -77,17 +77,31 @@ def test_physics_mode_is_reported(key):
 
 @pytest.mark.reference
 def test_mesh_and_time_step_refinement():
-    """100 mm, SESAM-equivalent, to 200 s (past peak heating and peak surface temperature): halving h_surface
-    (1 mm / 8 mm, 76 k nodes) changes the surface-temperature history by < 1 %; halving dt changes the peak surface
-    temperature by < 0.5 %."""
+    """100 mm, to 200 s (past peak heating and peak surface temperature): halving h_surface (1 mm / 8 mm, 76 k
+    nodes) changes the surface-temperature history by < 1 % under both SESAM-equivalent (measured <= 0.03 %) and
+    physics-mode heating (measured <= 0.11 %, stagnation temperature <= 0.11 %); halving dt changes the
+    SESAM-equivalent peak surface temperature by < 0.5 %."""
     ref = load("d100")
     base = coupled_run(ref, "sesam", t_max=200.0)
     fine = coupled_run(ref, "sesam", h_surface=0.5 * mesh.DEFAULT_H_SURFACE, t_max=200.0)
     t = base.columns["time_s"]
+    sesam_h_surface_max_rel_diff = {}
     for col in ("surface_T_max_K", "surface_T_mean_K", "temperature_K"):
         d = np.abs(np.interp(t, fine.columns["time_s"], fine.columns[col]) - base.columns[col]) / base.columns[col]
+        sesam_h_surface_max_rel_diff[col] = float(d.max())
         assert d.max() < 0.01, (col, d.max())
     half = coupled_run(ref, "sesam", dt=0.25, t_max=200.0)
     assert abs(half.results["peak_surface_T_K"] / base.results["peak_surface_T_K"] - 1.0) < 0.005
+    base_p = coupled_run(ref, "physics", t_max=200.0)
+    fine_p = coupled_run(ref, "physics", h_surface=0.5 * mesh.DEFAULT_H_SURFACE, t_max=200.0)
+    t_p = base_p.columns["time_s"]
+    physics_h_surface_max_rel_diff = {}
+    for col in ("surface_T_max_K", "surface_T_mean_K", "temperature_K", "T_stagnation_K"):
+        d = np.abs(np.interp(t_p, fine_p.columns["time_s"], fine_p.columns[col]) - base_p.columns[col]) / base_p.columns[col]
+        physics_h_surface_max_rel_diff[col] = float(d.max())
+        assert d.max() < 0.01, (col, d.max())
     with open(os.path.join(OUTDIR, "d100__refinement.json"), "w") as fh:
-        json.dump({"base": base.results, "h_surface_halved": fine.results, "dt_halved": half.results}, fh, indent=2, default=str)
+        json.dump({"base": base.results, "h_surface_halved": fine.results, "dt_halved": half.results,
+                    "physics_base": base_p.results, "physics_h_surface_halved": fine_p.results,
+                    "sesam_h_surface_max_rel_diff": sesam_h_surface_max_rel_diff,
+                    "physics_h_surface_max_rel_diff": physics_h_surface_max_rel_diff}, fh, indent=2, default=str)

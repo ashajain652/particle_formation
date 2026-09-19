@@ -1,5 +1,5 @@
-"""First-principles re-entry model of a solid sphere, Step 1: the trajectory (spec:
-docs/superpowers/specs/2026-09-17-reentry-trajectory-model-design.md)."""
+"""First-principles re-entry model of a solid sphere, Steps 1-2: trajectory and coupled 3D heat transfer
+(specs under docs/superpowers/specs/)."""
 import os
 
 __version__ = "0.1.0"

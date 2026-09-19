@@ -4,7 +4,9 @@ Per macro step of dt: Simulator.advance(dt) (DOP853, events truncate the last st
 step -> heating with that state and the wall temperatures at the start of the step -> ThermalBody.advance (radiation
 implicit in the solver) -> history row, and every `frames_every` steps a VTK frame (nodal T on the volume mesh,
 q_conv / q_rad / T per patch on the surface). First-order operator splitting; the dt-halving test bounds its error.
-Mass is constant in Step 2; the loop already carries the body's mass and the mesh so Step 3 can change both."""
+Mass is constant in Step 2; the loop already carries the body's mass and the mesh so Step 3 can change both.
+`body` must be a ThermalBody: CoupledRun uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
+`integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
 import os
 import time
 from dataclasses import dataclass, field
@@ -29,6 +31,8 @@ class CoupledSettings:
 
 class CoupledRun:
     def __init__(self, sim, body, heating_model, settings=None):
+        """`body` must be a ThermalBody (uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
+        `integrated_heat`, beyond the `Body` protocol); `ConstantBody` is for `Simulator.run()` only."""
         self.sim, self.body, self.heating = sim, body, heating_model
         self.settings = settings or CoupledSettings()
         if self.settings.frames_every and not self.settings.output_dir:

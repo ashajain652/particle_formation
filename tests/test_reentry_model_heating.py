@@ -112,6 +112,10 @@ def test_physics_mode_free_molecular_limit_and_sesam_bridging(air, coarse_sphere
     assert fm.total(surface.areas) == pytest.approx(0.25 * fm.q_stag * surface.area, rel=3e-2)  # cos(theta) shape
     sesam = heating.PhysicsHeating(stagnation="sutton-graves", bridging="sesam-table", air=air).evaluate(state(), theta, T_wall, R)
     assert sesam.blend == pytest.approx(heating.aero.SesamTable()(KN))
+    hot_wall = np.full(surface.n_patches, 3000.0)
+    res = heating.PhysicsHeating(stagnation="sutton-graves", bridging="sesam-table", air=air).evaluate(
+        state(rho=1e-3, V=2000.0, kn=1e-5, ma=6.7), theta, hot_wall, R)                        # h_w > h_s: hot-wall clamp
+    assert res.q_stag == 0.0 and np.all(res.q_conv >= 0.0)
     with pytest.raises(ValueError):
         heating.PhysicsHeating(stagnation="magic", air=air)
     with pytest.raises(NotImplementedError):
