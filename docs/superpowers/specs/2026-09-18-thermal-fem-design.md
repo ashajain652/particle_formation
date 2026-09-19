@@ -190,11 +190,12 @@ must say so (the README paragraph is part of the acceptance of this step).
   `surface_T_max_K, surface_T_min_K, surface_T_mean_K, T_stagnation_K, T_back_K, T_centre_K,
   q_stag_Wm2, heating_blend_f`; sampled every macro step. Existing column names keep the wrapper's
   meaning so `compare` and the plots work unchanged.
-- Measured (Task 12, 2026-09-18, this machine): 100 mm reference, default mesh, 732 steps, ~151 s
-  (SESAM-equivalent); 50 mm from 115 km, 1117 steps, ~46 s (SESAM-equivalent). Physics mode does not
-  complete to ground on either reference — the shock iteration behind Fay–Riddell fails near Mach 1
-  during descent (facts §16) — so no physics-mode full-flight or animation runtime is measured; a
-  200 s/320 s truncated run (before the Mach 1 band, past peak heating) took ~99 s / ~33 s.
+- Measured (Task 12, 2026-09-18, this machine): 100 mm reference, default mesh, 732 steps, ~158 s
+  (SESAM-equivalent), ~182 s including the surface-temperature animation (physics mode; both modes
+  run the same 732 steps to the ground); 50 mm from 115 km, 1117 steps, ~47 s (SESAM-equivalent),
+  ~54 s (physics mode, same 1117 steps to the ground). Both heating modes reach the ground on both
+  references (facts §16: the equilibrium-air shock iteration behind Fay–Riddell used to stall near
+  Mach 1 during descent; fixed by skipping the shock at Ma ≤ 1.1, where none exists).
 
 ## 8. Solver backends (`thermal/`)
 

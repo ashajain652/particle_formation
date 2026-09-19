@@ -71,7 +71,11 @@ def main(argv=None):
             path = os.path.join(args.outdir, label + ".json")
             if os.path.isfile(path):
                 with open(path) as fh:
-                    rows.append(row_from_doc(key, mode, json.load(fh)))
+                    doc = json.load(fh)
+                if not doc.get("comparison"):
+                    print("skipping {}: no comparison block (not a run of this script)".format(label))
+                else:
+                    rows.append(row_from_doc(key, mode, doc))
     with open(os.path.join(args.outdir, "summary.json"), "w") as fh:
         json.dump(rows, fh, indent=2)
     lines = ["| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]

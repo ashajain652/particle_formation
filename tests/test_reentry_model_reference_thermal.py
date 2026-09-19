@@ -1,7 +1,8 @@
 """Coupled model vs the two no-melt US76 SESAM references (marker: reference, ~25 min): SESAM-equivalent heating on
 the default mesh against the acceptance thresholds of spec section 10, physics mode reported (not thresholded),
 and the mesh / time-step refinement checks on the 100 mm case. Each run's metrics are also written to
-reentry_model_output/verification_thermal/ for the README table."""
+reentry_model_output/verification_thermal/reference_tests/ (its own subdirectory so these artifacts never collide
+with analysis/reentry_model_thermal_verification.py's identically-named CLI-schema JSONs) for the README table."""
 import json
 import os
 
@@ -15,7 +16,7 @@ NAMES = {
     "d100": "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind",
     "d050": "sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_nowind",
 }
-OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reentry_model_output", "verification_thermal")
+OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reentry_model_output", "verification_thermal", "reference_tests")
 # Spec section 10 expectations, except the radiated power: the resolved surface radiates at its own (hotter)
 # temperature, so a 2 % temperature margin is a 4 x 2 % = 8 % margin on eps sigma T^4 (measured 6.7 % / 3.4 % on
 # 2026-09-18 while T_eq was within 1.2 %). Task 12 may revise a value only together with the measured number and

@@ -292,8 +292,8 @@ of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped tem
 |---|---|---|---|---|---|---|---|---|
 | d100.00mm_h077.500km | sesam | 0.46 % | 2.24 % | +0.31 % / +0.30 % | 24.5 K (1.20 %) | 6.65 % | 2089 K at 139 s (SESAM lumped peak 2104 K at 143 s) | 158 s, 732 steps |
 | d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 47 s, 1117 steps |
-| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 200 s incl. animation, 732 steps |
-| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 58 s, 1117 steps |
+| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 182 s incl. animation, 732 steps |
+| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 54 s, 1117 steps |
 
 Both physics-mode runs now reach the ground (`end_reason == "ground"`, same 732 / 1117 steps as their sesam-mode
 counterparts — the trajectory is heating-mode-independent). The Q_conv/point-wise/ΔT_eq/radiated columns are "—"
