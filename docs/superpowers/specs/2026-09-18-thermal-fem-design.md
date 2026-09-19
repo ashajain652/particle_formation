@@ -258,15 +258,13 @@ of the coupled run (`--heating sesam`, `--atmosphere us76`) against both US76 SE
   1.20 % / 1.22 %),
 - radiated power within 8 % (= 4 × the temperature margin: the resolved surface radiates at its own,
   hotter temperature; measured 6.65 % / 3.40 %),
-and the physics-mode run reported (integrated-heat ratio to SESAM at the end of the hypersonic phase,
-measured 0.744 / 0.77, matching the 0.196/0.2747 × Fay–Riddell/DKR × hot-wall estimate) but not
-thresholded — neither reference's `--heating physics` run reaches the ground: the Fay–Riddell shock
-iteration (`gas.EquilibriumAir.stagnation`) does not converge within its cap in the Mach ≈ 1.00–1.01
-band both references cross during descent (facts §16, discovered running this verification); the
-ratio above is measured on a truncated run past peak heating and the end of the hypersonic phase, well
-clear of that band. As in Step 1, thresholds are expectations: the plan's last task measures, records
-the numbers in the README, and changes a threshold only with the measured value and the reason beside
-it.
+and the physics-mode run reported (integrated-heat ratio to SESAM at the end of the flight, measured
+0.744 / 0.770, matching the 0.196/0.2747 × Fay–Riddell/DKR × hot-wall estimate) but not thresholded.
+Both references' `--heating physics` runs now reach the ground (facts §16: the Fay–Riddell shock
+iteration, `gas.EquilibriumAir.stagnation`, used to stall in the Mach ≈ 1.00–1.01 band both references
+cross during descent; fixed by skipping the shock entirely at Ma ≤ 1.1, where none exists). As in
+Step 1, thresholds are expectations: the plan's last task measures, records the numbers in the
+README, and changes a threshold only with the measured value and the reason beside it.
 
 ## 11. CLI
 
@@ -332,7 +330,11 @@ Measured facts and spec amendments applied by Task 12 (verification against SESA
     both at 2.22e6 W/m² catalytic); the Carslaw–Jaeger check uses a uniform 4 mm mesh (measured 0.5 %
     centre, 0.2 % volume mean); the lumped/radiative-cooling checks use k × 1e4, not 1e6; the
     radiated-power threshold widened to 8 % (reason: the resolved surface radiates at its own, hotter
-    temperature); the measured values of the README's verification table recorded; the physics-mode
-    run does not reach the ground on either reference (facts §16) — its reported ratio is measured on
-    a truncated run past the hypersonic phase instead.
+    temperature); the measured values of the README's verification table recorded, including the
+    physics-mode integrated-heat ratio at the end of the flight (0.744 / 0.770).
 12. §12 environment: `requirements-step2.txt` versions pinned and listed explicitly.
+13. §6.3/§10 (fix round 1, 2026-09-18): `gas.EquilibriumAir.stagnation` skips the normal-shock fixed
+    point entirely at Ma ≤ 1.1 (no shock exists at Ma ≤ 1, and a Ma < 1.1 shock's entropy jump is
+    < 0.1 %) and compresses isentropically from the freestream instead, fixing the stall the fixed
+    point hit as its contraction factor → 1 near Ma 1 (facts §16); both references' `--heating physics`
+    runs now reach the ground.

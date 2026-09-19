@@ -256,10 +256,8 @@ Newton on the ε σ T⁴ radiation term, energy-exact secant heat capacity) adva
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --heating sesam --reference data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
 # physics mode: Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution, with the surface-temperature animation
-# (does not reach the ground on either reference sphere -- see the "physics mode" finding below; --t-max lets it
-# run far enough to pass peak heating and the animation's interesting part)
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
-    --thermal fem --heating physics --t-max 200 --animate
+    --thermal fem --heating physics --animate
 "$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> reentry_model_output/verification_thermal/summary.md
 ```
 
@@ -273,9 +271,9 @@ T_stagnation_K, T_back_K, T_centre_K, q_stag_Wm2, heating_blend_f` (`temperature
 temperature, the quantity SESAM's lumped model reports); `<run>/vtk/` holds `field.pvd` + `field_<k>.vtu` (nodal T) and
 `surface.pvd` + `surface_<k>.vtp` (per-patch q_conv, q_rad, T), `<run>/vtk/animation.mp4` (GIF fallback), `frames/`,
 `stills/`; with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
-`comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent); the FEniCSx backend needs
-the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested until that environment exists (selecting
-it in `drama_env` exits 2).
+`comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3.3 min (physics with
+animation); the FEniCSx backend needs the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested
+until that environment exists (selecting it in `drama_env` exits 2).
 
 **`--heating sesam` is a verification device, not a physical model.** It applies SESAM's tumbling-average heat input —
 0.27471 × q_DKR × F_h(Kn) × hot-wall factor — uniformly to every patch, front and back, so that the conduction,
@@ -292,19 +290,17 @@ of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped tem
 
 | case | heating | Q_conv max (of peak) | Q_conv point-wise (continuum) | integrated heat (end of hypersonic / end) | max ΔT_eq | radiated (of peak) | peak surface T | runtime |
 |---|---|---|---|---|---|---|---|---|
-| d100.00mm_h077.500km | sesam | 0.46 % | 2.24 % | +0.31 % / +0.30 % | 24.5 K (1.20 %) | 6.65 % | 2089 K at 139 s (SESAM lumped peak 2104 K at 143 s) | 151 s, 732 steps |
-| d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 46 s, 1117 steps |
-| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 (end of hypersonic phase)¹ | — | — | 2319 K stagnation, mean 1717 K | does not reach ground¹ |
-| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.771 (end of hypersonic phase)¹ | — | — | 2493 K stagnation, mean 2151 K | does not reach ground¹ |
+| d100.00mm_h077.500km | sesam | 0.46 % | 2.24 % | +0.31 % / +0.30 % | 24.5 K (1.20 %) | 6.65 % | 2089 K at 139 s (SESAM lumped peak 2104 K at 143 s) | 158 s, 732 steps |
+| d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 47 s, 1117 steps |
+| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 200 s incl. animation, 732 steps |
+| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 58 s, 1117 steps |
 
-¹ Neither reference's `--heating physics` run reaches the ground (`end_reason == "ground"`): the Fay–Riddell
-stagnation state (`gas.EquilibriumAir.stagnation`) fails to converge within its 3000-iteration cap while the sphere
-crosses Ma ≈ 1.00–1.01 during descent (100 mm: t ≈ 221 s, well after peak heating at 94.5 s and the hypersonic phase's
-end at 185.5 s; 50 mm: t ≈ 341.5 s, hypersonic phase ends at 301.5 s) — a fact from the review loop this task's brief
-predates (facts note §16). The peak temperatures and the integrated-heat ratio above are measured on a run truncated
-before that band (100 mm to 200 s, 50 mm to 320 s), which fully covers peak heating and the hypersonic phase; both
-`tests/test_reentry_model_reference_thermal.py::test_physics_mode_is_reported` cases and the unmodified verification
-script (which does not truncate) reproduce the same `RuntimeError` deterministically.
+Both physics-mode runs now reach the ground (`end_reason == "ground"`, same 732 / 1117 steps as their sesam-mode
+counterparts — the trajectory is heating-mode-independent). The Q_conv/point-wise/ΔT_eq/radiated columns are "—"
+for physics mode because those thresholds are SESAM-equivalent-mode-specific (spec section 10): physics mode's
+raw heat distribution and timing are deliberately different from SESAM's tumbling average (windward-concentrated
+vs. uniform), so a point-wise or peak-power comparison against SESAM isn't meaningful there — only the
+integrated-heat ratio is reported, per spec section 10.
 
 Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat
 3 %, T_eq 2 %, radiated power 8 % (= 4 × the temperature margin: the resolved surface radiates at its own, hotter
@@ -327,10 +323,10 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
   transport data, so viscosity comes from Blottner fits with Wilke mixing.
 - Physics mode delivers 0.74–0.77 × SESAM's integrated heat (0.196/0.2747 × Fay–Riddell/DKR × hot wall) with a
   600 K stagnation-to-mean temperature difference at peak heating — the reason Step 3 needs the resolved field.
-- Both thermal backends raise `RuntimeError` when their Newton iteration fails to converge, and
-  `EquilibriumAir.stagnation` raises `RuntimeError` when its shock iteration doesn't converge in 3000 iterations
-  (slow near Mach 1, facts §16); the CLI catches all three and exits 1 with the message, rather than hanging or
-  producing a silently wrong result. This is why the physics-mode rows above are capped before the ground.
+- Both thermal backends raise `RuntimeError` when their Newton iteration fails to converge; the CLI catches this
+  (and other model errors) and exits 1 with the message, rather than hanging or producing a silently wrong result.
+- The transonic tail is compressed isentropically without a shock because the shock fixed point stalls at Ma 1 —
+  found by the first full physics-mode run (facts §16).
 
 ## Tests
 
