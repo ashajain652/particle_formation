@@ -60,7 +60,8 @@ def wilke_viscosity(T, mole_fractions, molar_masses):
 
 
 class EquilibriumAir:
-    """Normal shock + isentropic compression to rest in equilibrium air, and the wall state at (T_w, p_s)."""
+    """Normal shock + isentropic compression to rest in equilibrium air, and the wall state at (T_w, p_s). For
+    Ma <= 1.1 (no shock) the compression is isentropic from the freestream; above it a normal shock precedes it."""
 
     def __init__(self, mechanism="airNASA9.yaml"):
         import cantera as ct                    # imported here: only `--heating physics` needs Cantera
@@ -91,28 +92,38 @@ class EquilibriumAir:
         return self._state()
 
     def stagnation(self, rho_inf, T_inf, V):
-        """Equilibrium stagnation state behind the bow shock for freestream (rho, T, V)."""
+        """Equilibrium stagnation state for freestream (rho, T, V). For Ma <= 1.1 (no shock) the compression is
+        isentropic from the freestream; above it a normal shock precedes the compression."""
         g = self.gas
         T_inf = max(T_inf, T_FLOOR)
         g.TDX = T_inf, rho_inf, AIR
         p_inf, h_inf = float(g.P), float(g.enthalpy_mass)
+        mach = V / float(g.sound_speed)
+        s_inf = float(g.entropy_mass)
         equilibrate = T_inf + 0.5 * V * V / CP_AIR > T_EQUILIBRATE     # frozen air below ~1500 K (subsonic/low supersonic states)
-        eps = 0.1                                                     # rho_inf / rho_2, Rankine-Hugoniot fixed point
-        converged = False
-        for _ in range(3000):                                           # damped fixed point converges linearly; contraction factor -> 1 as Ma -> 1 (subsonic), ~600 iters needed (0.12 s); hypersonic ~30
-            u2 = eps * V
-            p2 = p_inf + rho_inf * V * (V - u2)
-            g.HPX = h_inf + 0.5 * (V * V - u2 * u2), p2, AIR
-            if equilibrate:
-                g.equilibrate("HP")
-            eps_new = rho_inf / float(g.density)
-            if abs(eps_new - eps) < 1e-10:
-                converged = True
-                break
-            eps = 0.5 * (eps + eps_new)
-        if not converged:
-            raise RuntimeError(f"normal shock iteration did not converge in 3000 iterations (rho {rho_inf:.3e} kg/m3, T {T_inf:.1f} K, V {V:.0f} m/s, last change {abs(eps_new - eps):.2e})")
-        s2, h_s = float(g.entropy_mass), h_inf + 0.5 * V * V             # isentropic compression to rest
+        if mach <= 1.1:
+            # No shock at Ma <= 1 (and the entropy jump of a Ma < 1.1 shock is < 0.1 %, so the fixed point's
+            # contraction factor -> 1 near Ma 1 is not worth chasing): isentropic compression straight from
+            # the freestream state.
+            p2, s2 = p_inf, s_inf
+        else:
+            eps = 0.1                                                     # rho_inf / rho_2, Rankine-Hugoniot fixed point
+            converged = False
+            for _ in range(3000):                                           # damped fixed point converges linearly; contraction factor -> 1 as Ma -> 1 (subsonic), ~600 iters needed (0.12 s); hypersonic ~30
+                u2 = eps * V
+                p2 = p_inf + rho_inf * V * (V - u2)
+                g.HPX = h_inf + 0.5 * (V * V - u2 * u2), p2, AIR
+                if equilibrate:
+                    g.equilibrate("HP")
+                eps_new = rho_inf / float(g.density)
+                if abs(eps_new - eps) < 1e-10:
+                    converged = True
+                    break
+                eps = 0.5 * (eps + eps_new)
+            if not converged:
+                raise RuntimeError(f"normal shock iteration did not converge in 3000 iterations (rho {rho_inf:.3e} kg/m3, T {T_inf:.1f} K, V {V:.0f} m/s, last change {abs(eps_new - eps):.2e})")
+            s2 = float(g.entropy_mass)
+        h_s = h_inf + 0.5 * V * V                                        # isentropic compression to rest
 
         def residual(log_p):
             g.SPX = s2, math.exp(log_p), AIR
@@ -120,7 +131,7 @@ class EquilibriumAir:
                 g.equilibrate("SP")
             return float(g.enthalpy_mass) - h_s
 
-        p_s = math.exp(brentq(residual, math.log(p2), math.log(2.0 * p2), xtol=1e-12))
+        p_s = math.exp(brentq(residual, math.log(p2), math.log(8.0 * p2), xtol=1e-12))
         g.SPX = s2, p_s, AIR
         if equilibrate:
             g.equilibrate("SP")

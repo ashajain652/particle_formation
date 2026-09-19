@@ -2,6 +2,7 @@
 100 mm reference start (US76 77.5 km: rho 2.727e-5 kg/m3, T 203.6 K, 7.5 km/s, R 0.05 m)."""
 import warnings
 
+import numpy as np
 import pytest
 
 from reentry_model import gas
@@ -60,3 +61,17 @@ def test_stagnation_converges_across_the_flight_envelope(air):
             assert s.p > 0.0
             assert s.rho > rho
             assert s.h == pytest.approx(float(air.air_enthalpy(T_inf)) + 0.5 * V * V, rel=1e-6, abs=5.0)   # abs: the 25 K air-enthalpy table's interpolation error
+
+
+def test_transonic_crossing_converges(air):
+    """The shock fixed point stalls right at Ma 1 (contraction factor -> 1); at Ma <= 1.1 stagnation() now skips the
+    shock and compresses isentropically from the freestream instead (no exception, no discontinuity crossing 1.1)."""
+    rho, T_inf = 7e-2, 220.0
+    ps = []
+    for V in np.arange(240.0, 420.0, 10.0):
+        s = air.stagnation(rho, T_inf, V)
+        assert s.p > 0.0
+        assert s.h == pytest.approx(float(air.air_enthalpy(T_inf)) + 0.5 * V * V, rel=1e-6, abs=5.0)
+        ps.append(s.p)
+    ps = np.array(ps)
+    assert np.all(np.diff(ps) >= -1e-6 * ps[1:])
