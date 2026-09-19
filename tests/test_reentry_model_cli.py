@@ -109,7 +109,9 @@ def test_thermal_run_writes_columns_plots_and_json(tmp_path):
     for plot in compare.PLOT_NAMES + compare.THERMAL_PLOT_NAMES:
         assert os.path.isfile(tmp_path / "fem_short" / plot)
     assert os.path.isfile(tmp_path / "fem_short" / "vtk" / "field.pvd") and doc["files"]["vtk_dir"].endswith("vtk")
-    assert doc["files"]["animation"] is None and len(doc["files"]["stills"]) == 4 and all(os.path.isfile(p) for p in doc["files"]["stills"])
+    assert doc["files"]["animation"] is None and doc["files"]["section"] is None
+    assert len(doc["files"]["stills"]) == 8 and all(os.path.isfile(p) for p in doc["files"]["stills"])       # surface + section stills
+    assert sum(os.path.basename(p).startswith("section_") for p in doc["files"]["stills"]) == 4
     assert doc["provenance"]["skfem"] and doc["provenance"]["gmsh"]
 
 

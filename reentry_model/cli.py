@@ -139,8 +139,8 @@ def build_parser():
     th.add_argument("--lumped-mass", action="store_true")
     th.add_argument("--dt", type=float, default=0.5, help="macro step [s] (default %(default)s)")
     th.add_argument("--frames-every", type=int, default=0, help="VTK frame every n macro steps (default 0: none; 10 with --animate/--stills)")
-    th.add_argument("--animate", action="store_true", help="MP4/GIF of the surface temperature plus stills")
-    th.add_argument("--stills", action="store_true", help="only the four stills (start, peak heating, peak surface T, end)")
+    th.add_argument("--animate", action="store_true", help="MP4/GIF of the surface temperature and of the meridional cross-section, plus stills")
+    th.add_argument("--stills", action="store_true", help="only the stills (start, peak heating, peak surface T, end; surface and section)")
 
     c = sub.add_parser("compare", help="metrics and plots for an existing model history")
     c.add_argument("--model", required=True, help="model history CSV")
@@ -247,8 +247,11 @@ def cmd_run(args, parser):
             doc["comparison"]["thermal_metrics"] = compare.thermal_metrics(history, reference)
             doc["comparison"]["plots"] += [os.path.abspath(p) for p in compare.plot_thermal(history, reference, run_dir, name)]
     if args.thermal == "fem" and (args.animate or args.stills):
-        out = viz.animate(os.path.join(run_dir, "vtk"), history, settings.diameter / 2.0, animation=args.animate)
-        doc["files"]["animation"], doc["files"]["stills"] = out.get("animation"), out["stills"]
+        vtk_dir = os.path.join(run_dir, "vtk")
+        out = viz.animate(vtk_dir, history, settings.diameter / 2.0, animation=args.animate)
+        section = viz.animate_section(vtk_dir, history, settings.diameter / 2.0, animation=args.animate)
+        doc["files"]["animation"], doc["files"]["section"] = out.get("animation"), section.get("animation")
+        doc["files"]["stills"] = out["stills"] + section["stills"]
     if args.thermal == "fem":
         doc["files"]["vtk_dir"] = os.path.abspath(os.path.join(run_dir, "vtk")) if history.results.get("n_frames") else None
     tj.write_run_json(json_path, doc)

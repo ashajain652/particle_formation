@@ -271,8 +271,10 @@ T_stagnation_K, T_back_K, T_centre_K, q_stag_Wm2, heating_blend_f` (`temperature
 temperature, the quantity SESAM's lumped model reports; `heating_blend_f`: SESAM-equivalent mode — the measured heat
 factor F_h(Kn); physics mode — the free-molecular weight w of the distribution (1 − q_stag/q_c under Matting, f(Kn)
 under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c)); `<run>/vtk/` holds `field.pvd` + `field_<k>.vtu` (nodal T) and
-`surface.pvd` + `surface_<k>.vtp` (per-patch q_conv, q_rad, T), `<run>/vtk/animation.mp4` (GIF fallback), `frames/`,
-`stills/`; with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
+`surface.pvd` + `surface_<k>.vtp` (per-patch q_conv, q_rad, T), `<run>/vtk/animation.mp4` (the surface temperature) and
+`<run>/vtk/section.mp4` (the meridional cross-section through the flight axis, windward side on the right; GIF fallback
+for both), `frames/`, `frames_section/`, `stills/` (surface and `section_*` stills at the start, peak heating, peak surface
+temperature and the end); with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
 `comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3 min (182 s with the
 animation); the FEniCSx backend needs the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested
 until that environment exists (selecting it in `drama_env` exits 2).
