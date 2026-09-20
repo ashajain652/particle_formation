@@ -144,13 +144,20 @@ SESAM's own transitional heating law is unknown and reproduced only as a measure
 
 ## 8. The ATDB shape factor
 
-DRAMA's aerothermal database `ATDB_SPHERE.nc` tabulates, for the sphere, two heat factors next to the drag
+DRAMA's aerothermal database `ATDB_SPHERE.nc` (HTG, 2019) tabulates, for the sphere, two heat factors next to the drag
 coefficients: a continuum factor of 0.27471 (constant over Ma 5–30) and a free-molecular factor (0.2707 at Ma 5 →
-0.2501 at Ma 30). They are the ratio of the surface-averaged convective flux to the stagnation-point flux for a
-*randomly tumbling* body, so that SESAM's lumped model can take the total heat as Q = A_sphere · factor · q_stag
-without resolving a distribution: 0.27471 · q_stag on the whole area is what SESAM applies. For comparison, a fixed
-attitude with Lees' laminar distribution over the windward hemisphere gives 0.196 (Ma → ∞) / 0.209 (Ma 5) of q_stag
-over the whole area and nothing on the lee side, and the free-molecular cos θ distribution gives 0.25 — so the ATDB
-value is 37–40 % above the windward-only laminar integral, i.e. it includes leeward/base heating under tumbling (or a
-broader distribution; the HTG report that would say which is not in hand). That difference is the main reason physics
-mode delivers ~0.74 × SESAM's integrated heat.
+0.2501 at Ma 30). A heat factor is the ratio of the surface-averaged convective flux to the stagnation-point flux, so
+that SESAM's lumped model takes the total heat as Q = A_sphere · factor · q_stag without resolving a distribution.
+
+Attitude does not enter for a sphere: whichever way it faces it presents the same geometry to the flow, so the
+instantaneous flux averaged over the whole surface is the same number, tumbling or fixed. (HTG builds its databases
+under a random-tumbling convention, which matters for plates, boxes and cylinders, not for spheres.) SESAM with a fixed
+attitude would therefore still apply 0.27471 to the sphere — the factor is HTG's surface-average-to-stagnation ratio
+for the sphere's flux distribution, not a tumbling correction.
+
+For comparison, Lees' laminar distribution over the windward hemisphere gives 0.196 (Ma → ∞) / 0.209 (Ma 5) of q_stag
+over the whole area and nothing on the lee side, and the free-molecular cos θ distribution gives 0.25. HTG's value is
+37–40 % above the windward-only laminar integral, so its sphere distribution carries leeward/base heating or a broader
+windward distribution than Lees'; the HTG SARA modelling report that would say which is not in hand (measured base
+heating on spheres is only a few percent of q_stag, which does not obviously close the gap). That distribution
+difference — not attitude — is the main reason the physics mode delivers ~0.74 × SESAM's integrated heat.
