@@ -294,7 +294,7 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
     --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 --thermal fem --thermal-solver fenicsx
 ```
 
-**`--heating sesam` is a verification device, not a physical model.** It applies SESAM's tumbling-average heat input —
+**`--heating sesam` is a verification device, not a physical model.** It applies SESAM's surface-averaged heat input —
 0.27471 × q_DKR × F_h(Kn) × hot-wall factor — uniformly to every patch, front and back, so that the conduction,
 time stepping, material curves and coupling can be compared with SESAM's lumped temperature and heat totals with no
 distribution question in between. Real heating is concentrated on the windward face (`--heating physics`: Lees'
@@ -317,8 +317,8 @@ of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped tem
 Both physics-mode runs now reach the ground (`end_reason == "ground"`, same 732 / 1117 steps as their sesam-mode
 counterparts — the trajectory is heating-mode-independent). The Q_conv/point-wise/ΔT_eq/radiated columns are "—"
 for physics mode because those thresholds are SESAM-equivalent-mode-specific (spec section 10): physics mode's
-raw heat distribution and timing are deliberately different from SESAM's tumbling average (windward-concentrated
-vs. uniform), so a point-wise or peak-power comparison against SESAM isn't meaningful there — only the
+raw heat distribution and timing are deliberately different from SESAM's surface average (windward-concentrated
+vs. uniform; for a sphere the ATDB factor is the same for any attitude, see docs/model_assumptions.md §8), so a point-wise or peak-power comparison against SESAM isn't meaningful there — only the
 integrated-heat ratio is reported, per spec section 10.
 
 Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat

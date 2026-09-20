@@ -67,7 +67,7 @@ def test_sesam_equivalent_mode_matches_sesam(key):
 @pytest.mark.reference
 @pytest.mark.parametrize("key", list(NAMES))
 def test_physics_mode_is_reported(key):
-    """Lees x Fay-Riddell delivers less heat than SESAM's tumbling average: the ratio is recorded, not thresholded
+    """Lees x Fay-Riddell delivers less heat than SESAM's surface average: the ratio is recorded, not thresholded
     (expected 0.6-0.9: 0.196/0.2747 x Fay-Riddell/DKR x hot wall)."""
     ref = load(key)
     history = coupled_run(ref, "physics")

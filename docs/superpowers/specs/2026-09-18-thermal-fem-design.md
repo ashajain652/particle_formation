@@ -30,7 +30,7 @@ Reference material: `Literature Review/Sphere Demise Model - Planning References
 | Topic | Fact |
 |---|---|
 | SESAM heating | Total convective power Q = A_sphere · 0.27471 · q_DKR · F_h(Kn) · max(0, 1 − c_p(T − T∞)/(V²/2)) for Ma ≥ 1 (½ · 0.27471 · q_DKR below Ma 1), q_DKR = 1.1035e8 R^-1/2 (ρ/1.225)^1/2 (V/7925)^3.15 W/m², c_p = 1004.5 J/kg/K, F_h measured in 0.125-decade Kn bins (aero.SesamHeatTable: 1.005 continuum, 0.14 at Kn 1, 0.059 at Kn 40 = 0.78 × the free-molecular cos θ average). Supersedes the (1 − f)·q_DKR + f·q_FM decomposition of facts §4 (measured 2026-09-18, facts §15). |
-| SESAM shape factor | 0.27471 = surface-average ÷ stagnation flux, constant in Mach in the ATDB; applied to the whole surface area of a lumped mass under the "random tumbling" attitude assumption. Hot-wall factor 1 − c_p(T − T∞)/(V²/2), clamped at 0 (facts §15). |
+| SESAM shape factor | 0.27471 = surface-average ÷ stagnation flux, constant in Mach in the ATDB; applied to the whole surface area of a lumped mass (attitude-independent for a sphere: HTG's random-tumbling database convention matters only for non-spherical shapes). Hot-wall factor 1 − c_p(T − T∞)/(V²/2), clamped at 0 (facts §15). |
 | Lees integral | Lees' laminar sphere distribution over the windward hemisphere, divided by the whole sphere area: 0.196 (M→∞), 0.200 (M=10), 0.209 (M=5). A fixed-attitude, windward-only model delivers ~28 % less total heat than SESAM at the same stagnation flux. |
 | SESAM radiation | rad_cooling = −ε σ A T⁴ with T_ambient = 0 K, ε = 0.40 (`drama-AA7075`). |
 | SESAM thermal | Lumped (one temperature), c_p(T) and k(T) tables of `drama-AA7075`; the committed `AA7075_nomelt` material holds those curves at their 850 K values above 850 K. |
@@ -120,7 +120,7 @@ c_p = 1004.5 J/kg/K, using the body's energy-equivalent temperature T_eq (`T_mea
 lumped model does; **q = 0.27471 · q_DKR · F_h(Kn) · hot-wall on every patch, front and back**.
 
 *This distribution is a verification device, not a physical model.* It reproduces SESAM's
-tumbling-average assumption so that our resolved conduction, time stepping, material curves and
+surface-average assumption so that our resolved conduction, time stepping, material curves and
 coupling can be checked against SESAM's lumped temperature and heat totals with no distribution
 question in between. The class docstring, a comment at the line applying the factor, and the README
 must say so (the README paragraph is part of the acceptance of this step).
@@ -298,8 +298,8 @@ interpreter (`FI_PROVIDER=tcp`, `CC=<env>/bin/clang` on this Mac, README) and ar
 
 ## 13. Assumptions to state in the thesis
 
-1. Fixed attitude (windward face toward the velocity vector) in physics mode; SESAM's tumbling
-   average reproduced only in the verification mode.
+1. Fixed attitude (windward face toward the velocity vector) in physics mode; SESAM's surface
+   average (attitude-independent for a sphere) reproduced only in the verification mode.
 2. Laminar, equilibrium boundary layer; catalycity as a parameter, fully catalytic by default.
 3. No ablation blowing, no oxidation heating, no shock-layer radiation (negligible for R ≤ 0.1 m
    below 9 km/s).

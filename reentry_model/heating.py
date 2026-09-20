@@ -86,7 +86,7 @@ class SesamEquivalentHeating:
     """SESAM's heating on every patch: q = 0.27471 x q_DKR x F_h(Kn) x max(0, 1 - c_p (T_lumped - T_inf) / (V^2/2))
     for Ma >= 1, and 0.5 x 0.27471 x q_DKR x F_h(Kn) with no hot-wall term below Ma 1 (both measured, module docstring).
 
-    NOT PHYSICAL -- a verification device: the uniform factor reproduces SESAM's tumbling-average lumped-body input so
+    NOT PHYSICAL -- a verification device: the uniform factor reproduces SESAM's surface-averaged lumped-body input so
     that the conduction/coupling can be compared with SESAM's lumped temperature. No distribution over theta; the
     hot-wall factor uses the body's lumped (energy-equivalent) temperature `T_mean` as SESAM does, falling back to
     the mean of `T_wall`. HeatingResult: q_stag is the effective stagnation flux q_DKR x F_h x hot-wall, q_stag_c the
