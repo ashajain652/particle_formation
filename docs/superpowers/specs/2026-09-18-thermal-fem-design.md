@@ -214,12 +214,15 @@ must say so (the README paragraph is part of the acceptance of this step).
   precomputed P1 element matrices in numpy; scikit-fem's `MeshTet`/`Basis`/`asm` are used as the
   reference operators in the conformance test, so "scikit-fem backend" names the reference, not the
   per-step assembly.
-- `fenicsx_backend` (`--thermal-solver fenicsx`): the same weak form in UFL on the same gmsh mesh
-  (`dolfinx.io.gmshio`), backward Euler with `dolfinx.nls.petsc.NewtonSolver`, PETSc LU or CG +
-  hypre/gamg; serial by default, MPI-parallel under `mpirun` by construction (not exercised here).
-  `dolfinx` is imported lazily; selecting the backend without it exits 2 with a message naming the
-  `fenicsx_env` environment. Written against dolfinx 0.9/0.10; untested until `fenicsx_env` exists;
-  lumped mass not implemented there.
+- `fenicsx_backend` (`--thermal-solver fenicsx`): the same linearised system in UFL on the same mesh
+  (`dolfinx.mesh.create_mesh` from the VolumeMesh arrays), backward Euler with the same Picard/Newton
+  loop as the skfem backend (k and the secant heat capacity as DG0 coefficients, radiation Jacobian by
+  quadrature on nodal T), assembled in place into a pre-allocated PETSc matrix and solved with PETSc LU or
+  CG + hypre BoomerAMG whose hierarchy is reused for 30 solves; serial (the nodal loads and dof/node maps
+  assume one process). `dolfinx` is imported lazily; selecting the backend without it exits 2 with a
+  message naming the `fenicsx_env` environment. Verified with dolfinx 0.11.0 (2026-09-20): all conformance
+  tests pass and a 100 s coupled flight matches the skfem backend to every printed digit; ~3x slower in
+  serial (62 s vs 19 s). Lumped mass not implemented there.
 - Conformance: both backends pass the same analytic tests (§10) and a cross-check on one mesh and
   load history to 0.1 %. FEniCSx tests are skipped automatically when `dolfinx` is not importable.
 
@@ -289,9 +292,9 @@ README, and changes a threshold only with the measured value and the reason besi
 `drama_env` (`/Users/ashajain/miniforge3/envs/drama_env/bin/python`, Python 3.12, arm64) gains, pinned
 in `requirements-step2.txt`: `scikit-fem==12.0.2`, `gmsh==4.15.2`, `meshio==5.3.5`, `pyamg==5.3.0`,
 `pyvista==0.49.0`, `imageio==2.37.4`, `imageio-ffmpeg==0.6.0`, `cantera==3.2.0` (all pip wheels).
-FEniCSx: a separate conda-forge environment `fenicsx_env` (`fenics-dolfinx`, `mpich`, `gmsh`,
-plus this package's pip dependencies), created only after explicit go-ahead; its tests run with that
-interpreter and are skipped elsewhere.
+FEniCSx: a separate conda-forge environment `fenicsx_env` (`fenics-dolfinx` 0.11.0, `mpich`, plus this
+package's pip dependencies and pytest), created by the user on 2026-09-19; its tests run with that
+interpreter (`FI_PROVIDER=tcp`, `CC=<env>/bin/clang` on this Mac, README) and are skipped elsewhere.
 
 ## 13. Assumptions to state in the thesis
 
@@ -358,3 +361,8 @@ Measured facts and spec amendments applied by Task 12 (verification against SESA
 17. §5 (fix round 2): the `h_surface`-halving convergence check was previously measured only under
     SESAM-equivalent heating; extended to physics-mode heating on the same 100 mm case (measured ≤ 0.03 % in
     SESAM-equivalent mode, ≤ 0.11 % in physics mode including the stagnation temperature).
+18. §8/§12 (2026-09-20): the FEniCSx backend was run for the first time in `fenicsx_env` (dolfinx 0.11.0). API
+    fixes: `create_mesh(comm, cells, element, x)` argument order; ε σ as a `Constant` so ε = 0 keeps the `ds`
+    domain; Dirichlet dofs assigned exactly after the solve. Performance: in-place assembly and BoomerAMG reuse
+    (0.57 → 0.31 s per macro step on the default mesh; skfem 0.10 s). All seven conformance tests pass, including
+    the 0.1 % cross-check; the "untested" status is withdrawn.

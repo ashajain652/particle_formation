@@ -276,8 +276,23 @@ under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c)); `<run>/vtk/` 
 for both), `frames/`, `frames_section/`, `stills/` (surface and `section_*` stills at the start, peak heating, peak surface
 temperature and the end); with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
 `comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3 min (182 s with the
-animation); the FEniCSx backend needs the separate `fenicsx_env` (conda-forge `fenics-dolfinx`) and is untested
-until that environment exists (selecting it in `drama_env` exits 2).
+animation). The FEniCSx backend (`--thermal-solver fenicsx`) runs from the separate conda environment `fenicsx_env`
+(conda-forge `fenics-dolfinx` 0.11 + this repo's pip dependencies); selecting it in `drama_env` exits 2. It is verified:
+the seven conformance tests (the analytic cases and a 0.1 % cross-check against the skfem backend) pass, and a 100 s
+coupled flight gives the same temperatures, heat totals and energy balance as the skfem backend to every printed
+digit. In serial it is ~3x slower (62 s vs 19 s for those 100 s: dolfinx assembles the forms by quadrature every
+Newton iterate, where the skfem backend rescales precomputed element matrices); its purpose is MPI scaling for the
+larger spheres, which is not exercised yet. Two machine notes for `fenicsx_env` on this Mac: run with
+`FI_PROVIDER=tcp` (MPICH's libfabric otherwise aborts at interpreter exit with "OFI poll failed"), and with
+`CC=$CONDA_PREFIX/bin/clang` if the environment is not activated (FFCx JIT-compiles the forms; Apple's linker
+cannot read the macOS 27.0 SDK on this machine while conda's clang can):
+
+```bash
+FX=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/python
+FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q
+FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m reentry_model run --diameter 100 --velocity 7.5 \
+    --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 --thermal fem --thermal-solver fenicsx
+```
 
 **`--heating sesam` is a verification device, not a physical model.** It applies SESAM's tumbling-average heat input —
 0.27471 × q_DKR × F_h(Kn) × hot-wall factor — uniformly to every patch, front and back, so that the conduction,
@@ -347,4 +362,5 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 ```
 
 `tests/test_reentry_model_fenicsx.py` runs only with an interpreter that can import `dolfinx` (the `fenicsx_env`
-environment); elsewhere it is skipped. To refresh a fixture see `tests/fixtures/README.md`.
+environment, see above; the whole unit tier also passes there apart from the sweep wrapper's `tqdm` dependency);
+elsewhere it is skipped. To refresh a fixture see `tests/fixtures/README.md`.

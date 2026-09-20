@@ -1,4 +1,4 @@
-"""FEniCSx (dolfinx >= 0.9) backend: the scheme of skfem_backend written in UFL on the same mesh (spec section 8).
+"""FEniCSx (dolfinx >= 0.11) backend: the scheme of skfem_backend written in UFL on the same mesh (spec section 8).
 
 Per Newton iterate the linearised, symmetric positive definite system
     a(u, v) = rho c u v / dt + k(T_k) grad u . grad v + 4 eps sigma T_k^3 u v |_Gamma
@@ -8,8 +8,9 @@ c = [h(T_k) - h(T_old)] / (T_k - T_old) are DG0 cell coefficients refreshed ever
 backend, so both backends discretise the volume terms identically; the radiation term is integrated by quadrature
 on nodal T (skfem uses the facet mean) and the convective load is the same nodal vector A_f/3 per facet node.
 dolfinx renumbers vertices: `node_of_dof`/`dof_of_node` map between the VolumeMesh's node ids and the P1 dofs.
-Serial by default; written for serial runs against dolfinx 0.10 (the nodal-load addition and the dof/node maps
-assume one process; an MPI version would scatter the loads and map ghost dofs); untested until fenicsx_env exists.
+Serial by default; written for serial runs (the nodal-load addition and the dof/node maps assume one process; an MPI
+version would scatter the loads and map ghost dofs). Verified with dolfinx 0.11.0 in fenicsx_env (2026-09-20): all
+conformance tests and the cross-check against the skfem backend pass.
 Lumped mass is not implemented in this backend. `dolfinx` is imported lazily: the constructor raises MissingBackend
 without it."""
 import numpy as np
@@ -18,7 +19,8 @@ from . import SIGMA_SB, MissingBackend, StepResult
 
 
 class FenicsxThermalSolver:
-    def __init__(self, linear_solver="amg", lumped_mass=False, newton_tol=1e-6, max_iterations=30, cg_tol=1e-10, **_):
+    def __init__(self, linear_solver="amg", lumped_mass=False, newton_tol=1e-6, max_iterations=30, amg_rebuild_every=30,
+                 cg_tol=1e-10, **_):
         try:
             import dolfinx  # noqa: F401
             import ufl  # noqa: F401
@@ -34,18 +36,20 @@ class FenicsxThermalSolver:
         if max_iterations < 1:
             raise ValueError("max_iterations must be >= 1")
         self.linear_solver, self.newton_tol, self.max_iterations, self.cg_tol = linear_solver, newton_tol, max_iterations, cg_tol
+        self.amg_rebuild_every, self._solves = amg_rebuild_every, 0
 
     def setup(self, mesh, material, emissivity):
         import basix.ufl
         import ufl
         from dolfinx import fem
         from dolfinx import mesh as dmesh
+        from dolfinx.fem import petsc
         from mpi4py import MPI
         from petsc4py import PETSc
         from scipy.spatial import cKDTree
         self.mesh, self.material, self.emissivity = mesh, material, float(emissivity)
         domain = ufl.Mesh(basix.ufl.element("Lagrange", "tetrahedron", 1, shape=(3,)))
-        self.msh = dmesh.create_mesh(MPI.COMM_WORLD, mesh.tets.astype(np.int64), mesh.points, domain)
+        self.msh = dmesh.create_mesh(MPI.COMM_WORLD, mesh.tets.astype(np.int64), domain, mesh.points)   # dolfinx >= 0.9: (comm, cells, element, x)
         self.V = fem.functionspace(self.msh, ("Lagrange", 1))
         self.V0 = fem.functionspace(self.msh, ("DG", 0))
         n_local = self.V.dofmap.index_map.size_local
@@ -62,11 +66,12 @@ class FenicsxThermalSolver:
         self.k_fun, self.c_fun = fem.Function(self.V0), fem.Function(self.V0)
         self.dt_c, self.T_amb_c = fem.Constant(self.msh, PETSc.ScalarType(1.0)), fem.Constant(self.msh, PETSc.ScalarType(0.0))
         u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
-        es = self.emissivity * SIGMA_SB
+        es = fem.Constant(self.msh, PETSc.ScalarType(self.emissivity * SIGMA_SB))   # a Constant, not a float: eps = 0 must keep the ds domain
         self.a = fem.form(self.c_fun / self.dt_c * u * v * ufl.dx + self.k_fun * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
                           + 4.0 * es * self.T_k ** 3 * u * v * ufl.ds)
         self.L = fem.form(self.c_fun / self.dt_c * self.T_old * v * ufl.dx + es * (3.0 * self.T_k ** 4 + self.T_amb_c ** 4) * v * ufl.ds)
         self.rad_form = fem.form(es * (self.T ** 4 - self.T_amb_c ** 4) * ufl.ds)
+        self.A, self.b = petsc.create_matrix(self.a), petsc.create_vector(self.V)     # allocated once, assembled in place
         self.ksp = PETSc.KSP().create(self.msh.comm)
         if self.linear_solver == "direct":
             self.ksp.setType("preonly")
@@ -130,16 +135,29 @@ class FenicsxThermalSolver:
         for iteration in range(1, self.max_iterations + 1):
             self.T_k.x.array[:] = T_k
             self._coefficients(T_k, T_old)
-            A = assemble_matrix(self.a, bcs=bcs)
+            A, b = self.A, self.b
+            A.zeroEntries()
+            assemble_matrix(A, self.a, bcs=bcs)
             A.assemble()
-            b = assemble_vector(self.L)
+            with b.localForm() as local:
+                local.set(0.0)
+            assemble_vector(b, self.L)
             b.array[:] += F_conv
             apply_lifting(b, [self.a], bcs=[bcs])
             b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
             set_bc(b, bcs)
             self.ksp.setOperators(A)
+            # the AMG hierarchy is reused for amg_rebuild_every solves (the operator changes slowly), as in the skfem
+            # backend; LU must refactor whenever the operator changes, and a Dirichlet solve gets a fresh setup
+            reuse = self.linear_solver == "amg" and dirichlet is None and self._solves % self.amg_rebuild_every != 0
+            self.ksp.getPC().setReusePreconditioner(reuse)
+            self._solves += 1
             self.ksp.solve(b, T_new.x.petsc_vec)
+            if self.ksp.getConvergedReason() <= 0:
+                raise RuntimeError("PETSc KSP did not converge (reason {})".format(self.ksp.getConvergedReason()))
             T_new.x.scatter_forward()
+            if dirichlet is not None:
+                T_new.x.array[dofs] = dirichlet[1]              # constrained dofs exactly, as the skfem backend does
             last_relative_change = np.linalg.norm(T_new.x.array - T_k) / np.linalg.norm(T_new.x.array)
             if last_relative_change <= self.newton_tol:
                 converged = True
