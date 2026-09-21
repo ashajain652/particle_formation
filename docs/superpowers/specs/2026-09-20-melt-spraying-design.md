@@ -37,7 +37,7 @@ fate — secondary breakup, cooling, the wake — is Step 4).
 | Our case (100 mm sphere, 60–77 km, 6–7.5 km/s), estimated 2026-09-20 | Post-shock edge state ρ_e ≈ 4·10⁻⁴–2·10⁻³ kg/m³, u_e ≈ 1 km/s mid-sphere, μ_e ≈ 1.7·10⁻⁴ Pa s → Re_e ≈ 300–1200, δ_a ≈ 3–7 mm; α ≈ 2·10⁻⁷, μ ≈ 0.13 → δ_m ≈ 0.07–0.15 mm, V_s ≈ 3–5 m/s (also from τ ≈ μ_e u_e/δ_a ≈ 25–60 Pa and τδ_m/μ_m); We_s ≈ 3–5 — at the threshold; continuum droplet radius k_r 2πδ_m/Δ_f ≈ 90 µm; melt-film equilibration b²/α ≈ 0.3 ms (thermally thin); Kn_δ = λ_e/δ_a ≈ 0.03 at 71 km (slip), < 0.01 below ~65 km; free-molecular shear ρ∞V∞² sin θ cos θ ≈ 1850 Pa at 71 km, 45° (much larger than the continuum 24 Pa — the same ordering as C_D,fm > C_D,c); pressure-gradient runoff term G b²/(2μ) ≈ 25 % of the shear term at b = 0.1 mm, dominant above ~0.3 mm; body deceleration ≈ 30 m/s² → the 1994 RT front mode (needs 10³–10⁵ m/s²) is inactive; droplet freestream Weber number We_d = ρ∞V²·2r/Σ ≈ 1–5 (< 12: no secondary breakup expected). | this design |
 | SESAM melting (lumped) | Mass removed at Q_net/L_f once the whole body is at 850 K (drama-AA7075, L_f 400 kJ/kg); 100 mm: onset 71.0 km (Kn 0.011), fully melted 66.5 km; 50 mm: 74.9 → 73.0 km; a fully melted sphere ends "ballooning" with ~3 mg residual; `thick_mm` is the sphere radius in mm and shrinks with the mass. | facts note §§8–9 |
 | Step 2 state | Surface temperature at peak heating 2319 K (physics) vs mean 1717 K for the no-melt 100 mm sphere; 2 mm surface elements carry a ~30 K gradient across the first element at 2 MW/m² (0.25 mm layers: ~4 K); step cost 0.10 s at 18.9 k nodes (skfem), 0.31 s (FEniCSx). | Step 2 spec §14, README |
-| Liquid AA7075 (assumed, near the liquidus) | ρ_l = 2400 kg/m³, μ_l = 1.3 mPa s, Σ = 0.86 N/m (pure-aluminium values; alloy corrections ≤ 10 %); solidus 750 K, liquidus 908 K, L_f = 400 kJ/kg (DRAMA's value; handbook 380). | Smithells Metals Reference Book; ASM Handbook Vol. 2 (to be cited in the material file) |
+| Material basis (decided 2026-09-20) | DRAMA's `drama-AA7075` solid properties, ε, melting temperature (850 K) and L_f (400 kJ/kg) are used as they are; DRAMA carries no liquid-phase properties, so the film uses pure-aluminium handbook values near the liquidus, recorded as assumptions in the material files: ρ_l = 2400 kg/m³, μ_l = 1.3 mPa s, Σ = 0.86 N/m (alloy corrections ≤ 10 %); `AA7075_range` uses solidus 750 K, liquidus 908 K for the alloy. | DRAMA 4.1.4 material database; Smithells Metals Reference Book; ASM Handbook Vol. 2 (cited in the material files) |
 
 ## 3. Scope
 
@@ -49,7 +49,7 @@ projected area fed back to the trajectory; new history columns, plots, videos; v
 references, Girin 2017/1994 tables and analytic solutions; sensitivity study; CLI; README and `docs/model_assumptions.md`.
 
 Out (later steps): droplet tracking, secondary breakup, cooling/solidification and the wake (Step 4); the within-patch
-size spread (§17); mushy-zone rheology beyond the coherency threshold (§17); vaporisation and blowing; oxide skin;
+size spread (§17); the solidus–liquidus region's own treatment (§17); vaporisation and blowing; oxide skin;
 tumbling or attitude change; nose-radius and shape feedback on heating and drag tables; non-spherical initial shapes;
 MPI runs.
 
@@ -137,12 +137,13 @@ Per patch and step, from the Step 2 stagnation state (p_s, h_s, s_s, ρ_s) and t
 ## 8. Melt film (`film.py`)
 
 - **State.** m_f per patch (kg), b = m_f/(ρ_l A_patch); carried across steps; hand-over on element death.
-- **Feed (solidus–liquidus region, flagged for review §17).** Each surface element's liquid inventory is
-  f_l(T̄_e) φ_e ρ V_e. An element feeds its patch(es) only once f_l ≥ f_coh (`--coherency`, default 0.5: the
-  coherency point of the dendritic skeleton); the increment since the last step goes into the film. Once an element
-  has lost coherency, its remaining solid fraction is treated as carried with the melt as a slurry at the liquid's
-  viscosity; below f_coh the element counts as solid. For the single-temperature material f_coh is irrelevant.
-  The liquid inventory of an element deeper than the surface element is counted when it becomes the surface.
+- **Feed (solidus–liquidus region: decided 2026-09-20, flagged for review §17).** Melt and runoff start at the
+  **liquidus**: a surface element feeds its patch(es) only once its liquid fraction f_l(T̄_e) = 1 (element-mean
+  temperature at or above the liquidus, 908 K for `AA7075_range`, 850 K for `AA7075`); its material φ_e ρ V_e then
+  becomes film (the increment since the last step). Material in the solidus–liquidus range counts as solid for the
+  film — it neither runs off nor is stripped — while the enthalpy method still books its latent heat. The liquid
+  inventory of an element deeper than the surface element is counted when it becomes the surface. The mushy range is
+  to be treated in its own right in a later iteration (§17.2); no coherency parameter is introduced now.
 - **Lubrication solution** with the patch's τ, G, b and δ_m (from §9), μ_l:
   thin branch (b ≤ δ_m): V_s = τb/μ_l + Gb²/(2μ_l), q = τb²/(2μ_l) + Gb³/(3μ_l);
   thick branch (b > δ_m): V_s = τδ_m/μ_l (Girin's Eq. 2 value), q = V_s δ_m/2 + Gb³/(3μ_l).
@@ -256,7 +257,7 @@ measured value and the reason beside it.
    removal 10⁻⁶; element death keeps the surface closed and the area/volume consistent; both thermal backends give
    the same melting run (0.1 %).
 5. **Convergence and sensitivity (reported)**: prism layers 2/4/8 (t0 0.25 mm), Δt 0.5/0.25 s, `--rarefied-shear`,
-   `--runoff`, We_cr 3.08/4.62, k_r and k_t ±30 %, coherency 0.3/0.5/0.7, backend skfem/fenicsx — a table of sprayed
+   `--runoff`, We_cr 3.08/4.62, k_r and k_t ±30 %, material AA7075/AA7075_range, backend skfem/fenicsx — a table of sprayed
    mass, r_median, melt-onset, spraying-onset and demise altitudes for the 100 mm and 50 mm physics-mode flights
    (`analysis/melt_sensitivity.py`).
 6. **Cost target**: a 100 mm physics-mode melting flight on the default (4-layer) mesh in ≤ 6 min serial.
@@ -265,7 +266,7 @@ measured value and the reason beside it.
 
 `run` adds `--melt off|on` (default off: Step 2 behaviour unchanged), `--material AA7075|AA7075_range|<path>`
 (default `AA7075_range` with `--melt on`), `--removal girin|instant`, `--runoff on|off`, `--rarefied-shear
-slip|bridged`, `--we-critical`, `--kr`, `--kt`, `--coherency`, `--prism-layers`, `--layer-thickness` (mm),
+slip|bridged`, `--we-critical`, `--kr`, `--kt`, `--prism-layers`, `--layer-thickness` (mm),
 `--demise-fraction`, `--particles/--no-particles`. `compare` accepts the new columns and produces the mass-loss plots
 when both files carry `mass_kg` variation. Exit codes as before. `analysis/girin_reference.py`,
 `analysis/melt_verification.py`, `analysis/melt_sensitivity.py`.
@@ -281,7 +282,7 @@ scikit-fem/pyamg, PyVista as in Step 2; `fenicsx_env` for the backend cross-chec
 2. Girin's gradient-instability theory with its boundary-layer relations and constants (k_r 0.17, k_t 1.1,
    We_cr 4.62) calibrated on ordinary liquids; the thin-film branch from an inviscid analysis.
 3. Liquid AA7075 as pure aluminium near the liquidus (ρ_l, μ_l, Σ); no oxide skin (Denis et al. saw it stripped).
-4. Solidus–liquidus region: coherency threshold f_coh = 0.5, slurry at the liquid's viscosity (§17).
+4. Solidus–liquidus region: melt and runoff start at the liquidus; mushy material counts as solid for the film (§17).
 5. Continuum boundary-layer relations down to Kn_δ 0.1 with first-order slip; the free-molecular branch extrapolates
    the thin-film theory (§17).
 6. Modified-Newtonian pressure with isentropic expansion for the edge state; laminar boundary layer (Thwaites);
@@ -297,8 +298,10 @@ scikit-fem/pyamg, PyVista as in Step 2; `fenicsx_env` for the backend cross-chec
    range of wavelengths; Girin's 1990 drop-shattering result N(r) ∝ r⁻ˡ, l ≈ 5.5–7.5, could be draped over each
    release, normalised to Δm — as a post-processing option on the source table (each row carries Δn, Δm, r) or a
    switch in `spray`. Left out on 2026-09-20 because it adds an empirical layer with no aluminium data behind it.
-2. **Solidus–liquidus rheology**: the coherency convention of §8 ignores the strength of the mushy skeleton and the
-   viscosity rising by orders of magnitude toward the solidus; it moves the melt-onset altitude by up to ~1 km.
+2. **Solidus–liquidus region**: to be treated uniquely in a later iteration (decided 2026-09-20). The current
+   convention — nothing flows or is stripped below the liquidus — is the conservative extreme; a coherency point of
+   the dendritic skeleton (liquid fraction ~0.3–0.7, casting-metallurgy convention) with a slurry viscosity rising
+   toward the solidus would let melt move earlier, by up to ~1 km of altitude at onset.
 3. **Rarefied thin-film branch**: no film-instability theory exists for free-molecular driving; the extrapolation and
    the shear bridging are the least certain parts of the spraying onset for small spheres.
 4. **Droplet fate** (Step 4): secondary breakup (We_d expected 1–5 here, checked per row), cooling and
