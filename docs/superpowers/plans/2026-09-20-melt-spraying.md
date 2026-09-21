@@ -18,6 +18,7 @@
 - Never modify DRAMA's databases or the wrapper (`sphere_reentry.py`, `sphere_sweep.py`). The two melting references are produced by the wrapper (Task 13) and committed under `data/reference_runs/`.
 - Non-physical devices must say so: `--heating sesam` (Step 2), `--removal instant` and `--k-scale` (Step 3) — docstring, CLI help and README each state that they are verification devices, not physical models (user requirement carried from Step 2).
 - Melt and runoff start at the liquidus; the mushy range counts as solid for the film; no coherency parameter (spec §8, §17.2, user decision of 2026-09-20). Droplets are recorded at birth, one radius per patch and step, no within-patch size spread (spec §17.1).
+- Size feedback (user decision of 2026-09-21, replacing spec §10's fixed R₀): in the model proper the body Knudsen number uses the current equivalent diameter of the remaining mass and the stagnation radius of the heating and surface flow is fitted to the current windward cap; the SESAM verification devices (`--heating sesam` + `--removal instant`) keep D₀ and R₀, which is what SESAM does.
 - Git-ignored output root `reentry_model_output/`; meshes cached under `reentry_model_output/meshes/`; verification outputs under `reentry_model_output/verification_melt/`.
 - Repo conventions: module docstrings, `argparse`, exit codes 0/1/2, tests under `tests/` named `test_reentry_model_<module>.py`, one commit per task, commit messages in the imperative like the existing history, ending with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` (exactly this line).
 - Every task's tests are run with the exact command given in the task; a task is done only when the whole unit tier passes (`"$PY" -m pytest -m "not drama and not reference" -q`).
@@ -38,8 +39,10 @@ These were measured while writing the plan and override the corresponding spec s
 9. **Spraying branches.** A film thicker than δ_m takes the thick (Girin 2017) branch in every regime, with the film velocity the local shear gives it (τ δ_m/μ_l; for the free-molecular shear this is what strips the rim, where the film piled up to 100 mm otherwise); the thin branch (Girin & Kopyt 1994) uses λ* = 1.5 M_e Σ/(ρ_e u_e²) (their 1.5 M d/We_d: the thickness cancels), τ* = 2 capillary periods = 0.798 λ*^1.5 (ρ_l/Σ)^½ (their Eq. 12), **ṁ = ρ_l min(b, λ*/8)/τ*** — their Table 1 mass rate is ρ₁ r_d/(2τ_d) = ρ₁ λ*/(8τ*), reproduced within 1 % (spec §9's ρ_l b/τ* is amended to this); their cut-off λ_t = λ*/3 never limits the mode (dropped). The droplet radius is capped by the film on the patch ((3 m_f/(4πρ_l))^⅓) and by R/4 (long near-critical waves; the rim's expanded edge state gave 25 mm droplets otherwise). Both branches strip hundreds to thousands of kg/m²/s where the melt supplies ~5 kg/m²/s: spraying is melt-limited, the film stays microns thin, r ≈ 45 µm–1.3 mm with a median ≈ 145–200 µm; We_d ≤ 21 with a few hundred breakup-flagged rows per flight.
 10. **Girin 2017 Table 1.** GI = We∞Re∞^−½ is reproduced (13.04 / 3.51 / 43.46) only with We∞ on the ambient density ρ∞ = ρ_a/6 and Re∞ on the compressed ρ_a = 1e-4 kg/m³; α = ρ∞/ρ_m reproduces his t_ch. φ_cr from Eq. (3) matches his table with We_cr = 4.62 (16.3° / 32.0° / 8.9°; 3.08 gives 17 % smaller angles). The rest depends on which density enters δ_a: with the **ambient** Reynolds number t_f (7.0 / 27.1 / 207 µs vs 5.7 / 31 / 194), N (1.31e6 / 3.57e5 / 636 vs 1.5e6 / 3.7e5 / 832) and r_med (25.8 / 39.6 µm vs 26.9 / 41.6) are within 30 %; with the shock density droplets come out 2.5× smaller. The spraying duration is half his for the iron variants (2.8 / 8.0 ms vs 5.9 / 16.0) and 6.5 vs 149 ms for the stony one (λ_f 3.5 mm > R₀; belt discretisation and induction handling unstated). Spec §13.2's tiers become: exact (GI, φ_cr ≤ 2 %), integrated (t_f, N, r_med ≤ 30 %, ambient density), reported (t_s.d., ranges, σ, z₀).
 11. **Girin & Kopyt 1994.** Table 1's six r_d imply an effective dynamic pressure 7.8 × ρ₂V₀² (their "deceleration ~10× and re-acceleration to M = 2–3"); with that one factor r_d agree within 0.5 % and τ_d within 1 %. Table 2's λ* column is exactly 10 × smaller than their Eq. (14) (a units slip); τ* agrees to three digits. The RT criterion is inactive at our 10–30 m/s².
-12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %); resolved (sesam heating, AA7075, girin): onset 71.62 / 77.57 km, mass 10 % / 14 % of m₀ off SESAM, 1 %-mass time +4 % / +2 %; physics mode (AA7075_range): 100 mm onset 73.96 km, demise 59.2 km at 98.5 s, 1.455 kg sprayed as 4.9e7 droplets (median 145 µm), **146 s** for 198 steps on the default mesh (target ≤ 6 min; 3.8 Newton iterations per step); 50 mm: onset 78.3 km, 1 %-mass time +3.9 %, 35 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius): sprayed mass and demise altitude within 0.2 % for layers, Δt/2, `bridged`, no runoff, We_cr 3.08, k_t ±30 %; median radius ±22–24 % for k_r ±30 %, −8 % for Δt/2, +5 % without runoff; the single-temperature `AA7075` melts 1 km higher, ends 1 km higher and takes 401 s (its ±2 K ramp triples the Newton work).
-13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material). The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device) and `--consistent-mass` replaces `--lumped-mass`.
+12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %); resolved (sesam heating, AA7075, girin, D₀/R₀): onset 71.62 / 77.57 km, mass 9.7 % / 13.6 % of m₀ off SESAM, 1 %-mass time +6.5 % / +0.5 %; physics mode (AA7075_range, size feedback on): 100 mm onset 73.96 km, 1 %-mass time 114.8 s (SESAM's lumped model: 66.8 s), 1.455 kg sprayed as 4.1e7 droplets (median 154 µm), 230 steps in **284 s** on the default mesh (target ≤ 6 min; 3.2 Newton iterations per step; 146 s for 198 steps before the size feedback); 50 mm: onset 78.3 km, 1 %-mass time +5.4 %, 45 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius): sprayed mass within 0.2 % for every variant; demise altitude +8.9 % without the size feedback, +2.8 % for Δt/2, within 0.3 % otherwise; median radius −21 % for k_r −30 % (+1 % for +30 %: the film cap), −21 % for Δt/2, +17 % without runoff, −28 % for the single-temperature `AA7075`, which also melts 1 km higher, takes 753 s (its ±2 K ramp costs Newton iterations) and leaves a 1.8 % leeward remnant.
+14. **Size feedback** (measured on the coarse-mesh physics flight): the front erodes fastest — the front-most point recedes from +49 mm to −28 mm while the back stays at −50 mm and the transverse radius at 50 mm until the last 20 % of the mass — so the fitted windward-cap radius grows from 50 mm to 140–200 mm within the first 15 % of mass loss (a flat front) and is capped at 1.67 R_t = 83 mm; the stagnation heating factor (R₀/R_nose)^½ is 0.78–0.82 during most of the melt. A cone from the mass centre selects too few patches on the eroded front (the fit collapsed to 4–16 mm), hence the depth-band cap definition. With the feedback the 100 mm physics flight ends at 114.8 s / 55.7 km (98.5 s without), 230 steps, 1.455 kg sprayed, median 154 µm; the 50 mm flight's 1 %-mass time moves from +3.9 % to +5.4 % of SESAM's. The bookkeeping and resolved runs keep D₀/R₀ (`--size-feedback initial`, the CLI default with `--removal instant`; the verification driver sets it for the resolved mode too).
+15. **Transonic remnant.** A light remnant (the single-temperature `AA7075` variant leaves 27 g = 1.8 % of m₀ of leeward material that the fixed-attitude, windward-only heating never reaches, so the run continues to the ground) reaches its terminal velocity near Ma 1, where SESAM's factor-2 drag step made DOP853 take 1.3e5 RHS evaluations in one macro step and then stall. The step is now a cubic ramp over Ma 0.98–1.02 (`aero.MACH_SWITCH_LO/HI`); the Step 1 reference tier is unchanged (8 passed) since the intact spheres cross Ma 1 in a fraction of a second. Melting runs may end on the ground with a few percent of leeward remnant; the 1 %-mass time is then n/a.
+13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material). The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
 
@@ -58,9 +61,10 @@ reentry_model/surface_flow.py             edge state per 1 deg bin, Ranger-form 
 reentry_model/film.py                     lubrication branches, Runoff (edge geometry, coefficients, linearly implicit transport)
 reentry_model/spray.py                    melt_layer, thin-film and RT modes, SprayModel (branches, release), source_rows, histogram
 reentry_model/girin_case.py               Girin-as-published flight of his Table 1 variants
-reentry_model/body.py                     + MeltSettings, MeltingBody (feed, film, spray, death cascade, hand-over, accounting, stats), reference_area hook
-reentry_model/trajectory.py               + body.reference_area() in the drag, zero drag for a consumed body
-reentry_model/coupled.py                  + MELT_COLUMNS, state passed to advance, demise, melt_results, melt VTK fields, write_particles
+reentry_model/body.py                     + MeltSettings, fit_sphere, MeltingBody (feed, film, spray, death cascade, hand-over, nose-cap fit, accounting, stats), reference_area/reference_length/nose_radius hooks
+reentry_model/trajectory.py               + body.reference_area() and reference_length() in the drag and Kn, zero drag for a consumed body
+reentry_model/aero.py                     + SESAM's Mach-1 drag step smoothed over Ma 0.98-1.02 (MACH_SWITCH_LO/HI)
+reentry_model/coupled.py                  + MELT_COLUMNS, state passed to advance, body.nose_radius() in the heating, demise, melt_results, melt VTK fields, write_particles
 reentry_model/sesam_io.py                 + Reference.mass/thickness
 reentry_model/compare.py                  + has_melt, melt_metrics (interpolated 1 %-mass crossing), plot_melt (7 plots)
 reentry_model/viz.py                      + emitting-patch overlay, film frame/video, liquidus/solidus iso-lines, melt stills
@@ -69,7 +73,7 @@ data/reference_runs/sphere_d100.00mm_..._h077.500km_nowind.{csv,json}, sphere_d0
 data/reference_values/girin2017_table1.json, girin1994_tables.json
 analysis/girin_reference.py, analysis/melt_verification.py, analysis/melt_sensitivity.py
 tests/test_reentry_model_{dispersion,surface_flow,film,spray,girin,melting,reference_melt}.py   new
-tests/test_reentry_model_{mesh,material,thermal,coupled,cli,compare,viz,data,aero,fenicsx}.py   extended
+tests/test_reentry_model_{mesh,material,thermal,coupled,cli,compare,viz,data,aero,fenicsx}.py   extended (aero: the smoothed step and the melting references)
 README.md, docs/model_assumptions.md (§9), the spec (§18), sesam_verified_facts.md (§17)   Task 15
 ```
 
@@ -3243,12 +3247,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify (replace): `reentry_model/body.py`
-- Modify: `reentry_model/trajectory.py` (one statement)
-- Test: `tests/test_reentry_model_melting.py` (new); `tests/test_reentry_model_fenicsx.py::test_melting_run_matches_the_skfem_backend` (from Task 3) now runs in `fenicsx_env`
+- Modify: `reentry_model/trajectory.py` (three statements), `reentry_model/aero.py` (the Mach-1 step)
+- Test: `tests/test_reentry_model_melting.py` (new); `tests/test_reentry_model_aero.py` (one assertion); `tests/test_reentry_model_fenicsx.py::test_melting_run_matches_the_skfem_backend` (from Task 3) now runs in `fenicsx_env`
 
 **Interfaces:**
 - Consumes: Tasks 1–7 (`mesh.deactivate/surface/active_nodes`, `Material.feed_fraction/liquid_fraction/enthalpy/h_liquid/liquid`, `thermal` `set_fractions/element_energies/step(nodal_load=)/pinned/temperature`, `surface_flow.SurfaceFlow`, `spray.SprayModel/melt_layer/source_rows/histogram/N_BINS`, `film.lubrication/Runoff`), `heating.HeatingResult`, `trajectory.AeroState`.
-- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`; `MeltSettings(removal, runoff, demise_fraction, particles)`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.equivalent_radius()`, `.energy()` (FEM + film), `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area and gives a consumed body no drag.
+- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `SIZE_FEEDBACK_NAMES = ("current", "initial")`, `NOSE_CAP_ANGLE = 30.0`, `NOSE_CAP_FACTOR = 1.67`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`; `fit_sphere(points) -> (centre, radius)`; `MeltSettings(removal, runoff, demise_fraction, particles, size_feedback="current")`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.reference_length()` (2 R_eq, or None with `initial`), `.nose_radius()` (the windward-cap fit, or R₀ with `initial`), `.equivalent_radius()`, `.energy()` (FEM + film), `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, mass_centre, transverse_radius, fitted_nose_radius, cap_nose_radius, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()`/`reference_length()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.nose_radius()` returns the sphere's radius; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area and length and gives a consumed body no drag.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3299,7 +3303,7 @@ def test_settings_and_construction(layered_mesh):
 def test_instant_removal_in_the_lumped_limit_follows_q_over_l(layered_mesh):
     """k x 1e4, uniform 3e5 W/m2 on the whole surface, AA7075: once the body sits on the 850 K plateau the mass leaves
     at (Q_conv - Q_rad) / L_f with the geometry intact (SESAM's lumped law), the energy balance exact."""
-    b = melting_body(layered_mesh, "AA7075", k_scale=1e4, removal="instant", runoff=False)
+    b = melting_body(layered_mesh, "AA7075", k_scale=1e4, removal="instant", runoff=False, size_feedback="initial")
     q = np.full(b.surface.n_patches, 3e5)
     loads = heating.HeatingResult(q, 3e5, 0.0, 0.0, 0.0)
     t, dt = 0.0, 0.5
@@ -3349,7 +3353,7 @@ def test_film_spraying_death_and_balances(layered_mesh):
 
 
 def test_demise_and_consumption(layered_mesh):
-    b = melting_body(layered_mesh, "AA7075", k_scale=1e4, removal="instant", runoff=False, demise_fraction=0.5)
+    b = melting_body(layered_mesh, "AA7075", k_scale=1e4, removal="instant", runoff=False, demise_fraction=0.5, size_feedback="initial")
     loads = heating.HeatingResult(np.full(b.surface.n_patches, 2e6), 2e6, 0.0, 0.0, 0.0)
     t = 0.0
     while not b.demised():
@@ -3357,6 +3361,47 @@ def test_demise_and_consumption(layered_mesh):
         b.advance(t, 0.5, loads)
         assert t < 200.0
     assert b.mass(0.0) < 0.5 * b.mass0 and not b.consumed and b.mesh.n_active > 0
+
+
+def test_size_feedback_nose_fit_and_knudsen_length(layered_mesh):
+    """Intact sphere: the windward-cap fit returns R0 and the Knudsen length is D0; a flattened front (the cap patches
+    pushed onto the plane x = 0.8 R0, then 0.6 R0) fits a larger radius, capped at NOSE_CAP_FACTOR x the transverse
+    radius; with size_feedback 'initial' both stay at their initial values. The trajectory's Kn follows the body's length."""
+    b = melting_body(layered_mesh)
+    assert b.nose_radius() == pytest.approx(0.05, rel=5e-3) and b.reference_length() == pytest.approx(0.1, rel=1e-3)
+    assert b.transverse_radius == pytest.approx(0.05, rel=2e-3) and np.linalg.norm(b.mass_centre) < 1e-3
+    centre, r = body.fit_sphere(b.surface.centroids)
+    assert np.linalg.norm(centre) < 1e-4 and r == pytest.approx(0.05, rel=5e-3)
+    original = b.surface.centroids.copy()
+    flat = original.copy()
+    flat[original[:, 0] > 0.8 * 0.05, 0] = 0.8 * 0.05
+    b.surface.centroids = flat
+    b._fit_nose()
+    assert b.fitted_nose_radius > 0.06                                             # flat centre + curved shoulders: ~84 mm
+    assert b.nose_radius() == pytest.approx(min(b.fitted_nose_radius, body.NOSE_CAP_FACTOR * b.transverse_radius))
+    flat = original.copy()
+    flat[original[:, 0] > 0.6 * 0.05, 0] = 0.6 * 0.05                               # a wider flat face: the fit exceeds the cap
+    b.surface.centroids = flat
+    b._fit_nose()
+    assert b.fitted_nose_radius > body.NOSE_CAP_FACTOR * b.transverse_radius and b.nose_radius() == pytest.approx(body.NOSE_CAP_FACTOR * b.transverse_radius)
+    fixed = melting_body(layered_mesh, size_feedback="initial")
+    fixed.surface.centroids = flat
+    fixed._fit_nose()
+    assert fixed.nose_radius() == 0.05 and fixed.reference_length() is None
+    with pytest.raises(ValueError):
+        body.MeltSettings(size_feedback="magic")
+    # the trajectory's Knudsen number uses the body's length: halve the body's mass and compare
+    sim = simulator(b)
+    a0 = sim.aero_state(0.0, sim.y[:3], sim.y[3:])
+    b.phi *= 0.125                                                                  # equivalent diameter halves
+    a1 = sim.aero_state(0.0, sim.y[:3], sim.y[3:])
+    assert a1.kn == pytest.approx(2.0 * a0.kn, rel=1e-6) and a0.kn == pytest.approx(0.0298, rel=0.02)
+    assert melt_stats_has_radii(b)
+
+
+def melt_stats_has_radii(b):
+    s = b.melt_stats()
+    return s["nose_radius_mm"] > 0.0 and s["transverse_radius_mm"] > 0.0 and s["fitted_nose_radius_mm"] > 0.0
 ```
 
 
@@ -3382,6 +3427,7 @@ class Body(Protocol):
     def mass(self, t) -> float: ...
     def advance(self, t, dt, loads) -> None: ...          # loads: heating.HeatingResult applied over [t - dt, t]
     def reference_area(self): ...                        # m2 drag reference area, or None for the fixed pi D^2/4
+    def reference_length(self): ...                      # m length of the body Knudsen number, or None for the fixed D
     def surface_temperature(self) -> np.ndarray: ...     # K per patch
     def mean_temperature(self) -> float: ...             # K, energy-equivalent (spec 6.4)
     def energy(self) -> float: ...                       # J stored above the material's reference temperature
@@ -3402,6 +3448,9 @@ class ConstantBody:
         return self.mass_kg
 
     def reference_area(self):
+        return None
+
+    def reference_length(self):
         return None
 
     def advance(self, t, dt, loads):
@@ -3448,6 +3497,14 @@ class ThermalBody:
     def reference_area(self):
         return None
 
+    def reference_length(self):
+        """Length scale of the body Knudsen number, or None for the fixed initial diameter."""
+        return None
+
+    def nose_radius(self):
+        """Stagnation-point radius of curvature [m] for the heating and the surface flow: the sphere's."""
+        return float(self.mesh.params.get("radius_m", 0.05))
+
     def advance(self, t, dt, loads, state=None):
         res = self.solver.step(dt, loads.q_conv, self.T_ambient)
         self.integrated_heat += res.Q_conv * dt
@@ -3482,6 +3539,10 @@ class ThermalBody:
                 "T_stagnation_K": float(Tf[self.i_stag]), "T_back_K": float(Tf[self.i_back]), "T_centre_K": float(T[self.i_centre])}
 
 
+SIZE_FEEDBACK_NAMES = ("current", "initial")
+NOSE_CAP_ANGLE = 30.0            # deg: the windward cap fitted for the nose radius (depth (1 - cos 30 deg) R_t behind the front)
+NOSE_CAP_FACTOR = 1.67           # a flat face of radius R_t heats like a sphere of 1.67 R_t (its stagnation velocity gradient is
+                                 # ~0.6 x a sphere's of the same radius, Boison & Curtiss 1959): the cap on the fitted radius
 PHI_MIN = 1.0e-3                 # element fraction kept by elements that do not own a patch (they cannot die: no cavities)
 NEAREST_PATCHES = 4              # patches that receive an interior element's liquid (area-weighted)
 PHI_DEATH = 0.05                 # a patch owner below this fraction dies (its remainder goes to the film): keeps the surface
@@ -3496,12 +3557,25 @@ class MeltSettings:
     runoff: bool = True
     demise_fraction: float = 0.01    # the run ends when the mass falls below this fraction of the initial mass
     particles: bool = True           # keep the source-table rows
+    size_feedback: str = "current"   # current: Kn on the equivalent diameter of the remaining mass and the nose radius fitted to the
+                                     # windward cap; initial: D0 and R0 throughout (SESAM's convention, for the verification devices)
 
     def __post_init__(self):
         if self.removal not in REMOVAL_NAMES:
             raise ValueError("removal must be one of {}, got {!r}".format(REMOVAL_NAMES, self.removal))
+        if self.size_feedback not in SIZE_FEEDBACK_NAMES:
+            raise ValueError("size_feedback must be one of {}, got {!r}".format(SIZE_FEEDBACK_NAMES, self.size_feedback))
         if not 0.0 < self.demise_fraction < 1.0:
             raise ValueError("demise_fraction must be within (0, 1)")
+
+
+def fit_sphere(points):
+    """Algebraic least-squares sphere through `points` (n, 3): (centre, radius)."""
+    x = np.asarray(points, dtype=float)
+    A = np.column_stack([2.0 * x, np.ones(len(x))])
+    p = np.linalg.lstsq(A, (x * x).sum(axis=1), rcond=None)[0]
+    c = p[:3]
+    return c, float(math.sqrt(max(p[3] + c @ c, 0.0)))
 
 
 class MeltingBody(ThermalBody):
@@ -3520,7 +3594,13 @@ class MeltingBody(ThermalBody):
     device that reproduces SESAM's Q/L_f law (SESAM hollows the sphere at fixed outer geometry, measured
     2026-09-20, so the geometry is kept until elements die).
     mass(t) = sum phi rho V + sum m_f; the drag reference area is the current surface's projection on the flight
-    direction (pi R^2 while intact); the nose radius R0 and the sphere drag tables are kept (spec section 10)."""
+    direction (pi R^2 while intact). Size feedback (decided 2026-09-21, replacing spec section 10's fixed R0): the body
+    Knudsen number uses the equivalent diameter of the remaining mass, and the stagnation radius for the heating and
+    the surface flow is fitted to the current windward cap -- a least-squares sphere through the patch centroids within
+    (1 - cos 30 deg) R_t of the front-most point (R_t the transverse radius about the mass centre), bounded to
+    [0.1 R_t, NOSE_CAP_FACTOR R_t] (the front erodes fastest and flattens, which lowers the stagnation heating as R^-1/2;
+    a flat face heats like a sphere of 1.67 x its radius). The sphere drag tables are kept. `size_feedback = "initial"`
+    keeps D0 and R0 (SESAM's convention, used by the verification devices)."""
 
     def __init__(self, mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0=300.0,
                  emissivity=None, T_ambient=0.0, v_hat=(1.0, 0.0, 0.0)):
@@ -3563,6 +3643,34 @@ class MeltingBody(ThermalBody):
         self._patch_tree = cKDTree(self.surface.centroids)
         self.patch_of_face = np.full(len(self.mesh._face_nodes), -1, dtype=np.int64)     # face id -> patch index (-1: not a patch)
         self.patch_of_face[self.surface.face_ids] = np.arange(self.surface.n_patches)
+        self._fit_nose()
+
+    def _fit_nose(self):
+        """Mass centre, transverse radius and the windward-cap radius of the current surface (module docstring)."""
+        m, s, v = self.mesh, self.surface, self.v_hat
+        w = self.phi * m.element_volumes()
+        self.mass_centre = (w[:, None] * m.points[m.tets].mean(axis=1)).sum(axis=0) / max(w.sum(), 1e-300)
+        X = m.points[np.unique(s.faces)] - self.mass_centre
+        self.transverse_radius = float(np.sqrt(np.maximum(np.linalg.norm(X, axis=1) ** 2 - (X @ v) ** 2, 0.0)).max())
+        x = (s.centroids - self.mass_centre) @ v
+        band = x >= x.max() - (1.0 - math.cos(math.radians(NOSE_CAP_ANGLE))) * self.transverse_radius
+        r0 = float(m.params.get("radius_m", 0.05))
+        if band.sum() >= 4 and self.transverse_radius > 0.0:
+            _, r = fit_sphere(s.centroids[band])
+            self.fitted_nose_radius = r
+            self.cap_nose_radius = float(min(max(r, 0.1 * self.transverse_radius), NOSE_CAP_FACTOR * self.transverse_radius))
+        else:
+            self.fitted_nose_radius = self.cap_nose_radius = r0
+
+    def nose_radius(self):
+        if self.settings.size_feedback == "initial":
+            return float(self.mesh.params.get("radius_m", 0.05))
+        return self.cap_nose_radius
+
+    def reference_length(self):
+        if self.settings.size_feedback == "initial":
+            return None
+        return 2.0 * self.equivalent_radius()
 
     def mass(self, t):
         return float((self.phi * self.element_mass).sum() + self.m_f.sum())
@@ -3684,7 +3792,7 @@ class MeltingBody(ThermalBody):
         if state is None or self.m_f.sum() <= 0.0:
             self.last_flow = self.last_spray = None
             return 0.0
-        flow = self.flow.evaluate(state, self.theta, self.mesh.params.get("radius_m", 0.05), liq.rho)
+        flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho)
         delta_m, _ = spray_mod.melt_layer(flow, liq)
         areas = self.surface.areas
         # (ii) lubrication and runoff
@@ -3696,7 +3804,7 @@ class MeltingBody(ThermalBody):
         b = self.m_f / (liq.rho * areas)
         v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu)
         # (iii) spraying
-        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f, self.mesh.params.get("radius_m", 0.05))
+        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f, self.transverse_radius)
         released = float(res.dm.sum())
         if released > 0.0:
             if self.spray_onset is None:
@@ -3787,39 +3895,75 @@ class MeltingBody(ThermalBody):
                 "regime_fraction_slip": fractions[1], "regime_fraction_fm": fractions[2], "rt_active": lm.get("rt_active", 0.0),
                 "removed_enthalpy_J": self.removed_enthalpy,
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
+                "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
+                "fitted_nose_radius_mm": self.fitted_nose_radius * 1e3,
                 "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active)}
 ```
 
 
 - [ ] **Step 4: Edit `reentry_model/trajectory.py`**
 
-In `Simulator.aero_state`, replace the line
+In `Simulator.aero_state`, replace the three lines
 
 ```python
+            kn = aero.knudsen(fs.rho, fs.m_bar, self.settings.diameter)
+            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging)
             a_drag = -0.5 * fs.rho * V * v_rel * cd * self.area / self.body.mass(t)
 ```
 
 with
 
 ```python
+            kn = aero.knudsen(fs.rho, fs.m_bar, self.body.reference_length() or self.settings.diameter)   # a melting body's current size (Step 3)
+            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging)
             area = self.body.reference_area() or self.area          # a melting body's projected area (Step 3), else pi D^2/4
             m = self.body.mass(t)
             a_drag = -0.5 * fs.rho * V * v_rel * cd * area / m if m > 0.0 else np.zeros(3)      # a consumed body (Step 3) has no drag
 ```
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 5: Smooth SESAM's Mach-1 drag step in `reentry_model/aero.py`**
+
+A light melting remnant hovers at its terminal velocity near Ma 1, where the factor-2 step in `cd_continuum` stalls the adaptive integrator (1.3e5 RHS evaluations in one macro step, measured). After `DEFAULT_ATDB = os.path.join(DATA_DIR, "atdb_sphere.json")` add
+
+```python
+MACH_SWITCH_LO, MACH_SWITCH_HI = 0.98, 1.02      # SESAM halves C_D below Ma 1; the step is smoothed over this band (below)
+```
+
+replace `SphereDragTables.cd_continuum` with
+
+```python
+    def cd_continuum(self, ma):
+        if ma < MACH_SWITCH_LO:
+            return 0.5 * float(self.cd_c[0])
+        if ma < MACH_SWITCH_HI:                                  # SESAM's factor-2 step at Ma 1, smoothed over +-2 % (module docstring)
+            s = (ma - MACH_SWITCH_LO) / (MACH_SWITCH_HI - MACH_SWITCH_LO)
+            return (0.5 + 0.5 * s * s * (3.0 - 2.0 * s)) * float(self.cd_c[0])
+        if ma < self.mach[0]:
+            return float(self.cd_c[0])
+        return float(np.interp(ma, self.mach, self.cd_c))
+```
+
+and extend the class docstring's last sentence to: `simply clamped (Kn is negligible wherever Ma < 5). The factor-2 step is applied as a smooth (cubic) ramp over Ma 0.98-1.02: a discontinuous C_D stalls the adaptive integrator when a light body hovers at its transonic terminal velocity (a melting remnant, Step 3: 1.3e5 RHS evaluations in one macro step, measured 2026-09-21); the reference spheres cross Ma 1 in a fraction of a second, where the ramp changes nothing measurable (the drag test excludes |Ma - 1| <= 0.02 rows for SESAM's 3-decimal Mach column)."""`. In `tests/test_reentry_model_aero.py` replace the assertion `assert t.cd_continuum(3.0) == 0.898818 and t.cd_continuum(1.0) == 0.898818` with
+
+```python
+        assert t.cd_continuum(3.0) == 0.898818 and t.cd_continuum(1.02) == 0.898818
+        assert t.cd_continuum(1.0) == pytest.approx(0.75 * 0.898818) and t.cd_continuum(0.98) == 0.5 * 0.898818   # the Ma-1 step smoothed over +-2 % (Step 3)
+```
+
+- [ ] **Step 6: Run the tests**
 
 ```bash
-"$PY" -m pytest tests/test_reentry_model_melting.py tests/test_reentry_model_coupled.py tests/test_reentry_model_trajectory.py -q
+"$PY" -m pytest tests/test_reentry_model_melting.py tests/test_reentry_model_coupled.py tests/test_reentry_model_trajectory.py tests/test_reentry_model_aero.py -q
+"$PY" -m pytest -m reference tests/test_reentry_model_reference.py -q                        # the Step 1 flights, ~2 min: unchanged by the ramp
 FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q
 ```
 
-Expected: 4 passed (melting) and the Step 2 coupled/trajectory tests unchanged; in `fenicsx_env` 8 passed — the two backends give the same melting run (mass to 1e-6, temperatures to 0.5 K, the same dead elements).
+Expected: 5 passed (melting), the Step 2 coupled/trajectory/aero tests unchanged, the eight Step 1 reference flights within their thresholds; in `fenicsx_env` 8 passed — the two backends give the same melting run (mass to 1e-6, temperatures to 0.5 K, the same dead elements).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add reentry_model/body.py reentry_model/trajectory.py tests/test_reentry_model_melting.py
+git add reentry_model/body.py reentry_model/trajectory.py reentry_model/aero.py tests/test_reentry_model_melting.py tests/test_reentry_model_aero.py
 git commit -m "Add the melting body: feed, film, spraying, element death, accounting and the projected area (Step 3 Task 9)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
@@ -3835,7 +3979,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `MeltingBody` (Task 9: `advance(state=)`, `demised()`, `melt_stats()`, `source_rows`, `m_f`, `liquid`, `last_spray/last_flow`, `phi`, `material.liquid_fraction`), `spray.SOURCE_COLUMNS/BIN_EDGES/N_BINS/histogram` (Task 7).
-- Produces: `coupled.MELT_COLUMNS` (20 names), `CoupledRun.melting` (property), `melt_results(history)` (melt/spraying onsets, demise, masses, `n_released`, `r_median_um`, `n_dead_elements`, `n_source_rows`, `removed_enthalpy_J`, `melt_energy_balance_residual`), end reason `"demise"`; `write_vtk_frame` writes active cells only with `liquid_fraction`/`phi` and the surface fields `film_thickness, we_s, regime, tau, r_droplet, release_rate` when melting; `write_particles(run_dir, body, history, window=10.0) -> {"particles", "particles_summary", "size_distribution"}`.
+- Produces: `coupled.MELT_COLUMNS` (23 names), `CoupledRun.melting` (property), `loads_at` passing `body.nose_radius()` to the heating, `melt_results(history)` (melt/spraying onsets, demise, masses, `n_released`, `r_median_um`, `n_dead_elements`, `n_source_rows`, `removed_enthalpy_J`, `melt_energy_balance_residual`), end reason `"demise"`; `write_vtk_frame` writes active cells only with `liquid_fraction`/`phi` and the surface fields `film_thickness, we_s, regime, tau, r_droplet, release_rate` when melting; `write_particles(run_dir, body, history, window=10.0) -> {"particles", "particles_summary", "size_distribution"}`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3892,7 +4036,8 @@ def test_demise_ends_the_run(coarse_sphere_mesh):
     m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
     mat = material.Material.from_drama_json("AA7075")
     mat.k_table = mat.k_table * 1e4
-    b = body.MeltingBody(m, mat, thermal.thermal_solver("skfem"), MASS_100MM, settings=body.MeltSettings(removal="instant", runoff=False, demise_fraction=0.6))
+    b = body.MeltingBody(m, mat, thermal.thermal_solver("skfem"), MASS_100MM,
+                         settings=body.MeltSettings(removal="instant", runoff=False, demise_fraction=0.6, size_feedback="initial"))
     hist = coupled.CoupledRun(simulator(b), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5)).run()
     assert hist.end_reason == "demise" and hist.results["end_reason"] == "demise" and hist.results["demise_altitude_km"] < 71.0
     assert 0.55 * MASS_100MM < hist.columns["mass_kg"][-1] < 0.6 * MASS_100MM and hist.results["final_mass_kg"] == hist.columns["mass_kg"][-1]
@@ -3914,8 +4059,8 @@ step -> heating with that state and the wall temperatures at the start of the st
 implicit in the solver) -> history row, and every `frames_every` steps a VTK frame (nodal T on the volume mesh,
 q_conv / q_rad / T per patch on the surface). First-order operator splitting; the dt-halving test bounds its error.
 Mass is constant in Step 2; the loop already carries the body's mass and the mesh so Step 3 can change both.
-`body` must be a ThermalBody: CoupledRun uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
-`integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
+`body` must be a ThermalBody: CoupledRun uses `theta`, `surface`, `radiated_power()`, `surface_stats()`,
+`nose_radius()` and `integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
 import os
 import time
 from dataclasses import dataclass, field
@@ -3931,7 +4076,7 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 "equivalent_radius_mm", "n_active_elements", "spraying_area_m2", "theta_cr_deg", "n_released",
                 "released_mass_kg", "r_median_um", "r_max_um", "regime_fraction_continuum", "regime_fraction_slip",
                 "regime_fraction_fm", "rt_active", "removed_enthalpy_J", "film_thickness_max_mm", "film_thickness_mean_mm",
-                "n_dead_elements"]
+                "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm", "n_dead_elements"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -3954,7 +4099,7 @@ class CoupledRun:
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
-        return a, self.heating.evaluate(a, self.body.theta, self.body.surface_temperature(), self.sim.settings.diameter / 2.0,
+        return a, self.heating.evaluate(a, self.body.theta, self.body.surface_temperature(), self.body.nose_radius(),
                                         T_mean=self.body.mean_temperature())
 
     def row(self, t, y, a, loads):
@@ -4750,7 +4895,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `run` flags `--melt off|on`, `--material` (names or path; default `AA7075_nomelt`, `AA7075_range` with `--melt on`), `--removal`, `--runoff`, `--rarefied-shear`, `--we-critical`, `--kr`, `--kt`, `--prism-layers` (default 4 with melting, 0 otherwise), `--layer-thickness` (mm), `--demise-fraction`, `--particles/--no-particles`, `--k-scale`, `--consistent-mass`; run names end in `_melt-<removal>`; the JSON `settings` carry the melt settings and the liquid properties, `results` the melt results, `files` the particle files and melt plots (and `film`); `compare` handles melting histories; `model_run_name(..., heating_name=None, melt=None)`; `_fmt`.
+- Produces: `run` flags `--melt off|on`, `--material` (names or path; default `AA7075_nomelt`, `AA7075_range` with `--melt on`), `--removal`, `--runoff`, `--rarefied-shear`, `--we-critical`, `--kr`, `--kt`, `--prism-layers` (default 4 with melting, 0 otherwise), `--layer-thickness` (mm), `--demise-fraction`, `--particles/--no-particles`, `--size-feedback current|initial` (default `current` with `girin`, `initial` with `instant`), `--k-scale`, `--consistent-mass`; run names end in `_melt-<removal>`; the JSON `settings` carry the melt settings and the liquid properties, `results` the melt results, `files` the particle files and melt plots (and `film`); `compare` handles melting histories; `model_run_name(..., heating_name=None, melt=None)`; `_fmt`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4781,6 +4926,7 @@ def test_melting_run_writes_columns_files_and_json(tmp_path):
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+    assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
     assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
     for key in ("particles", "particles_summary", "size_distribution"):
@@ -4803,6 +4949,7 @@ def test_bookkeeping_device_against_the_melting_reference(tmp_path):
     assert doc["results"]["end_reason"] == "demise" and mm["mass"]["max_rel_m0"] < 0.02
     assert abs(mm["onset_altitude_diff_km"]) < 0.5 and abs(mm["demise_time_rel"]) < 0.02 and mm["sprayed_mass_kg"] == 0.0
     assert os.path.isfile(tmp_path / "bookkeeping" / "mass_time.png") and doc["settings"]["k_scale"] == 1e4
+    assert doc["settings"]["size_feedback"] == "initial"                                             # SESAM's D0 / R0 for the device
     assert not os.path.isfile(tmp_path / "bookkeeping" / "particles.npz") or True                    # written (empty table) with --particles
 
 
@@ -4813,6 +4960,7 @@ def test_bookkeeping_device_against_the_melting_reference(tmp_path):
     MELT + ["--demise-fraction", "1.5"],
     MELT + ["--k-scale", "0"],
     MELT + ["--removal", "magic"],
+    MELT + ["--size-feedback", "shrinking"],
 ])
 def test_bad_melt_arguments_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:
@@ -4991,6 +5139,9 @@ def build_parser():
     me.add_argument("--prism-layers", type=int, default=None, help="prism layers under the surface (default 4 with --melt on, 0 otherwise)")
     me.add_argument("--layer-thickness", type=float, default=mesh.DEFAULT_LAYER_THICKNESS * 1e3, help="outermost layer thickness [mm] (default %(default)s, growth 2)")
     me.add_argument("--demise-fraction", type=float, default=0.01, help="the run ends when the body mass falls below this fraction of the initial (default %(default)s)")
+    me.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                    help="current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap "
+                         "(default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with --removal instant)")
     me.add_argument("--particles", dest="particles", action="store_true", default=True, help="write the particle source table (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
 
@@ -5018,8 +5169,9 @@ def build_thermal(args, settings, mass):
     if melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear)
         spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical)
+        size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
-                                          particles=args.particles)
+                                          particles=args.particles, size_feedback=size_feedback)
         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
     else:
@@ -5041,6 +5193,7 @@ def build_thermal(args, settings, mass):
     if melting:
         info.update({"removal": args.removal, "runoff": args.runoff, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                     "size_feedback": size_feedback,
                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
                      "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus, "latent_heat_Jkg": mat.latent_heat})
     return the_body, heating_model, info
@@ -5272,7 +5425,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ```python
 """Melting model vs the two melting US76 SESAM references (marker: reference, ~2 min): the bookkeeping device
-(SESAM-equivalent heating, AA7075, instant removal, k x 1e4, the Step 2 default mesh) against the acceptance
+(SESAM-equivalent heating, AA7075, instant removal, k x 1e4, D0/R0 kept, the Step 2 default mesh) against the acceptance
 thresholds of spec section 13.1 -- mass within 2 % of the initial at every reference time, melt-onset altitude within
 0.5 km, the 1 %-mass time within 2 % (measured 2026-09-21: 0.98 % / +0.10 km / -1.3 % for 100 mm, 1.29 % / +0.17 km /
 -0.2 % for 50 mm). The resolved and physics-mode runs are analysis/melt_verification.py's business (reported). Metrics
@@ -5298,7 +5451,7 @@ def bookkeeping_run(ref):
     mat = material.Material.from_drama_json("AA7075")
     mat.k_table = mat.k_table * 1e4
     the_body = body.MeltingBody(the_mesh, mat, thermal.thermal_solver("skfem"), body.sphere_mass(ref.diameter, ref.material_density),
-                                settings=body.MeltSettings(removal="instant", runoff=False))
+                                settings=body.MeltSettings(removal="instant", runoff=False, size_feedback="initial"))
     sim = tj.Simulator(initial, the_body, atmosphere.US76TableAtmosphere(), aero.SphereDragTables.from_json(), aero.SesamTable(),
                        tj.Settings(diameter=ref.diameter))
     return coupled.CoupledRun(sim, the_body, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5)).run()
@@ -5334,9 +5487,10 @@ Modes: `bookkeeping` -- SESAM-equivalent heating, AA7075 (DRAMA's single melting
 --runoff off, --k-scale 1e4 (near-isothermal body): the thresholded check of the melting bookkeeping against SESAM's
 lumped Q/L_f law (mass within 2 % of the initial at every reference time, onset altitude within 0.5 km, 1 %-mass
 time within 2 %); `resolved` -- the same heating and material with the real conductivity, film + runoff + Girin
-spraying on the default layered mesh (reported: the surface melts before the interior is hot, so the mass leaves
-earlier and, per unit heat, the interior's sensible heating delays the end); `physics` -- physics-mode heating,
-AA7075_range, Girin removal (the model proper; the SESAM overlay is context, not a target). Every run writes its
+spraying on the default layered mesh, D0/R0 kept as SESAM keeps them (reported: the surface melts before the
+interior is hot, so the mass leaves earlier and, per unit heat, the interior's sensible heating delays the end);
+`physics` -- physics-mode heating, AA7075_range, Girin removal with the size feedback (the model proper; the SESAM
+overlay is context, not a target). Every run writes its
 overlay + residual plots and metrics JSON through the CLI; cases left out are read back from existing JSONs so
 summary.md / summary.json cover everything available."""
 import argparse
@@ -5355,7 +5509,7 @@ CASES = {
 }
 MODES = {
     "bookkeeping": ["--heating", "sesam", "--material", "AA7075", "--removal", "instant", "--runoff", "off", "--k-scale", "1e4", "--prism-layers", "0"],
-    "resolved": ["--heating", "sesam", "--material", "AA7075", "--removal", "girin"],
+    "resolved": ["--heating", "sesam", "--material", "AA7075", "--removal", "girin", "--size-feedback", "initial"],
     "physics": ["--heating", "physics", "--material", "AA7075_range", "--removal", "girin"],
 }
 THRESHOLDS = {"mass_rel_m0": 0.02, "onset_km": 0.5, "demise_time_rel": 0.02}     # bookkeeping mode only
@@ -5436,14 +5590,14 @@ if __name__ == "__main__":
 """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
 
     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
-        [--variants base,layers2,layers6,dt025,bridged,norunoff,we308,kr-30,kr+30,kt-30,kt+30,AA7075,fenicsx]
+        [--variants base,layers2,layers6,dt025,bridged,norunoff,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,fenicsx]
 
 Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
 six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius); the table
 lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
-change relative to `base`. The `fenicsx` variant needs the fenicsx_env interpreter (run it separately with
---variants fenicsx --python <fenicsx_env python>; it is launched as a subprocess). Variants left out are read back
-from existing JSONs."""
+change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+exported). Variants left out are read back from existing JSONs."""
 import argparse
 import json
 import os
@@ -5453,14 +5607,13 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from reentry_model import cli  # noqa: E402
 
 CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
 VARIANTS = {
     "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "we308": ["--we-critical", "3.08"],
     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
-    "AA7075": ["--material", "AA7075"], "fenicsx": ["--thermal-solver", "fenicsx"],
+    "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "fenicsx": ["--thermal-solver", "fenicsx"],
 }
 KEYS = ["sprayed_mass_kg", "r_median_um", "melt_onset_altitude_km", "spraying_onset_altitude_km", "demise_altitude_km", "runtime_s"]
 COLUMNS = ["case", "variant", "sprayed [kg]", "median r [um]", "melt onset [km]", "spraying onset [km]", "demise [km]", "runtime [s]"]
@@ -5477,17 +5630,15 @@ def main(argv=None):
     p.add_argument("--outdir", default=os.path.join(REPO_ROOT, "reentry_model_output", "verification_melt", "sensitivity"))
     p.add_argument("--cases", default=",".join(CASES))
     p.add_argument("--variants", default=",".join(v for v in VARIANTS if v != "fenicsx"))
-    p.add_argument("--python", default=None, help="interpreter for subprocess runs (the fenicsx variant)")
+    p.add_argument("--python", default=sys.executable, help="interpreter for the runs (default: this one; the fenicsx variant needs fenicsx_env's)")
     args = p.parse_args(argv)
     os.makedirs(args.outdir, exist_ok=True)
     for key in args.cases.split(","):
         for variant in args.variants.split(","):
-            a = argv_for(key, variant, args.outdir)
-            if args.python:
-                env = dict(os.environ, FI_PROVIDER="tcp")
-                subprocess.run([args.python, "-m", "reentry_model"] + a, cwd=REPO_ROOT, check=True, env=env)
-            elif cli.main(a) != 0:
-                raise SystemExit("run {}__{} failed".format(key, variant))
+            # every run in a fresh interpreter: one flight is ~250 s and a 46 k-node solver; a long in-process series was
+            # seen to crawl (measured 2026-09-21)
+            env = dict(os.environ, FI_PROVIDER="tcp")
+            subprocess.run([args.python, "-m", "reentry_model"] + argv_for(key, variant, args.outdir), cwd=REPO_ROOT, check=True, env=env)
     rows = []
     for key in CASES:
         base = None
@@ -5522,16 +5673,16 @@ if __name__ == "__main__":
 "$PY" analysis/melt_verification.py --animate                                         # ~6 min: 2 spheres x 3 modes, with the videos
 ```
 
-Expected: 2 passed (measured 0.98 % / +0.10 km / −1.3 % and 1.29 % / +0.17 km / −0.2 %); the driver prints the six-row table with `pass` in both bookkeeping rows, the resolved rows ~10 % / 14 % mass difference with onsets 71.62 / 77.57 km, the physics rows onsets 73.96 / 78.32 km, and writes `summary.md`. Check that `reentry_model_output/verification_melt/d100__physics/vtk/` holds `animation.mp4`, `film.mp4`, `section.mp4` and the stills (`melt_onset`, `spraying_onset`, `peak_release`, `film_*`, `section_*`), and that `d100__resolved/mass_time.png` shows the SESAM overlay with its residual panel.
+Expected: 2 passed (measured 0.98 % / +0.10 km / −1.3 % and 1.29 % / +0.17 km / −0.2 %); the driver prints the six-row table with `pass` in both bookkeeping rows, the resolved rows ~10 % / 14 % mass difference with onsets 71.62 / 77.57 km and 1 %-mass times +6.5 % / +0.5 %, the physics rows onsets 73.96 / 78.32 km with 1 %-mass times 114.8 s (+72 %) / 201.7 s (+5.4 %), and writes `summary.md`. Check that `reentry_model_output/verification_melt/d100__physics/vtk/` holds `animation.mp4`, `film.mp4`, `section.mp4` and the stills (`melt_onset`, `spraying_onset`, `peak_release`, `film_*`, `section_*`), and that `d100__resolved/mass_time.png` shows the SESAM overlay with its residual panel.
 
 - [ ] **Step 5: Run the sensitivity study**
 
 ```bash
-"$PY" analysis/melt_sensitivity.py                                                    # ~45 min: 12 variants x 2 spheres
+"$PY" analysis/melt_sensitivity.py                                                    # ~60 min: 13 variants x 2 spheres
 "$PY" analysis/melt_sensitivity.py --variants fenicsx --python "$FX"                  # the backend variant from fenicsx_env (CC and FI_PROVIDER exported)
 ```
 
-(export `CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang` before the second command; the script sets `FI_PROVIDER=tcp` itself.) Expected: `sensitivity.md` with every variant's sprayed mass, median radius, onsets and demise altitude and the change relative to `base`; the `fenicsx` row equal to `base` to the printed digits; `layers2`/`layers6`/`dt025` within a few percent of `base` in demise altitude and sprayed mass; `we308`, `kr±30`, `kt±30` nearly identical (the thick branch rarely acts: spraying is melt-limited); `AA7075` earlier onset (850 K vs 908 K liquidus). Record the table in Task 15.
+(export `CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang` before the second command; the script sets `FI_PROVIDER=tcp` itself.) Expected: `sensitivity.md` with every variant's sprayed mass, median radius, onsets and demise altitude and the change relative to `base`; the `fenicsx` row equal to `base` to the printed digits; `layers2`/`layers6`/`dt025` within a few percent of `base` in demise altitude and sprayed mass; `we308`, `kt±30` nearly identical (spraying is melt-limited), `kr-30` moving the median radius by −21 %; `AA7075` earlier onset (850 K vs 908 K liquidus) and a leeward remnant that reaches the ground (demise n/a); `sizeinitial` ending 5 km higher (the nose stays at R₀). Record the table in Task 15.
 
 - [ ] **Step 6: Run the FEniCSx tests once more and the whole unit tier**
 
@@ -5601,13 +5752,17 @@ tables with the alloy's solidus 750 K / liquidus 908 K, latent heat 400 kJ/kg sp
 Σ 0.86 N/m (pure aluminium near the liquidus, `reentry_model/data/materials/*.json`); `--removal girin|instant`;
 `--runoff on|off`; `--rarefied-shear slip|bridged`; `--we-critical 4.62`, `--kr 0.17`, `--kt 1.1`; `--prism-layers 4`,
 `--layer-thickness 0.25` (mm, growth 2; 46 k nodes / 255 k tets on the 100 mm sphere); `--demise-fraction 0.01`;
-`--particles/--no-particles`; `--k-scale` (a verification device). Melt and runoff start at the liquidus: material
-between the solidus and the liquidus holds its latent heat but counts as solid for the film (spec §8, §17.2).
+`--particles/--no-particles`; `--size-feedback current|initial` (`current` with `girin`: the body Knudsen number on
+the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap, bounded to
+1.67 × the transverse radius for a flat front; `initial` with `instant`: D₀ and R₀, SESAM's convention); `--k-scale`
+(a verification device). Melt and runoff start at the liquidus: material between the solidus and the liquidus holds
+its latent heat but counts as solid for the film (spec §8, §17.2).
 
 Outputs: `<run>.csv` gains `mass_kg` (now varying), `film_mass_kg`, `sprayed_mass_kg`, `runoff_mass_kg`,
 `removed_mass_kg`, `melt_front_depth_max_mm`, `equivalent_radius_mm`, `n_active_elements`, `spraying_area_m2`,
 `theta_cr_deg`, `n_released`, `released_mass_kg`, `r_median_um`, `r_max_um`, `regime_fraction_continuum/_slip/_fm`,
-`rt_active`, `removed_enthalpy_J`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `n_dead_elements`; the run
+`rt_active`, `removed_enthalpy_J`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`,
+`transverse_radius_mm`, `fitted_nose_radius_mm`, `n_dead_elements`; the run
 JSON adds the melt onset, spraying onset, demise, the masses, size statistics and the settings; `<run>/particles.npz`
 (the source table: time, altitude, velocity, θ, patch centroid, regime, branch, film thickness, δ_m, We_s, radius,
 count, mass, release velocity and direction, We_d, Oh, breakup flag), `particles_summary.csv`, `size_distribution.csv`
@@ -5617,9 +5772,10 @@ and residual when a melting reference is given); videos `animation.mp4` (surface
 patches coloured by droplet radius), `film.mp4` (film thickness), `section.mp4` (cross-section with the liquidus and
 solidus iso-lines) and stills at melt onset, spraying onset and peak release in addition to Step 2's. The VTK series
 add the liquid fraction and φ_e (volume, active elements only) and the film thickness, We_s, regime, shear, droplet
-radius and release rate (surface). A 100 mm physics-mode melting flight on the default mesh takes ~2.5 min
-(146 s: 198 steps, 3.8 Newton iterations per step; melt onset 74.0 km, demise 59.2 km at 98.5 s, 1.455 kg sprayed
-as 4.9e7 droplets of median radius 145 µm).
+radius and release rate (surface). A 100 mm physics-mode melting flight on the default mesh takes ~5 min
+(284 s: 230 steps, 3.2 Newton iterations per step; melt onset 74.0 km, demise 54.8 km at 115 s, 1.455 kg sprayed as
+4.1e7 droplets of median radius 154 µm; the windward-cap radius reaches its 1.67 R_t cap within the first 15 % of the
+mass loss, which lowers the stagnation heating to ≈ 0.8 × the sphere's).
 
 **`--removal instant` and `--k-scale` are verification devices, not physical models.** `instant` removes the liquid
 of every element as it forms — no film, no runoff, no spraying — which is the lumped Q/L_f law SESAM applies once its
@@ -5640,16 +5796,17 @@ criterion, film excluded).
 |---|---|---|---|---|---|---|---|
 | d100 | bookkeeping | 0.98 % | 71.10 / 71.00 | 65.9 / 66.8 (−1.3 %) | — | — | 16 s, 132 steps |
 | d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 8 s, 382 steps |
-| d100 | resolved (sesam heating, AA7075, girin) | 9.96 % | 71.62 / 71.00 | 69.7 / 66.8 (+4 %) | 1.396 / 0.065 | 2.7e7 (165 µm) | 80 s, 143 steps |
-| d050 | resolved | 13.7 % | 77.57 / 77.10 | 195.0 / 191.4 (+2 %) | 0.161 / 0.021 | 5.3e6 (201 µm) | 25 s, 385 steps |
-| d100 | physics (AA7075_range, girin) | 58.7 % | 73.96 / 71.00 | 98.3 / 66.8 | 1.457 / 0.003 | 4.9e7 (145 µm) | 135 s, 194 steps |
-| d050 | physics | 52.2 % | 78.32 / 77.10 | 198.9 / 191.4 (+3.9 %) | 0.181 / 0.000 | 8.6e6 (194 µm) | 35 s, 398 steps |
+| d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 9.7 % | 71.62 / 71.00 | 71.1 / 66.8 (+6.5 %) | 1.400 / 0.061 | 2.6e7 (164 µm) | 110 s, 143 steps |
+| d050 | resolved | 13.6 % | 77.57 / 77.10 | 192.4 / 191.4 (+0.5 %) | 0.161 / 0.021 | 5.6e6 (137 µm) | 29 s, 385 steps |
+| d100 | physics (AA7075_range, girin, size feedback) | 75.2 % | 73.96 / 71.00 | 114.8 / 66.8 (+72 %) | 1.455 / 0.004 | 4.1e7 (154 µm) | 248 s, 230 steps |
+| d050 | physics | 66.5 % | 78.32 / 77.10 | 201.7 / 191.4 (+5.4 %) | 0.170 / 0.000 | 7.4e6 (161 µm) | 45 s, 404 steps |
 
 Thresholds (bookkeeping mode only, `tests/test_reentry_model_reference_melt.py`): mass 2 % of m₀, onset 0.5 km,
 1 %-mass time 2 %. The resolved runs are reported: the surface melts 0.6 km before SESAM's lumped body reaches 850 K,
-and the interior's sensible heating during the melt delays the end by 2–4 %; the mass difference (10–14 % of m₀) is
-the lumped-body assumption, plotted in `d100__resolved/mass_time.png`. Physics mode is the model proper (0.74 × SESAM's
-heat, windward-concentrated): the surface melts at 74 km and the body is consumed by 59 km.
+and the interior's sensible heating during the melt delays the end by 0.5–6.5 %; the mass difference (10–14 % of m₀)
+is the lumped-body assumption, plotted in `d100__resolved/mass_time.png`. Physics mode is the model proper (0.74 ×
+SESAM's heat, windward-concentrated, the nose flattening as it erodes): the 100 mm surface melts at 74 km and the body
+is consumed at 115 s / 56 km — 48 s after SESAM's lumped sphere.
 
 Girin's published cases (`analysis/girin_reference.py`, `data/reference_values/girin2017_table1.json`,
 `girin1994_tables.json`): the exact tier — GI = We∞Re∞^−½ (13.04 / 3.51 / 43.46 vs 13.0 / 3.55 / 43.5) and φ_cr from his
@@ -5668,25 +5825,29 @@ Thwaites' momentum thickness a constant 12.3 × it within ±1.7 % over 5°–85�
 We_s 3.00 and 3.08, Δ_f 1.226 and Im Ω_f 0.247 at We_s 10⁴); energy and mass balances with melting and removal to
 1e-8; element death keeps the surface closed; both thermal backends give the same melting run to 1e-10 in mass.
 
-Sensitivity (`analysis/melt_sensitivity.py`, 100 mm physics flight, one setting changed per row; the sprayed mass and the demise altitude are
-insensitive to the layers, the time step, the shear bridging, the runoff, We_cr and k_t (≤ 0.2 %); the median droplet radius follows k_r
-(±22–24 % for ±30 %: the thick branch sets the size at the rim), Δt/2 −8 %, no runoff +5 %; DRAMA's single 850 K material melts 1 km
-higher and runs 3× longer (its ±2 K ramp costs Newton iterations). The 50 mm rows and the `fenicsx` row come from the full run of Task 14.)
+Sensitivity (`analysis/melt_sensitivity.py`, 100 mm physics flight, one setting changed per row). The sprayed mass is
+insensitive to everything (≤ 0.2 %); the demise altitude moves only with the size feedback (+8.9 % without it: the
+nose stays at R₀ and heats harder) and with Δt/2 (+2.8 %); the median droplet radius follows k_r (−21 % for −30 %,
+capped on the other side), Δt/2 (−21 %), the runoff (+17 % without it) and the material (−28 % for DRAMA's single
+850 K, which also melts 1 km higher, runs 2.7× longer and leaves a 1.8 % leeward remnant that reaches the ground);
+layers, the shear bridging, We_cr and k_t change nothing beyond 1 %. The 50 mm rows and the `fenicsx` row come from the
+full run of Task 14.
 
 | case | variant | sprayed [kg] | median r [um] | melt onset [km] | spraying onset [km] | demise [km] | runtime [s] |
 |---|---|---|---|---|---|---|---|
-| d100 | base | 1.4563 | 149.8 | 73.96 | 73.96 | 59.65 | 137 |
-| d100 | layers2 | 1.4543 (-0.1%) | 149.3 (-0.3%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.54 (-0.2%) | 108 (-21.1%) |
-| d100 | layers6 | 1.4579 (+0.1%) | 150.5 (+0.5%) | 73.96 (-0.0%) | 73.96 (-0.0%) | 59.77 (+0.2%) | 159 (+15.7%) |
-| d100 | dt025 | 1.4563 (-0.0%) | 137.4 (-8.3%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.52 (-0.2%) | 224 (+63.2%) |
-| d100 | bridged | 1.4557 (-0.0%) | 149.7 (-0.1%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.66 (+0.0%) | 118 (-14.0%) |
-| d100 | norunoff | 1.4568 (+0.0%) | 157.2 (+4.9%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.55 (-0.2%) | 118 (-13.8%) |
-| d100 | we308 | 1.4544 (-0.1%) | 149.8 (+0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.66 (+0.0%) | 119 (-13.1%) |
-| d100 | kr-30 | 1.4556 (-0.0%) | 114.0 (-23.9%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.75 (+0.2%) | 119 (-13.0%) |
-| d100 | kr+30 | 1.4593 (+0.2%) | 182.5 (+21.8%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.54 (-0.2%) | 119 (-13.3%) |
-| d100 | kt-30 | 1.4543 (-0.1%) | 149.7 (-0.1%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.66 (+0.0%) | 142 (+3.5%) |
-| d100 | kt+30 | 1.4572 (+0.1%) | 149.8 (+0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.65 (-0.0%) | 127 (-7.7%) |
-| d100 | AA7075 | 1.4561 (-0.0%) | 154.0 (+2.8%) | 74.93 (+1.3%) | 74.93 (+1.3%) | 60.68 (+1.7%) | 401 (+191.8%) |
+| d100 | base | 1.4546 | 154.2 | 73.96 | 73.96 | 54.76 | 284 |
+| d100 | layers2 | 1.4572 (+0.2%) | 144.7 (-6.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.64 (-0.2%) | 198 (-30.1%) |
+| d100 | layers6 | 1.4567 (+0.1%) | 155.4 (+0.8%) | 73.96 (-0.0%) | 73.96 (-0.0%) | 54.62 (-0.3%) | 287 (+1.1%) |
+| d100 | dt025 | 1.4574 (+0.2%) | 122.0 (-20.9%) | 73.96 (-0.0%) | 73.96 (-0.0%) | 56.32 (+2.8%) | 461 (+62.6%) |
+| d100 | bridged | 1.4551 (+0.0%) | 153.0 (-0.8%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 279 (-1.5%) |
+| d100 | norunoff | 1.4537 (-0.1%) | 180.7 (+17.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 247 (-12.9%) |
+| d100 | we308 | 1.4577 (+0.2%) | 155.0 (+0.5%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.64 (-0.2%) | 265 (-6.6%) |
+| d100 | kr-30 | 1.4561 (+0.1%) | 122.3 (-20.7%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (+0.0%) | 258 (-8.9%) |
+| d100 | kr+30 | 1.4528 (-0.1%) | 156.0 (+1.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 241 (-14.9%) |
+| d100 | kt-30 | 1.4538 (-0.1%) | 154.2 (-0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 305 (+7.6%) |
+| d100 | kt+30 | 1.4559 (+0.1%) | 154.2 (-0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (+0.0%) | 239 (-15.6%) |
+| d100 | AA7075 | 1.4447 (-0.7%) | 111.6 (-27.6%) | 74.93 (+1.3%) | 74.93 (+1.3%) | n/a | 753 (+165.5%) |
+| d100 | sizeinitial | 1.4563 (+0.1%) | 149.8 (-2.8%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.65 (+8.9%) | 181 (-36.3%) |
 
 Findings recorded while building this step (details in the spec's amendments):
 - The film is stripped as fast as it melts: both instability branches remove hundreds to thousands of kg/m²/s where
@@ -5764,8 +5925,14 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   Droplets are capped at the film on the patch and a quarter of the body radius; one radius per patch and step; no
   within-patch size spread; recorded at birth, not tracked. Both branches strip far faster than the melt supply, so
   the mass loss is energy-limited (Girin's "outstripping ablation").
-- **Geometry feedback.** Mass = Σφ_e ρV_e + film; the drag reference area is the current surface's projection; the
-  nose radius R₀, the sphere drag tables and Kn's length scale are those of the intact sphere (as SESAM keeps them).
+- **Size feedback** (decided 2026-09-21, replacing the spec's fixed R₀). Mass = Σφ_e ρV_e + film; the drag reference
+  area is the current surface's projection; the body Knudsen number uses the equivalent diameter of the remaining
+  mass; the stagnation radius for the heating and the surface flow is a least-squares sphere fitted to the current
+  windward cap (the patches within (1 − cos 30°) R_t of the front-most point, R_t the transverse radius about the mass
+  centre), bounded to [0.1, 1.67] × R_t — the front erodes fastest and flattens, so the fitted radius grows from R₀ to
+  the cap and the stagnation heating falls as R^−½ (a flat face heats like a sphere of 1.67 × its radius: its
+  stagnation velocity gradient is ≈ 0.6 × a sphere's, Boison & Curtiss 1959). The sphere drag tables are kept. The
+  verification devices keep D₀ and R₀ (SESAM's convention).
 - **Verification devices.** `--removal instant` (every element's liquid leaves as it forms) and `--k-scale 1e4`
   reproduce SESAM's lumped Q/L_f melting (mass within 1.3 % of m₀, onset within 0.2 km, end within 1.3 %); Girin's
   Table 1 is reproduced in its exact tier (GI, φ_cr) and, with the ambient-density Reynolds number, in t_f, N and
@@ -5819,7 +5986,17 @@ spec amendments" list carries the numbers.
     `n_dead_elements`; `runoff_mass_kg` is the mass that arrived on another patch; the source table has 22 columns.
 11. §14 — `--k-scale` (verification device) and `--consistent-mass` (replacing `--lumped-mass`, whose sense is now the
     default) join the CLI.
-12. §13.6 — the 100 mm physics-mode flight takes 146 s on the default mesh (target 6 min).
+12. §13.6 — the 100 mm physics-mode flight takes ≈ 4 min on the default mesh (target 6 min; 146 s without the size feedback).
+14. §6.4/§6.5 of the Step 1 spec (aero) — SESAM's factor-2 drag step at Ma 1 is applied as a cubic ramp over Ma 0.98–1.02:
+    a discontinuous C_D stalled the integrator for a light remnant at its transonic terminal velocity; the Step 1 reference
+    flights are unchanged.
+13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
+    the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
+    sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
+    the front erodes fastest and flattens, so the fitted radius reaches the cap within the first 15 % of mass loss and
+    the stagnation heating falls to ≈ 0.8 × its sphere value; the sphere drag tables are kept. `--size-feedback initial`
+    (D₀, R₀) is SESAM's convention and the verification devices' setting. History columns `nose_radius_mm`,
+    `transverse_radius_mm`, `fitted_nose_radius_mm`.
 ```
 
 - [ ] **Step 5: Append §17 to the facts note and update the package docstring**
