@@ -244,10 +244,19 @@ measured value and the reason beside it.
    - *Resolved run (reported)*: the same with the real conductivity: onset earlier than SESAM's (surface melts first),
      demise time expected within ~5 % (energy-limited); the difference is the lumped-body assumption, plotted and
      discussed in the README.
-2. **Girin 2017 Table 1** (`analysis/girin_reference.py`, "Girin-as-published" mode: his constant ρ_a, potential-flow
-   u_e, W(τ) law, no runoff, iron/stone properties, We_cr 4.62): variants I and II — N, r_med, size range, t_s.d., σ
-   within 20 %; variant III reported; `data/reference_values/girin2017_table1.json`; Δn(r), ΔM(r) plotted with his
-   table values marked.
+2. **Girin 2017 Table 1** (`analysis/girin_reference.py`, "Girin-as-published" mode: his constant ρ_a = 10⁻⁷ g/cm³,
+   potential-flow u_e = 1.5(V∞ − w) sin φ, W(τ) = 1 − exp(−Cτ), no runoff, iron/stone properties, We_cr 4.62), reference
+   values in `data/reference_values/girin2017_table1.json`, two tiers:
+   - *Exact checks (explicit formulas, ≤ 2 %)*: GI = We∞Re∞⁻¹ᐟ² (13.0 / 3.55 / 43.5 for variants I/II/III), φ_cr at
+     τ = 0 from Eq. (3) (16.1° / 31.4° / 8.8°), the minimum growth time t_f along the surface (5.7 / 31 / 194 µs), the
+     release radius at τ = 0 from Eq. (8) with his B₁, and z₀ from GI ≥ 0.4 with his atmosphere — these verify the
+     transcription of his algebra and constants.
+   - *Integrated checks (≤ 20 %)*: N (1.5·10⁶ / 3.7·10⁵ / 832), r_med (26.9 µm for I), size range (4–135 µm for I),
+     t_s.d. (5.9 / 16.0 / 149 ms), σ, and the mass-loss law's near-(1 − t/t_s.d.)³ shape — these accumulate his
+     unstated discretisation (belt widths, time step, induction rule), his reading of Fig. 5 (we solve the dispersion
+     relation; 1.29/0.216 at We_s = 20 vs his constants 1.225/0.24), the unstated shock-layer treatment of V_a and
+     his rounded printed constants, so an identical reproduction is not expected.
+   Δn(r) and ΔM(r) are plotted with his table values marked.
 3. **Girin & Kopyt 1994 Tables 1–2**: r_d and τ_d for the six (ρ₂, V₀) cases and RT λ*, τ* for W = 10⁵–10⁷ cm/s²
    within 5 % (transcription check; their ṁ is reproduced with the mass-rate definition transcribed from the paper
    and reconciled with §9's ρ_l b/τ* — the reconciliation is recorded, and §9's rate is adjusted if the paper's
