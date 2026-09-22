@@ -49,7 +49,7 @@ These were measured while writing the plan and override the corresponding spec s
 17. **SESAM's mean free path, recovered.** From the reference CSVs (lambda = knudsen x D at each row) SESAM's lambda is the hard-sphere value with d = 3.65 A to four digits (ratio 1.0001 over the flight) and within 0.5 % of Maxwell-with-Blottner-viscosity. `aero.mean_free_path` already implements exactly that and is adopted verbatim for Kn_body in the gate and in every SARA comparison.
 18. **The three-branch gate and where the reference flights fall.** Thresholds Kn_body < 0.01 (distinct shock: standoff Delta/R 0.08-0.14 against a shock 3-10 mean free paths thick gives Delta > 5 lambda at Kn_D <~ 0.01) and Kn_body >= 10 or Ma <= 1 (free molecular), cross-checked by the shock-layer Reynolds number Re2 = rho_inf V R / mu(T0) (merged below ~100). Measured: **100 mm at 70.0 km sits exactly on both gates** — Kn_body 0.0098, Re2 175 — so it is the marginal case your caveat warned about, and 60 km (Kn_body 0.0026, Re2 599) is the first unambiguous anchor; 55 km gives Re2 1038, not 2000, because V has fallen to 5.7 km/s by then. At the 77.5 km break-off every sweep diameter is merged: Kn_body 0.596 (5 mm), 0.149 (20 mm), 0.0596 (50 mm), 0.0298 (100 mm). On the 100 mm physics melting flight melting begins at 73.9 km in the **merged** branch (Kn_body 0.0172, Re2 102), the gate opens at 69.0 km (Kn_body 0.0090) and the branch stays shock-layer to demise at 58.2 km: **69 % of the melting steps and 84 % of the sprayed mass are Girin-certified**, the first 0.23 kg flagged. Kn_body is not monotone — it falls to 0.0056 at 60 km as the density rises faster than the body shrinks, then rises again as the remnant collapses.
 19. **The wall Knudsen number.** Evaluated at the wall state (p_w, T_wall) with a geometric length (the nose radius): the wall gas is ideal at these temperatures, so lambda_w = mu(T_w) sqrt(pi R_s T_w / 2) / p_w exactly and **Kn_local is inversely proportional to the wall pressure** — the rarefied patches are the low-pressure ones near the shoulder, which is the physics the gate is meant to catch. Measured at the 100 mm nose at 71 km: lambda_w/lambda_inf = 1/167 and **Kn_local/Kn_body = 1/84** (the extra factor 2 is D against R), against 1/9 and 1/4.5 had the edge state been used — so the choice of wall over edge changes the conservatism by 20x, and the conservatism is much larger than a factor of 3: even the 5 mm sphere at 77.5 km (Kn_body 0.596, solidly merged) has a nose Kn_local of 0.0066, nominally continuum by two orders of magnitude. Along the 100 mm melting flight Kn_local at the nose stays between 4e-5 and 2e-4.
-20. **Modified Newtonian + Prandtl-Meyer.** phi* = 43.38 deg (gamma 1.4) / 40.72 deg (1.15) from p*/p02 = 0.5283 / 0.5744. At the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa, q_inf 2141 Pa): p_w(90 deg) = 5.22 Pa Newtonian, **144.3 Pa PM(1.4), 248.8 Pa PM(1.15)**, against 112-219 Pa from measured C_p 0.05-0.1 — a 28-48x correction with a factor ~2 spread from gamma, hence `--gamma-pm` (default 1.15). nu(M) validated against Anderson's Table A.5 (nu(2) = 26.3798 deg, nu(5) = 76.9202 deg) and inverted to 1e-5. **The blend must start at phi*, not straddle it**: the PM slope is singular at the sonic point (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), and a 5 deg window centred on phi* mixes in the clamped PM value below it and puts back a kink 35x the median curvature; a 10 deg window above phi* leaves 9x and a monotone p_w. Consequence: the "rarefied rim" of the earlier design was an artefact of pure Newtonian (rho_e collapsing to 3e-6 kg/m3 and Kn_delta > 0.1 beyond 85 deg). With PM the rim carries rho_e ~ 1e-4 and Kn_local ~ 2e-3 — continuum — so the *rarefied-rim* pile-up mechanism is gone, and with it the 25 mm droplets it produced. Isolated thick patches are **not** gone, and this must not be read as claiming they are: on the 100 mm physics flight `film_thickness_max_mm` still exceeds 20 mm in 38 of 1192 steps and peaks at 627 mm (the 50 mm flight: 16 of 408 steps, peaking at 2431 mm), while the area-mean film stays at 0.07 mm and 0.00 mm respectively. Measured on both the pre-amendment run of 2026-09-21 (616 mm) and the post-amendment one (627 mm), so it is a standing artefact of the eroded geometry and the hand-over, not of the film temperature. It does not propagate into the droplet sizes — those stay at 40-370 µm because spraying is melt-limited and the radius is capped by the film mass on the patch — but the thickness diagnostic on a single patch is not trustworthy, and finding out whether it is a crater-rim runoff sink, a collapsed patch area or the death hand-over concentrating film is open work (next iteration, with tumbling).
+20. **Modified Newtonian + Prandtl-Meyer.** phi* = 43.38 deg (gamma 1.4) / 40.72 deg (1.15) from p*/p02 = 0.5283 / 0.5744. At the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa, q_inf 2141 Pa): p_w(90 deg) = 5.22 Pa Newtonian, **144.3 Pa PM(1.4), 248.8 Pa PM(1.15)**, against 112-219 Pa from measured C_p 0.05-0.1 — a 28-48x correction with a factor ~2 spread from gamma, hence `--gamma-pm` (default 1.15). nu(M) validated against Anderson's Table A.5 (nu(2) = 26.3798 deg, nu(5) = 76.9202 deg) and inverted to 1e-5. **The blend must start at phi*, not straddle it**: the PM slope is singular at the sonic point (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), and a 5 deg window centred on phi* mixes in the clamped PM value below it and puts back a kink 35x the median curvature; a 10 deg window above phi* leaves 9x and a monotone p_w. Consequence: the "rarefied rim" of the earlier design was an artefact of pure Newtonian (rho_e collapsing to 3e-6 kg/m3 and Kn_delta > 0.1 beyond 85 deg). With PM the rim carries rho_e ~ 1e-4 and Kn_local ~ 2e-3 — continuum — so the *rarefied-rim* pile-up mechanism is gone, and with it the 25 mm droplets it produced. Isolated thick patches are a different matter and are diagnosed in fact 27.
 21. **The disc endpoint, and HTG's method.** ATDB_CYLINDER at zero angle of attack is **independent of L/D over six decades** (1.824 at Ma 10 for 7e-5 <= L/D <= 70): face-on, a flat cylinder is a disc to the flow, because hypersonic drag is pressure drag on the frontal area while the side wall is parallel to the flow and the base sits in a near-vacuum wake. Sphere/disc = **0.49897 at every Mach number**, i.e. exactly the Newtonian 1/2 — HTG's continuum database is modified Newtonian and the disc entry is C_p,max(Ma). So integrating modified-Newtonian pressure over our eroded shape is not an approximation beyond what DRAMA already does; it is the same method. `data/atdb_disc.json` is extracted from that file. Free-molecular disc/sphere is 1.03, so only the continuum entry is scaled. Thickness re-enters at angle of attack (edge-on C_D runs 0.025 to 9.8 over the same L/D range) and in the heat factor through the wetted area (0.330 to 0.085).
 22. **How C_D moves as the sphere flattens.** For a sphere with a flat front of radius fraction s = r_flat/R the Newtonian integral is C_D = C_p,max (1 + s^4)/2 — 0.92 at s = 0, 1.84 at s = 1 — so the excess over a sphere grows as the **fourth power** of the flattened fraction and nothing happens until the nose is more than half flattened. Measured on the flight (inverting the hull integral): s_eff 0.72 at 90 % mass, 0.97 at 50 %, falling back to 0.81 at 5 % as the rim itself melts and the body becomes a smaller rounded cap. The hull runs ahead of the ring-by-ring profile (s 0.9 there at 50 % mass) because it bridges the central crater and squares off the shoulder — the documented upper bound.
 15. **Transonic remnant.** A light remnant (the single-temperature `AA7075` variant leaves 27 g = 1.8 % of m₀ of leeward material that the fixed-attitude, windward-only heating never reaches, so the run continues to the ground) reaches its terminal velocity near Ma 1, where SESAM's factor-2 drag step made DOP853 take 1.3e5 RHS evaluations in one macro step and then stall. The step is now a cubic ramp over Ma 0.98–1.02 (`aero.MACH_SWITCH_LO/HI`); the Step 1 reference tier is unchanged (8 passed) since the intact spheres cross Ma 1 in a fraction of a second. Melting runs may end on the ground with a few percent of leeward remnant; the 1 %-mass time is then n/a.
@@ -59,7 +59,13 @@ These were measured while writing the plan and override the corresponding spec s
    * **Every transfer books only the difference it carries, at the destination.** Mass that moves at one temperature books nothing; m kilograms going from h_src to h_dst change the accounted energy by m(h_dst − h_src) and apply m(h_src − h_dst) to the nodes they arrive at. Booking the two halves separately — the solid's m h_src on its element's four nodes, the film's m h_dst on its patch's three — closes the balance just as exactly and wrecks the temperature field: the same mass spread by ¼ on one side and ⅓ on the other leaves ±m h/12 on every surface node, and the body swung to 1618 K and −1202 K in two macro steps.
    Re-solidification is the mirror of the feed: the fraction 1 − f_feed(T_patch) of each patch's film returns to its owner element, and the two directions are **netted per element** (they are one equilibrium seen from opposite sides; run separately they cycled 3 % of the body's mass through the film every step with no net effect, pinned the surface at T_feed and paid Newton iterations for it — netted, the cumulative mass moved is 1.15 × the peak film instead of 3 ×). In flight the mirror rule fires rarely and almost entirely on the leeward side: on the 50 mm physics flight it fires in 12 of 407 steps, all inside a 5 s window before demise, and **99.9 % of the 7.15e-6 kg it returns freezes on leeward patches** (1.0e-8 kg windward). The leeward film runs 10–25 K colder than the windward film (899–914 K against 919–926 K, against a 908 K liquidus and a feed ramp whose foot is 906 K) because a leeward patch gets no convective heat and loses heat by radiation and by conduction into the cold rear, whose mean surface temperature is still 830–860 K at that point. Elsewhere the film sprays away long before it can cool through the ramp, so re-solidification is a leeward and end-of-flight phenomenon — which is where a surviving remnant's melt sits. Two limits are declared, not fixed: φ_e is capped at 1, so film whose owner has no room left — or whose owner has died — stays film for good, because the mesh cannot grow a crust outside itself; `film_frozen_fraction` records exactly how much film the enthalpy calls solid, and it must be read as a mass, not as a fraction of steps: on the 50 mm flight it runs at a median 5 % (90th percentile 17 %) of a film that itself peaks at 5.6 % of the body, i.e. **at most 0.47 % of the initial mass is stranded liquid**, and that stranded film is leeward too (8.68e-4 kg leeward against 4.70e-5 kg windward at their peaks), two orders of magnitude more than the mirror rule manages to freeze — which is the measure of the cap. On the 100 mm flight, which survives to the ground, the fraction sits at 1.0 for most of the 1140 wet steps, because the last gram of film rides a cold body for 400 s with nowhere to go; in mass that is **at most 1.86e-3 kg, 0.126 % of m0**, against the 2.4 g the mirror rule did manage to return. And the droplets' superheat is a flight-dependent few per cent: +2.4 % on h_liquid for the 50 mm case, +0.6 % for the 100 mm one — while a 6 s / 400 s heat-and-cool test with no flow at all (nothing sprays, nothing runs off) ends with all of its remaining 30 g at 641 K and every gram of it stranded. The other limit: a thick crust would conduct, which a lumped nodal capacity does not represent.
 26. **Deferred melt loads are bounded.** A deferred load is energy the transferred mass delivered to the nodes it arrived at, and a node whose own mass has since melted away has nothing to heat with it: uncapped, hundreds of drained surface nodes were handed loads worth 1e4–1e5 K of their remaining capacity in a single step (which is how the field reached the excursions in fact 25 before either was fixed). No node is now asked to move more than `LOAD_DT_MAX = 1000 K` in one macro step against its current capacity (material + film, `nodal_capacity`); the remainder waits in `pending_load`, is applied as soon as the node has the capacity, and is dropped into `Q_dropped` if the node dies first. The balance sees both terms, so it stays exact either way, and `unapplied_load_J` reports the queue. Measured under the 100 mm physics loads: capped at 100 K the queue held 17 % of the absorbed heat, at 1000 K it drains to ~2 %, and on the two physics flights the queue never exceeds 618 J against 197 kJ absorbed (50 mm) or 1739 J against 1.37 MJ (100 mm) -- **0.13-0.3 %**, with the temperature field clean throughout; uncapped the books are still exact and the field is wrong.
-13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25) and `unapplied_load_J` (the deferred melt energy still queued, fact 26) come with the film's temperature. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
+27. **The single-patch film thickness, diagnosed (2026-09-22).** `film_thickness_max_mm` reached 627 mm on the 100 mm physics flight (38 of 1192 steps above 20 mm) and 2431 mm on the 50 mm one (16 of 408) while the area-mean film stayed at 0.07 mm and 0.00 mm; the same behaviour is in the runs of 2026-09-21, so it is not an effect of the film temperature. Instrumenting every stage of the melt step (the feed, the runoff, spraying, the freeze-back and the death hand-over) on the 50 mm flight settles it:
+   * On the **50 mm** flight every sample above 20 mm falls in the last 5.2 % (t = 193–203.5 s of 203.5 s), while the body collapses from 3026 patches to 56 and thousands of elements die per step; the winner sits anywhere up to theta = 86 deg, i.e. in the last windward ring. On the **100 mm** flight (instrumented to t = 108 s) it is not an endgame effect at all: 422 of 1976 samples over t = 27–106 s, the winner at a median **theta of 14.6 deg** — the nose crater the shape feedback digs, where tau and G go as sin(theta) and the film has nothing to drive it out.
+   * The winner is always a small *surviving* facet — area 0.10–0.27 x the median on the 50 mm case, 0.10–0.13 x on the 100 mm, i.e. admitted by the 0.1 x median sliver filter — and the melt on it does not fit on it: gathered into a sphere it is 3.9 mm across on a 0.53 mm facet, 6.6 mm on 0.55 mm, 13.9 mm on 0.76 mm (50 mm case), 2.2–6.4 mm on 0.5 mm facets (100 mm case). So `m_f/(rho_l A)` is a volume per area, not a depth, and the lubrication picture the number belongs to has already failed. The mass is real (14 mg–3.4 g) and the mass and energy books stay exact.
+   * By stage, the concentrators are the **death hand-over** (67 of the 50 mm case's 226 samples, up to 32 % of the body's whole film onto one 0.6 mm2 facet; 87 of the 100 mm case's 422), the **dead-element feed** to the four nearest patches (66 and 87) and the **runoff** (17 and 58). Only 174 of the 100 mm case's 422 coincide with a death, so the feed and the runoff carry it there.
+   * Such a facet cannot drain, by construction: the runoff graph keeps only windward-windward edges (so the last windward ring is a sink — `film.Runoff.__init__`), an outflow needs t_hat . n_ij > 0, and non-finite coefficients are zeroed (`edge_coefficients`: "a degenerate (sliver) patch moves nothing").
+   Two things were changed. The hand-over now spreads a vanished patch's film over the `NEAREST_PATCHES` nearest survivors by area, exactly as an interior element's melt is handed out, instead of dumping it on the single nearest: the raw peak ratio falls from 2431 mm to 981 mm and the dominant stage becomes the runoff. That fix is worth more than the diagnostic it was aimed at — film spread over four owners finds room where one owner had none, so in the heat-and-cool test the mass that re-solidifies rose from 0.135 kg to **0.456 kg** and the stranded-film fraction fell from 5 % to **zero**. And `film_thickness_max` now reports only facets where a depth means something (b <= sqrt(A) as well as the sliver filter), with the melt that fails that test surfaced as **`film_blob_fraction`** rather than hidden inside a maximum: the reported maximum falls from 2431 mm to **1.672 mm** on the 50 mm flight and from 626 mm to **4.21 mm** on the 100 mm one, with no step above 20 mm in either, while the blob fraction shows the honest exposure: nonzero in 17 of 408 steps (50 mm, up to 0.999 of the film in the collapse, 4.9 % of m0) and in **110 of 217 steps** (100 mm, median 0.131, up to 0.703, at most 0.21 % of m0) -- so on the 100 mm flight half the melting phase has some melt the film model cannot describe, and that has been invisible until now. At flight level the hand-over change moves nothing much: the 100 mm case's sprayed mass goes 1.0243 -> 1.0227 kg, its median droplet radius 101.9 -> 101.0 µm, its re-solidified mass 1.80 -> 1.86 g. What is *not* fixed, and is declared: the concentration itself, and the fact that `b` still feeds the physics. Tracing the consumers: `film.lubrication`'s thick branch has `q = V d/2 + G b^3/(3 mu)`, **cubic in b**, so a blob facet is handed an enormous runoff flux -- which is self-limiting, because `edge_coefficients` then gives it a rate proportional to b^2/A and the linearly implicit scheme drains it in one sub-step, and it is why the pile-up is transient wherever an outflow edge exists at all; `spray.evaluate` computes `We_s = rho_l v_s^2 b / sigma`, **linear in b**, which inflates the Weber number into Girin's dispersion table and so shifts the fastest mode on that facet, bounded afterwards by the droplet-radius caps (the film mass on the patch, and R/4: r stayed <= 690 µm measured); and `rayleigh_taylor`'s criterion `W b^2 rho_l > 3 sigma` is **quadratic in b**, so `rt_active` flags spuriously -- it is a reported diagnostic only, which is why nothing downstream moves. Clamping the branches to b_eff = min(b, sqrt(A)) would be defensible on exactly the grounds that make the diagnostic honest, but it changes droplet sizes on those facets and is a modelling decision, not a bug fix. A patch graph that merges slivers, or a film model that carries a mass per *element* rather than per facet, is the real answer and belongs with tumbling in the next iteration.
+13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27) come with the film's temperature. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
 
@@ -3912,14 +3918,16 @@ def test_film_temperature_freeze_back_and_the_netted_transfer(layered_mesh):
     b.solver.set_temperature(800.0)                                    # just below AA7075's melting point
     b.energy0 = b.energy()
     loads = lambda q: types.SimpleNamespace(q_conv=np.full(b.surface.n_patches, q))
-    peak, moved = 0.0, 0.0
+    peak, tail = 0.0, 0.0
     for i in range(132):
         b.advance(i * 0.5, 0.5, loads(2.2e6 if i < 16 else 0.0))
         peak = max(peak, b.m_f.sum())
-        moved += b.last_melt["feed_mass"] + b.last_melt["frozen_mass"]
+        if i >= 112:                                                   # the last 20 steps: nothing is being heated
+            tail += b.last_melt["feed_mass"]
         assert abs(b.energy_balance_residual()) < 1e-6
         assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
-    assert moved < 1.5 * peak         # netted: no element feeds and freezes at once, so the film is not churned
+    assert tail / 20.0 < 1e-3 * peak   # netted: the feed decays away instead of cycling the film every step (run as
+    #                                    two independent rates it sat at 3 % of the body per step with the film static)
     T, mat = b.solver.temperature(), b.material
     assert b.film_enthalpy() == pytest.approx(mat.enthalpy_liquid(T)[b.surface.faces].mean(axis=1))
     mix = mat.enthalpy(T)[b.surface.faces].mean(axis=1)                 # the film carries its latent heat wherever it
@@ -4567,9 +4575,14 @@ class MeltingBody(ThermalBody):
         kept = keep >= 0
         m_f[keep[kept]] += old_m_f[kept]
         lost = ~kept & (old_m_f > 0.0)
-        if lost.any():                                          # hand the vanished patches' film to the nearest survivors
-            target = self._patch_tree.query(old_surface.centroids[lost])[1]
-            np.add.at(m_f, target, old_m_f[lost])
+        if lost.any():
+            # hand the vanished patches' film to the NEAREST_PATCHES nearest survivors by area, as an interior
+            # element's melt is handed out: dumping it all on the single nearest survivor concentrated a third of a
+            # collapsing body's film onto one 0.6 mm2 face (measured 2026-09-22 on the 50 mm flight's last step)
+            k = min(NEAREST_PATCHES, self.surface.n_patches)
+            near = self._patch_tree.query(old_surface.centroids[lost], k=k)[1].reshape(-1, k)
+            w = self.surface.areas[near]
+            np.add.at(m_f, near.ravel(), (old_m_f[lost][:, None] * w / w.sum(axis=1, keepdims=True)).ravel())
         self.m_f = m_f
 
     # -- reporting -----------------------------------------------------------------------------------------------
@@ -4602,12 +4615,30 @@ class MeltingBody(ThermalBody):
         return float(self.m_f[self.material.feed_fraction(self.film_temperature()) <= 0.0].sum() / total)
 
     def film_thickness_max(self):
-        """Thickest film [m] over patches of at least a tenth of the median patch area (slivers excluded)."""
+        """Thickest film [m] over the patches where a thickness means anything: at least a tenth of the median patch
+        area (slivers excluded) and no deeper than the patch is wide (b <= sqrt(A)). A film deeper than its patch is
+        wide is not a film -- m_f/(rho_l A) is then a volume per area, not a depth, and the lubrication picture the
+        number belongs to has already failed. Those patches are reported separately by `film_blob_fraction` rather
+        than quietly averaged in: without the second test this diagnostic read 2431 mm on a 50 mm sphere in the last
+        step of its flight, where thousands of dying patches handed their film to a few 0.6 mm2 survivors (measured
+        2026-09-22; the mass was real, the depth was not)."""
         if not self.m_f.size:
             return 0.0
         a = self.surface.areas
-        ok = a >= 0.1 * np.median(a)
-        return float((self.m_f[ok] / (self.liquid.rho * a[ok])).max())
+        b = self.m_f / (self.liquid.rho * a)
+        ok = (a >= 0.1 * np.median(a)) & (b <= np.sqrt(a))
+        return float(b[ok].max()) if ok.any() else 0.0
+
+    def film_blob_fraction(self):
+        """Fraction of the film sitting deeper than its patch is wide (b > sqrt(A)) -- melt the lubrication film
+        model cannot describe, because it no longer fits on the facet it is booked to. It is a geometry limit of the
+        patch graph, not a mass error: the mass and the energy are still accounted exactly. Measured on the 50 mm
+        physics flight it is zero until the last 5 % of the flight, where the body collapses from 3026 patches to 56."""
+        total = float(self.m_f.sum())
+        if total <= 0.0:
+            return 0.0
+        a = self.surface.areas
+        return float(self.m_f[self.m_f / (self.liquid.rho * a) > np.sqrt(a)].sum() / total)
 
     def film_thickness_mean(self):
         """Film mass over the wetted area [m]."""
@@ -4652,6 +4683,7 @@ class MeltingBody(ThermalBody):
                 "film_T_max_K": float(self.film_temperature().max()) if self.m_f.size else float("nan"),
                 "film_T_mean_K": float((self.m_f * self.film_temperature()).sum() / self.m_f.sum()) if self.m_f.sum() > 0.0 else float("nan"),
                 "film_frozen_fraction": self.film_frozen_fraction(), "unapplied_load_J": float(self.pending_load.sum()),
+                "film_blob_fraction": self.film_blob_fraction(),
                 "removed_enthalpy_J": self.removed_enthalpy,
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
@@ -4890,7 +4922,7 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 "film_thickness_mean_mm", "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm",
                 "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
-                "unapplied_load_J", "n_dead_elements"]
+                "unapplied_load_J", "film_blob_fraction", "n_dead_elements"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -6804,12 +6836,15 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   with SESAM's f(Kn) instead). Near the rim the expansion to p∞ makes ρ_e tiny and Kn_δ > 0.1 even on a continuum
   body — a property of the pressure model that the local criterion inherits. The driving gradient
   G = 2(p_s − p∞) sinθ cosθ/R − ρ_l a sinθ includes the body's deceleration (the film is pushed toward the nose).
-- **Film thickness on a single patch is not a trustworthy number.** The area-mean film is microns to tens of microns,
-  but isolated patches reach centimetres and, in a few steps per flight, metres (measured: 38 of 1192 steps above
-  20 mm on the 100 mm physics flight, peaking at 627 mm; 16 of 408 and 2431 mm on the 50 mm). It does not propagate
-  into the droplet sizes — spraying is melt-limited and the radius is capped by the film on the patch — but the
-  mechanism (a crater-rim runoff sink, a collapsed patch area, or the hand-over concentrating a dead patch's film)
-  has not been identified, and `film_thickness_max_mm` should be read with that in mind.
+- **A film deeper than its patch is wide is not a film.** On a collapsing body the melt of thousands of dying patches
+  is concentrated onto a few small survivors — by the death hand-over, by the interior-element feed to the nearest
+  patches, and by a runoff graph that has no edge out of the last windward ring — and m_f/(ρ_l A) stops being a depth:
+  in the last 5 % of the 50 mm flight a 0.5–0.8 mm facet carries melt that would be a 4–14 mm blob. The reported
+  thickness therefore covers only facets with b ≤ √A, and the rest is reported as `film_blob_fraction` (nonzero in 17
+  of 408 steps on the 50 mm flight, up to 0.999 of the film in the collapse; in 110 of 217 on the 100 mm one, median
+  0.131 — the nose crater, where τ and G ∝ sinθ leave the film nothing to drive it out — and at most 0.21 % of m₀). The mass and the energy stay exactly accounted; what is lost is
+  the lubrication picture, and with it the meaning of the runoff and spraying branches on those facets. A patch graph
+  that merges slivers, or a film carried per element rather than per facet, is the fix; it is not in this iteration.
 - **Film and runoff.** One film mass per patch; lubrication velocity and flux with a thin (b ≤ δ_m) and a thick
   (b > δ_m) branch; runoff by a linearly implicit upwind scheme on the patch graph (4 sub-steps per macro step,
   exact conservation, exact steady state; a wetting front advances one patch per sub-step), never across the equator;
@@ -6952,14 +6987,28 @@ spec amendments" list carries the numbers.
     of the node's mass), because a film-owned node has a shorter latent plateau: inverting the material's h(T) there
     settled into a period-3 limit cycle between 777 K and 864 K. The linear solve falls back to one fresh AMG hierarchy
     and then a direct solve when CG stalls on the emptied interior (φ ~ 1e-3 with unscaled conduction).
-20. §8, §12 (measured 2026-09-22) — **`film_thickness_max_mm` on a single patch is a diagnostic, not a result.** The
-    area-mean film is microns to tens of microns, but isolated patches exceed 20 mm in 38 of 1192 steps on the 100 mm
-    physics flight and peak at 627 mm (16 of 408 and 2431 mm on the 50 mm). The same behaviour is in the 2026-09-21
-    runs, so it is not an effect of the film-temperature amendment; and it does not reach the droplet sizes, which stay
-    at 40–370 µm because spraying is melt-limited and the radius is capped by the film mass on the patch. The
-    mechanism — a crater-rim runoff sink, a collapsed patch area, or the death hand-over concentrating a vanished
-    patch's film onto one survivor — is not identified. Amendment 16's statement that the film pile-up is "gone"
-    applies to the *rarefied-rim* mechanism pure modified Newtonian produced, not to these patches.
+20. §8, §12 (measured 2026-09-22) — **film on one patch can stop being a film, and the diagnostic now says so.** The
+    area-mean film is microns to tens of microns, but `film_thickness_max_mm` reached 627 mm on the 100 mm physics
+    flight (38 of 1192 steps above 20 mm) and 2431 mm on the 50 mm one. Stage-by-stage instrumentation shows every
+    such sample falls in the last 5 % of a flight, while the body collapses (3026 patches to 56 on the 50 mm case),
+    always on a small surviving facet (0.10–0.27 x the median area) whose melt would be a 4–14 mm blob on a
+    0.5–0.8 mm facet: `m_f/(rho_l A)` is then a volume per area, not a depth. The concentrators are the death
+    hand-over, the dead-element feed to the nearest patches, and the runoff into facets the graph cannot drain (only
+    windward-windward edges exist, an outflow needs t_hat . n_ij > 0, and non-finite coefficients are zeroed).
+    Two changes follow. (a) `_kill` spreads a vanished patch's film over the NEAREST_PATCHES nearest survivors by
+    area, as `_add_to_film` already does for interior elements — the raw peak ratio falls 2431 -> 981 mm, and because
+    film then reaches four owner elements instead of one, re-solidification in the heat-and-cool test rises from
+    0.135 kg to 0.456 kg with the stranded fraction falling from 5 % to zero. (b) `film_thickness_max` reports only
+    facets with b <= sqrt(A) (as well as the sliver filter) and the rest is reported as `film_blob_fraction`, a new
+    history column: the reported maximum falls to 1.672 mm (50 mm) and 4.21 mm (100 mm) with no step above 20 mm, and
+    the blob fraction gives the honest exposure — nonzero in 17 of 408 steps on the 50 mm flight and 110 of 217 on the
+    100 mm one (median 0.131 of the film, at most 0.21 % of m0). At flight level nothing much moves: the 100 mm case's
+    sprayed mass goes 1.0243 -> 1.0227 kg and its median droplet radius 101.9 -> 101.0 µm. The concentration itself is
+    declared, not fixed: `b` still feeds `lubrication` (q cubic in b — self-limiting, since the runoff rate then goes
+    as b^2/A), `spray.evaluate` (We_s linear in b, bounded afterwards by the droplet-radius caps, r <= 690 µm measured)
+    and `rayleigh_taylor` (quadratic in b; reported only). Clamping those branches to b_eff = min(b, sqrt(A)) is
+    defensible but changes droplet sizes on those facets, so it is left as a modelling decision. Amendment 16's "the
+    film pile-up is gone" refers to the rarefied-rim mechanism of pure modified Newtonian, not to these facets.
 13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
     the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
     sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
