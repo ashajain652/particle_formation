@@ -32,28 +32,34 @@ These were measured while writing the plan and override the corresponding spec s
 
 1. **Reference run names.** The wrapper names default-material runs without a material suffix: the melting references are `sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind` and `sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_nowind` (spec §13.1 wrote `_mAA7075_nowind`). Measured on them: 100 mm melt onset 71.005 km at 43.55 s, mass 0 at 66.476 km / 67.315 s; 50 mm onset 77.104 km at 178.55 s, mass 0 at 73.094 km / 191.55 s (the facts note's "74.9 → 73.0 km" was the NRLMSISE case).
 2. **SESAM hollows the melting sphere at fixed outer geometry.** During melting `thick_mm` is the shell thickness of a hollow sphere of outer radius R₀ (m = ρ 4π/3 [R₀³ − (R₀ − thick)³] to four digits), the heat input stays 4πR₀² × q with R₀ in DKR, Kn uses D₀, the radiated power is 4πR₀² εσ 850⁴ = 372 W throughout and C_D stays 0.913. Consequence: the bookkeeping device keeps the intact geometry (uniform φ_e reduction) and needs no area scaling; `--removal instant` removes the liquid inventory of **every** element as it forms (not only surface elements — a surface-only feed stores latent heat in the interior of the isothermal body and lags SESAM by 5–30 s).
-3. **Nodal enthalpy, lumped capacity, enthalpy-consistent Newton.** Step 2's element-mean enthalpy with the secant capacity is a regula falsi anchored at T_old whose fixed point repels inside a steep latent-heat ramp (contraction factor −59 for the isothermal body crossing the ±2 K ramp); with the real conductivity a surface element spans 30 K while its mean crosses a 4 K ramp and the iteration cycled (jumps across the ramp, 3-cycles under damping). The thermal core now uses the **nodal** enthalpy h(T_i) with a **lumped** capacity matrix diag(Σ_e φ_e V_e/4 ρ c_i) — the only capacity matrix whose increment equals the increment of ρ∫h dV with h interpolated linearly (the consistent P1-coefficient matrix left a 3e-4 balance error) — a tangent Newton on R(T) = E/dt + KT − F with E = M(ρ c_sec)(T − T_old), and every update mapped through the true h(T) per node (T_new ← T(h(T_k) + c_p,eff(T_k)(T_new − T_k))) so that a node cannot jump across the melting range, with damping as a fallback. Both backends implement it identically (the FEniCSx backend assembles only the stiffness in UFL and adds everything nodal in numpy/PETSc, so the radiation follows the moving boundary). `lumped_mass=True` is the default; `--consistent-mass` (skfem only) keeps the consistent form for the analytic checks. Measured: Stefan front within 0.3 % (0.5 mm box), 2.0–2.4 Newton iterations per step without melting, 3–5 with; the Step 2 verification numbers re-measured with the new core: d100 sesam Q_conv 0.46 % / 2.23 % point-wise, integrated +0.31 %, ΔT_eq 24.6 K (1.20 %), radiated 6.66 %, 74 s runtime (was 158 s) — Task 15 refreshes the README table with the full re-run.
+3. **Nodal enthalpy, lumped capacity, enthalpy-consistent Newton.** Step 2's element-mean enthalpy with the secant capacity is a regula falsi anchored at T_old whose fixed point repels inside a steep latent-heat ramp (contraction factor −59 for the isothermal body crossing the ±2 K ramp); with the real conductivity a surface element spans 30 K while its mean crosses a 4 K ramp and the iteration cycled (jumps across the ramp, 3-cycles under damping). The thermal core now uses the **nodal** enthalpy h(T_i) with a **lumped** capacity matrix diag(Σ_e φ_e V_e/4 ρ c_i) — the only capacity matrix whose increment equals the increment of ρ∫h dV with h interpolated linearly (the consistent P1-coefficient matrix left a 3e-4 balance error) — a tangent Newton on R(T) = E/dt + KT − F with E = M(ρ c_sec)(T − T_old), and every update mapped through the true h(T) per node (T_new ← T(h(T_k) + c_p,eff(T_k)(T_new − T_k))) so that a node cannot jump across the melting range, with damping as a fallback. Where a melt film rides a node the enthalpy inverted is the node's **own mixture** of material and film (`enthalpy_mixed`/`temperature_from_enthalpy_mixed`, weighted by `film_weight`), because the film is liquid and its latent plateau is already spent: inverting the material's h(T) there threw nodes clean across the ramp and the iteration settled into a period-3 limit cycle between 777 K and 864 K on 22 nodes (measured 2026-09-22; with the mixture it converges in 4–9 iterations). Both backends implement it identically (the FEniCSx backend assembles only the stiffness in UFL and adds everything nodal in numpy/PETSc, so the radiation follows the moving boundary). `lumped_mass=True` is the default; `--consistent-mass` (skfem only) keeps the consistent form for the analytic checks. Measured: Stefan front within 0.3 % (0.5 mm box), 2.0–2.4 Newton iterations per step without melting, 3–5 with; the Step 2 verification numbers re-measured with the new core: d100 sesam Q_conv 0.46 % / 2.23 % point-wise, integrated +0.31 %, ΔT_eq 24.6 K (1.20 %), radiated 6.66 %, 74 s runtime (was 158 s) — Task 15 refreshes the README table with the full re-run.
 4. **Conductivity is not scaled by φ_e.** Scaling k with φ_e (spec §6) isolated the surface nodes of nearly consumed elements (capacity and conductance both ×0.05) and drove them to 5000 K; k stays that of the full element while φ_e > 0 (a thinner sliver conducts better, not worse); only the capacity scales. Patch owners die at φ_e ≤ PHI_DEATH = 0.05 (their remainder joins the film; owners at 10⁻³ made surface nodes swing by hundreds of kelvin between iterates), interior elements keep φ_e ≥ 10⁻³ (no cavity can open); deaths cascade within the step until every owner has φ_e > 0.05; nodes without material are pinned at their temperature and loads on them are counted (`StepResult.Q_dropped`).
-5. **Feed rule.** Every active element feeds its liquid inventory φ_e ρ V_e mean_i f_feed(T_i) (f_feed a ±2 K ramp at the liquidus; for the single-temperature material identical to f_l), owners to their patches by area, interior elements to the four nearest patches by area; the material leaves the FEM at its nodal-mean enthalpy but is booked at h_liquid, the difference (superheat or latent deficit) being a nodal load on the element's nodes over the next step — energy-exact, and the melt front moves at the energy-limited rate whatever the element size (surface-only feed with per-element death could not: the three tets of a prism reach the liquidus together and at peak heating 3.6 layers melt per step).
+5. **Feed rule.** Every active element feeds its liquid inventory φ_e ρ V_e mean_i f_feed(T_i) (f_feed a ±2 K ramp at the liquidus; for the single-temperature material identical to f_l), owners to their patches by area, interior elements to the four nearest patches by area. The rate is a *fraction of what the element still holds*, which is what makes the melt front move at the energy-limited rate whatever the element size (surface-only feed with per-element death could not: the three tets of a prism reach the liquidus together and at peak heating 3.6 layers melt per step) — and what limits it is not the rule but the energy, because the mass leaves at the enthalpy the **molten part** of the element carries (the f-weighted nodal mean, not the element mean) and arrives holding `enthalpy_liquid`. With `--removal instant` it leaves at h_liquid instead and the difference is a load on the element's own nodes; that is the lumped device that reproduces SESAM's Q/L_f law, and it is the same rule. Two ways of getting this wrong were measured on 2026-09-22 and are the reason for fact 25: debit only the destination and the element keeps a melt fraction it no longer has and feeds it again next step (the surface melted three times faster than the heat allowed); book the film at the mixture enthalpy h(T) instead of the liquid one and melting is free on the ramp (a 100 mm sphere turned entirely to film on a quarter of its latent heat).
 6. **Mesh: layers by radial projection.** gmsh's `extrudeBoundaryLayer` is a geo-kernel operation that cannot be attached to the OCC sphere without re-parametrising; the layers are built by projecting the inner gmsh sphere's boundary triangulation radially (inner radius R − 3.75 mm, shells at 46.25/48.25/49.25/49.75/50 mm), each prism split into three tetrahedra by the smallest-node-id diagonal rule (conforming, exact areas/volumes, closed surface). Default 4 layers × (0.25, 0.5, 1, 2 mm): **46 278 nodes / 255 276 tets / 15 430 patches** on the 100 mm sphere (spec estimated ≈55 k nodes); surface triangles 2.16 mm. A face table (every face with its ≤ 2 elements) makes deactivation O(dead elements). The box mesh is a structured Kuhn split (no gmsh).
 7. **Runoff: linearly implicit upwind, no explicit sub-steps.** Films driven by the free-molecular shear near the rim move at ~10 m/s and cross the hemisphere many times per 0.5 s step: the spec's explicit CFL scheme needed 1e4–1e5 sub-steps per macro step (sliver patches worst). The transport is (I + Δt_s C) m_new = m_old with the edge coefficients c = q ℓ (t̂·n̂)⁺/(A b) at the start of each of 4 sub-steps: unconditionally stable, positive, conservative to round-off, exact steady state (strip test 0.1 %); a wetting front advances one patch per sub-step (documented limit). A Picard iteration on the fully implicit form does not contract (Δt × c ≫ 1). Runoff never crosses into leeward patches (the flow stops at the equator); leeward films are static and can stay attached at the end of a run (0.065 kg in the resolved 100 mm case).
 8. **Boundary layer: Ranger's own integral.** δ_a² = 58.08 ν_e ∫u_e⁴ds/u_e⁵ reproduces Ranger's 2.2 R Re_D^−½ Ψ(θ) exactly under potential flow (0.05 % on 1° bins with a 20× refined quadrature); Thwaites' momentum thickness (spec §7) is a constant 12.3 × smaller within ±1.7 % over 5°–85° and is kept as the cross-check. Ψ(0) = √(48/15) = 1.789. Measured at 71 km / 7.24 km/s: u_e 1.3 km/s at 30°, 1.9 km/s at 45°; δ_a 6–9 mm; Kn_δ 0.007–0.03 (continuum/slip) up to 60°, ≥ 0.1 from ~85° (the modified-Newtonian expansion to p∞ makes ρ_e → 3e-6 kg/m³ at the rim); τ_c 12–46 Pa, τ_fm 1600–1900 Pa; G 2e4–6e4 Pa/m with the deceleration term (30 m/s² × ρ_l) comparable to the pressure gradient. The film's driving gradient is G = 2(p_s − p∞) sinθ cosθ/R − ρ_l a sinθ (the deceleration pushes the film toward the nose).
 9. **Spraying branches.** A film thicker than δ_m takes the thick (Girin 2017) branch in every regime, with the film velocity the local shear gives it (τ δ_m/μ_l; for the free-molecular shear this is what strips the rim, where the film piled up to 100 mm otherwise); the thin branch (Girin & Kopyt 1994) uses λ* = 1.5 M_e Σ/(ρ_e u_e²) (their 1.5 M d/We_d: the thickness cancels), τ* = 2 capillary periods = 0.798 λ*^1.5 (ρ_l/Σ)^½ (their Eq. 12), **ṁ = ρ_l min(b, λ*/8)/τ*** — their Table 1 mass rate is ρ₁ r_d/(2τ_d) = ρ₁ λ*/(8τ*), reproduced within 1 % (spec §9's ρ_l b/τ* is amended to this); their cut-off λ_t = λ*/3 never limits the mode (dropped). The droplet radius is capped by the film on the patch ((3 m_f/(4πρ_l))^⅓) and by R/4 (long near-critical waves; the rim's expanded edge state gave 25 mm droplets otherwise). Both branches strip hundreds to thousands of kg/m²/s where the melt supplies ~5 kg/m²/s: spraying is melt-limited, the film stays microns thin, r ≈ 45 µm–1.3 mm with a median ≈ 145–200 µm; We_d ≤ 21 with a few hundred breakup-flagged rows per flight.
 10. **Girin 2017 Table 1.** GI = We∞Re∞^−½ is reproduced (13.04 / 3.51 / 43.46) only with We∞ on the ambient density ρ∞ = ρ_a/6 and Re∞ on the compressed ρ_a = 1e-4 kg/m³; α = ρ∞/ρ_m reproduces his t_ch. φ_cr from Eq. (3) matches his table with We_cr = 4.62 (16.3° / 32.0° / 8.9°; 3.08 gives 17 % smaller angles). The rest depends on which density enters δ_a: with the **ambient** Reynolds number t_f (7.0 / 27.1 / 207 µs vs 5.7 / 31 / 194), N (1.31e6 / 3.57e5 / 636 vs 1.5e6 / 3.7e5 / 832) and r_med (25.8 / 39.6 µm vs 26.9 / 41.6) are within 30 %; with the shock density droplets come out 2.5× smaller. The spraying duration is half his for the iron variants (2.8 / 8.0 ms vs 5.9 / 16.0) and 6.5 vs 149 ms for the stony one (λ_f 3.5 mm > R₀; belt discretisation and induction handling unstated). Spec §13.2's tiers become: exact (GI, φ_cr ≤ 2 %), integrated (t_f, N, r_med ≤ 30 %, ambient density), reported (t_s.d., ranges, σ, z₀).
 11. **Girin & Kopyt 1994.** Table 1's six r_d imply an effective dynamic pressure 7.8 × ρ₂V₀² (their "deceleration ~10× and re-acceleration to M = 2–3"); with that one factor r_d agree within 0.5 % and τ_d within 1 %. Table 2's λ* column is exactly 10 × smaller than their Eq. (14) (a units slip); τ* agrees to three digits. The RT criterion is inactive at our 10–30 m/s².
-23. **Cost, re-measured after the amendments.** A macro step on the default mesh costs ~1.5 s (0.6 s conduction; the rest the melt step's 91 Cantera isentropic expansions, the runoff solve and the hull). The spec's "100 mm physics flight in <= 6 min" held for a flight that demises (2-5 min) but not for one whose remnant survives: the 100 mm physics case now runs to the ground in 1195 steps / 1808 s. Restate the target per macro step, or bound the flight with `--t-max` when only the spraying phase is wanted.
-24. **The physics-mode 100 mm sphere no longer demises.** With the shape feedback and the amended surface flow it sprays 1.027 kg of 1.472 kg as 3.2e7 droplets from 74.0 km and **0.445 kg (30 %) reaches the ground**; the 50 mm sphere still demises (202.6 s, +5.9 % on SESAM's 1 %-mass time). This is a fixed-attitude result three times over -- the flattening face is held in its maximum-drag orientation, the fitted nose radius cuts the stagnation flux by a further ~20 %, and the leeward shell is never heated -- and DRAMA's own tumbling-averaged disc C_D (0.60, *below* the sphere's 0.91) shows the spread is an attitude uncertainty, not a drag-law one. It must be reported as such in the README and the spec, with tumbling as the next iteration's first item. The verification devices are pinned to `--size-feedback initial`, so the bookkeeping thresholds are untouched by any of it (0.98 % / 1.29 %, unchanged).
-12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %; the devices are pinned to `--size-feedback initial`, so no later amendment can move them); resolved (sesam heating, AA7075, girin, D₀/R₀): onset 71.62 / 77.57 km, mass 10.1 % / 13.5 % of m₀ off SESAM, 1 %-mass time +6.5 % / +0.5 %; physics mode (AA7075_range, size feedback and the amended surface flow): 100 mm onset 73.96 km, **no demise** (1.027 kg sprayed, 0.445 kg to the ground), 3.2e7 droplets of median radius 99 µm, 1195 steps in 1808 s; 50 mm onset 78.32 km, 1 %-mass time 202.6 s (+5.9 %), 0.175 kg sprayed, 406 steps in 219 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius): sprayed mass within 0.2 % for every variant; demise altitude +8.9 % without the size feedback, +2.8 % for Δt/2, within 0.3 % otherwise; median radius −21 % for k_r −30 % (+1 % for +30 %: the film cap), −21 % for Δt/2, +17 % without runoff, −28 % for the single-temperature `AA7075`, which also melts 1 km higher, takes 753 s (its ±2 K ramp costs Newton iterations) and leaves a 1.8 % leeward remnant.
+23. **Cost, re-measured after the amendments.** A macro step on the default mesh costs ~2.0 s (0.6 s conduction; the rest the melt step's 91 Cantera isentropic expansions, the runoff solve and the hull), up from ~1.5 s: the film-temperature amendment (facts 25-26) adds the liquid-enthalpy evaluations and the mixed inversion, which cost 30-90 % of wall clock across the cases (bookkeeping 39 s / 20 s, resolved 269 s / 54 s, 50 mm physics 324 s). The spec's "100 mm physics flight in <= 6 min" held for a flight that demises (2-5 min) but not for one whose remnant survives: the 100 mm physics case now runs to the ground in 1191 steps / 2357 s. Restate the target per macro step, or bound the flight with `--t-max` when only the spraying phase is wanted.
+24. **The physics-mode 100 mm sphere no longer demises.** With the shape feedback and the amended surface flow it sprays 1.032 kg of 1.472 kg as 3.3e7 droplets from 74.0 km and **0.440 kg (29.9 %) reaches the ground**; the 50 mm sphere still demises (203.5 s). Re-measured on 2026-09-22 with the film temperature: the sprayed mass moved by 0.5 % and the median droplet radius from 99 to 122 µm (+23 %, comparable to the +-21 % the sensitivity study spans for a single setting change, and worth a row of its own in Task 14's re-run), so the headline -- that this sphere reaches the ground -- is unchanged by that amendment. This is a fixed-attitude result three times over -- the flattening face is held in its maximum-drag orientation, the fitted nose radius cuts the stagnation flux by a further ~20 %, and the leeward shell is never heated -- and DRAMA's own tumbling-averaged disc C_D (0.60, *below* the sphere's 0.91) shows the spread is an attitude uncertainty, not a drag-law one. It must be reported as such in the README and the spec, with tumbling as the next iteration's first item. The verification devices are pinned to `--size-feedback initial`, so the bookkeeping thresholds are untouched by any of it (0.98 % / 1.29 %, unchanged).
+12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %; the devices are pinned to `--size-feedback initial`, so no later amendment can move them); resolved (sesam heating, AA7075, girin, D₀/R₀): onset 71.62 / 77.57 km, mass 9.35 % / 7.10 % of m₀ off SESAM, 1 %-mass time +4.8 % / −0.1 % (both moved toward SESAM by the film-temperature amendment: the 50 mm mass error halved from 13.5 %, because melt can no longer become film without paying its latent heat); physics mode (AA7075_range, size feedback, the amended surface flow and the film temperature): 100 mm onset 73.96 km, **no demise** (1.032 kg sprayed, 0.440 kg to the ground, 76.42 % of m0 off SESAM at its own time stamps), 3.3e7 droplets of median radius 122 µm, 2.4 g re-solidified, 1191 steps in 2357 s; 50 mm onset 78.32 km, demise 203.5 s, 0.173 kg sprayed, 66.70 % of m0 off SESAM, 2.5e6 droplets of median radius 236 µm, 407 steps in 324 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius; measured before the film-temperature amendment of facts 25–26, which moved the 50 mm flight by under 1 %, so Task 14's re-run is expected to confirm the ranking rather than change it): sprayed mass within 0.2 % for every variant; demise altitude +8.9 % without the size feedback, +2.8 % for Δt/2, within 0.3 % otherwise; median radius −21 % for k_r −30 % (+1 % for +30 %: the film cap), −21 % for Δt/2, +17 % without runoff, −28 % for the single-temperature `AA7075`, which also melts 1 km higher, takes 753 s (its ±2 K ramp costs Newton iterations) and leaves a 1.8 % leeward remnant.
 14. **Size feedback** (measured on the coarse-mesh physics flight): the front erodes fastest — the front-most point recedes from +49 mm to −28 mm while the back stays at −50 mm and the transverse radius at 50 mm until the last 20 % of the mass — so the fitted windward-cap radius grows from 50 mm to 140–200 mm within the first 15 % of mass loss (a flat front) and is capped at 1.67 R_t = 83 mm; the stagnation heating factor (R₀/R_nose)^½ is 0.78–0.82 during most of the melt. A cone from the mass centre selects too few patches on the eroded front (the fit collapsed to 4–16 mm), hence the depth-band cap definition. With the feedback the 100 mm physics flight ends at 114.8 s / 55.7 km (98.5 s without), 230 steps, 1.455 kg sprayed, median 154 µm; the 50 mm flight's 1 %-mass time moves from +3.9 % to +5.4 % of SESAM's. The bookkeeping and resolved runs keep D₀/R₀ (`--size-feedback initial`, the CLI default with `--removal instant`; the verification driver sets it for the resolved mode too).
 16. **DRAMA's gamma is constant.** `atmosphereData.xml` and our packaged copy of `StaticEnvironmentData.csv` carry gamma = 1.4000 at every altitude from 0 to 150 km (only the oxygen fraction varies, 0.2317 → 0.1170), so "SARA's own value per altitude" resolves to 1.4 everywhere; the loader reads the column and a test asserts it, so a future varying table would be picked up. The identity Kn = (Ma/Re) sqrt(gamma pi/2) reproduces lambda/L to machine precision; the coefficient is 1.4829 (Maxwell, gamma 1.4) against 1.5105 for the Chapman-Enskog hard sphere — a 2 % difference. The freestream gamma is **not** the Prandtl-Meyer gamma (§20).
 17. **SESAM's mean free path, recovered.** From the reference CSVs (lambda = knudsen x D at each row) SESAM's lambda is the hard-sphere value with d = 3.65 A to four digits (ratio 1.0001 over the flight) and within 0.5 % of Maxwell-with-Blottner-viscosity. `aero.mean_free_path` already implements exactly that and is adopted verbatim for Kn_body in the gate and in every SARA comparison.
 18. **The three-branch gate and where the reference flights fall.** Thresholds Kn_body < 0.01 (distinct shock: standoff Delta/R 0.08-0.14 against a shock 3-10 mean free paths thick gives Delta > 5 lambda at Kn_D <~ 0.01) and Kn_body >= 10 or Ma <= 1 (free molecular), cross-checked by the shock-layer Reynolds number Re2 = rho_inf V R / mu(T0) (merged below ~100). Measured: **100 mm at 70.0 km sits exactly on both gates** — Kn_body 0.0098, Re2 175 — so it is the marginal case your caveat warned about, and 60 km (Kn_body 0.0026, Re2 599) is the first unambiguous anchor; 55 km gives Re2 1038, not 2000, because V has fallen to 5.7 km/s by then. At the 77.5 km break-off every sweep diameter is merged: Kn_body 0.596 (5 mm), 0.149 (20 mm), 0.0596 (50 mm), 0.0298 (100 mm). On the 100 mm physics melting flight melting begins at 73.9 km in the **merged** branch (Kn_body 0.0172, Re2 102), the gate opens at 69.0 km (Kn_body 0.0090) and the branch stays shock-layer to demise at 58.2 km: **69 % of the melting steps and 84 % of the sprayed mass are Girin-certified**, the first 0.23 kg flagged. Kn_body is not monotone — it falls to 0.0056 at 60 km as the density rises faster than the body shrinks, then rises again as the remnant collapses.
 19. **The wall Knudsen number.** Evaluated at the wall state (p_w, T_wall) with a geometric length (the nose radius): the wall gas is ideal at these temperatures, so lambda_w = mu(T_w) sqrt(pi R_s T_w / 2) / p_w exactly and **Kn_local is inversely proportional to the wall pressure** — the rarefied patches are the low-pressure ones near the shoulder, which is the physics the gate is meant to catch. Measured at the 100 mm nose at 71 km: lambda_w/lambda_inf = 1/167 and **Kn_local/Kn_body = 1/84** (the extra factor 2 is D against R), against 1/9 and 1/4.5 had the edge state been used — so the choice of wall over edge changes the conservatism by 20x, and the conservatism is much larger than a factor of 3: even the 5 mm sphere at 77.5 km (Kn_body 0.596, solidly merged) has a nose Kn_local of 0.0066, nominally continuum by two orders of magnitude. Along the 100 mm melting flight Kn_local at the nose stays between 4e-5 and 2e-4.
-20. **Modified Newtonian + Prandtl-Meyer.** phi* = 43.38 deg (gamma 1.4) / 40.72 deg (1.15) from p*/p02 = 0.5283 / 0.5744. At the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa, q_inf 2141 Pa): p_w(90 deg) = 5.22 Pa Newtonian, **144.3 Pa PM(1.4), 248.8 Pa PM(1.15)**, against 112-219 Pa from measured C_p 0.05-0.1 — a 28-48x correction with a factor ~2 spread from gamma, hence `--gamma-pm` (default 1.15). nu(M) validated against Anderson's Table A.5 (nu(2) = 26.3798 deg, nu(5) = 76.9202 deg) and inverted to 1e-5. **The blend must start at phi*, not straddle it**: the PM slope is singular at the sonic point (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), and a 5 deg window centred on phi* mixes in the clamped PM value below it and puts back a kink 35x the median curvature; a 10 deg window above phi* leaves 9x and a monotone p_w. Consequence: the "rarefied rim" of the earlier design was an artefact of pure Newtonian (rho_e collapsing to 3e-6 kg/m3 and Kn_delta > 0.1 beyond 85 deg). With PM the rim carries rho_e ~ 1e-4 and Kn_local ~ 2e-3 — continuum — so the film pile-up (a rim patch reached b = 100 mm) and the droplet-size cap it forced are gone.
+20. **Modified Newtonian + Prandtl-Meyer.** phi* = 43.38 deg (gamma 1.4) / 40.72 deg (1.15) from p*/p02 = 0.5283 / 0.5744. At the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa, q_inf 2141 Pa): p_w(90 deg) = 5.22 Pa Newtonian, **144.3 Pa PM(1.4), 248.8 Pa PM(1.15)**, against 112-219 Pa from measured C_p 0.05-0.1 — a 28-48x correction with a factor ~2 spread from gamma, hence `--gamma-pm` (default 1.15). nu(M) validated against Anderson's Table A.5 (nu(2) = 26.3798 deg, nu(5) = 76.9202 deg) and inverted to 1e-5. **The blend must start at phi*, not straddle it**: the PM slope is singular at the sonic point (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), and a 5 deg window centred on phi* mixes in the clamped PM value below it and puts back a kink 35x the median curvature; a 10 deg window above phi* leaves 9x and a monotone p_w. Consequence: the "rarefied rim" of the earlier design was an artefact of pure Newtonian (rho_e collapsing to 3e-6 kg/m3 and Kn_delta > 0.1 beyond 85 deg). With PM the rim carries rho_e ~ 1e-4 and Kn_local ~ 2e-3 — continuum — so the *rarefied-rim* pile-up mechanism is gone, and with it the 25 mm droplets it produced. Isolated thick patches are **not** gone, and this must not be read as claiming they are: on the 100 mm physics flight `film_thickness_max_mm` still exceeds 20 mm in 38 of 1192 steps and peaks at 627 mm (the 50 mm flight: 16 of 408 steps, peaking at 2431 mm), while the area-mean film stays at 0.07 mm and 0.00 mm respectively. Measured on both the pre-amendment run of 2026-09-21 (616 mm) and the post-amendment one (627 mm), so it is a standing artefact of the eroded geometry and the hand-over, not of the film temperature. It does not propagate into the droplet sizes — those stay at 40-370 µm because spraying is melt-limited and the radius is capped by the film mass on the patch — but the thickness diagnostic on a single patch is not trustworthy, and finding out whether it is a crater-rim runoff sink, a collapsed patch area or the death hand-over concentrating film is open work (next iteration, with tumbling).
 21. **The disc endpoint, and HTG's method.** ATDB_CYLINDER at zero angle of attack is **independent of L/D over six decades** (1.824 at Ma 10 for 7e-5 <= L/D <= 70): face-on, a flat cylinder is a disc to the flow, because hypersonic drag is pressure drag on the frontal area while the side wall is parallel to the flow and the base sits in a near-vacuum wake. Sphere/disc = **0.49897 at every Mach number**, i.e. exactly the Newtonian 1/2 — HTG's continuum database is modified Newtonian and the disc entry is C_p,max(Ma). So integrating modified-Newtonian pressure over our eroded shape is not an approximation beyond what DRAMA already does; it is the same method. `data/atdb_disc.json` is extracted from that file. Free-molecular disc/sphere is 1.03, so only the continuum entry is scaled. Thickness re-enters at angle of attack (edge-on C_D runs 0.025 to 9.8 over the same L/D range) and in the heat factor through the wetted area (0.330 to 0.085).
 22. **How C_D moves as the sphere flattens.** For a sphere with a flat front of radius fraction s = r_flat/R the Newtonian integral is C_D = C_p,max (1 + s^4)/2 — 0.92 at s = 0, 1.84 at s = 1 — so the excess over a sphere grows as the **fourth power** of the flattened fraction and nothing happens until the nose is more than half flattened. Measured on the flight (inverting the hull integral): s_eff 0.72 at 90 % mass, 0.97 at 50 %, falling back to 0.81 at 5 % as the rim itself melts and the body becomes a smaller rounded cap. The hull runs ahead of the ring-by-ring profile (s 0.9 there at 50 % mass) because it bridges the central crater and squares off the shoulder — the documented upper bound.
 15. **Transonic remnant.** A light remnant (the single-temperature `AA7075` variant leaves 27 g = 1.8 % of m₀ of leeward material that the fixed-attitude, windward-only heating never reaches, so the run continues to the ground) reaches its terminal velocity near Ma 1, where SESAM's factor-2 drag step made DOP853 take 1.3e5 RHS evaluations in one macro step and then stall. The step is now a cubic ramp over Ma 0.98–1.02 (`aero.MACH_SWITCH_LO/HI`); the Step 1 reference tier is unchanged (8 passed) since the intact spheres cross Ma 1 in a fraction of a second. Melting runs may end on the ground with a few percent of leeward remnant; the 1 %-mass time is then n/a.
-13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material). The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
+25. **The film's temperature and its re-solidification.** The film is thermally thin — q b / k_l = 0.22 K across a 10 µm film at 2 MW/m² (22 K even at 1 mm) and b²/α = 0.3 ms against the 0.5 s macro step — so it is given no energy equation. Its **mass** goes to the solver (`set_film_mass`), which carries it on the boundary nodes with the liquid capacity, and it is at the surface temperature by construction: it heats, cools and freezes with the surface, and the droplets leave carrying whatever superheat the surface has (measured on the 50 mm physics flight: the droplets leave at 1.0801 MJ/kg against h_liquid = 1.0553, **+2.4 %**, the film reaching 1013 K against a 908 K liquidus with a mass-weighted mean of 929 K — the earlier design had every droplet leave at h_liquid exactly). Three things had to be true for this to close:
+   * **The film holds the liquid enthalpy** h(T) + L_f (1 − f_l), not the mixture h(T) (`Material.enthalpy_liquid`). It is liquid by construction — that is what makes it a film — so it carries its latent heat wherever it sits, and feeding it debits the latent heat the mass has not yet paid. With the mixture enthalpy, mass could be relabelled from solid to film for free wherever the surface sat on the ramp: a 100 mm sphere turned entirely to film on a quarter of its latent heat.
+   * **The enthalpy is the patch's nodal mean**, i.e. `mean_i h_liq(T_i)` over the patch's three nodes, matching the nodal sum the solver's mass matrix carries. The mean of the enthalpies and the enthalpy of the mean temperature differ by the whole latent heat across the ramp; using the latter left a **−0.4** residual in the coupled balance.
+   * **Every transfer books only the difference it carries, at the destination.** Mass that moves at one temperature books nothing; m kilograms going from h_src to h_dst change the accounted energy by m(h_dst − h_src) and apply m(h_src − h_dst) to the nodes they arrive at. Booking the two halves separately — the solid's m h_src on its element's four nodes, the film's m h_dst on its patch's three — closes the balance just as exactly and wrecks the temperature field: the same mass spread by ¼ on one side and ⅓ on the other leaves ±m h/12 on every surface node, and the body swung to 1618 K and −1202 K in two macro steps.
+   Re-solidification is the mirror of the feed: the fraction 1 − f_feed(T_patch) of each patch's film returns to its owner element, and the two directions are **netted per element** (they are one equilibrium seen from opposite sides; run separately they cycled 3 % of the body's mass through the film every step with no net effect, pinned the surface at T_feed and paid Newton iterations for it — netted, the cumulative mass moved is 1.15 × the peak film instead of 3 ×). In flight the mirror rule fires rarely and almost entirely on the leeward side: on the 50 mm physics flight it fires in 12 of 407 steps, all inside a 5 s window before demise, and **99.9 % of the 7.15e-6 kg it returns freezes on leeward patches** (1.0e-8 kg windward). The leeward film runs 10–25 K colder than the windward film (899–914 K against 919–926 K, against a 908 K liquidus and a feed ramp whose foot is 906 K) because a leeward patch gets no convective heat and loses heat by radiation and by conduction into the cold rear, whose mean surface temperature is still 830–860 K at that point. Elsewhere the film sprays away long before it can cool through the ramp, so re-solidification is a leeward and end-of-flight phenomenon — which is where a surviving remnant's melt sits. Two limits are declared, not fixed: φ_e is capped at 1, so film whose owner has no room left — or whose owner has died — stays film for good, because the mesh cannot grow a crust outside itself; `film_frozen_fraction` records exactly how much film the enthalpy calls solid, and it must be read as a mass, not as a fraction of steps: on the 50 mm flight it runs at a median 5 % (90th percentile 17 %) of a film that itself peaks at 5.6 % of the body, i.e. **at most 0.47 % of the initial mass is stranded liquid**, and that stranded film is leeward too (8.68e-4 kg leeward against 4.70e-5 kg windward at their peaks), two orders of magnitude more than the mirror rule manages to freeze — which is the measure of the cap. On the 100 mm flight, which survives to the ground, the fraction sits at 1.0 for most of the 1140 wet steps, because the last gram of film rides a cold body for 400 s with nowhere to go; in mass that is **at most 1.86e-3 kg, 0.126 % of m0**, against the 2.4 g the mirror rule did manage to return. And the droplets' superheat is a flight-dependent few per cent: +2.4 % on h_liquid for the 50 mm case, +0.6 % for the 100 mm one — while a 6 s / 400 s heat-and-cool test with no flow at all (nothing sprays, nothing runs off) ends with all of its remaining 30 g at 641 K and every gram of it stranded. The other limit: a thick crust would conduct, which a lumped nodal capacity does not represent.
+26. **Deferred melt loads are bounded.** A deferred load is energy the transferred mass delivered to the nodes it arrived at, and a node whose own mass has since melted away has nothing to heat with it: uncapped, hundreds of drained surface nodes were handed loads worth 1e4–1e5 K of their remaining capacity in a single step (which is how the field reached the excursions in fact 25 before either was fixed). No node is now asked to move more than `LOAD_DT_MAX = 1000 K` in one macro step against its current capacity (material + film, `nodal_capacity`); the remainder waits in `pending_load`, is applied as soon as the node has the capacity, and is dropped into `Q_dropped` if the node dies first. The balance sees both terms, so it stays exact either way, and `unapplied_load_J` reports the queue. Measured under the 100 mm physics loads: capped at 100 K the queue held 17 % of the absorbed heat, at 1000 K it drains to ~2 %, and on the two physics flights the queue never exceeds 618 J against 197 kJ absorbed (50 mm) or 1739 J against 1.37 MJ (100 mm) -- **0.13-0.3 %**, with the temperature field clean throughout; uncapped the books are still exact and the field is wrong.
+13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25) and `unapplied_load_J` (the deferred melt energy still queued, fact 26) come with the film's temperature. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
 
@@ -61,10 +67,10 @@ These were measured while writing the plan and override the corresponding spec s
 
 ```
 reentry_model/mesh.py                     + prism layers (radial projection, prism split), active set with a face table, deactivate, box mesh, SurfaceMesh.owner/face_ids/tangent_from/projected_area/edges
-reentry_model/material.py                 + latent heat, solidus/liquidus, MELT_RAMP, feed_fraction, LiquidProperties, MATERIAL_NAMES, exact enthalpy with the latent slope
+reentry_model/material.py                 + latent heat, solidus/liquidus, MELT_RAMP, feed_fraction, LiquidProperties, MATERIAL_NAMES, exact enthalpy with the latent slope, enthalpy_liquid/enthalpy_mixed/cp_mixed/temperature_from_enthalpy_mixed (the film's liquid branch)
 reentry_model/data/materials/AA7075.json, AA7075_range.json   DRAMA's drama-AA7075 verbatim + liquid properties (+ the alloy's range)
-reentry_model/thermal/__init__.py         + StepResult.Q_extra/Q_dropped, set_fractions/element_energies in the protocol
-reentry_model/thermal/skfem_backend.py    nodal enthalpy, lumped capacity, tangent Newton mapped through h(T), phi_e, pinned nodes, nodal loads
+reentry_model/thermal/__init__.py         + StepResult.Q_extra/Q_dropped, set_fractions/element_energies/set_film_mass/nodal_capacity in the protocol
+reentry_model/thermal/skfem_backend.py    nodal enthalpy, lumped capacity, tangent Newton mapped through the node's own material+film enthalpy, phi_e, pinned nodes, nodal loads, film mass on the boundary nodes, CG fallback
 reentry_model/thermal/fenicsx_backend.py  the same scheme: stiffness in UFL, everything nodal in numpy/PETSc, MatZeroRowsColumns for pinned/Dirichlet
 reentry_model/dispersion.py               Girin Eq. (1): batched cubic roots, fastest mode, cached table data/girin_dispersion.json
 reentry_model/gas.py                      + GasState.s/a/m_bar, EquilibriumAir.expand
@@ -72,7 +78,7 @@ reentry_model/surface_flow.py             three-branch gate, Newtonian+Prandtl-M
 reentry_model/film.py                     lubrication branches, Runoff (edge geometry, coefficients, linearly implicit transport)
 reentry_model/spray.py                    melt_layer (Girin closure only), thin-film and RT modes, SprayModel (branches, release), source_rows, histogram
 reentry_model/girin_case.py               Girin-as-published flight of his Table 1 variants
-reentry_model/body.py                     + MeltSettings, fit_sphere, MeltingBody (feed, film, spray, death cascade, hand-over, nose-cap fit, accounting, stats), reference_area/reference_length/nose_radius hooks
+reentry_model/body.py                     + MeltSettings, fit_sphere, MeltingBody (netted feed/freeze, film temperature and energy, spray, death cascade, hand-over, nose-cap fit, destination-booked accounting with bounded deferred loads, stats), reference_area/reference_length/nose_radius hooks
 reentry_model/trajectory.py               + body.reference_area() and reference_length() in the drag and Kn, zero drag for a consumed body
 reentry_model/aero.py                     + SESAM's Mach-1 drag step smoothed over Ma 0.98-1.02, + shape_factor on the continuum entry
 reentry_model/data/atdb_disc.json         ATDB_CYLINDER at zero angle of attack: the flat-disc endpoint of the shape family
@@ -566,7 +572,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `reentry_model/data/materials/AA7075_nomelt.json` (Step 2).
-- Produces: `Material` fields `latent_heat`, `T_solidus`, `T_liquidus`, `liquid: LiquidProperties(rho, mu, sigma)`; properties `melts`, `T_feed`, `h_liquid`; methods `liquid_fraction(T)`, `feed_fraction(T)`, `cp_eff(T)`, `enthalpy(T)` (exact, latent slope inside the range), `temperature_from_enthalpy(h)`; `Material.from_drama_json(name_or_path)` accepting the names in `MATERIAL_NAMES` (`AA7075_nomelt`, `AA7075`, `AA7075_range`); constants `MELT_RAMP = 2.0`, `NO_MELT_ABOVE = 5000.0`. Single-temperature materials get a ±MELT_RAMP ramp; `feed_fraction` is a ±MELT_RAMP ramp ending at `T_feed` (the liquidus, +2 K for range materials).
+- Produces: `Material` fields `latent_heat`, `T_solidus`, `T_liquidus`, `liquid: LiquidProperties(rho, mu, sigma)`; properties `melts`, `T_feed`, `h_liquid`; methods `liquid_fraction(T)`, `feed_fraction(T)`, `cp_eff(T)`, `enthalpy(T)` (exact, latent slope inside the range), `temperature_from_enthalpy(h)`, and the melt film's four: `enthalpy_liquid(T)` = h(T) + L_f (1 - f_l(T)) (what a kilogram of *liquid* holds at T -- the film carries its latent heat wherever it sits), `enthalpy_mixed(T, w)` and `cp_mixed(T, w)` for a node holding a fraction `w` of film and 1 - w of material, and `temperature_from_enthalpy_mixed(h, w)`, their exact inverse in T for every w (round-trip 4e-12 K, measured); `Material.from_drama_json(name_or_path)` accepting the names in `MATERIAL_NAMES` (`AA7075_nomelt`, `AA7075`, `AA7075_range`); constants `MELT_RAMP = 2.0`, `NO_MELT_ABOVE = 5000.0`. Single-temperature materials get a ±MELT_RAMP ramp; `feed_fraction` is a ±MELT_RAMP ramp ending at `T_feed` (the liquidus, +2 K for range materials).
 
 - [ ] **Step 1: Write the two material files**
 
@@ -641,13 +647,32 @@ def test_invalid_melting_data():
         material.Material("bad", 2813.0, 0.4, [300.0, 900.0], [900.0, 900.0], [300.0, 900.0], [150.0, 150.0], -1.0, 850.0, 850.0)
     with pytest.raises(ValueError):
         material.Material("bad", 2813.0, 0.4, [300.0, 900.0], [900.0, 900.0], [300.0, 900.0], [150.0, 150.0], 4e5, 900.0, 850.0)
+
+
+def test_liquid_and_mixed_enthalpy_invert_exactly(request):
+    """The melt film is liquid: h_liquid(T) = h(T) + L_f (1 - f_l) carries the latent heat at every temperature, and a
+    node holding a fraction w of film has a latent plateau only (1 - w) as tall. enthalpy_mixed and its inverse are
+    each other's exact inverse for every w -- the solver's Newton update inverts the node's own mixture, and a
+    mismatch there limit-cycled the iteration between 777 K and 864 K (Step 3)."""
+    for name in ("AA7075", "AA7075_range"):
+        mat = material.Material.from_drama_json(name)
+        T = np.linspace(300.0, 1400.0, 2001)
+        solid, liquid = T < mat.T_solidus, T > mat.T_liquidus
+        assert mat.enthalpy_liquid(T)[solid] == pytest.approx(mat.enthalpy(T)[solid] + mat.latent_heat)
+        assert mat.enthalpy_liquid(T)[liquid] == pytest.approx(mat.enthalpy(T)[liquid])
+        assert mat.enthalpy_mixed(T, 0.0) == pytest.approx(mat.enthalpy(T)) and mat.enthalpy_mixed(T, 1.0) == pytest.approx(mat.enthalpy_liquid(T))
+        assert mat.cp_mixed(T, 0.0) == pytest.approx(mat.cp_eff(T)) and mat.cp_mixed(T, 1.0) == pytest.approx(mat.cp(T))
+        w = np.random.default_rng(0).random(T.size)
+        for weights in (np.zeros_like(T), np.full_like(T, 0.3), np.ones_like(T), w):
+            assert mat.temperature_from_enthalpy_mixed(mat.enthalpy_mixed(T, weights), weights) == pytest.approx(T, abs=1e-9)
+        assert np.all(np.diff(mat.enthalpy_mixed(T, 0.4)) > 0.0)                     # monotone: the inverse is a function
 ```
 
 
 - [ ] **Step 3: Run the tests to see them fail**
 
 Run: `"$PY" -m pytest tests/test_reentry_model_material.py -q`
-Expected: the four new tests fail (`from_drama_json("AA7075")` is a bad path; no `melts`, `feed_fraction`, `liquid`).
+Expected: the five new tests fail (`from_drama_json("AA7075")` is a bad path; no `melts`, `feed_fraction`, `liquid`, `enthalpy_liquid`).
 
 - [ ] **Step 4: Replace `reentry_model/material.py`**
 
@@ -796,6 +821,54 @@ class Material:
         h = np.where(T > self._T_h[-1], self._h_nodes[-1] + self.cp_table[-1] * (T - self._T_h[-1]), h)
         return h
 
+    def enthalpy_liquid(self, T):
+        """Specific enthalpy of fully liquid material [J/kg]: h(T) with the whole latent heat added, whatever the
+        equilibrium liquid fraction at T would be. The melt film is liquid by construction -- that is what makes it a
+        film -- so this, not the mixture enthalpy h(T), is what a kilogram of film holds, and feeding the film costs
+        the latent heat the mass has not yet paid. Book the film at h(T) instead and melting a body held on the ramp
+        is free: it turned a 100 mm sphere entirely to film on a quarter of its latent heat (measured 2026-09-22)."""
+        T = np.asarray(T, dtype=float)
+        return self.enthalpy(T) + (self.latent_heat * (1.0 - self.liquid_fraction(T)) if self.melts else 0.0)
+
+    def enthalpy_mixed(self, T, w):
+        """Specific enthalpy of a node holding a fraction `w` of melt film and 1 - w of ordinary material: the film
+        is liquid, so it carries its latent heat at every temperature, and the material carries L_f f_l(T)."""
+        w = np.asarray(w, dtype=float)
+        return self.enthalpy(T) + (w * self.latent_heat * (1.0 - self.liquid_fraction(T)) if self.melts else 0.0)
+
+    def cp_mixed(self, T, w):
+        """d/dT of enthalpy_mixed: the film has no latent plateau, the material does."""
+        w = np.asarray(w, dtype=float)
+        return (1.0 - w) * self.cp_eff(T) + w * self.cp(T) if self.melts else self.cp(T)
+
+    def temperature_from_enthalpy_mixed(self, h, w):
+        """Inverse of enthalpy_mixed in T (monotonic in T for every w). A node the film owns has a shorter latent
+        plateau -- only its material part has one -- so inverting the material's h(T) there throws the node clean
+        across the ramp and the Newton iteration limit-cycles between 777 K and 864 K (measured 2026-09-22)."""
+        h, w = np.asarray(h, dtype=float), np.broadcast_to(np.asarray(w, dtype=float), np.shape(h))
+        T = self.temperature_from_enthalpy(h)                          # exact, and what a node with no film gets
+        hot = w > 0.0
+        if not self.melts or not hot.any():
+            return T
+        # the same quadratic inversion, against this node's own enthalpy table: the latent plateau is shortened to
+        # (1 - w) of its height and the whole table is lifted by w L_f below the solidus
+        hw, ww = h[hot], w[hot]
+        tab = self._h_nodes[None, :] + ww[:, None] * self.latent_heat * (1.0 - self._liquid_fraction_raw(self._T_h))[None, :]
+        i = np.clip((tab <= hw[:, None]).sum(axis=1) - 1, 0, len(self._T_h) - 2)
+        rows, T0, T1 = np.arange(len(hw)), self._T_h[i], self._T_h[i + 1]
+        h0, h1 = tab[rows, i], tab[rows, i + 1]
+        cp0, cp1 = np.interp(T0, self.T_cp, self.cp_table), np.interp(T1, self.T_cp, self.cp_table)
+        b = cp0 + (1.0 - ww) * self._latent_slope[i]
+        a = (cp1 - cp0) / (T1 - T0)
+        dh = np.clip(hw, h0, h1) - h0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x = np.where(np.abs(a) > 1e-12, (np.sqrt(b * b + 2.0 * a * dh) - b) / a, dh / b)
+        Tw = np.where(hw < tab[:, 0], self._T_h[0] + (hw - tab[:, 0]) / self.cp_table[0],
+                      np.where(hw > tab[:, -1], self._T_h[-1] + (hw - tab[:, -1]) / self.cp_table[-1], T0 + x))
+        T = T.copy()
+        T[hot] = Tw
+        return T
+
     def temperature_from_enthalpy(self, h):
         """Inverse of enthalpy() (monotonic): the energy-equivalent temperature of a body holding h per kg."""
         h = np.asarray(h, dtype=float)
@@ -835,11 +908,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Files:**
 - Modify (replace): `reentry_model/thermal/__init__.py`, `reentry_model/thermal/skfem_backend.py`, `reentry_model/thermal/fenicsx_backend.py`
 - Modify: `reentry_model/cli.py` (the `--lumped-mass` flag becomes `--consistent-mass`, three lines)
-- Test: `tests/test_reentry_model_thermal.py` (one test changed, four appended), `tests/test_reentry_model_fenicsx.py` (one line changed, one test appended)
+- Test: `tests/test_reentry_model_thermal.py` (one test changed, five appended), `tests/test_reentry_model_fenicsx.py` (one line changed, one test appended)
 
 **Interfaces:**
-- Consumes: `VolumeMesh.active`, `.surface()` (Task 1); `Material.enthalpy/cp_eff/temperature_from_enthalpy/melts/T_solidus/T_liquidus` (Task 2).
-- Produces: `StepResult(T, Q_conv, Q_rad, iterations, Q_extra=0.0, Q_dropped=0.0)`; solver methods `set_fractions(phi)` (0 = dead; refreshes the boundary and the pinned nodes), `element_energies(T=None)` (φ_e ρ V_e mean_i h(T_i)), `step(dt, q_conv, T_amb, dirichlet=None, nodal_load=None)` (nodal_load in W, mesh node order); attributes `phi`, `pinned`, `faces`, `areas`, `last_damping`; `SkfemThermalSolver(lumped_mass=True)` default with `consistent_mass = not lumped_mass`; `element_matrices(points, tets) -> (vol, Ke, Mk)` with `Mk[e, k]` the nodal-coefficient mass matrices and `nodal_mass_weights()`; `mass_matrix(c_nodal)`; `operators(T, T_old=None) -> (K, M_tan[, E])`. The FEniCSx backend has the same public surface (`lumped_mass=False` raises `ValueError`).
+- Consumes: `VolumeMesh.active`, `.surface()` (Task 1); `Material.enthalpy/enthalpy_liquid/enthalpy_mixed/cp/cp_eff/cp_mixed/temperature_from_enthalpy/temperature_from_enthalpy_mixed/melts/T_solidus/T_liquidus` (Task 2).
+- Produces: `StepResult(T, Q_conv, Q_rad, iterations, Q_extra=0.0, Q_dropped=0.0)`; solver methods `set_fractions(phi)` (0 = dead; refreshes the boundary and the pinned nodes), `element_energies(T=None)` (φ_e ρ V_e mean_i h(T_i)), `step(dt, q_conv, T_amb, dirichlet=None, nodal_load=None)` (nodal_load in W, mesh node order); attributes `phi`, `pinned`, `faces`, `areas`, `last_damping`; `SkfemThermalSolver(lumped_mass=True)` default with `consistent_mass = not lumped_mass`; `element_matrices(points, tets) -> (vol, Ke, Mk)` with `Mk[e, k]` the nodal-coefficient mass matrices and `nodal_mass_weights()`; `mass_matrix(c_nodal, c_film=None)`; `operators(T, T_old=None) -> (K, M_tan[, E])`; and, for the melt film (Step 3, Task 9): `set_film_mass(mass)` (one non-negative value per node, kg -- it joins the nodes' capacity and keeps a node live even when its elements are gone), `nodal_capacity()` (J/K per node, material + film, which the body uses to bound the melt loads it defers) and `film_weight()` (the film's share of each node's mass, which the enthalpy-consistent Newton update inverts against). The FEniCSx backend has the same public surface (`lumped_mass=False` raises `ValueError`).
+
+The film's capacity is the **liquid** one -- tangent c_p(T) in M, the secant of `enthalpy_liquid` in E -- never the mixture's c_p,eff: the film has already paid its latent heat and must not pay it again on the ramp. The same weighting makes 1^T E the exact increment of (solid nodal enthalpy + film liquid enthalpy), which is what `MeltingBody.energy()` sums, so the coupled balance closes on it. CG gets one fresh AMG hierarchy and then a direct solve if it still stalls (melting drains interior elements to phi ~ 1e-3 with unscaled conduction; `direct_fallbacks` counts it).
 
 - [ ] **Step 1: Update the conformance test and append the melting tests**
 
@@ -984,6 +1059,42 @@ def test_melting_iteration_converges_across_the_ramp(coarse_sphere_mesh):
     T = s.temperature()
     assert 848.0 < T.mean() < 852.0 and T.max() - T.min() < 0.5                 # on the plateau, isothermal
     assert abs(s.energy() - E0 - absorbed) < 1e-8 * absorbed
+
+
+def test_film_mass_rides_the_boundary_nodes_with_the_solid_s_capacity(coarse_sphere_mesh):
+    """A melt film handed to the solver as nodal mass: it joins the nodes' capacity with the material's own c_p, so
+    the same heat raises the body less; its nodes stay live when their elements die; and the solver's nodal capacity
+    reports both halves (Step 3, the film is thermally thin and has no temperature of its own)."""
+    from reentry_model import mesh as mesh_mod
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets)
+    mat = material.Material.from_drama_json("AA7075")
+    s = solver(m, mat)
+    s.set_temperature(300.0)
+    surf = m.surface()
+    q = np.where(surf.normals[:, 0] > 0.0, 5e5, 0.0)
+    for _ in range(3):
+        s.step(0.5, q, 0.0)
+    T_dry = s.temperature().max()
+    film = np.zeros(m.n_nodes)
+    film[np.unique(surf.faces)] = 2.0e-4                                       # 0.2 g per boundary node
+    C_dry = s.nodal_capacity()
+    s.set_film_mass(film)
+    assert s.nodal_capacity() == pytest.approx(C_dry + film * mat.cp_eff(s.temperature()), rel=1e-12)
+    s.set_temperature(300.0)
+    for _ in range(3):
+        s.step(0.5, q, 0.0)
+    assert s.temperature().max() < T_dry                                       # the film's capacity absorbs its share
+    with pytest.raises(ValueError):
+        s.set_film_mass(np.full(m.n_nodes, -1.0))
+    hot = surf.owner[surf.normals[:, 0] > 0.8]
+    m.deactivate(hot)
+    phi = np.ones(m.n_elements)
+    phi[hot] = 0.0
+    s.set_fractions(phi)
+    wet = np.setdiff1d(np.unique(m.tets[hot]), np.unique(m.tets[m.active]))     # nodes left with no live element
+    assert wet.size and not s.pinned[wet].any()                                # ... but with film: still live
+    s.set_film_mass(np.zeros(m.n_nodes))
+    assert s.pinned[wet].all()                                                 # film gone: pinned again, in one breath
 ```
 
 
@@ -1007,10 +1118,16 @@ def test_melting_run_matches_the_skfem_backend(coarse_sphere_mesh):
             sim.advance(0.5)
             a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
             b.advance(sim.t, 0.5, model.evaluate(a, b.theta, b.surface_temperature(), 0.05, T_mean=b.mean_temperature()), state=a)
-        out[name] = (b.mass(0.0), b.sprayed_mass, b.solver.temperature(), b.mesh.n_active, b.energy_balance_residual())
+        out[name] = (b.mass(0.0), b.sprayed_mass, b.solver.temperature(), b.mesh.n_active, b.energy_balance_residual(),
+                     b.m_f.sum(), b.film_energy(), b.solver.film_mass.sum(), b.solver.film_weight().max())
     assert out["skfem"][0] == pytest.approx(out["fenicsx"][0], rel=1e-6) and out["skfem"][1] == pytest.approx(out["fenicsx"][1], rel=1e-4)
     assert np.abs(out["skfem"][2] - out["fenicsx"][2]).max() < 0.5 and out["skfem"][3] == out["fenicsx"][3]
     assert abs(out["fenicsx"][4]) < 1e-6 and out["fenicsx"][1] > 0.0
+    # the film rides the boundary nodes in both backends, with the same mass, the same liquid enthalpy and the same
+    # share of the nodes it owns (which is what the enthalpy Newton inverts against)
+    assert out["skfem"][5] == pytest.approx(out["fenicsx"][5], rel=1e-4) and out["fenicsx"][5] > 0.0
+    assert out["skfem"][6] == pytest.approx(out["fenicsx"][6], rel=1e-4)
+    assert out["fenicsx"][7] == pytest.approx(out["skfem"][7], rel=1e-4) and 0.0 < out["fenicsx"][7] <= 1.0
 ```
 
 
@@ -1061,6 +1178,9 @@ class ThermalSolver(Protocol):
     def element_energies(self, T=None) -> np.ndarray: ...           # phi_e rho V_e h(T_e) per element [J]
     def radiated_power(self, T_amb) -> float: ...
     def set_fractions(self, phi) -> None: ...                       # element material fractions (0 = dead), Step 3
+    def set_film_mass(self, mass) -> None: ...                      # nodal mass of the melt film [kg], Step 3
+    def nodal_capacity(self): ...                                   # J/K per node, material + film (Step 3)
+    def film_weight(self): ...                                      # the film's share of each node's mass, 0-1 (Step 3)
 
 
 def thermal_solver(name, **options):
@@ -1161,7 +1281,7 @@ class SkfemThermalSolver:
         self.consistent_mass = not lumped_mass
         self.newton_tol, self.max_iterations = newton_tol, max_iterations
         self.amg_rebuild_every, self.cg_tol = amg_rebuild_every, cg_tol
-        self._ml, self._solves, self.last_cg_iterations = None, 0, 0
+        self._ml, self._solves, self.last_cg_iterations, self.direct_fallbacks = None, 0, 0, 0
 
     def setup(self, mesh, material, emissivity):
         self.mesh, self.material, self.emissivity = mesh, material, float(emissivity)
@@ -1171,6 +1291,7 @@ class SkfemThermalSolver:
         self.pattern = _Pattern(np.repeat(self.tets, 4, axis=1).ravel(), np.tile(self.tets, (1, 4)).ravel(), n)
         self.T, self._T_prev = np.full(n, 300.0), None
         self.phi = np.where(mesh.active, 1.0, 0.0)
+        self.film_mass = np.zeros(n)              # kg per node: the melt film riding on the boundary (Step 3)
         self.pinned = np.zeros(n, dtype=bool)
         self._refresh_surface()
 
@@ -1181,11 +1302,30 @@ class SkfemThermalSolver:
         n = len(self.points)
         self.facet_pattern = _Pattern(np.repeat(self.faces, 3, axis=1).ravel(), np.tile(self.faces, (1, 3)).ravel(), n)
         self.Bf = np.ones((3, 3))[None] * (self.areas / 9.0)[:, None, None]
-        pinned = np.ones(n, dtype=bool)
+        self._update_pinned()
+
+    def _update_pinned(self):
+        """Nodes with neither material nor film: they keep their temperature (identity rows). Recomputed whenever
+        either the fractions or the film capacity change -- a node that had film and lost it must be pinned again in
+        the same breath, or its row empties and the system goes singular (measured 2026-09-22)."""
+        pinned = np.ones(len(self.points), dtype=bool)
         pinned[np.unique(self.tets[self.phi > 0.0])] = False
-        if pinned.any() != self.pinned.any() or not np.array_equal(pinned, self.pinned):
+        pinned &= self.film_mass <= 0.0                          # a node carrying film still has a heat capacity
+        if not np.array_equal(pinned, self.pinned):
             self._ml = None                                   # the operator's structure changed: fresh AMG hierarchy
         self.pinned = pinned
+
+    def set_film_mass(self, mass):
+        """Nodal mass [kg] of the melt film riding on the boundary (Step 3). The film is thermally thin -- q b / k_l =
+        0.22 K across a 10 um film at 2 MW/m2, and b^2/alpha = 0.3 ms against a 0.5 s macro step -- so it is given no
+        temperature of its own: its mass joins the boundary nodes' capacity with the *same* heat capacity the solid
+        uses (tangent c_p,eff in the operator, secant [h(T) - h(T_old)]/(T - T_old) in the enthalpy rate), so the film's
+        sensible heat is part of 1^T M dT by construction and `MeltingBody.film_energy` closes the balance exactly."""
+        mass = np.asarray(mass, dtype=float)
+        if mass.shape != (len(self.points),) or (mass < 0.0).any() or not np.isfinite(mass).all():
+            raise ValueError("film mass must be one finite non-negative value per node")
+        self.film_mass = mass
+        self._update_pinned()
 
     def set_fractions(self, phi):
         """Element material fractions phi_e in [0, 1] (0 = dead): they scale the heat capacity of every element (the
@@ -1211,16 +1351,20 @@ class SkfemThermalSolver:
         """Nodal load vector of a per-facet flux q [W/m2]: A_f/3 to each of the facet's nodes."""
         return np.bincount(self.faces.ravel(), weights=np.repeat(q * self.areas / 3.0, 3), minlength=len(self.points))
 
-    def mass_matrix(self, c_nodal):
+    def mass_matrix(self, c_nodal, c_film=None):
         """Capacity matrix for the nodal coefficient c [J/(m3 K)] (times phi_e per element). Lumped by default:
         diag(sum_e phi_e V_e/4 c_i), so that 1^T M dT = sum_e phi_e V_e/4 sum_i c_i dT_i is exactly the increment of
         the nodal enthalpy integral (the consistent form sum_k c_k Mk integrates the product of the interpolants of c
         and dT, which is not the increment of any energy functional and left a 3e-4 balance error, measured
         2026-09-20). `consistent_mass=True` keeps the consistent form (analytic tests only)."""
+        # the film is liquid: its capacity is the liquid c_p (tangent) or the secant of the liquid enthalpy, never
+        # the mixture's c_p,eff -- it has already paid its latent heat and does not pay it again on the ramp
+        film = self.film_mass * (c_nodal if c_film is None else c_film) / self.material.rho
         if self.consistent_mass:
-            return self.pattern.assemble(np.einsum("ek,ekab->eab", self.phi[:, None] * c_nodal[self.tets], self.Mk))
+            M = self.pattern.assemble(np.einsum("ek,ekab->eab", self.phi[:, None] * c_nodal[self.tets], self.Mk))
+            return M + sp.diags(film, format="csr") if self.film_mass.any() else M
         return sp.diags(np.bincount(self.tets.ravel(), weights=np.repeat(self.phi * self.vol / 4.0, 4) * c_nodal[self.tets].ravel(),
-                                    minlength=len(self.points)), format="csr")
+                                    minlength=len(self.points)) + film, format="csr")
 
     def operators(self, T, T_old=None):
         """Stiffness K with k(T_e) at the element-mean temperature (active elements); the tangent mass M_tan with the nodal
@@ -1235,18 +1379,41 @@ class SkfemThermalSolver:
         # which conducts better, not worse; scaling k with phi isolated the surface nodes of nearly consumed
         # elements and drove them to 5000 K (measured 2026-09-20). Dead elements (phi = 0) drop out.
         K = self.pattern.assemble(self.Ke * ((self.phi > 0.0) * self.material.k(Te))[:, None, None])
-        c_tan = self.material.cp_eff(T)
-        M = self.mass_matrix(self.material.rho * c_tan)
+        c_tan, c_liq = self.material.cp_eff(T), self.material.cp(T)
+        M = self.mass_matrix(self.material.rho * c_tan, self.material.rho * c_liq)
         if T_old is None:
             return K, M
         dT = T - T_old
         moved = np.abs(dT) > 1e-9
         c_sec = np.where(moved, (self.material.enthalpy(T) - self.material.enthalpy(T_old)) / np.where(moved, dT, 1.0), c_tan)
-        return K, M, self.mass_matrix(self.material.rho * c_sec) @ dT
+        c_sec_l = np.where(moved, (self.material.enthalpy_liquid(T) - self.material.enthalpy_liquid(T_old)) / np.where(moved, dT, 1.0), c_liq)
+        # the film's mass enters both M and E through mass_matrix with its own liquid capacity, so 1^T E is exactly
+        # the increment of (solid nodal enthalpy + film liquid enthalpy) -- which is what MeltingBody.energy sums
+        return K, M, self.mass_matrix(self.material.rho * c_sec, self.material.rho * c_sec_l) @ dT
 
     def radiated_power(self, T_amb, T=None):
         Tf = self.facet_temperature(T)
         return float((self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4) * self.areas).sum())
+
+    def film_weight(self):
+        """Share of each node's mass that is melt film, 0 to 1. The film is liquid: its enthalpy has no latent
+        plateau, so the enthalpy-consistent Newton update -- which inverts the *mixture* h(T) -- must not be applied
+        to a node the film owns, or the node is pushed onto a plateau it is not on and the iteration cycles (Newton
+        stopped converging at 30 iterations once a patch was mostly film, measured 2026-09-22). The update is blended
+        with the plain linear one by this weight, which is exact in both limits; it changes only the iteration, never
+        the residual it converges to."""
+        solid = np.bincount(self.tets.ravel(), weights=np.repeat(self.phi * self.vol / 4.0, 4) * self.material.rho,
+                            minlength=len(self.points))
+        total = solid + self.film_mass
+        return np.divide(self.film_mass, total, out=np.zeros_like(total), where=total > 0.0)
+
+    def nodal_capacity(self):
+        """Heat capacity carried by each node [J/K], material and film together (lumped, tangent c_p,eff). The body
+        uses it to bound the melt loads it defers: energy booked onto a node that has melted away has nothing to
+        heat, and pushing it in anyway moved drained surface nodes by 1e4-1e5 K in a step (measured 2026-09-22)."""
+        c = self.material.cp_eff(self.T) * self.material.rho
+        return np.bincount(self.tets.ravel(), weights=np.repeat(self.phi * self.vol / 4.0, 4) * c[self.tets].ravel(),
+                           minlength=len(self.points)) + self.film_mass * self.material.cp(self.T)
 
     def energy(self):
         """Stored enthalpy above T_REF: rho int h dV with the nodal h(T_i) interpolated linearly, i.e.
@@ -1271,6 +1438,7 @@ class SkfemThermalSolver:
         converged = False
         last_relative_change, previous_change, damping, decreases = None, None, 1.0, 0
         mat = self.material
+        film_w = self.film_weight() if self.film_mass.any() else np.zeros(len(self.points))
         for iteration in range(1, self.max_iterations + 1):
             K, M, E = self.operators(T_k, T_old)
             Tf = self.facet_temperature(T_k)
@@ -1288,9 +1456,11 @@ class SkfemThermalSolver:
                 # enthalpy-consistent update: the linearised step is an enthalpy increment c_p,eff(T_k) (T_new - T_k)
                 # per node; inverting the true h(T) puts a node that would overshoot the melting range where the
                 # latent heat actually leaves it (identity where h is linear). Without it nodes jump across the +-2 K
-                # ramp of a single-temperature material and the iteration cycles (measured 2026-09-20).
-                free = ~self.pinned
-                T_new[free] = mat.temperature_from_enthalpy(mat.enthalpy(T_k[free]) + mat.cp_eff(T_k[free]) * (T_new[free] - T_k[free]))
+                # ramp of a single-temperature material and the iteration cycles (measured 2026-09-20). The enthalpy
+                # inverted is the node's own mixture of material and film (see film_weight), not the material's.
+                free, w = ~self.pinned, film_w[~self.pinned]
+                T_new[free] = mat.temperature_from_enthalpy_mixed(
+                    mat.enthalpy_mixed(T_k[free], w) + mat.cp_mixed(T_k[free], w) * (T_new[free] - T_k[free]), w)
             last_relative_change = np.linalg.norm(T_new - T_k) / np.linalg.norm(T_new)
             if last_relative_change <= self.newton_tol:
                 converged = True
@@ -1325,17 +1495,23 @@ class SkfemThermalSolver:
     def _solve(self, A, b, x0, fresh=False):
         if self.linear_solver == "direct":
             return spla.spsolve(A.tocsc(), b)
-        if fresh or self._ml is None or self._solves % self.amg_rebuild_every == 0:
-            import pyamg
-            self._ml = pyamg.smoothed_aggregation_solver(A, symmetry="symmetric")
-        self._solves += 1
-        counter = []
-        x, info = spla.cg(A, b, x0=x0, rtol=self.cg_tol, maxiter=500, M=self._ml.aspreconditioner(cycle="V"),
-                          callback=lambda _: counter.append(1))
-        self.last_cg_iterations = len(counter)
-        if info != 0:
-            raise RuntimeError("CG did not converge (info {})".format(info))
-        return x
+        for attempt in (0, 1):
+            if fresh or attempt or self._ml is None or self._solves % self.amg_rebuild_every == 0:
+                import pyamg
+                self._ml = pyamg.smoothed_aggregation_solver(A, symmetry="symmetric")
+            self._solves += 1
+            counter = []
+            x, info = spla.cg(A, b, x0=x0, rtol=self.cg_tol, maxiter=500, M=self._ml.aspreconditioner(cycle="V"),
+                              callback=lambda _: counter.append(1))
+            self.last_cg_iterations = len(counter)
+            if info == 0:
+                return x
+        # Melting drains interior elements to phi ~ 1e-3 while their conduction stays unscaled (spec section 9), which
+        # raises the condition number by 1/phi; a hierarchy built before the drain can stall on the emptied region.
+        # A fresh hierarchy clears it in every case measured except the step after the heating is switched off, where
+        # the operator changes by orders of magnitude in one step -- that one system is solved directly.
+        self.direct_fallbacks += 1
+        return spla.spsolve(A.tocsc(), b)
 
     def reference_operators(self, T):
         """K (element-mean k) and M (nodal c_p) assembled by scikit-fem with the same coefficients (conformance test only)."""
@@ -1446,6 +1622,7 @@ class FenicsxThermalSolver:
         self.T = np.full(mesh.n_nodes, 300.0)                               # nodal, mesh numbering
         self._T_prev = None
         self.phi = np.where(mesh.active, 1.0, 0.0)
+        self.film_mass = np.zeros(mesh.n_nodes)                   # kg per node (see the skfem backend)
         self.pinned = np.zeros(mesh.n_nodes, dtype=bool)
         self._structure_changed = True
         self._refresh_surface()
@@ -1459,9 +1636,18 @@ class FenicsxThermalSolver:
         self._facet_rows, self._facet_cols = rows, cols
         pinned = np.ones(n, dtype=bool)
         pinned[np.unique(self.mesh.tets[self.phi > 0.0])] = False
+        pinned &= self.film_mass <= 0.0                           # a node carrying film keeps a heat capacity
         if not np.array_equal(pinned, self.pinned):
             self._structure_changed = True
         self.pinned = pinned
+
+    def set_film_mass(self, mass):
+        """Nodal mass [kg] of the melt film riding on the boundary (see the skfem backend)."""
+        mass = np.asarray(mass, dtype=float)
+        if mass.shape != (self.mesh.n_nodes,) or (mass < 0.0).any() or not np.isfinite(mass).all():
+            raise ValueError("film mass must be one finite non-negative value per node")
+        self.film_mass = mass
+        self._refresh_surface()
 
     def set_fractions(self, phi):
         self.phi = np.asarray(phi, dtype=float)
@@ -1483,15 +1669,30 @@ class FenicsxThermalSolver:
     def facet_temperature(self, T):
         return T[self.faces].mean(axis=1)
 
-    def lumped(self, c_nodal):
-        """diag(sum_e phi_e V_e/4 c_i) on the mesh nodes."""
+    def lumped(self, c_nodal, c_film=None):
+        """diag(sum_e phi_e V_e/4 c_i) on the mesh nodes, plus the film's own (liquid) capacity where it rides."""
         vol = self.mesh.element_volumes()
         return np.bincount(self.mesh.tets.ravel(), weights=np.repeat(self.phi * vol / 4.0, 4) * c_nodal[self.mesh.tets].ravel(),
-                           minlength=self.mesh.n_nodes)
+                           minlength=self.mesh.n_nodes) + self.film_mass * (c_nodal if c_film is None else c_film) / self.material.rho
 
     def element_energies(self, T=None):
         h = self.material.enthalpy(self.T if T is None else T)
         return self.phi * self.material.rho * self.mesh.element_volumes() * h[self.mesh.tets].mean(axis=1)
+
+    def film_weight(self):
+        """Share of each node's mass that is melt film, 0 to 1 (see the skfem backend)."""
+        solid = np.bincount(self.mesh.tets.ravel(),
+                            weights=np.repeat(self.phi * self.mesh.element_volumes() / 4.0, 4) * self.material.rho,
+                            minlength=self.mesh.n_nodes)
+        total = solid + self.film_mass
+        return np.divide(self.film_mass, total, out=np.zeros_like(total), where=total > 0.0)
+
+    def nodal_capacity(self):
+        """Heat capacity carried by each node [J/K], material and film together (see the skfem backend)."""
+        T = self.temperature()
+        c, vol = self.material.cp_eff(T) * self.material.rho, self.mesh.element_volumes()
+        return np.bincount(self.mesh.tets.ravel(), weights=np.repeat(self.phi * vol / 4.0, 4) * c[self.mesh.tets].ravel(),
+                           minlength=self.mesh.n_nodes) + self.film_mass * self.material.cp(T)
 
     def energy(self):
         return float(self.element_energies().sum())
@@ -1529,6 +1730,7 @@ class FenicsxThermalSolver:
             fixed[np.asarray(dirichlet[0])] = True
             fixed_values[np.asarray(dirichlet[0])] = dirichlet[1]
         vol = self.mesh.element_volumes()
+        film_w = self.film_weight() if self.film_mass.any() else np.zeros(n)
         converged, last_relative_change, previous_change, damping, decreases = False, None, None, 1.0, 0
         T_new, iteration = T_k, 0
         for iteration in range(1, self.max_iterations + 1):
@@ -1537,7 +1739,10 @@ class FenicsxThermalSolver:
             dT = T_k - T_old
             moved = np.abs(dT) > 1e-9
             c_sec = np.where(moved, (mat.enthalpy(T_k) - mat.enthalpy(T_old)) / np.where(moved, dT, 1.0), c_tan)
-            M_tan, E = self.lumped(mat.rho * c_tan), self.lumped(mat.rho * c_sec) * dT
+            c_liq = mat.cp(T_k)                                   # the film is liquid: no latent plateau (skfem backend)
+            c_sec_l = np.where(moved, (mat.enthalpy_liquid(T_k) - mat.enthalpy_liquid(T_old)) / np.where(moved, dT, 1.0), c_liq)
+            M_tan = self.lumped(mat.rho * c_tan, mat.rho * c_liq)
+            E = self.lumped(mat.rho * c_sec, mat.rho * c_sec_l) * dT
             Tf = self.facet_temperature(T_k)
             B = sp.csr_matrix((np.repeat(4.0 * self.emissivity * SIGMA_SB * Tf ** 3 * self.areas / 9.0, 9), (self._facet_rows, self._facet_cols)), shape=(n, n))
             F_rad = self.facet_load(self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4))
@@ -1564,8 +1769,9 @@ class FenicsxThermalSolver:
             T_new = sol.getArray()[self.dof_of_node].copy()
             T_new[fixed] = fixed_values[fixed]
             if mat.melts:
-                free = ~fixed
-                T_new[free] = mat.temperature_from_enthalpy(mat.enthalpy(T_k[free]) + mat.cp_eff(T_k[free]) * (T_new[free] - T_k[free]))
+                free, w = ~fixed, film_w[~fixed]
+                T_new[free] = mat.temperature_from_enthalpy_mixed(
+                    mat.enthalpy_mixed(T_k[free], w) + mat.cp_mixed(T_k[free], w) * (T_new[free] - T_k[free]), w)
             last_relative_change = np.linalg.norm(T_new - T_k) / np.linalg.norm(T_new)
             if last_relative_change <= self.newton_tol:
                 converged = True
@@ -3503,7 +3709,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: Tasks 1–7 (`mesh.deactivate/surface/active_nodes`, `Material.feed_fraction/liquid_fraction/enthalpy/h_liquid/liquid`, `thermal` `set_fractions/element_energies/step(nodal_load=)/pinned/temperature`, `surface_flow.SurfaceFlow`, `spray.SprayModel/melt_layer/source_rows/histogram/N_BINS`, `film.lubrication/Runoff`), `heating.HeatingResult`, `trajectory.AeroState`.
-- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `SIZE_FEEDBACK_NAMES = ("current", "initial")`, `NOSE_CAP_ANGLE = 30.0`, `NOSE_CAP_FACTOR = 1.67`, `CP_MAX_NEWTONIAN = 1.84`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`; `fit_sphere(points) -> (centre, radius)`; `MeltSettings(removal, runoff, demise_fraction, particles, size_feedback="current")`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.reference_length()` (2 R_eq, or None with `initial`), `.nose_radius()` (the windward-cap fit, or R₀ with `initial`), `.newtonian_drag() -> (C_D, projected area)` (modified Newtonian over the windward convex hull), `.drag_shape_factor()` (that value over the meshed sphere's own, so exactly 1 while intact and 2.00 at the flat limit; 1 with `initial`), `.equivalent_radius()`, `.energy()` (FEM + film), `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, mass_centre, transverse_radius, fitted_nose_radius, cap_nose_radius, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()`/`reference_length()`/`drag_shape_factor()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.nose_radius()` returns the sphere's radius; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area, Knudsen length and drag shape factor, and gives a consumed body no drag; `aero.drag_coefficient(kn, ma, tables, bridging, shape_factor=1.0)` scales the continuum entry only.
+- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `SIZE_FEEDBACK_NAMES = ("current", "initial")`, `NOSE_CAP_ANGLE = 30.0`, `NOSE_CAP_FACTOR = 1.67`, `CP_MAX_NEWTONIAN = 1.84`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`, `LOAD_DT_MAX = 1000.0`; `fit_sphere(points) -> (centre, radius)`; `MeltSettings(removal, runoff, demise_fraction, particles, size_feedback="current")`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.reference_length()` (2 R_eq, or None with `initial`), `.nose_radius()` (the windward-cap fit, or R₀ with `initial`), `.newtonian_drag() -> (C_D, projected area)` (modified Newtonian over the windward convex hull), `.drag_shape_factor()` (that value over the meshed sphere's own, so exactly 1 while intact and 2.00 at the flat limit; 1 with `initial`), `.equivalent_radius()`, `.energy()` (FEM + film), `.film_temperature()` (the surface's own: the film is thermally thin), `.film_enthalpy(h_node=None)` (per patch, the mean of the *liquid* nodal enthalpies), `.film_energy()`, `.film_frozen_fraction()`, `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, mass_centre, transverse_radius, fitted_nose_radius, cap_nose_radius, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()`/`reference_length()`/`drag_shape_factor()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.nose_radius()` returns the sphere's radius; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area, Knudsen length and drag shape factor, and gives a consumed body no drag; `aero.drag_coefficient(kn, ma, tables, bridging, shape_factor=1.0)` scales the continuum entry only.
+
+The film's temperature, its re-solidification and the way every transfer is booked are the subject of measured facts 25 and 26: the film has no energy equation of its own (its *mass* goes to the solver, which carries it on the boundary nodes with the liquid capacity), it holds `enthalpy_liquid` wherever it sits, the feed and the freeze are netted into one transfer per element, each transfer books only the enthalpy difference it carries and books it at the destination, and no deferred load may move a node more than `LOAD_DT_MAX` in one step. Read those two facts before reading `melt_step`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3600,7 +3808,10 @@ def test_film_spraying_death_and_balances(layered_mesh):
     assert stats["closure_fraction_girin"] + stats["closure_fraction_couette_slip"] + stats["closure_fraction_couette_fm"] == pytest.approx(1.0)
     assert stats["kn_body"] > 0.0 and stats["kn_local_stag"] < stats["kn_body"] and stats["re_shock"] > 0.0      # the wall gas is compressed
     assert stats["flow_branch"] in (0.0, 1.0, 2.0) and stats["p_w_stag_Pa"] > stats["kn_body"] * 0.0
-    assert stats["film_thickness_max_mm"] >= stats["film_thickness_mean_mm"] >= 0.0 and stats["removed_enthalpy_J"] == pytest.approx(b.sprayed_mass * b.material.h_liquid)
+    assert stats["film_thickness_max_mm"] >= stats["film_thickness_mean_mm"] >= 0.0
+    h_out = stats["removed_enthalpy_J"] / b.sprayed_mass                                           # the droplets leave at the film's
+    assert b.material.h_liquid < h_out <= b.material.enthalpy(b.surface_temperature().max())       # own temperature, superheat and all
+    assert stats["film_T_max_K"] == pytest.approx(b.surface_temperature().max()) and stats["film_T_max_K"] > b.material.T_liquidus
     rows = np.array(b.source_rows)
     assert rows.shape[1] == 22 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
     assert b.hist_n.sum() == pytest.approx(b.n_released) and b.hist_m.sum() == pytest.approx(b.sprayed_mass)
@@ -3688,6 +3899,54 @@ def test_drag_shape_factor_between_the_two_atdb_endpoints(layered_mesh):
     tables, bridging = aero.SphereDragTables.from_json(), aero.SesamTable()
     assert aero.drag_coefficient(0.0, 10.0, tables, bridging, 2.0) == pytest.approx(2.0 * tables.cd_continuum(10.0))
     assert aero.drag_coefficient(1e6, 10.0, tables, bridging, 2.0) == pytest.approx(tables.cd_free_molecular(10.0))
+
+
+def test_film_temperature_freeze_back_and_the_netted_transfer(layered_mesh):
+    """2.2 MW/m2 for 6 s on a 100 mm body, then the heating off for 60 s, with no flow (so nothing runs off or
+    sprays): the film takes the surface's temperature and its enthalpy is the mean of the nodes' -- not the enthalpy
+    of the mean temperature, which differs by the whole latent heat on the ramp -- it freezes back onto its owner
+    element once the surface falls through the feed ramp, and feed and freeze are netted, so neither runs while the
+    other does. Mass and the coupled energy balance are exact throughout."""
+    import types
+    b = melting_body(layered_mesh, name="AA7075")
+    b.solver.set_temperature(800.0)                                    # just below AA7075's melting point
+    b.energy0 = b.energy()
+    loads = lambda q: types.SimpleNamespace(q_conv=np.full(b.surface.n_patches, q))
+    peak, moved = 0.0, 0.0
+    for i in range(132):
+        b.advance(i * 0.5, 0.5, loads(2.2e6 if i < 16 else 0.0))
+        peak = max(peak, b.m_f.sum())
+        moved += b.last_melt["feed_mass"] + b.last_melt["frozen_mass"]
+        assert abs(b.energy_balance_residual()) < 1e-6
+        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
+    assert moved < 1.5 * peak         # netted: no element feeds and freezes at once, so the film is not churned
+    T, mat = b.solver.temperature(), b.material
+    assert b.film_enthalpy() == pytest.approx(mat.enthalpy_liquid(T)[b.surface.faces].mean(axis=1))
+    mix = mat.enthalpy(T)[b.surface.faces].mean(axis=1)                 # the film carries its latent heat wherever it
+    assert (b.film_enthalpy() >= mix - 1e-6).all()                      # sits, so it is never below the mixture's
+    assert (b.film_enthalpy() > mix + 0.2 * mat.latent_heat).any()      # and is well above it where the surface cooled
+    assert b.film_energy() == pytest.approx((b.m_f * b.film_enthalpy()).sum())
+    assert b.film_temperature() == pytest.approx(b.surface_temperature())
+    assert peak > 0.0 and b.frozen_mass > 0.0 and b.phi.max() <= 1.0     # the film came back and phi never overflows
+    assert b.solver.film_mass.sum() == pytest.approx(b.m_f.sum())        # the solver carries the same film
+    assert b.melt_stats()["film_T_max_K"] == pytest.approx(b.surface_temperature().max())
+
+
+def test_a_deferred_melt_load_never_moves_a_node_more_than_the_cap(layered_mesh):
+    """A drained node has nothing to heat with the enthalpy its melt delivered: no node is moved more than
+    LOAD_DT_MAX in one step, the remainder waits in `pending_load`, and the balance counts it either way."""
+    import types
+    b = melting_body(layered_mesh, name="AA7075")
+    loads = lambda q: types.SimpleNamespace(q_conv=np.full(b.surface.n_patches, q))
+    b.advance(0.0, 0.5, loads(0.0))
+    b.pending_load[:] = 0.0
+    b.pending_load[np.unique(b.surface.faces)] = 1.0e4                   # 10 kJ on every boundary node
+    queued, T0 = b.pending_load.sum(), b.solver.temperature().copy()
+    room = body.LOAD_DT_MAX * b.solver.nodal_capacity()
+    b.advance(0.5, 0.5, loads(0.0))
+    assert b.pending_load.sum() == pytest.approx(queued - np.minimum(1.0e4, room[np.unique(b.surface.faces)]).sum())
+    assert (b.solver.temperature() - T0).max() < 1.05 * body.LOAD_DT_MAX
+    assert b.pending_load.sum() + b.total_applied_load == pytest.approx(queued)     # nothing is lost on the way
 ```
 
 
@@ -3840,6 +4099,7 @@ NOSE_CAP_FACTOR = 1.67           # a flat face of radius R_t heats like a sphere
                                  # ~0.6 x a sphere's of the same radius, Boison & Curtiss 1959): the cap on the fitted radius
 PHI_MIN = 1.0e-3                 # element fraction kept by elements that do not own a patch (they cannot die: no cavities)
 NEAREST_PATCHES = 4              # patches that receive an interior element's liquid (area-weighted)
+LOAD_DT_MAX = 1000.0             # K, the most a deferred melt load may move one node in one macro step
 PHI_DEATH = 0.05                 # a patch owner below this fraction dies (its remainder goes to the film): keeps the surface
                                  # nodes' thermal mass above 5 % of an element's, which the Newton iteration needs (measured
                                  # 2026-09-20: owners at 1e-3 made surface nodes swing by hundreds of K between iterates)
@@ -3879,12 +4139,27 @@ class MeltingBody(ThermalBody):
 
     Per macro step (`advance`): the conduction step with the deferred melt loads of the previous step -> melt step:
     (i) every element's liquid inventory f_feed(T_e) phi_e rho V_e becomes film on its patches (owners) or the
-    nearest patch (interior elements keep PHI_MIN so no cavity can open); the material leaves the FEM at h(T_e)
-    but is booked at h_liquid, the difference (superheat, or the latent deficit of a partly molten element) is a
-    nodal load on the element's nodes over the next step -- energy-exact and the melt front moves at the
-    energy-limited rate whatever the element size; (ii) surface flow, delta_m, lubrication, runoff transport;
-    (iii) spraying and release; (iv) patch owners at phi <= PHI_MIN die: the mesh's active set, the surface, the
-    film (handed to the nearest surviving patch) and the solver's fractions are refreshed. `removal = "instant"`
+    nearest patch (interior elements keep PHI_MIN so no cavity can open), netted against (iv) below; what leaves is
+    the element's molten part, at the enthalpy that part carries, so the melt front moves at the energy-limited rate
+    whatever the element size; (ii) surface flow, delta_m, lubrication, runoff transport; (iii) spraying and release;
+    (iv) re-solidification: the fraction 1 - f_feed(T_patch) of each patch's film returns to its owner element
+    (raising phi_e, capped at 1) once the patch falls back through the ramp -- the mirror of the feed rule, netted
+    with it so that no element both melts and freezes in one step; (v) patch owners at phi <= PHI_DEATH die: the
+    mesh's active set, the surface, the film (handed to the nearest surviving patch) and the solver's fractions are
+    refreshed. With `removal = "instant"` the liquid leaves the body at h_liquid instead, and the difference to the
+    element's own enthalpy is a nodal load on its nodes over the next step.
+
+    The film has the surface's own temperature, because it is thermally thin: q b / k_l = 0.22 K across a 10 um film
+    at 2 MW/m2 (22 K even at 1 mm) and b^2/alpha = 0.3 ms against the 0.5 s macro step. Rather than give it an energy
+    equation, its *mass* is handed to the solver (`set_film_mass`), which weighs it with the liquid heat capacity, so
+    the film rides the boundary nodes at the surface temperature by construction; it heats, cools and re-solidifies
+    with the surface, and the droplets carry away whatever superheat the surface has. A film is liquid by
+    construction, so it holds the *liquid* enthalpy h(T) + L_f (1 - f_l) wherever it sits (`film_enthalpy`): feeding
+    it costs the latent heat its mass has not yet paid, which is what keeps a body that merely sits on the melting
+    ramp from turning into film for free. `film_energy` sums that enthalpy over the patches -- identical to the nodal
+    sum the solver's capacity matrix carries -- and every transfer -- feed, freeze-back, runoff between patches at
+    different temperatures, the hand-over when a patch dies -- books the enthalpy difference it carries, at the
+    patch it arrives on (`melt_step`), so the coupled balance stays exact (measured 1e-10). `removal = "instant"`
     removes the liquid inventory of every element as it forms, without film, runoff or spraying: the lumped-melting
     device that reproduces SESAM's Q/L_f law (SESAM hollows the sphere at fixed outer geometry, measured
     2026-09-20, so the geometry is kept until elements die).
@@ -3914,7 +4189,7 @@ class MeltingBody(ThermalBody):
         self.mass0 = float(self.element_mass.sum())
         self.m_f = np.zeros(self.surface.n_patches)
         self.pending_load = np.zeros(mesh.n_nodes)                          # J, deferred melt energy for the next step
-        self.sprayed_mass = self.runoff_mass = self.removed_mass = self.removed_enthalpy = 0.0
+        self.sprayed_mass = self.runoff_mass = self.removed_mass = self.removed_enthalpy = self.frozen_mass = 0.0
         self.n_released = 0.0
         self.source_rows = []
         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)
@@ -4018,7 +4293,7 @@ class MeltingBody(ThermalBody):
         return (3.0 * self.mass(0.0) / (4.0 * math.pi * self.material.rho)) ** (1.0 / 3.0)
 
     def energy(self):
-        return self.solver.energy() + float(self.m_f.sum()) * self.material.h_liquid
+        return self.solver.energy() + self.film_energy()
 
     def mean_temperature(self):
         m = self.mass(0.0)
@@ -4035,9 +4310,14 @@ class MeltingBody(ThermalBody):
 
     # -- the step --------------------------------------------------------------------------------------------------
     def advance(self, t, dt, loads, state=None):
-        load = self.pending_load / dt
-        self.pending_load = np.zeros(self.mesh.n_nodes)
-        res = self.solver.step(dt, loads.q_conv, self.T_ambient, nodal_load=load)
+        # A deferred melt load is energy the transferred mass delivered to the nodes it arrived at; a node that has
+        # since melted away has nothing to heat with it, so no node is asked to move more than LOAD_DT_MAX in one
+        # step and the remainder waits (it is applied as soon as the node has the capacity, dropped into Q_dropped
+        # if the node dies first, and counted either way -- the balance sees `pending_load` and `Q_dropped` alike).
+        room = LOAD_DT_MAX * self.solver.nodal_capacity()
+        applied = np.clip(self.pending_load, -room, room)
+        self.pending_load = self.pending_load - applied
+        res = self.solver.step(dt, loads.q_conv, self.T_ambient, nodal_load=applied / dt)
         self.integrated_heat += res.Q_conv * dt
         self.absorbed_heat += (res.Q_conv - res.Q_rad) * dt
         self.radiated_heat += res.Q_rad * dt
@@ -4048,81 +4328,178 @@ class MeltingBody(ThermalBody):
         self.melt_step(t, dt, state)
 
     def melt_step(self, t, dt, state):
+        """Feed, film transport, spraying, re-solidification and element death (class docstring).
+
+        Energy is moved between three places -- the finite-element solid, the film, and the outside world -- and every
+        transfer is booked by the same rule: mass that moves at one temperature books nothing, and mass that arrives
+        somewhere colder or hotter than it left books the difference it carries, as a deferred load on the nodes it
+        arrives at. So a transfer of m kilograms from enthalpy h_src to h_dst changes the accounted energy by
+        m (h_dst - h_src) and applies m (h_src - h_dst) to the destination: the balance closes exactly, and nothing
+        larger than the difference ever touches the temperature field. Booking the two halves separately -- the
+        solid's m h_src on its element's nodes, the film's m h_dst on its patch's nodes -- closes the balance just as
+        exactly and wrecks the field: the same mass is spread by 1/4 over four nodes on one side and by 1/3 over
+        three on the other, which left +-m h/12 on every surface node and swung the body to 1618 K and -1202 K in two
+        macro steps (measured 2026-09-22). The enthalpies are the ones the two energy functionals actually use: the
+        element's is the mean of h(T_i) over its four nodes, the film's the mean of the *liquid* h over its patch's
+        three, and what leaves an element is its molten part, at the enthalpy that part carries."""
         mat, liq, s = self.material, self.liquid, self.settings
         T = self.solver.temperature()
         tets = self.mesh.tets
-        h_e = mat.enthalpy(T)[tets].mean(axis=1)                 # the element's specific enthalpy (nodal h, as the solver's energy)
-        # (i) feed: the liquid inventory of every active element (nodal feed fraction averaged over the element)
-        f = mat.feed_fraction(T)[tets].mean(axis=1) * self.mesh.active
-        owner = self.owner_area > 0.0
-        cap = np.where(owner, self.phi, np.maximum(self.phi - PHI_MIN, 0.0))
-        d_phi = np.minimum(f * self.phi, cap)
-        fed = d_phi * self.element_mass
-        self.phi = self.phi - d_phi
-        self._book_removed(fed, h_e)
+        h_node = mat.enthalpy(T)
+        h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
+        h_liq = mat.enthalpy_liquid(T)
+        h_p = self.film_enthalpy(h_liq)                          # as film_energy() weighs the film: liquid, with L_f
+        # (i) feed and (iv) re-solidification, netted. The feed hands the molten fraction of what each element still
+        # holds to the film (f_feed of phi_e, so an element that is a quarter molten hands over a quarter of its
+        # remainder); the mirror rule hands back the fraction of the film that has fallen below the ramp. What stops
+        # the feed from eating a body that merely sits on the ramp is not the rule but the energy: film is liquid and
+        # carries L_f wherever it sits (`Material.enthalpy_liquid`), so every kilogram fed debits the latent heat it
+        # has not paid and the surface falls back to the solidus. Book the film at the mixture enthalpy instead and
+        # melting is free on the ramp -- a 100 mm sphere turned entirely to film on a quarter of its latent heat
+        # (measured 2026-09-22). The two directions are netted per element because they are one equilibrium seen
+        # from opposite sides: run separately they cycled 3 % of the body's mass through the film every step with no
+        # net effect, pinning the surface at T_feed and paying Newton iterations for it.
+        fn = mat.feed_fraction(T)[tets]
+        f = fn.mean(axis=1) * self.mesh.active
+        h_hot = (fn * h_node[tets]).mean(axis=1) * self.mesh.active     # what the molten part carries, per kg of element
+        cap = np.where(self.owner_area > 0.0, self.phi, np.maximum(self.phi - PHI_MIN, 0.0))
+        gross = np.minimum(f * self.phi, cap) * self.element_mass
+        solid = (1.0 - mat.feed_fraction(self.film_temperature())) * self.m_f if s.removal != "instant" else np.zeros(0)
+        want = np.bincount(self.surface.owner, solid, self.mesh.n_elements) if solid.size else np.zeros(self.mesh.n_elements)
+        net = gross - want
+        fed, want = np.maximum(net, 0.0), np.maximum(-net, 0.0)
+        # the enthalpy the fed mass carries: the *molten* part of the element, not its mean. The mass that leaves sits
+        # at the nodes that are above the ramp, so it carries h(T_i) there -- and what stays behind is the colder
+        # rest, which is why the element must be debited the difference. Debit only the destination and the element
+        # keeps a melt fraction it no longer has and feeds it again next step: the surface then melted three times
+        # faster than the heat allowed and the body was gone in ten steps (measured 2026-09-22).
+        with np.errstate(divide="ignore", invalid="ignore"):
+            fed_h = np.where(f > 0.0, fed * h_hot / np.where(f > 0.0, f, 1.0), 0.0)
+        self.phi = self.phi - fed / self.element_mass
         feed_mass = float(fed.sum())
         if feed_mass > 0.0 and self.melt_onset is None:
             self.melt_onset = t
         if s.removal == "instant":
             self.removed_mass += feed_mass
             self.removed_enthalpy += feed_mass * mat.h_liquid
+            self._defer_to_elements(fed * (h_e - mat.h_liquid))  # it leaves the body at the liquidus, not at h_e
             released = feed_mass
         else:
-            self._add_to_film(fed)
-            released = self._film_and_spray(t, dt, state)
-        # (iv) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed
-        # (cascade within the step: the surface never ends a step owned by a material-free element)
+            self._defer_to_elements(fed * h_e - fed_h)           # the element keeps only what the melt left behind
+            delta, carried = self._add_to_film(fed, fed_h)
+            self._defer_to_patches(carried - delta * h_p)        # ... and the melt arrives at its patch's temperature
+            released = self._film_and_spray(t, dt, state, h_p)
+        frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
+        # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed
         n_dead = 0
         while not self.consumed:
             dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= PHI_DEATH))
             if dead.size == 0:
                 break
             rest = self.phi[dead] * self.element_mass[dead]
-            self._book_removed_subset(dead, rest, h_e[dead])
             if s.removal == "instant":
                 self.removed_mass += float(rest.sum())
                 self.removed_enthalpy += float(rest.sum()) * mat.h_liquid
+                self._defer_to_elements(rest * (h_e[dead] - mat.h_liquid), dead)
             else:
-                extra = np.zeros(self.mesh.n_elements)
-                extra[dead] = rest
-                self._add_to_film(extra)
+                extra, extra_h = np.zeros(self.mesh.n_elements), np.zeros(self.mesh.n_elements)
+                extra[dead], extra_h[dead] = rest, rest * h_e[dead]
+                delta, carried = self._add_to_film(extra, extra_h)
+                self._defer_to_patches(carried - delta * h_p)
             self.phi[dead] = 0.0
-            self._kill(dead)
+            before = float((self.m_f * h_p).sum())
+            self._kill(dead)                                     # the film of a dead patch moves to another patch...
+            if self.m_f.size:                                    # ... which is at its own temperature
+                h_p = self.film_enthalpy(h_liq)
+                self._spread_to_patches(before - float((self.m_f * h_p).sum()), self.m_f)
             n_dead += int(dead.size)
         self.solver.set_fractions(self.phi)
-        self.last_melt.update({"n_dead": n_dead, "released_mass": released, "feed_mass": feed_mass})
+        self.solver.set_film_mass(self._film_nodal())
+        self.frozen_mass += frozen
+        self.last_melt.update({"n_dead": n_dead, "released_mass": released, "feed_mass": feed_mass, "frozen_mass": frozen})
 
-    def _book_removed(self, fed, h_e):
-        k = np.flatnonzero(fed > 0.0)
-        if k.size:
-            self._book_removed_subset(k, fed[k], h_e[k])
+    def _freeze_back(self, want, solid, h_e, h_p):
+        """Give each element back the `want` kilograms of film that have fallen below the feed ramp, drawn from its
+        own patches in proportion to what each wants to give (`solid`). An element can only recover film that is
+        still there -- what ran off or sprayed away is gone -- and phi_e is capped at 1, because a patch may hold
+        what its neighbours' runoff delivered and the mesh cannot grow a layer outside itself, so film with nowhere
+        to go simply stays film (`film_frozen_fraction` records how much)."""
+        if not self.m_f.size or not want.any():
+            return 0.0
+        owner = self.surface.owner
+        have = np.bincount(owner, solid, self.mesh.n_elements)
+        room = np.maximum(1.0 - self.phi, 0.0) * self.element_mass
+        with np.errstate(divide="ignore", invalid="ignore"):
+            share = np.where(have > 0.0, np.minimum(want, room) / np.where(have > 0.0, have, 1.0), 0.0)
+        taken = np.minimum(solid * share[owner], self.m_f)
+        if not taken.any():
+            return 0.0
+        per_element = np.bincount(owner, taken, self.mesh.n_elements)
+        self.phi = np.clip(self.phi + per_element / self.element_mass, 0.0, 1.0)
+        self.m_f = self.m_f - taken
+        # the film arrives in the element it froze onto, which is colder than the surface it left
+        self._defer_to_elements(np.bincount(owner, taken * h_p, self.mesh.n_elements) - per_element * h_e)
+        return float(taken.sum())
 
-    def _book_removed_subset(self, elements, mass, h_e):
-        """Material leaving the FEM at h(T_e) is booked at h_liquid; the difference is deferred to the element's nodes."""
-        diff = mass * (h_e - self.material.h_liquid)             # J (positive: superheat stays in the body)
-        nodes = self.mesh.tets[elements]
-        np.add.at(self.pending_load, nodes.ravel(), np.repeat(diff / 4.0, 4))
+    def _defer_to_elements(self, energy, elements=None):
+        """Book a per-element energy [J] on the elements' nodes, to be applied over the next step."""
+        e = np.asarray(energy, dtype=float)
+        if not e.any():
+            return
+        nodes = self.mesh.tets if elements is None else self.mesh.tets[elements]
+        np.add.at(self.pending_load, nodes.ravel(), np.repeat(e / 4.0, 4))
 
-    def _add_to_film(self, fed):
+    def _spread_to_patches(self, energy, weights):
+        """Book one energy [J] over the patches that received mass, in proportion to how much each received. Used
+        where the transfer's per-edge detail is not carried back (runoff, and the hand-over when a patch dies): the
+        total is exact and it lands on the arriving liquid, which is where the difference is released."""
+        total = float(weights.sum())
+        if total > 0.0 and energy != 0.0:
+            self._defer_to_patches(energy * weights / total)
+
+    def _defer_to_patches(self, energy):
+        """Book a per-patch energy [J] on the patches' nodes, to be applied over the next step."""
+        e = np.asarray(energy, dtype=float)
+        if e.any():
+            np.add.at(self.pending_load, self.surface.faces.ravel(), np.repeat(e / 3.0, 3))
+
+    def _film_nodal(self):
+        """The film's mass per node [kg]: each patch's film shared over its three nodes. The film's thermal state
+        lives on the nodes because that is where the solver's capacity and the solver's enthalpy live."""
+        if not self.m_f.size:
+            return np.zeros(self.mesh.n_nodes)
+        return np.bincount(self.surface.faces.ravel(), np.repeat(self.m_f / 3.0, 3), self.mesh.n_nodes)
+
+
+
+    def _add_to_film(self, fed, carried):
+        """Distribute each element's freed liquid to the film: owners to their own patches by area, interior elements
+        to the NEAREST_PATCHES nearest patches by area. `carried` is the enthalpy that liquid takes with it [J per
+        element]; it rides the same weights, so the caller knows what arrived on each patch. Returns the per-patch
+        increment [kg] and the per-patch enthalpy carried in [J]."""
+        before, got = self.m_f.copy(), np.zeros_like(self.m_f)
         k = np.flatnonzero(fed > 0.0)
         if k.size == 0:
-            return
+            return np.zeros_like(self.m_f), got
         owner = self.owner_area[k] > 0.0
         # owners: shared by patch area; interior elements: the nearest patch
         if owner.any():
             ko = k[owner]
-            share = np.zeros(self.mesh.n_elements)
-            share[ko] = fed[ko] / self.owner_area[ko]
+            share, share_h = np.zeros(self.mesh.n_elements), np.zeros(self.mesh.n_elements)
+            share[ko], share_h[ko] = fed[ko] / self.owner_area[ko], carried[ko] / self.owner_area[ko]
             self.m_f += share[self.surface.owner] * self.surface.areas
+            got += share_h[self.surface.owner] * self.surface.areas
         if (~owner).any():                                    # interior elements: the NEAREST_PATCHES nearest patches, by area
             ki = k[~owner]
             kk = min(NEAREST_PATCHES, self.surface.n_patches)
             _, near = self._patch_tree.query(self.mesh.points[self.mesh.tets[ki]].mean(axis=1), k=kk)
             near = near.reshape(len(ki), kk)
-            w = self.surface.areas[near]
-            np.add.at(self.m_f, near.ravel(), (fed[ki][:, None] * w / w.sum(axis=1, keepdims=True)).ravel())
+            w = self.surface.areas[near] / self.surface.areas[near].sum(axis=1, keepdims=True)
+            np.add.at(self.m_f, near.ravel(), (fed[ki][:, None] * w).ravel())
+            np.add.at(got, near.ravel(), (carried[ki][:, None] * w).ravel())
+        return self.m_f - before, got
 
-    def _film_and_spray(self, t, dt, state):
+    def _film_and_spray(self, t, dt, state, h_p):
         liq, s, mat = self.liquid, self.settings, self.material
         from . import spray as spray_mod
         if state is None or self.m_f.sum() <= 0.0:
@@ -4135,8 +4512,14 @@ class MeltingBody(ThermalBody):
         n_sub, moved = 0, 0.0
         if self.runoff is not None:
             q_of_b = lambda b: self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu)[1]
+            before = self.m_f
             self.m_f, n_sub, moved = self.runoff.transport(self.m_f, q_of_b, self.t_hat, liq.rho, areas, dt)
             self.runoff_mass += moved                                              # mass that arrived on another patch
+            # film that runs to a colder patch takes its enthalpy with it and arrives at that patch's temperature;
+            # the difference is released where it lands (the per-edge detail is not carried back, so it is shared
+            # over the patches that gained film, which is exact in total and second order in the attribution)
+            d = self.m_f - before
+            self._spread_to_patches(-float((d * h_p).sum()), np.maximum(d, 0.0))
         b = self.m_f / (liq.rho * areas)
         v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu)
         # (iii) spraying
@@ -4150,10 +4533,10 @@ class MeltingBody(ThermalBody):
             hn, hm = spray_mod.histogram(res.r, res.dn, res.dm)
             self.hist_n += hn
             self.hist_m += hm
+            self.removed_enthalpy += float((res.dm * h_p).sum())   # the droplets keep the surface's superheat, and go
             self.m_f = self.m_f - res.dm
             self.sprayed_mass += released
             self.removed_mass += released
-            self.removed_enthalpy += released * mat.h_liquid
             self.n_released += float(res.dn.sum())
         self.m_f[self.m_f < 1e-30] = 0.0                       # no denormal films (they made 0/0 coefficients in the runoff)
         self.last_flow, self.last_spray, self.last_b = flow, res, b
@@ -4173,7 +4556,9 @@ class MeltingBody(ThermalBody):
         old_surface, old_m_f = self.surface, self.m_f
         gone, new = self.mesh.deactivate(dead)
         if self.mesh.n_active == 0:                              # nothing left: the run ends (demise) without a surface
-            self.consumed = True
+            self.consumed = True                                 # the film still on it leaves with the body
+            self.removed_mass += float(self.m_f.sum())
+            self.removed_enthalpy += float((self.m_f * self.film_enthalpy()).sum())
             self.m_f = np.zeros(0)
             return
         self._refresh_geometry()
@@ -4188,6 +4573,34 @@ class MeltingBody(ThermalBody):
         self.m_f = m_f
 
     # -- reporting -----------------------------------------------------------------------------------------------
+    def film_temperature(self):
+        """The film's temperature per patch: the surface's own (the film is thermally thin, class docstring)."""
+        return self.surface_temperature()
+
+    def film_enthalpy(self, h_node=None):
+        """Specific enthalpy of each patch's film [J/kg]: the mean over the patch's three nodes of the *liquid*
+        enthalpy h(T_i) + L_f (1 - f_l) -- the film is liquid by construction, so it carries its latent heat wherever
+        it sits. Two things this must not be: the enthalpy of the mean temperature (the mean of the enthalpies and
+        the enthalpy of the mean differ by the whole latent heat across the ramp, which left a -0.4 residual in the
+        coupled balance), and the mixture enthalpy h(T) (which makes melting free on the ramp)."""
+        if h_node is None:
+            h_node = self.material.enthalpy_liquid(self.solver.temperature())
+        return h_node[self.surface.faces].mean(axis=1) if self.m_f.size else np.zeros(0)
+
+    def film_energy(self):
+        """Enthalpy held by the film [J]. Identical to the nodal sum the solver carries (`set_film_mass` gives each
+        node sum_p m_p/3), so the film's sensible heat is inside 1^T M dT and the balance closes on it exactly."""
+        return float((self.m_f * self.film_enthalpy()).sum()) if self.m_f.size else 0.0
+
+    def film_frozen_fraction(self):
+        """Fraction of the film sitting on patches below the feed ramp: mass the enthalpy calls solid but the model
+        still treats as liquid, because the mesh cannot grow a crust outside itself and its own element may be gone
+        (section 9.5). It is the honest measure of that limitation, so it is recorded every step."""
+        total = float(self.m_f.sum())
+        if total <= 0.0:
+            return 0.0
+        return float(self.m_f[self.material.feed_fraction(self.film_temperature()) <= 0.0].sum() / total)
+
     def film_thickness_max(self):
         """Thickest film [m] over patches of at least a tenth of the median patch area (slivers excluded)."""
         if not self.m_f.size:
@@ -4235,7 +4648,10 @@ class MeltingBody(ThermalBody):
                 "kn_body": lm.get("kn_body", float("nan")), "kn_local_stag": lm.get("kn_local_stag", float("nan")),
                 "re_shock": lm.get("re_shock", float("nan")), "flow_branch": lm.get("flow_branch", float("nan")),
                 "p_w_stag_Pa": lm.get("p_w_stag", float("nan")), "phi_sonic_deg": lm.get("phi_sonic_deg", float("nan")),
-                "drag_shape_factor": self.drag_shape_factor(),
+                "drag_shape_factor": self.drag_shape_factor(), "frozen_mass_kg": self.frozen_mass,
+                "film_T_max_K": float(self.film_temperature().max()) if self.m_f.size else float("nan"),
+                "film_T_mean_K": float((self.m_f * self.film_temperature()).sum() / self.m_f.sum()) if self.m_f.sum() > 0.0 else float("nan"),
+                "film_frozen_fraction": self.film_frozen_fraction(), "unapplied_load_J": float(self.pending_load.sum()),
                 "removed_enthalpy_J": self.removed_enthalpy,
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
@@ -4473,7 +4889,8 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 "closure_fraction_couette_fm", "rt_active", "removed_enthalpy_J", "film_thickness_max_mm",
                 "film_thickness_mean_mm", "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm",
                 "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
-                "drag_shape_factor", "n_dead_elements"]
+                "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                "unapplied_load_J", "n_dead_elements"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -4556,7 +4973,8 @@ class CoupledRun:
                 "n_released": body.n_released, "time_of_peak_release_s": float(c["time_s"][i_peak]),
                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
-                "removed_enthalpy_J": body.removed_enthalpy, "melt_energy_balance_residual": body.energy_balance_residual()}
+                "removed_enthalpy_J": body.removed_enthalpy, "frozen_mass_kg": body.frozen_mass,
+                "melt_energy_balance_residual": body.energy_balance_residual()}
 
     def thermal_results(self, history):
         c, body = history.columns, self.body
@@ -4618,6 +5036,7 @@ def write_vtk_frame(output_dir, k, body, loads):
     poly.cell_data["T_patch"] = Tf
     if melting:
         poly.cell_data["film_thickness"] = body.m_f / (body.liquid.rho * surface.areas)
+        poly.cell_data["film_T"] = body.film_temperature()
         n = surface.n_patches
         res, flow = body.last_spray, body.last_flow
         same = res is not None and res.r.size == n
@@ -6110,7 +6529,7 @@ if __name__ == "__main__":
 "$PY" analysis/melt_verification.py --animate                                         # ~6 min: 2 spheres x 3 modes, with the videos
 ```
 
-Expected: 2 passed (measured 0.98 % / +0.10 km / −1.3 % and 1.29 % / +0.17 km / −0.2 %); the driver prints the six-row table with `pass` in both bookkeeping rows, the resolved rows ~10 % / 14 % mass difference with onsets 71.62 / 77.57 km and 1 %-mass times +6.5 % / +0.5 %, the physics rows onsets 73.96 / 78.32 km with 1 %-mass times 114.8 s (+72 %) / 201.7 s (+5.4 %), and writes `summary.md`. Check that `reentry_model_output/verification_melt/d100__physics/vtk/` holds `animation.mp4`, `film.mp4`, `section.mp4` and the stills (`melt_onset`, `spraying_onset`, `peak_release`, `film_*`, `section_*`), and that `d100__resolved/mass_time.png` shows the SESAM overlay with its residual panel.
+Expected: 2 passed (measured 0.98 % / +0.10 km / −1.3 % and 1.29 % / +0.17 km / −0.2 %); the driver prints the six-row table with `pass` in both bookkeeping rows and the resolved and physics rows of the README's verification table (Task 15), and writes `summary.md`. The whole reference tier (`"$PY" -m pytest -m reference -q`) is 15 passed in ≈ 24 min. Check that `reentry_model_output/verification_melt/d100__physics/vtk/` holds `animation.mp4`, `film.mp4`, `section.mp4` and the stills (`melt_onset`, `spraying_onset`, `peak_release`, `film_*`, `section_*`), and that `d100__resolved/mass_time.png` shows the SESAM overlay with its residual panel.
 
 - [ ] **Step 5: Run the sensitivity study**
 
@@ -6156,7 +6575,7 @@ Expected (measured 2026-09-21 with the nodal-enthalpy core): d100 sesam 0.46 % /
 
 - [ ] **Step 2: Add the Step 3 section to `README.md`**
 
-Insert before `## Tests` (fill the sensitivity table and the two "[...]" placeholders from `reentry_model_output/verification_melt/sensitivity/sensitivity.md` and the Step 1 re-run; keep every measured number of Task 14's `summary.md` in the verification table — replace the prototype numbers below where the re-run differs in the last digit):
+Insert before `## Tests`. The verification table below carries the prototype's own measurements; replace each row with Task 14's `summary.md` where the re-run differs, and write the sensitivity findings from `reentry_model_output/verification_melt/sensitivity/sensitivity.md` into the paragraph that names the fifteen variants:
 
 ```markdown
 ## Physics model — `reentry_model` (Step 3: melting, melt film and melt spraying)
@@ -6193,7 +6612,17 @@ tables with the alloy's solidus 750 K / liquidus 908 K, latent heat 400 kJ/kg sp
 the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap, bounded to
 1.67 × the transverse radius for a flat front; `initial` with `instant`: D₀ and R₀, SESAM's convention); `--k-scale`
 (a verification device). Melt and runoff start at the liquidus: material between the solidus and the liquidus holds
-its latent heat but counts as solid for the film (spec §8, §17.2).
+its latent heat but counts as solid for the film (spec §8, §17.2). The film has the surface's own temperature (it is
+thermally thin), carries the liquid enthalpy wherever it sits, and re-solidifies onto its owner element when the
+surface falls back through the ramp — the mirror of the feed rule, netted with it so that no element both melts and
+freezes in one step. Film that has nowhere to freeze (a full or dead owner element: the mesh cannot grow a crust
+outside itself) stays liquid, and `film_frozen_fraction` reports how much — at most 0.47 % of the initial mass on the
+50 mm flight and 0.126 % on the 100 mm one. Re-solidification is a leeward, end-of-flight phenomenon: on the 50 mm
+flight the film sprays away before it can cool through the ramp, so only 7.2 µg freezes back — and 99.9 % of that is
+leeward, where a patch gets no convective heat and loses heat by radiation and into the cold rear (the leeward film
+runs 10–25 K colder than the windward film). The 100 mm remnant, which survives to the ground, freezes 2.4 g back.
+Droplets leave at the film's own temperature, so they carry its superheat: +2.4 % on h_liquid for the 50 mm flight
+(the film reaching 1013 K against a 908 K liquidus), +0.6 % for the 100 mm one.
 
 Outputs: `<run>.csv` gains `mass_kg` (now varying), `film_mass_kg`, `sprayed_mass_kg`, `runoff_mass_kg`,
 `removed_mass_kg`, `melt_front_depth_max_mm`, `equivalent_radius_mm`, `n_active_elements`, `spraying_area_m2`,
@@ -6230,28 +6659,30 @@ criterion, film excluded).
 
 | case | mode | max \|Δm\| (of m₀) | melt onset [km] model / SESAM | 1 %-mass time [s] model / SESAM | sprayed / film left [kg] | droplets (median r) | runtime |
 |---|---|---|---|---|---|---|---|
-| d100 | bookkeeping | 0.98 % | 71.10 / 71.00 | 65.9 / 66.8 (−1.3 %) | — | — | 29 s, 132 steps |
-| d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 14 s, 382 steps |
-| d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 10.1 % | 71.62 / 71.00 | 71.1 / 66.8 (+6.5 %) | 1.396 / 0.065 | 2.6e7 (160 µm) | 144 s, 143 steps |
-| d050 | resolved | 13.5 % | 77.57 / 77.10 | 192.4 / 191.4 (+0.5 %) | 0.161 / 0.021 | 5.1e5 (303 µm) | 40 s, 385 steps |
-| d100 | physics (AA7075_range, girin, shape feedback) | 76.2 % | 73.96 / 71.00 | **no demise** | 1.027 / 0.001 | 3.2e7 (99 µm) | 1808 s, 1195 steps |
-| d050 | physics | 66.3 % | 78.32 / 77.10 | 202.6 / 191.4 (+5.9 %) | 0.175 / 0.000 | 2.5e6 (235 µm) | 219 s, 406 steps |
+| d100 | bookkeeping | 0.98 % | 71.10 / 71.00 | 65.9 / 66.8 (−1.3 %) | — | — | 39 s, 132 steps |
+| d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 20 s, 382 steps |
+| d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 9.35 % | 71.62 / 71.00 | 70.0 / 66.8 (+4.8 %) | 1.404 / 0.057 | 2.7e7 (160 µm) | 269 s, 141 steps |
+| d050 | resolved | 7.10 % | 77.57 / 77.10 | 191.3 / 191.4 (−0.1 %) | 0.161 / 0.021 | 4.5e5 (298 µm) | 54 s, 383 steps |
+| d100 | physics (AA7075_range, girin, shape feedback) | 76.4 % | 73.96 / 71.00 | **no demise** | 1.032 / 0.001 | 3.3e7 (122 µm) | 2357 s, 1191 steps |
+| d050 | physics | 66.5 % | 78.32 / 77.10 | 203.3 / 191.4 (+6.2 %) | 0.173 / 0.010 | 2.5e6 (236 µm) | 222 s, 407 steps |
 
 Thresholds (bookkeeping mode only, `tests/test_reentry_model_reference_melt.py`): mass 2 % of m₀, onset 0.5 km,
 1 %-mass time 2 %. The devices are pinned to `--size-feedback initial`, so none of the shape or regime amendments can
 move them — which is what makes them a fixed yardstick. The resolved runs are reported: the surface melts 0.6 km before
-SESAM's lumped body reaches 850 K, and the interior's sensible heating delays the end by 0.5–6.5 %; the 10–14 % mass
-difference is the lumped-body assumption, plotted in `d100__resolved/mass_time.png`.
+SESAM's lumped body reaches 850 K, and the interior's sensible heating delays the end by up to 4.8 %; the 7–9 % mass
+difference is the lumped-body assumption, plotted in `d100__resolved/mass_time.png`. Giving the film its own latent
+heat (2026-09-22) moved both cases toward SESAM — the 50 mm mass error halved, from 13.5 % to 7.1 %, and its 1 %-mass
+time from +0.5 % to −0.1 % — because melt can no longer be relabelled as film without paying for itself.
 
-**The physics-mode 100 mm sphere does not demise.** It melts from 74.0 km, sprays 1.027 kg of its 1.472 kg as 3.2×10⁷
-droplets, and the remaining **0.445 kg (30 % of the initial mass) reaches the ground**. That is a consequence of the
+**The physics-mode 100 mm sphere does not demise.** It melts from 74.0 km, sprays 1.032 kg of its 1.472 kg as 3.3×10⁷
+droplets, and the remaining **0.440 kg (29.9 % of the initial mass) reaches the ground**. That is a consequence of the
 fixed-attitude assumption acting three times over: the flattening nose is held face-on, which is the maximum-drag
 orientation (C_D rises from 0.91 toward 1.8, so the body decelerates high and the heating ∝ ρV³ collapses); the
 stagnation radius grows as the face flattens, cutting the stagnation flux by a further ~20 %; and the leeward shell is
 never heated at all. SESAM's lumped sphere, which keeps D₀, R₀ and the sphere drag table, demises at 66.5 km. A
 tumbling fragment would sit between the two — DRAMA's own tumbling-averaged C_D for a thin disc is 0.60, *below* the
 sphere's 0.91 — so the sphere/face-on spread is an attitude uncertainty, not a drag-law one, and tumbling is the first
-item of the next iteration (spec §17). The 50 mm sphere still demises (202.6 s, +5.9 % on SESAM's 1 %-mass time).
+item of the next iteration (spec §17). The 50 mm sphere still demises (203.3 s, +6.2 % on SESAM's 1 %-mass time).
 
 Girin's published cases (`analysis/girin_reference.py`, `data/reference_values/girin2017_table1.json`,
 `girin1994_tables.json`): the exact tier — GI = We∞Re∞^−½ (13.04 / 3.51 / 43.46 vs 13.0 / 3.55 / 43.5) and φ_cr from his
@@ -6325,13 +6756,35 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   across the melting range (the element-mean formulation of Step 2 could not carry a 4 K ramp under a 30 K nodal
   spread). The Stefan front on a box is reproduced within 0.3 %.
 - **Liquid properties** (DRAMA has none): ρ_l 2400 kg/m³, μ_l 1.3 mPa s, Σ 0.86 N/m — pure aluminium near the
-  liquidus (Smithells; Assael et al. 2006; ASM Vol. 2); alloy corrections within 10 %; no oxide skin.
+  liquidus (Smithells; Assael et al. 2006; ASM Vol. 2); alloy corrections within 10 %; no oxide skin. They are
+  constants: the film now has a temperature (below), but its viscosity and surface tension are still evaluated at the
+  liquidus, which is where most of it sits. μ_l falls by roughly a third per 200 K of superheat, so the runoff and the
+  thin-branch wavelength are the quantities a temperature-dependent μ_l would move.
 - **What flows.** Melt and runoff start at the liquidus: an element's material becomes film in proportion to a ±2 K
   ramp at the liquidus (f_feed), so the mushy range holds latent heat but neither runs off nor is stripped
-  (conservative; a coherency-point treatment is a future iteration). Material leaves the finite-element body at the
-  liquidus enthalpy; the difference to the element's actual enthalpy (superheat, or the latent deficit of a partly
-  molten element) is returned to its nodes over the next step, so the balance is exact and the melt front advances at
-  the energy-limited rate whatever the element size.
+  (conservative; a coherency-point treatment is a future iteration). What leaves an element is its *molten* part, at
+  the enthalpy that part carries (the f_feed-weighted mean of its nodal enthalpies), and what stays behind is the
+  colder rest — so the element is debited the difference, which is what makes the melt front advance at the
+  energy-limited rate whatever the element size. With `--removal instant` the mass leaves the body at the liquidus
+  enthalpy instead, and the difference is returned to the element's nodes.
+- **The film's temperature and re-solidification.** The film is thermally thin (q b/k_l = 0.22 K across a 10 µm film
+  at 2 MW/m², 22 K even at 1 mm; b²/α = 0.3 ms against the 0.5 s macro step), so it is given no energy equation: its
+  mass is carried on the boundary nodes with the liquid heat capacity and it is at the surface temperature by
+  construction. It therefore heats, cools and freezes with the surface, and droplets leave carrying the surface's
+  superheat (+4.6 % on h_liquid in the 100 mm case) rather than at the liquidus exactly. Because a film is liquid by
+  construction it holds the liquid enthalpy h(T) + L_f(1 − f_l) wherever it sits, so feeding it costs the latent heat
+  the mass has not yet paid and no mass can be relabelled from solid to liquid for free. Re-solidification is the
+  mirror of the feed rule — the fraction 1 − f_feed(T_patch) of a patch's film returns to its owner element as solid,
+  and the two directions are netted into one transfer per element so that the film is never churned. Two limits are
+  declared: φ_e is capped at 1, so film whose owner element is full (or has died) stays liquid for good — the mesh
+  cannot grow a crust outside itself — and `film_frozen_fraction` reports how much film is in that state; and a thick
+  crust would conduct, which a lumped nodal capacity does not represent. A re-solidified crust is therefore still
+  available to run off and be stripped, which is conservative for mass loss.
+- **How melt energy is booked.** Mass moving at one temperature books nothing; mass that arrives somewhere hotter or
+  colder books the enthalpy difference it carries, on the nodes it arrives at. No deferred load may move a node more
+  than 1000 K in one macro step (a node whose own mass has melted away has nothing to heat with it); the remainder
+  waits and is reported as `unapplied_load_J`, and is counted as dropped if the node dies first. The coupled energy
+  balance is exact (1e-9 of the absorbed heat) with the queue and the dropped loads in it.
 - **Element fractions and death.** φ_e scales an element's heat capacity, not its conductivity (a thinner sliver of
   the same material conducts better, not worse; scaling k isolated the surface nodes and drove them to thousands of
   kelvin). A patch owner dies at φ_e ≤ 5 % (its remainder joins the film); interior elements keep ≥ 10⁻³ so that no
@@ -6351,6 +6804,12 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   with SESAM's f(Kn) instead). Near the rim the expansion to p∞ makes ρ_e tiny and Kn_δ > 0.1 even on a continuum
   body — a property of the pressure model that the local criterion inherits. The driving gradient
   G = 2(p_s − p∞) sinθ cosθ/R − ρ_l a sinθ includes the body's deceleration (the film is pushed toward the nose).
+- **Film thickness on a single patch is not a trustworthy number.** The area-mean film is microns to tens of microns,
+  but isolated patches reach centimetres and, in a few steps per flight, metres (measured: 38 of 1192 steps above
+  20 mm on the 100 mm physics flight, peaking at 627 mm; 16 of 408 and 2431 mm on the 50 mm). It does not propagate
+  into the droplet sizes — spraying is melt-limited and the radius is capped by the film on the patch — but the
+  mechanism (a crater-rim runoff sink, a collapsed patch area, or the hand-over concentrating a dead patch's film)
+  has not been identified, and `film_thickness_max_mm` should be read with that in mind.
 - **Film and runoff.** One film mass per patch; lubrication velocity and flux with a thin (b ≤ δ_m) and a thick
   (b > δ_m) branch; runoff by a linearly implicit upwind scheme on the patch graph (4 sub-steps per macro step,
   exact conservation, exact steady state; a wetting front advances one patch per sub-step), never across the equator;
@@ -6385,7 +6844,7 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
 Change the spec's status line to `Status: implemented 2026-09-21 (plan docs/superpowers/plans/2026-09-20-melt-spraying.md); amendments in §18` and append:
 
 ```markdown
-## 18. Amendments (implementation, 2026-09-20/21)
+## 18. Amendments (implementation, 2026-09-20/22)
 
 Measured while writing and executing the plan; each overrides the section it names. The plan's "Measured facts and
 spec amendments" list carries the numbers.
@@ -6406,8 +6865,10 @@ spec amendments" list carries the numbers.
    material-free nodes are pinned. The FEniCSx backend assembles only the stiffness in UFL; the radiation and all loads
    are nodal in both backends (the boundary moves). Both backends agree to 1e-10 in mass.
 3. §8 — every active element feeds its liquid inventory (nodal mean of the ±2 K feed ramp at the liquidus), owners to
-   their patches by area, interior elements to the four nearest patches; the material leaves at its nodal-mean enthalpy
-   and is booked at h_liquid with the difference returned to the element's nodes over the next step. Runoff is a
+   their patches by area, interior elements to the four nearest patches; what leaves is the element's *molten* part, at
+   the enthalpy that part carries (the feed-weighted mean of its nodal enthalpies), with the difference to the element's
+   mean returned to its nodes over the next step — `--removal instant` books the mass at h_liquid instead, which is the
+   lumped device SESAM's Q/L_f law is compared against. Runoff is a
    linearly implicit upwind scheme (4 sub-steps, exact conservation and steady state; a wetting front advances one patch
    per sub-step) that never crosses the equator; leeward films are static and may stay attached.
 4. §5 — the layers are built by radial projection of the inner gmsh sphere's boundary (gmsh's extrudeBoundaryLayer is
@@ -6427,7 +6888,8 @@ spec amendments" list carries the numbers.
 9. §13.5 — the layer variants are 2 / 4 / 6 (six layers from 0.125 mm; eight layers of 0.25 mm with growth 2 would
    exceed the radius).
 10. §10, §12 — extra history columns `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`,
-    `n_dead_elements`; `runoff_mass_kg` is the mass that arrived on another patch; the source table has 22 columns.
+    `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction`, `unapplied_load_J`, `n_dead_elements`; `runoff_mass_kg` is
+    the mass that arrived on another patch; the source table has 22 columns.
 11. §14 — `--k-scale` (verification device) and `--consistent-mass` (replacing `--lumped-mass`, whose sense is now the
     default) join the CLI.
 12. §13.6 — the 100 mm physics-mode flight takes ≈ 4 min on the default mesh (target 6 min; 146 s without the size feedback).
@@ -6460,6 +6922,44 @@ spec amendments" list carries the numbers.
     anchor. At the 77.5 km break-off every sweep diameter is merged (5 mm 0.596, 20 mm 0.149, 50 mm 0.0596, 100 mm 0.0298),
     so Girin-certified results exist only for the 100 mm case below ~69 km -- measured as 69 % of its melting steps and 84 %
     of its sprayed mass; everything else is the flagged extension.
+18. §8, §10 (decided 2026-09-22) — **the film has a temperature and it re-solidifies.** The film is thermally thin
+    (q b/k_l = 0.22 K across a 10 µm film at 2 MW/m², b²/α = 0.3 ms against the 0.5 s macro step), so it is given no
+    energy equation: its mass is handed to the solver, which carries it on the boundary nodes with the **liquid** heat
+    capacity (tangent c_p, secant of the liquid enthalpy), and it is at the surface temperature by construction. Three
+    consequences for §8 and §10. (a) A kilogram of film holds the *liquid* enthalpy h(T) + L_f(1 − f_l(T)), not the
+    mixture h(T): a film is liquid by construction, so it carries its latent heat wherever it sits and feeding it
+    debits the latent heat its mass has not yet paid. Booked at the mixture enthalpy, mass could be relabelled from
+    solid to film for free wherever the surface sat on the melting ramp — measured: a 100 mm sphere turned entirely to
+    film on a quarter of its latent heat. (b) The enthalpy is the patch's **nodal mean**, matching the nodal sum the
+    capacity matrix carries; the enthalpy of the mean temperature differs from the mean of the enthalpies by the whole
+    latent heat across the ramp and left a −0.4 residual in the coupled balance. (c) Every transfer books only the
+    enthalpy difference it carries, on the nodes the mass arrives at — mass that moves at one temperature books nothing.
+    Booking the two halves separately closes the balance just as exactly and wrecks the field (±m h/12 on every surface
+    node; the body swung to 1618 K and −1202 K in two macro steps). Re-solidification is the mirror of the feed rule
+    (the fraction 1 − f_feed(T_patch) of a patch's film returns to its owner element), **netted** with the feed per
+    element: run as two independent rates they cycled 3 % of the body's mass through the film every step with no net
+    effect. Declared limits: φ_e is capped at 1, so film whose owner element is full or dead stays liquid — the mesh
+    cannot grow a crust outside itself, and `film_frozen_fraction` reports how much film the enthalpy calls solid; a
+    thick crust would conduct, which a lumped nodal capacity does not represent. Droplets leave at the film's own
+    temperature, so they carry the surface's superheat (+4.6 % on h_liquid, measured), not h_liquid exactly.
+19. §6, §10 (decided 2026-09-22) — **deferred melt loads are bounded and the Newton update follows the node's own
+    mixture.** No node is asked to move more than `LOAD_DT_MAX` = 1000 K in one macro step against its current
+    capacity (material + film): a node whose own mass has melted away has nothing to heat with the enthalpy its melt
+    delivered, and uncapped such nodes were asked to move 1e4–1e5 K in a step. The remainder waits in `pending_load`
+    (reported as `unapplied_load_J`, ~2 % of the absorbed heat; 17 % if the cap is 100 K) and is counted as dropped if
+    the node dies first, so the balance is exact either way. The enthalpy-consistent Newton update inverts the node's
+    own material-plus-film enthalpy (`enthalpy_mixed`/`temperature_from_enthalpy_mixed`, weighted by the film's share
+    of the node's mass), because a film-owned node has a shorter latent plateau: inverting the material's h(T) there
+    settled into a period-3 limit cycle between 777 K and 864 K. The linear solve falls back to one fresh AMG hierarchy
+    and then a direct solve when CG stalls on the emptied interior (φ ~ 1e-3 with unscaled conduction).
+20. §8, §12 (measured 2026-09-22) — **`film_thickness_max_mm` on a single patch is a diagnostic, not a result.** The
+    area-mean film is microns to tens of microns, but isolated patches exceed 20 mm in 38 of 1192 steps on the 100 mm
+    physics flight and peak at 627 mm (16 of 408 and 2431 mm on the 50 mm). The same behaviour is in the 2026-09-21
+    runs, so it is not an effect of the film-temperature amendment; and it does not reach the droplet sizes, which stay
+    at 40–370 µm because spraying is melt-limited and the radius is capped by the film mass on the patch. The
+    mechanism — a crater-rim runoff sink, a collapsed patch area, or the death hand-over concentrating a vanished
+    patch's film onto one survivor — is not identified. Amendment 16's statement that the film pile-up is "gone"
+    applies to the *rarefied-rim* mechanism pure modified Newtonian produced, not to these patches.
 13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
     the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
     sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
