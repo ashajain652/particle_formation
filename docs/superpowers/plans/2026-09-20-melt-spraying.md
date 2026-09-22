@@ -4,7 +4,7 @@
 
 **Goal:** Extend `reentry_model` so that the coupled trajectory + 3D conduction model of Step 2 melts the AA7075 sphere (enthalpy method, element fractions and element death on a prism-layered mesh), forms a melt film on the surface patches (lubrication runoff driven by the gas shear and pressure gradient), strips the film into droplets by Girin's gradient instability (thick, thin and rarefied branches), feeds the mass loss and projected area back to the trajectory, records every droplet release in a source table with size distributions, visualises it, and verifies the whole against two new melting SESAM references, Girin's published cases and analytic solutions.
 
-**Architecture:** New modules `dispersion` (Girin's Eq. 1 solved numerically, cached table), `surface_flow` (edge state by isentropic expansion, Ranger-form boundary layer, Kn_δ regimes, shear, driving gradient), `film` (lubrication branches, linearly implicit upwind runoff on the patch graph), `spray` (instability branches, release bookkeeping, source rows, histograms), `girin_case` (Girin-as-published driver) and `body.MeltingBody`; `mesh` gains prism layers, the active set with a face table and the box mesh; `material` gains the latent heat, the melting ranges, the feed fraction and the liquid properties; the thermal backends move the enthalpy to the nodes (lumped capacity matrix, exact conservation) with a Newton iteration mapped through h(T), element fractions, pinned nodes and nodal loads; `coupled`, `compare`, `viz`, `cli` and three analysis scripts grow the melt columns, writers, metrics, plots, videos and flags. Per 0.5 s macro step: trajectory advance → aero state → heating → conduction step (with the deferred melt loads of the previous step) → melt step: liquid inventory of every element → film feed; surface flow; lubrication + runoff; spraying and release; element death with film hand-over; mass and projected area for the next advance → history row, source rows, VTK frame. Every module is plain arrays over patches or elements with its own tests; the Step 1–2 behaviour is unchanged when `--melt off`.
+**Architecture:** New modules `dispersion` (Girin's Eq. 1 solved numerically, cached table), `surface_flow` (the three-branch flow-regime gate, modified-Newtonian + Prandtl-Meyer wall pressure, edge state by isentropic expansion, Ranger-form boundary layer, wall Knudsen number and the melt closure it selects, shear, driving gradient), `film` (lubrication branches, linearly implicit upwind runoff on the patch graph), `spray` (instability branches, release bookkeeping, source rows, histograms), `girin_case` (Girin-as-published driver) and `body.MeltingBody`; `mesh` gains prism layers, the active set with a face table and the box mesh; `material` gains the latent heat, the melting ranges, the feed fraction and the liquid properties; the thermal backends move the enthalpy to the nodes (lumped capacity matrix, exact conservation) with a Newton iteration mapped through h(T), element fractions, pinned nodes and nodal loads; `coupled`, `compare`, `viz`, `cli` and three analysis scripts grow the melt columns, writers, metrics, plots, videos and flags. Per 0.5 s macro step: trajectory advance → aero state → heating → conduction step (with the deferred melt loads of the previous step) → melt step: liquid inventory of every element → film feed; surface flow; lubrication + runoff; spraying and release; element death with film hand-over; mass and projected area for the next advance → history row, source rows, VTK frame. Every module is plain arrays over patches or elements with its own tests; the Step 1–2 behaviour is unchanged when `--melt off`.
 
 **Tech Stack:** Python 3.12 in `drama_env` (`/Users/ashajain/miniforge3/envs/drama_env/bin/python`); numpy 2.5, scipy 1.18 (`brentq`, `cumulative_trapezoid`, sparse `spsolve`), gmsh 4.15.2, scikit-fem 12.0.2, pyamg 5.3.0, Cantera 3.2.0, pyvista 0.49, imageio-ffmpeg, matplotlib — all already installed for Step 2; **no new packages**. FEniCSx (dolfinx 0.11) in the separate `fenicsx_env` for the backend cross-check.
 
@@ -18,7 +18,9 @@
 - Never modify DRAMA's databases or the wrapper (`sphere_reentry.py`, `sphere_sweep.py`). The two melting references are produced by the wrapper (Task 13) and committed under `data/reference_runs/`.
 - Non-physical devices must say so: `--heating sesam` (Step 2), `--removal instant` and `--k-scale` (Step 3) — docstring, CLI help and README each state that they are verification devices, not physical models (user requirement carried from Step 2).
 - Melt and runoff start at the liquidus; the mushy range counts as solid for the film; no coherency parameter (spec §8, §17.2, user decision of 2026-09-20). Droplets are recorded at birth, one radius per patch and step, no within-patch size spread (spec §17.1).
-- Size feedback (user decision of 2026-09-21, replacing spec §10's fixed R₀): in the model proper the body Knudsen number uses the current equivalent diameter of the remaining mass and the stagnation radius of the heating and surface flow is fitted to the current windward cap; the SESAM verification devices (`--heating sesam` + `--removal instant`) keep D₀ and R₀, which is what SESAM does.
+- Size feedback (user decision of 2026-09-21, replacing spec §10's fixed R₀): in the model proper the body Knudsen number uses the current equivalent diameter of the remaining mass, the stagnation radius of the heating and surface flow is fitted to the current windward cap, and the continuum drag coefficient is the modified-Newtonian drag of the current windward silhouette relative to a sphere's; the SESAM verification devices (`--heating sesam` + `--removal instant`) keep D₀, R₀ and the sphere table, which is what SESAM does. Fixed attitude throughout; tumbling is a later iteration (its bound is recorded, not implemented).
+- Flow-regime gate (user decision of 2026-09-22, replacing spec §7's Kn_δ regimes): stage one asks whether a **distinct bow shock exists**, not whether the flow is continuum — a continuum construction must not be allowed to certify itself. The body-scale gate (Kn_body on SESAM's own mean free path) selects one of three branches; within the shock-layer branch a wall-scale Knudsen number selects the **melt closure**, never whether spraying happens: Girin's dispersion relation contains no gas parameters, so the melt is sheared and can spray in every branch. The gate is a **declared conservatism**, not a physical deduction — Kn_body > 0.01 does not imply Kn_local > 0.01 — and every step records `kn_body`, `kn_local_stag`, `re_shock`, `flow_branch` and the closure area fractions so that the cost of the conservatism is measurable rather than invisible.
+- Never write that a merged or free-molecular patch "sees no more than freestream density": there is real compression in the merged regime and a cold diffusely reflecting wall raises the number density even in free-molecular flow. The free-molecular branch simply evaluates the surface loads from freestream conditions directly, with no compression model.
 - Git-ignored output root `reentry_model_output/`; meshes cached under `reentry_model_output/meshes/`; verification outputs under `reentry_model_output/verification_melt/`.
 - Repo conventions: module docstrings, `argparse`, exit codes 0/1/2, tests under `tests/` named `test_reentry_model_<module>.py`, one commit per task, commit messages in the imperative like the existing history, ending with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` (exactly this line).
 - Every task's tests are run with the exact command given in the task; a task is done only when the whole unit tier passes (`"$PY" -m pytest -m "not drama and not reference" -q`).
@@ -39,8 +41,17 @@ These were measured while writing the plan and override the corresponding spec s
 9. **Spraying branches.** A film thicker than δ_m takes the thick (Girin 2017) branch in every regime, with the film velocity the local shear gives it (τ δ_m/μ_l; for the free-molecular shear this is what strips the rim, where the film piled up to 100 mm otherwise); the thin branch (Girin & Kopyt 1994) uses λ* = 1.5 M_e Σ/(ρ_e u_e²) (their 1.5 M d/We_d: the thickness cancels), τ* = 2 capillary periods = 0.798 λ*^1.5 (ρ_l/Σ)^½ (their Eq. 12), **ṁ = ρ_l min(b, λ*/8)/τ*** — their Table 1 mass rate is ρ₁ r_d/(2τ_d) = ρ₁ λ*/(8τ*), reproduced within 1 % (spec §9's ρ_l b/τ* is amended to this); their cut-off λ_t = λ*/3 never limits the mode (dropped). The droplet radius is capped by the film on the patch ((3 m_f/(4πρ_l))^⅓) and by R/4 (long near-critical waves; the rim's expanded edge state gave 25 mm droplets otherwise). Both branches strip hundreds to thousands of kg/m²/s where the melt supplies ~5 kg/m²/s: spraying is melt-limited, the film stays microns thin, r ≈ 45 µm–1.3 mm with a median ≈ 145–200 µm; We_d ≤ 21 with a few hundred breakup-flagged rows per flight.
 10. **Girin 2017 Table 1.** GI = We∞Re∞^−½ is reproduced (13.04 / 3.51 / 43.46) only with We∞ on the ambient density ρ∞ = ρ_a/6 and Re∞ on the compressed ρ_a = 1e-4 kg/m³; α = ρ∞/ρ_m reproduces his t_ch. φ_cr from Eq. (3) matches his table with We_cr = 4.62 (16.3° / 32.0° / 8.9°; 3.08 gives 17 % smaller angles). The rest depends on which density enters δ_a: with the **ambient** Reynolds number t_f (7.0 / 27.1 / 207 µs vs 5.7 / 31 / 194), N (1.31e6 / 3.57e5 / 636 vs 1.5e6 / 3.7e5 / 832) and r_med (25.8 / 39.6 µm vs 26.9 / 41.6) are within 30 %; with the shock density droplets come out 2.5× smaller. The spraying duration is half his for the iron variants (2.8 / 8.0 ms vs 5.9 / 16.0) and 6.5 vs 149 ms for the stony one (λ_f 3.5 mm > R₀; belt discretisation and induction handling unstated). Spec §13.2's tiers become: exact (GI, φ_cr ≤ 2 %), integrated (t_f, N, r_med ≤ 30 %, ambient density), reported (t_s.d., ranges, σ, z₀).
 11. **Girin & Kopyt 1994.** Table 1's six r_d imply an effective dynamic pressure 7.8 × ρ₂V₀² (their "deceleration ~10× and re-acceleration to M = 2–3"); with that one factor r_d agree within 0.5 % and τ_d within 1 %. Table 2's λ* column is exactly 10 × smaller than their Eq. (14) (a units slip); τ* agrees to three digits. The RT criterion is inactive at our 10–30 m/s².
-12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %); resolved (sesam heating, AA7075, girin, D₀/R₀): onset 71.62 / 77.57 km, mass 9.7 % / 13.6 % of m₀ off SESAM, 1 %-mass time +6.5 % / +0.5 %; physics mode (AA7075_range, size feedback on): 100 mm onset 73.96 km, 1 %-mass time 114.8 s (SESAM's lumped model: 66.8 s), 1.455 kg sprayed as 4.1e7 droplets (median 154 µm), 230 steps in **284 s** on the default mesh (target ≤ 6 min; 3.2 Newton iterations per step; 146 s for 198 steps before the size feedback); 50 mm: onset 78.3 km, 1 %-mass time +5.4 %, 45 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius): sprayed mass within 0.2 % for every variant; demise altitude +8.9 % without the size feedback, +2.8 % for Δt/2, within 0.3 % otherwise; median radius −21 % for k_r −30 % (+1 % for +30 %: the film cap), −21 % for Δt/2, +17 % without runoff, −28 % for the single-temperature `AA7075`, which also melts 1 km higher, takes 753 s (its ±2 K ramp costs Newton iterations) and leaves a 1.8 % leeward remnant.
+23. **Cost, re-measured after the amendments.** A macro step on the default mesh costs ~1.5 s (0.6 s conduction; the rest the melt step's 91 Cantera isentropic expansions, the runoff solve and the hull). The spec's "100 mm physics flight in <= 6 min" held for a flight that demises (2-5 min) but not for one whose remnant survives: the 100 mm physics case now runs to the ground in 1195 steps / 1808 s. Restate the target per macro step, or bound the flight with `--t-max` when only the spraying phase is wanted.
+24. **The physics-mode 100 mm sphere no longer demises.** With the shape feedback and the amended surface flow it sprays 1.027 kg of 1.472 kg as 3.2e7 droplets from 74.0 km and **0.445 kg (30 %) reaches the ground**; the 50 mm sphere still demises (202.6 s, +5.9 % on SESAM's 1 %-mass time). This is a fixed-attitude result three times over -- the flattening face is held in its maximum-drag orientation, the fitted nose radius cuts the stagnation flux by a further ~20 %, and the leeward shell is never heated -- and DRAMA's own tumbling-averaged disc C_D (0.60, *below* the sphere's 0.91) shows the spread is an attitude uncertainty, not a drag-law one. It must be reported as such in the README and the spec, with tumbling as the next iteration's first item. The verification devices are pinned to `--size-feedback initial`, so the bookkeeping thresholds are untouched by any of it (0.98 % / 1.29 %, unchanged).
+12. **Verification results** (prototype, default settings unless stated): bookkeeping device (sesam heating, AA7075, instant, k×1e4, `--prism-layers 0`) — 100 mm: mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm: 1.29 %, +0.17 km, −0.2 % (thresholds 2 % / 0.5 km / 2 %; the devices are pinned to `--size-feedback initial`, so no later amendment can move them); resolved (sesam heating, AA7075, girin, D₀/R₀): onset 71.62 / 77.57 km, mass 10.1 % / 13.5 % of m₀ off SESAM, 1 %-mass time +6.5 % / +0.5 %; physics mode (AA7075_range, size feedback and the amended surface flow): 100 mm onset 73.96 km, **no demise** (1.027 kg sprayed, 0.445 kg to the ground), 3.2e7 droplets of median radius 99 µm, 1195 steps in 1808 s; 50 mm onset 78.32 km, 1 %-mass time 202.6 s (+5.9 %), 0.175 kg sprayed, 406 steps in 219 s. The two thermal backends give the same melting run to 1e-10 in mass and 0 K in temperature (spec 0.1 %). The 1 %-mass time is interpolated and, for the model, taken on the body's material (film excluded). Sensitivity (100 mm, spec §13.5 with layers 2/4/6 — eight layers of 0.25 mm at growth 2 exceed the radius): sprayed mass within 0.2 % for every variant; demise altitude +8.9 % without the size feedback, +2.8 % for Δt/2, within 0.3 % otherwise; median radius −21 % for k_r −30 % (+1 % for +30 %: the film cap), −21 % for Δt/2, +17 % without runoff, −28 % for the single-temperature `AA7075`, which also melts 1 km higher, takes 753 s (its ±2 K ramp costs Newton iterations) and leaves a 1.8 % leeward remnant.
 14. **Size feedback** (measured on the coarse-mesh physics flight): the front erodes fastest — the front-most point recedes from +49 mm to −28 mm while the back stays at −50 mm and the transverse radius at 50 mm until the last 20 % of the mass — so the fitted windward-cap radius grows from 50 mm to 140–200 mm within the first 15 % of mass loss (a flat front) and is capped at 1.67 R_t = 83 mm; the stagnation heating factor (R₀/R_nose)^½ is 0.78–0.82 during most of the melt. A cone from the mass centre selects too few patches on the eroded front (the fit collapsed to 4–16 mm), hence the depth-band cap definition. With the feedback the 100 mm physics flight ends at 114.8 s / 55.7 km (98.5 s without), 230 steps, 1.455 kg sprayed, median 154 µm; the 50 mm flight's 1 %-mass time moves from +3.9 % to +5.4 % of SESAM's. The bookkeeping and resolved runs keep D₀/R₀ (`--size-feedback initial`, the CLI default with `--removal instant`; the verification driver sets it for the resolved mode too).
+16. **DRAMA's gamma is constant.** `atmosphereData.xml` and our packaged copy of `StaticEnvironmentData.csv` carry gamma = 1.4000 at every altitude from 0 to 150 km (only the oxygen fraction varies, 0.2317 → 0.1170), so "SARA's own value per altitude" resolves to 1.4 everywhere; the loader reads the column and a test asserts it, so a future varying table would be picked up. The identity Kn = (Ma/Re) sqrt(gamma pi/2) reproduces lambda/L to machine precision; the coefficient is 1.4829 (Maxwell, gamma 1.4) against 1.5105 for the Chapman-Enskog hard sphere — a 2 % difference. The freestream gamma is **not** the Prandtl-Meyer gamma (§20).
+17. **SESAM's mean free path, recovered.** From the reference CSVs (lambda = knudsen x D at each row) SESAM's lambda is the hard-sphere value with d = 3.65 A to four digits (ratio 1.0001 over the flight) and within 0.5 % of Maxwell-with-Blottner-viscosity. `aero.mean_free_path` already implements exactly that and is adopted verbatim for Kn_body in the gate and in every SARA comparison.
+18. **The three-branch gate and where the reference flights fall.** Thresholds Kn_body < 0.01 (distinct shock: standoff Delta/R 0.08-0.14 against a shock 3-10 mean free paths thick gives Delta > 5 lambda at Kn_D <~ 0.01) and Kn_body >= 10 or Ma <= 1 (free molecular), cross-checked by the shock-layer Reynolds number Re2 = rho_inf V R / mu(T0) (merged below ~100). Measured: **100 mm at 70.0 km sits exactly on both gates** — Kn_body 0.0098, Re2 175 — so it is the marginal case your caveat warned about, and 60 km (Kn_body 0.0026, Re2 599) is the first unambiguous anchor; 55 km gives Re2 1038, not 2000, because V has fallen to 5.7 km/s by then. At the 77.5 km break-off every sweep diameter is merged: Kn_body 0.596 (5 mm), 0.149 (20 mm), 0.0596 (50 mm), 0.0298 (100 mm). On the 100 mm physics melting flight melting begins at 73.9 km in the **merged** branch (Kn_body 0.0172, Re2 102), the gate opens at 69.0 km (Kn_body 0.0090) and the branch stays shock-layer to demise at 58.2 km: **69 % of the melting steps and 84 % of the sprayed mass are Girin-certified**, the first 0.23 kg flagged. Kn_body is not monotone — it falls to 0.0056 at 60 km as the density rises faster than the body shrinks, then rises again as the remnant collapses.
+19. **The wall Knudsen number.** Evaluated at the wall state (p_w, T_wall) with a geometric length (the nose radius): the wall gas is ideal at these temperatures, so lambda_w = mu(T_w) sqrt(pi R_s T_w / 2) / p_w exactly and **Kn_local is inversely proportional to the wall pressure** — the rarefied patches are the low-pressure ones near the shoulder, which is the physics the gate is meant to catch. Measured at the 100 mm nose at 71 km: lambda_w/lambda_inf = 1/167 and **Kn_local/Kn_body = 1/84** (the extra factor 2 is D against R), against 1/9 and 1/4.5 had the edge state been used — so the choice of wall over edge changes the conservatism by 20x, and the conservatism is much larger than a factor of 3: even the 5 mm sphere at 77.5 km (Kn_body 0.596, solidly merged) has a nose Kn_local of 0.0066, nominally continuum by two orders of magnitude. Along the 100 mm melting flight Kn_local at the nose stays between 4e-5 and 2e-4.
+20. **Modified Newtonian + Prandtl-Meyer.** phi* = 43.38 deg (gamma 1.4) / 40.72 deg (1.15) from p*/p02 = 0.5283 / 0.5744. At the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa, q_inf 2141 Pa): p_w(90 deg) = 5.22 Pa Newtonian, **144.3 Pa PM(1.4), 248.8 Pa PM(1.15)**, against 112-219 Pa from measured C_p 0.05-0.1 — a 28-48x correction with a factor ~2 spread from gamma, hence `--gamma-pm` (default 1.15). nu(M) validated against Anderson's Table A.5 (nu(2) = 26.3798 deg, nu(5) = 76.9202 deg) and inverted to 1e-5. **The blend must start at phi*, not straddle it**: the PM slope is singular at the sonic point (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), and a 5 deg window centred on phi* mixes in the clamped PM value below it and puts back a kink 35x the median curvature; a 10 deg window above phi* leaves 9x and a monotone p_w. Consequence: the "rarefied rim" of the earlier design was an artefact of pure Newtonian (rho_e collapsing to 3e-6 kg/m3 and Kn_delta > 0.1 beyond 85 deg). With PM the rim carries rho_e ~ 1e-4 and Kn_local ~ 2e-3 — continuum — so the film pile-up (a rim patch reached b = 100 mm) and the droplet-size cap it forced are gone.
+21. **The disc endpoint, and HTG's method.** ATDB_CYLINDER at zero angle of attack is **independent of L/D over six decades** (1.824 at Ma 10 for 7e-5 <= L/D <= 70): face-on, a flat cylinder is a disc to the flow, because hypersonic drag is pressure drag on the frontal area while the side wall is parallel to the flow and the base sits in a near-vacuum wake. Sphere/disc = **0.49897 at every Mach number**, i.e. exactly the Newtonian 1/2 — HTG's continuum database is modified Newtonian and the disc entry is C_p,max(Ma). So integrating modified-Newtonian pressure over our eroded shape is not an approximation beyond what DRAMA already does; it is the same method. `data/atdb_disc.json` is extracted from that file. Free-molecular disc/sphere is 1.03, so only the continuum entry is scaled. Thickness re-enters at angle of attack (edge-on C_D runs 0.025 to 9.8 over the same L/D range) and in the heat factor through the wetted area (0.330 to 0.085).
+22. **How C_D moves as the sphere flattens.** For a sphere with a flat front of radius fraction s = r_flat/R the Newtonian integral is C_D = C_p,max (1 + s^4)/2 — 0.92 at s = 0, 1.84 at s = 1 — so the excess over a sphere grows as the **fourth power** of the flattened fraction and nothing happens until the nose is more than half flattened. Measured on the flight (inverting the hull integral): s_eff 0.72 at 90 % mass, 0.97 at 50 %, falling back to 0.81 at 5 % as the rim itself melts and the body becomes a smaller rounded cap. The hull runs ahead of the ring-by-ring profile (s 0.9 there at 50 % mass) because it bridges the central crater and squares off the shoulder — the documented upper bound.
 15. **Transonic remnant.** A light remnant (the single-temperature `AA7075` variant leaves 27 g = 1.8 % of m₀ of leeward material that the fixed-attitude, windward-only heating never reaches, so the run continues to the ground) reaches its terminal velocity near Ma 1, where SESAM's factor-2 drag step made DOP853 take 1.3e5 RHS evaluations in one macro step and then stall. The step is now a cubic ramp over Ma 0.98–1.02 (`aero.MACH_SWITCH_LO/HI`); the Step 1 reference tier is unchanged (8 passed) since the intact spheres cross Ma 1 in a fraction of a second. Melting runs may end on the ground with a few percent of leeward remnant; the 1 %-mass time is then n/a.
 13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material). The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
 
@@ -57,13 +68,14 @@ reentry_model/thermal/skfem_backend.py    nodal enthalpy, lumped capacity, tange
 reentry_model/thermal/fenicsx_backend.py  the same scheme: stiffness in UFL, everything nodal in numpy/PETSc, MatZeroRowsColumns for pinned/Dirichlet
 reentry_model/dispersion.py               Girin Eq. (1): batched cubic roots, fastest mode, cached table data/girin_dispersion.json
 reentry_model/gas.py                      + GasState.s/a/m_bar, EquilibriumAir.expand
-reentry_model/surface_flow.py             edge state per 1 deg bin, Ranger-form boundary layer, Kn_delta regimes, shear (slip/bridged), G
+reentry_model/surface_flow.py             three-branch gate, Newtonian+Prandtl-Meyer wall pressure, edge state per 1 deg bin, Ranger boundary layer, wall Knudsen -> melt closure, shear, G
 reentry_model/film.py                     lubrication branches, Runoff (edge geometry, coefficients, linearly implicit transport)
-reentry_model/spray.py                    melt_layer, thin-film and RT modes, SprayModel (branches, release), source_rows, histogram
+reentry_model/spray.py                    melt_layer (Girin closure only), thin-film and RT modes, SprayModel (branches, release), source_rows, histogram
 reentry_model/girin_case.py               Girin-as-published flight of his Table 1 variants
 reentry_model/body.py                     + MeltSettings, fit_sphere, MeltingBody (feed, film, spray, death cascade, hand-over, nose-cap fit, accounting, stats), reference_area/reference_length/nose_radius hooks
 reentry_model/trajectory.py               + body.reference_area() and reference_length() in the drag and Kn, zero drag for a consumed body
-reentry_model/aero.py                     + SESAM's Mach-1 drag step smoothed over Ma 0.98-1.02 (MACH_SWITCH_LO/HI)
+reentry_model/aero.py                     + SESAM's Mach-1 drag step smoothed over Ma 0.98-1.02, + shape_factor on the continuum entry
+reentry_model/data/atdb_disc.json         ATDB_CYLINDER at zero angle of attack: the flat-disc endpoint of the shape family
 reentry_model/coupled.py                  + MELT_COLUMNS, state passed to advance, body.nose_radius() in the heating, demise, melt_results, melt VTK fields, write_particles
 reentry_model/sesam_io.py                 + Reference.mass/thickness
 reentry_model/compare.py                  + has_melt, melt_metrics (interpolated 1 %-mass crossing), plot_melt (7 plots)
@@ -1796,16 +1808,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Gas edge state and the surface flow per patch
+### Task 5: The flow-regime gate, the wall pressure and the surface flow per patch
 
 **Files:**
-- Modify: `reentry_model/gas.py` (five edits)
+- Modify: `reentry_model/gas.py` (four edits)
 - Create: `reentry_model/surface_flow.py`
 - Test: `tests/test_reentry_model_surface_flow.py`
 
 **Interfaces:**
-- Consumes: `gas.EquilibriumAir.stagnation` (Step 2), `aero.mean_free_path`, `aero.SesamTable`, `constants.HARD_SPHERE_DIAMETER`, `trajectory.AeroState` (freestream rho/T/p/m_bar, V, kn, ma, a_drag).
-- Produces: `GasState.s`, `.a`, `.m_bar` (defaulted fields), `EquilibriumAir.expand(stag, p)`; `surface_flow.SurfaceFlow(air=None, rarefied_shear="slip"|"bridged", bridging=None, sigma_v=1, sigma_t=1)` with `.evaluate(state, theta, radius, rho_liquid) -> SurfaceFlowResult` (fields `u_e, u_eff, rho_e, T_e, mu_e, p_e, mach_e, delta_a, lambda_e, kn_delta, regime, tau, tau_continuum, tau_fm, G, p_stag, p_inf, deceleration`, method `regime_fractions(areas, windward)`), `.edge_table(state, radius)`, `.last_bins`; functions `ranger_psi`, `ranger_thickness`, `boundary_layer_thickness(s, u_e, nu_e, constant=RANGER_C, power=4, refine=20)`; constants `REGIME_CONTINUUM/SLIP/FM = 0/1/2`, `KN_SLIP = 0.01`, `KN_FM = 0.1`, `FM_BODY_KN = 1.0`, `RANGER_C = 58.08`, `THWAITES_C = 0.45`, `RAREFIED_SHEAR_NAMES`, `THETA_BINS` (0–90° by 1°).
+- Consumes: `gas.EquilibriumAir.stagnation` (Step 2), `aero.mean_free_path` (SESAM's own lambda, measured fact 17), `aero.SesamTable`, `trajectory.AeroState` (freestream rho/T/p/m_bar, V, kn, ma, a_drag).
+- Produces: `GasState.s`, `.a`, `.m_bar` (defaulted fields), `EquilibriumAir.expand(stag, p)`; `surface_flow.SurfaceFlow(air=None, rarefied_shear="slip"|"bridged", bridging=None, sigma_v=1, sigma_t=1, gamma_pm=1.15, kn_body_shock=0.01, kn_body_fm=10.0)` with `.branch_of(state)`, `.edge_table(state, stag, radius)`, `.evaluate(state, theta, radius, rho_liquid, T_wall=None) -> SurfaceFlowResult`, `.last_bins`; `SurfaceFlowResult` carrying the body-scale diagnostics `branch, kn_body, re_shock, mach_inf, p_stag, p_inf, phi_sonic, deceleration, gamma_pm` and the per-patch arrays `p_w, u_e, u_eff, rho_e, T_e, mu_e, mach_e, delta_a, lambda_w, kn_local, closure, flagged, tau, tau_continuum, tau_fm, G`, with `.branch_name` and `.closure_fractions(areas, windward)`; functions `ranger_psi`, `ranger_thickness`, `boundary_layer_thickness`, `prandtl_meyer(mach, gamma)`, `mach_from_turn(turn, gamma)`, `sonic_angle(p_stag, p_inf, q_inf, gamma)`, `wall_pressure(theta, p_stag, p_inf, q_inf, gamma, blend_deg)`, `mean_free_path_maxwell`, `wall_knudsen(p_w, T_wall, mu_wall, length)`; constants `BRANCH_SHOCK_LAYER/MERGED/FREE_MOLECULAR = 0/1/2`, `BRANCH_NAMES`, `CLOSURE_GIRIN/COUETTE = 0/1`, `KN_BODY_SHOCK = 0.01`, `KN_BODY_FM = 10.0`, `KN_LOCAL_CONTINUUM = 0.01`, `KN_LOCAL_SLIP = 0.1`, `RE_SHOCK_MERGED = 100.0`, `R_SPECIFIC_AIR`, `RANGER_C = 58.08`, `THWAITES_C = 0.45`, `GAMMA_PM = 1.15`, `PM_BLEND_DEG = 10.0`, `PM_MAX_DEG = 110.0`, `RAREFIED_SHEAR_NAMES`, `THETA_BINS` (0-90 deg by 1 deg).
+
+The module docstring carries the physics and every threshold's justification -- the standoff argument for 0.01, the Re2 cross-check, the declared conservatism and its measured size, why the Knudsen length is geometric and the state is the wall's, why the Prandtl-Meyer blend must start at phi*, and why no oblique-shock machinery is built. Transcribe it verbatim: it is the spec's section 18 written in the code.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1857,37 +1871,89 @@ def aero_state_at(t):
     return sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
 
 
-def test_edge_state_regimes_and_shear_at_71_km():
+def test_prandtl_meyer_against_the_textbook():
+    """nu(M) and its inverse (Anderson, Modern Compressible Flow, Table A.5: nu(2) = 26.38 deg at gamma 1.4)."""
+    assert math.degrees(sf.prandtl_meyer(1.0, 1.4)) == pytest.approx(0.0, abs=1e-9)
+    assert math.degrees(sf.prandtl_meyer(2.0, 1.4)) == pytest.approx(26.3798, abs=1e-3)
+    assert math.degrees(sf.prandtl_meyer(5.0, 1.4)) == pytest.approx(76.9202, abs=1e-3)
+    assert sf.mach_from_turn(math.radians(26.3798), 1.4) == pytest.approx(2.0, rel=1e-5)
+    assert sf.mach_from_turn(0.0, 1.4) == pytest.approx(1.0)
+
+
+def test_sonic_point_and_wall_pressure():
+    """The Newtonian/Prandtl-Meyer switch: phi* = 43.38 deg at gamma 1.4 and 40.72 deg at 1.15, p_w continuous there,
+    monotone, floored at p_inf, and 20-50 x the Newtonian value at 90 degrees (spec section 18)."""
+    p_inf, q_inf, p_stag = 5.221, 2141.0, 4165.3                      # 100 mm sphere at 70.0 km, V = 7190 m/s
+    for gamma, expect in ((1.4, 43.38), (1.15, 40.72)):
+        assert math.degrees(sf.sonic_angle(p_stag, p_inf, q_inf, gamma)) == pytest.approx(expect, abs=0.05)
+    theta = np.radians(np.linspace(0.0, 90.0, 181))
+    p_w, phi_star = sf.wall_pressure(theta, p_stag, p_inf, q_inf, 1.15)
+    assert p_w[0] == pytest.approx(p_stag, rel=1e-6) and np.all(np.diff(p_w) < 0.0) and np.all(p_w >= p_inf)
+    newtonian = p_inf + q_inf * (p_stag - p_inf) / q_inf * np.cos(theta) ** 2
+    below = theta < phi_star - math.radians(sf.PM_BLEND_DEG)
+    assert np.allclose(p_w[below], newtonian[below], rtol=1e-9)        # unchanged below the sonic point
+    assert p_w[-1] == pytest.approx(248.8, rel=0.02) and p_w[-1] / newtonian[-1] > 40.0   # 90 deg: 249 Pa vs 5.2 Pa Newtonian (measured C_p: 112-219)
+    fine = np.radians(np.linspace(0.0, 90.0, 1801))
+    smooth = np.abs(np.diff(sf.wall_pressure(fine, p_stag, p_inf, q_inf, 1.15)[0], 2))
+    assert smooth.max() < 15.0 * np.median(smooth[smooth > 0])         # the blend starts at phi*, so no kink (35x if it straddles)
+    assert sf.wall_pressure(theta, p_stag, p_inf, q_inf, 1.4)[0][-1] == pytest.approx(144.3, rel=0.02)     # gamma is a factor ~2 on p_w(90)
+
+
+def test_wall_knudsen_is_the_maxwell_path_over_the_nose_radius():
+    """Kn_local = lambda_w/R with the wall gas ideal at (p_w, T_w): lambda_w = mu sqrt(pi R_s T/2)/p_w, and the
+    identity Kn = (Ma/Re) sqrt(gamma pi/2) (coefficient 1.4829 at gamma 1.4)."""
+    mu_w, T_w, p_w, R = 5.5e-5, 908.0, np.array([3667.0, 231.0]), 0.05
+    lam, kn = sf.wall_knudsen(p_w, np.full(2, T_w), mu_w, R)
+    assert np.allclose(lam, mu_w * math.sqrt(math.pi * sf.R_SPECIFIC_AIR * T_w / 2.0) / p_w)
+    assert np.allclose(kn, lam / R) and kn[0] < 1e-3 < kn[1]           # the rim is the rarefied place, not the nose
+    rho, T, V, L, mu = 8.28e-5, 219.6, 7250.0, 0.05, 1.7e-5
+    a = math.sqrt(sf.GAMMA_AIR * sf.R_SPECIFIC_AIR * T)
+    identity = (V / a) / (rho * V * L / mu) * math.sqrt(sf.GAMMA_AIR * math.pi / 2.0)
+    assert sf.mean_free_path_maxwell(mu, rho, T) / L == pytest.approx(identity, rel=1e-12)
+    assert math.sqrt(sf.GAMMA_AIR * math.pi / 2.0) == pytest.approx(1.4829, abs=1e-4)
+
+
+def test_branch_gate_and_closures_at_71_km():
+    """The body-scale gate and the wall-scale closure gate (spec section 18). At 71 km the 100 mm sphere has
+    Kn_body = 0.0113 -- just above the 0.01 threshold -- so the branch is merged and every closure is flagged, while
+    the wall Knudsen number is 1e-4 to 2e-3 (the declared conservatism: lambda_w/lambda_inf ~ 1/170)."""
     a = aero_state_at(43.5)
     assert 70.5e3 < a.h < 71.5e3
-    theta = np.radians([0.5, 10.0, 30.0, 45.0, 60.0, 75.0, 89.0, 100.0, 150.0])
-    flow = sf.SurfaceFlow().evaluate(a, theta, 0.05, 2400.0)
-    assert flow.u_e[0] < 50.0 and 1100.0 < flow.u_e[2] < 1400.0 and 1800.0 < flow.u_e[3] < 2100.0      # ~1 km/s mid-sphere (spec estimate)
-    assert np.all(flow.u_e[7:] == 0.0) and np.all(flow.tau[7:] == 0.0) and np.all(flow.G[7:] == 0.0)   # leeward: static
-    assert 5e-3 < flow.delta_a[1] < 8e-3 and 6e-3 < flow.delta_a[3] < 9e-3                             # 3-9 mm (spec estimate 3-7)
-    assert flow.regime[1] == sf.REGIME_CONTINUUM and flow.regime[3] in (sf.REGIME_CONTINUUM, sf.REGIME_SLIP)
-    assert flow.regime[4] == sf.REGIME_SLIP and flow.regime[6] == sf.REGIME_FM                           # Kn_delta grows toward the rim
-    assert 20.0 < flow.tau_continuum[3] < 60.0 and flow.tau[3] == pytest.approx(flow.tau_continuum[3] / (1.0 + flow.kn_delta[3]), rel=1e-9)
-    assert 1500.0 < flow.tau_fm[3] < 2100.0 and flow.tau[6] == flow.tau_fm[6]                           # slip mode: free-molecular shear above Kn_delta 0.1
-    assert flow.G[3] > 0.0 and flow.G[6] < 0.0                                                          # pressure gradient outward, deceleration toward the nose near the rim
-    assert flow.p_stag > 1000.0 and flow.p_e[0] == pytest.approx(flow.p_stag, rel=1e-3) and flow.p_e[7] == flow.p_inf
-    assert 0.9 < flow.mach_e[3] < 1.1 and flow.deceleration > 5.0
-    fractions = flow.regime_fractions(np.ones(theta.size), theta <= np.pi / 2)
-    assert sum(fractions) == pytest.approx(1.0)
-    bridged = sf.SurfaceFlow(rarefied_shear="bridged").evaluate(a, theta, 0.05, 2400.0)
-    f = aero.SesamTable()(a.kn)
-    assert bridged.tau[6] == pytest.approx((1.0 - f) * flow.tau_continuum[6] / (1.0 + flow.kn_delta[6]) + f * flow.tau_fm[6], rel=1e-9)
+    theta = np.radians(np.array([0.5, 10.0, 30.0, 45.0, 60.0, 75.0, 89.0, 100.0, 150.0]))
+    T_wall = np.full(theta.size, 908.0)
+    flow = sf.SurfaceFlow(gamma_pm=1.15)
+    r = flow.evaluate(a, theta, 0.05, 2400.0, T_wall)
+    assert r.branch == sf.BRANCH_MERGED and r.kn_body == pytest.approx(0.0113, rel=0.05) and 140.0 < r.re_shock < 210.0
+    assert np.all(r.closure == sf.CLOSURE_COUETTE) and np.all(r.flagged)          # merged: nothing is certified
+    assert 1e-5 < r.kn_local[0] < 1e-3 and r.kn_local[0] < r.kn_local[6] < 0.01   # compressed cold wall; the rim is the loosest
+    assert r.kn_local[0] == pytest.approx(r.kn_body / 84.0, rel=0.2)               # lambda_w/lambda_inf ~ 1/170, halved again by D/R
+    assert 1000.0 < r.p_stag < 6000.0 and r.p_w[0] == pytest.approx(r.p_stag, rel=1e-3) and r.p_w[7] == r.p_inf
+    assert 150.0 < r.p_w[6] < 350.0                                               # 89 deg: Prandtl-Meyer, not p_inf
+    assert 1100.0 < r.u_e[2] < 1500.0 and 1900.0 < r.u_e[3] < 2300.0
+    assert 4e-3 < r.delta_a[2] < 9e-3 and np.isnan(r.delta_a[7])
+    assert r.tau[3] > 0.0 and r.tau_fm[3] > r.tau[3] and np.all(r.tau[7:] == 0.0)
+    assert r.G[3] > 0.0 and np.all(r.G[7:] == 0.0)
+    assert np.allclose(r.closure_fractions(np.ones(theta.size), theta <= np.pi / 2), [0.0, 1.0, 0.0])
     with pytest.raises(ValueError):
         sf.SurfaceFlow(rarefied_shear="magic")
+    with pytest.raises(ValueError):
+        sf.SurfaceFlow(gamma_pm=0.9)
 
 
-def test_free_molecular_body_has_no_edge_state():
-    a = aero_state_at(0.0)
-    a.kn = 5.0
-    theta = np.radians([30.0, 60.0, 120.0])
-    flow = sf.SurfaceFlow().evaluate(a, theta, 0.05, 2400.0)
-    assert np.all(flow.regime == sf.REGIME_FM) and np.all(np.isnan(flow.delta_a)) and np.all(flow.u_e == 0.0)
-    assert flow.tau[0] == pytest.approx(a.freestream.rho * a.V ** 2 * math.sin(theta[0]) * math.cos(theta[0])) and flow.tau[2] == 0.0
+def test_shock_layer_branch_certifies_the_nose_lower_down():
+    """Below the gate (60 km, Kn_body 0.0026) the branch is the shock layer and the windward face takes Girin's
+    closure; the free-molecular branch has no edge state at all."""
+    a = aero_state_at(43.5)
+    a.kn = 0.005                                                        # the same state, below the body gate
+    theta = np.radians(np.array([0.5, 45.0, 89.0, 120.0]))
+    r = sf.SurfaceFlow().evaluate(a, theta, 0.05, 2400.0, np.full(4, 908.0))
+    assert r.branch == sf.BRANCH_SHOCK_LAYER and np.all(r.closure[:3] == sf.CLOSURE_GIRIN) and not r.flagged[:3].any()
+    assert np.isfinite(r.re_shock) and np.isfinite(r.phi_sonic)
+    a.kn = 20.0
+    r = sf.SurfaceFlow().evaluate(a, theta, 0.05, 2400.0, np.full(4, 908.0))
+    assert r.branch == sf.BRANCH_FREE_MOLECULAR and np.all(np.isnan(r.delta_a)) and np.all(r.u_e == 0.0)
+    assert np.isnan(r.p_stag) and np.all(r.p_w == r.p_inf) and np.all(r.closure == sf.CLOSURE_COUETTE)
+    assert r.tau[1] == pytest.approx(a.freestream.rho * a.V ** 2 * math.sin(theta[1]) * math.cos(theta[1])) and r.tau[3] == 0.0
 ```
 
 
@@ -1933,48 +1999,100 @@ Five edits. (a) After `AIR = "N2:0.79, O2:0.21"` add `AVOGADRO = 6.02214076e23`.
 - [ ] **Step 4: Create `reentry_model/surface_flow.py`**
 
 ```python
-"""Gas-side surface flow per patch: boundary-layer edge state, laminar boundary layer, Knudsen regime, wall shear
-and the film's driving pressure gradient (spec Step 3 section 7).
+"""Gas-side surface flow per patch: the flow-regime gate, the wall pressure, the boundary-layer edge state, the wall
+Knudsen number, the melt closure it selects, the wall shear and the film's driving gradient (spec Step 3 sections 7
+and 18, amended 2026-09-22).
 
-Edge state: modified-Newtonian pressure p_e = p_inf + (p_s - p_inf) cos^2 theta on the windward face and the
-isentropic expansion of the Step 2 equilibrium stagnation state to p_e (Cantera, one state per 1 degree bin,
-interpolated to the patches): h_e, u_e = sqrt(2 (h_s - h_e)), rho_e, T_e, a_e, mu_e (Blottner-Wilke), m_bar_e.
-Leeward patches (theta > 90 degrees) have p_e = p_inf, u_e = 0 and no shear.
+REGIME GATE (body scale, three branches). Stage one asks whether a *distinct bow shock* exists, not whether the flow
+is "continuum": a continuum construction must not be allowed to certify itself. The gate is on the body Knudsen
+number Kn_body = lambda_inf / D (SESAM's own definition, hard-sphere with d = 3.65 A, verified to reproduce its
+`knudsen` column to 1e-4) and the freestream Mach number:
 
-Boundary layer: Girin's linear-profile thickness delta_a in Ranger's (1972) form generalised to the actual edge
-velocity, delta_a^2 = RANGER_C nu_e int_0^s u_e^4 ds' / u_e^5 along the meridian s = R theta; RANGER_C = 58.1 makes
-it identical to delta_a = 2.2 R Re_D^-1/2 Psi(theta), Psi = [(6 theta - 4 sin 2 theta + 1/2 sin 4 theta)/sin^5
-theta]^1/2, for the potential-flow velocity 1.5 V sin theta and constant properties (Girin 2017 section 3). Thwaites'
-momentum thickness is provided for the cross-check (its shape differs from Ranger's by -8 %/+8 % over 5-85 degrees,
-measured 2026-09-20, which is why the spec's Thwaites route was replaced by Ranger's own integral). Wall shear in
-Girin's convention tau_c = mu_e u_e / delta_a.
+  Kn_body < KN_BODY_SHOCK (0.01) and Ma_inf > 1   BRANCH_SHOCK_LAYER: normal shock -> wall pressure -> isentropic
+      expansion to the edge state -> boundary layer -> wall Knudsen number -> the melt closure (below).
+  KN_BODY_SHOCK <= Kn_body < KN_BODY_FM (10)      BRANCH_MERGED: the shock is not distinct from the shock layer, so no
+      post-shock construction is valid. The wall loads are bridged between the free-molecular and continuum limits
+      with SESAM's measured f(Kn); the melt closure is Couette; every patch is flagged.
+  Kn_body >= KN_BODY_FM, or Ma_inf <= 1           BRANCH_FREE_MOLECULAR: Schaaf-Chambre loads from the freestream
+      directly, with no compression model; Couette closure; flagged.
 
-Regimes by Kn_delta = lambda_e / delta_a (hard-sphere mean free path of the edge gas): continuum < 0.01, slip
-0.01-0.1, transitional/free-molecular >= 0.1 (REGIME_CONTINUUM/SLIP/FM = 0/1/2). Slip: Maxwell first-order slip
-with the linear near-wall profile, an effective edge velocity u_e/(1 + C Kn_delta), C = (2 - sigma_v)/sigma_v,
-sigma_v = 1, so tau = tau_c/(1 + C Kn_delta) and the same u_e,eff enters Girin's Eq. (2). Free-molecular:
-tau_fm = sigma_t rho_inf V^2 sin theta cos theta (hypersonic speed ratio, sigma_t = 1). `rarefied_shear = "slip"`
-(default): tau_slip below Kn_delta 0.1, tau_fm above; "bridged": (1 - f) tau_slip + f tau_fm with SESAM's measured
-drag bridging f(Kn) on the body Knudsen number. Where the whole body is free-molecular (Kn >= FM_BODY_KN) no
-continuum edge state is computed at all.
+The 0.01 threshold is the standoff criterion: a bow shock is distinct only if it stands off farther than it is thick.
+Standoff Delta/R is 0.14 (perfect gas) to 0.08 (real gas) and a strong shock is 3-10 upstream mean free paths thick,
+so Delta > 5 lambda gives Kn_D <~ 0.01. The shock-layer Reynolds number Re2 = rho_inf V_inf R / mu(T0) (merged below
+~100) agrees: 100 mm at 70 km gives Re2 = 175 and Kn_body = 0.0098 -- exactly on both thresholds -- while 5 mm at
+77.5 km gives Re2 = 3.0, Kn_body = 0.60.
 
-Pressure gradient and body force on the film: G = -dp_e/ds - rho_l a sin theta [Pa/m] along the surface direction
-away from the stagnation point, with dp_e/ds = -2 (p_s - p_inf) sin theta cos theta / R and a the body's deceleration
-(the film feels the inertial force toward the nose)."""
-from dataclasses import dataclass
+The gate is a DECLARED CONSERVATISM, not a physical deduction: Kn_body > 0.01 does not imply Kn_local > 0.01. The
+wall gas is compressed and cold, so lambda_w / lambda_inf ~ 1/170 at the nose of the 100 mm sphere at 70 km (the
+edge value is ~1/9) and even the 5 mm sphere at 77.5 km has a nose Kn_local of 0.0066 while its Kn_body is 0.60.
+We decline to certify a patch as continuum because the construction we would use to check it is itself unreliable
+there; `branch` and the closure fractions are recorded every step so the cost of that conservatism is measurable.
+Nothing here claims that a merged or free-molecular patch sees only freestream density -- there is real compression
+in the merged regime, and a cold diffusely reflecting wall raises the number density even in free-molecular flow;
+the free-molecular branch simply evaluates the surface loads from freestream conditions with no compression model.
+
+WALL PRESSURE (modified Newtonian + Prandtl-Meyer). Modified Newtonian alone gives p_w = p_inf at 90 degrees, a
+factor ~25 below the measured sphere data (C_p 0.05-0.1), in exactly the band where Girin expects most of the
+spraying; that error would propagate into rho_w, u_e, tau_w and We_s. So the windward face uses
+  phi <= phi*:  p_w = p_inf + q_inf C_p,max cos^2 phi,    C_p,max = (p02 - p_inf)/q_inf
+  phi >  phi*:  Prandtl-Meyer expansion through the turn angle phi - phi* (the surface tangent of a sphere rotates
+                one-for-one with phi), p_w/p02 = [1 + (g-1) M^2/2]^(-g/(g-1)) with nu(M) = phi - phi*,
+with phi* the sonic point, cos^2 phi* = (p* - p_inf)/(q_inf C_p,max), p*/p02 = (2/(g+1))^(g/(g-1)) -- 43.38 deg at
+g = 1.4, 40.72 deg at g = 1.15. The two branches meet at phi* by construction but their slopes do not, so they are
+blended over PM_BLEND_DEG degrees above phi* (the kink would otherwise show up in tau_w through the pressure gradient). p_w is
+floored at p_inf. Prandtl-Meyer is used ONLY to produce p_w: the state itself comes from Cantera, (rho_e, T_e, h_e)
+= isentropic expansion of the post-shock reservoir to p_w and u_e = sqrt(2 (h02 - h_e)), so the perfect-gas M_e never
+propagates into the state variables. `gamma_pm` is a configuration parameter because the expansion's effective gamma
+varies (1.4 frozen to ~1.15 dissociated): at 90 degrees for the 100 mm sphere at 70.0 km (V 7190 m/s, p02 4165 Pa)
+the branch gives 144.3 Pa (g = 1.4) or 248.8 Pa (g = 1.15) against 112-219 Pa from measured C_p and 5.22 Pa from
+Newtonian -- a factor ~2 uncertainty on a 28-48x improvement. The branch is not extended past PM_MAX_DEG (real flow separates); our windward
+face ends at 90 degrees anyway.
+
+No oblique-shock or entropy-swallowing machinery is built (spec section 18): equating the boundary-layer mass flow at
+the shoulder with the mass crossing the shock inside radius y_s gives y_s/R ~ 0.04-0.1, where the local shock
+inclination is 85-88 degrees and M_n = 0.996 M -- indistinguishable from normal. A sphere is all nose: the whole
+windward hemisphere lies within ~1.6 nose radii of arc and the entropy layer is swallowed only many nose radii
+downstream, which is also what justifies the normal-shock reservoir for the Prandtl-Meyer branch.
+
+WALL KNUDSEN NUMBER AND THE MELT CLOSURE. Kn_local = lambda_w / R with lambda_w the Maxwell mean free path of the
+gas *touching the surface* (p_w, T_wall) and R the nose radius -- a geometric length, not the boundary-layer
+thickness (which only exists in the continuum, so using it would be circular) and not the running length s = R phi
+(which vanishes at the stagnation point). Because the wall gas is ideal at these temperatures this is exactly
+lambda_w = mu(T_w) sqrt(pi R_s T_w / 2) / p_w, i.e. Kn_local is inversely proportional to the wall pressure. The
+identity Kn = (Ma/Re) sqrt(gamma pi/2) holds to machine precision (coefficient 1.4829 at gamma = 1.4; the
+hard-sphere Chapman-Enskog form gives 1.5105 -- a 2 % difference).
+
+Kn_local selects the closure that supplies the melt's velocity scale, NOT whether spraying happens: Girin's
+dispersion relation contains no gas parameters -- it is a melt-side instability. What needs the continuum is his
+Eq. (2) conjugate boundary layers and Ranger's Psi(phi) for delta_a:
+  Kn_local < KN_LOCAL_CONTINUUM (0.01)   CLOSURE_GIRIN:   delta_m and V_s from Eq. (2)
+  0.01 - KN_LOCAL_SLIP (0.1)             CLOSURE_COUETTE: V_s = tau_w b / mu_melt, slip-corrected tau_w, flagged
+  >= 0.1                                 CLOSURE_COUETTE: free-molecular tau_w, flagged
+tau_w is well defined in every branch (Schaaf-Chambre, tau_w = sigma_t rho_inf V^2 sin phi cos phi for diffuse
+reflection), so the melt is sheared -- and can spray -- in all of them.
+"""
+import math
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
+from scipy.optimize import brentq
 
 from . import aero, gas
-from .constants import HARD_SPHERE_DIAMETER
+from .constants import GAMMA_AIR, K_BOLTZMANN, M_BAR_AIR
 
-REGIME_CONTINUUM, REGIME_SLIP, REGIME_FM = 0, 1, 2
-KN_SLIP, KN_FM = 0.01, 0.1
-FM_BODY_KN = 1.0
-RANGER_C = 58.08                      # 4.84 x 16 x 3/4: Ranger's delta_a from the u_e^4 integral (module docstring)
+BRANCH_SHOCK_LAYER, BRANCH_MERGED, BRANCH_FREE_MOLECULAR = 0, 1, 2
+BRANCH_NAMES = ("shock layer", "merged", "free molecular")
+CLOSURE_GIRIN, CLOSURE_COUETTE = 0, 1
+KN_BODY_SHOCK, KN_BODY_FM = 0.01, 10.0            # body-scale gate (module docstring)
+KN_LOCAL_CONTINUUM, KN_LOCAL_SLIP = 0.01, 0.1     # wall-scale closure gate
+RE_SHOCK_MERGED = 100.0                            # Re2 below which the shock layer is merged (diagnostic only)
+R_SPECIFIC_AIR = K_BOLTZMANN / M_BAR_AIR          # J/(kg K), 287.06
+RANGER_C = 58.08                                   # 4.84 x 12: Ranger's delta_a from the u_e^4 integral (below)
 THWAITES_C = 0.45
-SIGMA_V, SIGMA_T = 1.0, 1.0
+SIGMA_V, SIGMA_T = 1.0, 1.0                        # tangential momentum accommodation (Maxwell slip, Schaaf-Chambre)
+GAMMA_PM = 1.15                                    # effective gamma of the Prandtl-Meyer expansion (config, see docstring)
+PM_BLEND_DEG, PM_MAX_DEG = 10.0, 110.0   # blend window above phi* (10 deg: max |d2p| 9x the median, against 35x at 5 deg)
 RAREFIED_SHEAR_NAMES = ("slip", "bridged")
 THETA_BINS = np.radians(np.arange(0.0, 90.0 + 0.5, 1.0))
 
@@ -2005,117 +2123,231 @@ def boundary_layer_thickness(s, u_e, nu_e, constant=RANGER_C, power=4, refine=20
     return np.sqrt(np.maximum(d2, 0.0))
 
 
+def prandtl_meyer(mach, gamma=GAMMA_PM):
+    """Prandtl-Meyer function nu(M) [rad] for M >= 1."""
+    m = np.asarray(mach, dtype=float)
+    b = math.sqrt((gamma + 1.0) / (gamma - 1.0))
+    x = np.maximum(m * m - 1.0, 0.0)
+    return b * np.arctan(np.sqrt(x) / b) - np.arctan(np.sqrt(x))
+
+
+def mach_from_turn(turn, gamma=GAMMA_PM):
+    """Inverse of prandtl_meyer: the Mach number reached after turning through `turn` [rad] from sonic conditions."""
+    turn = np.asarray(turn, dtype=float)
+    out = np.ones_like(turn)
+    nu_max = prandtl_meyer(60.0, gamma)
+    for k, t in enumerate(np.ravel(turn)):
+        if t <= 0.0:
+            out.ravel()[k] = 1.0
+        else:
+            out.ravel()[k] = brentq(lambda m: prandtl_meyer(m, gamma) - min(t, 0.999 * nu_max), 1.0 + 1e-9, 60.0, xtol=1e-10)
+    return out
+
+
+def sonic_angle(p_stag, p_inf, q_inf, gamma=GAMMA_PM):
+    """The polar angle where modified-Newtonian pressure reaches the sonic value [rad] (43.38 deg at gamma 1.4)."""
+    cp_max = (p_stag - p_inf) / q_inf
+    p_star = p_stag * (2.0 / (gamma + 1.0)) ** (gamma / (gamma - 1.0))
+    c2 = (p_star - p_inf) / (q_inf * cp_max) if cp_max > 0.0 else 0.0
+    return math.acos(math.sqrt(min(1.0, max(0.0, c2))))
+
+
+def wall_pressure(theta, p_stag, p_inf, q_inf, gamma=GAMMA_PM, blend_deg=PM_BLEND_DEG):
+    """p_w(theta) on the windward face: modified Newtonian to the sonic point, Prandtl-Meyer beyond, blended over
+    `blend_deg` and floored at p_inf. Returns (p_w, phi_sonic [rad])."""
+    theta = np.asarray(theta, dtype=float)
+    phi_star = sonic_angle(p_stag, p_inf, q_inf, gamma)
+    cp_max = (p_stag - p_inf) / q_inf
+    newton = p_inf + q_inf * cp_max * np.cos(np.minimum(theta, 0.5 * math.pi)) ** 2
+    turn = np.clip(theta - phi_star, 0.0, math.radians(PM_MAX_DEG) - phi_star)
+    mach = mach_from_turn(turn, gamma)
+    p_star = p_stag * (2.0 / (gamma + 1.0)) ** (gamma / (gamma - 1.0))
+    pm = p_stag * (1.0 + 0.5 * (gamma - 1.0) * mach ** 2) ** (-gamma / (gamma - 1.0))
+    pm = np.where(turn > 0.0, pm, p_star)
+    # the blend runs from phi* upward, never below it: the two branches already meet in value at phi* (both give p*),
+    # but the Prandtl-Meyer slope is singular there (nu ~ (M-1)^3/2, so dp/dnu ~ nu^-1/3), so the Newtonian slope is
+    # carried through the window by a smoothstep whose own derivative vanishes at both ends. A window straddling phi*
+    # instead mixes in the clamped PM value below it and puts back the kink it was meant to remove (measured 2026-09-22).
+    w = np.clip((theta - phi_star) / math.radians(blend_deg), 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)
+    return np.maximum(np.where(theta <= 0.5 * math.pi, (1.0 - w) * newton + w * pm, p_inf), p_inf), phi_star
+
+
+def mean_free_path_maxwell(mu, rho, T, R_s=R_SPECIFIC_AIR):
+    """Maxwell mean free path mu/rho sqrt(pi/(2 R T)); Kn = (Ma/Re) sqrt(gamma pi/2) is the same quantity."""
+    return mu / rho * np.sqrt(math.pi / (2.0 * R_s * T))
+
+
+def wall_knudsen(p_w, T_wall, mu_wall, length, R_s=R_SPECIFIC_AIR):
+    """Kn_local = lambda_w / length with the wall gas ideal at (p_w, T_wall): lambda_w = mu sqrt(pi R T/2)/p_w."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lam = mu_wall * np.sqrt(math.pi * R_s * np.asarray(T_wall, dtype=float) / 2.0) / np.maximum(p_w, 1e-30)
+    return lam, lam / length
+
+
 @dataclass
 class SurfaceFlowResult:
-    u_e: np.ndarray          # m/s, edge velocity (before the slip correction)
-    u_eff: np.ndarray        # m/s, effective edge velocity driving the film (slip-corrected)
-    rho_e: np.ndarray        # kg/m3
-    T_e: np.ndarray          # K
-    mu_e: np.ndarray         # Pa s
-    p_e: np.ndarray          # Pa
-    mach_e: np.ndarray
-    delta_a: np.ndarray      # m, gas boundary-layer thickness (nan where free-molecular)
-    lambda_e: np.ndarray     # m, edge mean free path
-    kn_delta: np.ndarray     # lambda_e / delta_a (inf where free-molecular)
-    regime: np.ndarray       # 0 continuum, 1 slip, 2 transitional/free-molecular
-    tau: np.ndarray          # Pa, wall shear used by the film
-    tau_continuum: np.ndarray  # Pa, mu_e u_e / delta_a (before slip/bridging)
-    tau_fm: np.ndarray       # Pa, free-molecular shear
-    G: np.ndarray            # Pa/m, film driving gradient (pressure gradient + inertial force)
-    p_stag: float
+    # body-scale diagnostics
+    branch: int
+    kn_body: float
+    re_shock: float               # Re2 = rho_inf V R / mu(T0); nan outside the shock-layer/merged branches
+    mach_inf: float
+    p_stag: float                 # post-shock stagnation pressure (nan in the free-molecular branch)
     p_inf: float
-    deceleration: float      # m/s2
+    phi_sonic: float              # rad (nan where no shock layer is constructed)
+    deceleration: float
+    gamma_pm: float
+    # per patch
+    p_w: np.ndarray
+    u_e: np.ndarray
+    u_eff: np.ndarray             # slip-corrected edge velocity driving the film
+    rho_e: np.ndarray
+    T_e: np.ndarray
+    mu_e: np.ndarray
+    mach_e: np.ndarray
+    delta_a: np.ndarray           # gas boundary-layer thickness (nan where none is constructed)
+    lambda_w: np.ndarray
+    kn_local: np.ndarray
+    closure: np.ndarray           # CLOSURE_GIRIN / CLOSURE_COUETTE per patch
+    flagged: np.ndarray           # True where the closure is outside Girin's validated regime
+    tau: np.ndarray
+    tau_continuum: np.ndarray
+    tau_fm: np.ndarray
+    G: np.ndarray
 
-    def regime_fractions(self, areas, windward):
-        a = areas * windward
+    @property
+    def branch_name(self):
+        return BRANCH_NAMES[self.branch]
+
+    def closure_fractions(self, areas, windward):
+        """Windward area fractions of (Girin closure, Couette slip, Couette free-molecular)."""
+        a = np.asarray(areas, dtype=float) * np.asarray(windward, dtype=float)
         total = a.sum()
-        return [float(a[self.regime == k].sum() / total) if total > 0.0 else 0.0 for k in (0, 1, 2)]
+        if total <= 0.0:
+            return [0.0, 0.0, 0.0]
+        girin = self.closure == CLOSURE_GIRIN
+        fm = (self.closure == CLOSURE_COUETTE) & (self.kn_local >= KN_LOCAL_SLIP)
+        slip = (self.closure == CLOSURE_COUETTE) & ~fm
+        return [float(a[m].sum() / total) for m in (girin, slip, fm)]
 
 
 class SurfaceFlow:
-    def __init__(self, air=None, rarefied_shear="slip", bridging=None, sigma_v=SIGMA_V, sigma_t=SIGMA_T):
+    def __init__(self, air=None, rarefied_shear="slip", bridging=None, sigma_v=SIGMA_V, sigma_t=SIGMA_T,
+                 gamma_pm=GAMMA_PM, kn_body_shock=KN_BODY_SHOCK, kn_body_fm=KN_BODY_FM):
         if rarefied_shear not in RAREFIED_SHEAR_NAMES:
             raise ValueError("rarefied_shear must be one of {}, got {!r}".format(RAREFIED_SHEAR_NAMES, rarefied_shear))
+        if not 1.0 < gamma_pm < 2.0:
+            raise ValueError("gamma_pm must be within (1, 2), got {!r}".format(gamma_pm))
         self.air = air or gas.EquilibriumAir()
         self.rarefied_shear, self.bridging = rarefied_shear, bridging or aero.SesamTable()
-        self.slip_C, self.sigma_t = (2.0 - sigma_v) / sigma_v, sigma_t
+        self.slip_C, self.sigma_t, self.gamma_pm = (2.0 - sigma_v) / sigma_v, sigma_t, gamma_pm
+        self.kn_body_shock, self.kn_body_fm = kn_body_shock, kn_body_fm
         self.last_bins = None
 
-    def edge_table(self, state, radius):
-        """Edge quantities on THETA_BINS from the stagnation state: (p_e, u_e, rho_e, T_e, mu_e, a_e, m_bar_e, p_s)."""
-        fs = state.freestream
-        stag = self.air.stagnation(fs.rho, fs.T, state.V)
-        p_inf = float(fs.p)
-        p_e = p_inf + (stag.p - p_inf) * np.cos(THETA_BINS) ** 2
-        cols = []
-        for p in p_e:
-            e = self.air.expand(stag, float(p))
-            cols.append((np.sqrt(max(0.0, 2.0 * (stag.h - e.h))), e.rho, e.T, e.mu, e.a, e.m_bar))
-        u_e, rho_e, T_e, mu_e, a_e, m_bar = (np.array(c) for c in zip(*cols))
-        return p_e, u_e, rho_e, T_e, mu_e, a_e, m_bar, float(stag.p)
+    # -- the gate ---------------------------------------------------------------------------------------------
+    def branch_of(self, state):
+        """The flow branch of the whole body (module docstring): shock layer, merged, or free molecular."""
+        kn = state.kn
+        if not np.isfinite(kn) or kn >= self.kn_body_fm or state.ma <= 1.0:
+            return BRANCH_FREE_MOLECULAR
+        return BRANCH_SHOCK_LAYER if kn < self.kn_body_shock else BRANCH_MERGED
 
-    def evaluate(self, state, theta, radius, rho_liquid):
-        """Per-patch SurfaceFlowResult for the trajectory AeroState, the patch angles theta (rad), the nose radius
-        and the film density (for the inertial term of G)."""
+    def edge_table(self, state, stag, radius):
+        """Edge quantities on THETA_BINS from the post-shock reservoir: (p_w, u_e, rho_e, T_e, mu_e, a_e, phi_sonic)."""
+        fs = state.freestream
+        p_inf, q_inf = float(fs.p), 0.5 * fs.rho * state.V ** 2
+        p_w, phi_star = wall_pressure(THETA_BINS, stag.p, p_inf, q_inf, self.gamma_pm)
+        cols = []
+        for p in p_w:
+            e = self.air.expand(stag, float(p))
+            cols.append((math.sqrt(max(0.0, 2.0 * (stag.h - e.h))), e.rho, e.T, e.mu, e.a))
+        u_e, rho_e, T_e, mu_e, a_e = (np.array(c) for c in zip(*cols))
+        return p_w, u_e, rho_e, T_e, mu_e, a_e, phi_star
+
+    def evaluate(self, state, theta, radius, rho_liquid, T_wall=None):
+        """Per-patch SurfaceFlowResult for the trajectory AeroState, the patch angles theta [rad], the nose radius,
+        the film density (for the inertial term of G) and the patch wall temperatures [K]."""
         theta = np.asarray(theta, dtype=float)
         n = theta.size
         fs = state.freestream
         V, p_inf = float(state.V), float(fs.p)
         decel = float(np.linalg.norm(state.a_drag))
-        windward = theta <= 0.5 * np.pi
+        windward = theta <= 0.5 * math.pi
         sin, cos = np.sin(theta), np.cos(theta)
+        T_w = np.full(n, 300.0) if T_wall is None else np.asarray(T_wall, dtype=float)
+        mu_w = np.array([gas.wilke_viscosity(float(t), {"N2": 0.79, "O2": 0.21}, self.air.molar_masses) for t in np.unique(np.round(T_w, 1))])
+        mu_wall = np.interp(T_w, np.unique(np.round(T_w, 1)), mu_w)
         tau_fm = np.where(windward, self.sigma_t * fs.rho * V * V * sin * np.abs(cos), 0.0)
-        nan, zero = np.full(n, np.nan), np.zeros(n)
+        zero, nan = np.zeros(n), np.full(n, np.nan)
+        branch = self.branch_of(state)
         if fs.rho <= 0.0 or V <= 0.0:
-            return SurfaceFlowResult(zero, zero, zero, zero, zero, np.full(n, p_inf), zero, nan, nan, np.full(n, np.inf),
-                                     np.full(n, REGIME_FM), zero, zero, zero, zero, p_inf, p_inf, decel)
-        if not np.isfinite(state.kn) or state.kn >= FM_BODY_KN:
-            G = -rho_liquid * decel * sin
-            return SurfaceFlowResult(zero, zero, np.full(n, fs.rho), np.full(n, fs.T), zero, np.full(n, p_inf), zero, nan,
-                                     np.full(n, aero.mean_free_path(fs.rho, fs.m_bar)), np.full(n, np.inf),
-                                     np.full(n, REGIME_FM), tau_fm, zero, tau_fm, np.where(windward, G, 0.0), p_inf, p_inf, decel)
-        p_b, u_b, rho_b, T_b, mu_b, a_b, mbar_b, p_s = self.edge_table(state, radius)
+            return SurfaceFlowResult(BRANCH_FREE_MOLECULAR, state.kn, float("nan"), state.ma, float("nan"), p_inf,
+                                     float("nan"), decel, self.gamma_pm, np.full(n, p_inf), zero, zero, zero, zero, zero,
+                                     zero, nan, nan, np.full(n, np.inf), np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool),
+                                     zero, zero, zero, zero)
+        G_inertial = -rho_liquid * decel * sin
+        if branch == BRANCH_FREE_MOLECULAR:
+            # Schaaf-Chambre from the freestream directly: no compression model, no edge state, no boundary layer
+            lam_inf = aero.mean_free_path(fs.rho, fs.m_bar)
+            return SurfaceFlowResult(branch, state.kn, float("nan"), state.ma, float("nan"), p_inf, float("nan"), decel,
+                                     self.gamma_pm, np.full(n, p_inf), zero, zero, np.full(n, fs.rho), np.full(n, fs.T),
+                                     zero, zero, nan, np.full(n, lam_inf), np.full(n, lam_inf / radius),
+                                     np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool), tau_fm, zero, tau_fm,
+                                     np.where(windward, G_inertial, 0.0))
+        # shock-layer construction: the reservoir (also the bridge's continuum endpoint in the merged branch)
+        stag = self.air.stagnation(fs.rho, fs.T, V)
+        re_shock = float(fs.rho * V * radius / stag.mu)
+        p_b, u_b, rho_b, T_b, mu_b, a_b, phi_star = self.edge_table(state, stag, radius)
         s_b = radius * THETA_BINS
         delta_b = boundary_layer_thickness(s_b, u_b, mu_b / rho_b)
         self.last_bins = (THETA_BINS, p_b, u_b, rho_b, T_b, mu_b, delta_b)
-        th = np.minimum(theta, 0.5 * np.pi)
+        th = np.minimum(theta, 0.5 * math.pi)
         at = lambda col: np.interp(th, THETA_BINS, col)
-        u_e, rho_e, T_e, mu_e, p_e, a_e, mbar_e, delta_a = (at(c) for c in (u_b, rho_b, T_b, mu_b, p_b, a_b, mbar_b, delta_b))
+        p_w, u_e, rho_e, T_e, mu_e, a_e, delta_a = (at(c) for c in (p_b, u_b, rho_b, T_b, mu_b, a_b, delta_b))
+        p_w = np.where(windward, p_w, p_inf)
         u_e = np.where(windward, u_e, 0.0)
-        p_e = np.where(windward, p_e, p_inf)
-        lambda_e = 1.0 / (np.sqrt(2.0) * np.pi * HARD_SPHERE_DIAMETER ** 2 * (rho_e / mbar_e))
+        lam_w, kn_local = wall_knudsen(p_w, T_w, mu_wall, radius)
         with np.errstate(divide="ignore", invalid="ignore"):
-            kn_delta = np.where(delta_a > 0.0, lambda_e / delta_a, np.inf)
             tau_c = np.where(delta_a > 0.0, mu_e * u_e / delta_a, 0.0)
-        regime = np.where(kn_delta < KN_SLIP, REGIME_CONTINUUM, np.where(kn_delta < KN_FM, REGIME_SLIP, REGIME_FM))
-        slip = 1.0 / (1.0 + self.slip_C * np.where(np.isfinite(kn_delta), kn_delta, 0.0))
+        slip = 1.0 / (1.0 + self.slip_C * kn_local)
         tau_slip = tau_c * slip
-        if self.rarefied_shear == "slip":
-            tau = np.where(regime == REGIME_FM, tau_fm, tau_slip)
-        else:
+        if branch == BRANCH_MERGED:
+            # no valid post-shock construction: bridge the continuum and free-molecular limits, Couette closure
             f = self.bridging(state.kn)
             tau = (1.0 - f) * tau_slip + f * tau_fm
+            closure = np.full(n, CLOSURE_COUETTE)
+            flagged = np.ones(n, dtype=bool)
+        else:
+            closure = np.where(kn_local < KN_LOCAL_CONTINUUM, CLOSURE_GIRIN, CLOSURE_COUETTE)
+            flagged = closure != CLOSURE_GIRIN
+            if self.rarefied_shear == "slip":
+                tau = np.where(kn_local >= KN_LOCAL_SLIP, tau_fm, tau_slip)
+            else:
+                f = self.bridging(state.kn)
+                tau = (1.0 - f) * tau_slip + f * tau_fm
         tau = np.where(windward & np.isfinite(tau), tau, 0.0)
-        dp_ds = -2.0 * (p_s - p_inf) * sin * cos / radius
-        G = np.where(windward, -dp_ds - rho_liquid * decel * sin, 0.0)
+        closure = np.where(windward, closure, CLOSURE_COUETTE)
+        dp_ds = np.gradient(p_b, s_b)                              # from the actual p_w(theta), not a Newtonian formula
+        G = np.where(windward, -at(dp_ds) + G_inertial, 0.0)
         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)
         u_e, rho_e, mu_e = (np.where(np.isfinite(x), x, 0.0) for x in (u_e, rho_e, mu_e))
-        return SurfaceFlowResult(u_e, u_e * slip, rho_e, T_e, mu_e, p_e, mach_e, np.where(windward, delta_a, np.nan),
-                                 lambda_e, np.where(windward, kn_delta, np.inf), np.where(windward, regime, REGIME_FM),
-                                 tau, np.where(windward, tau_c, 0.0), tau_fm, G, p_s, p_inf, decel)
+        return SurfaceFlowResult(branch, float(state.kn), re_shock, float(state.ma), float(stag.p), p_inf, float(phi_star),
+                                 decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
+                                 np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
+                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G)
 ```
 
 
 - [ ] **Step 5: Run the tests**
 
 Run: `"$PY" -m pytest tests/test_reentry_model_surface_flow.py tests/test_reentry_model_gas.py tests/test_reentry_model_heating.py -q`
-Expected: all pass (`evaluate` at 71 km takes ~40 ms: 91 Cantera SP states).
+Expected: 7 passed plus the Step 2 gas/heating tests. `evaluate` at 71 km takes ~55 ms (one shock solve, 91 Cantera isentropic expansions; the wall state is analytic). The branch test asserts the measured values there: merged branch, Kn_body 0.0113, Re2 153, every closure Couette and flagged, Kn_local 1.4e-4 at the nose (Kn_body/84), and p_w(89 deg) between 150 and 350 Pa instead of p_inf.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add reentry_model/gas.py reentry_model/surface_flow.py tests/test_reentry_model_surface_flow.py
-git commit -m "Add the boundary-layer edge state, Ranger's boundary layer, Knudsen regimes and shear per patch (Step 3 Task 5)
+git commit -m "Add the flow-regime gate, the Newtonian+Prandtl-Meyer wall pressure and the wall-Knudsen melt closure (Step 3 Task 5)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -2352,7 +2584,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `dispersion.DispersionTable` (Task 4), `surface_flow.REGIME_FM` and `SurfaceFlowResult` fields (Task 5), `material.LiquidProperties` (Task 2).
-- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)`; `rayleigh_taylor(W, b, liquid) -> (active, lambda*, tau*)`; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s)`; `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED = 0/1/2`.
+- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)` -- **nan/0 wherever the patch's closure is not `CLOSURE_GIRIN`**, since Eq. (2) and Ranger's Psi(phi) are continuum constructions and Task 5's gate decides whether they may be used at all; `rayleigh_taylor(W, b, liquid) -> (active, lambda*, tau*)`; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s)`; `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED = 0/1/2` (Girin thick / thin-film on the edge state / thin-film on the freestream). The `closure` column replaces `regime` in `SOURCE_COLUMNS`. Spraying is never switched off by rarefaction: the gate selects the closure, and hence whether delta_m exists to define a thick film at all.
 
 - [ ] **Step 1: Write the two reference-value files**
 
@@ -2581,8 +2813,12 @@ def test_rayleigh_taylor_mode_reproduces_the_1994_table_2():
 
 
 class FakeFlow:
-    def __init__(self, n, regime, u=2000.0, rho=7e-4, mu=1.6e-4, delta_a=7e-3, mach=1.0, decel=30.0):
-        self.regime = np.full(n, regime)
+    """The fields spray.py reads: a shock-layer branch with the Girin closure unless told otherwise."""
+
+    def __init__(self, n, closure=sf.CLOSURE_GIRIN, branch=sf.BRANCH_SHOCK_LAYER, u=2000.0, rho=7e-4, mu=1.6e-4,
+                 delta_a=7e-3, mach=1.0, decel=30.0):
+        self.closure = np.full(n, closure)
+        self.branch = branch
         self.u_eff = self.u_e = np.full(n, u)
         self.rho_e, self.mu_e, self.delta_a, self.mach_e = np.full(n, rho), np.full(n, mu), np.full(n, delta_a), np.full(n, mach)
         self.deceleration = decel
@@ -2597,7 +2833,7 @@ class FakeState:
 
 
 def test_melt_layer_and_branches():
-    flow = FakeFlow(3, sf.REGIME_CONTINUUM)
+    flow = FakeFlow(3)
     delta_m, factor = spray.melt_layer(flow, LIQ)
     alpha, mu = 7e-4 / 2400.0, 1.6e-4 / 1.3e-3
     assert np.allclose(delta_m, (alpha / mu ** 2) ** (1 / 3) * 7e-3) and np.allclose(factor, (alpha * mu) ** (1 / 3) / (1 + (alpha * mu) ** (1 / 3)))
@@ -2620,10 +2856,16 @@ def test_melt_layer_and_branches():
     assert res.dm[1] == pytest.approx(min(res.mdot[1] * 1e-5 * 0.5, m_f[1])) and res.dm[2] == 0.0
     assert res.dn[1] == pytest.approx(res.dm[1] / (4 / 3 * np.pi * LIQ.rho * res.r[1] ** 3))
     assert not res.rt_active
-    # rarefied: thin film takes the free-molecular branch, a thick one the thick branch
-    flow_fm = FakeFlow(2, sf.REGIME_FM)
-    res = model.evaluate(flow_fm, FakeState(), np.array([2e-5, 1e-3]), delta_m[:2], np.array([0.5, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9)
-    assert res.branch.tolist() == [spray.BRANCH_RAREFIED, spray.BRANCH_THICK]
+    # Couette closure (the gate declined to certify the patch): no delta_m, so the thin mode with the edge state
+    flow_c = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    dm_c, factor_c = spray.melt_layer(flow_c, LIQ)
+    assert np.all(np.isnan(dm_c)) and np.all(factor_c == 0.0)
+    res = model.evaluate(flow_c, FakeState(), np.array([2e-5, 1e-3]), dm_c, np.array([0.5, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9)
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]          # a thick film cannot take Girin's branch here
+    # free-molecular branch: no edge state exists, the freestream drives the mode
+    flow_fm = FakeFlow(2, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    res = model.evaluate(flow_fm, FakeState(), np.array([2e-5, 1e-3]), dm_c, np.array([0.5, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9)
+    assert res.branch.tolist() == [spray.BRANCH_RAREFIED, spray.BRANCH_RAREFIED]
     lam_r, _ = spray.thin_film_mode(np.array([24.0]), np.array([8e-5 * 7200.0 ** 2]), LIQ)
     assert res.r[0] == pytest.approx(min(lam_r[0] / 4.0, (3 * (m_f[0] + 1e-9) / (4 * np.pi * LIQ.rho)) ** (1 / 3), 0.0125))
     # leeward or dry: nothing
@@ -2634,7 +2876,7 @@ def test_melt_layer_and_branches():
 
 
 def test_source_rows_and_histogram():
-    flow = FakeFlow(2, sf.REGIME_CONTINUUM)
+    flow = FakeFlow(2)
     delta_m, _ = spray.melt_layer(flow, LIQ)
     b = np.array([1e-3, 1e-3])
     m_f = b * LIQ.rho * 1e-5
@@ -2643,6 +2885,7 @@ def test_source_rows_and_histogram():
     assert len(rows) == 2 and len(rows[0]) == len(spray.SOURCE_COLUMNS)
     row = dict(zip(spray.SOURCE_COLUMNS, rows[0]))
     assert row["time_s"] == 10.0 and row["altitude_km"] == 71.0 and row["theta_deg"] == pytest.approx(30.0) and row["branch"] == spray.BRANCH_THICK
+    assert row["closure"] == sf.CLOSURE_GIRIN
     assert row["we_d"] == pytest.approx(8e-5 * 7200.0 ** 2 * 2 * row["r_m"] / LIQ.sigma) and row["oh"] == pytest.approx(LIQ.mu / np.sqrt(LIQ.rho * LIQ.sigma * 2 * row["r_m"]))
     assert row["breakup"] == float(row["we_d"] > 12.0) and row["dm_kg"] == res.dm[0] and row["v_s_ms"] == 5.0
     n_hist, m_hist = spray.histogram(np.array([2e-6, 5e-5, 5e-5, np.nan, 2e-2]), np.array([1.0, 2.0, 3.0, 4.0, 5.0]), np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
@@ -2673,12 +2916,13 @@ Branches per windward patch with film (regime from surface_flow, b from the film
       release rate mdot = rho_l min(b, lambda*/8) / tau* (their Table 1's mass rate is rho_1 r_d / (2 tau_d) =
       rho_1 lambda*/(8 tau*), reproduced 2026-09-20; the film supplies at most its thickness). Active when b >= B_MIN.
       (Their dissipation cut-off lambda_t = lambda*/3 is always below lambda*, so it never limits the mode.)
-  transitional/free-molecular (Kn_delta >= 0.1), thin film: the thin mode with the free-molecular momentum flux,
-      lambda* = 1.5 M_inf Sigma / (rho_inf V^2), and the Couette film velocity from tau_fm -- an extrapolation of a
-      continuum film theory (spec section 17.3), sensitive to --rarefied-shear. A film thicker than delta_m on such a
-      patch takes the thick branch with the film velocity the free-molecular shear gives it (tau_fm delta_m / mu_l):
-      without it the film piling up at the windward rim, where the edge state expands to p_inf and Kn_delta exceeds
-      0.1, was never stripped (measured 2026-09-20: a rim patch reached b = 100 mm).
+  free-molecular branch, thin film: the thin mode with the freestream momentum flux, lambda* = 1.5 M_inf Sigma /
+      (rho_inf V^2), and the Couette film velocity from tau_fm -- an extrapolation of a continuum film theory
+      (spec section 17.3), sensitive to --rarefied-shear.
+The branch selection follows the closure gate of surface_flow, not a regime of its own: Girin's dispersion relation
+contains no gas parameters (it is a melt-side instability), so spraying is never switched off by rarefaction -- what
+the gate decides is which closure supplies the melt velocity scale, and hence whether delta_m exists to define a
+"thick" film at all (spec section 18).
 The 1994 front-surface Rayleigh-Taylor criterion W b^2 rho_l > 3 Sigma (W the body deceleration) is evaluated and
 reported (lambda* = 2 pi (3 Sigma/(W rho_l))^1/2, tau* = (27 Sigma/(4 W^3 rho_l))^1/4), never applied.
 
@@ -2689,7 +2933,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import dispersion
-from .surface_flow import REGIME_FM
+from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN
 
 K_R, K_T = 0.17, 1.1
 B_MIN = 1.0e-6                     # m, films thinner than this do not spray (numerical floor)
@@ -2697,20 +2941,25 @@ N_BINS, R_MIN, R_MAX = 40, 1.0e-6, 1.0e-2
 BIN_EDGES = np.logspace(np.log10(R_MIN), np.log10(R_MAX), N_BINS + 1)
 WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected above this droplet Weber number
 CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
-SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "regime", "branch", "b_m",
+SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup"]
-BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED = 0, 1, 2
+BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED = 0, 1, 2      # Girin thick / thin-film with the edge state / thin-film with the freestream
 
 
 def melt_layer(flow, liquid):
-    """delta_m per patch from Girin's Eq. 2 (nan where there is no gas boundary layer) and the shear velocity factor
-    (alpha mu)^(1/3)/(1 + (alpha mu)^(1/3))."""
+    """delta_m per patch from Girin's Eq. (2) and the shear velocity factor (alpha mu)^(1/3)/(1 + (alpha mu)^(1/3)).
+
+    Both are nan/0 wherever the patch's closure is not CLOSURE_GIRIN: Eq. (2) is a conjugate-boundary-layer result and
+    Ranger's Psi(phi) for delta_a is a continuum construction, so the wall Knudsen gate of surface_flow decides whether
+    they may be used at all (spec section 18). Where they may not, the film takes the Couette closure
+    V_s = tau_w b / mu_melt (film.lubrication's thin branch) and the thin-film spray mode."""
+    girin = (flow.closure == CLOSURE_GIRIN) & np.isfinite(flow.delta_a)
     alpha = flow.rho_e / liquid.rho
     mu = flow.mu_e / liquid.mu
     with np.errstate(divide="ignore", invalid="ignore"):
-        delta_m = np.where(np.isfinite(flow.delta_a) & (mu > 0.0), (alpha / mu ** 2) ** (1.0 / 3.0) * flow.delta_a, np.nan)
+        delta_m = np.where(girin & (mu > 0.0), (alpha / np.where(mu > 0.0, mu, 1.0) ** 2) ** (1.0 / 3.0) * flow.delta_a, np.nan)
         am = (alpha * mu) ** (1.0 / 3.0)
-        factor = np.where(np.isfinite(am), am / (1.0 + am), 0.0)
+        factor = np.where(girin & np.isfinite(am), am / (1.0 + am), 0.0)
     return delta_m, factor
 
 
@@ -2764,8 +3013,9 @@ class SprayModel:
         r = np.full(n, np.nan)
         mdot = np.zeros(n)
         has_film = windward & (b >= B_MIN)
-        thick = has_film & np.isfinite(delta_m) & (b > delta_m)          # any regime: a film thicker than delta_m is Girin's thick case
-        rarefied = has_film & ~thick & (flow.regime == REGIME_FM)
+        thick = has_film & np.isfinite(delta_m) & (b > delta_m)          # Girin closure and a film thicker than delta_m
+        free_molecular = flow.branch == BRANCH_FREE_MOLECULAR
+        rarefied = has_film & ~thick & free_molecular                     # no edge state exists: the freestream drives the mode
         thin = has_film & ~thick & ~rarefied
         # thick: Girin 2017
         if thick.any():
@@ -2812,7 +3062,7 @@ def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state):
     we_d = state.freestream.rho * state.V ** 2 * 2.0 * r / liquid.sigma
     oh = liquid.mu / np.sqrt(liquid.rho * liquid.sigma * 2.0 * r)
     rows = np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
-                            centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.regime[k], res.branch[k], b[k],
+                            centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
                             res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1], t_hat[k, 2],
                             we_d, oh, (we_d > WE_BREAKUP).astype(float)])
     return rows.tolist()
@@ -3247,12 +3497,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify (replace): `reentry_model/body.py`
-- Modify: `reentry_model/trajectory.py` (three statements), `reentry_model/aero.py` (the Mach-1 step)
+- Modify: `reentry_model/trajectory.py` (three statements), `reentry_model/aero.py` (the Mach-1 step and the shape factor)
+- Create: `reentry_model/data/atdb_disc.json` (extracted from DRAMA)
 - Test: `tests/test_reentry_model_melting.py` (new); `tests/test_reentry_model_aero.py` (one assertion); `tests/test_reentry_model_fenicsx.py::test_melting_run_matches_the_skfem_backend` (from Task 3) now runs in `fenicsx_env`
 
 **Interfaces:**
 - Consumes: Tasks 1–7 (`mesh.deactivate/surface/active_nodes`, `Material.feed_fraction/liquid_fraction/enthalpy/h_liquid/liquid`, `thermal` `set_fractions/element_energies/step(nodal_load=)/pinned/temperature`, `surface_flow.SurfaceFlow`, `spray.SprayModel/melt_layer/source_rows/histogram/N_BINS`, `film.lubrication/Runoff`), `heating.HeatingResult`, `trajectory.AeroState`.
-- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `SIZE_FEEDBACK_NAMES = ("current", "initial")`, `NOSE_CAP_ANGLE = 30.0`, `NOSE_CAP_FACTOR = 1.67`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`; `fit_sphere(points) -> (centre, radius)`; `MeltSettings(removal, runoff, demise_fraction, particles, size_feedback="current")`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.reference_length()` (2 R_eq, or None with `initial`), `.nose_radius()` (the windward-cap fit, or R₀ with `initial`), `.equivalent_radius()`, `.energy()` (FEM + film), `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, mass_centre, transverse_radius, fitted_nose_radius, cap_nose_radius, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()`/`reference_length()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.nose_radius()` returns the sphere's radius; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area and length and gives a consumed body no drag.
+- Produces: `body.REMOVAL_NAMES = ("girin", "instant")`, `SIZE_FEEDBACK_NAMES = ("current", "initial")`, `NOSE_CAP_ANGLE = 30.0`, `NOSE_CAP_FACTOR = 1.67`, `CP_MAX_NEWTONIAN = 1.84`, `PHI_MIN = 1e-3`, `PHI_DEATH = 0.05`, `NEAREST_PATCHES = 4`; `fit_sphere(points) -> (centre, radius)`; `MeltSettings(removal, runoff, demise_fraction, particles, size_feedback="current")`; `MeltingBody(mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0, emissivity, T_ambient, v_hat)` with `.advance(t, dt, loads, state=None)`, `.melt_step(t, dt, state)`, `.mass(t)`, `.reference_area()`, `.reference_length()` (2 R_eq, or None with `initial`), `.nose_radius()` (the windward-cap fit, or R₀ with `initial`), `.newtonian_drag() -> (C_D, projected area)` (modified Newtonian over the windward convex hull), `.drag_shape_factor()` (that value over the meshed sphere's own, so exactly 1 while intact and 2.00 at the flat limit; 1 with `initial`), `.equivalent_radius()`, `.energy()` (FEM + film), `.mean_temperature()`, `.melt_front_depth()`, `.film_thickness_max/mean()`, `.demised()`, `.energy_balance_residual()`, `.melt_stats() -> dict` (the `coupled.MELT_COLUMNS` values plus `mass_kg`), attributes `phi, m_f, surface, theta, t_hat, windward, mass0, mass_centre, transverse_radius, fitted_nose_radius, cap_nose_radius, sprayed_mass, runoff_mass, removed_mass, removed_enthalpy, n_released, source_rows, hist_n, hist_m, melt_onset, spray_onset, consumed, last_flow, last_spray, last_b, last_melt, pending_load, liquid, flow, spray, runoff`; `Body.reference_area()`/`reference_length()`/`drag_shape_factor()` in the protocol (`ConstantBody`/`ThermalBody` return None; `ThermalBody.nose_radius()` returns the sphere's radius; `ThermalBody.advance` accepts `state=None`); `Simulator.aero_state` uses the body's reference area, Knudsen length and drag shape factor, and gives a consumed body no drag; `aero.drag_coefficient(kn, ma, tables, bridging, shape_factor=1.0)` scales the continuum entry only.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3260,8 +3511,10 @@ Create `tests/test_reentry_model_melting.py`:
 
 ```python
 """body.MeltingBody: feed, instant removal in the lumped limit, film and spraying, element death with hand-over,
-energy and mass balances, demise (spec Step 3 sections 8-11)."""
+energy and mass balances, demise, and the shape feedback -- Knudsen length, nose-cap radius and drag (sections 8-11,
+18)."""
 import math
+import os
 
 import numpy as np
 import pytest
@@ -3344,7 +3597,9 @@ def test_film_spraying_death_and_balances(layered_mesh):
     assert abs(b.energy_balance_residual()) < 1e-7
     assert b.surface.n_patches == b.m_f.size == len(b.solver.areas) and b.theta.size == b.surface.n_patches
     assert stats["theta_cr_deg"] < 45.0 and stats["spraying_area_m2"] > 0.0 and 20.0 < stats["r_median_um"] < 2000.0
-    assert 0.0 <= stats["regime_fraction_continuum"] and stats["regime_fraction_continuum"] + stats["regime_fraction_slip"] + stats["regime_fraction_fm"] == pytest.approx(1.0)
+    assert stats["closure_fraction_girin"] + stats["closure_fraction_couette_slip"] + stats["closure_fraction_couette_fm"] == pytest.approx(1.0)
+    assert stats["kn_body"] > 0.0 and stats["kn_local_stag"] < stats["kn_body"] and stats["re_shock"] > 0.0      # the wall gas is compressed
+    assert stats["flow_branch"] in (0.0, 1.0, 2.0) and stats["p_w_stag_Pa"] > stats["kn_body"] * 0.0
     assert stats["film_thickness_max_mm"] >= stats["film_thickness_mean_mm"] >= 0.0 and stats["removed_enthalpy_J"] == pytest.approx(b.sprayed_mass * b.material.h_liquid)
     rows = np.array(b.source_rows)
     assert rows.shape[1] == 22 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
@@ -3402,6 +3657,37 @@ def test_size_feedback_nose_fit_and_knudsen_length(layered_mesh):
 def melt_stats_has_radii(b):
     s = b.melt_stats()
     return s["nose_radius_mm"] > 0.0 and s["transverse_radius_mm"] > 0.0 and s["fitted_nose_radius_mm"] > 0.0
+
+
+def test_drag_shape_factor_between_the_two_atdb_endpoints(layered_mesh):
+    """The shape factor is exactly 1 for the intact sphere (so the ATDB sphere table is reproduced bit for bit) and
+    reaches the ATDB disc entry at the flat-face limit: HTG's continuum database is modified Newtonian, its
+    sphere/disc ratio being 0.49897 at every Mach number, and the same integral over a meshed flat plate gives 2.00."""
+    import json
+    from reentry_model import aero, mesh as mesh_mod
+    from helpers import REPO_ROOT
+    b = melting_body(layered_mesh)
+    assert b.drag_shape_factor() == pytest.approx(1.0, abs=1e-12)
+    cd, area = b.newtonian_drag()
+    assert cd == pytest.approx(0.92, rel=0.02) and area == pytest.approx(math.pi * 0.05 ** 2, rel=0.02)
+    sphere = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_sphere.json")))
+    disc = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_disc.json")))
+    ratios = np.array(sphere["cd_continuum"]) / np.array(disc["cd_continuum"])
+    assert np.allclose(ratios, 0.49897, atol=1e-5) and disc["mach"] == sphere["mach"]
+    assert np.allclose(np.array(disc["cd_free_molecular"]) / np.array(sphere["cd_free_molecular"]), 1.03, atol=0.04)
+    # a flat plate normal to the flow: every windward element is square-on, so the integral is C_p,max itself
+    plate = mesh_mod.box_mesh(0.004, 0.06, 0.06, 0.002)
+    flat = body.MeltingBody(plate, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"),
+                            1.0, settings=body.MeltSettings())
+    flat_cd = flat.newtonian_drag()[0]
+    assert flat_cd == pytest.approx(body.CP_MAX_NEWTONIAN, rel=1e-6)
+    assert flat_cd / b.newtonian_drag_sphere == pytest.approx(1.0 / 0.49897, rel=0.02)     # 2.00 vs ATDB's 2.0041
+    fixed = melting_body(layered_mesh, size_feedback="initial")
+    assert fixed.drag_shape_factor() == 1.0 and fixed.reference_area() == pytest.approx(math.pi * 0.05 ** 2, rel=2e-3)
+    # the trajectory multiplies the continuum entry only
+    tables, bridging = aero.SphereDragTables.from_json(), aero.SesamTable()
+    assert aero.drag_coefficient(0.0, 10.0, tables, bridging, 2.0) == pytest.approx(2.0 * tables.cd_continuum(10.0))
+    assert aero.drag_coefficient(1e6, 10.0, tables, bridging, 2.0) == pytest.approx(tables.cd_free_molecular(10.0))
 ```
 
 
@@ -3428,6 +3714,7 @@ class Body(Protocol):
     def advance(self, t, dt, loads) -> None: ...          # loads: heating.HeatingResult applied over [t - dt, t]
     def reference_area(self): ...                        # m2 drag reference area, or None for the fixed pi D^2/4
     def reference_length(self): ...                      # m length of the body Knudsen number, or None for the fixed D
+    def drag_shape_factor(self): ...                     # continuum C_D of the current shape / a sphere's (1 for a sphere)
     def surface_temperature(self) -> np.ndarray: ...     # K per patch
     def mean_temperature(self) -> float: ...             # K, energy-equivalent (spec 6.4)
     def energy(self) -> float: ...                       # J stored above the material's reference temperature
@@ -3452,6 +3739,9 @@ class ConstantBody:
 
     def reference_length(self):
         return None
+
+    def drag_shape_factor(self):
+        return 1.0
 
     def advance(self, t, dt, loads):
         return None
@@ -3501,6 +3791,10 @@ class ThermalBody:
         """Length scale of the body Knudsen number, or None for the fixed initial diameter."""
         return None
 
+    def drag_shape_factor(self):
+        """Continuum drag of the body's shape relative to a sphere's: 1 for the sphere of Steps 1-2."""
+        return 1.0
+
     def nose_radius(self):
         """Stagnation-point radius of curvature [m] for the heating and the surface flow: the sphere's."""
         return float(self.mesh.params.get("radius_m", 0.05))
@@ -3540,6 +3834,7 @@ class ThermalBody:
 
 
 SIZE_FEEDBACK_NAMES = ("current", "initial")
+CP_MAX_NEWTONIAN = 1.84          # only the ratio to the meshed sphere's own value is used, so this cancels
 NOSE_CAP_ANGLE = 30.0            # deg: the windward cap fitted for the nose radius (depth (1 - cos 30 deg) R_t behind the front)
 NOSE_CAP_FACTOR = 1.67           # a flat face of radius R_t heats like a sphere of 1.67 R_t (its stagnation velocity gradient is
                                  # ~0.6 x a sphere's of the same radius, Boison & Curtiss 1959): the cap on the fitted radius
@@ -3628,6 +3923,7 @@ class MeltingBody(ThermalBody):
         self.melt_onset = self.spray_onset = None
         self.consumed = False
         self._refresh_geometry()
+        self.newtonian_drag_sphere = self.newtonian_drag()[0]      # the meshed sphere's own value: the normalisation
 
     # -- geometry -----------------------------------------------------------------------------------------------
     def _refresh_geometry(self):
@@ -3667,6 +3963,42 @@ class MeltingBody(ThermalBody):
             return float(self.mesh.params.get("radius_m", 0.05))
         return self.cap_nose_radius
 
+    def newtonian_drag(self):
+        """Modified-Newtonian drag coefficient of the current windward silhouette: sum C_p,max (n.v)^3 A / sum (n.v) A
+        over the convex hull of the surface (0.92 for a sphere, 1.84 for a flat face, with C_p,max = 1.84).
+
+        The hull, not the raw facets: the staircase left by element death scatters the normals and biases the integral
+        low and non-monotonically (0.79-1.07 against the hull's smooth 0.92-1.73, measured 2026-09-21), and the flow
+        sees the silhouette -- a shallow cavity recovers roughly the stagnation pressure at its mouth. It is therefore
+        an upper bound where the face is cratered."""
+        from scipy.spatial import ConvexHull
+        points = self.mesh.points[np.unique(self.surface.faces)]
+        try:
+            hull = ConvexHull(points)
+        except Exception:                                        # degenerate remnant: fall back to the sphere
+            return CP_MAX_NEWTONIAN / 2.0, self.surface.projected_area(self.v_hat)
+        tri = points[hull.simplices]
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        area = 0.5 * np.linalg.norm(n, axis=1)
+        n = n / (2.0 * np.maximum(area, 1e-300))[:, None]
+        inward = np.einsum("ij,ij->i", n, tri.mean(axis=1) - points.mean(axis=0)) < 0.0
+        n[inward] *= -1.0
+        c = n @ self.v_hat
+        w = c > 0.0
+        projected = float((area[w] * c[w]).sum())
+        if projected <= 0.0:
+            return CP_MAX_NEWTONIAN / 2.0, self.surface.projected_area(self.v_hat)
+        return float((CP_MAX_NEWTONIAN * c[w] ** 3 * area[w]).sum() / projected), projected
+
+    def drag_shape_factor(self):
+        """The continuum drag of the current shape relative to a sphere's, for aero.drag_coefficient: exactly 1 while
+        the body is intact (it is normalised by the meshed sphere's own Newtonian value, so the mesh discretisation
+        error cancels and the ATDB sphere table is reproduced bit for bit) and 2.00 at the flat-face limit, where the
+        ATDB disc entry sits. `size_feedback = "initial"` pins it to 1 (SESAM's convention)."""
+        if self.settings.size_feedback == "initial":
+            return 1.0
+        return self.newtonian_drag()[0] / self.newtonian_drag_sphere
+
     def reference_length(self):
         if self.settings.size_feedback == "initial":
             return None
@@ -3676,7 +4008,11 @@ class MeltingBody(ThermalBody):
         return float((self.phi * self.element_mass).sum() + self.m_f.sum())
 
     def reference_area(self):
-        return self.surface.projected_area(self.v_hat)
+        """Drag reference area: the hull's projected area, paired with the C_D of drag_shape_factor (the raw surface's
+        projection counts forward-facing patches inside a crater and is 2-4 % larger)."""
+        if self.settings.size_feedback == "initial":
+            return self.surface.projected_area(self.v_hat)
+        return self.newtonian_drag()[1]
 
     def equivalent_radius(self):
         return (3.0 * self.mass(0.0) / (4.0 * math.pi * self.material.rho)) ** (1.0 / 3.0)
@@ -3792,7 +4128,7 @@ class MeltingBody(ThermalBody):
         if state is None or self.m_f.sum() <= 0.0:
             self.last_flow = self.last_spray = None
             return 0.0
-        flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho)
+        flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
         delta_m, _ = spray_mod.melt_layer(flow, liq)
         areas = self.surface.areas
         # (ii) lubrication and runoff
@@ -3823,7 +4159,10 @@ class MeltingBody(ThermalBody):
         self.last_flow, self.last_spray, self.last_b = flow, res, b
         r = res.r[res.dm > 0.0]
         self.last_melt.update({
-            "runoff_substeps": n_sub, "n_released": float(res.dn.sum()), "regime_fractions": flow.regime_fractions(areas, self.windward),
+            "runoff_substeps": n_sub, "n_released": float(res.dn.sum()), "regime_fractions": flow.closure_fractions(areas, self.windward),
+            "kn_body": flow.kn_body, "re_shock": flow.re_shock, "flow_branch": float(flow.branch),
+            "kn_local_stag": float(flow.kn_local[self.i_stag]), "p_w_stag": float(flow.p_w[self.i_stag]),
+            "phi_sonic_deg": math.degrees(flow.phi_sonic) if np.isfinite(flow.phi_sonic) else float("nan"),
             "theta_cr_deg": float(np.degrees(self.theta[res.unstable].min())) if res.unstable.any() else float("nan"),
             "spraying_area_m2": float(areas[res.unstable].sum()), "rt_active": float(res.rt_active),
             "r_median_um": float(np.median(r) * 1e6) if r.size else float("nan"), "r_max_um": float(r.max() * 1e6) if r.size else float("nan"),
@@ -3891,8 +4230,12 @@ class MeltingBody(ThermalBody):
                 "n_active_elements": float(self.mesh.n_active), "spraying_area_m2": lm.get("spraying_area_m2", 0.0),
                 "theta_cr_deg": lm.get("theta_cr_deg", float("nan")), "n_released": self.n_released,
                 "released_mass_kg": lm.get("released_mass", 0.0), "r_median_um": lm.get("r_median_um", float("nan")),
-                "r_max_um": lm.get("r_max_um", float("nan")), "regime_fraction_continuum": fractions[0],
-                "regime_fraction_slip": fractions[1], "regime_fraction_fm": fractions[2], "rt_active": lm.get("rt_active", 0.0),
+                "r_max_um": lm.get("r_max_um", float("nan")), "closure_fraction_girin": fractions[0],
+                "closure_fraction_couette_slip": fractions[1], "closure_fraction_couette_fm": fractions[2], "rt_active": lm.get("rt_active", 0.0),
+                "kn_body": lm.get("kn_body", float("nan")), "kn_local_stag": lm.get("kn_local_stag", float("nan")),
+                "re_shock": lm.get("re_shock", float("nan")), "flow_branch": lm.get("flow_branch", float("nan")),
+                "p_w_stag_Pa": lm.get("p_w_stag", float("nan")), "phi_sonic_deg": lm.get("phi_sonic_deg", float("nan")),
+                "drag_shape_factor": self.drag_shape_factor(),
                 "removed_enthalpy_J": self.removed_enthalpy,
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
@@ -3901,7 +4244,59 @@ class MeltingBody(ThermalBody):
 ```
 
 
-- [ ] **Step 4: Edit `reentry_model/trajectory.py`**
+- [ ] **Step 4: Extract the flat-disc endpoint of the drag family**
+
+```bash
+"$PY" - <<'EOF'
+import scipy.io as sio, numpy as np, json
+c = sio.netcdf_file("/Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_CYLINDER.nc", "r", mmap=False)
+ld = np.asarray(c.variables["log_LengthToDiameter"][:])
+j = int(np.argmin(10.0 ** ld))                       # thinnest disc
+ma = np.asarray(c.variables["MachNumber"][:])
+get = lambda k: [round(float(v), 6) for v in np.asarray(c.variables[k][:])[0, :, j]]
+doc = {
+    "_provenance": ("Values of /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_CYLINDER.nc (ESA DRAMA 4.1.4 aerothermal "
+                    "database for the primitive CYLINDER, Hyperschall Technologie Goettingen GmbH) at angle of attack 0 (the flat "
+                    "face normal to the flow) and the thinnest tabulated aspect ratio L/D = %.1e, read on 2026-09-22. This is the "
+                    "flat-disc limit of the sphere-to-disc shape family: the face-on continuum C_D is independent of L/D over six "
+                    "decades (1.824 at Ma 10 for every thickness), because hypersonic drag on a blunt body is pressure drag on the "
+                    "frontal area while the side wall is parallel to the flow and the base sits in a near-vacuum wake. HTG's "
+                    "continuum database is modified Newtonian: sphere/disc = 0.4990-0.4991 at every Mach number, i.e. exactly the "
+                    "Newtonian ratio 1/2, so cd_continuum here IS C_p,max(Ma)." % (10.0 ** ld[j])),
+    "mach": [float(v) for v in ma], "cd_free_molecular": get("FMF_CD"), "cd_continuum": get("CON_CD"),
+    "heat_flux_factor_free_molecular": get("FMF_AvHeatFlux"), "heat_flux_factor_continuum": get("CON_AvHeatFlux"),
+}
+json.dump(doc, open("reentry_model/data/atdb_disc.json", "w"), indent=2)
+print(doc["cd_continuum"])
+EOF
+```
+
+Expected: `[1.801341, 1.824148, 1.828404, 1.829896, 1.830587, 1.830962]`, and the sphere table divided by it is 0.49897 at every Mach number.
+
+In `reentry_model/aero.py` add, next to `DEFAULT_ATDB`:
+
+```python
+DISC_ATDB = os.path.join(DATA_DIR, "atdb_disc.json")     # the flat-disc limit (ATDB_CYLINDER at zero angle of attack)
+```
+
+and give `drag_coefficient` the shape factor:
+
+```python
+def drag_coefficient(kn, ma, tables, bridging, shape_factor=1.0):
+    """SESAM's sphere C_D: continuum and free-molecular table values blended by f(Kn).
+
+    `shape_factor` (Step 3) scales the continuum entry for a body that is no longer a sphere: it is the
+    modified-Newtonian drag of the current windward shape divided by that of a sphere, so 1 for a sphere and 2.00 for
+    a flat face (the ATDB disc entry is exactly 2 x the sphere entry at every Mach number -- HTG's continuum database
+    is itself modified Newtonian). The free-molecular entry is left alone: face-on, a disc and a sphere differ by only
+    3-4 % there (2.24 vs 2.15 at Ma 10), and a melting body is deep in the continuum by the time it flattens."""
+    cd_c = tables.cd_continuum(ma) * shape_factor
+    cd_fm = tables.cd_free_molecular(ma)
+    f = bridging(kn) if kn > 0.0 else 0.0
+    return cd_c + (cd_fm - cd_c) * f
+```
+
+- [ ] **Step 5: Edit `reentry_model/trajectory.py`**
 
 In `Simulator.aero_state`, replace the three lines
 
@@ -3915,13 +4310,13 @@ with
 
 ```python
             kn = aero.knudsen(fs.rho, fs.m_bar, self.body.reference_length() or self.settings.diameter)   # a melting body's current size (Step 3)
-            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging)
+            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging, self.body.drag_shape_factor())
             area = self.body.reference_area() or self.area          # a melting body's projected area (Step 3), else pi D^2/4
             m = self.body.mass(t)
             a_drag = -0.5 * fs.rho * V * v_rel * cd * area / m if m > 0.0 else np.zeros(3)      # a consumed body (Step 3) has no drag
 ```
 
-- [ ] **Step 5: Smooth SESAM's Mach-1 drag step in `reentry_model/aero.py`**
+- [ ] **Step 6: Smooth SESAM's Mach-1 drag step in `reentry_model/aero.py`**
 
 A light melting remnant hovers at its terminal velocity near Ma 1, where the factor-2 step in `cd_continuum` stalls the adaptive integrator (1.3e5 RHS evaluations in one macro step, measured). After `DEFAULT_ATDB = os.path.join(DATA_DIR, "atdb_sphere.json")` add
 
@@ -3950,7 +4345,7 @@ and extend the class docstring's last sentence to: `simply clamped (Kn is neglig
         assert t.cd_continuum(1.0) == pytest.approx(0.75 * 0.898818) and t.cd_continuum(0.98) == 0.5 * 0.898818   # the Ma-1 step smoothed over +-2 % (Step 3)
 ```
 
-- [ ] **Step 6: Run the tests**
+- [ ] **Step 7: Run the tests**
 
 ```bash
 "$PY" -m pytest tests/test_reentry_model_melting.py tests/test_reentry_model_coupled.py tests/test_reentry_model_trajectory.py tests/test_reentry_model_aero.py -q
@@ -3958,12 +4353,12 @@ and extend the class docstring's last sentence to: `simply clamped (Kn is neglig
 FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q
 ```
 
-Expected: 5 passed (melting), the Step 2 coupled/trajectory/aero tests unchanged, the eight Step 1 reference flights within their thresholds; in `fenicsx_env` 8 passed — the two backends give the same melting run (mass to 1e-6, temperatures to 0.5 K, the same dead elements).
+Expected: 6 passed (melting), the Step 2 coupled/trajectory/aero tests unchanged, the eight Step 1 reference flights within their thresholds; in `fenicsx_env` 8 passed — the two backends give the same melting run (mass to 1e-6, temperatures to 0.5 K, the same dead elements).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add reentry_model/body.py reentry_model/trajectory.py reentry_model/aero.py tests/test_reentry_model_melting.py tests/test_reentry_model_aero.py
+git add reentry_model/body.py reentry_model/trajectory.py reentry_model/aero.py reentry_model/data/atdb_disc.json tests/test_reentry_model_melting.py tests/test_reentry_model_aero.py tests/test_reentry_model_data.py
 git commit -m "Add the melting body: feed, film, spraying, element death, accounting and the projected area (Step 3 Task 9)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
@@ -4014,7 +4409,7 @@ def test_coupled_melting_run_and_writers(coarse_sphere_mesh, tmp_path):
     grid = pv.read(os.path.join(run_dir, "vtk", "field_1.vtu"))
     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
-    for key in ("film_thickness", "we_s", "regime", "tau", "r_droplet", "release_rate"):
+    for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate"):
         assert key in poly.cell_data
     files = coupled.write_particles(run_dir, b, hist)
     for key in ("particles", "particles_summary", "size_distribution"):
@@ -4074,9 +4469,11 @@ THERMAL_COLUMNS = ["convective_heat_W", "rad_cooling_W", "integrated_heat_J", "a
                    "T_centre_K", "q_stag_Wm2", "heating_blend_f"]
 MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_mass_kg", "melt_front_depth_max_mm",
                 "equivalent_radius_mm", "n_active_elements", "spraying_area_m2", "theta_cr_deg", "n_released",
-                "released_mass_kg", "r_median_um", "r_max_um", "regime_fraction_continuum", "regime_fraction_slip",
-                "regime_fraction_fm", "rt_active", "removed_enthalpy_J", "film_thickness_max_mm", "film_thickness_mean_mm",
-                "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm", "n_dead_elements"]
+                "released_mass_kg", "r_median_um", "r_max_um", "closure_fraction_girin", "closure_fraction_couette_slip",
+                "closure_fraction_couette_fm", "rt_active", "removed_enthalpy_J", "film_thickness_max_mm",
+                "film_thickness_mean_mm", "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm",
+                "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
+                "drag_shape_factor", "n_dead_elements"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -4225,7 +4622,9 @@ def write_vtk_frame(output_dir, k, body, loads):
         res, flow = body.last_spray, body.last_flow
         same = res is not None and res.r.size == n
         poly.cell_data["we_s"] = res.we_s if same else np.zeros(n)
-        poly.cell_data["regime"] = flow.regime.astype(float) if same else np.full(n, 2.0)
+        poly.cell_data["closure"] = flow.closure.astype(float) if same else np.ones(n)
+        poly.cell_data["kn_local"] = flow.kn_local if same else np.full(n, np.nan)
+        poly.cell_data["p_w"] = flow.p_w if same else np.zeros(n)
         poly.cell_data["tau"] = flow.tau if same else np.zeros(n)
         poly.cell_data["r_droplet"] = np.where(res.dm > 0.0, res.r, np.nan) if same else np.full(n, np.nan)
         poly.cell_data["release_rate"] = res.dm / surface.areas if same else np.zeros(n)
@@ -4342,6 +4741,21 @@ def test_melting_reference_runs_are_committed_and_consistent():
         rows = list(csv.DictReader(open(csv_path)))
         assert float(rows[-1]["mass_kg"]) == 0.0 and float(rows[-1]["thick_mm"]) == 0.0 and float(rows[-1]["altitude_km"]) > 60.0
         assert abs(float(rows[0]["mass_kg"]) - doc["inputs"]["initial_mass_kg"]) < 1e-3
+
+
+def test_disc_aerothermal_table():
+    """data/atdb_disc.json: ATDB_CYLINDER at zero angle of attack and the thinnest aspect ratio -- the flat-face limit
+    of the sphere-to-disc family (Step 3). HTG's continuum database is modified Newtonian, so the sphere entry is
+    0.49897 of the disc entry at every Mach number, and the free-molecular entries differ by only 3 %."""
+    sphere = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_sphere.json")))
+    disc = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_disc.json")))
+    assert disc["mach"] == sphere["mach"] == [5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
+    assert "ATDB_CYLINDER" in disc["_provenance"] and "angle of attack 0" in disc["_provenance"]
+    cd_c, cd_fm = disc["cd_continuum"], disc["cd_free_molecular"]
+    assert cd_c[1] == pytest.approx(1.824148) and cd_fm[1] == pytest.approx(2.202072)
+    assert all(abs(s / d - 0.49897) < 1e-5 for s, d in zip(sphere["cd_continuum"], cd_c))
+    assert all(0.99 < d / s < 1.08 for s, d in zip(sphere["cd_free_molecular"], cd_fm))
+    assert all(v == pytest.approx(0.329561) for v in disc["heat_flux_factor_continuum"])       # Mach-independent, like the sphere's
 ```
 
 
@@ -4383,7 +4797,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: the melting reference files (Task 11), histories with `MELT_COLUMNS` (Task 10), VTK series with the melt fields (Task 10).
-- Produces: `sesam_io.Reference.mass`, `.thickness`; `compare.MELT_PLOT_NAMES` (7), `DEMISE_FRACTION = 0.01`, `has_melt(history, reference=None)`, `melt_metrics(history, reference) -> dict` (`mass.max_rel_m0`, `onset_altitude_diff_km`, `demise_time_diff_s`, `demise_time_rel`, ...), `plot_melt(history, outdir, title, reference=None, size_distribution_csv=None) -> paths`; `viz.render_frame(..., melting=False)`, `render_film_frame`, `render_section_frame(..., melting=False)`, `animate(..., melting=False)`, `animate_section(..., melting=False)`, `animate_film(run_dir, history, radius, fps, animation, stills)`, `still_marks(history, melting=False)`.
+- Produces: `sesam_io.Reference.mass`, `.thickness`; `compare.MELT_PLOT_NAMES` (7, with `closures_time.png` carrying the closure area fractions and both Knudsen numbers on a twin log axis), `DEMISE_FRACTION = 0.01`, `has_melt(history, reference=None)`, `melt_metrics(history, reference) -> dict` (`mass.max_rel_m0`, `onset_altitude_diff_km`, `demise_time_diff_s`, `demise_time_rel`, ...), `plot_melt(history, outdir, title, reference=None, size_distribution_csv=None) -> paths`; `viz.render_frame(..., melting=False)`, `render_film_frame`, `render_section_frame(..., melting=False)`, `animate(..., melting=False)`, `animate_section(..., melting=False)`, `animate_film(run_dir, history, radius, fps, animation, stills)`, `still_marks(history, melting=False)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4408,15 +4822,18 @@ def melting_history(ref, lag=0.0, film=0.0):
     n = len(ref.time)
     c["mass_kg"] = np.interp(ref.time - lag, ref.time, ref.mass) + film
     for key in ("film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_mass_kg", "spraying_area_m2", "theta_cr_deg", "n_released",
-                "released_mass_kg", "r_median_um", "r_max_um", "regime_fraction_continuum", "regime_fraction_slip", "regime_fraction_fm",
-                "film_thickness_mean_mm", "film_thickness_max_mm", "convective_heat_W", "surface_T_max_K"):
+                "released_mass_kg", "r_median_um", "r_max_um", "closure_fraction_girin", "closure_fraction_couette_slip",
+                "closure_fraction_couette_fm", "kn_body", "kn_local_stag", "film_thickness_mean_mm", "film_thickness_max_mm",
+                "convective_heat_W", "surface_T_max_K"):
         c[key] = np.zeros(n)
     c["film_mass_kg"][:] = film
     c["removed_mass_kg"] = ref.mass[0] - c["mass_kg"] + film
     c["sprayed_mass_kg"] = c["removed_mass_kg"].copy()
     c["r_median_um"][:] = 150.0
-    c["regime_fraction_continuum"][:] = 0.5
-    c["regime_fraction_slip"][:] = 0.5
+    c["closure_fraction_girin"][:] = 0.5
+    c["closure_fraction_couette_slip"][:] = 0.5
+    c["kn_body"][:] = 0.01
+    c["kn_local_stag"][:] = 1e-4
     return h
 
 
@@ -4646,11 +5063,17 @@ def plot_melt(history, outdir, title, reference=None, size_distribution_csv=None
     bx.plot(t, c["spraying_area_m2"] * 1e4, color=MODEL_COLOR, lw=1.0); bx.set_ylabel("spraying area [cm2]"); bx.set_xlabel("time [s]")
     strip_top_right_spines(ax); strip_top_right_spines(bx)
     fig.tight_layout(); fig.savefig(paths[3], dpi=150); plt.close(fig)
-    # 5. regime fractions
+    # 5. closure fractions and the two Knudsen numbers
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.stackplot(t, c["regime_fraction_continuum"], c["regime_fraction_slip"], c["regime_fraction_fm"],
-                 labels=["continuum", "slip", "transitional/free-molecular"], colors=[INK, MODEL_COLOR, MUTED], alpha=0.8)
-    ax.set_xlabel("time [s]"); ax.set_ylabel("windward area fraction"); ax.set_ylim(0.0, 1.0); ax.legend(frameon=False, loc="upper left")
+    ax.stackplot(t, c["closure_fraction_girin"], c["closure_fraction_couette_slip"], c["closure_fraction_couette_fm"],
+                 labels=["Girin closure (Kn_local < 0.01)", "Couette, slip-corrected shear", "Couette, free-molecular shear"],
+                 colors=[INK, MODEL_COLOR, MUTED], alpha=0.8)
+    ax.set_xlabel("time [s]"); ax.set_ylabel("windward area fraction"); ax.set_ylim(0.0, 1.0); ax.legend(frameon=False, loc="upper left", fontsize=8)
+    bx2 = ax.twinx()
+    bx2.semilogy(t, c["kn_body"], color=SECOND, lw=1.0, ls="--")
+    bx2.semilogy(t, c["kn_local_stag"], color=SECOND, lw=1.0, ls=":")
+    bx2.axhline(0.01, color=MUTED, lw=0.6)
+    bx2.set_ylabel("Kn_body (dashed), Kn_local at the nose (dotted)", color=SECOND, fontsize=8)
     ax.set_title(title, color=SECOND, fontsize=10); strip_top_right_spines(ax)
     fig.tight_layout(); fig.savefig(paths[4], dpi=150); plt.close(fig)
     # 6. droplet size and film thickness
@@ -4895,7 +5318,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `run` flags `--melt off|on`, `--material` (names or path; default `AA7075_nomelt`, `AA7075_range` with `--melt on`), `--removal`, `--runoff`, `--rarefied-shear`, `--we-critical`, `--kr`, `--kt`, `--prism-layers` (default 4 with melting, 0 otherwise), `--layer-thickness` (mm), `--demise-fraction`, `--particles/--no-particles`, `--size-feedback current|initial` (default `current` with `girin`, `initial` with `instant`), `--k-scale`, `--consistent-mass`; run names end in `_melt-<removal>`; the JSON `settings` carry the melt settings and the liquid properties, `results` the melt results, `files` the particle files and melt plots (and `film`); `compare` handles melting histories; `model_run_name(..., heating_name=None, melt=None)`; `_fmt`.
+- Produces: `run` flags `--melt off|on`, `--material` (names or path; default `AA7075_nomelt`, `AA7075_range` with `--melt on`), `--removal`, `--runoff`, `--rarefied-shear`, `--we-critical`, `--kr`, `--kt`, `--prism-layers` (default 4 with melting, 0 otherwise), `--layer-thickness` (mm), `--demise-fraction`, `--particles/--no-particles`, `--size-feedback current|initial` (default `current` with `girin`, `initial` with `instant`; it governs the Knudsen length, the nose-cap radius and the drag shape factor together), `--gamma-pm` (default 1.15), `--kn-body-shock` (default 0.01), `--k-scale`, `--consistent-mass`; run names end in `_melt-<removal>`; the JSON `settings` carry the melt settings and the liquid properties, `results` the melt results, `files` the particle files and melt plots (and `film`); `compare` handles melting histories; `model_run_name(..., heating_name=None, melt=None)`; `_fmt`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4920,12 +5343,14 @@ def test_melting_run_writes_columns_files_and_json(tmp_path):
                                                                    "--t-max", "15", "--outdir", str(tmp_path), "--name", "melt_short", "--stills"]
     assert cli.main(argv) == 0
     rows = list(csv.DictReader(open(tmp_path / "melt_short.csv")))
-    assert len(rows) == 31 and "sprayed_mass_kg" in rows[0] and "film_mass_kg" in rows[0] and "regime_fraction_slip" in rows[0]
+    assert len(rows) == 31 and "sprayed_mass_kg" in rows[0] and "film_mass_kg" in rows[0] and "closure_fraction_girin" in rows[0]
+    assert float(rows[-1]["kn_body"]) > 0.0 and float(rows[-1]["kn_local_stag"]) < float(rows[-1]["kn_body"]) and "flow_branch" in rows[0]
     assert float(rows[-1]["mass_kg"]) < float(rows[0]["mass_kg"]) and float(rows[-1]["sprayed_mass_kg"]) > 0.0
     doc = json.load(open(tmp_path / "melt_short.json"))
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01
     assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
     assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
@@ -5132,7 +5557,14 @@ def build_parser():
                          "verification device, not physical")
     me.add_argument("--runoff", choices=("on", "off"), default="on", help="film runoff transport along the surface (default on)")
     me.add_argument("--rarefied-shear", choices=surface_flow.RAREFIED_SHEAR_NAMES, default="slip",
-                    help="slip: Maxwell slip below Kn_delta 0.1 and free-molecular shear above (default); bridged: SESAM's f(Kn) blend")
+                    help="within the shock-layer branch: slip (default) uses Maxwell slip below Kn_local 0.1 and free-molecular shear above; "
+                         "bridged blends them with SESAM's f(Kn). The merged branch always bridges")
+    me.add_argument("--gamma-pm", type=float, default=surface_flow.GAMMA_PM,
+                    help="effective ratio of specific heats of the Prandtl-Meyer expansion that sets the wall pressure beyond the sonic "
+                         "point (default %(default)s; 1.4 frozen air, ~1.15 dissociated -- a factor ~2 on p_w at 90 deg)")
+    me.add_argument("--kn-body-shock", type=float, default=surface_flow.KN_BODY_SHOCK,
+                    help="body Knudsen number below which a distinct bow shock is assumed and the shock-layer construction is used "
+                         "(default %(default)s); above it the flow is treated as merged and every melt closure is flagged")
     me.add_argument("--we-critical", type=float, default=dispersion.WE_CRITICAL_PRACTICAL, help="critical surface Weber number (default %(default)s)")
     me.add_argument("--kr", type=float, default=spray.K_R, help="droplet radius / wavelength (default %(default)s)")
     me.add_argument("--kt", type=float, default=spray.K_T, help="release period / growth time (default %(default)s)")
@@ -5167,7 +5599,7 @@ def build_thermal(args, settings, mass):
         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
     if melting:
-        flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear)
+        flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical)
         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
@@ -5193,7 +5625,7 @@ def build_thermal(args, settings, mass):
     if melting:
         info.update({"removal": args.removal, "runoff": args.runoff, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
-                     "size_feedback": size_feedback,
+                     "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
                      "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus, "latent_heat_Jkg": mat.latent_heat})
     return the_body, heating_model, info
@@ -5217,7 +5649,10 @@ def cmd_run(args, parser):
         parser.error("--animate/--stills/--frames-every need --thermal fem")
     if args.melt == "on" and args.thermal != "fem":
         parser.error("--melt on needs --thermal fem")
-    for label, value in (("--we-critical", args.we_critical), ("--kr", args.kr), ("--kt", args.kt), ("--layer-thickness", args.layer_thickness)):
+    if not 1.0 < args.gamma_pm < 2.0:
+        parser.error("--gamma-pm must be within (1, 2)")
+    for label, value in (("--we-critical", args.we_critical), ("--kr", args.kr), ("--kt", args.kt), ("--layer-thickness", args.layer_thickness),
+                         ("--kn-body-shock", args.kn_body_shock)):
         if value <= 0.0:
             parser.error("{} must be > 0".format(label))
     if args.prism_layers is not None and args.prism_layers < 0:
@@ -5590,10 +6025,11 @@ if __name__ == "__main__":
 """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
 
     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
-        [--variants base,layers2,layers6,dt025,bridged,norunoff,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,fenicsx]
+        [--variants base,layers2,layers6,dt025,bridged,norunoff,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
 
 Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
-six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius); the table
+six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+`knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate); the table
 lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
 change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
 needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
@@ -5613,7 +6049,8 @@ VARIANTS = {
     "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "we308": ["--we-critical", "3.08"],
     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
-    "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "fenicsx": ["--thermal-solver", "fenicsx"],
+    "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+    "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],
 }
 KEYS = ["sprayed_mass_kg", "r_median_um", "melt_onset_altitude_km", "spraying_onset_altitude_km", "demise_altitude_km", "runtime_s"]
 COLUMNS = ["case", "variant", "sprayed [kg]", "median r [um]", "melt onset [km]", "spraying onset [km]", "demise [km]", "runtime [s]"]
@@ -5682,7 +6119,7 @@ Expected: 2 passed (measured 0.98 % / +0.10 km / −1.3 % and 1.29 % / +0.17 km 
 "$PY" analysis/melt_sensitivity.py --variants fenicsx --python "$FX"                  # the backend variant from fenicsx_env (CC and FI_PROVIDER exported)
 ```
 
-(export `CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang` before the second command; the script sets `FI_PROVIDER=tcp` itself.) Expected: `sensitivity.md` with every variant's sprayed mass, median radius, onsets and demise altitude and the change relative to `base`; the `fenicsx` row equal to `base` to the printed digits; `layers2`/`layers6`/`dt025` within a few percent of `base` in demise altitude and sprayed mass; `we308`, `kt±30` nearly identical (spraying is melt-limited), `kr-30` moving the median radius by −21 %; `AA7075` earlier onset (850 K vs 908 K liquidus) and a leeward remnant that reaches the ground (demise n/a); `sizeinitial` ending 5 km higher (the nose stays at R₀). Record the table in Task 15.
+(export `CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang` before the second command; the script sets `FI_PROVIDER=tcp` itself.) Expected: `sensitivity.md` with every variant's sprayed mass, median radius, onsets and demise altitude and the change relative to `base`; the `fenicsx` row equal to `base` to the printed digits; `layers2`/`layers6`/`dt025` within a few percent of `base` in demise altitude and sprayed mass; `we308`, `kt±30` nearly identical (spraying is melt-limited), `kr-30` moving the median radius; `AA7075` earlier onset (850 K vs 908 K liquidus) and a leeward remnant that reaches the ground (demise n/a); `sizeinitial` ending higher (the nose stays at R₀, the body keeps the sphere's drag). `gammapm14` (`--gamma-pm 1.4`) and `knbody003` (`--kn-body-shock 0.003`) bound the two new modelling choices: the first halves the wall pressure beyond the sonic point, the second shrinks the Girin-certified band. Record the table in Task 15.
 
 - [ ] **Step 6: Run the FEniCSx tests once more and the whole unit tier**
 
@@ -5772,10 +6209,9 @@ and residual when a melting reference is given); videos `animation.mp4` (surface
 patches coloured by droplet radius), `film.mp4` (film thickness), `section.mp4` (cross-section with the liquidus and
 solidus iso-lines) and stills at melt onset, spraying onset and peak release in addition to Step 2's. The VTK series
 add the liquid fraction and φ_e (volume, active elements only) and the film thickness, We_s, regime, shear, droplet
-radius and release rate (surface). A 100 mm physics-mode melting flight on the default mesh takes ~5 min
-(284 s: 230 steps, 3.2 Newton iterations per step; melt onset 74.0 km, demise 54.8 km at 115 s, 1.455 kg sprayed as
-4.1e7 droplets of median radius 154 µm; the windward-cap radius reaches its 1.67 R_t cap within the first 15 % of the
-mass loss, which lowers the stagnation heating to ≈ 0.8 × the sphere's).
+radius and release rate (surface). A macro step costs ~1.5 s on the default mesh (0.6 s of it conduction, the rest the
+melt step's Cantera edge states and the runoff solve); a flight that demises takes 2–5 min, while one whose remnant
+survives runs to the ground and takes ~30 min (1195 steps for the 100 mm physics case).
 
 **`--removal instant` and `--k-scale` are verification devices, not physical models.** `instant` removes the liquid
 of every element as it forms — no film, no runoff, no spraying — which is the lumped Q/L_f law SESAM applies once its
@@ -5794,19 +6230,28 @@ criterion, film excluded).
 
 | case | mode | max \|Δm\| (of m₀) | melt onset [km] model / SESAM | 1 %-mass time [s] model / SESAM | sprayed / film left [kg] | droplets (median r) | runtime |
 |---|---|---|---|---|---|---|---|
-| d100 | bookkeeping | 0.98 % | 71.10 / 71.00 | 65.9 / 66.8 (−1.3 %) | — | — | 16 s, 132 steps |
-| d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 8 s, 382 steps |
-| d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 9.7 % | 71.62 / 71.00 | 71.1 / 66.8 (+6.5 %) | 1.400 / 0.061 | 2.6e7 (164 µm) | 110 s, 143 steps |
-| d050 | resolved | 13.6 % | 77.57 / 77.10 | 192.4 / 191.4 (+0.5 %) | 0.161 / 0.021 | 5.6e6 (137 µm) | 29 s, 385 steps |
-| d100 | physics (AA7075_range, girin, size feedback) | 75.2 % | 73.96 / 71.00 | 114.8 / 66.8 (+72 %) | 1.455 / 0.004 | 4.1e7 (154 µm) | 248 s, 230 steps |
-| d050 | physics | 66.5 % | 78.32 / 77.10 | 201.7 / 191.4 (+5.4 %) | 0.170 / 0.000 | 7.4e6 (161 µm) | 45 s, 404 steps |
+| d100 | bookkeeping | 0.98 % | 71.10 / 71.00 | 65.9 / 66.8 (−1.3 %) | — | — | 29 s, 132 steps |
+| d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 14 s, 382 steps |
+| d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 10.1 % | 71.62 / 71.00 | 71.1 / 66.8 (+6.5 %) | 1.396 / 0.065 | 2.6e7 (160 µm) | 144 s, 143 steps |
+| d050 | resolved | 13.5 % | 77.57 / 77.10 | 192.4 / 191.4 (+0.5 %) | 0.161 / 0.021 | 5.1e5 (303 µm) | 40 s, 385 steps |
+| d100 | physics (AA7075_range, girin, shape feedback) | 76.2 % | 73.96 / 71.00 | **no demise** | 1.027 / 0.001 | 3.2e7 (99 µm) | 1808 s, 1195 steps |
+| d050 | physics | 66.3 % | 78.32 / 77.10 | 202.6 / 191.4 (+5.9 %) | 0.175 / 0.000 | 2.5e6 (235 µm) | 219 s, 406 steps |
 
 Thresholds (bookkeeping mode only, `tests/test_reentry_model_reference_melt.py`): mass 2 % of m₀, onset 0.5 km,
-1 %-mass time 2 %. The resolved runs are reported: the surface melts 0.6 km before SESAM's lumped body reaches 850 K,
-and the interior's sensible heating during the melt delays the end by 0.5–6.5 %; the mass difference (10–14 % of m₀)
-is the lumped-body assumption, plotted in `d100__resolved/mass_time.png`. Physics mode is the model proper (0.74 ×
-SESAM's heat, windward-concentrated, the nose flattening as it erodes): the 100 mm surface melts at 74 km and the body
-is consumed at 115 s / 56 km — 48 s after SESAM's lumped sphere.
+1 %-mass time 2 %. The devices are pinned to `--size-feedback initial`, so none of the shape or regime amendments can
+move them — which is what makes them a fixed yardstick. The resolved runs are reported: the surface melts 0.6 km before
+SESAM's lumped body reaches 850 K, and the interior's sensible heating delays the end by 0.5–6.5 %; the 10–14 % mass
+difference is the lumped-body assumption, plotted in `d100__resolved/mass_time.png`.
+
+**The physics-mode 100 mm sphere does not demise.** It melts from 74.0 km, sprays 1.027 kg of its 1.472 kg as 3.2×10⁷
+droplets, and the remaining **0.445 kg (30 % of the initial mass) reaches the ground**. That is a consequence of the
+fixed-attitude assumption acting three times over: the flattening nose is held face-on, which is the maximum-drag
+orientation (C_D rises from 0.91 toward 1.8, so the body decelerates high and the heating ∝ ρV³ collapses); the
+stagnation radius grows as the face flattens, cutting the stagnation flux by a further ~20 %; and the leeward shell is
+never heated at all. SESAM's lumped sphere, which keeps D₀, R₀ and the sphere drag table, demises at 66.5 km. A
+tumbling fragment would sit between the two — DRAMA's own tumbling-averaged C_D for a thin disc is 0.60, *below* the
+sphere's 0.91 — so the sphere/face-on spread is an attitude uncertainty, not a drag-law one, and tumbling is the first
+item of the next iteration (spec §17). The 50 mm sphere still demises (202.6 s, +5.9 % on SESAM's 1 %-mass time).
 
 Girin's published cases (`analysis/girin_reference.py`, `data/reference_values/girin2017_table1.json`,
 `girin1994_tables.json`): the exact tier — GI = We∞Re∞^−½ (13.04 / 3.51 / 43.46 vs 13.0 / 3.55 / 43.5) and φ_cr from his
@@ -5825,34 +6270,29 @@ Thwaites' momentum thickness a constant 12.3 × it within ±1.7 % over 5°–85�
 We_s 3.00 and 3.08, Δ_f 1.226 and Im Ω_f 0.247 at We_s 10⁴); energy and mass balances with melting and removal to
 1e-8; element death keeps the surface closed; both thermal backends give the same melting run to 1e-10 in mass.
 
-Sensitivity (`analysis/melt_sensitivity.py`, 100 mm physics flight, one setting changed per row). The sprayed mass is
-insensitive to everything (≤ 0.2 %); the demise altitude moves only with the size feedback (+8.9 % without it: the
-nose stays at R₀ and heats harder) and with Δt/2 (+2.8 %); the median droplet radius follows k_r (−21 % for −30 %,
-capped on the other side), Δt/2 (−21 %), the runoff (+17 % without it) and the material (−28 % for DRAMA's single
-850 K, which also melts 1 km higher, runs 2.7× longer and leaves a 1.8 % leeward remnant that reaches the ground);
-layers, the shear bridging, We_cr and k_t change nothing beyond 1 %. The 50 mm rows and the `fenicsx` row come from the
-full run of Task 14.
-
-| case | variant | sprayed [kg] | median r [um] | melt onset [km] | spraying onset [km] | demise [km] | runtime [s] |
-|---|---|---|---|---|---|---|---|
-| d100 | base | 1.4546 | 154.2 | 73.96 | 73.96 | 54.76 | 284 |
-| d100 | layers2 | 1.4572 (+0.2%) | 144.7 (-6.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.64 (-0.2%) | 198 (-30.1%) |
-| d100 | layers6 | 1.4567 (+0.1%) | 155.4 (+0.8%) | 73.96 (-0.0%) | 73.96 (-0.0%) | 54.62 (-0.3%) | 287 (+1.1%) |
-| d100 | dt025 | 1.4574 (+0.2%) | 122.0 (-20.9%) | 73.96 (-0.0%) | 73.96 (-0.0%) | 56.32 (+2.8%) | 461 (+62.6%) |
-| d100 | bridged | 1.4551 (+0.0%) | 153.0 (-0.8%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 279 (-1.5%) |
-| d100 | norunoff | 1.4537 (-0.1%) | 180.7 (+17.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 247 (-12.9%) |
-| d100 | we308 | 1.4577 (+0.2%) | 155.0 (+0.5%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.64 (-0.2%) | 265 (-6.6%) |
-| d100 | kr-30 | 1.4561 (+0.1%) | 122.3 (-20.7%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (+0.0%) | 258 (-8.9%) |
-| d100 | kr+30 | 1.4528 (-0.1%) | 156.0 (+1.2%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 241 (-14.9%) |
-| d100 | kt-30 | 1.4538 (-0.1%) | 154.2 (-0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (-0.0%) | 305 (+7.6%) |
-| d100 | kt+30 | 1.4559 (+0.1%) | 154.2 (-0.0%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 54.76 (+0.0%) | 239 (-15.6%) |
-| d100 | AA7075 | 1.4447 (-0.7%) | 111.6 (-27.6%) | 74.93 (+1.3%) | 74.93 (+1.3%) | n/a | 753 (+165.5%) |
-| d100 | sizeinitial | 1.4563 (+0.1%) | 149.8 (-2.8%) | 73.96 (+0.0%) | 73.96 (+0.0%) | 59.65 (+8.9%) | 181 (-36.3%) |
+Sensitivity (`analysis/melt_sensitivity.py`, 100 mm physics flight, one setting changed per row): fifteen variants —
+prism layers 2/4/6, Δt/2, `--rarefied-shear bridged`, no runoff, We_cr 3.08, k_r and k_t ±30 %, the single-temperature
+material, `--size-feedback initial`, `--gamma-pm 1.4`, `--kn-body-shock 0.003` and the FEniCSx backend — with the table
+written to `reentry_model_output/verification_melt/sensitivity/sensitivity.md`. The two amendments of 2026-09-22 get a
+row each so their uncertainty is bounded rather than asserted: γ_PM moves the wall pressure beyond the sonic point by a
+factor ~2, and the body gate moves the fraction of the flight that is Girin-certified.
 
 Findings recorded while building this step (details in the spec's amendments):
 - The film is stripped as fast as it melts: both instability branches remove hundreds to thousands of kg/m²/s where
   the melt supply is ~5 kg/m²/s, so the mass loss is energy-limited and the film stays microns thin (Girin's
-  "outstripping ablation" case); the thick branch acts only where the runoff piles the film up at the windward rim.
+  "outstripping ablation" case).
+- Where Girin's closure may be used is a measurable result, not an assumption. On the 100 mm physics flight melting
+  starts at 73.9 km inside the *merged* branch (Kn_body 0.0172, Re₂ 102); the gate opens at 69.0 km and stays open to
+  the end, so 69 % of the melting steps and 84 % of the sprayed mass carry Girin's Eq. (2) closure and the rest is
+  flagged Couette. At the 77.5 km break-off every sweep diameter is merged (Kn_body 0.60 at 5 mm to 0.030 at 100 mm).
+- The gate is deliberately conservative. Evaluated at the wall — cold and compressed — the local Knudsen number is
+  λ_w/λ∞ ≈ 1/167 of the freestream value, i.e. Kn_local ≈ Kn_body/84, so even the 5 mm sphere at 77.5 km has a nose
+  Kn_local of 0.0066 while its body value is 0.60. We decline to certify those patches because the construction that
+  would check them is the one we do not trust there.
+- Pure modified Newtonian was wrong where it mattered most: it gives p_w = p∞ at 90°, a factor 28–48 below the
+  Prandtl-Meyer value (5.2 Pa against 144–249 Pa at 100 mm/70 km) and below the measured sphere C_p band of 112–219 Pa.
+  It was also the cause of the "rarefied rim" in the earlier design — with the expansion resolved, the rim carries
+  ρ_e ~ 1e-4 kg/m³ and Kn_local ~ 2e-3, so the film no longer piles up there and needs no droplet-size cap.
 - SESAM hollows the melting sphere at fixed outer geometry (`thick_mm` = shell thickness): heat input, radiation,
   Kn and C_D stay those of the intact sphere until the last gram.
 - Girin's Table 1 is reproduced only with the ambient density in the boundary-layer Reynolds number (his printed
@@ -5950,6 +6390,10 @@ Change the spec's status line to `Status: implemented 2026-09-21 (plan docs/supe
 Measured while writing and executing the plan; each overrides the section it names. The plan's "Measured facts and
 spec amendments" list carries the numbers.
 
+0. §7, §16.5 — DRAMA's own gamma is constant: `atmosphereData.xml` and the packaged `StaticEnvironmentData.csv` carry
+   gamma = 1.4000 at every altitude from 0 to 150 km, so the Knudsen identity coefficient sqrt(gamma pi/2) = 1.4829 is a
+   constant and the freestream gamma never varies along a flight. SESAM's own mean free path, recovered from the reference
+   CSVs, is the hard-sphere value with d = 3.65 A (ratio 1.0001), which `aero.mean_free_path` already implements.
 1. §13.1 — the reference runs are `sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind` and
    `sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_nowind` (the wrapper adds no material suffix for the default
    material); SESAM hollows the melting sphere at fixed outer geometry (`thick_mm` = shell thickness; heat input,
@@ -5990,6 +6434,32 @@ spec amendments" list carries the numbers.
 14. §6.4/§6.5 of the Step 1 spec (aero) — SESAM's factor-2 drag step at Ma 1 is applied as a cubic ramp over Ma 0.98–1.02:
     a discontinuous C_D stalled the integrator for a light remnant at its transonic terminal velocity; the Step 1 reference
     flights are unchanged.
+15. §7 (decided 2026-09-22, replacing the Kn_delta regimes) — the flow-regime gate has three branches, decided on the body
+    Knudsen number with SESAM's own mean free path and the freestream Mach number: distinct shock layer (Kn_body < 0.01 and
+    Ma > 1), merged (0.01-10) and free molecular (>= 10 or Ma <= 1). Stage one asks whether a distinct bow shock exists, not
+    whether the flow is continuum, because a continuum construction must not certify itself; the 0.01 threshold is the
+    standoff criterion (Delta/R 0.08-0.14 against a shock 3-10 mean free paths thick), cross-checked by Re2 = rho_inf V R /
+    mu(T0) merged below ~100. The gate selects the MELT CLOSURE, never whether spraying happens: Girin's dispersion relation
+    has no gas parameters, and tau_w is defined in every branch (Schaaf-Chambre), so the melt is sheared throughout. Within
+    the shock-layer branch a wall Knudsen number Kn_local = lambda_w/R -- geometric length, wall state (p_w, T_wall) --
+    selects Girin's Eq. (2) closure below 0.01 and the Couette closure V_s = tau_w b / mu_melt above it. The body gate is a
+    DECLARED CONSERVATISM, not a physical deduction: Kn_body > 0.01 does not imply Kn_local > 0.01 (measured
+    lambda_w/lambda_inf = 1/167 and Kn_local = Kn_body/84 at the nose), and every step records kn_body, kn_local_stag,
+    re_shock, flow_branch and the closure fractions so the cost is measurable. Nothing in the merged or free-molecular
+    branch asserts that the patch sees only freestream density; the free-molecular branch evaluates the loads from
+    freestream conditions with no compression model.
+16. §7 (pressure) — modified Newtonian is replaced by modified Newtonian to the sonic point plus a Prandtl-Meyer expansion
+    beyond it, blended over 10 degrees above phi* and floored at p_inf; Prandtl-Meyer supplies only p_w, with the state
+    coming from Cantera's isentropic expansion of the post-shock reservoir and u_e from energy conservation. gamma_pm is a
+    configuration parameter (`--gamma-pm`, default 1.15) carrying a factor ~2. No oblique-shock or entropy-swallowing
+    machinery is built: a mass-flux balance at the shoulder gives y_s/R ~ 0.04-0.1 where the local shock inclination is
+    85-88 degrees (M_n = 0.996 M), indistinguishable from normal, because a sphere is all nose and the entropy layer is
+    swallowed only many nose radii downstream -- which is also what justifies the normal-shock reservoir.
+17. §13.1 (decided 2026-09-22) — the 100 mm sphere at 70 km is the marginal case, not a clean anchor: Kn_body = 0.0098 sits
+    exactly on the gate while Re2 = 175 says distinct shock. 60 km (Kn_body 0.0026, Re2 599) is the first unambiguous
+    anchor. At the 77.5 km break-off every sweep diameter is merged (5 mm 0.596, 20 mm 0.149, 50 mm 0.0596, 100 mm 0.0298),
+    so Girin-certified results exist only for the 100 mm case below ~69 km -- measured as 69 % of its melting steps and 84 %
+    of its sprayed mass; everything else is the flagged extension.
 13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
     the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
     sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
