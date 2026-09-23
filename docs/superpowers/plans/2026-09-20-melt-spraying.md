@@ -34,7 +34,7 @@ These were measured while writing the plan and override the corresponding spec s
 2. **SESAM hollows the melting sphere at fixed outer geometry.** During melting `thick_mm` is the shell thickness of a hollow sphere of outer radius R₀ (m = ρ 4π/3 [R₀³ − (R₀ − thick)³] to four digits), the heat input stays 4πR₀² × q with R₀ in DKR, Kn uses D₀, the radiated power is 4πR₀² εσ 850⁴ = 372 W throughout and C_D stays 0.913. Consequence: the bookkeeping device keeps the intact geometry (uniform φ_e reduction) and needs no area scaling; `--removal instant` removes the liquid inventory of **every** element as it forms (not only surface elements — a surface-only feed stores latent heat in the interior of the isothermal body and lags SESAM by 5–30 s).
 3. **Nodal enthalpy, lumped capacity, enthalpy-consistent Newton.** Step 2's element-mean enthalpy with the secant capacity is a regula falsi anchored at T_old whose fixed point repels inside a steep latent-heat ramp (contraction factor −59 for the isothermal body crossing the ±2 K ramp); with the real conductivity a surface element spans 30 K while its mean crosses a 4 K ramp and the iteration cycled (jumps across the ramp, 3-cycles under damping). The thermal core now uses the **nodal** enthalpy h(T_i) with a **lumped** capacity matrix diag(Σ_e φ_e V_e/4 ρ c_i) — the only capacity matrix whose increment equals the increment of ρ∫h dV with h interpolated linearly (the consistent P1-coefficient matrix left a 3e-4 balance error) — a tangent Newton on R(T) = E/dt + KT − F with E = M(ρ c_sec)(T − T_old), and every update mapped through the true h(T) per node (T_new ← T(h(T_k) + c_p,eff(T_k)(T_new − T_k))) so that a node cannot jump across the melting range, with damping as a fallback. Where a melt film rides a node the enthalpy inverted is the node's **own mixture** of material and film (`enthalpy_mixed`/`temperature_from_enthalpy_mixed`, weighted by `film_weight`), because the film is liquid and its latent plateau is already spent: inverting the material's h(T) there threw nodes clean across the ramp and the iteration settled into a period-3 limit cycle between 777 K and 864 K on 22 nodes (measured 2026-09-22; with the mixture it converges in 4–9 iterations). Both backends implement it identically (the FEniCSx backend assembles only the stiffness in UFL and adds everything nodal in numpy/PETSc, so the radiation follows the moving boundary). `lumped_mass=True` is the default; `--consistent-mass` (skfem only) keeps the consistent form for the analytic checks. Measured: Stefan front within 0.3 % (0.5 mm box), 2.0–2.4 Newton iterations per step without melting, 3–5 with; the Step 2 verification numbers re-measured with the new core: d100 sesam Q_conv 0.46 % / 2.23 % point-wise, integrated +0.31 %, ΔT_eq 24.6 K (1.20 %), radiated 6.66 %, 74 s runtime (was 158 s) — Task 15 refreshes the README table with the full re-run.
 4. **Conductivity is not scaled by φ_e.** Scaling k with φ_e (spec §6) isolated the surface nodes of nearly consumed elements (capacity and conductance both ×0.05) and drove them to 5000 K; k stays that of the full element while φ_e > 0 (a thinner sliver conducts better, not worse); only the capacity scales. Patch owners die at φ_e ≤ PHI_DEATH = 0.05 (their remainder joins the film; owners at 10⁻³ made surface nodes swing by hundreds of kelvin between iterates), interior elements keep φ_e ≥ 10⁻³ (no cavity can open); deaths cascade within the step until every owner has φ_e > 0.05; nodes without material are pinned at their temperature and loads on them are counted (`StepResult.Q_dropped`).
-5. **Feed rule.** Every active element feeds its liquid inventory φ_e ρ V_e mean_i f_feed(T_i) (f_feed a ±2 K ramp at the liquidus; for the single-temperature material identical to f_l), owners to their patches by area, interior elements to the four nearest patches by area. The rate is a *fraction of what the element still holds*, which is what makes the melt front move at the energy-limited rate whatever the element size (surface-only feed with per-element death could not: the three tets of a prism reach the liquidus together and at peak heating 3.6 layers melt per step) — and what limits it is not the rule but the energy, because the mass leaves at the enthalpy the **molten part** of the element carries (the f-weighted nodal mean, not the element mean) and arrives holding `enthalpy_liquid`. With `--removal instant` it leaves at h_liquid instead and the difference is a load on the element's own nodes; that is the lumped device that reproduces SESAM's Q/L_f law, and it is the same rule. Two ways of getting this wrong were measured on 2026-09-22 and are the reason for fact 25: debit only the destination and the element keeps a melt fraction it no longer has and feeds it again next step (the surface melted three times faster than the heat allowed); book the film at the mixture enthalpy h(T) instead of the liquid one and melting is free on the ramp (a 100 mm sphere turned entirely to film on a quarter of its latent heat).
+5. **Feed rule** (gated by depth since 2026-09-22, fact 28(b): only material the gas shear can reach leaves its element). Every active element feeds its liquid inventory φ_e ρ V_e mean_i f_feed(T_i) (f_feed a ±2 K ramp at the liquidus; for the single-temperature material identical to f_l), owners to their patches by area, interior elements to the four nearest patches by area. The rate is a *fraction of what the element still holds*, which is what makes the melt front move at the energy-limited rate whatever the element size (surface-only feed with per-element death could not: the three tets of a prism reach the liquidus together and at peak heating 3.6 layers melt per step) — and what limits it is not the rule but the energy, because the mass leaves at the enthalpy the **molten part** of the element carries (the f-weighted nodal mean, not the element mean) and arrives holding `enthalpy_liquid`. With `--removal instant` it leaves at h_liquid instead and the difference is a load on the element's own nodes; that is the lumped device that reproduces SESAM's Q/L_f law, and it is the same rule. Two ways of getting this wrong were measured on 2026-09-22 and are the reason for fact 25: debit only the destination and the element keeps a melt fraction it no longer has and feeds it again next step (the surface melted three times faster than the heat allowed); book the film at the mixture enthalpy h(T) instead of the liquid one and melting is free on the ramp (a 100 mm sphere turned entirely to film on a quarter of its latent heat).
 6. **Mesh: layers by radial projection.** gmsh's `extrudeBoundaryLayer` is a geo-kernel operation that cannot be attached to the OCC sphere without re-parametrising; the layers are built by projecting the inner gmsh sphere's boundary triangulation radially (inner radius R − 3.75 mm, shells at 46.25/48.25/49.25/49.75/50 mm), each prism split into three tetrahedra by the smallest-node-id diagonal rule (conforming, exact areas/volumes, closed surface). Default 4 layers × (0.25, 0.5, 1, 2 mm): **46 278 nodes / 255 276 tets / 15 430 patches** on the 100 mm sphere (spec estimated ≈55 k nodes); surface triangles 2.16 mm. A face table (every face with its ≤ 2 elements) makes deactivation O(dead elements). The box mesh is a structured Kuhn split (no gmsh).
 7. **Runoff: linearly implicit upwind, no explicit sub-steps.** Films driven by the free-molecular shear near the rim move at ~10 m/s and cross the hemisphere many times per 0.5 s step: the spec's explicit CFL scheme needed 1e4–1e5 sub-steps per macro step (sliver patches worst). The transport is (I + Δt_s C) m_new = m_old with the edge coefficients c = q ℓ (t̂·n̂)⁺/(A b) at the start of each of 4 sub-steps: unconditionally stable, positive, conservative to round-off, exact steady state (strip test 0.1 %); a wetting front advances one patch per sub-step (documented limit). A Picard iteration on the fully implicit form does not contract (Δt × c ≫ 1). Runoff never crosses into leeward patches (the flow stops at the equator); leeward films are static and can stay attached at the end of a run (0.065 kg in the resolved 100 mm case).
 8. **Boundary layer: Ranger's own integral.** δ_a² = 58.08 ν_e ∫u_e⁴ds/u_e⁵ reproduces Ranger's 2.2 R Re_D^−½ Ψ(θ) exactly under potential flow (0.05 % on 1° bins with a 20× refined quadrature); Thwaites' momentum thickness (spec §7) is a constant 12.3 × smaller within ±1.7 % over 5°–85° and is kept as the cross-check. Ψ(0) = √(48/15) = 1.789. Measured at 71 km / 7.24 km/s: u_e 1.3 km/s at 30°, 1.9 km/s at 45°; δ_a 6–9 mm; Kn_δ 0.007–0.03 (continuum/slip) up to 60°, ≥ 0.1 from ~85° (the modified-Newtonian expansion to p∞ makes ρ_e → 3e-6 kg/m³ at the rim); τ_c 12–46 Pa, τ_fm 1600–1900 Pa; G 2e4–6e4 Pa/m with the deceleration term (30 m/s² × ρ_l) comparable to the pressure gradient. The film's driving gradient is G = 2(p_s − p∞) sinθ cosθ/R − ρ_l a sinθ (the deceleration pushes the film toward the nose).
@@ -65,7 +65,17 @@ These were measured while writing the plan and override the corresponding spec s
    * By stage, the concentrators are the **death hand-over** (67 of the 50 mm case's 226 samples, up to 32 % of the body's whole film onto one 0.6 mm2 facet; 87 of the 100 mm case's 422), the **dead-element feed** to the four nearest patches (66 and 87) and the **runoff** (17 and 58). Only 174 of the 100 mm case's 422 coincide with a death, so the feed and the runoff carry it there.
    * Such a facet cannot drain, by construction: the runoff graph keeps only windward-windward edges (so the last windward ring is a sink — `film.Runoff.__init__`), an outflow needs t_hat . n_ij > 0, and non-finite coefficients are zeroed (`edge_coefficients`: "a degenerate (sliver) patch moves nothing").
    Two things were changed. The hand-over now spreads a vanished patch's film over the `NEAREST_PATCHES` nearest survivors by area, exactly as an interior element's melt is handed out, instead of dumping it on the single nearest: the raw peak ratio falls from 2431 mm to 981 mm and the dominant stage becomes the runoff. That fix is worth more than the diagnostic it was aimed at — film spread over four owners finds room where one owner had none, so in the heat-and-cool test the mass that re-solidifies rose from 0.135 kg to **0.456 kg** and the stranded-film fraction fell from 5 % to **zero**. And `film_thickness_max` now reports only facets where a depth means something (b <= sqrt(A) as well as the sliver filter), with the melt that fails that test surfaced as **`film_blob_fraction`** rather than hidden inside a maximum: the reported maximum falls from 2431 mm to **1.672 mm** on the 50 mm flight and from 626 mm to **4.21 mm** on the 100 mm one, with no step above 20 mm in either, while the blob fraction shows the honest exposure: nonzero in 17 of 408 steps (50 mm, up to 0.999 of the film in the collapse, 4.9 % of m0) and in **110 of 217 steps** (100 mm, median 0.131, up to 0.703, at most 0.21 % of m0) -- so on the 100 mm flight half the melting phase has some melt the film model cannot describe, and that has been invisible until now. At flight level the hand-over change moves nothing much: the 100 mm case's sprayed mass goes 1.0243 -> 1.0227 kg, its median droplet radius 101.9 -> 101.0 µm, its re-solidified mass 1.80 -> 1.86 g. What is *not* fixed, and is declared: the concentration itself, and the fact that `b` still feeds the physics. Tracing the consumers: `film.lubrication`'s thick branch has `q = V d/2 + G b^3/(3 mu)`, **cubic in b**, so a blob facet is handed an enormous runoff flux -- which is self-limiting, because `edge_coefficients` then gives it a rate proportional to b^2/A and the linearly implicit scheme drains it in one sub-step, and it is why the pile-up is transient wherever an outflow edge exists at all; `spray.evaluate` computes `We_s = rho_l v_s^2 b / sigma`, **linear in b**, which inflates the Weber number into Girin's dispersion table and so shifts the fastest mode on that facet, bounded afterwards by the droplet-radius caps (the film mass on the patch, and R/4: r stayed <= 690 µm measured); and `rayleigh_taylor`'s criterion `W b^2 rho_l > 3 sigma` is **quadratic in b**, so `rt_active` flags spuriously -- it is a reported diagnostic only, which is why nothing downstream moves. Clamping the branches to b_eff = min(b, sqrt(A)) would be defensible on exactly the grounds that make the diagnostic honest, but it changes droplet sizes on those facets and is a modelling decision, not a bug fix. A patch graph that merges slivers, or a film model that carries a mass per *element* rather than per facet, is the real answer and belongs with tumbling in the next iteration.
-13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27) come with the film's temperature. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
+28. **The liquid layer, the branch test and the feed gate (2026-09-22/23).** Asked whether `b` accounts for the elements beneath a patch being molten, the answer was no: `b = m_f/(rho_l A)` is the film account -- the mass the feed rule has mobilised -- and the model's premise was that the film therefore *is* the liquid layer. Measured on the 100 mm physics flight, with depths taken from the **present** wall rather than the original outline (an early attempt measured from the original radius and gave 7-14 mm, meaningless once the nose has receded 77 mm):
+   * Girin's conjugate melt-layer depth, how far the gas shear reaches into the liquid: **215-303 um**.
+   * The film account: **1.7-3266 um**, thinner than the conjugate depth in 77 % of steps.
+   * The **contiguous** molten layer beneath the wall: **350-890 um**, thicker than the conjugate depth in 100 % of steps. Cross-checked independently: the mass-weighted distance melt actually travels from its donating element to the patch it lands on is 2.06 mm on the 50 mm flight, and the contiguous-layer walk gives 2.10 mm on the same flight -- two unrelated measurements agreeing to 2 %.
+   So the branch test was comparing the wrong thickness: it put **79-99.8 %** of patches on the thin (Girin & Kopyt 1994) branch where the liquid depth says they are thick (Girin 2017, the outstripping regime). Two changes follow.
+   **(a) The contiguous liquid depth decides the branch, and nothing else.** `MeltingBody.molten_depth` marches inward from each patch, hopping to the face-adjacent element furthest along the inward normal, and **stops at the first element that is not fully molten**: molten material separated from the patch by solid is blocked from it and must not be credited to it. Contiguity is not a technicality -- with it enforced the thick branch fires on a median of **26.7 %** of patches (up to 97.9 %), not the 94-100 % an any-nearby-molten measure suggested, because most patches have mushy rather than fully liquid material beneath them and correctly stay thin. What the layer does **not** touch is any Weber number, and the record must be exact here because it was twice written down wrongly while the work was in progress: Girin's surface Weber number in the thick branch is `rho_l V_s^2 delta_m / Sigma`, on the **conjugate depth**, as is everything downstream of it (`lambda_f = 2 pi delta_m / Delta_f`, `t_per = k_t delta_m/(V_s Im Omega_f)`, `r = k_r lambda_f`); the thin branch's Weber number is a reported diagnostic on `b`, which is the whole sheared layer there anyway and which nothing consumes; the droplet Weber number of `spray.source_rows` is on the droplet diameter. The only other quantity moved onto the layer is the Rayleigh-Taylor criterion `W b^2 rho_l > 3 Sigma`, which is reported and never applied.
+   **(b) Melt leaves an element only where the shear can reach it** (`MeltSettings.feed_depth`, default `conjugate`, `all` for the old behaviour; `--removal instant` is unaffected, so the SESAM-equivalent device keeps the every-element feed it needs). A wall-owning element always may, being in the sheared layer by definition; a buried element may only if its centroid lies within the conjugate depth of the nearest patch; and where the wall Knudsen gate denies the Girin closure there is no conjugate depth, so only wall-owning elements may feed. The surface flow is now evaluated once per step, at the top of the melt step, because the feed needs delta_m.
+   **Measured effect** (flight-integrated medians over all droplets released, not per-step medians -- mixing the two is how a +76 % was briefly mis-reported): 100 mm to 108 s, median droplet radius **130.7 -> 178.2 um (+36 %)**, droplets 32.8 -> 19.8 million, sprayed 1.0227 -> 0.9818 kg (-4.0 %), remaining 0.4491 -> 0.4900 kg, 2.25 s per macro step against 2.0; 50 mm whole flight, median radius **232.0 -> 211.2 um (-9 %)**, droplets 2.56 -> 3.06 million, sprayed 0.17442 -> 0.17925 kg (+2.8 %), demise 203.5 s / 69.32 km -> **207.5 s / 68.08 km**, film left 9.00 -> 2.58 g, runtime 306 -> 172 s (-44 %: far fewer elements pass the gate, and the flow is evaluated once). The two spheres move in opposite directions and that is the gate working: the 100 mm case descends into the branch where Girin's closure is certified, so the branch switch dominates; the 50 mm case never does, so only the feed gate acts and it merely makes the film smaller. The fully molten inventory held *in place* in the mesh rises from about 0.1 % to about **1.0 %** of the body -- the stagnant melt no longer delivered to the surface. Balances stay exact (-1.7e-10, +2.2e-10); tiers 200 unit, 15 reference (10.75 min), 8 FEniCSx.
+   **A claim withdrawn.** The shell-retention comparison was read as evidence that the model hollows the body under an intact skin. It is not: the measure that tests hollowness -- how full the *surviving* elements are -- shows them 94-99 % full both before and after, so the body loses whole elements as the surface recedes rather than draining them from inside. The retention crossover at 82 s reflects **where the erosion front is** (by then it has eaten through the thin prism layers on the windward face, so there the coarse core *is* the surface, while the shells survive on the never-heated leeward side), which mixes two places and says nothing about radial drainage. What the gate demonstrably does is stop melt being delivered to the surface from up to two millimetres below it, worth four seconds and 1.2 km of extra life on the 50 mm flight.
+29. **Runoff and stripping do not double count the shear (2026-09-23).** Asked how a film can run off and be stripped at once if the same shear drives both, three independent analyses agree that it is not double counting, for a reason worth keeping: **wall shear stress is a flux, not a stock** -- N/m2 is momentum per unit area per unit time, delivered for as long as the body flies, so there is no budget to allocate. The magnitudes: the post-shock gas carries a streamwise momentum flux of order 2e5 Pa of which a 200 Pa wall shear is 0.1 %, and the shear work on the liquid (~8 kW/m2) is ~1/25000 of the gas kinetic energy flux; making droplets is cheaper still (surface creation ~103 W/m2 at 2.4 kg/m2/s and 50 um radii, 1.3 % of the shear work). Physically the shear sets up a mean flow in the sheared sublayer, which carries mass along the wall, and the instability is a perturbation on that flow's free surface, which removes mass from it: the mean and the fluctuation about it, not two claims on one budget. The film momentum balance closes as `tau_gas = tau_wall + h dp/dx + rho h a + mdot_strip V_s + tau_wave`, and the **only** legitimate debit of runoff by stripping is the droplet momentum sink `mdot_strip V_s`, whose size relative to the driving shear is `Pi = v_melt delta_m / nu` = v_melt x 480 s/m for these properties: 5 % at a recession speed of 0.1 mm/s (decoupling safe), 48 % at 1 mm/s (not safe, and the sink must then be solved with the profile). **Recommendation: report Pi every step and flag Pi > 0.2.** What *would* be double counting, as a checklist: applying the sheared layer's velocity to mass that is not in the sheared layer -- the error fact 28(b) removes, and the one that made the question worth asking; computing transport and stripping in two independent passes and adding them without a shared inventory cap (the model applies them in sequence, each capped by the mass present, so it is an operator split with a first-order-in-dt error, not a double count); using one depth limit for both parts of the runoff flux; and charging droplet surface energy to both the shear work and the melting enthalpy. The literature treats the coexistence as routine: annular two-phase flow writes advection, entrainment and deposition as three terms in one film mass balance (Hewitt & Hall-Taylor 1970; entrainment onset, Ishii & Grolmes 1975), as do liquid-film cooling (Gater & L'Ecuyer 1970), melt-layer ablation (Bethe & Adams 1959; Roberts 1959) and -- closest to this work -- Bronshten's *Physics of Meteoric Phenomena* (1983), which partitions meteoroid melt-layer runoff and droplet spray as concurrent channels from one film. **One consequence not implemented, and it is the pressure-response question deferred by the user:** the runoff flux needs *two* depth limits in the same expression -- the shear-driven part over min(delta_m, h), the pressure-gradient and deceleration-driven part over the full contiguous liquid depth h. The thick branch has the first right and uses the film thickness for the second, so the pressure-driven flux is under-integrated. That is the exact form the deferred work should take. (Caveat from the analysis itself: it knows Girin's conjugate construction only from the problem statement given to it and has not read the paper, so whether Girin addresses simultaneous stripping should be checked against the primary source.)
+13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27), and `molten_depth_max_mm`, `molten_depth_mean_mm`, `delta_m_mean_um` and `thick_branch_fraction` (the contiguous liquid layer, the conjugate depth, and the share of wet windward patches on Girin's thick branch, fact 28) come with the film's temperature and the layer. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
 
@@ -363,6 +373,11 @@ class VolumeMesh:
     def volume(self):
         """Volume of the active elements."""
         return float(self.element_volumes()[self.active].sum())
+
+    def element_faces(self, elements):
+        """Face-table ids of each given element's four faces, (n, 4). Stable across deactivations, so a dying element
+        can be asked which of its own faces have just become boundary (Step 3: where its melt film goes)."""
+        return self._element_faces[np.asarray(elements, dtype=np.int64)]
 
     def deactivate(self, elements):
         """Remove elements from the active set; the boundary (and `surface()`) follows. Returns the face ids that
@@ -2692,11 +2707,20 @@ from dataclasses import dataclass
 import numpy as np
 
 
-def lubrication(tau, G, b, delta_m, mu_l):
-    """(V_s, q, shear_rate) per patch for the thin/thick lubrication branches (module docstring)."""
+def lubrication(tau, G, b, delta_m, mu_l, b_layer=None):
+    """(V_s, q, shear_rate) per patch for the thin/thick lubrication branches (module docstring).
+
+    `b` is the mobile film -- the mass that is actually available to move -- while `b_layer`, if given, is the depth of
+    liquid beneath the wall (film plus the contiguous molten material under it, `MeltingBody.liquid_layer_depth`). The
+    branch is decided on the layer, because whether the gas shear penetrates the whole liquid or only its top delta_m
+    is a property of the liquid's depth, not of how much of it the melt bookkeeping has mobilised; the fluxes stay on
+    the film. Deciding the branch on the film instead put 79-99.8 % of the patches on the thin branch where the layer
+    says 94-100 % are thick (measured on the 100 mm physics flight, 2026-09-22).
+    """
     tau, G, b = (np.asarray(x, dtype=float) for x in (tau, G, b))
     delta_m = np.asarray(delta_m, dtype=float)
-    thick = np.isfinite(delta_m) & (b > delta_m)
+    layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
+    thick = np.isfinite(delta_m) & (layer > delta_m)
     V_thin = tau * b / mu_l + G * b * b / (2.0 * mu_l)
     q_thin = tau * b * b / (2.0 * mu_l) + G * b ** 3 / (3.0 * mu_l)
     d = np.where(thick, delta_m, 0.0)
@@ -3215,17 +3239,22 @@ class SprayModel:
         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
         self.table = table or dispersion.DispersionTable()
 
-    def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05):
+    def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None):
         """Per-patch instability and release for the film thickness b, melt-layer thickness delta_m and film surface
-        velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's."""
+        velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's.
+
+        `b_layer`, if given, is the depth of liquid beneath the wall (film plus the contiguous molten material under
+        it): the thick/thin test belongs on that, since it asks whether the gas shear reaches the bottom of the liquid,
+        while the release rates and the droplet cap stay on the film, which is the mass that can actually leave."""
         liq = self.liquid
         n = b.size
+        layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
         branch = np.full(n, -1)
         we_s = np.zeros(n)
         r = np.full(n, np.nan)
         mdot = np.zeros(n)
         has_film = windward & (b >= B_MIN)
-        thick = has_film & np.isfinite(delta_m) & (b > delta_m)          # Girin closure and a film thicker than delta_m
+        thick = has_film & np.isfinite(delta_m) & (layer > delta_m)      # Girin closure and liquid deeper than delta_m
         free_molecular = flow.branch == BRANCH_FREE_MOLECULAR
         rarefied = has_film & ~thick & free_molecular                     # no edge state exists: the freestream drives the mode
         thin = has_film & ~thick & ~rarefied
@@ -3261,7 +3290,7 @@ class SprayModel:
             r = np.minimum(r, np.minimum((3.0 * m_f / (4.0 * np.pi * liq.rho)) ** (1.0 / 3.0), 0.25 * radius))
         with np.errstate(divide="ignore", invalid="ignore"):
             dn = np.where(dm > 0.0, dm / (4.0 / 3.0 * np.pi * liq.rho * np.where(dm > 0.0, r, 1.0) ** 3), 0.0)
-        rt_active, _, _ = rayleigh_taylor(flow.deceleration, b, liq)
+        rt_active, _, _ = rayleigh_taylor(flow.deceleration, layer, liq)   # the criterion is about the whole liquid
         return SprayResult(branch, we_s, unstable, r, mdot, dm, dn, bool(np.any(rt_active & has_film)), delta_m, v_s)
 
 
@@ -3734,6 +3763,7 @@ import numpy as np
 import pytest
 
 from reentry_model import body, heating, material, mesh, thermal
+from reentry_model.body import PHI_DEATH as PHI_DEATH_FOR_TEST
 from test_reentry_model_coupled import MASS_100MM, simulator
 
 pytest.importorskip("cantera")
@@ -3822,6 +3852,27 @@ def test_film_spraying_death_and_balances(layered_mesh):
     assert rows.shape[1] == 22 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
     assert b.hist_n.sum() == pytest.approx(b.n_released) and b.hist_m.sum() == pytest.approx(b.sprayed_mass)
     assert not b.demised() and b.reference_area() < math.pi * 0.05 ** 2                            # the windward face has receded
+
+
+def test_a_dying_element_leaves_its_last_solid_on_the_face_it_exposes(layered_mesh):
+    """An element is removed while it still holds up to PHI_DEATH of its material (typically far less). That remainder
+    has to end up where the surface receded to -- on the faces the element itself has just exposed -- exactly like the
+    film it was already carrying, and it does, because the remainder is credited to the element's own patches first and
+    is then handed over with them (spec amendment 20). Held below the feed ramp so that nothing else melts this step."""
+    b = melting_body(layered_mesh, name="AA7075")
+    owner = int(b.surface.owner[0])
+    b.m_f[:] = 0.0
+    b.solver.set_temperature(b.material.T_feed - 30.0)             # below the feed ramp: no other element melts
+    b.phi[owner] = 0.5 * PHI_DEATH_FOR_TEST                        # below the death threshold, with solid left
+    b.solver.set_fractions(b.phi)
+    rest = float(b.phi[owner] * b.element_mass[owner])
+    faces = b.mesh.element_faces([owner])[0]
+    mass_before = b.mass(0.0)
+    b.melt_step(0.0, 0.5, None)
+    exposed = np.array([q for q in b.patch_of_face[faces] if q >= 0])
+    assert not b.mesh.active[owner] and exposed.size > 0            # it died and uncovered at least one face
+    assert b.m_f.sum() == pytest.approx(rest) and b.m_f[exposed].sum() == pytest.approx(rest)
+    assert b.mass(0.0) + b.removed_mass == pytest.approx(mass_before, rel=1e-12)
 
 
 def test_demise_and_consumption(layered_mesh):
@@ -3955,6 +4006,30 @@ def test_a_deferred_melt_load_never_moves_a_node_more_than_the_cap(layered_mesh)
     assert b.pending_load.sum() == pytest.approx(queued - np.minimum(1.0e4, room[np.unique(b.surface.faces)]).sum())
     assert (b.solver.temperature() - T0).max() < 1.05 * body.LOAD_DT_MAX
     assert b.pending_load.sum() + b.total_applied_load == pytest.approx(queued)     # nothing is lost on the way
+
+
+def test_a_dying_element_hands_its_film_to_the_faces_it_exposes(layered_mesh):
+    """When an element is removed the surface recedes into the film it carried, so that film belongs on the faces of
+    that same element which have just become boundary -- its inward face and the walls of the pit it opens -- not on
+    whichever surviving centroid happens to be nearest (which is a statement about the mesh's numbering, and which
+    once put a third of a collapsing body's film onto one 0.6 mm2 facet)."""
+    b = melting_body(layered_mesh, name="AA7075")
+    owner = b.surface.owner[0]                                      # kill one patch owner, with film only on its patch
+    b.m_f[:] = 0.0
+    b.m_f[b.surface.owner == owner] = 1.0e-4
+    carried, faces = float(b.m_f.sum()), b.mesh.element_faces([owner])[0]
+    gone_normal = b.surface.normals[b.surface.owner == owner][0]
+    b._kill(np.array([owner]))
+    exposed = np.array([q for q in b.patch_of_face[faces] if q >= 0])
+    assert exposed.size and b.m_f.sum() == pytest.approx(carried)    # nothing lost, and it all landed on that element's
+    assert b.m_f[exposed].sum() == pytest.approx(carried)            # own newly exposed faces
+    # shared by the area each exposed face presents to the vanished patch, i.e. its area projected on that patch's
+    # outward normal: the floor the recession uncovered takes the film, the pit walls standing perpendicular take none
+    cosine = np.clip(b.surface.normals[exposed] @ gone_normal, 0.0, None)
+    w = b.surface.areas[exposed] * cosine
+    assert b.m_f[exposed] == pytest.approx(carried * w / w.sum())
+    floor = exposed[int(np.argmax(cosine))]                         # the face most nearly parallel to the old patch
+    assert b.m_f[floor] > 0.5 * carried and cosine.max() > 0.9      # takes the bulk of it
 ```
 
 
@@ -4101,6 +4176,7 @@ class ThermalBody:
 
 
 SIZE_FEEDBACK_NAMES = ("current", "initial")
+FEED_DEPTH_NAMES = ("conjugate", "all")     # how deep melt may leave an element for the film (Step 3, 2026-09-22)
 CP_MAX_NEWTONIAN = 1.84          # only the ratio to the meshed sphere's own value is used, so this cancels
 NOSE_CAP_ANGLE = 30.0            # deg: the windward cap fitted for the nose radius (depth (1 - cos 30 deg) R_t behind the front)
 NOSE_CAP_FACTOR = 1.67           # a flat face of radius R_t heats like a sphere of 1.67 R_t (its stagnation velocity gradient is
@@ -4120,7 +4196,8 @@ class MeltSettings:
     runoff: bool = True
     demise_fraction: float = 0.01    # the run ends when the mass falls below this fraction of the initial mass
     particles: bool = True           # keep the source-table rows
-    size_feedback: str = "current"   # current: Kn on the equivalent diameter of the remaining mass and the nose radius fitted to the
+    size_feedback: str = "current"
+    feed_depth: str = "conjugate"     # "conjugate": only liquid the gas shear reaches leaves its element; "all": any   # current: Kn on the equivalent diameter of the remaining mass and the nose radius fitted to the
                                      # windward cap; initial: D0 and R0 throughout (SESAM's convention, for the verification devices)
 
     def __post_init__(self):
@@ -4128,6 +4205,8 @@ class MeltSettings:
             raise ValueError("removal must be one of {}, got {!r}".format(REMOVAL_NAMES, self.removal))
         if self.size_feedback not in SIZE_FEEDBACK_NAMES:
             raise ValueError("size_feedback must be one of {}, got {!r}".format(SIZE_FEEDBACK_NAMES, self.size_feedback))
+        if self.feed_depth not in FEED_DEPTH_NAMES:
+            raise ValueError("feed_depth must be one of {}, got {!r}".format(FEED_DEPTH_NAMES, self.feed_depth))
         if not 0.0 < self.demise_fraction < 1.0:
             raise ValueError("demise_fraction must be within (0, 1)")
 
@@ -4351,8 +4430,18 @@ class MeltingBody(ThermalBody):
         element's is the mean of h(T_i) over its four nodes, the film's the mean of the *liquid* h over its patch's
         three, and what leaves an element is its molten part, at the enthalpy that part carries."""
         mat, liq, s = self.material, self.liquid, self.settings
+        from . import spray as spray_mod
         T = self.solver.temperature()
         tets = self.mesh.tets
+        # The surface flow is evaluated once per step, here rather than inside the film step, because the feed needs
+        # Girin's conjugate melt-layer depth: the gas shear penetrates the liquid only that far, so only liquid within
+        # that depth of the wall can be carried away, and material deeper than it keeps its melt until the surface has
+        # receded to it. Feeding from any depth let the interior drain through an intact skin -- by 82 s of the 100 mm
+        # flight the core was being consumed faster than the outermost shell (measured 2026-09-22).
+        flow = delta_m = None
+        if state is not None and s.removal != "instant" and self.surface.n_patches and self.m_f.size:
+            flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
+            delta_m, _ = spray_mod.melt_layer(flow, liq)
         h_node = mat.enthalpy(T)
         h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
         h_liq = mat.enthalpy_liquid(T)
@@ -4369,6 +4458,8 @@ class MeltingBody(ThermalBody):
         # net effect, pinning the surface at T_feed and paying Newton iterations for it.
         fn = mat.feed_fraction(T)[tets]
         f = fn.mean(axis=1) * self.mesh.active
+        if s.feed_depth == "conjugate" and s.removal != "instant":
+            f = f * self._shear_reaches(delta_m)
         h_hot = (fn * h_node[tets]).mean(axis=1) * self.mesh.active     # what the molten part carries, per kg of element
         cap = np.where(self.owner_area > 0.0, self.phi, np.maximum(self.phi - PHI_MIN, 0.0))
         gross = np.minimum(f * self.phi, cap) * self.element_mass
@@ -4396,7 +4487,7 @@ class MeltingBody(ThermalBody):
             self._defer_to_elements(fed * h_e - fed_h)           # the element keeps only what the melt left behind
             delta, carried = self._add_to_film(fed, fed_h)
             self._defer_to_patches(carried - delta * h_p)        # ... and the melt arrives at its patch's temperature
-            released = self._film_and_spray(t, dt, state, h_p)
+            released = self._film_and_spray(t, dt, state, h_p, flow, delta_m)
         frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
         # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed
         n_dead = 0
@@ -4507,19 +4598,21 @@ class MeltingBody(ThermalBody):
             np.add.at(got, near.ravel(), (carried[ki][:, None] * w).ravel())
         return self.m_f - before, got
 
-    def _film_and_spray(self, t, dt, state, h_p):
+    def _film_and_spray(self, t, dt, state, h_p, flow=None, delta_m=None):
         liq, s, mat = self.liquid, self.settings, self.material
         from . import spray as spray_mod
-        if state is None or self.m_f.sum() <= 0.0:
+        if state is None or self.m_f.sum() <= 0.0 or flow is None:
             self.last_flow = self.last_spray = None
             return 0.0
-        flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
-        delta_m, _ = spray_mod.melt_layer(flow, liq)
         areas = self.surface.areas
+        # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
+        # tests below ask whether the gas shear reaches the bottom of the liquid, so they belong on this; the fluxes
+        # and the release stay on the film, which is the mass that can actually move (decided 2026-09-22).
+        molten = self.molten_depth()
         # (ii) lubrication and runoff
         n_sub, moved = 0, 0.0
         if self.runoff is not None:
-            q_of_b = lambda b: self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu)[1]
+            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + molten)[1]
             before = self.m_f
             self.m_f, n_sub, moved = self.runoff.transport(self.m_f, q_of_b, self.t_hat, liq.rho, areas, dt)
             self.runoff_mass += moved                                              # mass that arrived on another patch
@@ -4529,9 +4622,11 @@ class MeltingBody(ThermalBody):
             d = self.m_f - before
             self._spread_to_patches(-float((d * h_p).sum()), np.maximum(d, 0.0))
         b = self.m_f / (liq.rho * areas)
-        v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu)
+        layer = b + molten
+        v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=layer)
         # (iii) spraying
-        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f, self.transverse_radius)
+        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f,
+                                  self.transverse_radius, b_layer=layer)
         released = float(res.dm.sum())
         if released > 0.0:
             if self.spray_onset is None:
@@ -4557,7 +4652,12 @@ class MeltingBody(ThermalBody):
             "theta_cr_deg": float(np.degrees(self.theta[res.unstable].min())) if res.unstable.any() else float("nan"),
             "spraying_area_m2": float(areas[res.unstable].sum()), "rt_active": float(res.rt_active),
             "r_median_um": float(np.median(r) * 1e6) if r.size else float("nan"), "r_max_um": float(r.max() * 1e6) if r.size else float("nan"),
-            "film_thickness_max_mm": float(b.max() * 1e3)})
+            "film_thickness_max_mm": float(b.max() * 1e3),
+            "molten_depth_max_mm": float(molten.max() * 1e3),
+            "molten_depth_mean_mm": float((self.m_f * molten).sum() / self.m_f.sum() * 1e3) if self.m_f.sum() > 0.0 else 0.0,
+            "delta_m_mean_um": self._mean_conjugate_um(delta_m),
+            "thick_branch_fraction": float(thick[self.windward & (self.m_f > 0.0)].mean())
+            if (self.windward & (self.m_f > 0.0)).any() else float("nan")})
         return released
 
     def _kill(self, dead):
@@ -4576,13 +4676,36 @@ class MeltingBody(ThermalBody):
         m_f[keep[kept]] += old_m_f[kept]
         lost = ~kept & (old_m_f > 0.0)
         if lost.any():
-            # hand the vanished patches' film to the NEAREST_PATCHES nearest survivors by area, as an interior
-            # element's melt is handed out: dumping it all on the single nearest survivor concentrated a third of a
-            # collapsing body's film onto one 0.6 mm2 face (measured 2026-09-22 on the 50 mm flight's last step)
-            k = min(NEAREST_PATCHES, self.surface.n_patches)
-            near = self._patch_tree.query(old_surface.centroids[lost], k=k)[1].reshape(-1, k)
-            w = self.surface.areas[near]
-            np.add.at(m_f, near.ravel(), (old_m_f[lost][:, None] * w / w.sum(axis=1, keepdims=True)).ravel())
+            # The film on a vanished patch has not moved: the surface receded *into* it, so it now rests on the faces
+            # of that same element which have just become boundary -- the face on its inward side, whose neighbour is
+            # the next layer in, and the walls of the pit its lateral neighbours expose -- shared by their areas.
+            # Handing it to the nearest surviving centroid instead sends it sideways to whatever triangle happens to
+            # be closest, which put a third of a collapsing body's film onto one 0.6 mm2 face (measured 2026-09-22),
+            # and is a rule about the mesh's numbering rather than about where the liquid is.
+            idx = np.flatnonzero(lost)
+            targets = self.patch_of_face[self.mesh.element_faces(old_surface.owner[idx])]   # (n, 4), -1: not a patch
+            ok = targets >= 0
+            safe = np.where(ok, targets, 0)
+            # weight by each exposed face's area *projected on the vanished patch's own outward normal*, not by its raw
+            # area: the face the recession uncovered underneath lies parallel to the patch that vanished (its new
+            # outward normal points the same way), while the pit walls stand perpendicular to it. A prism element's
+            # side faces can out-area its inward face -- 0.25 x 1.5 mm slivers against a 1 mm2 floor -- so raw areas
+            # route most of the film sideways into walls no shear is pushing it towards, and concentrate it by the
+            # element's aspect ratio (3 to 8 here). The projection is the footprint each face offers the liquid.
+            cosine = np.clip(np.einsum("nij,nj->ni", self.surface.normals[safe], old_surface.normals[idx]), 0.0, None)
+            area = np.where(ok, self.surface.areas[safe] * cosine, 0.0)
+            total = area.sum(axis=1)
+            flat = ok & (total[:, None] <= 0.0)                  # no face faces the right way: fall back to raw areas
+            if flat.any():
+                area = np.where(flat, self.surface.areas[safe], area)
+                total = area.sum(axis=1)
+            has = total > 0.0
+            if has.any():
+                share = old_m_f[idx[has]][:, None] * area[has] / total[has][:, None]
+                np.add.at(m_f, targets[has][ok[has]], share[ok[has]])
+            if (~has).any():                                     # the element exposed nothing: its death opened a
+                orphan = idx[~has]                               # hole right through, so fall back to the nearest patch
+                np.add.at(m_f, self._patch_tree.query(old_surface.centroids[orphan])[1], old_m_f[orphan])
         self.m_f = m_f
 
     # -- reporting -----------------------------------------------------------------------------------------------
@@ -4613,6 +4736,74 @@ class MeltingBody(ThermalBody):
         if total <= 0.0:
             return 0.0
         return float(self.m_f[self.material.feed_fraction(self.film_temperature()) <= 0.0].sum() / total)
+
+    @staticmethod
+    def _mean_conjugate_um(delta_m):
+        """Mean conjugate melt-layer depth [um] over the patches that have one; nan where the gate denies them all."""
+        ok = np.isfinite(delta_m)
+        return float(delta_m[ok].mean() * 1e6) if ok.any() else float("nan")
+
+    def _shear_reaches(self, delta_m):
+        """Per element, may its melt leave for the film this step? An element that owns part of the wall is in the
+        sheared layer by definition and always may. A buried element may only if its centroid lies within Girin's
+        conjugate melt-layer depth of the nearest patch, because that is how far the gas shear penetrates the liquid;
+        deeper melt is stagnant and stays where it is until the surface reaches it. Where the wall Knudsen gate denies
+        the Girin closure there is no conjugate depth, and then only wall-owning elements may feed, which is the
+        conservative reading of the same statement."""
+        owner = self.owner_area > 0.0
+        if delta_m is None or not self.surface.n_patches:
+            return owner.astype(float)
+        dist, near = self._patch_tree.query(self.mesh.points[self.mesh.tets].mean(axis=1))
+        d = delta_m[near]
+        return (owner | (np.isfinite(d) & (dist <= d))).astype(float)
+
+    def molten_depth(self, Te=None, max_levels=8):
+        """Depth of *contiguous* fully molten material under each patch [m], measured inward from the patch.
+
+        Marches inward through the mesh from the patch's owner element, hopping to the face-adjacent element furthest
+        along the inward normal, and stops at the first element that is not fully molten (below `Material.T_feed`) or
+        at the mesh boundary. Only contiguous liquid counts: molten material separated from the patch by solid is
+        blocked from it, cannot be part of the layer the gas shear sees, and must not be credited to it -- accumulating
+        every nearby molten element instead would count melt that cannot reach the wall (decided 2026-09-22).
+
+        This is the thickness that belongs in the thick/thin instability test against Girin's conjugate melt-layer
+        depth delta_m: the film mass on a patch is the mobile inventory, not the depth of liquid beneath the wall.
+        Measured on the 100 mm physics flight, the two differ by an order of magnitude and invert the branch choice."""
+        mat, mesh = self.material, self.mesh
+        if not self.surface.n_patches or not mat.melts:
+            return np.zeros(self.surface.n_patches)
+        if Te is None:
+            Te = self.solver.temperature()[mesh.tets].mean(axis=1)
+        molten = mesh.active & (Te >= mat.T_feed)
+        centroid = mesh.points[mesh.tets].mean(axis=1)
+        inward = -self.surface.normals
+        cur = self.surface.owner.copy()
+        alive = molten[cur]
+        depth = np.zeros(self.surface.n_patches)
+        rows = np.arange(len(cur))
+        for _ in range(max_levels):
+            if not alive.any():
+                break
+            reach = np.einsum("ij,ij->i", centroid[cur] - self.surface.centroids, inward)      # projected depth so far
+            depth = np.where(alive, np.maximum(depth, reach), depth)
+            pair = mesh._face_elements[mesh.element_faces(cur)]                               # (n, 4, 2)
+            nb = np.where(pair[:, :, 0] == cur[:, None], pair[:, :, 1], pair[:, :, 0])
+            ok = nb >= 0
+            step = np.einsum("nkj,nj->nk", centroid[np.where(ok, nb, 0)] - centroid[cur][:, None, :], inward)
+            pick = np.where(ok, step, -np.inf).argmax(axis=1)
+            nxt = nb[rows, pick]
+            good = (nxt >= 0) & (step[rows, pick] > 0.0)
+            alive = alive & good & molten[np.where(good, nxt, 0)]
+            cur = np.where(good, nxt, cur)
+        # the chain's last centroid sits half an element short of the far wall of that element: add that half
+        return np.maximum(depth, 0.0) * 1.5
+
+    def liquid_layer_depth(self, Te=None):
+        """Depth of liquid at each patch [m]: its film plus the contiguous molten material beneath it. What the gas
+        shear sees, and so what decides whether the film is thick or thin against the conjugate melt-layer depth."""
+        if not self.m_f.size:
+            return np.zeros(0)
+        return self.m_f / (self.liquid.rho * self.surface.areas) + self.molten_depth(Te)
 
     def film_thickness_max(self):
         """Thickest film [m] over the patches where a thickness means anything: at least a tenth of the median patch
@@ -4684,6 +4875,10 @@ class MeltingBody(ThermalBody):
                 "film_T_mean_K": float((self.m_f * self.film_temperature()).sum() / self.m_f.sum()) if self.m_f.sum() > 0.0 else float("nan"),
                 "film_frozen_fraction": self.film_frozen_fraction(), "unapplied_load_J": float(self.pending_load.sum()),
                 "film_blob_fraction": self.film_blob_fraction(),
+                "molten_depth_max_mm": lm.get("molten_depth_max_mm", float("nan")),
+                "molten_depth_mean_mm": lm.get("molten_depth_mean_mm", float("nan")),
+                "delta_m_mean_um": lm.get("delta_m_mean_um", float("nan")),
+                "thick_branch_fraction": lm.get("thick_branch_fraction", float("nan")),
                 "removed_enthalpy_J": self.removed_enthalpy,
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
@@ -4922,7 +5117,8 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 "film_thickness_mean_mm", "nose_radius_mm", "transverse_radius_mm", "fitted_nose_radius_mm",
                 "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
-                "unapplied_load_J", "film_blob_fraction", "n_dead_elements"]
+                "unapplied_load_J", "film_blob_fraction", "molten_depth_max_mm", "molten_depth_mean_mm",
+                "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -6716,6 +6912,15 @@ tumbling fragment would sit between the two — DRAMA's own tumbling-averaged C_
 sphere's 0.91 — so the sphere/face-on spread is an attitude uncertainty, not a drag-law one, and tumbling is the first
 item of the next iteration (spec §17). The 50 mm sphere still demises (203.3 s, +6.2 % on SESAM's 1 %-mass time).
 
+**Next iteration** (in order): tumbling, replacing the fixed-attitude assumption; an Arbitrary Lagrangian–Eulerian
+mesh in which each patch recedes every step according to its own mass loss, which dissolves the element-removal
+question rather than improving it — no threshold, no residual mass to reassign, no hand-over rule, and a shape that
+updates continuously instead of in jumps; the pressure-driven part of the runoff flux integrated over the whole liquid
+depth while the shear-driven part stays at the conjugate depth, which is how the molten region's response to pressure
+differences enters; a patch graph that merges sliver facets, or a film carried per element rather than per facet, which
+is the real answer to the single-patch concentration; and reporting the runoff/stripping coupling parameter (melting
+speed × conjugate depth / kinematic viscosity) so that the decoupled treatment is checked rather than assumed.
+
 Girin's published cases (`analysis/girin_reference.py`, `data/reference_values/girin2017_table1.json`,
 `girin1994_tables.json`): the exact tier — GI = We∞Re∞^−½ (13.04 / 3.51 / 43.46 vs 13.0 / 3.55 / 43.5) and φ_cr from his
 Eq. (3) with We_cr 4.62 (16.3° / 32.0° / 8.9° vs 16.1° / 31.4° / 8.8°) — within 2 %; the integrated tier with the
@@ -6792,6 +6997,22 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   constants: the film now has a temperature (below), but its viscosity and surface tension are still evaluated at the
   liquidus, which is where most of it sits. μ_l falls by roughly a third per 200 K of superheat, so the runoff and the
   thin-branch wavelength are the quantities a temperature-dependent μ_l would move.
+- **How deep the shear reaches, and what may therefore leave.** The gas shear penetrates the liquid only to Girin's
+  conjugate depth, measured at 215 to 303 µm on the 100 mm flight, while the contiguous molten layer beneath the wall
+  is 350 to 890 µm. Two rules follow. Melt leaves an element only if the shear can reach it: a wall-owning element
+  always, a buried element only within the conjugate depth of the nearest patch, and where the wall-Knudsen gate
+  denies Girin's closure, only wall-owning elements. And the thick-versus-thin instability branch is decided on the
+  depth of *contiguous* liquid under the patch — the march inward stops at the first element that is not fully molten,
+  so melt blocked by solid is never credited — while the film account remains what can actually move and be stripped.
+  The layer decides the branch and the reported-only Rayleigh–Taylor criterion and nothing else; Girin's surface Weber
+  number, wavelength, period and droplet radius are all on the conjugate depth, as he has them.
+- **Runoff and stripping happen at once, and that is not double counting.** Wall shear stress is a flux, not a stock:
+  the shear sets up a mean flow in the sheared sublayer, which carries mass along the wall, and the instability is a
+  perturbation on that flow's free surface, which removes mass from it. The only coupling is the momentum the departing
+  droplets carry, of relative size (melting speed × conjugate depth / kinematic viscosity) — 5 % at a recession speed
+  of 0.1 mm/s, 48 % at 1 mm/s. What is *not* yet done, and is deferred with the pressure response of the molten
+  region: the pressure-gradient and deceleration-driven part of the runoff flux should integrate over the whole liquid
+  depth while the shear-driven part stays limited to the conjugate depth.
 - **What flows.** Melt and runoff start at the liquidus: an element's material becomes film in proportion to a ±2 K
   ramp at the liquidus (f_feed), so the mushy range holds latent heat but neither runs off nor is stripped
   (conservative; a coherency-point treatment is a future iteration). What leaves an element is its *molten* part, at
@@ -7009,6 +7230,34 @@ spec amendments" list carries the numbers.
     and `rayleigh_taylor` (quadratic in b; reported only). Clamping those branches to b_eff = min(b, sqrt(A)) is
     defensible but changes droplet sizes on those facets, so it is left as a modelling decision. Amendment 16's "the
     film pile-up is gone" refers to the rarefied-rim mechanism of pure modified Newtonian, not to these facets.
+21. §8, §9 (decided 2026-09-22/23) — **the instability branch is chosen on the depth of liquid, not on the film
+    account, and melt only leaves an element where the shear can reach it.** `b = m_f/(rho_l A)` is the mobilised film;
+    the liquid the gas shears is the film plus the *contiguous* fully molten material beneath the patch, found by
+    marching inward and stopping at the first element that is not fully molten, so melt blocked by solid is never
+    credited. Measured on the 100 mm flight: conjugate depth 215-303 um, film 1.7-3266 um (thinner than it in 77 % of
+    steps), contiguous layer 350-890 um (thicker in 100 %). The branch test therefore put 79-99.8 % of patches on the
+    1994 thin-film mode where Girin's 2017 thick mode applies; with the layer deciding it, the thick branch fires on a
+    median 26.7 % of patches (up to 97.9 %) -- lower than a non-contiguous measure suggests, because most patches have
+    mushy rather than liquid material beneath them. The layer changes the branch test and the reported-only
+    Rayleigh-Taylor criterion and **nothing else**: Girin's surface Weber number stays `rho_l V_s^2 delta_m / Sigma` on
+    the conjugate depth, as do his wavelength, period and radius; the thin branch's Weber number is a diagnostic on b;
+    the droplet Weber number is on the droplet diameter. Separately, `MeltSettings.feed_depth` (default `conjugate`)
+    lets melt leave an element only if a wall-owner or within the conjugate depth of the nearest patch, with
+    wall-owners only where the wall Knudsen gate denies the Girin closure; `--removal instant` is unaffected. Effects:
+    100 mm median droplet radius 130.7 -> 178.2 um (+36 %) with sprayed mass -4.0 %; 50 mm median 232.0 -> 211.2 um
+    (-9 %), demise 203.5 s / 69.32 km -> 207.5 s / 68.08 km, sprayed +2.8 %; molten material held in place in the mesh
+    up tenfold to ~1 % of the body. New history columns `molten_depth_max_mm`, `molten_depth_mean_mm`,
+    `delta_m_mean_um`, `thick_branch_fraction`.
+22. §8 (measured 2026-09-23) — **runoff and stripping are not double counting the shear.** Wall shear stress is a flux,
+    not a stock: 200 Pa against a gas momentum flux of order 2e5 Pa, with the shear work ~1/25000 of the gas kinetic
+    energy flux and droplet surface creation 1.3 % of the shear work. The shear drives a mean flow in the sheared
+    sublayer (runoff) and the instability is a perturbation on that flow's free surface (stripping) -- the mean and the
+    fluctuation, not two claims on one budget. The only legitimate coupling is the droplet momentum sink
+    `mdot_strip V_s` in `tau_gas = tau_wall + h dp/dx + rho h a + mdot_strip V_s + tau_wave`, whose relative size is
+    `Pi = v_melt delta_m / nu` (5 % at 0.1 mm/s of recession, 48 % at 1 mm/s): **report Pi and flag Pi > 0.2**. Not yet
+    implemented, and the form the deferred pressure-response work should take: the runoff flux needs two depth limits
+    in one expression, the shear-driven part over min(delta_m, h) and the pressure-gradient and deceleration part over
+    the full contiguous liquid depth h. The thick branch has the first and uses the film for the second.
 13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
     the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
     sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
