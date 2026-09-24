@@ -937,11 +937,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Files:**
 - Modify (replace): `reentry_model/thermal/__init__.py`, `reentry_model/thermal/skfem_backend.py`, `reentry_model/thermal/fenicsx_backend.py`
 - Modify: `reentry_model/cli.py` (the `--lumped-mass` flag becomes `--consistent-mass`, three lines)
-- Test: `tests/test_reentry_model_thermal.py` (one test changed, five appended), `tests/test_reentry_model_fenicsx.py` (one line changed, one test appended)
+- Test: `tests/test_reentry_model_thermal.py` (one test changed, five appended), `tests/test_reentry_model_fenicsx.py` (one line changed, two tests appended)
 
 **Interfaces:**
 - Consumes: `VolumeMesh.active`, `.surface()` (Task 1); `Material.enthalpy/enthalpy_liquid/enthalpy_mixed/cp/cp_eff/cp_mixed/temperature_from_enthalpy/temperature_from_enthalpy_mixed/melts/T_solidus/T_liquidus` (Task 2).
-- Produces: `StepResult(T, Q_conv, Q_rad, iterations, Q_extra=0.0, Q_dropped=0.0)`; solver methods `set_fractions(phi)` (0 = dead; refreshes the boundary and the pinned nodes), `element_energies(T=None)` (φ_e ρ V_e mean_i h(T_i)), `step(dt, q_conv, T_amb, dirichlet=None, nodal_load=None)` (nodal_load in W, mesh node order); attributes `phi`, `pinned`, `faces`, `areas`, `last_damping`; `SkfemThermalSolver(lumped_mass=True)` default with `consistent_mass = not lumped_mass`; `element_matrices(points, tets) -> (vol, Ke, Mk)` with `Mk[e, k]` the nodal-coefficient mass matrices and `nodal_mass_weights()`; `mass_matrix(c_nodal, c_film=None)`; `operators(T, T_old=None) -> (K, M_tan[, E])`; and, for the melt film (Step 3, Task 9): `set_film_mass(mass)` (one non-negative value per node, kg -- it joins the nodes' capacity and keeps a node live even when its elements are gone), `nodal_capacity()` (J/K per node, material + film, which the body uses to bound the melt loads it defers) and `film_weight()` (the film's share of each node's mass, which the enthalpy-consistent Newton update inverts against). `facet_temperature(T)` (the mean of a facet's three nodal temperatures) is on both backends, the skfem one defaulting `T=None` to its own stored field. The FEniCSx backend has the same public surface (`lumped_mass=False` raises `ValueError`).
+- Produces: `StepResult(T, Q_conv, Q_rad, iterations, Q_extra=0.0, Q_dropped=0.0)`; solver methods `set_fractions(phi)` (0 = dead; refreshes the boundary and the pinned nodes), `element_energies(T=None)` (φ_e ρ V_e mean_i h(T_i)), `step(dt, q_conv, T_amb, dirichlet=None, nodal_load=None)` (nodal_load in W, mesh node order); attributes `phi`, `pinned`, `faces`, `areas`, `last_damping`; `SkfemThermalSolver(lumped_mass=True)` default with `consistent_mass = not lumped_mass`; `element_matrices(points, tets) -> (vol, Ke, Mk)` with `Mk[e, k]` the nodal-coefficient mass matrices and `nodal_mass_weights()`; `mass_matrix(c_nodal, c_film=None)`; `operators(T, T_old=None) -> (K, M_tan[, E])`; and, for the melt film (Step 3, Task 9): `set_film_mass(mass)` (one non-negative value per node, kg -- it joins the nodes' capacity and keeps a node live even when its elements are gone), `nodal_capacity()` (J/K per node, material + film, which the body uses to bound the melt loads it defers) and `film_weight()` (the film's share of each node's mass, which the enthalpy-consistent Newton update inverts against). `facet_temperature(T=None)` (the mean of a facet's three nodal temperatures, defaulting to the solver's own stored field) is on both backends with the same signature -- they stand behind one protocol, so a call that works on either must work on both, and a test asserts it. The FEniCSx backend has the same public surface (`lumped_mass=False` raises `ValueError`).
 
 The film's capacity is the **liquid** one -- tangent c_p(T) in M, the secant of `enthalpy_liquid` in E -- never the mixture's c_p,eff: the film has already paid its latent heat and must not pay it again on the ramp. The same weighting makes 1^T E the exact increment of (solid nodal enthalpy + film liquid enthalpy), which is what `MeltingBody.energy()` sums, so the coupled balance closes on it. CG gets one fresh AMG hierarchy and then a direct solve if it still stalls (melting drains interior elements to phi ~ 1e-3 with unscaled conduction; `direct_fallbacks` counts it).
 
@@ -1157,6 +1157,18 @@ def test_melting_run_matches_the_skfem_backend(coarse_sphere_mesh):
     assert out["skfem"][5] == pytest.approx(out["fenicsx"][5], rel=1e-4) and out["fenicsx"][5] > 0.0
     assert out["skfem"][6] == pytest.approx(out["fenicsx"][6], rel=1e-4)
     assert out["fenicsx"][7] == pytest.approx(out["skfem"][7], rel=1e-4) and 0.0 < out["fenicsx"][7] <= 1.0
+
+
+def test_both_backends_accept_facet_temperature_with_no_argument(coarse_sphere_mesh):
+    """The two backends stand behind one protocol, so a call that works on either must work on both:
+    `facet_temperature()` with no argument means the solver's own stored field. The FEniCSx backend required the field
+    explicitly, which nothing caught because all four callers pass it -- a trap with no upside (fixed 2026-09-24)."""
+    mat = material.Material.from_drama_json()
+    for name in ("skfem", "fenicsx"):
+        s = solver(name, coarse_sphere_mesh, mat)
+        s.set_temperature(450.0)
+        assert s.facet_temperature() == pytest.approx(np.full(len(s.areas), 450.0)), name
+        assert s.facet_temperature() == pytest.approx(s.facet_temperature(s.temperature())), name
 ```
 
 
@@ -1695,8 +1707,8 @@ class FenicsxThermalSolver:
     def facet_load(self, q):
         return np.bincount(self.faces.ravel(), weights=np.repeat(q * self.areas / 3.0, 3), minlength=self.mesh.n_nodes)
 
-    def facet_temperature(self, T):
-        return T[self.faces].mean(axis=1)
+    def facet_temperature(self, T=None):
+        return (self.T if T is None else T)[self.faces].mean(axis=1)   # same default as the skfem backend: one protocol
 
     def lumped(self, c_nodal, c_film=None):
         """diag(sum_e phi_e V_e/4 c_i) on the mesh nodes, plus the film's own (liquid) capacity where it rides."""
