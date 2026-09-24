@@ -26,7 +26,7 @@
 - Every task's tests are run with the exact command given in the task; a task is done only when the whole unit tier passes (`"$PY" -m pytest -m "not drama and not reference" -q`).
 - Code in this plan was executed and its tests passed on 2026-09-20/21 in a throwaway copy of the package (`drama_env`'s package versions as pinned in `requirements-step2.txt`; the FEniCSx backend in `fenicsx_env`). Transcribe it verbatim; where a task says "replace the file", the block is the complete new file; where it says "append", the block goes at the end of the existing file.
 
-## Measured facts and spec amendments (2026-09-20/21, prototype in a throwaway copy)
+## Measured facts and spec amendments (2026-09-20 to 2026-09-23, prototype in a throwaway copy)
 
 These were measured while writing the plan and override the corresponding spec statements; Task 15 writes them into the spec (§18) and the README.
 
