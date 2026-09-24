@@ -21,3 +21,7 @@ objects.xml
 
 # physics-model outputs (histories, comparison plots)
 reentry_model_output/
+
+# one-off ground-track plot for NORAD 62878 (scratch, unrelated to the re-entry model)
+plot_groundtrack_62878.py
+groundtrack_norad62878.png
