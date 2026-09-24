@@ -156,7 +156,52 @@ These were measured while writing the plan and override the corresponding spec s
     so the transition is a modelling choice that must be stated rather than buried. (b) The extent cap of fact 33.
     (c) The pressure-driven runoff term of fact 29, which needs the full contiguous liquid depth where the model uses
     the film. (d) The ALE mesh of fact 28's preamble.
-13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27), and `molten_depth_max_mm`, `molten_depth_mean_mm`, `delta_m_mean_um` and `thick_branch_fraction` (the contiguous liquid layer, the conjugate depth, and the share of wet windward patches on Girin's thick branch, fact 28) come with the film's temperature and the layer. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial` and `--consistent-mass` replaces `--lumped-mass`.
+35. **The front-surface Rayleigh-Taylor mode, applied (2026-09-24).** Asked to apply the criterion so it can spray, with
+    the expectation that the nose would be the only place it is met. **It is**: the mode releases mass out to 20 deg and
+    **exactly zero beyond it**, with 99.1 % of that mass inside 15 deg and 58.3 % inside 10. Switched by
+    `--rt-spray on|off`, default on; `off` reproduces every run before this date.
+    **The gate needs both criteria, and finding out why was instructive.** The *bounded* criterion has no threshold of
+    its own: with a wide molten region k = k_max is always admissible and tanh(k h) > 0 at any depth, so it answers yes
+    wherever there is liquid -- depth enters its *rate*, not its yes/no. Gating on it alone made every wet patch
+    Rayleigh-Taylor-unstable, which a unit test caught at once. The criterion with a threshold is the depth one,
+    `W cos(phi) h^2 rho_l > 3 Sigma`, equivalently h > lambda*/2 pi, and that is exactly what confines the mode to the
+    nose: the normal deceleration falls as cos(phi), so the depth required rises as 1/sqrt(cos phi) while the melt gets
+    shallower. Both are now required -- the depth criterion for the threshold, the bounded form for the admissible
+    wavelength, the lateral fit and the growth rate.
+    **Three modelling decisions, none of them Girin & Kopyt's**, because their paper gives no mass-loss rate for the
+    front surface (its Table 2 has no mdot column, unlike Table 1 for the side). (a) The rate carries their side-surface
+    construction across: for the side they give r_d = lambda*/4 and tau_d = tau*, which this model writes
+    mdot = rho_l min(b, r_d/2)/tau*, so for the front, where they give r_d ~ lambda* and tau_d ~ tau*, the same form is
+    mdot = rho_l min(b, lambda*/2)/tau*. Since lambda* is centimetre-scale (21 mm at 95 m/s^2) and b millimetre-scale it
+    reduces to **rho_l b / tau***: the film is shaken off within one growth time, which is what their text describes, and
+    **no new closure constant is introduced**. (b) The droplet radius is lambda*, their front-surface r_d, then capped as
+    on every branch by the film mass on the patch and a quarter of the body radius -- and here the film-mass cap is what
+    binds, giving 1.2-1.9 mm rather than 21. (c) Two modes of one interface cannot both break it up, so the **shorter
+    growth time takes the patch** and the other does not act on the same film; that is also what keeps the shear from
+    being spent twice (the double-counting checklist of fact 29).
+    **Measured, 100 mm flight.** The mode releases **61.04 g, 6.27 % of the sprayed mass**, and the crossover is sharp
+    because the two growth times move in opposite directions: tau_RT is nearly constant at **10-13 ms** across the whole
+    cap while tau_shear rises from 0.27 ms at 30-45 deg through 1.41 ms at 10-15 deg to **35.6 ms at 0-2 deg**. They
+    cross between 2-4 and 4-6 deg, and beyond 15 deg Girin's thick branch wins outright (58.4 g at 15-20 deg against the
+    front mode's 0.55 g). The **total** sprayed mass moves only **-0.16 %** (0.97531 to 0.97375 kg) -- supply-limited
+    once again, so what changes is the mechanism and the droplet population, not the mass.
+    **The size distribution is where it shows.** The median radius is unmoved, 187.9 to 188.6 um, but the tail is
+    transformed: the per-step largest droplet goes from a median **388.6 to 2027.0 um** and the largest anywhere from
+    1551 to **4093 um**. So about 6 % of the sprayed mass now leaves as droplets an order of magnitude larger in radius
+    and three in volume, which is precisely the inertial "shaking off" Girin & Kopyt describe at the front surface and
+    associate with meteoroid flares. **For Step 4 the droplet source is now two populations, not one**: a ~190 um shear
+    population from the 20-90 deg annulus and a ~1.7 mm inertial population from the stagnation cap.
+    **It is a large-body mechanism here.** On the 50 mm sphere it barely fires: demise unmoved (207.5 s, 68.082 km),
+    sprayed mass unmoved to six figures, droplet count to five, median radius -0.10 %, and the only visible effect is the
+    largest droplet, 1359 to 2567 um. The threshold h > sqrt(3 Sigma/(W cos(phi) rho_l)) is an **absolute length** --
+    3.36 mm at 95 m/s^2 -- so the 100 mm sphere's pool reaches it and the 50 mm sphere's does not. The energy balance
+    stays exact on both flights (-1.7e-10 and 2.5e-10 of the absorbed heat).
+    **A procedural near-miss worth recording.** The first 50 mm comparison was of the wrong run: the output directory
+    already held a run from the previous day, and a wait loop testing only for the file's *existence* found it
+    immediately and returned stale numbers that happened to reproduce an older baseline exactly -- which is what gave it
+    away. Fact 31's rule extends: **check that an output path is fresh, not merely that the file is there**, and prefer a
+    directory that did not exist before the run.
+13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27), and `molten_depth_max_mm`, `molten_depth_mean_mm`, `delta_m_mean_um` and `thick_branch_fraction` (the contiguous liquid layer, the conjugate depth, and the share of wet windward patches on Girin's thick branch, fact 28) come with the film's temperature and the layer. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial`, `--rt-spray on|off` (fact 35) and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
 
@@ -2914,7 +2959,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `dispersion.DispersionTable` (Task 4), `surface_flow.BRANCH_FREE_MOLECULAR`, `CLOSURE_GIRIN` and `SurfaceFlowResult` fields (Task 5), `material.LiquidProperties` (Task 2).
-- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)` -- **nan/0 wherever the patch's closure is not `CLOSURE_GIRIN`**, since Eq. (2) and Ranger's Psi(phi) are continuum constructions and Task 5's gate decides whether they may be used at all; `rayleigh_taylor(deceleration, b, liquid) -> (active, lambda*, tau*)` (the unbounded fastest mode, reported only; `deceleration` is the component **normal to the film**, Girin & Kopyt's W sin(Theta) = W cos(phi) on this body, per patch or scalar); `rayleigh_taylor_bounded(deceleration, h, extent, liquid) -> (active, lambda, tau)`, the same mode in a pool of finite lateral extent, which admits only k >= pi/extent, with `extent` the contiguous **molten region** each patch belongs to (facts 30 and 33; reported only); `wave_fits(lam, extent) -> bool` -- one whole wavelength must fit inside that region, applied on every branch; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None, extent=None, deceleration_n=None) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s, growth)` (`b_layer` is the contiguous liquid depth that decides the thick/thin branch, `extent` the molten region's lateral extent for the wave-fits test, `deceleration_n` the surface-normal deceleration for the reported Rayleigh-Taylor flag, and `growth` the selected mode's growth time per patch). Girin's criterion `We_s > We_cr` with We_s = rho_l V_s^2 min(delta_m, layer)/Sigma gates **every** branch, not just the thick one (fact 32); `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED = 0/1/2` (Girin thick / thin-film on the edge state / thin-film on the freestream). The `closure` column replaces `regime` in `SOURCE_COLUMNS`. Spraying is never switched off by rarefaction: the gate selects the closure, and hence whether delta_m exists to define a thick film at all.
+- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)` -- **nan/0 wherever the patch's closure is not `CLOSURE_GIRIN`**, since Eq. (2) and Ranger's Psi(phi) are continuum constructions and Task 5's gate decides whether they may be used at all; `rayleigh_taylor(deceleration, b, liquid) -> (active, lambda*, tau*)` (the unbounded fastest mode, reported only; `deceleration` is the component **normal to the film**, Girin & Kopyt's W sin(Theta) = W cos(phi) on this body, per patch or scalar); `rayleigh_taylor_bounded(deceleration, h, extent, liquid) -> (active, lambda, tau)`, the same mode in a pool of finite lateral extent, which admits only k >= pi/extent, with `extent` the contiguous **molten region** each patch belongs to (facts 30 and 33; reported only); `wave_fits(lam, extent) -> bool` -- one whole wavelength must fit inside that region, applied on every branch; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None, extent=None, deceleration_n=None) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s, growth)` (`b_layer` is the contiguous liquid depth that decides the thick/thin branch, `extent` the molten region's lateral extent for the wave-fits test, `deceleration_n` the surface-normal deceleration for the reported Rayleigh-Taylor flag, and `growth` the selected mode's growth time per patch). Girin's criterion `We_s > We_cr` with We_s = rho_l V_s^2 min(delta_m, layer)/Sigma gates **every** branch, not just the thick one (fact 32); `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; `SprayModel(..., rt_spray=True)` applies the front-surface Rayleigh-Taylor mode on the patches where it passes both criteria and grows faster than the shear mode (fact 35; `rt_spray=False` reports it only, as every run before 2026-09-24 did). Constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED/RT = 0/1/2/3` (Girin thick / thin-film on the edge state / thin-film on the freestream / front-surface Rayleigh-Taylor). The `closure` column replaces `regime` in `SOURCE_COLUMNS`. Spraying is never switched off by rarefaction: the gate selects the closure, and hence whether delta_m exists to define a thick film at all.
 
 - [ ] **Step 1: Write the two reference-value files**
 
@@ -3282,6 +3327,55 @@ def test_the_rayleigh_taylor_driving_is_the_deceleration_normal_to_the_film():
     # and the bounded form takes the same normal component
     onb, lamb, taub = spray.rayleigh_taylor_bounded(w_n, h, np.full(4, 0.2), LIQ)
     assert onb[0] and not onb[2] and not onb[3] and taub[0] < taub[1] < np.inf
+
+
+def test_the_front_surface_rayleigh_taylor_mode_is_applied_where_it_is_the_faster_mode():
+    """Girin & Kopyt assign the front surface to their aperiodic Rayleigh-Taylor mode, not to the side mode, and with
+    Girin's critical angle gating the shear branches the stagnation cap otherwise has no mechanism at all. The mode is
+    applied where it passes *both* criteria -- the depth threshold W cos(phi) h^2 rho_l > 3 Sigma, which is what confines
+    it to the nose, and an admissible wave in the molten region -- and where its growth time beats the shear mode's,
+    since two modes of one interface cannot both break it up."""
+    flow = FakeFlow(3, closure=sf.CLOSURE_COUETTE)            # no delta_m: the shear mode here is the weak thin one
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-4)
+    layer = np.array([5e-3, 1e-3, 5e-3])                      # deep, too shallow for the threshold, deep
+    v_s = np.array([0.1, 0.1, 40.0])                          # stable shear, stable shear, strong shear
+    w_n = np.full(3, 95.0)                                    # at the stagnation point cos(phi) = 1
+    areas, m_f = np.full(3, 1e-5), b * LIQ.rho * 1e-5
+    deep, _, _ = spray.rayleigh_taylor(w_n, layer, LIQ)
+    assert deep.tolist() == [True, False, True]               # h > lambda*/2 pi only for the deep pair
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(3, True), 0.5, areas, m_f,
+                         b_layer=layer, deceleration_n=w_n)
+    assert res.branch.tolist() == [spray.BRANCH_RT, spray.BRANCH_THIN, spray.BRANCH_THIN]
+    assert res.dm[0] > 0.0 and res.dm[1] == 0.0 and res.dm[2] > 0.0
+    _, lam_rt, tau_rt = spray.rayleigh_taylor_bounded(w_n, layer, np.full(3, np.inf), LIQ)
+    assert res.growth[0] == pytest.approx(tau_rt[0])          # the winning mode's growth time is the RT one
+    assert res.growth[2] < res.growth[0]                      # and the shear mode is the faster one on patch 2
+    assert res.mdot[0] == pytest.approx(LIQ.rho * min(b[0], lam_rt[0] / 2.0) / tau_rt[0])
+    cap = (3 * m_f[0] / (4 * np.pi * LIQ.rho)) ** (1 / 3)
+    assert lam_rt[0] > 1e-2 and res.r[0] == pytest.approx(cap)   # lambda* is centimetres; the film-mass cap binds
+    # with the mode reported but not applied -- every run before 2026-09-24 -- the deep stable patch releases nothing
+    off = spray.SprayModel(LIQ, rt_spray=False).evaluate(
+        flow, FakeState(), b, delta_m, v_s, np.full(3, True), 0.5, areas, m_f, b_layer=layer, deceleration_n=w_n)
+    assert off.branch.tolist() == [spray.BRANCH_THIN] * 3 and off.dm[0] == 0.0 and off.dm[2] > 0.0
+    assert off.dm[2] == pytest.approx(res.dm[2])              # the shear-dominated patch is untouched either way
+
+
+def test_the_applied_rayleigh_taylor_mode_needs_the_wave_to_fit_its_melt_region():
+    """The lateral bound applies to this mode as it does to the shear ones: a pool narrower than half the marginal
+    wavelength admits nothing at all, however deep it is."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, layer, v_s = np.full(2, 1e-4), np.full(2, 5e-3), np.full(2, 0.1)
+    w_n = np.full(2, 95.0)
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    lam_c = 2 * np.pi * np.sqrt(LIQ.sigma / (95.0 * LIQ.rho))          # the marginal wavelength
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f,
+                         b_layer=layer, extent=np.array([0.4 * lam_c, 20.0 * lam_c]), deceleration_n=w_n)
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_RT]   # too narrow, then wide enough
+    assert res.dm[0] == 0.0 and res.dm[1] > 0.0
 ```
 
 
@@ -3353,7 +3447,8 @@ WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected ab
 CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
 SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup"]
-BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED = 0, 1, 2      # Girin thick / thin-film with the edge state / thin-film with the freestream
+BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
+#                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
 
 
 def melt_layer(flow, liquid):
@@ -3471,10 +3566,12 @@ class SprayResult:
 
 
 class SprayModel:
-    def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_PRACTICAL, table=None):
+    def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_PRACTICAL, table=None,
+                 rt_spray=True):
         if k_r <= 0.0 or k_t <= 0.0 or we_critical <= 0.0:
             raise ValueError("k_r, k_t and the critical Weber number must be > 0")
         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
+        self.rt_spray = bool(rt_spray)               # apply the front-surface mode, or only report it
         self.table = table or dispersion.DispersionTable()
 
     def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None,
@@ -3539,6 +3636,42 @@ class SprayModel:
             rate = np.where(ok, liq.rho * np.minimum(b[mask], lam / 8.0) / np.where(ok, tau, 1.0), 0.0)
             r[mask], mdot[mask], branch[mask] = rr, rate, code
             growth[mask] = np.where(ok, tau, np.nan)
+        # (iv) the front-surface Rayleigh-Taylor mode, now *applied* rather than only reported.
+        #
+        # Girin & Kopyt assign the front surface -- where the flow influence is negligible, V_0 -> 0 and sin Theta -> 1 --
+        # to this aperiodic mode rather than to their side mode, and with Girin's critical angle now gating the shear
+        # branches the stagnation cap has no other mechanism at all. Three modelling decisions, none of them theirs,
+        # because their paper gives no mass-loss rate for the front surface (its Table 2 has no mdot column):
+        #   * the gate is *both* criteria, because each supplies something the other does not. The depth criterion
+        #     W cos(phi) h^2 rho_l > 3 Sigma -- equivalently h > lambda*/2 pi -- is the one with a threshold, and it is
+        #     what confines the mode to the nose: the normal deceleration falls as cos(phi) so the depth needed rises as
+        #     1/sqrt(cos phi) while the melt gets shallower. The bounded criterion has no threshold of its own (with a
+        #     wide molten region k = k_max is always admissible and tanh(k h) > 0 for any depth, so it answers yes
+        #     wherever there is liquid); what it supplies is the admissible wavelength and the growth rate, including
+        #     the lateral fit and the finite-depth factor. Requiring only the bounded form made every wet patch
+        #     Rayleigh-Taylor-unstable, which is how this was caught;
+        #   * the rate carries their side-surface construction across. For the side they give r_d = lambda*/4 and
+        #     tau_d = tau*, which this model writes mdot = rho_l min(b, r_d/2)/tau*; for the front they give
+        #     r_d ~ lambda* and tau_d ~ tau*, so the same form is mdot = rho_l min(b, lambda*/2)/tau*. Since lambda*
+        #     is centimetre-scale here and b millimetre-scale, it reduces to rho_l b / tau*: the film is shaken off
+        #     within one growth time, which is what their text describes. No new closure constant is introduced.
+        #   * the droplet radius is lambda* (their front-surface r_d), then capped as every branch is, by the film mass
+        #     on the patch and a quarter of the body radius -- and here the film-mass cap is what actually binds.
+        # The two modes are two modes of one interface, so the one that reaches tearing-off first breaks it up: the
+        # shorter growth time takes the patch and the other does not act on the same film. That is also what keeps the
+        # shear from being spent twice (the double-counting checklist of the plan's fact 29).
+        w_n = flow.deceleration if deceleration_n is None else deceleration_n   # normal component, W cos(phi)
+        if self.rt_spray:
+            deep, _, _ = rayleigh_taylor(w_n, layer, liq)               # the threshold: h > lambda*/2 pi
+            rt_on, lam_rt, tau_rt = rayleigh_taylor_bounded(w_n, layer, np.full(n, np.inf) if L is None else L, liq)
+            rt_on = np.asarray(rt_on) & np.asarray(deep) & has_film & np.isfinite(tau_rt)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                rate_rt = np.where(rt_on, liq.rho * np.minimum(b, lam_rt / 2.0) / np.where(rt_on, tau_rt, 1.0), 0.0)
+            faster = rt_on & (rate_rt > 0.0) & (~np.isfinite(growth) | (tau_rt < growth))
+            r = np.where(faster, lam_rt, r)
+            mdot = np.where(faster, rate_rt, mdot)
+            branch = np.where(faster, BRANCH_RT, branch)
+            growth = np.where(faster, tau_rt, growth)
         unstable = mdot > 0.0
         dm = np.where(unstable, np.minimum(mdot * areas * dt, m_f), 0.0)
         # a droplet is never larger than the film on its patch nor than a quarter of the body radius
@@ -3547,8 +3680,7 @@ class SprayModel:
             r = np.minimum(r, np.minimum((3.0 * m_f / (4.0 * np.pi * liq.rho)) ** (1.0 / 3.0), 0.25 * radius))
         with np.errstate(divide="ignore", invalid="ignore"):
             dn = np.where(dm > 0.0, dm / (4.0 / 3.0 * np.pi * liq.rho * np.where(dm > 0.0, r, 1.0) ** 3), 0.0)
-        w_n = flow.deceleration if deceleration_n is None else deceleration_n   # normal component, W cos(phi)
-        rt_active, _, _ = rayleigh_taylor(w_n, layer, liq)                 # the criterion is about the whole liquid
+        rt_active, _, _ = rayleigh_taylor(w_n, layer, liq)     # the unbounded criterion, still reported for continuity
         return SprayResult(branch, we_s, unstable, r, mdot, dm, dn, bool(np.any(rt_active & has_film)), delta_m, v_s, growth)
 
 
@@ -6541,6 +6673,10 @@ def build_parser():
                     help="girin: film + runoff + Girin spraying (default); instant: liquid removed as it forms -- the lumped-melting "
                          "verification device, not physical")
     me.add_argument("--runoff", choices=("on", "off"), default="on", help="film runoff transport along the surface (default on)")
+    me.add_argument("--rt-spray", choices=("on", "off"), default="on",
+                    help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
+                         "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
+                         "which is how every run before 2026-09-24 behaved")
     me.add_argument("--rarefied-shear", choices=surface_flow.RAREFIED_SHEAR_NAMES, default="slip",
                     help="within the shock-layer branch: slip (default) uses Maxwell slip below Kn_local 0.1 and free-molecular shear above; "
                          "bridged blends them with SESAM's f(Kn). The merged branch always bridges")
@@ -6585,7 +6721,8 @@ def build_thermal(args, settings, mass):
     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
     if melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
-        spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical)
+        spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
+                                       rt_spray=args.rt_spray == "on")
         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
                                           particles=args.particles, size_feedback=size_feedback)
@@ -6608,7 +6745,8 @@ def build_thermal(args, settings, mass):
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
     if melting:
-        info.update({"removal": args.removal, "runoff": args.runoff, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+        info.update({"removal": args.removal, "runoff": args.runoff, "rt_spray": args.rt_spray,
+                     "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
