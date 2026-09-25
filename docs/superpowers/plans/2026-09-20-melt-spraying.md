@@ -201,57 +201,62 @@ These were measured while writing the plan and override the corresponding spec s
     immediately and returned stale numbers that happened to reproduce an older baseline exactly -- which is what gave it
     away. Fact 31's rule extends: **check that an output path is fresh, not merely that the file is there**, and prefer a
     directory that did not exist before the run.
-36. **Regime 2: a deep film whose melt is the more viscous medium (2026-09-25).** Asked to add Girin & Kopyt's
-    step-profile branch for the case of a film deeper than delta_m whose melt has the higher kinematic viscosity, it is
-    implemented as `spray.BRANCH_REGIME2 = 4`, gated exactly as specified -- and measuring it turned up two independent
-    reasons why it cannot fire, one of which is structural and worth keeping.
-    **What it is, and whose it is.** delta_m is a conjugate-boundary-layer depth: it presumes a velocity gradient
-    resolved *inside* the melt, which is the premise of Girin's (2017) gradient instability. That premise fails once
-    nu_melt = mu_l/rho_l exceeds nu_gas = mu_e/rho_e, because the melt's viscous layer then outgrows the air's and the
-    interfacial profile degenerates from a gradient into a tangential discontinuity -- Landau's "tangential rupture",
-    which is exactly the profile Girin & Kopyt assume. The branch therefore reverts to their pair,
-    lambda* = 1.5 M_e Sigma/(rho_e u_eff^2) and tau* = 0.798 lambda*^1.5 (rho_l/Sigma)^1/2 (their Eqs. 11 and 12), with
-    the rigid-wall factor cth(Lambda) of their Eq. (5) going to 1 in the deep-film limit, and takes Girin 2017's
-    torus-shedding rate mdot = rho_l pi r^2/(lambda* tau*) with r = k_r lambda*, which like the thick branch's rate and
-    unlike the thin branch's does not reference the film depth at all. "Uncapped" therefore means *not depth-limited*,
-    not larger: it comes out **0.73 x** the thin branch's rate at the same wavelength (pi k_r^2 = 0.0908 against 1/8)
-    wherever that branch is not itself depth-limited, and what bounds the release is still the film mass through
-    dm = min(mdot A dt, m_f). Provenance, because only part of this is in the source: the wavelength, the growth time and
-    the deep-film limit are Girin & Kopyt's; the criterion nu_melt > nu_gas is **not** -- they neglect the viscosity of
-    both media outright and their summary defers it ("inclusion of the effects of viscosities of the media will be
-    necessary for further improvements in the accuracy") -- and the rate is Girin 2017's, carried across as the thin and
-    Rayleigh-Taylor branches carry theirs.
-    **It cannot fire, measured two ways.** (a) *This material is nowhere near the threshold.* Liquid aluminium has
-    nu_melt = 5.42e-7 m2/s against an edge nu_gas measured at **0.0178 to 2.04 m2/s** over the 100 mm flight to 110 s and
-    0.0951 to 3.75 m2/s over the whole 50 mm flight, so nu_gas/nu_melt runs **3.3e4 to 6.9e6** and the closest approach
-    is a factor of 33 000. Directly: **0 of 533 960** windward wet patch-steps on the 100 mm flight and 0 of 42 268 on
-    the 50 mm one take the branch. (Those flights split 120 682 thick / 411 949 thin / 1 329 Rayleigh-Taylor and
-    40 990 thin / 1 278 Rayleigh-Taylor with no thick patch-step at all -- the 50 mm flight being thin throughout is the
-    wall-Knudsen gate denying Girin's closure, as fact 32 has it.) (b) *The two halves of the condition are mutually
-    exclusive, for any material*, because delta_m carries the same viscosity ratio:
-    delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3). At the threshold nu_melt = nu_gas the
-    conjugate depth is already (rho_l/rho_e)^(1/3) = **151** boundary-layer thicknesses -- **1.06 m** at delta_a = 7 mm --
-    and it grows as the melt thickens further (700 delta_a, 4.9 m, at ten times the threshold). No melt layer a 100 mm
-    sphere can hold exceeds a metre, so `layer > delta_m` and `nu_melt > nu_gas` cannot both hold: raising the melt's
-    viscosity to reach the branch pushes the depth it must beat out of reach faster than the melt can deepen. A unit test
-    locks this, so it cannot quietly be misread later, and the branch test must supply delta_m directly.
-    **Consequence, and the decision left open.** The branch is kept as a **guard**: it is where the logic belongs if the
-    material, the altitude band or the delta_m closure ever changes, and it stops Girin's gradient closure being applied
-    silently outside its domain. It is inert for every run in this plan, measured against the model's own reproducibility
-    floor rather than asserted: on the 50 mm physics flight the worst column anywhere in the 416-row history moves by
-    **3.1e-8** between the build without the branch and the build with it, against **1.6e-8** between two runs of the
-    *same* build -- the same order, i.e. the change is not distinguishable from run-to-run scatter -- while
-    `thick_branch_fraction` is identical in all 67 comparable steps (maximum absolute difference exactly 0), demise time
-    is identical to the step at 207.5 s and sprayed mass agrees to twelve significant figures. It is not bit-identical,
-    and should not be claimed as such: the extra array operations perturb the last bit, which the adaptive integrator
-    amplifies into 12 more right-hand-side evaluations out of 11 702. What is **not** decided: whether the viscosity
-    test should gate *before* delta_m is trusted rather than after -- which is the change that would make the branch
-    reachable, and is the non-circular ordering, since it is delta_m's own construction whose validity is in question.
-    That is a modelling decision of the same kind as fact 27's b_eff clamp, and is recorded rather than taken.
-    Where it shows up, checked rather than assumed: the source table's `branch` column (`SOURCE_COLUMNS` index 8) and
-    nowhere else. The surface VTK carries surface_flow's `closure`, not the spray branch; no history column is added; and
-    `thick_branch_fraction` is `film.lubrication`'s thick flag over the whole deep set, so it would count a regime-2
-    patch as thick -- it measures how deep the liquid is, not which instability took the patch.
+36. **Regime 2: Girin's Kelvin-Helmholtz cell, implemented (2026-09-25).** `spray.BRANCH_REGIME2 = 4` adds the one cell
+    of Girin's own regime classification the model did not carry, and his two-stage test is now applied in his order.
+    **Stage one, on the depth.** delta_m is a *theoretical* thickness -- the melt velocity boundary layer his Eq. (2)
+    predicts -- so what the liquid depth decides is whether that layer can physically form in the melt that is present.
+    Girin (2017) Sect. 1: when "the aerodynamic interaction dominates over the rate of heating, the mass loss overtakes
+    fusion", the molten layer is thinner than delta_m, "the unstable disturbances are then affected by the stabilizing
+    influence of the meteoroid rigid core", and "the results obtained in Girin & Kopyt (1994) are thus valid for the case
+    of dominant ablation" -- **regime 1**, this model's thin branch. When melting outstrips the mass loss the layer does
+    form, layer > delta_m, and the profile becomes "the completed boundary layer ... consisting of free conjugated
+    boundary layers, in air, delta_a, and in the melt, delta_m, independent from the solid core" -- dominant fusion.
+    **Stage two, on the kinematic viscosities, only where the layer formed.** Sect. 2: the "classical Kelvin-Helmholtz
+    type ... is in action only when the liquid kinematic viscosity is greater than that one of the gas: nu_m > nu_a",
+    because then "the liquid boundary layer is much thicker than the gas one" and V_s << V_a, so "the velocity profile is
+    close to the discontinuous one (tangential discontinuity) which is the base for the Kelvin-Helmholtz mechanism" --
+    **regime 2**. Under the inverse inequality nu_a > nu_m the thicknesses become comparable, delta_m = O(delta_a) and
+    V_s = O(V_a), the profile is "inflated", and the mechanism is "completely different from the Kelvin-Helmholtz one",
+    being set by his Eq. (1) -- **regime 3**, the gradient instability the thick branch already solves through
+    `dispersion`. So the plan's thin and thick branches were Girin's regimes 1 and 3 all along, and 2 was the empty cell.
+    **What the branch computes, and the one choice in it that is not Girin's.** Wavelength and growth time are Girin &
+    Kopyt's Eqs. (11) and (12), lambda* = 1.5 M_e Sigma/(rho_e u_eff^2) and tau* = 0.798 lambda*^1.5 (rho_l/Sigma)^1/2 --
+    the same mode the thin branch uses, because it is the same tangential-discontinuity profile -- with their rigid-wall
+    factor cth(Lambda) of Eq. (5) going to 1, the deep-film limit, since the layer has formed and the core no longer
+    stabilises it. Neither paper gives a mass-loss rate for this cell, so it takes the torus form Girin (2017) uses on the
+    thick branch, mdot = rho_l pi r^2/(lambda* tau*) with r = k_r lambda*, which like that rate and unlike the thin
+    branch's does not reference the film depth: "uncapped" means *not depth-limited*, not larger, and it comes out
+    **0.73 x** the thin branch's rate at the same wavelength (pi k_r^2 = 0.0908 against 1/8) wherever that branch is not
+    itself depth-limited. What bounds the release is the film mass, through dm = min(mdot A dt, m_f), as on every branch.
+    That rate transfer is the only modelling choice in the branch, and it introduces no new closure constant.
+    **This body is in regime 3, measured.** Liquid aluminium has nu_melt = 5.42e-7 m2/s against an edge nu_gas of
+    **0.0178 to 2.04 m2/s** over the 100 mm flight to 110 s and 0.0951 to 3.75 m2/s over the whole 50 mm flight, so
+    nu_gas/nu_melt runs **3.3e4 to 6.9e6** and never approaches one: wherever the layer forms the mechanism is his
+    gradient instability, which is exactly why that is the right model for this work. Directly: **0 of 533 960** windward
+    wet patch-steps on the 100 mm flight and 0 of 42 268 on the 50 mm one take regime 2. (Those flights split 120 682
+    regime 3 / 411 949 regime 1 / 1 329 front-surface Rayleigh-Taylor and 40 990 regime 1 / 1 278 Rayleigh-Taylor with no
+    regime 3 at all -- the 50 mm sphere being regime 1 throughout is the wall-Knudsen gate denying Girin's closure, as
+    fact 32 has it.)
+    **A melt viscous enough for regime 2 would fail stage one on this body**, which is his ordering working rather than a
+    gap in it. Eq. (2) carries the same ratio, delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2
+    rho_l/rho_e)^(1/3), so at the viscosity threshold itself the predicted layer is already (rho_l/rho_e)^(1/3) = **151**
+    air boundary-layer thicknesses, about **1.06 m** at delta_a = 7 mm. Girin records the same effect for his stony
+    variant -- "the thick boundary layer, which for a high-viscosity stony melt becomes comparable with the radius of the
+    meteoroid remnant" -- and it is why that case ends with lambda_f above R_0 (fact 10). No film a 100 mm sphere can
+    hold accommodates a metre-scale delta_m, so such a melt is routed to regime 1, correctly. A unit test pins that
+    routing so the branch is not later read as dead code that ought to have fired, and the branch-behaviour test
+    therefore supplies delta_m directly.
+    **Inert for every run in this plan**, measured against the model's own reproducibility floor rather than asserted: on
+    the 50 mm physics flight the worst column anywhere in the 416-row history moves by **3.1e-8** between the build
+    without the branch and the build with it, against **1.6e-8** between two runs of the *same* build -- the same order,
+    so it is not distinguishable from run-to-run scatter -- while `thick_branch_fraction` is identical in all 67
+    comparable steps (maximum absolute difference exactly 0), demise time is identical to the step at 207.5 s, and
+    sprayed mass agrees to twelve significant figures. It is not bit-identical and is not claimed to be: the extra array
+    operations perturb the last bit, which the adaptive integrator amplifies into 12 more right-hand-side evaluations out
+    of 11 702. Where it shows up, checked rather than assumed: the source table's `branch` column (`SOURCE_COLUMNS` index
+    8) and nowhere else -- the surface VTK carries surface_flow's `closure`, not the spray branch; no history column is
+    added; and `thick_branch_fraction` is `film.lubrication`'s thick flag over the whole formed-layer set, so it would
+    count a regime-2 patch as regime 3. That column records whether the layer formed, not which mechanism took the patch.
 13. **Columns and files.** History adds `removed_mass_kg`, `film_thickness_max_mm`, `film_thickness_mean_mm`, `nose_radius_mm`, `transverse_radius_mm`, `fitted_nose_radius_mm` and `n_dead_elements` to spec §10's list (`runoff_mass_kg` = mass that arrived on another patch, cumulative); `melt_front_depth_max_mm` is the depth of the deepest element with f_l > 0 (the solidus front for the range material); `film_T_max_K`, `film_T_mean_K`, `film_frozen_fraction` (the share of the film sitting on patches below the feed ramp — mass the enthalpy calls solid that the model still treats as liquid, fact 25), `unapplied_load_J` (the deferred melt energy still queued, fact 26) and `film_blob_fraction` (the share of the film deeper than its patch is wide, fact 27), and `molten_depth_max_mm`, `molten_depth_mean_mm`, `delta_m_mean_um` and `thick_branch_fraction` (the contiguous liquid layer, the conjugate depth, and the share of wet windward patches on Girin's thick branch, fact 28) come with the film's temperature and the layer. The source table has 22 columns (`spray.SOURCE_COLUMNS`), 5e5 rows for the 100 mm physics flight (`particles.npz`, compressed). The CLI gains `--k-scale` (verification device), `--size-feedback current|initial`, `--rt-spray on|off` (fact 35) and `--consistent-mass` replaces `--lumped-mass`.
 
 ---
@@ -3010,7 +3015,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `dispersion.DispersionTable` (Task 4), `surface_flow.BRANCH_FREE_MOLECULAR`, `CLOSURE_GIRIN` and `SurfaceFlowResult` fields (Task 5), `material.LiquidProperties` (Task 2).
-- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)` -- **nan/0 wherever the patch's closure is not `CLOSURE_GIRIN`**, since Eq. (2) and Ranger's Psi(phi) are continuum constructions and Task 5's gate decides whether they may be used at all; `rayleigh_taylor(deceleration, b, liquid) -> (active, lambda*, tau*)` (the unbounded fastest mode, reported only; `deceleration` is the component **normal to the film**, Girin & Kopyt's W sin(Theta) = W cos(phi) on this body, per patch or scalar); `rayleigh_taylor_bounded(deceleration, h, extent, liquid) -> (active, lambda, tau)`, the same mode in a pool of finite lateral extent, which admits only k >= pi/extent, with `extent` the contiguous **molten region** each patch belongs to (facts 30 and 33; reported only); `wave_fits(lam, extent) -> bool` -- one whole wavelength must fit inside that region, applied on every branch; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None, extent=None, deceleration_n=None) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s, growth)` (`b_layer` is the contiguous liquid depth that decides the thick/thin branch, `extent` the molten region's lateral extent for the wave-fits test, `deceleration_n` the surface-normal deceleration for the reported Rayleigh-Taylor flag, and `growth` the selected mode's growth time per patch). Girin's criterion `We_s > We_cr` with We_s = rho_l V_s^2 min(delta_m, layer)/Sigma gates **every** branch, not just the thick one (fact 32); a deep film whose melt is the **more viscous medium** -- kinematic viscosity nu_melt = mu_l/rho_l above the gas's nu_gas = mu_e/rho_e -- takes `BRANCH_REGIME2` rather than Girin's thick branch, because delta_m's conjugate construction presumes a gradient resolved inside the melt and that presumption is what fails there: Girin & Kopyt's lambda* and tau* in their deep-film limit, with Girin 2017's torus-shedding rate rho_l pi r^2/(lambda* tau*), r = k_r lambda*, which does not reference the film depth (fact 36). The viscosity criterion is **not** Girin & Kopyt's -- they neglect the viscosity of both media and defer it -- and the branch is unreachable both for liquid aluminium and by construction, so it is a guard that only the unit tests exercise; `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; `SprayModel(..., rt_spray=True)` applies the front-surface Rayleigh-Taylor mode on the patches where it passes both criteria and grows faster than the shear mode (fact 35; `rt_spray=False` reports it only, as every run before 2026-09-24 did). Constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED/RT = 0/1/2/3, BRANCH_REGIME2 = 4` (Girin thick / thin-film on the edge state / thin-film on the freestream / front-surface Rayleigh-Taylor / Girin & Kopyt's step profile for a deep film whose melt is the more viscous medium). The `closure` column replaces `regime` in `SOURCE_COLUMNS`. Spraying is never switched off by rarefaction: the gate selects the closure, and hence whether delta_m exists to define a thick film at all.
+- Produces: `melt_layer(flow, liquid) -> (delta_m, factor)` -- **nan/0 wherever the patch's closure is not `CLOSURE_GIRIN`**, since Eq. (2) and Ranger's Psi(phi) are continuum constructions and Task 5's gate decides whether they may be used at all; `rayleigh_taylor(deceleration, b, liquid) -> (active, lambda*, tau*)` (the unbounded fastest mode, reported only; `deceleration` is the component **normal to the film**, Girin & Kopyt's W sin(Theta) = W cos(phi) on this body, per patch or scalar); `rayleigh_taylor_bounded(deceleration, h, extent, liquid) -> (active, lambda, tau)`, the same mode in a pool of finite lateral extent, which admits only k >= pi/extent, with `extent` the contiguous **molten region** each patch belongs to (facts 30 and 33; reported only); `wave_fits(lam, extent) -> bool` -- one whole wavelength must fit inside that region, applied on every branch; `thin_film_mode(mach, momentum_flux, liquid) -> (lambda*, tau*)`; `SprayModel(liquid, k_r=0.17, k_t=1.1, we_critical=4.62, table=None).evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None, extent=None, deceleration_n=None) -> SprayResult(branch, we_s, unstable, r, mdot, dm, dn, rt_active, delta_m, v_s, growth)` (`b_layer` is the contiguous liquid depth that decides the thick/thin branch, `extent` the molten region's lateral extent for the wave-fits test, `deceleration_n` the surface-normal deceleration for the reported Rayleigh-Taylor flag, and `growth` the selected mode's growth time per patch). Girin's criterion `We_s > We_cr` with We_s = rho_l V_s^2 min(delta_m, layer)/Sigma gates **every** branch, not just the thick one (fact 32); Girin's regime test then runs in **two stages**, in his order (fact 36). Stage one asks whether the *theoretical* melt boundary layer delta_m of his Eq. (2) can form in the liquid present: where it cannot, layer <= delta_m, the rigid core still stabilises the disturbances and the case is his regime 1, the Girin & Kopyt (1994) thin branch. Where it has formed, stage two decides the mechanism on the kinematic viscosities nu_melt = mu_l/rho_l against nu_gas = mu_e/rho_e -- `BRANCH_REGIME2` (regime 2, classical Kelvin-Helmholtz on the tangential-discontinuity profile, reusing Girin & Kopyt's lambda* and tau* with their rigid-wall factor cth(Lambda) -> 1 and the thick branch's torus rate rho_l pi r^2/(lambda* tau*), r = k_r lambda*, which does not reference the film depth) where the melt is the more viscous medium, and the thick branch (regime 3, his gradient instability) where the gas is. Liquid aluminium sits 3.3e4 to 6.9e6 from that threshold, so regime 2 is inert on these flights and only the unit tests exercise it; `source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state) -> list of 22-value rows`; `histogram(r, dn, dm) -> (dn per bin, dM per bin)`; `SprayModel(..., rt_spray=True)` applies the front-surface Rayleigh-Taylor mode on the patches where it passes both criteria and grows faster than the shear mode (fact 35; `rt_spray=False` reports it only, as every run before 2026-09-24 did). Constants `K_R, K_T, B_MIN, N_BINS = 40, R_MIN = 1e-6, R_MAX = 1e-2, BIN_EDGES, WE_BREAKUP = 12, CAPILLARY_TAU, SOURCE_COLUMNS, BRANCH_THICK/THIN/RAREFIED/RT = 0/1/2/3, BRANCH_REGIME2 = 4` (Girin thick / thin-film on the edge state / thin-film on the freestream / front-surface Rayleigh-Taylor / Girin & Kopyt's step profile for a deep film whose melt is the more viscous medium). The `closure` column replaces `regime` in `SOURCE_COLUMNS`. Spraying is never switched off by rarefaction: the gate selects the closure, and hence whether delta_m exists to define a thick film at all.
 
 - [ ] **Step 1: Write the two reference-value files**
 
@@ -3430,13 +3435,14 @@ def test_the_applied_rayleigh_taylor_mode_needs_the_wave_to_fit_its_melt_region(
 
 
 def test_regime_2_gives_a_deep_film_with_a_viscous_melt_the_step_profile_mode():
-    """Regime 2: a film deeper than delta_m whose melt is the *more* viscous medium takes Girin & Kopyt's step-profile
-    mode, not Girin's gradient one, with the release drawn from the full depth.
+    """Regime 2: where delta_m has formed and the melt is the more viscous medium, the patch takes Girin's
+    Kelvin-Helmholtz cell -- the 1994 step-profile mode -- and not regime 3's gradient instability.
 
-    delta_m is supplied directly rather than through `melt_layer`, and it has to be: Eq. (2) puts the conjugate depth at
-    metres for any melt this viscous, so the two halves of the condition cannot be met at once through it. The next test
-    measures that, and the module docstring records it. Here the branch itself is exercised on the state the rest of the
-    model would hand it."""
+    delta_m is supplied directly rather than through `melt_layer`, and it has to be: Eq. (2) puts the predicted melt
+    boundary layer at metres for a melt this viscous, which is Girin's own observation that for a high-viscosity melt the
+    layer "becomes comparable with the radius of the meteoroid remnant". On a body this size such a melt therefore never
+    passes stage one and lands in regime 1 instead, which the next test measures. Here the branch itself is exercised on
+    the state stage two would hand it."""
     nu_gas = 1.6e-4 / 7e-4                                     # the edge state FakeFlow carries, 0.229 m2/s
     MELT_VISCOUS = material.LiquidProperties(2400.0, 10.0 * nu_gas * 2400.0, 0.86)   # nu_melt = 10 x nu_gas
     assert MELT_VISCOUS.mu / MELT_VISCOUS.rho > nu_gas
@@ -3466,13 +3472,15 @@ def test_regime_2_gives_a_deep_film_with_a_viscous_melt_the_step_profile_mode():
     assert mdot * areas[0] * 0.5 > m_f[0] and res.dm[0] == pytest.approx(m_f[0])
 
 
-def test_regime_2_cannot_be_reached_through_girins_conjugate_depth():
-    """The two halves of the regime-2 condition are mutually exclusive when delta_m comes from Girin's Eq. (2).
+def test_a_kelvin_helmholtz_melt_fails_girins_first_stage_on_this_body():
+    """A melt viscous enough for regime 2 cannot satisfy stage one here, so it routes to regime 1 -- correctly.
 
-    delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3), so raising the melt's kinematic
-    viscosity to the point where it exceeds the gas's drives the conjugate depth to at least (rho_l/rho_e)^(1/3) ~ 151
-    boundary-layer thicknesses -- of order a metre on this flight -- which no melt layer on a 100 mm sphere can exceed.
-    Recorded so that the branch is understood to be unreachable by construction, not merely unreachable for aluminium."""
+    delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3), so at the viscosity threshold itself
+    the predicted melt boundary layer is already (rho_l/rho_e)^(1/3) ~ 151 air boundary-layer thicknesses, of order a
+    metre at delta_a = 7 mm, and no film a 100 mm sphere can hold accommodates it. Stage one then says the layer never
+    formed, which is Girin's dominant-ablation case and his Girin & Kopyt (1994) mode: the thin branch. That is what his
+    own ordering produces and not a gap in it -- recorded so the regime-2 branch is not later mistaken for dead code that
+    ought to have fired."""
     flow = FakeFlow(1)
     nu_gas = flow.mu_e[0] / flow.rho_e[0]
     for ratio in (1.0, 10.0, 100.0):
@@ -3488,16 +3496,16 @@ def test_regime_2_cannot_be_reached_through_girins_conjugate_depth():
     b = np.full(1, 1e-2)                                         # 10 mm of melt: a tenth of the sphere's radius
     res = spray.SprayModel(liq).evaluate(flow, FakeState(), b, delta_m, np.full(1, 10.0), np.full(1, True), 0.5,
                                         np.full(1, 1e-5), b * liq.rho * 1e-5)
-    assert spray.BRANCH_REGIME2 not in res.branch.tolist()       # the deep test fails, so the branch never opens
+    assert res.branch.tolist() == [spray.BRANCH_THIN]            # regime 1, the stabilised-core case, as Girin has it
 
 
 def test_regime_2_never_fires_for_liquid_aluminium():
     """The regression guard: for the real melt the branch is inert, so every earlier run is reproduced exactly.
 
     Liquid aluminium has nu_melt = 5.42e-7 m2/s against a post-shock edge nu_gas measured at 0.018-3.75 m2/s over the
-    two physics flights, a ratio of 3.3e4 to 6.9e6, so `step_profile` is false everywhere and a deep film takes Girin's
-    thick branch as it did before 2026-09-25 (0 of 533 960 windward wet patch-steps on the 100 mm flight and 0 of
-    42 268 on the 50 mm one were assigned regime 2)."""
+    two physics flights, a ratio of 3.3e4 to 6.9e6, so the melt is far the less viscous medium everywhere and a formed
+    layer is always regime 3 -- Girin's gradient instability, the thick branch -- exactly as before 2026-09-25 (0 of
+    533 960 windward wet patch-steps on the 100 mm flight and 0 of 42 268 on the 50 mm one were assigned regime 2)."""
     flow = FakeFlow(2)
     assert LIQ.mu / LIQ.rho < flow.mu_e[0] / flow.rho_e[0]       # aluminium is far the less viscous medium
     delta_m, _ = spray.melt_layer(flow, LIQ)
@@ -3531,39 +3539,48 @@ Branches per windward patch with film (regime from surface_flow, b from the film
       release rate mdot = rho_l min(b, lambda*/8) / tau* (their Table 1's mass rate is rho_1 r_d / (2 tau_d) =
       rho_1 lambda*/(8 tau*), reproduced 2026-09-20; the film supplies at most its thickness). Active when b >= B_MIN.
       (Their dissipation cut-off lambda_t = lambda*/3 is always below lambda*, so it never limits the mode.)
-  regime 2, continuum/slip (liquid layer > delta_m, as for the thick branch, *and* nu_melt > nu_gas): Girin & Kopyt's
-      side mode again, in their deep-film limit, for a deep film whose melt is the more viscous medium. delta_m is a
-      conjugate-boundary-layer construction: it presumes a velocity gradient resolved *inside* the melt, and that
-      presumption fails once the melt's kinematic viscosity nu_melt = mu_l/rho_l exceeds the gas's nu_gas = mu_e/rho_e,
-      because the melt's viscous layer then outgrows the air's and the profile across the interface degenerates from a
-      gradient into a tangential discontinuity -- Landau's "tangential rupture", which is exactly the profile Girin &
-      Kopyt assume. So the branch reverts to their pair, lambda* = 1.5 M_e Sigma/(rho_e u_eff^2) and tau* =
-      0.798 lambda*^1.5 (rho_l/Sigma)^1/2 (their Eqs. 11 and 12), with the rigid-wall factor cth(Lambda) of their Eq. (5)
-      -> 1: the film is deeper than the wave sees, so the unmelted body beneath no longer stiffens the response. The
-      release is Girin's (2017) torus shedding on that wavelength, mdot = rho_l pi r^2/(lambda* tau*) with
+  regime 2, continuum/slip (liquid layer > delta_m, as for the thick branch, *and* nu_melt > nu_gas): the
+      Kelvin-Helmholtz corner of Girin's own two-regime classification -- a deep film whose melt is the more viscous
+      medium, where the interfacial profile is a tangential discontinuity rather than a resolved gradient. Wavelength and
+      growth time are then Girin & Kopyt's pair, lambda* = 1.5 M_e Sigma/(rho_e u_eff^2) and
+      tau* = 0.798 lambda*^1.5 (rho_l/Sigma)^1/2 (their Eqs. 11 and 12), with the rigid-wall factor cth(Lambda) of their
+      Eq. (5) -> 1 because the film is deeper than the wave sees, so the unmelted body no longer stiffens the response.
+      The release is the torus form Girin (2017) uses on the thick branch, mdot = rho_l pi r^2/(lambda* tau*) with
       r = k_r lambda*, and *not* the thin branch's rho_l min(b, lambda*/8)/tau*: that factor is there because a film
       shallower than the wave can give up no more than its own depth, which is not this film's position. Like the thick
       branch's rate it therefore does not reference b at all -- and it is 0.73 x the thin branch's rate at the same
       wavelength, not a larger one, wherever that branch is not itself depth-limited; what bounds the release here is the
       film mass, through dm = min(mdot A dt, m_f) as on every branch.
-      PROVENANCE, because only part of this is in the source. The wavelength, the growth time and the deep-film limit of
-      cth(Lambda) are Girin & Kopyt's. The criterion nu_melt > nu_gas is *not*: they neglect the viscosity of both media
-      outright ("neglecting the viscosity of the media") and their summary defers it -- "inclusion of the effects of
-      viscosities of the media will be necessary for further improvements in the accuracy" -- so the criterion is this
-      model's reading of where their inviscid step profile is the right idealisation and Girin's gradient picture is not.
-      The release rate is Girin 2017's, carried across as the thin and RT branches carry their rates across.
-      UNREACHABLE, and by construction rather than by accident (measured 2026-09-25). Two facts, either of which closes
-      it. (a) For this material the ratio is nowhere near one: liquid aluminium has nu_melt = 5.42e-7 m2/s against an
+      PROVENANCE: both tests are Girin's, and the numbering is his. Girin (2017) Sect. 1 sets out "two regimes of
+      meteoroid ablation due to instability". In *dominant ablation* the mass loss overtakes fusion, the molten layer is
+      thinner than the melt velocity boundary layer, b < delta_m, the rigid core still stabilises the disturbances, and
+      "the results obtained in Girin & Kopyt (1994) are thus valid" -- this module's thin branch. In *dominant fusion*,
+      b > delta_m, the profile is the completed boundary layer: free conjugated layers, delta_a in air and delta_m in the
+      melt, "independent from the solid core". His Sect. 2 then selects the mechanism inside that conjugated picture on
+      the kinematic viscosities. The "classical Kelvin-Helmholtz type ... is in action only when the liquid kinematic
+      viscosity is greater than that one of the gas: nu_m > nu_a", because then "the liquid boundary layer is much
+      thicker than the gas one" and V_s << V_a, so "the velocity profile is close to the discontinuous one (tangential
+      discontinuity) which is the base for the Kelvin-Helmholtz mechanism". For the inverse inequality nu_a > nu_m the
+      thicknesses become comparable, delta_m = O(delta_a) and V_s = O(V_a), the profile is "inflated", and the mechanism
+      is "completely different from the Kelvin-Helmholtz one", being set by his Eq. (1) -- the gradient instability the
+      thick branch solves through `dispersion`. So regime 2 is his Kelvin-Helmholtz cell and the thick branch is his
+      gradient cell of the same two-by-two; what this model supplies is only the arithmetic for the cell he does not
+      develop, by reusing the 1994 mode that belongs to that profile.
+      UNREACHABLE FOR THIS PROBLEM, measured 2026-09-25, and consistent with Girin's own description rather than in
+      tension with it. (a) Liquid aluminium is nowhere near the Kelvin-Helmholtz cell: nu_melt = 5.42e-7 m2/s against an
       edge nu_gas measured at 0.0178-2.04 m2/s over the 100 mm flight to 110 s and 0.0951-3.75 m2/s over the whole 50 mm
-      flight, i.e. nu_gas/nu_melt = 3.3e4 to 6.9e6, and 0 of 533 960 windward wet patch-steps (100 mm) and 0 of 42 268
-      (50 mm) were assigned this branch. (b) More fundamentally the two halves of the condition cannot both hold, since
-      delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3): raising the melt's viscosity to the
-      threshold drives the conjugate depth to at least (rho_l/rho_e)^(1/3) ~ 151 boundary-layer thicknesses, about a
-      metre at delta_a = 7 mm, which no melt layer on a 100 mm sphere can exceed. The branch is therefore kept as a
-      guard -- so that the gradient closure cannot silently be applied outside its domain if the material, the altitude
-      band or the delta_m closure ever changes -- and is exercised only by test, with delta_m supplied directly. Whether
-      the viscosity test should instead gate *before* delta_m is trusted, which is what would make the branch reachable,
-      is a modelling decision and is recorded as one, not taken here.
+      flight, so nu_gas/nu_melt runs 3.3e4 to 6.9e6 and never approaches one. This body sits firmly in Girin's
+      nu_a > nu_m case, which is exactly why his gradient instability is the right model for it. Directly: 0 of 533 960
+      windward wet patch-steps (100 mm) and 0 of 42 268 (50 mm) take this branch. (b) The two tests reinforce each other
+      rather than crossing, because Eq. (2) carries the same ratio:
+      delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3), so at nu_melt = nu_gas the conjugate
+      depth is already (rho_l/rho_e)^(1/3) ~ 151 air boundary-layer thicknesses, about a metre at delta_a = 7 mm -- which
+      is Girin's "much thicker than the gas one" restated numerically. A melt viscous enough to be Kelvin-Helmholtz
+      therefore carries a delta_m no film here can exceed, so the gate puts it at b < delta_m, which is Girin's
+      dominant-ablation case and his Girin & Kopyt (1994) mode: the thin branch. That is the correct routing and not a
+      gap. Reaching regime 2 needs a viscous melt *and* a melt layer deeper than a metre-scale delta_m, which this
+      problem never produces; the branch is kept because it is where that cell belongs if the material or the altitude
+      band changes, and it is exercised by test with delta_m supplied directly.
       Where it would show up, checked rather than assumed: the source table's `branch` column (`SOURCE_COLUMNS` index 8)
       and nowhere else. The surface VTK carries surface_flow's `closure`, not the spray branch, so a regime-2 patch is
       not distinguishable there; no history column is added; and `thick_branch_fraction` is `film.lubrication`'s own
@@ -3762,20 +3779,25 @@ class SprayModel:
         r = np.full(n, np.nan)
         mdot = np.zeros(n)
         has_film = windward & (b >= B_MIN)
-        deep = has_film & np.isfinite(delta_m) & (layer > delta_m)        # Girin closure and liquid deeper than delta_m
-        # Which instability a *deep* film takes depends on which medium carries the thicker viscous layer. Girin's (2017)
-        # gradient mode needs a resolved velocity gradient inside the melt, which is the conjugate-boundary-layer picture
-        # delta_m comes from; that picture degenerates when the melt's kinematic viscosity exceeds the gas's, because the
-        # melt's viscous layer then outgrows the air's and the interface looks like a tangential discontinuity instead of
-        # a gradient. That step profile is precisely what Girin & Kopyt (1994) assume, so a deep film in that state takes
-        # their mode rather than his -- "regime 2" (added 2026-09-25). See the module docstring for the provenance of each
-        # piece and for the measured ratio that makes this branch unreachable for liquid aluminium.
+        # Girin's regime test, in his order, two stages (2026-09-25). Stage one: delta_m is a *theoretical* thickness --
+        # the melt velocity boundary layer Eq. (2) predicts -- so the question the liquid depth answers is whether that
+        # layer can physically form in the melt that is present. If the liquid cannot accommodate it, layer <= delta_m,
+        # the layer did not form, the rigid core still stabilises the disturbances and the case is Girin's dominant
+        # ablation: regime 1, his Girin & Kopyt (1994) mode, the thin branch below. If it did form, layer > delta_m, the
+        # profile is the conjugated pair (delta_a in air, delta_m in melt) and the case is dominant fusion.
+        deep = has_film & np.isfinite(delta_m) & (layer > delta_m)         # delta_m fits in the liquid: it formed
+        # Stage two, only where it formed: which mechanism the conjugated profile carries, decided on the kinematic
+        # viscosities. nu_melt > nu_gas puts the thicker viscous layer in the melt, V_s << V_a and the profile close to a
+        # tangential discontinuity -- classical Kelvin-Helmholtz, regime 2. nu_gas > nu_melt makes the two thicknesses
+        # comparable and the profile inflated, which is the gradient instability of his Eq. (1) -- regime 3, the thick
+        # branch. Both stages are Girin (2017), Sects. 1 and 2; see the module docstring for the quotations and for the
+        # measurement that puts liquid aluminium firmly in regime 3.
         nu_melt = liq.mu / liq.rho
         with np.errstate(divide="ignore", invalid="ignore"):
             nu_gas = np.where(flow.rho_e > 0.0, flow.mu_e / np.where(flow.rho_e > 0.0, flow.rho_e, 1.0), np.inf)
-        step_profile = np.asarray(nu_melt > nu_gas)
-        regime2 = deep & step_profile
-        thick = deep & ~step_profile                                      # Girin 2017's gradient instability
+        step_profile = np.asarray(nu_melt > nu_gas)                        # the melt carries the thicker viscous layer
+        regime2 = deep & step_profile                                     # Kelvin-Helmholtz
+        thick = deep & ~step_profile                                      # regime 3: Girin 2017's gradient instability
         free_molecular = flow.branch == BRANCH_FREE_MOLECULAR
         rarefied = has_film & ~deep & free_molecular                      # no edge state exists: the freestream drives the mode
         thin = has_film & ~deep & ~rarefied
@@ -7776,7 +7798,7 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
 Change the spec's status line to `Status: implemented 2026-09-21 (plan docs/superpowers/plans/2026-09-20-melt-spraying.md); amendments in §18` and append:
 
 ```markdown
-## 18. Amendments (implementation, 2026-09-20/22)
+## 18. Amendments (implementation, 2026-09-20/25)
 
 Measured while writing and executing the plan; each overrides the section it names. The plan's "Measured facts and
 spec amendments" list carries the numbers.
@@ -7934,6 +7956,91 @@ spec amendments" list carries the numbers.
     implemented, and the form the deferred pressure-response work should take: the runoff flux needs two depth limits
     in one expression, the shear-driven part over min(delta_m, h) and the pressure-gradient and deceleration part over
     the full contiguous liquid depth h. The thick branch has the first and uses the film for the second.
+23. §9 (decided 2026-09-24) — **Girin's stability criterion gates every branch, and a wave must fit inside its own melt
+    region.** The thin branch had no threshold at all: Girin & Kopyt's inviscid side mode is unstable at every wavelength
+    (their "unlimiting potential intensity" of high-frequency disturbances), so it stripped film at any angle however
+    small the shear — 2.23 g inside 10 deg on the 100 mm flight, 0.23 % of the sprayed mass, from a wave 6.1 x wider than
+    its own facet. Girin's We_s > We_cr now gates **every** branch, with We_s = rho_l V_s^2 min(delta_m, layer)/Sigma: his
+    closed-form phi_cr evaluated against the model's own local flow, which stays valid on an eroded body where a single
+    critical angle does not. Separately `wave_fits` requires one whole wavelength to fit inside the **contiguous molten
+    region** the patch belongs to (`MeltingBody.region_extent`) — the region and not the facet, because a facet edge is a
+    bookkeeping boundary and using it would make the limit mesh-dependent. Measured on the 100 mm flight: the smallest
+    angle releasing anything rises from a median 6.32 to 14.08 deg against Girin's published 16.1-16.3 deg, the spraying
+    area halves (61.2 to 33.5 cm2 median) and the unstable share of wetted area inside 10 deg falls about ninefold, while
+    the sprayed mass moves by only **-0.65 %** (0.98165 to 0.97531 kg) — because the release is supply-limited, so the film
+    leaves through whichever patches remain unstable. Droplets become fewer and larger: count -16 %, median radius +5.4 %
+    (178.4 to 187.9 um). The 50 mm sphere, regime 1 throughout, is unmoved in demise (207.5 s) and in sprayed mass to five
+    decimals, with only the median radius shifting +6.3 %.
+24. §9 (measured 2026-09-23/24) — **the Rayleigh-Taylor criterion, corrected twice, and the deceleration that drives it.**
+    Amendment-era fact 11's "the RT criterion is inactive at our 10-30 m/s2" was wrong twice over: the deceleration taken
+    from the trajectory runs **6 to 95 m/s2** (median 30), and the criterion fires in 137 of 217 steps of the 100 mm
+    flight. `W h^2 rho_l > 3 Sigma` is also the wrong *kind* of test — it rearranges to h > lambda*/2 pi, a statement that
+    the pool is deep enough for the fastest mode, not that the pool is unstable. The missing condition is lateral: from
+    n^2 = (W k - sigma k^3/rho) tanh(k h) the interface is unstable only for wavelengths longer than
+    lambda_c = 2 pi sqrt(sigma/(W rho)), and a pool of lateral extent L whose rim pins the interface admits only
+    k >= pi/L, which is what `rayleigh_taylor_bounded` evaluates. Two further corrections followed. The driving is the
+    deceleration **normal to the film**, Girin & Kopyt's W sin(Theta) = W cos(phi) on this body — whole at the stagnation
+    point, zero at the equator where it lies in the surface — and passing the whole deceleration over-drove every patch off
+    the nose by 1/cos(phi); with the normal component the depth criterion fires in 118 of 217 steps over a median 21.6 % of
+    the film mass instead of 137 steps and 34.8 %. And the lateral extent belongs to the **connected molten sheet**, whose
+    rim is what pins the interface, not to the subset of patches that already satisfy the depth test: measuring it the
+    second way used the criterion's own output to define its domain. On the sheet the extent is 125 mm, essentially the
+    whole windward face, and the bounded criterion is then satisfied for a median **69 %** of the film mass rather than
+    0 %. The conclusion is unchanged and much stronger — the bounded growth time is **4614 ms** against the shear mode's
+    **0.170 ms**, a ratio near **27 000**, because the admitted waves are the marginal ones near the equator where
+    W cos(phi) is small. Recorded every step: `rt_mass_fraction`, `rt_region_mm`, `rt_wavelength_over_nose`,
+    `rt_bounded_fraction`, `rt_bounded_growth_ms`, `rt_growth_ms`, `spray_growth_ms`. One caveat is declared and not
+    implemented: an equivalent diameter of 125 mm on a body of about 100 mm transverse diameter cannot host a 25 cm wave,
+    because the surface curves away; capping the extent at the transverse diameter would move k_1 only from 25.1 to
+    31.4 m^-1 and would not change the conclusion.
+25. §9, §14 (decided 2026-09-24) — **the front-surface Rayleigh-Taylor mode is applied, not merely reported**
+    (`--rt-spray on|off`, default on; `off` reproduces every run before that date). Girin & Kopyt assign the front surface,
+    where V_0 -> 0 and sin Theta -> 1, to their aperiodic Eq. (14) rather than to the side mode, and once amendment 23's
+    critical angle gates the shear branches the stagnation cap has no other mechanism at all. The gate needs **both**
+    criteria: the bounded form has no threshold of its own — with a wide molten region k = k_max is always admissible and
+    tanh(k h) > 0 at any depth, so requiring only that made every wet patch unstable, which a unit test caught at once —
+    while the depth criterion `W cos(phi) h^2 rho_l > 3 Sigma` is what confines the mode to the nose, since the normal
+    deceleration falls as cos(phi) so the depth required rises as 1/sqrt(cos phi) while the melt gets shallower. Three
+    modelling decisions are the model's and not theirs, because their Table 2 carries no mass-rate column: the rate carries
+    their side-surface construction across as mdot = rho_l min(b, lambda*/2)/tau*, which reduces to rho_l b/tau* because
+    lambda* is centimetre-scale (21 mm at 95 m/s2) against a millimetre-scale b — the film is shaken off within one growth
+    time, which is what their text describes, and no new closure constant appears; the droplet radius is lambda*, their
+    front-surface r_d, capped as on every branch by the film mass on the patch and a quarter of the body radius, and here
+    the film-mass cap binds at 1.2-1.9 mm; and two modes of one interface cannot both break it up, so the **shorter growth
+    time takes the patch**. Measured on the 100 mm flight: the mode releases **61.04 g, 6.27 %** of the sprayed mass, out
+    to 20 deg and **exactly zero beyond it**, 99.1 % of it inside 15 deg and 58.3 % inside 10. tau_RT is nearly constant at
+    10-13 ms across the cap while tau_shear rises from 0.27 ms at 30-45 deg to **35.6 ms at 0-2 deg**, so they cross
+    between 2-4 and 4-6 deg. Total sprayed mass moves only **-0.16 %** — supply-limited again — but the size tail is
+    transformed: the per-step largest droplet goes from a median 388.6 to **2027.0 um** and the largest anywhere from 1551
+    to **4093 um**, which is the inertial "shaking off" Girin & Kopyt associate with meteoroid flares. **For Step 4 the
+    droplet source is therefore two populations**, a ~190 um shear population from the 20-90 deg annulus and a ~1.7 mm
+    inertial one from the stagnation cap. It is a large-body mechanism: on the 50 mm sphere demise, sprayed mass and
+    droplet count are unmoved and only the largest droplet changes (1359 to 2567 um), because the threshold
+    h > sqrt(3 Sigma/(W cos(phi) rho_l)) is an **absolute length** — 3.36 mm at 95 m/s2 — that a smaller pool never reaches.
+26. §9 (2026-09-25) — **regime 2: Girin's Kelvin-Helmholtz cell** (`spray.BRANCH_REGIME2 = 4`). Girin (2017) classifies the
+    melt instability in two stages and the model now applies both, in his order. Stage one asks whether the *theoretical*
+    melt boundary layer delta_m of his Eq. (2) can form in the liquid that is present: where it cannot, layer <= delta_m,
+    the rigid core still stabilises the disturbances and the case is his dominant ablation — **regime 1**, the
+    Girin & Kopyt (1994) thin branch, for which he states their results "are thus valid". Where it has formed the profile
+    is the conjugated pair (delta_a in air, delta_m in the melt, independent of the core) and stage two decides the
+    mechanism on the kinematic viscosities: nu_melt > nu_gas puts the thicker viscous layer in the melt, with V_s << V_a
+    and a profile "close to the discontinuous one (tangential discontinuity)", which is classical Kelvin-Helmholtz —
+    **regime 2**; nu_gas > nu_melt makes the thicknesses comparable and the profile "inflated", which is the gradient
+    instability of his Eq. (1) — **regime 3**, the existing thick branch. The plan's thin and thick branches were his
+    regimes 1 and 3 all along, and 2 was the empty cell. Regime 2 reuses Girin & Kopyt's lambda* and tau* (their Eqs. 11
+    and 12), the same mode as regime 1 because it is the same profile, with their rigid-wall factor cth(Lambda) -> 1 in the
+    deep-film limit; the release is the thick branch's torus form mdot = rho_l pi r^2/(lambda* tau*) with r = k_r lambda*,
+    which does not reference the film depth, and that transfer is the branch's only modelling choice — no new closure
+    constant. Measured: liquid aluminium has nu_melt = 5.42e-7 m2/s against an edge nu_gas of 0.0178-2.04 m2/s over the
+    100 mm flight to 110 s and 0.0951-3.75 m2/s over the whole 50 mm flight, a ratio of **3.3e4 to 6.9e6**, so this body is
+    in regime 3 wherever the layer forms — **0 of 533 960** windward wet patch-steps on the 100 mm flight and 0 of 42 268 on
+    the 50 mm one take regime 2 — and a melt viscous enough for regime 2 would fail stage one here in any case, since
+    Eq. (2) gives delta_m/delta_a = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3) = **151** at the threshold, about **1.06 m**,
+    which is the effect Girin records for his stony variant as the boundary layer becoming "comparable with the radius of
+    the meteoroid remnant". The branch is therefore inert on these flights and exercised only by unit test; the 50 mm
+    flight is reproduced within the model's own run-to-run floor (worst column 3.1e-8 with the branch against 1.6e-8
+    between two runs of a single build, `thick_branch_fraction` identical in all 67 comparable steps, demise unmoved at
+    207.5 s).
 13. §10, §16.7, §17.5 (decided 2026-09-21) — the body Knudsen number uses the equivalent diameter of the remaining mass and
     the stagnation radius of the heating and the surface flow is fitted to the current windward cap (a least-squares
     sphere through the patch centroids within (1 − cos 30°) R_t of the front-most point, bounded to [0.1, 1.67] × R_t):
