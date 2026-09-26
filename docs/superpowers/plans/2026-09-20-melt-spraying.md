@@ -7532,7 +7532,10 @@ Options (`--melt on`, needs `--thermal fem`): `--material AA7075_range` (default
 tables with the alloy's solidus 750 K / liquidus 908 K, latent heat 400 kJ/kg spread across the range) or `AA7075`
 (DRAMA's single 850 K, a ±2 K numerical ramp) — both carry the liquid properties ρ_l 2400 kg/m³, μ_l 1.3 mPa s,
 Σ 0.86 N/m (pure aluminium near the liquidus, `reentry_model/data/materials/*.json`); `--removal girin|instant`;
-`--runoff on|off`; `--rarefied-shear slip|bridged`; `--we-critical 4.62`, `--kr 0.17`, `--kt 1.1`; `--prism-layers 4`,
+`--runoff on|off`; `--rarefied-shear slip|bridged`; `--we-critical 4.62`, `--kr 0.17`, `--kt 1.1`;
+`--rt-spray on|off` (default on: apply Girin & Kopyt's front-surface Rayleigh–Taylor mode on the patches where it
+passes both criteria and outgrows the shear mode; `off` reports it only, as every run before 2026-09-24 did);
+`--feed-depth conjugate|all` (default `conjugate`: melt leaves an element only where the gas shear can reach it); `--prism-layers 4`,
 `--layer-thickness 0.25` (mm, growth 2; 46 k nodes / 255 k tets on the 100 mm sphere); `--demise-fraction 0.01`;
 `--particles/--no-particles`; `--size-feedback current|initial` (`current` with `girin`: the body Knudsen number on
 the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap, bounded to
@@ -7563,10 +7566,11 @@ count, mass, release velocity and direction, We_d, Oh, breakup flag), `particles
 and residual when a melting reference is given); videos `animation.mp4` (surface temperature with the emitting
 patches coloured by droplet radius), `film.mp4` (film thickness), `section.mp4` (cross-section with the liquidus and
 solidus iso-lines) and stills at melt onset, spraying onset and peak release in addition to Step 2's. The VTK series
-add the liquid fraction and φ_e (volume, active elements only) and the film thickness, We_s, regime, shear, droplet
-radius and release rate (surface). A macro step costs ~1.5 s on the default mesh (0.6 s of it conduction, the rest the
-melt step's Cantera edge states and the runoff solve); a flight that demises takes 2–5 min, while one whose remnant
-survives runs to the ground and takes ~30 min (1195 steps for the 100 mm physics case).
+add the liquid fraction and φ_e (volume, active elements only) and the film thickness, film temperature, We_s, the flow
+closure, the wall Knudsen number, the wall pressure, the shear, the droplet radius and the release rate (surface). A
+macro step costs about 2 s on the default mesh (0.6 s of it conduction, the rest the melt step's Cantera edge states, the
+runoff solve and the contiguous-layer walk); a flight that demises takes 2–5 min, while one whose remnant survives runs
+to the ground and takes about 40 min (1191 steps for the 100 mm physics case).
 
 **`--removal instant` and `--k-scale` are verification devices, not physical models.** `instant` removes the liquid
 of every element as it forms — no film, no runoff, no spraying — which is the lumped Q/L_f law SESAM applies once its
@@ -7589,8 +7593,14 @@ criterion, film excluded).
 | d050 | bookkeeping | 1.29 % | 77.27 / 77.10 | 190.9 / 191.4 (−0.2 %) | — | — | 20 s, 382 steps |
 | d100 | resolved (sesam heating, AA7075, girin, D₀/R₀) | 9.35 % | 71.62 / 71.00 | 70.0 / 66.8 (+4.8 %) | 1.404 / 0.057 | 2.7e7 (160 µm) | 269 s, 141 steps |
 | d050 | resolved | 7.10 % | 77.57 / 77.10 | 191.3 / 191.4 (−0.1 %) | 0.161 / 0.021 | 4.5e5 (298 µm) | 54 s, 383 steps |
-| d100 | physics (AA7075_range, girin, shape feedback) | 76.4 % | 73.96 / 71.00 | **no demise** | 1.032 / 0.001 | 3.3e7 (122 µm) | 2357 s, 1191 steps |
-| d050 | physics | 66.5 % | 78.32 / 77.10 | 203.3 / 191.4 (+6.2 %) | 0.173 / 0.010 | 2.5e6 (236 µm) | 222 s, 407 steps |
+| d100 | physics (AA7075_range, girin, shape feedback) | 76.4 %† | 73.96 / 71.00† | **no demise** | 0.974 / —† | 1.6e7 (188.6 µm) | 2357 s, 1191 steps† |
+| d050 | physics | 66.5 %† | 78.32 / 77.10† | 207.5 (demise) / 191.4 | 0.1792 / 0.0026 | 3.1e6 (224.3 µm) | 130 s, 415 steps |
+
+The two physics rows carry the measurements of 2026-09-25 except where marked †, which are the 2026-09-21/22 values that
+the gates of amendments 23–26 have not re-measured; Task 14's `summary.md` replaces the whole table. The d050 physics row
+is a fresh run of the committed model, and its end-of-life cell is the **demise time**, not the interpolated 1 %-mass
+time, which needs the reference comparison to compute. The four device rows are unaffected by any of it, being pinned to
+`--size-feedback initial`.
 
 Thresholds (bookkeeping mode only, `tests/test_reentry_model_reference_melt.py`): mass 2 % of m₀, onset 0.5 km,
 1 %-mass time 2 %. The devices are pinned to `--size-feedback initial`, so none of the shape or regime amendments can
@@ -7600,15 +7610,15 @@ difference is the lumped-body assumption, plotted in `d100__resolved/mass_time.p
 heat (2026-09-22) moved both cases toward SESAM — the 50 mm mass error halved, from 13.5 % to 7.1 %, and its 1 %-mass
 time from +0.5 % to −0.1 % — because melt can no longer be relabelled as film without paying for itself.
 
-**The physics-mode 100 mm sphere does not demise.** It melts from 74.0 km, sprays 1.032 kg of its 1.472 kg as 3.3×10⁷
-droplets, and the remaining **0.440 kg (29.9 % of the initial mass) reaches the ground**. That is a consequence of the
+**The physics-mode 100 mm sphere does not demise.** It melts from 74.0 km, sprays 0.974 kg of its 1.472 kg as about
+1.6×10⁷ droplets, and the remaining **0.498 kg (33.8 % of the initial mass) reaches the ground**. That is a consequence of the
 fixed-attitude assumption acting three times over: the flattening nose is held face-on, which is the maximum-drag
 orientation (C_D rises from 0.91 toward 1.8, so the body decelerates high and the heating ∝ ρV³ collapses); the
 stagnation radius grows as the face flattens, cutting the stagnation flux by a further ~20 %; and the leeward shell is
 never heated at all. SESAM's lumped sphere, which keeps D₀, R₀ and the sphere drag table, demises at 66.5 km. A
 tumbling fragment would sit between the two — DRAMA's own tumbling-averaged C_D for a thin disc is 0.60, *below* the
 sphere's 0.91 — so the sphere/face-on spread is an attitude uncertainty, not a drag-law one, and tumbling is the first
-item of the next iteration (spec §17). The 50 mm sphere still demises (203.3 s, +6.2 % on SESAM's 1 %-mass time).
+item of the next iteration (spec §17). The 50 mm sphere still demises, at 207.5 s and 68.08 km against SESAM's 191.6 s and 73.1 km.
 
 **Next iteration** (in order): tumbling, replacing the fixed-attitude assumption; an Arbitrary Lagrangian–Eulerian
 mesh in which each patch recedes every step according to its own mass loss, which dissolves the element-removal
@@ -7722,7 +7732,7 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   at 2 MW/m², 22 K even at 1 mm; b²/α = 0.3 ms against the 0.5 s macro step), so it is given no energy equation: its
   mass is carried on the boundary nodes with the liquid heat capacity and it is at the surface temperature by
   construction. It therefore heats, cools and freezes with the surface, and droplets leave carrying the surface's
-  superheat (+4.6 % on h_liquid in the 100 mm case) rather than at the liquidus exactly. Because a film is liquid by
+  superheat (+2.4 % on h_liquid for the 50 mm flight, +0.6 % for the 100 mm one) rather than at the liquidus exactly. Because a film is liquid by
   construction it holds the liquid enthalpy h(T) + L_f(1 − f_l) wherever it sits, so feeding it costs the latent heat
   the mass has not yet paid and no mass can be relabelled from solid to liquid for free. Re-solidification is the
   mirror of the feed rule — the fraction 1 − f_feed(T_patch) of a patch's film returns to its owner element as solid,
@@ -7769,15 +7779,29 @@ In §7 replace "no melting or mass loss yet;" with "melting, film and spraying p
   exact conservation, exact steady state; a wetting front advances one patch per sub-step), never across the equator;
   leeward films are static and can stay attached (their fate is Step 4's). The film is fed where it melts and stripped
   there within the step, so it stays microns thin except where the runoff piles it at the windward rim.
-- **Spraying.** Girin's (2017) gradient instability with the dispersion relation solved numerically (Δ_f, Im Ω_f
-  tabulated against We_s; k_r 0.17, k_t 1.1, We_cr 4.62 — his constants for ordinary liquids), δ_m and V_s from his
-  conjugated-layer relations, stripping ρ_l π r²/(λ_f t_per) per area for thick films; Girin & Kopyt's (1994)
-  thin-film side mode λ* = 1.5 M_e Σ/(ρ_e u_e²), r = λ*/4, τ* = 2 capillary periods, rate ρ_l min(b, λ*/8)/τ* for
-  thin films (their Table 1 mass rate); the rarefied thin branch uses the freestream Mach number and momentum flux
-  (an extrapolation); their Rayleigh–Taylor front mode is evaluated and reported only (inactive at 10–30 m/s²).
-  Droplets are capped at the film on the patch and a quarter of the body radius; one radius per patch and step; no
-  within-patch size spread; recorded at birth, not tracked. Both branches strip far faster than the melt supply, so
-  the mass loss is energy-limited (Girin's "outstripping ablation").
+- **Spraying: Girin's three regimes.** His (2017) classification is applied in two stages. δ_m is the melt velocity
+  boundary layer his Eq. (2) *predicts*, so the liquid depth decides whether that layer can form at all: where it cannot
+  (layer ≤ δ_m) the rigid core still stabilises the disturbances and the case is **regime 1**, Girin & Kopyt's (1994)
+  side mode — λ* = 1.5 M_e Σ/(ρ_e u_e²), r = λ*/4, τ* = 2 capillary periods, rate ρ_l min(b, λ*/8)/τ*, their Table 1
+  mass rate. Where it has formed, the profile is the conjugated pair and the kinematic viscosities pick the mechanism:
+  ν_melt > ν_gas gives a near-discontinuous profile and classical Kelvin–Helmholtz (**regime 2**, Girin & Kopyt's λ* and
+  τ* in their deep-film limit with the torus rate; inert for liquid aluminium, which sits 3.3×10⁴ to 6.9×10⁶ from that
+  threshold), while ν_gas > ν_melt gives the inflated profile and his **regime 3** gradient instability — the dispersion
+  relation solved numerically (Δ_f, Im Ω_f tabulated against We_s; k_r 0.17, k_t 1.1, We_cr 4.62, his constants for
+  ordinary liquids), δ_m and V_s from his conjugated-layer relations, stripping ρ_l π r²/(λ_f t_per) per area. The
+  rarefied branch uses regime 1's mode on the freestream Mach number and momentum flux (an extrapolation). Two gates
+  apply to every regime: Girin's We_s > We_cr, his critical angle evaluated against the model's own local flow, and the
+  requirement that one whole wavelength fit inside the contiguous molten region the patch belongs to (the region, not the
+  mesh facet). Girin & Kopyt's front-surface Rayleigh–Taylor mode is **applied as well** (`--rt-spray on|off`, default
+  on): the body's deceleration is 6–95 m/s², not the 10–30 m/s² first assumed, and the mode needs both its depth
+  criterion W cos φ h² ρ_l > 3 Σ, which confines it to the nose, and the laterally bounded form, which supplies the
+  admissible wavelength and growth rate. It releases 6.27 % of the sprayed mass on the 100 mm sphere, out to 20° and
+  exactly zero beyond, as ~1.7 mm droplets against the shear population's ~190 µm; on the 50 mm sphere it barely fires,
+  because its threshold is an absolute depth (3.36 mm at 95 m/s²) a smaller pool never reaches. Where two modes could
+  claim one interface the shorter growth time takes the patch. Droplets are capped at the film on the patch and a
+  quarter of the body radius; one radius per patch and step; no within-patch size spread; recorded at birth, not
+  tracked. Every mode strips far faster than the melt supply, so the mass loss is energy-limited (Girin's "outstripping
+  ablation") and the instabilities set the droplet size and the release map rather than the mass.
 - **Size feedback** (decided 2026-09-21, replacing the spec's fixed R₀). Mass = Σφ_e ρV_e + film; the drag reference
   area is the current surface's projection; the body Knudsen number uses the equivalent diameter of the remaining
   mass; the stagnation radius for the heating and the surface flow is a least-squares sphere fitted to the current
@@ -7895,7 +7919,8 @@ spec amendments" list carries the numbers.
     effect. Declared limits: φ_e is capped at 1, so film whose owner element is full or dead stays liquid — the mesh
     cannot grow a crust outside itself, and `film_frozen_fraction` reports how much film the enthalpy calls solid; a
     thick crust would conduct, which a lumped nodal capacity does not represent. Droplets leave at the film's own
-    temperature, so they carry the surface's superheat (+4.6 % on h_liquid, measured), not h_liquid exactly.
+    temperature, so they carry the surface's superheat (measured: +2.4 % on h_liquid for the 50 mm flight, +0.6 % for the
+    100 mm one), not h_liquid exactly.
 19. §6, §10 (decided 2026-09-22) — **deferred melt loads are bounded and the Newton update follows the node's own
     mixture.** No node is asked to move more than `LOAD_DT_MAX` = 1000 K in one macro step against its current
     capacity (material + film): a node whose own mass has melted away has nothing to heat with the enthalpy its melt
@@ -7925,7 +7950,7 @@ spec amendments" list carries the numbers.
     sprayed mass goes 1.0243 -> 1.0227 kg and its median droplet radius 101.9 -> 101.0 µm. The concentration itself is
     declared, not fixed: `b` still feeds `lubrication` (q cubic in b — self-limiting, since the runoff rate then goes
     as b^2/A), `spray.evaluate` (We_s linear in b, bounded afterwards by the droplet-radius caps, r <= 690 µm measured)
-    and `rayleigh_taylor` (quadratic in b; reported only). Clamping those branches to b_eff = min(b, sqrt(A)) is
+    and `rayleigh_taylor` (quadratic in b; reported only as of this amendment -- applied since amendment 25). Clamping those branches to b_eff = min(b, sqrt(A)) is
     defensible but changes droplet sizes on those facets, so it is left as a modelling decision. Amendment 16's "the
     film pile-up is gone" refers to the rarefied-rim mechanism of pure modified Newtonian, not to these facets.
 21. §8, §9 (decided 2026-09-22/23) — **the instability branch is chosen on the depth of liquid, not on the film
