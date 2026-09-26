@@ -25,3 +25,9 @@ reentry_model_output/
 # one-off ground-track plot for NORAD 62878 (scratch, unrelated to the re-entry model)
 plot_groundtrack_62878.py
 groundtrack_norad62878.png
+
+# Step 3 prototype and the plan generator it feeds (moved in from the session scratchpad on 2026-09-26,
+# which had pruned them twice). Not version-controlled: the prototype is a throwaway copy of the
+# package by design, and `prototype/plan3/make_plan.py` can rebuild the plan from it at any time.
+# See prototype/README.md.
+prototype/
