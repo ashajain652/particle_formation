@@ -21,15 +21,30 @@
 5. **The first number to obtain, before anything else** (fact 43): how smooth the real per-patch recession field is.
    The least-squares fit is excellent at 0.03 % for a smooth field and mediocre at 22 % for a patchy one, and which
    regime the flight sits in is currently unknown.
-6. **Decide whether the melting references keep the band or pin it away** (found 2026-09-27 during Task 1's
-   implementation). `tests/test_reentry_model_reference_melt.py` calls `mesh.sphere_mesh(ref.diameter / 2.0)` with
-   no band argument, so the **bookkeeping device** — the one measured fact 12 pins at 0.98 % / 1.29 % of initial
-   mass and says "no later amendment can move them" — silently picks up the new 15 mm default. Its sibling, the
-   Step 2 thermal reference, was explicitly pinned with `band=0.0` for exactly this reason. This one was left
-   unpinned **deliberately**, because this task re-measures the melting table anyway and the melting runs are the
-   ones the band is for; but it is a decision, not an oversight, and it must be made and recorded rather than
-   discovered. Either pin it with `band=0.0` and keep the committed numbers, or let it move and re-measure — not
-   both, and not by accident.
+6. **The melting references KEEP the band — re-measure them and update the README** (decided 2026-09-28).
+   `tests/test_reentry_model_reference_melt.py:24` calls `mesh.sphere_mesh(ref.diameter / 2.0)` with no band, so the
+   **bookkeeping device** takes `DEFAULT_BAND` and meshes the way production melting runs mesh. That is deliberate
+   and it is the decision: a verification device should exercise the configuration actually run, and the band exists
+   for melting runs. **Do not pin it with `band=0.0`.** Its Step 2 sibling, `test_reentry_model_reference_thermal.py`,
+   *is* pinned, because a no-melt run has no business acquiring a melting-run mesh — the asymmetry is intended.
+
+   Consequences this task must carry out, not merely note:
+
+   * **Re-measure the six committed bookkeeping figures** and update them wherever they appear — measured fact 12 in
+     `00-shared-context.md`, the README verification table, and the thresholds in
+     `tests/test_reentry_model_reference*.py`. The current values were measured on the old mesh and are superseded:
+     100 mm mass within 0.98 % of m₀, onset +0.10 km, 1 %-mass time −1.3 %; 50 mm 1.29 %, +0.17 km, −0.2 %; against
+     thresholds 2 % / 0.5 km / 2 %. Fact 12's "no later amendment can move them" no longer holds for this device and
+     that sentence must be amended too, with this decision as the reason.
+   * **Expect the numbers to move very little, and treat it as a finding if they move a lot.** The device multiplies
+     the conductivity by 10⁴ (`mat.k_table * 1e4`), so the body is isothermal and the mesh has almost nothing left to
+     influence. If the six figures shift materially, that says the bookkeeping device is more mesh-sensitive than its
+     design implies — which is worth knowing before the thesis leans on it.
+   * **Record the runtime cost.** The 100 mm reference mesh goes from **18 896 nodes / 87 632 tets** to
+     **33 355 / 177 363**, a factor of 2.02 in elements (measured 2026-09-27). The element-proportional part of each
+     macro step — principally the conduction solve — roughly doubles for the two melting flights. Time the melting
+     reference tier before and after and write both figures into `CLAUDE.md`, whose "~15 min (Step 1) + ~35 min
+     (Step 2)" line does not yet cover the melting references at all.
 
 7. **The better Design A trigger** (spec §10.3): the **melt-rate** error under a surface pinned by the latent heat.
    While melting, a temperature error becomes a mass-flux error rather than a temperature error, and mass flux is
