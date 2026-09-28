@@ -51,6 +51,14 @@ recomputed from scratch, never accumulated, so it cannot drift away from the mas
    rejected surface-only feed rule and about crossing the **liquidus**, not about what leaves, and fact 28's depth
    gate holds melt in place — so this guard is what makes the design safe under either answer.
 5. **Write** `mesh.derived_points`, and report `recession_residual_frac`, the median absolute per-patch mismatch.
+   **Write boundary nodes only.** This is an invariant, not an incidental: measured 2026-09-27, every one of the
+   18 506 boundary faces on the layered fixture has an *interior* node as its tetrahedron's opposite vertex (0 of
+   18 506 are themselves boundary nodes), so while only boundary nodes move, `surface()`'s outward-orientation test
+   reads the same coordinate whichever array it indexes. Displace an interior node and that stops being true, and
+   the orientation of the derived surface begins to depend on which coordinate system that test reads — a
+   distinction **no mesh test can catch**, because the two code paths are numerically identical for every
+   boundary-only displacement, valid or inverted (measured: 0/4598 patches inward either way at 0.1 mm; 4598/4598
+   inward either way at 1.0 mm, where 13 794 elements are inverted).
 
 ## Interfaces
 

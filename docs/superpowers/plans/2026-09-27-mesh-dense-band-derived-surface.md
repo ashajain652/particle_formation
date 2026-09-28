@@ -19,7 +19,14 @@
 - **Additive only.** `layers`, `layer_thicknesses`, `split_prisms`, `add_prism_layers`, `deactivate`, the face table and `box_mesh` all keep working unchanged. The five existing Step 3 mesh tests must still pass untouched.
 - **Comment density and naming must match the surrounding file** — terse trailing comments carrying a measured number or a reason, docstrings that say *why*, not *what*.
 - **No new module-level imports.** `scipy` and `gmsh` are imported inside the function that needs them.
-- **Commit messages** are a scope prefix and a sentence describing the behaviour that changed, ending with the attribution line shown in each task's commit step.
+- **Do not run git. There are no commits in this plan.** `prototype/` is git-ignored (`.gitignore:33`), so
+  `git add prototype/proto3/...` fails with "paths are ignored". That is deliberate: `prototype/README.md` makes the
+  prototype a throwaway copy whose committed artefact is the **regenerated plan**, not the code. Each task therefore
+  ends by running its tests and reporting the numbers. The controller snapshots the files before and after each task
+  and produces the review diff; regenerating and committing the master plan happens later and is out of scope here.
+- **Do not create a git worktree for this work.** A worktree does not carry ignored files, so `prototype/` would be
+  empty in one. Work in place — which is safe precisely because the directory is ignored and nothing can reach a
+  tracked branch by accident.
 
 ## Review Focus
 
@@ -142,17 +149,11 @@ Next to `active_nodes`:
 Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 Expected: PASS, including the five pre-existing Step 3 mesh tests, unchanged.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Verify and report**
 
-```bash
-git add prototype/proto3/reentry_model/mesh.py prototype/proto3/tests/test_reentry_model_mesh.py
-git commit -m "mesh: carry the surface's coordinates, and measure patch edges and element depths
+Run the module's tests once more and record the exact counts in your report — the pass/fail line and, for any new test, the value it measured. Do **not** run `git add` or `git commit`: see Global Constraints. Leave the working tree as it is; the controller snapshots it for review.
 
-The two coarseness diagnostics the remesh triggers read, and the node
-coordinates a SurfaceMesh needs to measure or smooth itself.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 
 ---
 
@@ -308,19 +309,11 @@ minutes the first time. Neither is a defect.
 The pre-existing `test_generation_is_cached` still passes: it calls `generate_sphere_mesh` positionally with four
 arguments and the new ones are keyword-defaulted.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Verify and report**
 
-```bash
-git add prototype/proto3/reentry_model/mesh.py prototype/proto3/tests/test_reentry_model_mesh.py
-git commit -m "mesh: keep the cells fine through a dense band, not just a prism skin
+Run the module's tests once more and record the exact counts in your report — the pass/fail line and, for any new test, the value it measured. Do **not** run `git add` or `git commit`: see Global Constraints. Leave the working tree as it is; the controller snapshots it for review.
 
-The prism stack resolves 3.75 mm of a 77 mm recession, so the graded core
-becomes the surface and the recession quantum reaches 6 mm. A non-zero DistMin
-on the existing Threshold field holds h_surface through the whole band, and
-unlike a prism offset a distance field survives remeshing into a concave dish.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 
 ---
 
@@ -420,17 +413,11 @@ and at the end of `__post_init__`, **after** `self.points` is coerced to float:
 Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 Expected: PASS, all tests including the pre-existing ones.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Verify and report**
 
-```bash
-git add prototype/proto3/reentry_model/mesh.py prototype/proto3/tests/test_reentry_model_mesh.py
-git commit -m "mesh: a derived surface that moves while the solver's geometry stands still
+Run the module's tests once more and record the exact counts in your report — the pass/fail line and, for any new test, the value it measured. Do **not** run `git add` or `git commit`: see Global Constraints. Leave the working tree as it is; the controller snapshots it for review.
 
-derived_points carries the recession for everything that reads the shape;
-points never changes, so every precomputed element matrix stays valid.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 
 ---
 
@@ -551,18 +538,11 @@ Expected: PASS.
 Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest -m "not drama and not reference" -q --ignore=tests/test_integration_drama.py --ignore=tests/test_sphere_reentry.py --ignore=tests/test_sphere_sweep.py`
 Expected: the counts `prototype/README.md` records — 201 passed, with 2 failures and 3 errors that all come from the two melting SESAM reference runs being absent from `proto3/data/reference_runs/`. **Any other failure is a regression and must be fixed before committing.**
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Verify and report**
 
-```bash
-git add prototype/proto3/reentry_model/mesh.py prototype/proto3/tests/test_reentry_model_mesh.py
-git commit -m "mesh: smoothed normals, so the heating stops reading a 45-degree staircase
+Run the module's tests once more and record the exact counts in your report — the pass/fail line and, for any new test, the value it measured. Do **not** run `git add` or `git commit`: see Global Constraints. Leave the working tree as it is; the controller snapshots it for review.
 
-A death step is one cell tall and one cell wide. Taubin's lambda/mu pair takes
-the cell-scale roughness out of the normals the Lees distribution and the film
-tangents read, without moving the mesh and without assuming a shape.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-```
+Run: `cd "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/proto3" && "$PY" -m pytest tests/test_reentry_model_mesh.py -q`
 
 ---
 
