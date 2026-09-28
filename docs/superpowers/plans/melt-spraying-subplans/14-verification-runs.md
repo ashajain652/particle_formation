@@ -21,7 +21,17 @@
 5. **The first number to obtain, before anything else** (fact 43): how smooth the real per-patch recession field is.
    The least-squares fit is excellent at 0.03 % for a smooth field and mediocre at 22 % for a patchy one, and which
    regime the flight sits in is currently unknown.
-6. **The better Design A trigger** (spec §10.3): the **melt-rate** error under a surface pinned by the latent heat.
+6. **Decide whether the melting references keep the band or pin it away** (found 2026-09-27 during Task 1's
+   implementation). `tests/test_reentry_model_reference_melt.py` calls `mesh.sphere_mesh(ref.diameter / 2.0)` with
+   no band argument, so the **bookkeeping device** — the one measured fact 12 pins at 0.98 % / 1.29 % of initial
+   mass and says "no later amendment can move them" — silently picks up the new 15 mm default. Its sibling, the
+   Step 2 thermal reference, was explicitly pinned with `band=0.0` for exactly this reason. This one was left
+   unpinned **deliberately**, because this task re-measures the melting table anyway and the melting runs are the
+   ones the band is for; but it is a decision, not an oversight, and it must be made and recorded rather than
+   discovered. Either pin it with `band=0.0` and keep the committed numbers, or let it move and re-measure — not
+   both, and not by accident.
+
+7. **The better Design A trigger** (spec §10.3): the **melt-rate** error under a surface pinned by the latent heat.
    While melting, a temperature error becomes a mass-flux error rather than a temperature error, and mass flux is
    what feeds the spraying. The 1-D probe behind fact 44 cannot measure it; this task can.
 ---
