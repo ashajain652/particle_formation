@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status, 2026-09-28 — this document is no longer the live plan for every task.** Step 3 is being executed from
+> `docs/superpowers/plans/melt-spraying-subplans/`, one file per task, and **those files are the live document**:
+> read `00-shared-context.md` first (it carries measured facts 1–45, where 38–45 are not in this file), then the
+> sub-plan for the task in hand. **Task 1 is superseded** by `melt-spraying-subplans/01-mesh-active-set.md` and the
+> design `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`: the prism stack is no longer the
+> default surface mesh, `DEFAULT_LAYERS` is 0, a distance-field dense band replaces it, and `mesh.py` gained
+> `derived_points`, `surface(derived=True)`, `smoothed_normals()`, `element_depths()` and `edge_lengths()`. That work
+> is implemented and committed (`Implementation of step3-subplan01`); **Task 1's prose and code blocks below are the
+> pre-amendment version and will mislead you.** Tasks 9, 10, 13, 14 and 15 carry amendments in their own sub-plans
+> (notably `PHI_DEATH` 0.05 → 0.50), and Tasks 16 and 17 exist only there. The spec named below is likewise amended
+> by the 2026-09-27 design.
+
 **Goal:** Extend `reentry_model` so that the coupled trajectory + 3D conduction model of Step 2 melts the AA7075 sphere (enthalpy method, element fractions and element death on a prism-layered mesh), forms a melt film on the surface patches (lubrication runoff driven by the gas shear and pressure gradient), strips the film into droplets by Girin's gradient instability (thick, thin and rarefied branches), feeds the mass loss and projected area back to the trajectory, records every droplet release in a source table with size distributions, visualises it, and verifies the whole against two new melting SESAM references, Girin's published cases and analytic solutions.
 
 **Architecture:** New modules `dispersion` (Girin's Eq. 1 solved numerically, cached table), `surface_flow` (the three-branch flow-regime gate, modified-Newtonian + Prandtl-Meyer wall pressure, edge state by isentropic expansion, Ranger-form boundary layer, wall Knudsen number and the melt closure it selects, shear, driving gradient), `film` (lubrication branches, linearly implicit upwind runoff on the patch graph), `spray` (instability branches, release bookkeeping, source rows, histograms), `girin_case` (Girin-as-published driver) and `body.MeltingBody`; `mesh` gains prism layers, the active set with a face table and the box mesh; `material` gains the latent heat, the melting ranges, the feed fraction and the liquid properties; the thermal backends move the enthalpy to the nodes (lumped capacity matrix, exact conservation) with a Newton iteration mapped through h(T), element fractions, pinned nodes and nodal loads; `coupled`, `compare`, `viz`, `cli` and three analysis scripts grow the melt columns, writers, metrics, plots, videos and flags. Per 0.5 s macro step: trajectory advance → aero state → heating → conduction step (with the deferred melt loads of the previous step) → melt step: liquid inventory of every element → film feed; surface flow; lubrication + runoff; spraying and release; element death with film hand-over; mass and projected area for the next advance → history row, source rows, VTK frame. Every module is plain arrays over patches or elements with its own tests; the Step 1–2 behaviour is unchanged when `--melt off`.
