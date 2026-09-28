@@ -33,7 +33,9 @@ def coupled_run(ref, heating_name, h_surface=mesh.DEFAULT_H_SURFACE, h_core=mesh
     initial = tj.InitialState(ref.initial.velocity, ref.initial.altitude, ref.initial.flight_path, ref.initial.heading,
                               ref.initial.lat, ref.initial.lon, ref.initial.epoch)
     settings = tj.Settings(diameter=ref.diameter, t_max=t_max)
-    the_mesh = mesh.sphere_mesh(ref.diameter / 2.0, h_surface, h_core)
+    the_mesh = mesh.sphere_mesh(ref.diameter / 2.0, h_surface, h_core, band=0.0)   # pinned: the committed
+    # Step 2 verification numbers were measured on the Step 2 field (18 896 nodes / 87 632 tets on the 100 mm
+    # reference), and no later amendment may move them
     the_body = body.ThermalBody(the_mesh, material.Material.from_drama_json(), thermal.thermal_solver("skfem"),
                                 body.sphere_mass(ref.diameter, ref.material_density))
     model = heating.SesamEquivalentHeating() if heating_name == "sesam" else heating.PhysicsHeating()

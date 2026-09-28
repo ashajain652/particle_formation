@@ -155,7 +155,11 @@ def build_thermal(args, settings, mass):
     """(ThermalBody, HeatingModel, settings-provenance dict) for --thermal fem."""
     radius = settings.diameter / 2.0
     h_surface, h_core = args.h_surface * 1e-3 * args.mesh_size, args.h_core * 1e-3 * args.mesh_size
-    the_mesh = mesh.sphere_mesh(radius, h_surface, h_core)
+    # band = 0 is the Step 2 field (graded wall to centre over the whole radius). Every run in this package is
+    # non-melting, and the committed Step 2 verification numbers were measured on it: the 15 mm default band
+    # gives 177 363 tets against 87 632 on the 100 mm reference (measured 2026-09-27). Step 3's Task 13 adds
+    # the --band-thickness flag and turns it on for melting runs.
+    the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, band=0.0)
     mat = material.Material.from_drama_json(args.material)
     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=args.lumped_mass)
     the_body = body.ThermalBody(the_mesh, mat, solver, mass, T0=args.temperature, emissivity=args.emissivity, T_ambient=args.t_ambient)
