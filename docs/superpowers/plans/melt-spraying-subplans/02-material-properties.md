@@ -1,12 +1,58 @@
 # Sub-plan: Task 2 — Material with latent heat, melting ranges and liquid properties
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 769–1108), **amended 2026-09-27: Scheil solidification as its own material variant** (section below; the code blocks are the re-tested code). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 769–1108), **amended 2026-09-27: Scheil solidification as its own material variant**, and **amended 2026-09-28: Step 4's latent heat and surface tension in the Scheil variant, and the new `AA7075-empiricaldata` file** (sections below; the code blocks are the re-tested code). Read `00-shared-context.md` first.
 
 **Depends on:** Step 2's existing material loader only.
-**Produces, for later tasks:** latent heat, the solidus/liquidus melting range (linear in `AA7075_range`, Scheil's law in the new `AA7075_scheil`), feed fraction, and — critically — four separate enthalpy-related functions (mixed-phase enthalpy, liquid-only enthalpy, mixed-phase heat capacity, temperature-from-mixed-enthalpy) that Tasks 3, 6, and 9 all consume by name.
-**Character:** physics/data — small in scope, mostly formulas plus three JSON data files (Step 3's two checked materials and the Scheil variant).
+**Produces, for later tasks:** latent heat, the solidus/liquidus melting range (linear in `AA7075_range`, Scheil's law in the new `AA7075_scheil`), the empirical-data copy of AA7075 (`AA7075-empiricaldata`), feed fraction, and — critically — four separate enthalpy-related functions (mixed-phase enthalpy, liquid-only enthalpy, mixed-phase heat capacity, temperature-from-mixed-enthalpy) that Tasks 3, 6, and 9 all consume by name.
+**Character:** physics/data — small in scope, mostly formulas plus four JSON data files (Step 3's two checked materials, the Scheil variant and the empirical-data copy of AA7075).
 **Read before implementing:** Measured facts 4, 5, and 25 in the shared context describe two specific wrong implementations that were tried and rejected during prototyping (debiting only the destination element on feed; booking the film at mixture enthalpy instead of liquid-only enthalpy) — both reproduced real bugs (melt reappearing, a "free melting" runaway). Do not collapse the four enthalpy functions into one general-purpose formula; that simplification is exactly what caused the rejected version. Read the amendment of 2026-09-27 below as well: Scheil is a separate material variant, and `AA7075_range` must not be edited to implement it.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan — file list, function signatures, test plan, and acceptance criteria.
+
+## Amendment of 2026-09-28 — Step 4's values in the Scheil variant, and `AA7075-empiricaldata`
+
+**Decisions (user, 2026-09-28).**
+- **`AA7075_scheil` takes Step 4's values** (Step 4 plan, `docs/superpowers/plans/2026-09-27-deformation-ring-shedding.md`):
+  latent heat **390 kJ/kg** instead of DRAMA's 400 (source: Modulus Metal's AA7075-T6 data sheet, which lists
+  384–393 kJ/kg and cites no primary source; alternatives noted and not run: 397 kJ/kg for pure aluminium, NIST-JANAF,
+  and 358 kJ/kg, Mills 2002 via ASM Handbook Vol. 15), and liquid surface tension **0.80 N/m** instead of 0.86
+  (Bainbridge & Taylor 2013, Metall. Mater. Trans. A 44A, 3901–3909, doi 10.1007/s11661-013-1696-9, Table II:
+  commercial 7075 by sessile drop at the liquidus + 50 K, 0.809 ± 0.041 N/m as melted in vacuum, 0.843 ± 0.018 after
+  the oxide skin was broken, 0.777 ± 0.061 after exposure to dry air, 0.607 ± 0.083 after breaking it again in dry air).
+  Its heat capacity above 850 K stays DRAMA's last value, 1131.6 J/(kg K), which the literature supports to about
+  ±4 % for solid, mush and liquid (see the next item). Everything else in the variant is unchanged.
+- **A new file, `reentry_model/data/materials/AA7075-empiricaldata.json`: a duplicate of `AA7075.json` whose only
+  changes are the new surface tension and heat capacity values** — the liquid surface tension 0.80 N/m (as above) and
+  the heat capacity table made explicit above 850 K with rows at 900, 1000, 1100 and 1200 K of 1131.6 J/(kg K), held
+  beyond (the compiled liquid 7075 value is 1130 J/(kg K), Mills 2002 via ASM Vol. 15 Table 4; the mass-weighted sum of
+  the NIST-JANAF / SGTE liquid element heat capacities gives 1132; liquid aluminium is 1177 in NIST-JANAF against 1127
+  measured by pulse heating to 1491 K, Leitner et al. 2017, doi 10.1007/s11661-017-4053-6). Besides these two values
+  it differs from `AA7075.json` only in its `name`, which must differ because run names encode the material, and its
+  `_comment`. Its latent heat stays DRAMA's 400 kJ/kg and its melting temperature DRAMA's 850 K, as in `AA7075.json`.
+  It is registered in `MATERIAL_NAMES` as `AA7075-empiricaldata`.
+- **`AA7075.json` and `AA7075_range.json` stay exactly as they are** (byte-identical output of the generator).
+
+**Measured on 2026-09-28** in a throwaway copy of the prototype (the 2026-09-27 copy with this amendment applied; the
+code blocks below are the tested code):
+- The generator writes `AA7075.json` and `AA7075_range.json` byte-identical to the checked files (`cmp`).
+  `AA7075_scheil.json` differs from its 2026-09-27 version only in `meltingHeat`, `liquid.surfaceTension`,
+  `liquid._sources` and `_comment`; `AA7075-empiricaldata.json` differs from `AA7075.json` only in `_comment`, `name`,
+  `liquid.surfaceTension`, `liquid._sources` and the four heat-capacity rows above 850 K.
+- `AA7075-empiricaldata`'s c_p(T) and k(T) are bit-identical to `AA7075`'s at 7201 temperatures from 200 to 2000 K
+  (the explicit rows repeat the value `np.interp` already held), and its enthalpy agrees to 1e-12 relative.
+- `tests/test_reentry_model_material.py`: 15 passed (the 14 of 2026-09-27, the Scheil ones updated to 390 kJ/kg and
+  0.80 N/m, and the new one). Mutation check: writing 390 kJ/kg into the empirical file makes the new test fail. The
+  whole unit tier: 206 passed, 1 skipped, 2 failed and 3 errors — the baseline of 205 plus the new test; the failures
+  and errors are the known missing melting SESAM references of Task 11.
+- 50 mm physics flight, the same command as below with `--material AA7075_scheil`, against the 2026-09-27 values
+  (400 kJ/kg, 0.86 N/m): melt onset unchanged at 172.0 s / 79.06 km; demise 208.0 s / 67.98 km, 0.5 s earlier;
+  sprayed mass 0.1804 kg (−0.2 %); 3.22e6 droplets (+22 %) with median radius 222 µm (−5 %), the smaller surface
+  tension making the drops smaller; peak surface temperature 1304 K; absorbed heat 205.6 kJ (−0.8 %); energy-balance
+  residual 1.0e-10 (exact); 2.33 Newton iterations per step; runtime 120 s.
+
+**Follow-ups outside this sub-plan** (not edited here): sub-plan 13's `--material` help text should name
+`AA7075_scheil` and `AA7075-empiricaldata`; Task 15 records both files and the 2026-09-28 values in the README,
+`docs/model_assumptions.md` §9 and the spec's amendments; the file list in `00-shared-context.md` should name
+`AA7075-empiricaldata.json`; the Step 4 plan's open decision on where its material values live is answered here.
 
 ## Amendment of 2026-09-27 — Scheil solidification as its own material variant
 
@@ -21,20 +67,22 @@ existing tests are unchanged — the Scheil tests are appended after them. Do no
 
 **The law.** f_l(T) = ((T_pure − T)/(T_pure − T_liquidus))^(1/(k − 1)) with partition coefficient k = 0.4 and
 T_pure = 933 K (pure aluminium), and the same 908 K liquidus, 750 K solidus and 400 kJ/kg latent heat as
-`AA7075_range`. It leaves f_l(750 K) = 3.6 % of eutectic liquid, which melts or freezes linearly over ±`MELT_RAMP`
+`AA7075_range` (the latent heat and the liquid surface tension became 390 kJ/kg and 0.80 N/m on 2026-09-28, above). It leaves f_l(750 K) = 3.6 % of eutectic liquid, which melts or freezes linearly over ±`MELT_RAMP`
 around the solidus (748–752 K), so the variant's `T_solidus` is the ramp foot, 748 K, exactly as a
 single-temperature material's is. The curve is tabulated every `SCHEIL_DT` = 1 K (largest deviation from the formula
 below 1e-3) and its nodes join the enthalpy table, so the latent slope stays constant inside every interval and the
 exact enthalpy inversion — the film's mixed enthalpy included — works unchanged. Half of the latent heat is released
 in the 13 K below the liquidus (f_l = 0.5 at 895.1 K), against 8 % for the linear range; `T_feed` (910 K) and
-`h_liquid` are the same as `AA7075_range`'s, because a fully liquid kilogram holds the same enthalpy either way.
+`h_liquid` are the same as `AA7075_range`'s, because a fully liquid kilogram holds the same enthalpy either way
+(since 2026-09-28 `h_liquid` is 10 kJ/kg lower, by the latent heat's difference).
 
 **Known limitation, labelled.** Scheil describes a casting solidifying; the body is wrought 7075 melting, and
 wrought 7075 first melts on heating at 769–818 K (Brehm et al. 2022, SAND2022-9908; Gu et al. 2023, Materials 16,
 6145), not at 750 K. The variant therefore starts melting 20–70 K early, but with little liquid: 3.6 % at 750 K and
 6 % at 800 K, against 32 % at 800 K for the linear range.
 
-**Measured on 2026-09-27** in a throwaway copy of the prototype (the code blocks below are the tested code):
+**Measured on 2026-09-27** in a throwaway copy of the prototype, with the variant's 400 kJ/kg and 0.86 N/m of that date
+(kept as the record of that version; the code blocks below are now the 2026-09-28 code):
 - The Step 1 generator writes `AA7075.json` and `AA7075_range.json` byte-identical to the checked files (`cmp`),
   and `AA7075_scheil.json` with the three Scheil keys added.
 - The old and the new `material.py` give bit-identical results for `AA7075_nomelt`, `AA7075` and `AA7075_range`: the
@@ -72,16 +120,16 @@ surface-recession design at the same time).
 
 **Files:**
 - Modify (replace): `reentry_model/material.py`
-- Create: `reentry_model/data/materials/AA7075.json`, `reentry_model/data/materials/AA7075_range.json`, `reentry_model/data/materials/AA7075_scheil.json` (the Scheil variant; `AA7075_range.json` is unchanged by it)
+- Create: `reentry_model/data/materials/AA7075.json`, `reentry_model/data/materials/AA7075_range.json`, `reentry_model/data/materials/AA7075_scheil.json` (the Scheil variant; `AA7075_range.json` is unchanged by it), `reentry_model/data/materials/AA7075-empiricaldata.json` (the empirical-data copy of `AA7075.json`; amendment of 2026-09-28)
 - Test: `tests/test_reentry_model_material.py` (append)
 
 **Interfaces:**
 - Consumes: `reentry_model/data/materials/AA7075_nomelt.json` (Step 2).
-- Produces: `Material` fields `latent_heat`, `T_solidus`, `T_liquidus`, `liquid: LiquidProperties(rho, mu, sigma)`; properties `melts`, `T_feed`, `h_liquid`; methods `liquid_fraction(T)`, `feed_fraction(T)`, `cp_eff(T)`, `enthalpy(T)` (exact, latent slope inside the range), `temperature_from_enthalpy(h)`, and the melt film's four: `enthalpy_liquid(T)` = h(T) + L_f (1 - f_l(T)) (what a kilogram of *liquid* holds at T -- the film carries its latent heat wherever it sits), `enthalpy_mixed(T, w)` and `cp_mixed(T, w)` for a node holding a fraction `w` of film and 1 - w of material, and `temperature_from_enthalpy_mixed(h, w)`, their exact inverse in T for every w (round-trip 4e-12 K, measured); `Material.from_drama_json(path=None)` accepting the names in `MATERIAL_NAMES` (`AA7075_nomelt`, `AA7075`, `AA7075_range`, `AA7075_scheil`); constants `MELT_RAMP = 2.0`, `NO_MELT_ABOVE = 5000.0`, `SCHEIL_DT = 1.0`. Scheil variant (amendment of 2026-09-27): optional `Material` fields `partition_coefficient` and `T_pure` (read from `solidification: "scheil"`, `partitionCoefficient`, `pureMeltingTemperature`), property `scheil`; for it `liquid_fraction` is Scheil's law tabulated at `SCHEIL_DT` with the eutectic ramp at the solidus, `cp_eff` is the tabulated slope, and `T_solidus` is the ramp foot (748 K); every other interface is the same for both range materials. Single-temperature materials get a ±MELT_RAMP ramp; `feed_fraction` is a ±MELT_RAMP ramp ending at `T_feed` (the liquidus, +2 K for range materials).
+- Produces: `Material` fields `latent_heat`, `T_solidus`, `T_liquidus`, `liquid: LiquidProperties(rho, mu, sigma)`; properties `melts`, `T_feed`, `h_liquid`; methods `liquid_fraction(T)`, `feed_fraction(T)`, `cp_eff(T)`, `enthalpy(T)` (exact, latent slope inside the range), `temperature_from_enthalpy(h)`, and the melt film's four: `enthalpy_liquid(T)` = h(T) + L_f (1 - f_l(T)) (what a kilogram of *liquid* holds at T -- the film carries its latent heat wherever it sits), `enthalpy_mixed(T, w)` and `cp_mixed(T, w)` for a node holding a fraction `w` of film and 1 - w of material, and `temperature_from_enthalpy_mixed(h, w)`, their exact inverse in T for every w (round-trip 4e-12 K, measured); `Material.from_drama_json(path=None)` accepting the names in `MATERIAL_NAMES` (`AA7075_nomelt`, `AA7075`, `AA7075_range`, `AA7075_scheil`, `AA7075-empiricaldata`); constants `MELT_RAMP = 2.0`, `NO_MELT_ABOVE = 5000.0`, `SCHEIL_DT = 1.0`. Scheil variant (amendment of 2026-09-27): optional `Material` fields `partition_coefficient` and `T_pure` (read from `solidification: "scheil"`, `partitionCoefficient`, `pureMeltingTemperature`), property `scheil`; for it `liquid_fraction` is Scheil's law tabulated at `SCHEIL_DT` with the eutectic ramp at the solidus, `cp_eff` is the tabulated slope, and `T_solidus` is the ramp foot (748 K); every other interface is the same for both range materials. Single-temperature materials get a ±MELT_RAMP ramp; `feed_fraction` is a ±MELT_RAMP ramp ending at `T_feed` (the liquidus, +2 K for range materials).
 
-- [ ] **Step 1: Write the three material files**
+- [ ] **Step 1: Write the four material files**
 
-Generate them from the packaged no-melt file (the DRAMA tables verbatim, the 1e5 K holding row dropped, the liquid properties added). `AA7075_scheil` is built from `AA7075_range` and adds only the three Scheil keys and its own comment:
+Generate them from the packaged no-melt file (the DRAMA tables verbatim, the 1e5 K holding row dropped, the liquid properties added). `AA7075_scheil` is built from `AA7075_range` and adds the three Scheil keys, Step 4's latent heat (390 kJ/kg) and liquid surface tension (0.80 N/m) and its own comment; `AA7075-empiricaldata` is `AA7075` with only the liquid surface tension (0.80 N/m) and the heat capacity above 850 K (made explicit to 1200 K) changed, besides its name and comment:
 
 ```bash
 "$PY" - <<'EOF'
@@ -96,16 +144,26 @@ a = dict(base); a["name"] = "AA7075"; a["meltingTemperature"] = 850.0; a["liquid
 a["_comment"] = "DRAMA 4.1.4 drama-AA7075 verbatim (TOOLS/material_database.xml: density, cp(T) and k(T) to 850 K, meltingHeat 400 kJ/kg, meltingTemperature 850 K, emissivity 0.4, catalycity 1, oxidation off) plus the liquid-phase properties DRAMA does not carry (`liquid`). Above 850 K the tables hold their last value (cp 1131.6 J/kgK, k 128.19 W/mK). Step 3 material (spec 2026-09-20 section 6): single melting temperature, numerical ramp of +-2 K in the model. DRAMA's database itself is untouched."
 r = dict(a); r["name"] = "AA7075_range"; r["solidusTemperature"] = 750.0; r["liquidusTemperature"] = 908.0; r["meltingTemperature"] = 908.0
 r["_comment"] = "AA7075 (see AA7075.json) with the alloy's melting range instead of DRAMA's single temperature: solidus 750 K, liquidus 908 K (ASM Handbook Vol. 2, Properties and Selection: Nonferrous Alloys, AA7075 477-635 C), latent heat 400 kJ/kg spread linearly across the range. meltingTemperature is set to the liquidus. Default material of --melt on (spec 2026-09-20 sections 6 and 14); melt and runoff start at the liquidus (section 8)."
+# the Step 4 values of 2026-09-28: liquid surface tension, and the heat capacity above 850 K made explicit
+SIGMA_7075, SIGMA_SOURCE = 0.80, "sigma 0.80 N/m for fully liquid AA7075 (user decision 2026-09-28): Bainbridge & Taylor 2013, Metall. Mater. Trans. A 44A, 3901-3909, doi 10.1007/s11661-013-1696-9, Table II, commercial 7075 by sessile drop at the liquidus + 50 K: 0.809 +- 0.041 N/m as melted in vacuum (0.843 +- 0.018 after the oxide skin was broken, 0.777 +- 0.061 after exposure to dry air, 0.607 +- 0.083 after breaking it again in dry air); held constant with temperature."
+CP_ABOVE_850 = [[900.0, 1131.6], [1000.0, 1131.6], [1100.0, 1131.6], [1200.0, 1131.6]]
+CP_SOURCE = "Above 850 K the heat capacity is DRAMA's last value, 1131.6 J/kgK, made explicit to 1200 K and held beyond, for solid, mush and liquid alike, uncertainty about +-4 % (user decision 2026-09-28): the compiled liquid 7075 value is 1130 J/kgK (Mills 2002, reprinted in ASM Handbook Vol. 15, Table 4), the mass-weighted sum of the NIST-JANAF / SGTE liquid heat capacities of Al, Zn, Mg, Cu and Cr gives 1132 J/kgK, and liquid aluminium is 1177 J/kgK in NIST-JANAF against 1127 J/kgK measured by pulse heating to 1491 K (Leitner et al. 2017, doi 10.1007/s11661-017-4053-6). This is the sensible heat capacity; the latent heat is added separately."
+liquid_step4 = dict(liquid); liquid_step4["surfaceTension"] = SIGMA_7075
+liquid_step4["_sources"] = liquid["_sources"].replace("sigma 0.86-0.91 N/m (Smithells; ASM Handbook Vol. 2)", "sigma see below") + " " + SIGMA_SOURCE
 s = dict(r); s["name"] = "AA7075_scheil"; s["solidification"] = "scheil"; s["partitionCoefficient"] = 0.4; s["pureMeltingTemperature"] = 933.0
-s["_comment"] = "AA7075_range (see AA7075_range.json, which stays as it is) with the latent heat released along Scheil's non-equilibrium solidification curve instead of linearly: f_l = ((T_pure - T)/(T_pure - T_liquidus))^(1/(k - 1)), partition coefficient k 0.4, T_pure 933 K (pure aluminium), liquidus 908 K, solidus 750 K. Half of the 400 kJ/kg is released in the 13 K below the liquidus (f_l = 0.5 at 895.1 K) against 8 % for the linear range; the eutectic remainder f_l(750 K) = 3.6 % melts or freezes over +-2 K at the solidus. One Scheil material for the whole body -- heat, liquid fraction and the viscosity law that uses it (user decision 2026-09-27). Known limitation, labelled: wrought 7075 first melts on heating at 769-818 K (Brehm et al. 2022, SAND2022-9908; Gu et al. 2023, Materials 16, 6145), not at the 750 K solidus of a casting, so melting starts 20-70 K early -- though with only 3.6 % liquid at 750 K and 6 % at 800 K, against 32 % at 800 K for the linear range."
-for name, doc in (("AA7075", a), ("AA7075_range", r), ("AA7075_scheil", s)):
+s["meltingHeat"] = 390000.0; s["liquid"] = liquid_step4
+s["_comment"] = "AA7075_range (see AA7075_range.json, which stays as it is) with the latent heat released along Scheil's non-equilibrium solidification curve instead of linearly: f_l = ((T_pure - T)/(T_pure - T_liquidus))^(1/(k - 1)), partition coefficient k 0.4, T_pure 933 K (pure aluminium), liquidus 908 K, solidus 750 K. Half of the latent heat is released in the 13 K below the liquidus (f_l = 0.5 at 895.1 K) against 8 % for the linear range; the eutectic remainder f_l(750 K) = 3.6 % melts or freezes over +-2 K at the solidus. One Scheil material for the whole body -- heat, liquid fraction and the viscosity law that uses it (user decision 2026-09-27). Step 4 values (user decision 2026-09-28): latent heat 390 kJ/kg instead of DRAMA's 400 (Modulus Metal AA7075-T6 data sheet, 384-393 kJ/kg, which cites no primary source; alternatives 397 kJ/kg pure aluminium NIST-JANAF, 358 kJ/kg Mills 2002) and liquid surface tension 0.80 N/m (see liquid._sources); the heat capacity above 850 K is held at 1131.6 J/kgK, which the literature supports (see AA7075-empiricaldata.json). Known limitation, labelled: wrought 7075 first melts on heating at 769-818 K (Brehm et al. 2022, SAND2022-9908; Gu et al. 2023, Materials 16, 6145), not at the 750 K solidus of a casting, so melting starts 20-70 K early -- though with only 3.6 % liquid at 750 K and 6 % at 800 K, against 32 % at 800 K for the linear range."
+e = dict(a); e["name"] = "AA7075-empiricaldata"; e["liquid"] = liquid_step4
+e["specificHeatCapacity"] = a["specificHeatCapacity"] + CP_ABOVE_850
+e["_comment"] = "AA7075 (see AA7075.json) duplicated with only two changes, both empirical values adopted on 2026-09-28 (user decision): the liquid surface tension, 0.80 N/m instead of 0.86 (see liquid._sources), and the heat capacity above 850 K. " + CP_SOURCE + " Everything else -- DRAMA's tables to 850 K, the 400 kJ/kg latent heat, the 850 K melting temperature, the conductivity, emissivity and liquid density and viscosity -- is AA7075's."
+for name, doc in (("AA7075", a), ("AA7075_range", r), ("AA7075_scheil", s), ("AA7075-empiricaldata", e)):
     keys = ["_comment", "name", "materialType", "catalycity", "density", "meltingHeat", "meltingTemperature"] + (["solidusTemperature", "liquidusTemperature"] if "solidusTemperature" in doc else []) + (["solidification", "partitionCoefficient", "pureMeltingTemperature"] if "solidification" in doc else []) + ["specificHeatCapacity", "heatConductivity", "emissivity", "oxideActivationTemperature", "oxideEmissivity", "oxideHeatOfFormation", "oxideReactionProbability", "liquid"]
     json.dump({k: doc[k] for k in keys}, open("reentry_model/data/materials/%s.json" % name, "w"), indent=2)
 print("written")
 EOF
 ```
 
-Expected: all three files exist; `AA7075.json` has 29 c_p rows ending at 850 K, `meltingHeat` 400000, `meltingTemperature` 850; `AA7075_range.json` adds `solidusTemperature` 750 and `liquidusTemperature` 908 (`meltingTemperature` 908); `AA7075_scheil.json` is `AA7075_range.json` plus `solidification` "scheil", `partitionCoefficient` 0.4 and `pureMeltingTemperature` 933. `AA7075.json` and `AA7075_range.json` are byte-identical to what this script wrote before the Scheil amendment (checked with `cmp` on 2026-09-27).
+Expected: all four files exist; `AA7075.json` has 29 c_p rows ending at 850 K, `meltingHeat` 400000, `meltingTemperature` 850; `AA7075_range.json` adds `solidusTemperature` 750 and `liquidusTemperature` 908 (`meltingTemperature` 908); `AA7075_scheil.json` is `AA7075_range.json` plus `solidification` "scheil", `partitionCoefficient` 0.4 and `pureMeltingTemperature` 933, with `meltingHeat` 390000 and `liquid.surfaceTension` 0.80; `AA7075-empiricaldata.json` is `AA7075.json` with `liquid.surfaceTension` 0.80 and 33 c_p rows ending at 1200 K. `AA7075.json` and `AA7075_range.json` are byte-identical to what this script wrote before the Scheil amendment (checked with `cmp` on 2026-09-27 and again on 2026-09-28).
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -175,7 +233,7 @@ def test_liquid_and_mixed_enthalpy_invert_exactly(request):
         assert np.all(np.diff(mat.enthalpy_mixed(T, 0.4)) > 0.0)                     # monotone: the inverse is a function
 ```
 
-Then append the Scheil variant's tests (amendment of 2026-09-27) after them, leaving the tests above unchanged:
+Then append the Scheil variant's tests (amendment of 2026-09-27, values updated 2026-09-28) after them, leaving the tests above unchanged:
 
 ```python
 # ---------------------------------------------------------------------------------------------------------------
@@ -190,9 +248,11 @@ def test_scheil_material_is_a_separate_variant():
     assert s.scheil and not r.scheil and s.melts and s.partition_coefficient == 0.4 and s.T_pure == 933.0
     assert (r.T_solidus, r.T_liquidus) == (750.0, 908.0)                     # the range material is untouched
     assert (s.T_solidus, s.T_liquidus) == (748.0, 908.0)                     # foot of the eutectic ramp at the solidus
-    assert s.latent_heat == r.latent_heat == 400e3 and s.rho == r.rho and s.liquid == r.liquid
+    assert s.latent_heat == 390e3 and r.latent_heat == 400e3 and s.rho == r.rho     # Step 4's latent heat (2026-09-28)
+    assert s.liquid.sigma == 0.80 and r.liquid.sigma == 0.86                         # Step 4's surface tension (2026-09-28)
+    assert s.liquid.rho == r.liquid.rho and s.liquid.mu == r.liquid.mu
     assert np.array_equal(s.T_cp, r.T_cp) and np.array_equal(s.cp_table, r.cp_table) and np.array_equal(s.k_table, r.k_table)
-    assert s.T_feed == r.T_feed == 910.0 and s.h_liquid == pytest.approx(r.h_liquid, rel=1e-12)   # fully liquid: same h
+    assert s.T_feed == r.T_feed == 910.0 and s.h_liquid == pytest.approx(r.h_liquid - 10e3, rel=1e-12)   # fully liquid: L less
 
 
 def test_scheil_liquid_fraction_and_latent_heat():
@@ -208,8 +268,8 @@ def test_scheil_liquid_fraction_and_latent_heat():
         x = np.union1d(np.linspace(a, b, 2001), s.T_cp[(s.T_cp > a) & (s.T_cp < b)])
         return np.trapezoid(s.cp(x), x)
     latent = lambda a, b: s.enthalpy(b) - s.enthalpy(a) - sens(a, b)
-    assert latent(748.0, 908.0) == pytest.approx(400e3, rel=1e-9)            # all of L_f, exactly
-    assert latent(895.1, 908.0) / 400e3 == pytest.approx(0.5, abs=1e-3)      # half of it in the top 13 K ...
+    assert latent(748.0, 908.0) == pytest.approx(390e3, rel=1e-9)            # all of L_f, exactly
+    assert latent(895.1, 908.0) / 390e3 == pytest.approx(0.5, abs=1e-3)      # half of it in the top 13 K ...
     r = material.Material.from_drama_json("AA7075_range")
     assert (r.enthalpy(908.0) - r.enthalpy(895.1) - sens(895.1, 908.0)) / 400e3 == pytest.approx(12.9 / 158.0, rel=1e-6)   # ... 8 % linearly
 
@@ -241,11 +301,33 @@ def test_invalid_scheil_data():
         material.Material("bad", 2813.0, 0.4, [300.0, 900.0], [900.0, 900.0], [300.0, 900.0], [150.0, 150.0], 4e5, 850.0, 852.0, None, 0.4, 933.0)
 ```
 
+Then append the empirical-data file's test (amendment of 2026-09-28):
+
+```python
+# ---------------------------------------------------------------------------------------------------------------
+# Step 3 amendment of 2026-09-28: AA7075-empiricaldata, AA7075 with only the empirical surface tension and heat capacity
+
+def test_empirical_material_is_aa7075_with_two_changes():
+    import json
+    da = json.load(open(material.MATERIAL_NAMES["AA7075"]))
+    de = json.load(open(material.MATERIAL_NAMES["AA7075-empiricaldata"]))
+    assert {k for k in da if da[k] != de[k]} == {"_comment", "name", "liquid", "specificHeatCapacity"}
+    assert {k for k in da["liquid"] if da["liquid"][k] != de["liquid"][k]} == {"surfaceTension", "_sources"}
+    assert de["specificHeatCapacity"][:len(da["specificHeatCapacity"])] == da["specificHeatCapacity"]
+    assert de["specificHeatCapacity"][len(da["specificHeatCapacity"]):] == [[900.0, 1131.6], [1000.0, 1131.6], [1100.0, 1131.6], [1200.0, 1131.6]]
+    e, a = material.Material.from_drama_json("AA7075-empiricaldata"), material.Material.from_drama_json("AA7075")
+    assert e.name == "AA7075-empiricaldata" and e.liquid.sigma == 0.80 and a.liquid.sigma == 0.86
+    assert (e.latent_heat, e.T_solidus, e.T_liquidus, e.rho, e.emissivity) == (a.latent_heat, a.T_solidus, a.T_liquidus, a.rho, a.emissivity)
+    T = np.linspace(200.0, 2000.0, 7201)
+    assert np.array_equal(e.cp(T), a.cp(T)) and np.array_equal(e.k(T), a.k(T))   # the held value made explicit: same c_p
+    assert e.enthalpy(T) == pytest.approx(a.enthalpy(T), rel=1e-12) and np.abs(e.temperature_from_enthalpy(e.enthalpy(T)) - T).max() < 1e-8
+```
+
 
 - [ ] **Step 3: Run the tests to see them fail**
 
 Run: `"$PY" -m pytest tests/test_reentry_model_material.py -q`
-Expected: the nine new tests fail (`from_drama_json("AA7075")` and `from_drama_json("AA7075_scheil")` are bad paths; no `melts`, `feed_fraction`, `liquid`, `enthalpy_liquid`; `Material` takes no Scheil arguments).
+Expected: the ten new tests fail (`from_drama_json("AA7075")`, `from_drama_json("AA7075_scheil")` and `MATERIAL_NAMES["AA7075-empiricaldata"]` are bad paths or names; no `melts`, `feed_fraction`, `liquid`, `enthalpy_liquid`; `Material` takes no Scheil arguments).
 
 - [ ] **Step 4: Replace `reentry_model/material.py`**
 
@@ -281,7 +363,8 @@ from . import DATA_DIR
 DEFAULT_MATERIAL = os.path.join(DATA_DIR, "materials", "AA7075_nomelt.json")
 MATERIAL_NAMES = {"AA7075_nomelt": DEFAULT_MATERIAL, "AA7075": os.path.join(DATA_DIR, "materials", "AA7075.json"),
                   "AA7075_range": os.path.join(DATA_DIR, "materials", "AA7075_range.json"),
-                  "AA7075_scheil": os.path.join(DATA_DIR, "materials", "AA7075_scheil.json")}
+                  "AA7075_scheil": os.path.join(DATA_DIR, "materials", "AA7075_scheil.json"),
+                  "AA7075-empiricaldata": os.path.join(DATA_DIR, "materials", "AA7075-empiricaldata.json")}
 T_REF = 293.0                      # K, zero of the enthalpy scale (first row of DRAMA's tables)
 MELT_RAMP = 2.0                    # K, half-width of the numerical melting/feed ramps
 NO_MELT_ABOVE = 5000.0             # K: a melting temperature above this means "never melts"
@@ -373,8 +456,8 @@ class Material:
     @classmethod
     def from_drama_json(cls, path=None):
         """A DRAMA material file; `path` may also be a name in MATERIAL_NAMES (AA7075_nomelt, AA7075, AA7075_range,
-        AA7075_scheil). `solidification: "scheil"` with `partitionCoefficient` and `pureMeltingTemperature` selects
-        Scheil's law; anything else keeps the linear range."""
+        AA7075_scheil, AA7075-empiricaldata). `solidification: "scheil"` with `partitionCoefficient` and
+        `pureMeltingTemperature` selects Scheil's law; anything else keeps the linear range."""
         path = MATERIAL_NAMES.get(path, path) or DEFAULT_MATERIAL
         with open(path) as fh:
             d = json.load(fh)
@@ -512,8 +595,8 @@ Expected: all pass (the no-melt material behaves exactly as in Step 2: `latent_h
 - [ ] **Step 6: Commit**
 
 ```bash
-git add reentry_model/material.py reentry_model/data/materials/AA7075.json reentry_model/data/materials/AA7075_range.json reentry_model/data/materials/AA7075_scheil.json tests/test_reentry_model_material.py
-git commit -m "Add the latent heat, melting ranges (linear and Scheil), feed fraction and liquid properties to the material (Step 3 Task 2)
+git add reentry_model/material.py reentry_model/data/materials/AA7075.json reentry_model/data/materials/AA7075_range.json reentry_model/data/materials/AA7075_scheil.json reentry_model/data/materials/AA7075-empiricaldata.json tests/test_reentry_model_material.py
+git commit -m "Add the latent heat, melting ranges (linear and Scheil), feed fraction, liquid properties and the empirical-data copy of AA7075 to the material (Step 3 Task 2)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```

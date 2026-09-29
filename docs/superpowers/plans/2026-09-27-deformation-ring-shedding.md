@@ -19,9 +19,10 @@ that iteration will need.
 - the surface-recession amendment of 2026-09-27: the derived surface (`recession.py`, Task 16), periodic remeshing
   with conservative field transfer (`remesh.py`, Task 17) and `PHI_DEATH` = 0.50 (shared-context facts 38–45);
 - the Scheil material variant `AA7075_scheil` (sub-plan 02, amendment of 2026-09-27, commit e6722ee). Step 4 uses the
-  Scheil representation for the heat, the liquid fraction and the viscosity, with two values changed by the decisions
-  of 2026-09-28 (latent heat 390 kJ/kg, liquid surface tension 0.80 N/m; see the open decisions for where they live);
-  `AA7075_range` remains Step 3's checked linear material.
+  Scheil representation for the heat, the liquid fraction and the viscosity, with the two values changed on
+  2026-09-28 (latent heat 390 kJ/kg, liquid surface tension 0.80 N/m), which sub-plan 02's amendment of 2026-09-28
+  writes into `AA7075_scheil` itself; the same amendment adds `AA7075-empiricaldata`, a copy of `AA7075` with only the
+  surface tension and the heat capacity above 850 K changed. `AA7075_range` remains Step 3's checked linear material.
 
 **Spec.** To be written as `docs/superpowers/specs/<date>-deformation-ring-shedding-design.md` from the approved
 sections recorded below and sections 7–13, which are still to be presented.
@@ -427,9 +428,9 @@ Scheil material.
 
 ## Open inputs and decisions
 
-- **Where Step 4's material values live.** The committed `AA7075_scheil` (Step 3 sub-plan 02, e6722ee) carries
-  400 kJ/kg and 0.86 N/m; Step 4 needs 390 kJ/kg and 0.80 N/m. Either sub-plan 02 is amended (which changes Step 3's
-  Scheil variant as well) or Step 4 gets its own variant (Asha).
+- **Where Step 4's material values live** — answered 2026-09-28: sub-plan 02 was amended, so `AA7075_scheil` itself
+  carries 390 kJ/kg and 0.80 N/m (re-measured: 50 mm demise 0.5 s earlier, 22 % more droplets with a 5 % smaller
+  median radius, balance 1.0e-10), and `AA7075-empiricaldata` was added.
 - The surface tension of a film with a slurry top: none applied, recorded as an open assumption.
 - ESA's measured 7075 heat capacity and heat of fusion through melting (Pagan 2025, University of Stuttgart
   dissertation, doi 10.18419/opus-17557; Bonvoisin et al. 2022, CEAS Space Journal 15, 213–235,
