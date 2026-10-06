@@ -46,7 +46,8 @@ garbage collection every 100 steps, which production pays too. The numbers are n
 arm64 image under Docker Desktop's Linux VM, with no Rosetta (the cluster will be x86-64).
 
 The load average checked is the Linux VM's (/proc/loadavg in the container), read on rank 0 before Spheral is
-imported; above --max-load (2.0) the run refuses to start (exit 2) unless --force.
+imported; above --max-load (2.0) the run refuses to start (exit 2) unless --force. The host's load is invisible from
+the container; a caller that measured it passes it with --host-load and it is recorded (run_benchmark.sh does).
 
 Run through the launcher from the repository root, e.g.
 
@@ -95,6 +96,9 @@ def parse_args(argv):
     p.add_argument("--radius-mm", type=float, default=50.0, help="sphere radius in mm (default 50: the 100 mm body)")
     p.add_argument("--max-load", type=float, default=2.0, help="refuse to start above this 1-min load average")
     p.add_argument("--force", action="store_true", help="start even above --max-load")
+    p.add_argument("--host-load", default=None,
+                   help="the host's load averages measured by the caller before launching (the container cannot see "
+                        "them), recorded in summary.json, e.g. \"1.2 1.5 1.7\"")
     p.add_argument("--dt-votes", action="store_true",
                    help="after the timed steps, print every physics package's time-step vote and its reason")
     a = p.parse_args(argv)
@@ -300,6 +304,7 @@ def main(argv):
         peak_rss_bytes_max_process=rss_max, peak_rss_bytes_total=rss_total,
         memory_bytes_per_particle=rss_total/ntotal,
         load_average_at_start=list(load), load_average_source="Linux VM (/proc/loadavg in the container), rank 0",
+        host_load_average_at_start=[float(x) for x in a.host_load.split()] if a.host_load else None,
         forced=bool(a.force and load[0] > a.max_load),
         damage_max_eigenvalue_end=damage_max,
         machine=platform.machine(),
