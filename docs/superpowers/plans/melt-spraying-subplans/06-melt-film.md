@@ -1,6 +1,136 @@
 # Sub-plan: Task 6 — The melt film: lubrication and runoff
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 2778–3009). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 2778–3009). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below).
+
+## Amendment of 2026-10-02 — the flux of the liquid below the conjugate depth
+
+**Why (decision of 2026-10-02).** Asha approved a three-zone rule for where melted material belongs, written for the
+large-fragment (Spheral) model that will read this model's exported frames: (1) the sprayable skin, liquid above the
+908 K liquidus within Girin's conjugate depth δ_m of the surface (215–303 µm on the 100 mm flight, fact 28), stays in
+the film and is sprayed by Girin's mechanism; (2) the contiguous liquid below δ_m, down to a film limit of about
+2–3 mm, is not sprayed but runs off, driven by the pressure gradient along the surface and the deceleration; (3)
+material thicker than the film limit goes to the large-fragment model. Until now the middle zone never moved: fact
+28(b)'s feed gate holds it in its elements, and fact 29 recorded its runoff flux as "one consequence not
+implemented". This task supplies that flux; Task 9 moves the liquid with it (sub-plan 09's amendment of the same date
+holds the design, the alternatives considered and the measurements; facts 46–53 in `00-shared-context.md`).
+
+**The change: one new function, nothing else in this module.** `film.deep_flux(G, b, h, mu_l)` returns
+G (h³ − b³)/(3 μ_l), the flux per unit width of the liquid lying between the film (thickness b, on top) and the full
+contiguous liquid depth h, plus one paragraph of the module docstring. `lubrication` and `Runoff` are not touched, so
+the film's own flux and its thin/thick branch test are exactly what they were on every patch.
+
+**Why this form.** Fact 29 asked for "two depth limits in the same expression": the runoff flux of a liquid column is
+
+    q = τ d²/(2 μ_l) + G h³/(3 μ_l),     d = min(δ_m, h),
+
+where τ is the gas shear at the free surface [Pa], G the driving gradient along the surface (the gas-pressure gradient
+plus the deceleration term −ρ_l a sin θ, [Pa/m]), μ_l the liquid viscosity, the first term the shear-driven part over
+the conjugate depth only and the second the pressure- and deceleration-driven part over the whole liquid depth.
+G h³/(3 μ_l) is the Poiseuille flux of a half-channel of depth h with no slip at the solid and no stress from this part
+at the free surface — the gravity-driven film of classical lubrication theory with G in place of ρg.
+`lubrication`'s thick branch already gives the film the first term and G b³/(3 μ_l) of the second, which is what fact
+29 called under-integrated; `deep_flux` is the remainder, carried by the liquid beneath the film. It has no shear
+term: the gas shear reaches only the conjugate depth, and that layer is the film's.
+
+**One approximation, declared.** The split between the film and the liquid beneath it is not the exact split of the
+half-channel profile. In that profile a film of thickness b riding on the deeper liquid moves faster than G b³/(3 μ_l)
+gives it; the share of the column's pressure-driven flux that this simpler split moves to the liquid beneath instead
+is about 1.5 b/h — measured by quadrature: 0.15 % for a 1 µm film on a 1 mm column, 1.5 % for 10 µm, 15 % for
+100 µm and 35 % for a 250 µm film, i.e. a film as thick as the conjugate depth. Where the film is comparable to the
+liquid beneath it the liquid beneath is therefore driven too hard: by a factor 2.8 when b equals the deep thickness.
+The column's total is exact either way. The split was kept because it leaves `lubrication` untouched and so cannot
+change any patch that has no liquid beneath its film, and because the deep transport is close to its steady state in
+every macro step anyway (fact 47), so the factor moves how fast the deep liquid reaches where it collects, not where
+that is. The exact split (the film gaining (G/μ_l) b s (2b + s)/2, with s the deep thickness) is recorded in fact 53
+as an option.
+
+Code (the tested change; apply to `reentry_model/film.py` as given in the body below, which is the prototype's file):
+
+```diff
+--- a/reentry_model/film.py
++++ b/reentry_model/film.py
+@@ -10,6 +10,13 @@
+ gradient for the instability is V_s / b or V_s / delta_m). Where delta_m is undefined (free-molecular patches) the
+ film is thin-branch (Couette) by definition.
+ 
++The liquid below the film (amendment of 2026-10-02): where contiguous liquid lies beneath the film, the column's
++runoff flux needs two depth limits in one expression -- the shear-driven part over min(delta_m, h), the pressure-
++gradient and deceleration-driven part over the whole liquid depth h (plan fact 29):
++    q_column = tau d^2 / (2 mu_l) + G h^3 / (3 mu_l),    d = min(delta_m, h).
++The film keeps its own share above; `deep_flux` is the rest, G (h^3 - b^3) / (3 mu_l), carried by the liquid
++beneath it, which the shear does not reach.
++
+ Runoff: for every edge shared by patches i and j, flux = q_donor * l_edge * (t_donor . n_edge)^+ with n_edge the
+ in-plane edge normal pointing out of the donor; both directions are evaluated (a negative q reverses the flow toward
+ the nose). The transport over a macro step is the linearly implicit upwind scheme (I + dt C) m_new = m_old with the
+@@ -50,6 +57,19 @@
+     return V, q, rate, thick
+ 
+ 
++def deep_flux(G, b, h, mu_l):
++    """Flux per unit width [m^2/s] of the liquid beneath the film: the pressure-gradient and deceleration-driven part
++    of a column of contiguous liquid of depth h whose top b is the film,
++        q_deep = G (h^3 - b^3) / (3 mu_l)            (zero where h <= b; signed like G, negative toward the nose).
++    G h^3 / (3 mu_l) is the Poiseuille flux of a half-channel of depth h -- no slip at the solid, no stress from this
++    part at the free surface -- and `lubrication` already gives the film G b^3 / (3 mu_l) of it, so with the film's
++    shear-driven share over the conjugate depth the column carries exactly plan fact 29's
++    tau d^2 / (2 mu_l) + G h^3 / (3 mu_l). There is no shear term here: the gas shear reaches only Girin's conjugate
++    depth, and that layer is the film's (amendment of 2026-10-02)."""
++    G, b, h = (np.asarray(x, dtype=float) for x in (G, b, h))
++    return G * (np.maximum(h, b) ** 3 - b ** 3) / (3.0 * mu_l)
++
++
+ class Runoff:
+     """Explicit upwind transport of the film mass on a SurfaceMesh (rebuilt whenever the surface changes)."""
+ 
+```
+
+Test (the tested code, appended to `tests/test_reentry_model_film.py`):
+
+```diff
+--- a/tests/test_reentry_model_film.py
++++ b/tests/test_reentry_model_film.py
+@@ -73,3 +73,31 @@
+     assert m.sum() == pytest.approx(m0.sum(), rel=1e-12) and (m >= 0.0).all() and moved > 0.0
+     assert m[~windward].sum() == 0.0 and np.degrees(theta[m > 1e-9 * m.max()].max()) > 35.0        # spread outward (>= 4 patches), never leeward
+     assert ro.transport(np.zeros(s.n_patches), q_of_b, t_hat, LIQ.rho, s.areas, 0.5)[1] == 0    # a dry surface costs nothing
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-02: the liquid below the conjugate depth runs off under the pressure gradient and deceleration
++
++
++def test_deep_flux_is_the_poiseuille_flux_and_completes_fact_29s_two_depth_limits():
++    """With no film on top, the liquid beneath it carries the body-force-driven lubrication flux of a layer of depth h,
++    q = G h^3 / (3 mu): the half-channel profile u(y) = (G / mu)(h y - y^2 / 2), no slip at the solid and no stress
++    from this part at the free surface, integrated over the depth. Under a film of thickness b it carries the rest of
++    that flux, so that the thick branch's film flux plus this is plan fact 29's column flux
++    tau d^2 / (2 mu) + G h^3 / (3 mu) with d = min(delta_m, h): the shear part over the conjugate depth only, the
++    pressure part over the whole liquid depth."""
++    mu, G, h = LIQ.mu, 4.0e4, 1.0e-3
++    y = np.linspace(0.0, h, 200001)
++    u = G / mu * (h * y - 0.5 * y * y)
++    assert film.deep_flux(G, 0.0, h, mu) == pytest.approx(np.trapezoid(u, y), rel=1e-9)
++    assert film.deep_flux(G, 0.0, h, mu) == pytest.approx(G * h ** 3 / (3.0 * mu), rel=1e-12)
++    tau, delta_m, b = 30.0, 2.5e-4, np.array([1e-5, 1e-4, 4e-4])       # films thinner and thicker than delta_m
++    V, q, _, thick = film.lubrication(np.full(3, tau), np.full(3, G), b, np.full(3, delta_m), mu, b_layer=np.full(3, h))
++    assert thick.all()                                                  # the column is deeper than delta_m
++    column = tau * delta_m ** 2 / (2.0 * mu) + G * h ** 3 / (3.0 * mu)
++    assert q + film.deep_flux(G, b, h, mu) == pytest.approx(np.full(3, column), rel=1e-12)
++    assert film.deep_flux(G, 2e-3, h, mu) == 0.0                        # no liquid beneath a film as deep as the column
++    assert film.deep_flux(-G, 0.0, h, mu) == pytest.approx(-G * h ** 3 / (3.0 * mu))   # the deceleration's pull: toward the nose
++    # a thin column (h <= delta_m) is all within the shear's reach: lubrication alone is the column, unchanged
++    _, q_thin, _, thick_thin = film.lubrication([tau], [G], [5e-5], [delta_m], mu, b_layer=[2e-4])
++    assert not thick_thin[0] and q_thin[0] == pytest.approx(tau * 5e-5 ** 2 / (2.0 * mu) + G * 5e-5 ** 3 / (3.0 * mu))
+```
+
+**Measured (2026-10-02, throwaway copy of the prototype).** `"$PY" -m pytest tests/test_reentry_model_film.py -q`:
+4 passed (the three tests above and the new one). The new test fails on the unamended module (`AttributeError`, no
+`deep_flux`) and passes with it. The quadrature of the half-channel velocity profile reproduces G h³/(3 μ_l) to
+1e-9, and the thick-branch film flux plus `deep_flux` reproduces fact 29's column flux to 1e-12 for films of 10, 100
+and 400 µm under a 1 mm column.
+
+---
 
 **Depends on:** Task 1 (surface mesh edges, normals, centroids).
 **Produces, for later tasks:** the melt-film lubrication and runoff solver that Task 9 calls every step.

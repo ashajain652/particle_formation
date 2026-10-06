@@ -1,6 +1,6 @@
 # Sub-plan: Task 13 — Command line
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -20,6 +20,553 @@ describe:
 `_noremesh`, so runs with and without the new machinery cannot overwrite each other in one output directory.
 Exit codes are unchanged: 0 ok, 1 a model/integration failure — **including a Task 17 validity-gate stop** — 2 bad
 arguments or a missing optional library.
+---
+
+## Amendment of 2026-10-02 — `--deep-runoff on|off`
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+
+**The flag.** `--deep-runoff on|off` in the Step 3 group, default `on`, sets `MeltSettings.deep_runoff`. With `off`
+the deep stage of the melt step is skipped entirely, so the contiguous liquid below the conjugate depth stays in its
+elements until the surface recedes to it, as in every run before 2026-10-02. It needs `--runoff on`: with
+`--runoff off` there is no transport and nothing below the conjugate depth moves.
+
+**Why a flag rather than a fixed behaviour.** The repository's pattern for a mechanism that changes results is a flag
+with the old behaviour available (`--rt-spray on|off`, fact 35), and the deep runoff changes the 100 mm results by
+more than any amendment since fact 28 (fact 49). The flag also gives Task 14 its sensitivity row (`nodeep`) and lets
+the two settings be compared on the same flight. Measured: with `--deep-runoff off` the amended code reproduces the
+unamended prototype bit for bit on the 100 mm flight when both runs fix numpy's random seed (fact 52) — every history
+column, every row. **Whether the default should be `off` instead is the first open decision of fact 53:** at the
+default 0.5 s step the liquid the deep runoff moves is a backlog left by the order of the melt step, which vanishes as
+the step shrinks: at 0.25 s the deep runoff changes the 100 mm results by under 1 %, at 0.125 s by less than the
+run-to-run spread (fact 50). The default here is `on`, following the
+repository's pattern; flipping it is the one line `default="off"` here and `deep_runoff: bool = False` in
+`MeltSettings`.
+
+**Run names and the JSON.** A melting run with `--deep-runoff off` ends in `_deeprunoff-off`, so runs with and
+without the deep runoff can share one output directory without overwriting each other (CLAUDE.md's resumability
+convention, which this sub-plan's amendment of 2026-09-27 applied to the band and remesh flags). The default keeps the
+existing name, so no existing run name, reference or test changes. The JSON `settings` carry `"deep_runoff": "on"` or
+`"off"`, and the `results` carry `deep_runoff_mass_kg`, `deep_surfaced_mass_kg` and `deep_mass_kg` (Task 10's
+amendment). Exit codes are unchanged; an invalid value is argparse's exit 2, which the bad-argument test now covers.
+
+Code (the tested change to `reentry_model/cli.py`, the prototype's file — the body below plus the dense-band line of
+this sub-plan's amendment of 2026-09-27):
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -45,10 +45,14 @@
+         raise argparse.ArgumentTypeError("epoch must be YYYY-MM-DDTHH:MM:SS, got {!r}".format(text))
+ 
+ 
+-def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None):
++def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
++                   deep_runoff=True):
++    """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
++    run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`; the default keeps the old name."""
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+-    return name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
++    return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
++            + ("_deeprunoff-off" if melt and not deep_runoff else ""))
+ 
+ 
+ def make_atmosphere(spec, epoch, wind_name):
+@@ -152,6 +156,11 @@
+                     help="girin: film + runoff + Girin spraying (default); instant: liquid removed as it forms -- the lumped-melting "
+                          "verification device, not physical")
+     me.add_argument("--runoff", choices=("on", "off"), default="on", help="film runoff transport along the surface (default on)")
++    me.add_argument("--deep-runoff", choices=("on", "off"), default="on",
++                    help="move the contiguous liquid below Girin's conjugate depth along the surface by the pressure-gradient and "
++                         "deceleration-driven lubrication flux over the whole liquid depth, never spraying it; it becomes film only "
++                         "from the top, as the film thins below the conjugate depth (default on; needs --runoff on). off: that "
++                         "liquid stays in its elements until the surface recedes to it, as in every run before 2026-10-02")
+     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
+                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
+                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
+@@ -207,7 +216,8 @@
+                                        rt_spray=args.rt_spray == "on")
+         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
+         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
+-                                          particles=args.particles, size_feedback=size_feedback)
++                                          particles=args.particles, size_feedback=size_feedback,
++                                          deep_runoff=args.deep_runoff == "on")
+         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
+                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
+     else:
+@@ -227,7 +237,7 @@
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+     if melting:
+-        info.update({"removal": args.removal, "runoff": args.runoff, "rt_spray": args.rt_spray,
++        info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff, "rt_spray": args.rt_spray,
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+@@ -274,7 +284,8 @@
+     atm, atm_name, atm_info = make_atmosphere(args.atmosphere, args.epoch, args.wind)
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+-                                       args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None)
++                                       args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
++                                       deep_runoff=args.deep_runoff == "on")
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+```
+
+Tests (the tested change to `tests/test_reentry_model_cli.py`):
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -169,6 +169,8 @@
+ 
+ def test_run_name_with_melt():
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin").endswith("_fem-physics_melt-girin")
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              deep_runoff=False).endswith("_fem-physics_melt-girin_deeprunoff-off")    # amendment of 2026-10-02
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -185,7 +187,9 @@
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+-    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01
++    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on"
++    assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
++    assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+     assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
+     assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
+     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
+@@ -221,6 +225,7 @@
+     MELT + ["--k-scale", "0"],
+     MELT + ["--removal", "magic"],
+     MELT + ["--size-feedback", "shrinking"],
++    MELT + ["--deep-runoff", "maybe"],
+ ])
+ def test_bad_melt_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
+```
+
+**Measured (2026-10-02, throwaway copy of the prototype).** `test_run_name_with_melt`,
+`test_melting_run_writes_columns_files_and_json` and the eight `test_bad_melt_arguments_exit_2` cases pass; the first
+two fail on the unamended CLI (no `deep_runoff` keyword, no `deep_runoff` setting) and the new bad-argument case passes
+on both (argparse rejects an unknown flag and an unknown value alike, with exit 2). Whole unit tier: see sub-plan 09's
+amendment.
+
+## Amendment of 2026-10-03 — `--molten-cascade on|off`
+
+> Part of the molten-cascade amendment (sub-plan 09's amendment of this date; facts 54–61 in `00-shared-context.md`).
+
+**The flag.** `--molten-cascade on|off` in the Step 3 group, default `on`, sets `MeltSettings.molten_cascade`. With
+`on`, an element that an element death exposes fully molten — its mean nodal temperature at or above the top of the feed
+ramp, the test the molten layer is measured by — is fed whole within the same macro step, so the surface recedes through
+molten material by as many elements as are molten. With `off` an exposed element waits for the next step's feed, so the
+surface recedes through molten material by one element per macro step, as in every run before this amendment. It does
+nothing with `--removal instant`, which feeds every element as it melts.
+
+**Why a switch is genuinely needed.** The repository's pattern for a mechanism that changes results is a flag that keeps
+the old behaviour available (`--rt-spray`, `--deep-runoff`); this one changes the 100 mm results at the default step
+(fact 57), the time-step study compares the two settings, and the sensitivity table gets a `nocascade` row (sub-plan
+14). Measured: with `--molten-cascade off` the amended code reproduces the deep-runoff amendment of 2026-10-02 bit for
+bit on the 100 mm flight to 120 s, both runs seeded — all 241 rows of all 84 shared history columns, all 167 473
+source-table rows and every result field but the run time.
+
+**Run names and the JSON.** A melting run with `--molten-cascade off` ends in `_moltencascade-off` (after
+`_deeprunoff-off` when both are off), so runs with and without the cascade can share one output directory (CLAUDE.md's
+resumability convention); the default keeps the existing name, so no existing run name, reference or test changes. The
+JSON `settings` carry `"molten_cascade": "on"` or `"off"`, and the `results` carry `cascade_mass_kg`,
+`cascade_passes_max` and `cascade_capped_steps` (Task 10's amendment). Exit codes are unchanged; an invalid value is
+argparse's exit 2, which the bad-argument test now covers.
+
+Code (the tested change to `reentry_model/cli.py`, the prototype's file with the deep-runoff amendment above applied):
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -46,13 +46,14 @@
+ 
+ 
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+-                   deep_runoff=True):
++                   deep_runoff=True, molten_cascade=True):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+-    run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`; the default keeps the old name."""
++    run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
++    (amendment of 2026-10-03) in `_moltencascade-off`; the defaults keep the old name."""
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+     return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
+-            + ("_deeprunoff-off" if melt and not deep_runoff else ""))
++            + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else ""))
+ 
+ 
+ def make_atmosphere(spec, epoch, wind_name):
+@@ -161,6 +162,13 @@
+                          "deceleration-driven lubrication flux over the whole liquid depth, never spraying it; it becomes film only "
+                          "from the top, as the film thins below the conjugate depth (default on; needs --runoff on). off: that "
+                          "liquid stays in its elements until the surface recedes to it, as in every run before 2026-10-02")
++    me.add_argument("--molten-cascade", choices=("on", "off"), default="on",
++                    help="when an element death exposes an element that is fully molten (its mean temperature at or above the top "
++                         "of the feed ramp, the test the molten layer is measured by), feed it whole within the same macro step, so "
++                         "that it dies in turn and the surface recedes through molten material by as many elements as are molten "
++                         "(default on). off: an exposed element waits for the next step's feed, so the surface recedes through "
++                         "molten material by one element per macro step, as in every run before the molten-cascade amendment of "
++                         "2026-10-03")
+     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
+                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
+                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
+@@ -217,7 +225,7 @@
+         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
+         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
+                                           particles=args.particles, size_feedback=size_feedback,
+-                                          deep_runoff=args.deep_runoff == "on")
++                                          deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on")
+         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
+                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
+     else:
+@@ -237,7 +245,8 @@
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+     if melting:
+-        info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff, "rt_spray": args.rt_spray,
++        info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
++                     "molten_cascade": args.molten_cascade, "rt_spray": args.rt_spray,
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+@@ -285,7 +294,7 @@
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+-                                       deep_runoff=args.deep_runoff == "on")
++                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on")
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+```
+
+Tests (the tested change to `tests/test_reentry_model_cli.py`):
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -171,6 +171,8 @@
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin").endswith("_fem-physics_melt-girin")
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
+                               deep_runoff=False).endswith("_fem-physics_melt-girin_deeprunoff-off")    # amendment of 2026-10-02
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              molten_cascade=False).endswith("_fem-physics_melt-girin_moltencascade-off")   # the molten cascade
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -190,6 +192,10 @@
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on"
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
++    assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
++    assert r["cascade_mass_kg"] == pytest.approx(float(rows[-1]["cascade_mass_kg"])) and r["cascade_mass_kg"] >= 0.0
++    assert r["cascade_capped_steps"] == 0
++    assert r["cascade_passes_max"] == max(int(float(row["cascade_passes"])) for row in rows)
+     assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
+     assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
+     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
+@@ -226,6 +232,7 @@
+     MELT + ["--removal", "magic"],
+     MELT + ["--size-feedback", "shrinking"],
+     MELT + ["--deep-runoff", "maybe"],
++    MELT + ["--molten-cascade", "maybe"],
+ ])
+ def test_bad_melt_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
+```
+
+**Measured (2026-10-03, throwaway copy).** `test_run_name_with_melt`, `test_melting_run_writes_columns_files_and_json`
+and the nine `test_bad_melt_arguments_exit_2` cases pass; the first two fail on the copy without the cascade (no
+`molten_cascade` keyword, no `molten_cascade` setting, no cascade columns) and the new bad-argument case passes on
+both (argparse rejects an unknown flag and an unknown value alike, with exit 2). The 15 s melting run of the second test
+starts from a warm body at 71 km on the coarse mesh, and the cascade already feeds
+there. Whole unit tier: see sub-plan 09's amendment.
+
+## Amendment of 2026-10-05 — `--seed`: numpy's generator is seeded at the start of every run
+
+> Part of the seeding amendment (facts 62–68 in `00-shared-context.md`). This sub-plan holds its design and its tested
+> code; sub-plan 14's amendment of this date adds the sensitivity row and sub-plan 15's the documentation.
+
+**The flag.** `--seed` in the main `run` group — not the Step 3 group, because it applies to every run, melting or not
+— takes an integer in [0, 2³² − 1], the range `np.random.seed` accepts, with the default `DEFAULT_SEED = 12345`. The
+first statement of `cmd_run` is `np.random.seed(args.seed)`, before the argument checks and before anything is built,
+so nothing a run does can draw from numpy's global generator before it is seeded. Measured (fact 62): importing the
+package and parsing the arguments draw nothing, and the only draws in a run are pyamg's, inside
+`approximate_spectral_radius`, at every hierarchy the skfem backend builds; seeding at the start of `cmd_run` therefore
+fixes every random number a run uses, and two runs of one build agree bit for bit (fact 64). A malformed seed — not an
+integer, negative, or 2³² or more — is rejected by the argument's type check (`parse_seed`, the pattern of
+`parse_epoch`) with argparse's exit 2, before `cmd_run` runs; exit codes are otherwise unchanged.
+
+**Why 12345.** It is the seed the measurement harness of the amendments of 2026-10-02 and 2026-10-03 set before
+importing the package (`MEASURE_SEED=12345`). Nothing draws between that point and the start of `cmd_run`, so the
+model's own default reproduces the harness's runs: measured on the 100 mm flight to 120 s of fact 59 and the whole 50 mm
+flight of fact 60 — both with the cascade and the deep runoff on — every history cell, every source-table row, every
+result field but the run time and every array of every VTK frame; and with `--deep-runoff off --molten-cascade off` it
+reproduces a seeded run of 2026-10-02 of the unamended prototype the same way (fact 64). The seeded runs of facts 49–61
+are therefore reproducible from the command line alone, with the flags that select the model each was made with. Fact 52
+suggested `np.random.seed(0)`, which would have left every one of those runs out of the model's reach.
+
+**Alternatives not taken.** (1) A fixed starting vector inside the skfem backend, for instance a private generator
+reseeded at every hierarchy build: it would make the backend reproducible wherever it is constructed, the tests and the
+reference tier included, but it is a change to sub-plan 03's thermal core, `smoothed_aggregation_solver` offers no
+argument for the starting vector of the spectral-radius estimate inside its prolongation smoother, and it would change
+every run's numbers against the measured ones. (2) `--seed random`, a seed drawn from the operating system and recorded:
+a scatter study is reproducible only if its seeds are listed, and an explicit list (`--seed 1`, `--seed 2`, …) does that
+with no new code. (3) No seed by default, the old behaviour: an unseeded run can do nothing that a run with another seed
+cannot, and it cannot be repeated. (4) The suffix only on `--thermal fem` runs, the only ones in which anything draws:
+the seed is applied to every run and recorded in every JSON, and the name should encode the whole configuration.
+
+**Run names, the JSON and the printed summary.** A run with a seed other than 12345 ends in `_seed-<n>` (after
+`_deeprunoff-off` and `_moltencascade-off`), in every mode, so runs that differ only in the seed can share one output
+directory (CLAUDE.md's resumability convention); the default keeps the existing name, so no existing run name, reference
+or test changes, and `--name` still overrides the name. The run JSON's `settings` carry `"seed"` for every run, and the
+printed summary's first line names it — `<run name> (seed 12345): t_max at t = ...` — because the default does not
+appear in the name. The verification and sensitivity drivers' summary tables list results by case and mode or variant,
+not the configuration, so they are unchanged; every run they make goes through `cmd_run` and is seeded (sub-plan 14's
+amendment of this date).
+
+Code (the tested change to `reentry_model/cli.py`, the prototype's file with the amendments of 2026-10-02 and
+2026-10-03 above applied):
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -36,6 +36,11 @@
+ WINDS = ("none", "static")
+ THERMAL_MODES = ("none", "fem")
+ MELT_MODES = ("off", "on")
++# numpy's global generator is seeded with this at the start of every run (amendment of 2026-10-05): pyamg draws from it
++# the starting vector of the spectral-radius estimate that weights the prolongation smoother of every hierarchy it builds,
++# so an unseeded run differed from the next from the first solve on. 12345 is the seed the measurement harness of the
++# amendments of 2026-10-02 and 2026-10-03 set, so the model's default reproduces their runs.
++DEFAULT_SEED = 12345
+ 
+ 
+ def parse_epoch(text):
+@@ -45,15 +50,28 @@
+         raise argparse.ArgumentTypeError("epoch must be YYYY-MM-DDTHH:MM:SS, got {!r}".format(text))
+ 
+ 
++def parse_seed(text):
++    """--seed: an integer in [0, 2**32 - 1], the range numpy's np.random.seed accepts."""
++    try:
++        seed = int(text)
++    except ValueError:
++        seed = -1
++    if not 0 <= seed < 2 ** 32:
++        raise argparse.ArgumentTypeError("seed must be an integer in [0, 2**32 - 1], got {!r}".format(text))
++    return seed
++
++
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+-                   deep_runoff=True, molten_cascade=True):
++                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+-    (amendment of 2026-10-03) in `_moltencascade-off`; the defaults keep the old name."""
++    (amendment of 2026-10-03) in `_moltencascade-off`, and any run with a seed other than DEFAULT_SEED (amendment of
++    2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+     return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
+-            + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else ""))
++            + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
++            + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
+ def make_atmosphere(spec, epoch, wind_name):
+@@ -125,6 +143,12 @@
+                         "with --thermal fem the macro-step history is interpolated)")
+     r.add_argument("--outdir", default=DEFAULT_OUTDIR)
+     r.add_argument("--name", default=None, help="run name (default: model_d..mm_v..kms_h..km_<atmosphere>_<bridging>_<wind>[_fem-<heating>])")
++    r.add_argument("--seed", type=parse_seed, default=DEFAULT_SEED,
++                   help="seed of numpy's global random generator, set at the start of the run (default %(default)s): pyamg draws "
++                        "the starting vectors of its spectral-radius estimates from it, so a fixed seed makes a run reproducible "
++                        "bit for bit and another seed changes it only through that round-off, which the melting model amplifies "
++                        "into the run-to-run scatter; an integer in [0, 2**32 - 1], recorded in the run JSON, and a seed other "
++                        "than the default ends the run name in _seed-<n>")
+     r.add_argument("--quiet", action="store_true")
+     th = r.add_argument_group("thermal model (Step 2)")
+     th.add_argument("--thermal", choices=THERMAL_MODES, default="none", help="none: Step 1 trajectory only (default); fem: coupled 3D conduction")
+@@ -256,6 +280,10 @@
+ 
+ 
+ def cmd_run(args, parser):
++    # first, before anything that could draw from it (amendment of 2026-10-05; plan facts 52 and 62): the only draws in a
++    # run are pyamg's, at every hierarchy the skfem backend builds, and with the generator seeded here two runs of one
++    # build agree bit for bit
++    np.random.seed(args.seed)
+     for label, value in (("--diameter", args.diameter), ("--velocity", args.velocity), ("--material-density", args.material_density),
+                          ("--cadence", args.cadence), ("--t-max", args.t_max)):
+         if value <= 0.0:
+@@ -294,7 +322,7 @@
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+-                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on")
++                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed)
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+@@ -326,7 +354,8 @@
+                    "material_density_kgm3": args.material_density, "mass_kg": mass, "initial_temperature_K": args.temperature},
+         "settings": {"atmosphere": atm_name, "wind": args.wind, "bridging": args.bridging, "gravity": args.gravity,
+                      "rtol": args.rtol, "atol_position_m": settings.atol_position, "atol_velocity_ms": settings.atol_velocity,
+-                     "cadence_s": args.cadence, "t_max_s": args.t_max, **atm_info, "thermal": args.thermal, **thermal_info},
++                     "cadence_s": args.cadence, "t_max_s": args.t_max, "seed": args.seed, **atm_info, "thermal": args.thermal,
++                     **thermal_info},
+         "results": history.results,
+         "comparison": None,
+         "provenance": prov,
+@@ -362,8 +391,8 @@
+     tj.write_run_json(json_path, doc)
+     if not args.quiet:
+         res = history.results
+-        print("{}: {} at t = {:.1f} s, final V {:.4f} km/s, Kn {:.3g} -> {:.3g}, {} RHS evaluations in {:.1f} s".format(
+-            name, res["end_reason"], res["final_time_s"], res["final_velocity_kms"], res["knudsen_start"],
++        print("{} (seed {}): {} at t = {:.1f} s, final V {:.4f} km/s, Kn {:.3g} -> {:.3g}, {} RHS evaluations in {:.1f} s".format(
++            name, args.seed, res["end_reason"], res["final_time_s"], res["final_velocity_kms"], res["knudsen_start"],
+             history.columns["knudsen"][-1], res["rhs_evaluations"], res["runtime_s"]))
+         if args.thermal == "fem":
+             print("  thermal: peak surface T {:.0f} K at t = {:.0f} s, peak mean T {:.0f} K, integrated heat {:.3g} J, "
+```
+
+Tests (the tested change to `tests/test_reentry_model_cli.py`):
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -3,9 +3,10 @@
+ import json
+ import os
+ 
++import numpy as np
+ import pytest
+ 
+-from reentry_model import cli, compare, sesam_io
++from reentry_model import cli, compare, coupled, sesam_io
+ 
+ R100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind.csv")
+ BASE = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.500133", "--flight-path-angle", "-0.959331"]
+@@ -14,6 +15,13 @@
+ def test_run_name():
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none") == \
+         "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    # the seed of numpy's generator (amendment of 2026-10-05): the default keeps the name, any other seed ends it in
++    # _seed-<n>, so runs that differ only in the seed never overwrite each other
++    assert cli.DEFAULT_SEED == 12345
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", seed=cli.DEFAULT_SEED) == \
++        "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", seed=7) == \
++        "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_seed-7"
+ 
+ 
+ def test_run_us76_short_flight(tmp_path):
+@@ -24,6 +32,7 @@
+     assert [float(r["time_s"]) for r in rows] == [0.0, 5.0, 10.0, 15.0, 20.0]
+     doc = json.load(open(tmp_path / (name + ".json")))
+     assert doc["settings"]["atmosphere"] == "us76" and doc["results"]["end_reason"] == "t_max"
++    assert doc["settings"]["seed"] == cli.DEFAULT_SEED                         # every run records its seed (2026-10-05)
+     assert doc["inputs"]["mass_kg"] == pytest.approx(1.4728833557580150) and doc["comparison"] is None
+     assert doc["provenance"]["package_version"] and "git_commit" in doc["provenance"]
+     assert doc["provenance"]["reference_sha256"] is None and doc["provenance"]["replay_sha256"] is None
+@@ -72,6 +81,10 @@
+     BASE + ["--gravity", "j6"],
+     ["run", "--diameter", "-1", "--velocity", "7.5", "--altitude", "77.5"],
+     BASE + ["--epoch", "yesterday"],
++    BASE + ["--seed", "abc"],                     # the seed (amendment of 2026-10-05): an integer in [0, 2**32 - 1],
++    BASE + ["--seed", "1.5"],                     # the range numpy's generator accepts
++    BASE + ["--seed", "-1"],
++    BASE + ["--seed", "4294967296"],
+ ])
+ def test_bad_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
+@@ -160,6 +173,42 @@
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics").endswith("_fem-physics")
+ 
+ 
++def test_the_seed_makes_a_run_reproducible_and_another_seed_changes_it(tmp_path, monkeypatch, capsys):
++    """numpy's global generator is seeded at the start of every run (amendment of 2026-10-05): pyamg draws from it the
++    starting vector of the spectral-radius estimate that weights the prolongation smoother of every hierarchy it
++    builds, which made two runs of one build differ from the first solve on (plan fact 52). Three 5 s coupled runs on
++    the coarse mesh, whose conduction solves go through pyamg: two with the default seed -- the second started with the
++    generator scrambled, so a run cannot depend on what drew from it before -- agree bit for bit in every history column
++    and every result field but the run time, while one with another seed differs, at round-off, under its own name."""
++    histories = []
++    original_run = coupled.CoupledRun.run
++
++    def run_and_keep(self):
++        histories.append(original_run(self))
++        return histories[-1]
++
++    monkeypatch.setattr(coupled.CoupledRun, "run", run_and_keep)
++    argv = FEM + ["--t-max", "5", "--dt", "0.5"]
++    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam")
++    np.random.seed(1)
++    assert cli.main(argv + ["--outdir", str(tmp_path / "a")]) == 0
++    np.random.seed(2)
++    np.random.rand(1000)
++    assert cli.main(argv + ["--outdir", str(tmp_path / "b")]) == 0
++    capsys.readouterr()
++    assert cli.main([a for a in argv if a != "--quiet"] + ["--outdir", str(tmp_path / "c"), "--seed", "7"]) == 0
++    assert name + "_seed-7 (seed 7): t_max at t = 5.0 s" in capsys.readouterr().out     # the printed summary names it
++    a, b, c = histories
++    ra, rb = (json.load(open(tmp_path / d / (name + ".json")))["results"] for d in ("a", "b"))
++    assert set(a.columns) == set(b.columns) and all(np.array_equal(a.columns[k], b.columns[k], equal_nan=True) for k in a.columns)
++    assert {k: v for k, v in ra.items() if k != "runtime_s"} == {k: v for k, v in rb.items() if k != "runtime_s"}
++    assert not all(np.array_equal(a.columns[k], c.columns[k], equal_nan=True) for k in a.columns)
++    for k in a.columns:                                       # the seed acts at round-off; the melting model amplifies it
++        np.testing.assert_allclose(c.columns[k], a.columns[k], rtol=1e-6, atol=1e-9)
++    doc = json.load(open(tmp_path / "c" / (name + "_seed-7.json")))
++    assert doc["settings"]["seed"] == 7 and doc["run_name"] == name + "_seed-7"
++
++
+ # ---------------------------------------------------------------------------------------------------------------
+ # Step 3: melting flags, the melting run's files, the bookkeeping device against the melting reference
+ 
+@@ -173,6 +222,8 @@
+                               deep_runoff=False).endswith("_fem-physics_melt-girin_deeprunoff-off")    # amendment of 2026-10-02
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
+                               molten_cascade=False).endswith("_fem-physics_melt-girin_moltencascade-off")   # the molten cascade
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", deep_runoff=False,
++                              molten_cascade=False, seed=7).endswith("_melt-girin_deeprunoff-off_moltencascade-off_seed-7")
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -189,7 +240,7 @@
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+-    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on"
++    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+     assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
+```
+
+**Measured (2026-10-05, throwaway copy).** `test_run_name`, `test_run_us76_short_flight`, `test_run_name_with_melt`,
+`test_melting_run_writes_columns_files_and_json` and the new
+`test_the_seed_makes_a_run_reproducible_and_another_seed_changes_it` fail on the copy without the amendment (no
+`DEFAULT_SEED`, no `seed` keyword or setting, `--seed` an unknown argument) and pass with it; the four new
+`test_bad_arguments_exit_2` cases pass on both, because argparse rejects an unknown flag and a malformed value alike,
+with exit 2. The new test makes three 5 s Step 2 runs on the coarse mesh in 0.7 s; on the copy without the amendment two
+such runs started from different generator states differ in 6 of their 31 history columns, by 2e-16 to 6e-16 relative —
+the last bit — which is what its bit-identity assertion catches. One thing the test found that is not the seed's: meshio
+writes an empty line to standard output when it reads a cached mesh, so the printed summary is not the first line of a
+run's output; the test looks for it by the run name. The CLI module: 34 passed and the one known failure from the
+missing melting reference (Task 11), against 29 and the same failure before. Whole unit tier: 234 passed, 1 skipped, and
+the five known failures and errors from the missing melting SESAM references, against 229, 1 and the same five, in 179 s
+either way.
+
 ---
 
 **Depends on:** effectively everything before it (Tasks 9–12 directly, and transitively the rest).

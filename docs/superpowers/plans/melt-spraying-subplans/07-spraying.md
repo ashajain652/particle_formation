@@ -1,6 +1,62 @@
 # Sub-plan: Task 7 — Spraying: instability branches, release bookkeeping, published reference values
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
+
+## Amendment of 2026-10-02 — what the spray sees of the deep liquid (no code change)
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+
+Task 9 now keeps a second liquid account per patch, `m_d`: the contiguous liquid below Girin's conjugate depth δ_m
+that the deep runoff has moved there. Asha's three-zone rule of 2026-10-02 says that liquid is not sprayed; only the
+skin within δ_m is. Nothing in `spray.py` changes, and these are the consequences, checked rather than assumed:
+
+- **The deep liquid is never offered to a branch.** `SprayModel.evaluate` is called with the film alone (`b` and `m_f`),
+  so every release — thick, thin, rarefied, regime 2 and the front-surface Rayleigh–Taylor mode — is drawn from the
+  film. Deep liquid reaches the film only from the top, as far as the film is thinner than δ_m (one skin's worth per
+  macro step), which Task 9 does before this step. `test_the_deep_liquid_is_never_sprayed_only_the_skin_is`
+  (sub-plan 09) sprays a supercritical skin over a millimetre of deep liquid and finds the deep account unchanged to
+  the bit.
+- **The layer the regime test and the Rayleigh–Taylor criteria read is deeper where deep liquid sits.** `b_layer` is
+  now the film, plus the contiguous molten material beneath it, plus the deep account's thickness. That changes no
+  branch — a patch holding deep liquid is already deeper than δ_m — but the Rayleigh–Taylor depth criterion
+  W cos φ h² ρ_l > 3Σ and the bounded form's tanh(kh) factor see the deeper pool, so the front-surface mode takes more
+  of the nose: on the 100 mm flight to 120 s it released 72.5 g against 53.0 g without the deep runoff at the default
+  0.5 s step (fact 49), 19.7 g against 17.2 g at 0.25 s and 11.4 g against 8.5 g at 0.125 s, where far less liquid
+  lies below the conjugate depth (fact 50). The release itself falls sixfold between those steps with or without the
+  deep runoff, because the molten layer the criterion reads is a time-step artefact of the melt step (fact 50).
+- **Open, for Asha (fact 53).** The front-surface Rayleigh–Taylor mode is an instability of the whole liquid layer —
+  its criterion is evaluated on the full depth — yet it releases only the film. Whether it should also release the
+  deep liquid where it is applied is a modelling decision the three-zone rule does not settle: zone 2 is "not
+  sprayed", but the rule is written about Girin's shear mechanism, and the front-surface mode is Girin & Kopyt's
+  inertial one.
+
+## Amendment of 2026-10-03 — what the spray sees of the molten cascade (no code change)
+
+> Part of the molten-cascade amendment (sub-plan 09's amendment of this date; facts 54–61 in `00-shared-context.md`).
+
+Task 9 now lets the surface recede through fully molten material within the step: an element a death exposes fully
+molten (its mean temperature at or above the top of the feed ramp) is fed whole to the film, dies, and exposes the next.
+Nothing in `spray.py` changes, and these are the consequences, checked rather than assumed:
+
+- **The cascade's liquid is sprayed one step later.** The cascade runs in step (v), after the spray of step (iii), like
+  the death remainders of fact 4, so the liquid it feeds is film when the next step's runoff and spray act on it. Every
+  branch draws from that film as from any other; nothing is released twice and nothing skips the critical-Weber gate or
+  the wave-fits test.
+- **The layer the branch test and the Rayleigh–Taylor criteria read is what the conduction left molten in the step,
+  not an accumulated backlog.** Measured on the 100 mm flight at the default step (fact 57): the molten layer's mean
+  depth falls from 1.26 to 0.97 mm and the liquid held below the conjugate depth from a median 4.75 to 1.23 g, but the
+  share of wet windward patches on the thick branch only from 12.4 % to 11.9 %, because a single molten wall-owning
+  element already counts as 0.67–1.16 mm of liquid — more than the conjugate depth on every patch of the production
+  mesh — so the test asks whether the owner's mean temperature is above T_feed when the spray runs (fact 58).
+- **The release.** Unchanged in kind and nearly in amount at the default step: thin-branch share of the
+  sprayed mass 10.5 % against 9.4 %, front-surface Rayleigh–Taylor release 51.9 against 53.0 g (56.3 against 72.5 g
+  with the deep runoff on, because the deep liquid that deepened the layer its criterion sees is a tenth of what it
+  was), 18.1 against 17.2 million droplets, median radius by number 180 µm either way. The sixfold fall of the
+  Rayleigh–Taylor release between the default step and 0.125 s that the amendment of 2026-10-02 recorded is therefore
+  not the backlog's doing; it follows the branch test's step dependence (fact 58), which this amendment does not
+  change.
+
+---
 
 **Depends on:** Task 2 (material/liquid properties), Task 4 (dispersion table), and Task 5 (flow regime, wall pressure, surface flow).
 **Produces, for later tasks:** the thick-film, thin-film, regime-2, and front-surface Rayleigh–Taylor spraying branches, the release bookkeeping, and the two Girin reference-value JSON files that Task 8 checks against.

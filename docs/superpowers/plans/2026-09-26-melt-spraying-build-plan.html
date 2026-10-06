@@ -1,0 +1,587 @@
+<title>Melt Spraying Build Plan</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #f2f4f7;
+    --surface: #ffffff;
+    --surface-2: #e9edf3;
+    --ink: #191c22;
+    --ink-soft: #5b6270;
+    --line: #dbe0e7;
+    --accent: #b85c25;
+    --accent-soft: #f1e2d6;
+    --accent-2: #276b73;
+    --accent-2-soft: #dcebec;
+    --neutral-cat: #6b6f76;
+    --risk: #a3311c;
+    --risk-bg: #f9e9e5;
+    --shadow: 0 1px 2px rgba(20, 24, 30, 0.06), 0 8px 24px rgba(20, 24, 30, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c;
+      --surface: #1b1f26;
+      --surface-2: #232830;
+      --ink: #e7e9ee;
+      --ink-soft: #a8afbc;
+      --line: #2c323c;
+      --accent: #e2894a;
+      --accent-soft: #33261c;
+      --accent-2: #4fa9ae;
+      --accent-2-soft: #1b2d2e;
+      --neutral-cat: #9aa0ab;
+      --risk: #e2704f;
+      --risk-bg: #34211b;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c;
+    --surface: #1b1f26;
+    --surface-2: #232830;
+    --ink: #e7e9ee;
+    --ink-soft: #a8afbc;
+    --line: #2c323c;
+    --accent: #e2894a;
+    --accent-soft: #33261c;
+    --accent-2: #4fa9ae;
+    --accent-2-soft: #1b2d2e;
+    --neutral-cat: #9aa0ab;
+    --risk: #e2704f;
+    --risk-bg: #34211b;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    padding: 0 20px;
+  }
+
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding-block: 40px 72px;
+  }
+
+  h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; text-wrap: balance; color: var(--ink); }
+  h1 { font-size: clamp(1.9rem, 5vw, 2.5rem); font-weight: 700; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 1.45rem; font-weight: 600; margin: 3em 0 0.6em; padding-top: 0.4em; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.08rem; font-weight: 600; margin: 1.6em 0 0.4em; }
+
+  p { margin: 0 0 1em; max-width: 66ch; }
+  strong { font-weight: 600; }
+
+  code, .mono { font-family: 'IBM Plex Mono', monospace; font-size: 0.88em; }
+
+  header.page-head { margin-bottom: 8px; }
+  .source {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    word-break: break-word;
+    margin-bottom: 22px;
+  }
+
+  .stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 18px 0 8px;
+  }
+  .stat-tile {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    min-width: 128px;
+    flex: 1 1 128px;
+  }
+  .stat-tile .num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 1.35rem;
+    font-weight: 500;
+    color: var(--ink);
+    display: block;
+  }
+  .stat-tile .label {
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .issue {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--risk);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 16px 0;
+    box-shadow: var(--shadow);
+  }
+  .issue .tag {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--risk);
+    background: var(--risk-bg);
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-bottom: 8px;
+  }
+  .issue h3 { margin: 0 0 8px; font-size: 1.02rem; }
+  .issue p:last-child { margin-bottom: 0; }
+
+  figure { margin: 28px 0 8px; }
+  figure svg { width: 100%; height: auto; display: block; color: var(--ink-soft); }
+  figcaption {
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    margin-top: 10px;
+    max-width: 66ch;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    margin: 6px 0 18px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; border: 2px solid; background: var(--surface); display: inline-block; }
+
+  .wave-block { margin: 1.6em 0; }
+  .wave-block > h3 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    font-weight: 500;
+    margin-bottom: 10px;
+    border-bottom: none;
+  }
+
+  .plan-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .plan-card .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .plan-card .name { font-weight: 600; font-size: 1rem; }
+  .plan-card .task-ref {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+  }
+  .plan-card .meta {
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+    margin-bottom: 8px;
+  }
+  .plan-card .meta b { color: var(--ink); font-weight: 500; }
+  .plan-card p { margin: 0; font-size: 0.94rem; }
+  .plan-card.cat-physics { border-left: 4px solid var(--accent); }
+  .plan-card.cat-plumbing { border-left: 4px solid var(--accent-2); }
+  .plan-card.cat-verify { border-left: 4px solid var(--neutral-cat); }
+
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 18px 0;
+  }
+  .decision h3 { margin-top: 0; }
+  .decision ul { margin: 0.6em 0; padding-left: 1.2em; }
+  .decision li { margin-bottom: 0.5em; }
+  .decision .rec {
+    background: var(--accent-2-soft);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 10px;
+    font-size: 0.94rem;
+  }
+  .decision .rec b { color: var(--accent-2); }
+
+  footer {
+    margin-top: 60px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+
+  @media (max-width: 480px) {
+    h2 { font-size: 1.25rem; }
+  }
+</style>
+
+<main>
+  <header class="page-head">
+    <h1>Melt Spraying Build Plan</h1>
+    <div class="source">Source: <code>docs/superpowers/plans/2026-09-20-melt-spraying.md</code> — 8,146 lines, ~595&nbsp;KB, dated 2026-09-20 and amended through 2026-09-25.</div>
+  </header>
+
+  <p>You asked me to read the Step&nbsp;3 melt-spraying implementation plan, summarize its large steps at a high level, point out any questions or inconsistencies in how it is put together, and propose how to break it into smaller implementation plans that you can hand to separate agents, including which of those smaller plans could run in parallel. I read the whole document — a background sub-agent worked through it in full, section by section, since it is too long to hold in one pass — and this page is the result. All fifteen tasks, the global constraints, the measured-facts log, and the self-review notes are covered below.</p>
+
+  <h2>What this plan actually builds</h2>
+  <p>The plan implements Step&nbsp;3 of the re-entry model: what happens once the surface of a re-entering sphere reaches its melting point — how the solid melts, how the resulting liquid film runs across the surface, and how droplets are sprayed off into the wake. It replaces and extends Step&nbsp;2's purely thermal model. The fifteen tasks build in a fairly strict dependency order, from low-level geometry up through documentation, and fall into eight natural phases.</p>
+
+  <h3>1. Foundations: mesh, material, and a lookup table</h3>
+  <p><strong>Task&nbsp;1</strong> builds a prism-layered surface mesh with an "active set" that tracks which mesh elements are still solid versus fully melted away, plus helper geometry (tangents, projected areas, edges) that later tasks read from. <strong>Task&nbsp;2</strong> extends the material model with latent heat, a solidus-to-liquidus melting range, and — notably — four separate enthalpy formulas (mixed-phase enthalpy, liquid-only enthalpy, mixed-phase heat capacity, and temperature-from-enthalpy) rather than one general function. <strong>Task&nbsp;4</strong> is self-contained: it solves Girin's dispersion relation (a cubic equation used later to decide when a liquid film becomes unstable) and caches the results in a lookup table. None of these three depends on anything else in this plan.</p>
+
+  <h3>2. The thermal core rewrite</h3>
+  <p><strong>Task&nbsp;3</strong> replaces Step&nbsp;2's thermal solver with one built on nodal enthalpy (heat content tracked per mesh node) instead of per-element averages, because the prototyping log shows the old element-mean approach could cycle indefinitely across the latent-heat plateau instead of converging. This is the single largest numerical redesign in the plan, and it must run on both of the project's two solver backends (skfem and FEniCSx) behind one shared interface.</p>
+
+  <h3>3. Surface physics: flow regime, wall pressure, and the melt film</h3>
+  <p><strong>Task&nbsp;5</strong> is the largest physics module: it decides which of three flow regimes (shock-layer, merged-layer, or free-molecular) applies at each surface patch, computes wall pressure and a boundary layer, and uses the local Knudsen number to pick which melt closure applies. <strong>Task&nbsp;6</strong> builds the melt film itself — the thin liquid layer on the surface — using an unconditionally-stable implicit solver, because an earlier explicit version needed ten to a hundred thousand sub-steps per macro time-step and was judged too slow.</p>
+
+  <h3>4. Spraying, and validation against the literature</h3>
+  <p><strong>Task&nbsp;7</strong> decides when and how droplets leave the film (thick-film, thin-film, a second regime, and a front-side Rayleigh–Taylor instability branch), and books the released mass and energy. <strong>Task&nbsp;8</strong> is a separate, parallel validation track: it reruns the model against the specific test cases published in Girin's own papers — not this project's sphere — to check the physics against literature rather than against this project's own reference runs.</p>
+
+  <h3>5. The melting body: where everything comes together</h3>
+  <p><strong>Task&nbsp;9</strong> is the integration point. It builds the <code>MeltingBody</code> class that ties together feeding and freezing of mass between elements, the film's temperature and energy balance, spraying, the sequence in which elements "die" as they fully melt (with careful hand-over of their mass and heat to neighbors), and fitting a nose-cap boundary. Its code block is roughly 1,200 lines — larger than any other task's — and the plan's own text tells the reader to "read facts 25 and 26 before reading <code>melt_step</code>," which is the plan flagging, in its own words, that this is the densest and least obvious part of the whole document.</p>
+
+  <h3>6. Coupling, output, and the two reference runs</h3>
+  <p><strong>Task&nbsp;10</strong> wires <code>MeltingBody</code> into the main simulation loop, adding melt-history columns, demise detection, VTK melt-field output, and particle files. <strong>Task&nbsp;11</strong> is different in kind from every other task: it generates and commits the two SESAM melting reference runs using the project's existing, untouched wrapper scripts — it produces data, not new code.</p>
+
+  <h3>7. Metrics, plots, and the command line</h3>
+  <p><strong>Task&nbsp;12</strong> computes comparison metrics against the reference runs and adds seven new plots plus visual overlays (emitting patches, film-thickness frames, melting isolines). <strong>Task&nbsp;13</strong> wires seven new command-line flags and a run-naming/JSON-settings schema through the CLI; despite transcribing to roughly 500 lines, the plan describes this as conceptually simple — mostly argument parsing and dictionary wiring, not new physics.</p>
+
+  <h3>8. Verification and documentation</h3>
+  <p><strong>Task&nbsp;14</strong> adds a reference-tier test and the verification/sensitivity driver scripts that produce the plan's headline results. <strong>Task&nbsp;15</strong> writes the README, the model-assumptions section, the spec's amendment log, and an external facts note that lives outside this repository.</p>
+
+  <h2>What the prototyping already found</h2>
+  <p>Before writing the plan, its author ran everything once in a throwaway prototype and logged 36 numbered "measured facts." A few of these matter for anyone picking up individual tasks later:</p>
+  <p>Two earlier implementations were tried and explicitly rejected: one that debited melted mass only from the element it left (rather than also crediting the element it entered) reproduced a bug where melt reappeared after it should have been gone, and one that booked the film at a mixture enthalpy (rather than the liquid-only enthalpy from Task&nbsp;2) reproduced a "free melting" runaway. Both are recorded specifically so a future implementer doesn't reintroduce them while "simplifying" the bookkeeping in Task&nbsp;9.</p>
+  <p>On runtime: one macro simulation time-step costs about 2.0 seconds of wall-clock time on the reference hardware. That sounds small, but a full flight that survives all the way to the ground without fully melting away can take up to about 2,357 seconds — close to 40 minutes — because it needs many more time-steps than a flight that demises partway down. The original spec's target was under 6 minutes for a full run; the measured 40-minute case directly contradicts that target, and the plan itself flags this as something that needs to be restated rather than something that has been fixed (see the inconsistencies below).</p>
+  <p>On the physics itself: with size feedback and the corrected surface-flow model, a 100&nbsp;mm sphere stops demising entirely, and 29.9% of its original mass survives to reach the ground. That is a genuine new research finding, not a bug — but the plan is explicit that it is an artifact of the model's fixed body attitude (no tumbling is simulated yet), so it should be reported as a fixed-attitude result, not as a general statement about how spheres of that size behave in re-entry.</p>
+  <p>On test coverage: the project's existing unit-test tier passes 332 tests plus 1 skipped before this plan starts; this plan adds roughly 60 more unit tests, keeping that tier's runtime near 2 minutes. A second, slower "reference" tier adds the two melting runs from Task&nbsp;11 and costs roughly another 2 minutes on top — a modest number by itself, but Task&nbsp;14's own verification runs (the 40-minute case above) are a different order of magnitude and should be budgeted separately when you hand that task to an agent.</p>
+
+  <h2>Questions and inconsistencies</h2>
+  <p>The plan is unusually well self-documented — its 36 measured facts already function as a running risk log — but reading it end to end surfaced seven things worth deciding on or watching for before you split it up.</p>
+
+  <div class="issue">
+    <span class="tag">Attribution</span>
+    <h3>The plan's commit convention names a different model than this session's</h3>
+    <p>The Global Constraints section says every task's commit should end with <code>Co-Authored-By: Claude Opus 5</code>. Your current session is running under a different attribution convention (<code>Claude Sonnet 5</code>). If you hand these tasks to agents without resolving this, some commits could end up crediting a model that didn't do the work. This needs a decision before any agent commits under this plan — see the decisions section below.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Contradiction</span>
+    <h3>The runtime target is stated three different ways in three places</h3>
+    <p>The original spec asks for a full physics flight in under 6 minutes. Measured fact&nbsp;23 shows that a flight whose remnant survives to the ground (the 29.9%-mass-remaining case above) actually takes up to about 40 minutes. Task&nbsp;15's own draft amendment restates the target as "about 4 minutes on the default mesh (target 6 minutes)" — but that restatement only describes the case where the sphere fully demises partway down; it doesn't mention the much longer non-demising case the plan itself measured. Whoever writes Task&nbsp;15's documentation and whoever runs Task&nbsp;14's verification suite need to agree on one honest statement of the target before either is delegated, or they will silently contradict each other.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Cosmetic</span>
+    <h3>The amendments list is numbered out of sequence</h3>
+    <p>The spec-amendments section numbers its entries 0 through 26, and then one further entry — covering the size-feedback decision behind the 29.9%-mass finding — is labeled "13" and placed after entry 26, rather than being renumbered in. It reads as an item inserted during a later revision (dated 2026-09-21) without renumbering everything that follows it. This doesn't change the meaning of any entry, but it would confuse anyone who later cites an amendment by number.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Structure</span>
+    <h3>The "self-review" section is much thinner than its heading suggests</h3>
+    <p>The section titled "Self-review notes" is only two bullet points long: a table cross-referencing spec sections to tasks, and a check that public names like <code>MeltSettings</code>, <code>SprayModel</code>, and <code>DispersionTable</code> are used consistently across tasks. There is no separate, dedicated list of risks the author is unsure about. The real risk log is folded into the 36 measured facts instead — which is a reasonable way to write a prototyping log, but it means anyone executing a task should actually read the relevant measured facts, not assume the self-review section already surfaced everything worth worrying about.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Latent risk</span>
+    <h3>Task&nbsp;9's implementer needs history, not just the task text</h3>
+    <p>As noted above, two specific "obvious-looking" implementations were tried during prototyping and rejected because they reproduced known bugs (melt reappearing; a free-melting runaway). Both fixes live in the measured-facts log (facts 4, 5, 25, and 26), not in Task&nbsp;9's own prose. An agent working from Task&nbsp;9's text alone, without that context, could plausibly re-derive and reintroduce either mistake while trying to simplify the bookkeeping.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Coverage gap</span>
+    <h3>One spraying branch never fires in the real reference flights</h3>
+    <p>Task&nbsp;7's own text notes that its "regime 2" spraying branch is "inert on these flights and only the unit tests exercise it." That's not a defect in the plan, but it does mean that branch of code will ship having only ever been checked against synthetic test inputs, never against an actual physics run — worth knowing if that branch later needs debugging in a real flight.</p>
+  </div>
+
+  <div class="issue">
+    <span class="tag">Carry-forward caveat</span>
+    <h3>The non-demising finding needs its caveat to travel with it</h3>
+    <p>The 29.9%-mass-surviving result is a real and useful finding, but it only holds because the model does not yet simulate tumbling — the sphere is held at a fixed attitude throughout the flight. Both Task&nbsp;14 (which will reproduce this number) and Task&nbsp;15 (which will document it) need to state that caveat every time the number appears, so it isn't later read or cited as a general re-entry result.</p>
+  </div>
+
+  <h2>Splitting this into parallel implementation plans</h2>
+  <p>Since you'd rather keep the smaller plans traceable back to this document, I've kept a 1-to-1 mapping: one smaller implementation plan per existing task, numbered P1 through P15 to match Tasks 1 through 15. What changes is the order you hand them out in. Grouping them by dependency puts them into nine "waves" — plans in the same wave don't depend on each other and can go to different agents at the same time, while a plan in a later wave needs at least one plan from an earlier wave to land first.</p>
+
+  <figure>
+    <svg viewBox="0 0 920 1200" role="img" aria-label="Dependency diagram of fifteen proposed implementation plans P1 through P15, arranged in nine build waves. Row-mates are independent and parallelizable; arrows show which plan's output the next plan needs. P10, the Melting Body plan, is the convergence point for six earlier plans.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"></path>
+        </marker>
+        <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"></path>
+        </marker>
+      </defs>
+
+      <!-- connectors: ordinary -->
+      <g stroke="currentColor" stroke-width="1.3" opacity="0.5" fill="none" marker-end="url(#arrow)">
+        <line x1="135" y1="108" x2="170" y2="180"></line>
+        <line x1="345" y1="108" x2="170" y2="180"></line>
+        <line x1="135" y1="108" x2="450" y2="180"></line>
+        <line x1="135" y1="108" x2="730" y2="180"></line>
+        <line x1="345" y1="108" x2="460" y2="310"></line>
+        <line x1="555" y1="108" x2="460" y2="310"></line>
+        <line x1="450" y1="238" x2="460" y2="310"></line>
+        <line x1="555" y1="108" x2="250" y2="440"></line>
+        <line x1="450" y1="238" x2="250" y2="440"></line>
+        <line x1="460" y1="368" x2="250" y2="440"></line>
+        <line x1="600" y1="498" x2="460" y2="570"></line>
+        <line x1="460" y1="628" x2="460" y2="700"></line>
+        <line x1="765" y1="108" x2="460" y2="700"></line>
+        <line x1="460" y1="758" x2="460" y2="830"></line>
+        <line x1="460" y1="888" x2="460" y2="960"></line>
+        <line x1="460" y1="1018" x2="460" y2="1090"></line>
+      </g>
+
+      <!-- connectors into P10, emphasized -->
+      <g stroke="var(--accent)" stroke-width="1.5" opacity="0.75" fill="none" marker-end="url(#arrow-accent)">
+        <line x1="135" y1="108" x2="600" y2="440"></line>
+        <line x1="345" y1="108" x2="600" y2="440"></line>
+        <line x1="170" y1="238" x2="600" y2="440"></line>
+        <line x1="450" y1="238" x2="600" y2="440"></line>
+        <line x1="730" y1="238" x2="600" y2="440"></line>
+        <line x1="460" y1="368" x2="600" y2="440"></line>
+      </g>
+
+      <!-- Row 0 -->
+      <g font-family="IBM Plex Sans, sans-serif">
+        <rect x="40" y="50" width="190" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="135" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P1 — Mesh &amp; Active Set</text>
+        <text x="135" y="90" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 1</text>
+
+        <rect x="250" y="50" width="190" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="345" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P2 — Material Properties</text>
+        <text x="345" y="90" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 2</text>
+
+        <rect x="460" y="50" width="190" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="555" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P3 — Dispersion Table</text>
+        <text x="555" y="90" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 4</text>
+
+        <rect x="670" y="50" width="190" height="58" rx="8" fill="var(--surface)" stroke="var(--accent-2)" stroke-width="2"></rect>
+        <text x="765" y="74" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P4 — SESAM Refs</text>
+        <text x="765" y="90" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 11</text>
+
+        <!-- Row 1 -->
+        <rect x="40" y="180" width="260" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="170" y="204" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P5 — Thermal Core</text>
+        <text x="170" y="220" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 3</text>
+        <text x="170" y="233" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="0.03em" fill="var(--risk)">HIGHEST NUMERICAL RISK</text>
+
+        <rect x="320" y="180" width="260" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="450" y="204" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P6 — Flow-Regime Gate</text>
+        <text x="450" y="220" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 5</text>
+
+        <rect x="600" y="180" width="260" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="730" y="204" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P7 — Melt Film</text>
+        <text x="730" y="220" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 6</text>
+
+        <!-- Row 2 -->
+        <rect x="310" y="310" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"></rect>
+        <text x="460" y="334" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P8 — Spraying</text>
+        <text x="460" y="350" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 7</text>
+
+        <!-- Row 3 -->
+        <rect x="120" y="440" width="260" height="58" rx="8" fill="var(--surface)" stroke="var(--neutral-cat)" stroke-width="2"></rect>
+        <text x="250" y="464" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P9 — Girin Validation</text>
+        <text x="250" y="480" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 8</text>
+
+        <rect x="450" y="440" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--accent)" stroke-width="3"></rect>
+        <text x="600" y="464" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P10 — Melting Body</text>
+        <text x="600" y="480" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 9</text>
+        <text x="600" y="493" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="0.03em" fill="var(--risk)">DO NOT SPLIT FURTHER</text>
+
+        <!-- Row 4 -->
+        <rect x="310" y="570" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--accent-2)" stroke-width="2"></rect>
+        <text x="460" y="594" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P11 — Coupled Loop</text>
+        <text x="460" y="610" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 10</text>
+
+        <!-- Row 5 -->
+        <rect x="310" y="700" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--accent-2)" stroke-width="2"></rect>
+        <text x="460" y="724" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P12 — Metrics &amp; Plots</text>
+        <text x="460" y="740" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 12</text>
+
+        <!-- Row 6 -->
+        <rect x="310" y="830" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--accent-2)" stroke-width="2"></rect>
+        <text x="460" y="854" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P13 — CLI Wiring</text>
+        <text x="460" y="870" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 13</text>
+
+        <!-- Row 7 -->
+        <rect x="310" y="960" width="300" height="58" rx="8" fill="var(--surface)" stroke="var(--neutral-cat)" stroke-width="2"></rect>
+        <text x="460" y="984" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P14 — Verification Runs</text>
+        <text x="460" y="1000" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 14</text>
+        <text x="460" y="1013" text-anchor="middle" font-size="9" font-weight="600" letter-spacing="0.03em" fill="var(--risk)">~40 MIN RUNTIME</text>
+
+        <!-- Row 8 -->
+        <rect x="300" y="1090" width="320" height="58" rx="8" fill="var(--surface)" stroke="var(--neutral-cat)" stroke-width="2"></rect>
+        <text x="460" y="1114" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">P15 — Documentation</text>
+        <text x="460" y="1130" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)" font-family="IBM Plex Mono, monospace">Task 15</text>
+      </g>
+    </svg>
+    <figcaption>Fifteen proposed plans (P1–P15, one per original task) arranged into nine build waves by dependency. Plans in the same row don't depend on each other and can be handed to different agents at once; an arrow means the plan it points to needs the plan it starts from to have landed first. Outline color marks each plan's character — rust for physics and numerics, teal for coupling and plumbing, grey for validation and documentation — and P10 is drawn with a heavier outline because six earlier plans converge on it.</figcaption>
+  </figure>
+  <div class="legend">
+    <span><span class="swatch" style="border-color: var(--accent);"></span>Physics / numerics core</span>
+    <span><span class="swatch" style="border-color: var(--accent-2);"></span>Coupling &amp; plumbing / IO</span>
+    <span><span class="swatch" style="border-color: var(--neutral-cat);"></span>Validation &amp; documentation</span>
+  </div>
+
+  <p>Below is what each plan should include: its scope, what it needs handed to it, what it must produce for the plans after it, and anything from the inconsistencies above that its agent needs to be told explicitly rather than left to infer from the task text alone.</p>
+
+  <div class="wave-block">
+    <h3>Wave 0 — start all four immediately, in parallel</h3>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P1 — Mesh &amp; Active Set</span><span class="task-ref">Task 1</span></div>
+      <div class="meta"><b>Depends on:</b> Step 2's existing mesh module only. <b>Produces:</b> the prism-layered mesh, the active/dead element set, and the surface helpers (tangents, projected areas, edges) that P5, P6, P7, and P10 all read from.</div>
+      <p>Include the gmsh workaround as a stated constraint, not a design choice: the plan found that gmsh's boundary-layer extrusion doesn't work on the sphere primitive it uses, so prism layers are built by hand via radial projection. An agent re-deriving this from scratch might try the extrusion approach first and lose time rediscovering why it doesn't work.</p>
+    </div>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P2 — Material Properties</span><span class="task-ref">Task 2</span></div>
+      <div class="meta"><b>Depends on:</b> Step 2's existing material loader only. <b>Produces:</b> latent heat, the solidus/liquidus range, and the four enthalpy functions that P5, P7, and P10 all consume.</div>
+      <p>State explicitly that all four enthalpy variants (mixed-phase enthalpy, liquid-only enthalpy, mixed-phase heat capacity, temperature-from-enthalpy) are required, not optional convenience wrappers around one general function — collapsing them back to a single formula is exactly the kind of "obvious simplification" that reproduced the free-melting bug during prototyping.</p>
+    </div>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P3 — Dispersion Table</span><span class="task-ref">Task 4</span></div>
+      <div class="meta"><b>Depends on:</b> nothing else in this plan (numpy/scipy only). <b>Produces:</b> Girin's dispersion relation solver and its cached lookup table, used by P8 and P9.</div>
+      <p>Fully self-contained; a good candidate to hand to whichever agent finishes their other work first, since it has no upstream wait.</p>
+    </div>
+    <div class="plan-card cat-plumbing">
+      <div class="head"><span class="name">P4 — SESAM Reference Runs</span><span class="task-ref">Task 11</span></div>
+      <div class="meta"><b>Depends on:</b> nothing — it runs the project's existing, unmodified wrapper scripts. <b>Produces:</b> the two committed melting reference runs that P12 compares against.</div>
+      <p>This plan writes no new code; be explicit with its agent that the wrapper scripts (<code>sphere_reentry.py</code>, <code>sphere_sweep.py</code>) and the project's databases are off-limits to edit, per the Global Constraints. Since it doesn't depend on anything and P12 needs its output much later, it's worth kicking off in wave 0 even though nothing downstream needs it until wave 5.</p>
+    </div>
+  </div>
+
+  <div class="wave-block">
+    <h3>Wave 1 — once wave 0 lands</h3>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P5 — Thermal Core</span><span class="task-ref">Task 3</span></div>
+      <div class="meta"><b>Depends on:</b> P1 (mesh) and P2 (material). <b>Produces:</b> the nodal-enthalpy thermal solver, on both the skfem and FEniCSx backends, that P10 builds its melting step on top of.</div>
+      <p>This is the highest-risk numerical rewrite in the whole plan — the prototyping log shows the previous element-mean scheme could cycle instead of converge across the latent-heat plateau. Whoever takes this plan should be told to verify both solver backends produce matching results via the cross-backend test the plan specifies, not just get one backend working.</p>
+    </div>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P6 — Flow-Regime Gate</span><span class="task-ref">Task 5</span></div>
+      <div class="meta"><b>Depends on:</b> P1 (surface mesh) and Step 2's existing gas/aerodynamics modules. <b>Produces:</b> the regime classification, wall pressure, boundary layer, and Knudsen-number melt-closure selection that P8 and P10 both need.</div>
+      <p>The plan's own text says this module's docstring "carries the physics and every threshold's justification" and should be transcribed close to verbatim from the spec — tell the agent not to paraphrase or "clean up" that justification, since it is the documented basis for every conservatism claim later in the plan.</p>
+    </div>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P7 — Melt Film</span><span class="task-ref">Task 6</span></div>
+      <div class="meta"><b>Depends on:</b> P1 (surface mesh edges, normals, centroids). <b>Produces:</b> the lubrication and runoff solver that P10 calls each step.</div>
+      <p>The stability requirement is already load-bearing in the interface: mandate the linearly-implicit, unconditionally-stable formulation directly, rather than letting the agent choose an explicit scheme, since an explicit version was measured to need ten to a hundred thousand sub-steps per macro step.</p>
+    </div>
+  </div>
+
+  <div class="wave-block">
+    <h3>Wave 2</h3>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P8 — Spraying</span><span class="task-ref">Task 7</span></div>
+      <div class="meta"><b>Depends on:</b> P2 (material), P3 (dispersion table), and P6 (regime gate). <b>Produces:</b> the release/spraying model and the two Girin reference-value JSON files that P9 checks against.</div>
+      <p>Flag the "regime 2" branch explicitly as currently exercised only by unit tests and never by an actual reference flight — the agent should not assume it has been validated against real physics output just because it has test coverage.</p>
+    </div>
+  </div>
+
+  <div class="wave-block">
+    <h3>Wave 3 — two independent plans, can run in parallel</h3>
+    <div class="plan-card cat-verify">
+      <div class="head"><span class="name">P9 — Girin Validation</span><span class="task-ref">Task 8</span></div>
+      <div class="meta"><b>Depends on:</b> P3, P6, and P8. <b>Produces:</b> a standalone driver and analysis script reproducing Girin's own published test cases — independent of this project's sphere and independent of P10.</div>
+      <p>Because this plan never touches the main flight simulation, it can run fully in parallel with P10 once P8 has landed, rather than waiting behind it.</p>
+    </div>
+    <div class="plan-card cat-physics">
+      <div class="head"><span class="name">P10 — Melting Body</span><span class="task-ref">Task 9</span></div>
+      <div class="meta"><b>Depends on:</b> P1, P2, P5, P6, P7, and P8 — effectively everything before it. <b>Produces:</b> the <code>MeltingBody</code> class that P11 wires into the simulation loop.</div>
+      <p>This is the largest and riskiest single plan (its code runs to roughly 1,200 lines) and should not be split further despite its size — the feed/freeze bookkeeping, film energy balance, and element-death hand-over are tightly coupled to each other. Give this plan's agent the two rejected-approach warnings from the inconsistencies section above directly, in the plan text, rather than relying on the agent to go find facts 4, 5, 25, and 26 in the source document on their own. Recommend a review checkpoint after this plan and before P11 starts.</p>
+    </div>
+  </div>
+
+  <div class="wave-block">
+    <h3>Waves 4 through 8 — mostly serial from here</h3>
+    <div class="plan-card cat-plumbing">
+      <div class="head"><span class="name">P11 — Coupled Loop</span><span class="task-ref">Task 10</span></div>
+      <div class="meta"><b>Depends on:</b> P10. <b>Produces:</b> melt-history columns, demise detection, VTK melt fields, and particle output files.</div>
+      <p>Straightforward glue code once P10 exists.</p>
+    </div>
+    <div class="plan-card cat-plumbing">
+      <div class="head"><span class="name">P12 — Metrics &amp; Plots</span><span class="task-ref">Task 12</span></div>
+      <div class="meta"><b>Depends on:</b> P11's history columns and P4's reference-run files. <b>Produces:</b> comparison metrics and the seven new plots/overlays that P13 exposes through the CLI and P14 uses to report results.</div>
+      <p>No special caveats beyond making sure P4 landed before this one starts, since it needs P4's committed reference files as comparison data.</p>
+    </div>
+    <div class="plan-card cat-plumbing">
+      <div class="head"><span class="name">P13 — CLI Wiring</span><span class="task-ref">Task 13</span></div>
+      <div class="meta"><b>Depends on:</b> P11 and P12 (and, transitively, everything before them). <b>Produces:</b> the new command-line flags and the run-naming/JSON schema that P14 drives.</div>
+      <p>Large in line count but low in risk — mostly argument parsing and dictionary wiring, not new physics.</p>
+    </div>
+    <div class="plan-card cat-verify">
+      <div class="head"><span class="name">P14 — Verification Runs</span><span class="task-ref">Task 14</span></div>
+      <div class="meta"><b>Depends on:</b> P13 and P12. <b>Produces:</b> the reference-tier test and the actual verification/sensitivity runs, including the headline 29.9%-mass finding.</div>
+      <p>Budget real wall-clock time for whichever agent or CI system executes this — a full non-demising flight measured at up to about 40 minutes, not the few seconds a typical unit test takes. State the fixed-attitude caveat on the 29.9% figure directly in this plan's text so it's carried into every result this plan produces.</p>
+    </div>
+    <div class="plan-card cat-verify">
+      <div class="head"><span class="name">P15 — Documentation</span><span class="task-ref">Task 15</span></div>
+      <div class="meta"><b>Depends on:</b> everything, especially P14's results. <b>Produces:</b> the README, the model-assumptions section, the spec's amendment log, and an external facts note.</div>
+      <p>Resolve the runtime-target contradiction (below) before writing this plan's text, since it's the one that states the target publicly. It also edits a file outside this repository — confirm the path and write permissions before delegating it. Carry the fixed-attitude caveat into the write-up the same way P14 does.</p>
+    </div>
+  </div>
+
+  <h2>Decisions for you</h2>
+
+  <div class="decision">
+    <h3>Which model name goes in the commit trailer for these tasks?</h3>
+    <p>The plan's Global Constraints specify <code>Co-Authored-By: Claude Opus 5</code> on every commit; this session is currently operating under a <code>Claude Sonnet 5</code> convention instead.</p>
+    <ul>
+      <li><strong>Keep the plan's original trailer.</strong> Consistent with the document as written, but only correct if Opus 5 is actually the model that will execute these tasks.</li>
+      <li><strong>Switch every task to the current session's convention.</strong> Correct if Sonnet 5 (or whichever model actually runs each task) is doing the work, but requires a one-line edit to the Global Constraints section before delegating anything.</li>
+      <li><strong>Decide per plan, at delegation time.</strong> Most flexible if different plans go to different models, but risks some plans being delegated before anyone remembers to set the trailer.</li>
+    </ul>
+    <div class="rec"><b>Recommendation:</b> update the Global Constraints section once, now, to whichever model will actually execute the majority of these plans, so every smaller plan inherits the correct trailer automatically instead of each agent needing a separate reminder.</div>
+  </div>
+
+  <div class="decision">
+    <h3>How to state the runtime target before P14 and P15 are delegated</h3>
+    <p>The spec's original under-6-minute target is contradicted by the measured up-to-40-minute non-demising case, and Task 15's current draft restatement only covers the shorter, demising case.</p>
+    <ul>
+      <li><strong>Edit the amendments section now</strong> to state both figures honestly — roughly 4 minutes for a demising flight, up to roughly 40 minutes for a non-demising one — before splitting the plan into P14 and P15.</li>
+      <li><strong>Leave it as is</strong> and let whichever agent executes P14 flag the discrepancy when they hit it. Cheaper now, but risks P14 and P15 being written independently and disagreeing with each other in the final documentation.</li>
+      <li><strong>Split it into two explicit targets</strong> (typical case vs. worst case) as a permanent feature of the spec, rather than a one-off restatement.</li>
+    </ul>
+    <div class="rec"><b>Recommendation:</b> the first option. It's a small, one-time edit to the master document, and it removes the chance that P14's executor and P15's executor state two different numbers in the same set of deliverables.</div>
+  </div>
+
+  <div class="decision">
+    <h3>How tightly to scope P10 (Melting Body)</h3>
+    <p>P10 is by a wide margin the largest and most tightly coupled plan — roughly 1,200 lines covering feed/freeze bookkeeping, film energy balance, spraying integration, and element-death hand-over.</p>
+    <ul>
+      <li><strong>Keep it as one plan</strong> with a mandatory review checkpoint before P11 begins, and hand the agent the two rejected-approach warnings directly in the plan text.</li>
+      <li><strong>Split it further</strong> (for example, feed/freeze bookkeeping as one plan and spraying/death-cascade as another), accepting the coordination overhead of two agents sharing one class's internal state.</li>
+    </ul>
+    <div class="rec"><b>Recommendation:</b> keep it as one plan. The prototyping log's own account of this task — two rejected implementations that each silently reproduced a different bug — suggests the coupling between its parts is exactly the kind of thing that gets lost at a plan boundary if it's split between two agents who don't share full context.</div>
+  </div>
+
+  <footer>Read directly from the source plan on 2026-09-26. The full 8,146-line document was digested by a background sub-agent covering every section, including the complete measured-facts log and self-review notes, before this summary was written.</footer>
+</main>

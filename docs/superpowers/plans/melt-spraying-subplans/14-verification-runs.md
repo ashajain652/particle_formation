@@ -1,6 +1,6 @@
 # Sub-plan: Task 14 — Verification and sensitivity drivers, the reference-tier test, the runs
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -49,6 +49,228 @@
 7. **The better Design A trigger** (spec §10.3): the **melt-rate** error under a surface pinned by the latent heat.
    While melting, a temperature error becomes a mass-flux error rather than a temperature error, and mass flux is
    what feeds the spraying. The 1-D probe behind fact 44 cannot measure it; this task can.
+---
+
+## Amendment of 2026-10-02 — the deep runoff in the verification and sensitivity runs
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+
+1. **The verification devices are unaffected, by construction.** `--removal instant` evaluates no surface flow and so
+   has no conjugate depth, and the bookkeeping device also runs `--runoff off`, so the deep stage never runs in either.
+   Their six figures and thresholds stand as this sub-plan's amendment of 2026-09-27 left them.
+2. **The 50 mm physics flight is unaffected, and that is measured, not assumed.** It never has Girin's closure (the
+   wall-Knudsen gate denies it throughout, fact 32), so it has no conjugate depth and no liquid below one; with numpy's
+   random seed fixed in both runs the amended and unamended prototypes give it bit for bit (fact 49).
+3. **The 100 mm physics flight moves, and its row must be re-measured with the deep runoff on** (fact 49): at the
+   default step it sprays 12 % more and lands with 22.4 % instead of 30.8 % of its initial mass — but fact 50 shows that
+   this is a time-step artefact, so item 5 comes first. Re-measure the deep pile-up of fact 47 after Task 16 as well:
+   the derived surface takes θ and the film tangents from smoothed normals, which is expected to remove most of the
+   element-death craters in which the deep liquid collects at the default step, and the size of that change is
+   unknown.
+4. **A sensitivity row, `nodeep` (`--deep-runoff off`)**, in `analysis/melt_sensitivity.py`, which bounds the new
+   mechanism the way the `gammapm14` and `knbody003` rows bound the amendments of 2026-09-22:
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,11 +2,12 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,layers2,layers6,dt025,bridged,norunoff,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+-`knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate); the table
++`knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
++turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -24,7 +25,8 @@
+ CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
+ VARIANTS = {
+     "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+-    "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "we308": ["--we-critical", "3.08"],
++    "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
++    "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+     "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+     "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],
+```
+
+   Checked: `argv_for("d050", "nodeep", ...)` parses to `deep_runoff == "off"` with the run name `d050__nodeep`
+   (17 variants). The runs themselves are Task 14's to make.
+5. **A time-step study, before any droplet-population or deep-runoff result is quoted.** Fact 50 has it for the
+   100 mm physics flight to 120 s at 0.5, 0.25 and 0.125 s, with `--deep-runoff on` and `off`, all runs seeded: the
+   liquid the unamended model holds below δ_m vanishes as the step shrinks (a median 4.75, 0.23 and 0.004 g) and the
+   deep runoff's effect with it (+7.1 %, −0.3 % and −0.16 % in sprayed mass), but the molten layer the branch test
+   reads shrinks with the step as well, so the unamended model's droplet population has not converged even at
+   0.125 s (droplet count 1.72e7, 2.82e7 and 5.85e7; median radius by number 180, 105 and 76 µm). Repeat the study
+   on the prototype as Task 14 runs it (sub-plan 02's materials, Task 16's derived surface), for the whole flight and
+   for the 50 mm sphere, and again after fact 53 (a)'s option (3) if it is taken; run the `dt025` sensitivity row
+   with both settings; and report the held liquid (`deep_liquid_kg` with the flag on, or the contiguous molten layer
+   `molten_depth_*` with it off), the deep runoff's effect and the unamended model's own change at each step. The
+   cost is proportional to the number of steps: 10, 20 and 40 minutes for 120 s of the 100 mm flight at the three
+   steps.
+6. **Compare runs as seeded pairs.** Two runs of one build differ from the first melting step on, because pyamg draws
+   random starting vectors from numpy's global generator (fact 52); the 50 mm flight's collapse can amplify that to
+   per-cent level in the late-flight columns. Any before/after comparison this task reports should fix
+   `np.random.seed` at the start of both runs (fact 52 has the measurement and a one-line fix), or else quote the
+   run-to-run spread beside the difference.
+
+## Amendment of 2026-10-03 — the molten cascade in the verification and sensitivity runs
+
+> Part of the molten-cascade amendment (sub-plan 09's amendment of this date; facts 54–61 in `00-shared-context.md`).
+
+1. **The verification devices are unaffected, by construction.** `--removal instant` feeds every element as it melts,
+   so no fully molten element ever waits to be exposed and the cascade is skipped there; the six bookkeeping figures
+   and their thresholds stand as this sub-plan's amendment of 2026-09-27 left them.
+2. **The 50 mm physics flight changes, and must be re-measured with the cascade on** (fact 60): at the default step it
+   demises 8.0 s earlier and 2.5 km higher (199.0 s and 70.7 km against 207.0 s and 68.2 km), sprays 1.0 % more, and
+   makes 32 % fewer droplets of a 17 % larger median radius by number. Its row in the verification table and the
+   `nocascade` sensitivity row must be re-measured, and the flight run at a smaller step, with the cascade on, before
+   its droplet population is quoted.
+3. **The 100 mm physics flight changes** (fact 57): to 120 s at the default step it sprays 3.6 % more (1.055
+   against 1.018 kg, deep runoff off) and is 8 % lighter at 120 s (0.417 against 0.454 kg). The whole flight to the
+   ground with the cascade was **not** run (fact 60: the machine was on battery); run it before quoting fact 24's
+   headline (how much of the 100 mm sphere reaches the ground) again, with the deep runoff on and off.
+4. **A sensitivity row, `nocascade` (`--molten-cascade off`)**, in `analysis/melt_sensitivity.py`, beside `nodeep`:
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,12 +2,14 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+-turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements); the table
++turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
++`nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
++material by one element per macro step); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -26,7 +28,7 @@
+ VARIANTS = {
+     "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+-    "we308": ["--we-critical", "3.08"],
++    "nocascade": ["--molten-cascade", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+     "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+     "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],
+```
+
+   Checked: `argv_for("d050", "nocascade", ...)` parses to `molten_cascade == "off"` with the run name
+   `d050__nocascade` (18 variants). The runs themselves are Task 14's to make.
+5. **The time-step study of item 5 of the 2026-10-02 amendment, begun again with the cascade** (facts 57–58): the 100 mm
+   physics flight to 120 s at 0.5, 0.25 and 0.125 s, with the cascade on and off and the deep runoff on and off, every
+   run seeded. Done so far: the cascade at 0.5 s with the deep runoff on and off, against the seeded runs of 2026-10-02
+   at all three steps; **not** done, because the machine ran on battery (fact 60): the cascade at 0.25 and 0.125 s.
+   Measured: the cascade removes the backlog (liquid held below the conjugate depth a median 1.23 g instead of 4.75 g at
+   0.5 s) but not the droplet population's step dependence (18.1 million droplets at 0.5 s with the cascade, 58.5
+   million at 0.125 s without it), because the branch test's layer counts one molten wall-owning element as 0.67–1.16 mm
+   of liquid on this mesh, above the conjugate depth on every patch (fact 58). Make the two missing pairs first
+   (`--dt 0.25` and `--dt 0.125`, `--deep-runoff on` and `off`, 120 s, seeded; about 30 and 45 CPU-minutes each on mains
+   power), then the whole 100 mm flight and the 50 mm flight with the cascade. Repeat it on the prototype as Task 14
+   runs it (sub-plan 02's materials, Task 16's derived surface and fact 44's `PHI_DEATH`), because fact 44's
+   `PHI_DEATH = 0.50` changes how long a partly molten wall-owning element survives, which is half of fact 58's
+   mechanism, and the derived surface changes which facets are wall patches at all; and repeat it once more after fact
+   61 (a)'s decision on the branch test's liquid depth, which is now expected to decide whether the droplet population
+   converges.
+6. **Compare runs as seeded pairs** (item 6 of the 2026-10-02 amendment) still applies; every number of this amendment
+   was measured that way, with numpy's generator seeded in the measurement harness and not in the model.
+
+## Amendment of 2026-10-05 — the seed in the verification and sensitivity runs, and the scatter to quote results against
+
+> Part of the seeding amendment (facts 62–68 in `00-shared-context.md`; sub-plan 13's amendment of this date holds the
+> design and the CLI code).
+
+1. **Seeded pairs are now automatic.** Item 6 of the 2026-10-02 amendment and item 6 of the 2026-10-03 amendment
+   ("compare runs as seeded pairs") are met by the model itself: every run seeds numpy's generator at the start of
+   `cli.cmd_run`, with 12345 by default — the seed the measurement harness of those amendments set — so two runs of one
+   build agree bit for bit, and the seeded runs of facts 49–61 can be reproduced by the command line alone, with the
+   flags that select the model each was made with (fact 64: verified on three of them). No measurement harness needs to
+   seed numpy any more. What a before/after comparison must still do is quote its
+   difference against the scatter between seeds (fact 65, item 5 below), not against zero: two runs that differ only in
+   the seed land that far apart, so a smaller difference between two settings is not a result.
+2. **The drivers are seeded by construction.** `analysis/melt_verification.py` and Step 2's
+   `analysis/reentry_model_thermal_verification.py` call `cli.main` in-process and `analysis/melt_sensitivity.py` runs
+   the CLI as subprocesses, so every run they make starts from the default seed, whatever ran before it in the same
+   process; the verification and sensitivity tables are reproducible to the last digit. Their summary tables list
+   results by case and mode or variant, not the configuration, so they gain no seed column.
+3. **The reference-tier tests are not seeded, by decision.** `tests/test_reentry_model_reference_melt.py` and Step 2's
+   `tests/test_reentry_model_reference_thermal.py` construct their runs directly rather than through `cmd_run`, so they
+   draw from whatever state the generator is in. Measured on the bookkeeping device through the CLI (the 100 mm
+   reference's initial state, SESAM-equivalent heating, `AA7075`, instant removal, `--runoff off`, `--k-scale 1e4`, no
+   prism layers, 132 macro steps to demise): seed 12345 against seed 1 moves no history column by more than 2.4e-9 of
+   its value, the body mass by at most 1.4e-11 of the initial mass, the melt onset (71.10 km at 43.0 s) and the demise
+   (66.0 s) not at all, and the integrated heat by 1.3e-12 — nine to ten orders of magnitude below the device's
+   thresholds of 2 % of the mass, 0.5 km and 2 % of the 1 %-mass time, and far below the digits the README prints. The
+   Step 2 runs are smaller still (a 5 s run on the coarse mesh moves by 2e-16 to 6e-16, fact 62). Seeding them would
+   make the metrics files they write repeat to the last bit, at the cost of a test-file change that cannot be run in the
+   prototype until Task 11 commits the melting references; fact 68 (a) leaves it to Asha.
+4. **A sensitivity row, `seed1` (`--seed 1`)**, in `analysis/melt_sensitivity.py`, beside `base`: the same flight with
+   another seed, so that the table carries its own floor and every other row's change can be read against it.
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,14 +2,16 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+ turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
+ `nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
+-material by one element per macro step); the table
++material by one element per macro step; `seed1` reruns `base` with another seed of numpy's generator -- every run is
++seeded, `base` with the default 12345 (amendment of 2026-10-05) -- so its change relative to `base` is the run-to-run
++scatter, the floor against which every other row is read); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -26,7 +28,7 @@
+ 
+ CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
+ VARIANTS = {
+-    "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
++    "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+     "nocascade": ["--molten-cascade", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+```
+
+   Checked: `argv_for("d050", "seed1", ...)` parses to `seed == 1` with the run name `d050__seed1`, and `base` to the
+   default 12345 (19 variants). The runs themselves are Task 14's to make.
+5. **The scatter to quote results against** (fact 65). Measured on the 100 mm physics flight to 120 s at the default
+   step, with every setting at its default and the seeds 12345, 1, 2 and 3: the range across the four runs, as a share
+   of their mean, is 0.13 % in sprayed mass (1.0600 to 1.0614 kg), 0.33 % in the mass at 120 s (0.4107 to 0.4120 kg),
+   2.0 % in droplet count (1.76e7 to 1.80e7), 0.29 % in the median radius by number (179.6 to 180.1 µm) and 1.4 % in
+   re-solidified mass (6.38 to 6.46 g), with 6.7 % in the front-surface Rayleigh–Taylor release; the 50 mm whole flight,
+   with one pair of seeds, moves by at most 2.5e-6 of any history value. Fact 52's figures (0.15 % in sprayed mass,
+   0.33 % in the mass at 120 s, 1.2 % in droplet count and 14 % in re-solidified mass, from two unseeded runs of the
+   model before the molten cascade) are superseded by these as the floor. Re-measure it on the prototype as Task 14 runs
+   it (sub-plan 02's materials, Task 16's derived surface, fact 44's `PHI_DEATH`), for the 50 mm flight as well, and at
+   whatever step the results are quoted at, since the amplification that makes it comes from the melt step's thresholds
+   and will move with them; with four seeds it is a range, not a distribution (fact 68 (b)).
+6. **The `fenicsx` row is seed-independent.** The FEniCSx backend draws nothing from numpy's generator and two of its
+   runs with different seeds are identical (fact 66), so its difference from `base` contains `base`'s own scatter; read
+   it against the `seed1` row, not against zero.
+
 ---
 
 **Depends on:** Task 13 (CLI) and Task 12 (metrics).

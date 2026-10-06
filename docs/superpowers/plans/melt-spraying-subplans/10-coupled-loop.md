@@ -1,6 +1,6 @@
 # Sub-plan: Task 10 — The coupled loop: melt columns, demise, VTK melt fields, particle files
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -38,6 +38,230 @@
 
 4. **The VTK series changes topology at a remesh.** `viz` reads only exported files (CLAUDE.md), so this is legal,
    but the writer must start a new series index rather than assume constant connectivity.
+---
+
+## Amendment of 2026-10-02 — the conjugate depth and the deep liquid in every surface frame, and five deep columns
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+> The code below is the tested change, as a diff against the prototype's `coupled.py` (the body below with the
+> fact-37 lines of this sub-plan's amendment of 2026-09-27 applied).
+
+**(A) The frames.** The large-fragment model will classify melted material by Asha's three-zone rule, for which it
+needs Girin's conjugate depth patch by patch; until now it existed only as the flight-wide mean `delta_m_mean_um`.
+`surface_<k>.vtp` gains two cell fields:
+
+- **`delta_m`** [m]: the step's own conjugate depth per patch (`MeltingBody.last_delta_m`, from `spray.melt_layer`),
+  carried across that step's element deaths by face id exactly as `p_w` and `tau` are (`on_current_surface`). It is
+  NaN wherever the patch's closure is not Girin's — `melt_layer`'s own convention, because no conjugate depth exists
+  there — and on faces the step's deaths exposed, and everywhere before the first evaluation. One difference from the
+  other carried fields is deliberate: `closure`, `p_w` and `tau` come from the spray step and are written only when
+  the step had film, while `delta_m` is written from every step that evaluated the surface flow.
+- **`deep_thickness`** [m]: the deep liquid on the patch, m_d/(ρ_l A). It lives on the current surface (it is handed
+  to the exposed faces at a death, like the film), so it is not carried. Read it as a mass per area, not a depth,
+  where `deep_blob_fraction` says the liquid does not fit on its facet (fact 47).
+
+**(B) The history and the results.** `MELT_COLUMNS` gains five columns (Task 15's audit compares the README's column
+list with `MELT_COLUMNS`, so the README changes with them — sub-plan 15's amendment of this date):
+
+- `deep_liquid_kg` — the liquid below the conjugate depth that the step's deep runoff saw: the held liquid of the
+  contiguous molten chains under Girin patches plus the deep account (zone 2 of the rule, and zone 3 where it piles).
+- `deep_mass_kg` — the deep account after the step: liquid the runoff has moved and that is not yet film.
+- `deep_runoff_mass_kg` — cumulative mass the deep runoff took out of the elements. (A first version counted the mass
+  that arrived on another patch in each of the four sub-steps, as `runoff_mass_kg` does for the film; because the
+  deep account is re-transported every step, that counted the same liquid tens of times — 38 kg on a flight that
+  sprays 1.1 kg — and was replaced.)
+- `deep_surfaced_mass_kg` — cumulative deep liquid that became film from the top.
+- `deep_blob_fraction` — the share of the deep account deeper than its patch is wide, the counterpart of
+  `film_blob_fraction` (fact 27).
+
+`melt_results` gains `deep_runoff_mass_kg`, `deep_surfaced_mass_kg` and `deep_mass_kg` (the final deep account).
+
+Code (the tested change to `reentry_model/coupled.py`):
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -26,7 +26,8 @@
+                 "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+-                "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements"]
++                "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -106,6 +107,8 @@
+                 "demise_altitude_km": float(c["altitude_km"][-1]) if history.end_reason == "demise" else None,
+                 "initial_mass_kg": body.mass0, "final_mass_kg": float(c["mass_kg"][-1]), "sprayed_mass_kg": body.sprayed_mass,
+                 "runoff_mass_kg": body.runoff_mass, "removed_mass_kg": body.removed_mass, "film_mass_kg": float(body.m_f.sum()),
++                "deep_runoff_mass_kg": body.deep_runoff_mass, "deep_surfaced_mass_kg": body.deep_surfaced_mass,
++                "deep_mass_kg": float(body.m_d.sum()),
+                 "n_released": body.n_released, "time_of_peak_release_s": float(c["time_s"][i_peak]),
+                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
+                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
+@@ -149,9 +152,10 @@
+ def write_vtk_frame(output_dir, k, body, loads):
+     """field_<k>.vtu: nodal T on the active volume mesh (plus liquid fraction and element fractions when melting);
+     surface_<k>.vtp: q_conv, q_rad, T per patch, and when melting the film thickness and temperature, We_s, closure,
+-    local Knudsen number, wall pressure, shear, droplet radius and release rate -- the flow and spray fields of the
+-    step's own evaluation, carried across that step's element deaths by face id (`MeltingBody.on_current_surface`),
+-    with the defaults on faces the deaths exposed (PyVista/VTK XML)."""
++    local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
++    flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
++    (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
++    nan wherever the closure is not Girin's) -- and the thickness of the deep liquid beneath the film (PyVista/VTK XML)."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -183,6 +187,10 @@
+         poly.cell_data["tau"] = carry(flow.tau if flow is not None else None, 0.0)
+         poly.cell_data["r_droplet"] = carry(np.where(res.dm > 0.0, res.r, np.nan) if res is not None else None, np.nan)
+         poly.cell_data["release_rate"] = carry(res.dm if res is not None else None, 0.0) / surface.areas
++        # Girin's conjugate depth per patch, nan where the patch's closure is not his (no conjugate depth exists there),
++        # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
++        poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
++        poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 
+```
+
+Tests (the tested change to `tests/test_reentry_model_coupled.py`):
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -115,7 +115,8 @@
+     grid = pv.read(os.path.join(run_dir, "vtk", "field_1.vtu"))
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+-    for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate"):
++    for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
++                "deep_thickness"):
+         assert key in poly.cell_data
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+@@ -146,6 +147,36 @@
+         assert fh.readline().startswith("time_s,altitude_km,velocity_kms,released_mass_kg")
+ 
+ 
++def test_surface_frames_carry_the_conjugate_depth_per_patch(coarse_sphere_mesh, tmp_path):
++    """Girin's conjugate depth is the boundary between the skin the shear strips and the liquid that only runs off, and
++    the large-fragment model that reads these frames needs it patch by patch (amendment of 2026-10-02). Three seconds
++    from 69.8 km, where the windward face is under Girin's closure: the frame carries the step's own delta_m -- carried
++    across the step's element deaths like p_w and tau, nan wherever the closure is not Girin's, where no conjugate depth
++    exists -- and the thickness of the deep liquid on each patch. The body starts at 880 K so that it melts at once:
++    the closure field is the spray step's, written only where there is film, while delta_m is written from every step
++    that evaluates the flow."""
++    pytest.importorskip("cantera")
++    import pyvista as pv
++    from reentry_model import spray, surface_flow as sf
++    m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++    b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"), MASS_100MM, T0=880.0)
++    sim = simulator(b, t_max=53.0)
++    sim.advance(50.0)
++    out = os.path.join(str(tmp_path), "vtk")
++    hist = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5, frames_every=2, output_dir=out)).run()
++    assert hist.end_reason == "t_max" and hist.results["n_frames"] == 4               # steps 0, 2, 4 and 6
++    first, last = pv.read(os.path.join(out, "surface_0.vtp")), pv.read(os.path.join(out, "surface_3.vtp"))
++    assert np.isnan(np.asarray(first.cell_data["delta_m"])).all()        # before any step there is no evaluation yet
++    dm, closure = np.asarray(last.cell_data["delta_m"]), np.asarray(last.cell_data["closure"])
++    girin = closure == sf.CLOSURE_GIRIN
++    assert girin.sum() > 100 and (~girin).any()                           # windward patches with it, the lee without
++    assert np.isfinite(dm[girin]).all() and (dm[girin] > 1e-4).all() and (dm[girin] < 1e-3).all()   # 0.1-1 mm
++    assert np.isnan(dm[~girin]).all()
++    expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
++    np.testing.assert_array_equal(dm, expected)
++    assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
++
++
+ def test_demise_ends_the_run(coarse_sphere_mesh):
+     """The lumped instant-removal device with a 60 % demise fraction: the loop stops with end_reason demise."""
+     m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
+```
+
+**Measured (2026-10-02, throwaway copy of the prototype).** `test_coupled_melting_run_and_writers` (now also checking
+that both fields are written) and the new `test_surface_frames_carry_the_conjugate_depth_per_patch` pass; both fail on
+the unamended writer. On the frames of the 100 mm physics flight to 120 s (13 frames) `delta_m` is finite on exactly the
+25 650 patch-frames with Girin's closure and NaN on all the others — no mismatch in either direction — and lies between
+143 and 421 µm; it is NaN on every patch until the gate opens at 49.5 s, and on every patch of every frame of the 50 mm
+flight, which never has Girin's closure. `deep_thickness` is non-zero on 600–930 patches from 60 to 110 s (139 at 120 s)
+and reaches 0.69 m, a mass per area rather than a depth (fact 47) — at the default step; at 0.125 s the deep account
+never exceeds 0.014 g (fact 50). With numpy's random seed fixed the history of the 50 mm flight is bit-identical with
+and without the amendment, and so is the 100 mm flight's with `--deep-runoff off` (fact 49): the writer and the new
+columns change no result.
+
+## Amendment of 2026-10-03 — the molten cascade's two history columns and three results
+
+> Part of the molten-cascade amendment (sub-plan 09's amendment of this date; facts 54–61 in `00-shared-context.md`).
+> The code below is the tested change, as a diff against the prototype's `coupled.py` with the deep-runoff amendment
+> of 2026-10-02 above applied.
+
+The cascade adds no field to the frames — it moves liquid into the film, which the frames already carry — but its work
+must be visible per step, because how far the surface recedes within a step, and whether the safety cap ever stops it,
+is what the amendment changes. `MELT_COLUMNS` gains two columns (Task 15's audit compares the README's column list with
+`MELT_COLUMNS`, so the README changes with them — sub-plan 15's amendment of this date):
+
+- `cascade_passes` — the passes of the step's death loop in which the cascade fed something, i.e. how many layers of
+  fully molten elements the surface receded through within the step beyond the first.
+- `cascade_mass_kg` — cumulative mass the cascade fed to the film.
+
+`melt_results` gains `cascade_mass_kg` (the total), `cascade_passes_max` (the most passes in any step) and
+`cascade_capped_steps` (the steps in which `MAX_CASCADE_PASSES` stopped the cascade, leaving fully molten exposed
+elements for the next step's feed).
+
+Code (the tested change to `reentry_model/coupled.py`):
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -27,7 +27,7 @@
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+-                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction"]
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -109,6 +109,8 @@
+                 "runoff_mass_kg": body.runoff_mass, "removed_mass_kg": body.removed_mass, "film_mass_kg": float(body.m_f.sum()),
+                 "deep_runoff_mass_kg": body.deep_runoff_mass, "deep_surfaced_mass_kg": body.deep_surfaced_mass,
+                 "deep_mass_kg": float(body.m_d.sum()),
++                "cascade_mass_kg": body.cascade_mass, "cascade_passes_max": int(c["cascade_passes"].max()),
++                "cascade_capped_steps": body.cascade_capped_steps,
+                 "n_released": body.n_released, "time_of_peak_release_s": float(c["time_s"][i_peak]),
+                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
+                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
+```
+
+Test (the tested change to `tests/test_reentry_model_coupled.py`):
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -110,6 +110,9 @@
+     assert c["mass_kg"][-1] == pytest.approx(c["mass_kg"][0] - c["sprayed_mass_kg"][-1], rel=1e-6)
+     assert r["melt_onset_altitude_km"] is not None and r["spraying_onset_time_s"] >= r["melt_onset_time_s"] and r["demise_time_s"] is None
+     assert r["sprayed_mass_kg"] == c["sprayed_mass_kg"][-1] and r["n_source_rows"] == len(b.source_rows) > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
++    # the molten cascade (amendment of 2026-10-03): its cumulative mass and its passes per step, in the history and results
++    assert r["cascade_mass_kg"] == c["cascade_mass_kg"][-1] and np.all(np.diff(c["cascade_mass_kg"]) >= 0.0)
++    assert r["cascade_passes_max"] == int(c["cascade_passes"].max()) and r["cascade_capped_steps"] == b.cascade_capped_steps
+     assert np.all(c["convective_heat_W"] > 0.0) and c["convective_heat_W"][-1] == pytest.approx(b.last.Q_conv)
+     import pyvista as pv
+     grid = pv.read(os.path.join(run_dir, "vtk", "field_1.vtu"))
+```
+
+**Measured (2026-10-03, throwaway copy).** `test_coupled_melting_run_and_writers` passes with the two new assertions
+(the result equals the last row of the cumulative column, which never decreases, and the most passes equals the
+column's maximum); `MELT_COLUMNS` is a subset of the history columns as before. On the 100 mm flight to 120 s
+at the default step (seeded, deep runoff off) `cascade_passes` is non-zero in 146 of
+the 240 steps, from 33.5 s to 108 s, with a median of 3 (90th percentile 4, at most 6), `cascade_mass_kg` ends at
+0.245 kg, `cascade_passes_max` is 6 and `cascade_capped_steps` 0 (157 g, at most 6 passes and 0 capped steps with the
+deep runoff on). With `--molten-cascade off` the history is bit-identical with the deep-runoff amendment's in every
+shared column (fact 55): the two columns are the only addition.
+
 ---
 
 **Depends on:** Task 9 (`MeltingBody`).

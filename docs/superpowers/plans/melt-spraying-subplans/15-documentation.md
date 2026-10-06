@@ -1,6 +1,6 @@
 # Sub-plan: Task 15 — Documentation: README, assumptions, spec amendments, facts note
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -24,6 +24,284 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
    fragmenting body is not modelled; lateral resolution is unchanged; and it all remains a fixed-attitude
    calculation, which fact 24 already identifies as the dominant uncertainty on the shape.
 5. **Every claim carries its measurement** (CLAUDE.md). The new numbers are facts 38–45.
+---
+
+## Amendment of 2026-10-02 — the deep runoff and the conjugate depth in the README, the assumptions and the spec
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+> The blocks below are prose, so re-run `prototype/plan3/audit_docs.py`'s checks against them after these edits
+> (the flag must exist in `cli.py`, the columns in `coupled.MELT_COLUMNS`), and add the retracted sentence of
+> change 5 to its `SUPERSEDED` list. These changes stack on the block of 2026-09-27 above, which still applies.
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Options paragraph.* After the `--rt-spray on|off (...)` entry insert: "`--deep-runoff on|off` (default on: the
+   contiguous liquid below Girin's conjugate depth runs off under the pressure gradient and the deceleration and is
+   never sprayed — it becomes film only from the top, at most one conjugate depth per macro step; `off` keeps it in
+   its elements until the surface recedes to it, as every run before 2026-10-02 did);".
+2. *Outputs.* Add `deep_liquid_kg`, `deep_mass_kg`, `deep_runoff_mass_kg`, `deep_surfaced_mass_kg` and
+   `deep_blob_fraction` to the list of history columns, and in the sentence on the VTK series replace "the droplet
+   radius and the release rate (surface)" with "the droplet radius, the release rate, Girin's conjugate depth δ_m (NaN
+   where his closure does not apply) and the deep-liquid thickness (surface)".
+3. *Findings.* Append the bullet: "The liquid below the conjugate depth runs off, and only the skin sprays
+   (2026-10-02). Asha's three-zone rule for the large-fragment model: the skin within Girin's conjugate depth sprays,
+   the contiguous liquid below it runs off under the pressure gradient and the deceleration, and anything thicker than
+   a film limit of about 2–3 mm belongs to the large-fragment model. On the 100 mm physics flight there is, with a
+   short enough macro step, almost no such liquid: what lies below the conjugate depth is a backlog of the melt step,
+   which lets the surface recede through molten material by only one element per step, and it shrinks from a median
+   4.75 g at the default 0.5 s step to 0.23 g at 0.25 s and 0.004 g at 0.125 s. At the default step the deep runoff
+   therefore moves an artefact — by 120 s it has taken 0.29 kg from below the conjugate depth, the sprayed mass is 7 %
+   higher, the body 16 % lighter and 22.4 % instead of 30.8 % of the initial mass reaches the ground, almost all of
+   the deep liquid collecting in a few hundred crater facets at the eroding front — while at 0.125 s it changes the
+   sprayed mass by −0.16 %, within the run-to-run spread. The same backlog sets the molten layer that the thick/thin
+   branch test reads, so the droplet population is not converged in the step: from 0.5 to 0.25 to 0.125 s the thin
+   branch's share of the sprayed mass rises from 9 % to 18 % to 38 %, the droplet count from 1.7e7 to 2.8e7 to 5.8e7,
+   and the median radius by number falls from 180 to 105 to 76 µm, while the sprayed mass moves by at most 3 %. The
+   50 mm flight, which never has Girin's closure, is unchanged by the deep runoff bit for bit (plan facts 46–53)."
+4. *Next iteration.* Replace "the pressure-driven part of the runoff flux integrated over the whole liquid depth while
+   the shear-driven part stays at the conjugate depth, which is how the molten region's response to pressure
+   differences enters;" with "levelling of the deep liquid by surface tension, without which it collects in the
+   patch graph's sinks;".
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+5. In the bullet "Runoff and stripping happen at once, and that is not double counting", replace its last sentence,
+   "What is *not* yet done, and is deferred with the pressure response of the molten region: the pressure-gradient
+   and deceleration-driven part of the runoff flux should integrate over the whole liquid depth while the
+   shear-driven part stays limited to the conjugate depth.", with "Since 2026-10-02 the runoff carries both depth
+   limits: the shear-driven part over the conjugate depth, the pressure-gradient and deceleration-driven part over the
+   whole contiguous liquid depth (next bullet)."
+6. After that bullet insert:
+
+   "- **The liquid below the conjugate depth (2026-10-02).** Asha's three-zone rule for the large-fragment model: liquid
+   within Girin's conjugate depth δ_m of the surface is the skin and sprays; the contiguous liquid below it, down to a
+   film limit of about 2–3 mm, runs off and is not sprayed; anything thicker belongs to the large-fragment model. Where
+   Girin's closure applies, the liquid the feed gate holds below δ_m (the fully liquid part of the contiguous molten
+   chain under a patch) and the deep liquid already moved onto a patch run off with the pressure-gradient and
+   deceleration-driven lubrication flux G((b + h_D)³ − b³)/(3 μ_l), b the film's thickness and h_D the deep liquid's,
+   the film keeping its own share, and arrive in a per-patch deep account that is never offered to the spray. It becomes
+   film only from the top, at most one conjugate depth per macro step — a resolution choice, since the shear
+   re-establishes over newly exposed liquid in δ_m²/ν_l ≈ 0.16 s — and all at once where no conjugate depth exists; it
+   rides the patch's nodes with the film, holds the liquid enthalpy, freezes back first and is handed over at an element
+   death like the film. Declared limits: how much liquid lies below δ_m depends on the macro step — the melt step lets
+   the surface recede through molten material by only one element per step, so at 0.5 s a backlog of molten elements
+   waits below the owner; it is twentyfold smaller at 0.25 s and almost gone at 0.125 s, and the deep runoff's effect on
+   the sprayed mass of the 100 mm flight falls with it from +7 % to −0.16 % (next bullet); the flux is laminar
+   lubrication at Reynolds numbers of 10³–10⁴, an overestimate; nothing levels the deep liquid (surface tension is not
+   in the transport), so at the default step it collects in the patch graph's sinks — on the 100 mm flight in crater
+   facets at the eroding front, deeper than those facets are wide; the front-surface Rayleigh–Taylor mode sees the deep
+   liquid in its criterion but releases only the film; under the Couette closure nothing moves (the feed gate holds the
+   liquid as before); and the shear that the skin would pass down to the liquid beneath is not included."
+
+6b. After that bullet insert:
+
+   "- **The droplet population depends on the macro step (measured 2026-10-02).** The melt step lets the surface
+   recede through molten material by only one element per macro step, so a backlog of molten elements waits below
+   the wall-owning element, and the contiguous molten layer that the thick/thin branch test reads is part of that
+   backlog. Measured on the 100 mm physics flight to 120 s at 0.5, 0.25 and 0.125 s (numpy's random seed fixed): the
+   molten layer's mean depth falls from 1.26 to 0.28 to 0.066 mm, the share of wet windward patches on Girin's thick
+   branch from 12.4 % to 8.0 % to 2.6 %, the thin branch's share of the sprayed mass rises from 9 % to 18 % to 38 %,
+   the droplet count from 1.72e7 to 2.82e7 to 5.85e7 and the median radius by number falls from 180 to 105 to 76 µm
+   (by mass from 189 to 176 µm); the front-surface Rayleigh–Taylor release falls from 53 to 17 to 8.5 g; the sprayed
+   mass moves by at most 3 % and the mass at 120 s by at most 6 %, without a trend. Status: not converged. The droplet
+   count, the branch split, the Rayleigh–Taylor release and the re-solidified mass are not to be quoted from the
+   default step until the recession is fixed or a converged step is shown (plan fact 53 (a))."
+
+**Spec amendments block (`## 18. Amendments`).** Append:
+
+7. "27. §8, §9, §12, §14 (decided 2026-10-02) — **the liquid below the conjugate depth runs off, and the frames carry
+   δ_m.** Asha's three-zone rule for the large-fragment model (skin within the conjugate depth
+   sprays; contiguous liquid below it, down to a film limit of about 2–3 mm, runs off and is not sprayed; thicker
+   material belongs to the large-fragment model). The liquid below the conjugate depth that amendment 21's feed gate
+   holds in its elements now runs off under the pressure gradient and the deceleration — the pressure-driven part of
+   the runoff over the whole liquid depth that amendment 22 deferred, `film.deep_flux` — into a per-patch deep account
+   that is never sprayed and becomes film only from the top, one conjugate depth per macro step; `--deep-runoff on|off`
+   (default on, `off` reproducing every earlier run). Every surface frame carries Girin's conjugate depth δ_m per patch
+   (NaN where his closure does not apply) and the deep-liquid thickness; the history gains `deep_liquid_kg`,
+   `deep_mass_kg`, `deep_runoff_mass_kg`, `deep_surfaced_mass_kg` and `deep_blob_fraction`. Measured: the 50 mm flight
+   unchanged bit for bit; the 100 mm flight to 120 s sprays 7 % more and is 16 % lighter at 120 s at the default 0.5 s
+   step (22.4 % instead of 30.8 % of its initial mass reaching the ground), the deep liquid collecting in crater
+   facets at the eroding front — but the liquid held below the conjugate depth is a backlog of the melt step's order
+   that vanishes as the step shrinks (a median 4.75, 0.23 and 0.004 g at 0.5, 0.25 and 0.125 s), and at 0.125 s the
+   deep runoff changes the sprayed mass by −0.16 %, within the run-to-run spread. The same backlog makes the droplet
+   population depend on the step (droplet count 1.72e7, 2.82e7 and 5.85e7 at the three steps). The run-to-run
+   scatter all earlier comparisons carried comes from pyamg's random starting vectors and disappears with numpy's
+   seed fixed (plan facts 46–53)."
+
+## Amendment of 2026-10-03 — the molten cascade in the README, the assumptions and the spec
+
+> Part of the molten-cascade amendment (sub-plan 09's amendment of this date; facts 54–61 in `00-shared-context.md`).
+> These changes stack on the blocks of 2026-09-27 and 2026-10-02 above, which still apply except where a change below
+> replaces their wording. The blocks are prose, so re-run `prototype/plan3/audit_docs.py`'s checks against them after
+> these edits (`--molten-cascade` must exist in `cli.py`, `cascade_passes` and `cascade_mass_kg` in
+> `coupled.MELT_COLUMNS`), and add to its `SUPERSEDED` list the 2026-10-02 wording change 7 retracts, "until the
+> recession is fixed or a converged step is shown" (the recession is now fixed and the population still not converged).
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Options paragraph.* After the `--deep-runoff on|off (...)` entry of the 2026-10-02 amendment insert:
+   "`--molten-cascade on|off` (default on: an element that an element death exposes fully molten — its mean temperature
+   at or above the top of the feed ramp — is fed whole within the same macro step, so the surface recedes through molten
+   material by as many elements as are molten; `off` lets an exposed element wait for the next step's feed, one element
+   per macro step, as every run before 2026-10-03 did);".
+2. *Outputs.* Add `cascade_passes` and `cascade_mass_kg` to the list of history columns, and to the run JSON's results
+   `cascade_mass_kg`, `cascade_passes_max` and `cascade_capped_steps`.
+3. *Findings.* Append the bullet: "The surface recedes through molten material within the step (2026-10-03). The melt
+   step runs after the conduction, so each step melts material beside and below the wall-owning element; the element a
+   death exposes used to wait for the next step's feed, so the surface receded through molten material by one element
+   per macro step and a backlog of molten elements accumulated below it (a median 4.75 g at the default 0.5 s step on
+   the 100 mm flight). An element a death exposes fully molten — its mean temperature at or above the top of the feed
+   ramp, the test the molten layer is measured by — is now fed whole within the same step (`--molten-cascade`), which
+   removes most of the backlog (1.23 g) and most of what the deep runoff was amplifying (its effect on the sprayed mass
+   falls from +7 % to +0.5 %). It does not make the droplet population converge in the step: at 0.5 s the flight still
+   makes 18 million droplets of median radius 180 µm, against 58 million of 76 µm at 0.125 s, because the thick/thin
+   branch test counts one molten wall-owning element as 0.67–1.16 mm of liquid on this mesh — more than Girin's
+   conjugate depth everywhere — so it asks only whether the surface element's mean temperature is above the liquidus
+   when the spray runs, which the length of the step decides. The droplet count, branch split, median radius by number,
+   Rayleigh–Taylor release and re-solidified mass are therefore not to be quoted from the default step until the branch
+   test reads a liquid depth by mass. On the 50 mm flight, which never has Girin's closure, the cascade brings demise
+   8 s earlier and 2.5 km higher and makes 32 % fewer droplets of a 17 % larger median radius; neither flight has yet
+   been run at a smaller step with the cascade (plan facts 54–61)."
+4. *Findings, the deep-runoff bullet of 2026-10-02.* In the bullet of 2026-10-02 that begins "The liquid below the
+   conjugate depth runs off, and only the skin sprays", append: "Since 2026-10-03 the molten cascade removes most of the
+   backlog this describes: at the default step the deep runoff then takes 91 g from below the conjugate depth instead of
+   0.29 kg and changes the sprayed mass by +0.5 % instead of +7 %, and its piles hold a tenth of the mass."
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+5. In the bullet "Element fractions and death", after the sentence that ends "nodes without material are pinned."
+   insert: "An element that a death exposes fully molten — its mean temperature at or above the top
+   of the feed ramp — is fed whole within the same step and dies in turn (the molten cascade, 2026-10-03), so the
+   surface recedes through molten material by as many elements as are molten; the cascade stops at the first exposed
+   element that is not, and only wall-owning elements are ever fed."
+6. After the 2026-10-02 bullet "The liquid below the conjugate depth" insert the bullet: 
+
+   "- **The surface recedes through molten material within the step (2026-10-03).** The conduction step melts material
+   beside and below the wall-owning element before the melt step runs, and an element exposed by a death used to wait
+   for the next step's feed, so the surface could recede through molten material by only one element per macro step.
+   Now an element a death exposes fully molten is fed whole within the same step — the owner feed where every node is
+   above the top of the feed ramp, the death rule (the remainder joins the film and the faces it lands on pay the
+   latent heat it still lacks) where a node or two lies on the ramp — and the loop continues until the elements a death
+   exposes are no longer fully molten, at most 32 passes per step (never reached on the 100 mm flight, which needs at
+   most 6). "Fully molten" is the molten layer's own test, the element's mean temperature at or above the top of the
+   feed ramp: the feed's energy debit keeps every element it feeds, and every node such an element shares, on the ramp,
+   so no element at the melt front ever has all four nodes above it (none of 1 700–1 900 measured). Declared limits:
+   an element fed whole may have its coldest node in the mushy range (a median 897 K, 93 % liquid by the enthalpy), so
+   the cascade treats as film a little material the feed would still have held — part of why it raises the sprayed mass
+   of the 100 mm flight to 120 s by 3.6 %; it feeds full elements beside nearly consumed wall-owning elements, which can
+   leave a node with almost no heat capacity under the flux (2 009 K in an artificial uniform-flux test; no flight-level
+   excursion on the 100 mm flight); and the liquid it feeds is sprayed at the next step, like the remainder of a dying
+   element."
+7. Replace the 2026-10-02 bullet "The droplet population depends on the macro step (measured 2026-10-02)" with:
+   "- **The droplet population depends on the macro step (measured 2026-10-02 and 2026-10-03).**
+   Measured on the 100 mm physics flight to 120 s (numpy's random seed fixed): without the molten cascade, from 0.5 to
+   0.25 to 0.125 s the molten layer's mean depth falls from 1.26 to 0.28 to 0.066 mm, the share of wet windward patches
+   on Girin's thick branch from 12.4 % to 8.0 % to 2.6 %, the thin branch's share of the sprayed mass rises from 9 % to
+   18 % to 38 %, the droplet count from 1.72e7 to 2.82e7 to 5.85e7, and the median radius by number falls from 180 to
+   105 to 76 µm (by mass from 189 to 176 µm); the front-surface Rayleigh–Taylor release falls from 53 to 17 to 8.5 g and
+   the re-solidified mass rises from 6.2 to 16.8 to 48.4 g; the sprayed mass moves by at most 3 % and the mass at 120 s
+   by at most 6 %, without a trend. The molten cascade (2026-10-03) removes the backlog of molten elements below the
+   surface that was first blamed for this — at 0.5 s the liquid held below the conjugate depth falls from a median 4.75
+   to 1.23 g — but at 0.5 s it moves the thick-branch share only to 11.9 % and the droplet count to 1.81e7, with the
+   median radius by number unchanged at 180 µm. The cause is the branch test's liquid depth: `molten_depth` adds whole
+   elements, and on the default mesh one molten wall-owning element already counts as 0.67–1.16 mm, above the conjugate
+   depth on every patch, so the test asks whether that element's mean temperature is above the top of the feed ramp
+   when the spray runs, and a longer step leaves it there more often. Status: not converged; the cascade has not yet
+   been measured at 0.25 and 0.125 s. The droplet count, the branch split, the Rayleigh–Taylor release and the
+   re-solidified mass are not to be quoted from the default step until the branch test reads a liquid depth by mass or a
+   converged step is shown (plan facts 58 and 61)."
+
+**Spec amendments block (`## 18. Amendments`).** Append:
+
+8. "28. §8, §10 (decided 2026-10-02, measured 2026-10-02/03) — **the molten cascade: the surface recedes through molten
+   material within the step.** An element that a death exposes fully molten (its mean temperature at or above the top of
+   the feed ramp, the test the molten layer is measured by) is fed whole within the same macro step and dies in turn,
+   until the elements a death exposes are no longer fully molten (at most 32 passes per step);
+   `--molten-cascade on|off`, default on, `off` reproducing every earlier run bit for bit; history columns
+   `cascade_passes` and `cascade_mass_kg`. On the 100 mm flight to 120 s at the default step it feeds 245 g and removes
+   most of the molten backlog of amendment 27 (the liquid held below the conjugate depth falls from a median 4.75 to
+   1.23 g) and most of what the deep runoff amplified (+0.5 % in sprayed mass instead of +7.1 %); it raises the sprayed
+   mass by 3.6 % and leaves the droplet population where it was (1.81e7 droplets, median radius 180 µm by number). The
+   population's step dependence comes from the branch test instead: a single molten wall-owning element counts as
+   0.67–1.16 mm of liquid on the default mesh, above Girin's conjugate depth everywhere, so the thick/thin decision
+   depends on whether that element is above the liquidus when the spray runs, which the step decides. On the 50 mm
+   flight demise comes 8 s earlier and the droplets are 32 % fewer and 17 % larger. A liquid depth by mass is the
+   proposed next amendment (plan facts 54–61)."
+
+## Amendment of 2026-10-05 — reproducibility and the run-to-run scatter in the README, the assumptions and the spec
+
+> Part of the seeding amendment (facts 62–68 in `00-shared-context.md`; sub-plan 13's amendment of this date holds the
+> design and the code). These changes stack on the blocks of 2026-09-27, 2026-10-02 and 2026-10-03 above, which still
+> apply except where a change below adds a pointer to their wording. The blocks are prose, so re-run
+> `prototype/plan3/audit_docs.py`'s checks against them after these edits: `--seed` must exist in `cli.py` (it is in the
+> main `run` group, not the melt group, so the melt-group check is unaffected), and no history column is added. Nothing
+> is retracted, so the `SUPERSEDED` list gains nothing: the one overturned clause, amendment 26's run-to-run floor,
+  keeps
+> its place with a forward pointer (change 6), the convention of amendment 20.
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Options paragraph.* After the `--molten-cascade on|off (...)` entry of the 2026-10-03 amendment insert: "and, for
+   every run, melting or not, `--seed` (default 12345: the seed of numpy's global random generator, set at the start of
+   the run — pyamg draws the starting vectors of its spectral-radius estimates from it — so that a run repeats bit for
+   bit; another seed changes a run only through that round-off, which the melting model amplifies into the run-to-run
+   scatter of the findings below, and ends the run name in `_seed-<n>`);".
+2. *Outputs.* In "the run JSON adds the melt onset, spraying onset, demise, the masses, size statistics and the
+   settings;" replace "and the settings;" with "and the settings, among them the seed;".
+3. *Findings.* Append the bullet: "Every run is reproducible bit for bit, and the run-to-run scatter is measured
+   (2026-10-05). The only random numbers in a run are the starting vectors pyamg draws from numpy's global generator
+   when it builds the conduction solver's preconditioner, so until now two runs of one build differed in the last bit
+   from the first solve on, and the melting model's thresholds — the feed ramp, element death, the thick/thin branch
+   test — amplified that into per-cent differences over a flight. Every run now seeds the generator at its start
+   (`--seed`, default 12345, recorded in the run JSON), and two runs agree exactly: measured on the whole 50 mm flight
+   and the 100 mm flight to 120 s, in every history column, every droplet record and every frame. A run with another
+   seed is equally valid, and the spread between such runs is the floor against which any difference must be read: on
+   the 100 mm flight to 120 s, across four seeds, it spreads by 0.13 % in sprayed mass, 0.33 % in the mass at 120 s,
+   2.0 % in droplet count, 0.3 % in the median droplet radius by number, 1.4 % in re-solidified mass and 6.7 % in the
+   front-surface Rayleigh–Taylor release, while the 50 mm flight barely moves (at most 2.5e-6 of any value, one pair of
+   seeds). A difference between two settings smaller than that is not a result. The FEniCSx backend uses none of this,
+   and its runs repeat whatever the seed (plan facts 62–68)."
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+4. After the 2026-10-03 bullet "The surface recedes through molten material within the step" insert the bullet:
+
+   "- **Reproducibility and the run-to-run scatter (2026-10-05).** The only random numbers in a run are the starting
+   vectors pyamg draws from numpy's global generator for the spectral-radius estimate that weights the prolongation
+   smoother of its preconditioner, at every hierarchy the skfem backend builds (at its first solve, every 30 linear
+   solves and when a failed solve is retried); they change the preconditioner, and so the solution, in the last bits.
+   Every run seeds the generator at its start (`--seed`, default 12345), so a run is reproducible bit for bit; a run
+   with another seed is equally valid, and the melting model's thresholds amplify the last-bit difference into a spread
+   that is the floor for any comparison: on the 100 mm flight to 120 s at the default step, across four seeds, 0.13 % in
+   sprayed mass (1.0600 to 1.0614 kg), 0.33 % in the mass at 120 s, 2.0 % in droplet count, 0.3 % in the median radius
+   by number, 1.4 % in re-solidified mass and 6.7 % in the front-surface Rayleigh–Taylor release, while the 50 mm flight
+   moves by at most 2.5e-6 of any value with one pair of seeds. Declared limits: that spread is a range from four seeds
+   on one flight at one step, not a distribution, and it will move with the melt step's thresholds; the reference-tier
+   tests build their runs outside the command line and are not seeded (the bookkeeping device moves by at most 2.4e-9 of
+   any value with the seed, far below its thresholds); and the FEniCSx backend draws nothing and repeats whatever the
+   seed, so a comparison of the two backends contains the skfem run's own scatter."
+
+**Spec amendments block (`## 18. Amendments`).**
+
+5. Append: "29. §12, §14 (decided 2026-10-05) — **every run seeds numpy's generator, and the run-to-run scatter is
+   measured.** pyamg's smoothed-aggregation setup weights the Jacobi smoothing of its prolongator by 4/3 over a spectral
+   radius that it estimates by an Arnoldi iteration from a random starting vector drawn from numpy's global generator,
+   at every hierarchy the skfem backend builds; that is the only draw in a run (measured: the package import, the
+   argument parsing and everything else draw nothing), and it made two runs of one build differ from the first solve on.
+   `cli.cmd_run` now seeds the generator first (`--seed`, default 12345 — the seed every measurement of amendments 27
+   and 28 used, whose runs the default reproduces exactly with the flags that select the model each was made with,
+   verified on three of them; a non-default seed ends the run name in `_seed-<n>`; the run JSON's settings carry it).
+   Measured: two runs of the whole 50 mm flight and two of the 100 mm flight to 120 s are identical in every history
+   column at full precision, every source-table row, every result field but the run time and every frame; across four
+   seeds the 100 mm flight to 120 s spreads by 0.13 % in sprayed mass, 0.33 % in the mass at 120 s, 2.0 % in droplet
+   count, 0.3 % in the median radius, 1.4 % in re-solidified mass and 6.7 % in the Rayleigh–Taylor release, the floor
+   for any comparison; the FEniCSx backend draws nothing and is reproducible whatever the seed; the seed costs one call
+   of a few microseconds (plan facts 62–68)."
+6. In amendment 26, after "against 1.6e-8 between two runs of a single build" insert " — a floor that existed only
+   because those runs were unseeded; since amendment 29 two runs of one build agree bit for bit —". The 3.1e-8
+   measurement stands as what was measured.
+7. In amendment 27, after "disappears with numpy's seed fixed" insert ", as every run fixes it since amendment 29".
+
 ---
 
 **Depends on:** everything — this is the last task, written after every other plan's results exist.

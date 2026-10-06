@@ -2,7 +2,29 @@
 
 > **New task, added 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md` §7.
 > Not present in `2026-09-20-melt-spraying.md`. Read `00-shared-context.md` first, including the 2026-09-27
-> amendment block (facts 38–45), then Tasks 1 and 16.
+> amendment block (facts 38–45), then Tasks 1 and 16. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below).
+
+## Amendment of 2026-10-02 — the deep liquid crosses a remesh with the film
+
+> Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).
+
+Task 9 now keeps a second liquid account per patch, `MeltingBody.m_d`: the contiguous liquid below Girin's conjugate
+depth that the deep runoff has moved onto that patch (sub-plan 09's amendment of 2026-10-02). It is liquid on the
+patch exactly as the film is — it holds the same liquid enthalpy, rides the same boundary nodes (`_film_nodal` sums
+both accounts, so the solver carries both) and is handed to the exposed faces when an element dies — so a remesh must
+carry it the same way:
+
+- `transfer_fields(old, new, T, phi, film, pending)` gains the deep account beside the film: nearest-patch assignment,
+  rescaled to its exact total, its pre-correction residual reported like every other transfer.
+- Its thermal mass is on the boundary nodes with the film, so step 6's energy correction covers it once the node
+  masses are rebuilt from both accounts on the new mesh.
+
+Nothing else in this task changes. One expectation to measure rather than assume: on the 100 mm flight almost all of
+the deep account sits in piles deeper than their facets are wide (fact 47), so the nearest-patch assignment will move
+a few large masses rather than many small ones, and its pre-correction residual should be reported separately from
+the film's.
+
+---
 
 **Depends on:** Task 1's amendment (the band size field, `element_depths`, `edge_lengths`) and Task 16 (the derived
 surface this consumes). Task 10 calls it.
