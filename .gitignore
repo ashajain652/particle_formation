@@ -31,3 +31,6 @@ groundtrack_norad62878.png
 # package by design, and `prototype/plan3/make_plan.py` can rebuild the plan from it at any time.
 # See prototype/README.md.
 prototype/
+
+# Spheral container outputs (build logs, regression and benchmark runs)
+spheral_output/

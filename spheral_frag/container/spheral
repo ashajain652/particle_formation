@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Run a Spheral script inside the pinned container image: the `SPHERAL` launcher of spec §4.4.
+#
+#   spheral_frag/container/spheral [-n NPROC] script.py [args...]
+#   spheral_frag/container/spheral [-n NPROC] -c "import Spheral"
+#
+# Everything after -n goes to /opt/spheral/bin/spheral (Spheral's `python -B`). The repository is mounted read-write
+# at /work and the script runs in the caller's directory relative to it, so relative paths keep working; the caller
+# must therefore be inside the repository. NPROC 1 (the default) runs without mpirun, so start-up is not inflated;
+# NPROC > 1 runs `mpirun --bind-to none` (Docker's VM schedules the cores). Open MPI is allowed to run as root and
+# gets an 8 GB /dev/shm (Docker's default 64 MB breaks its shared-memory transport). OMP_NUM_THREADS defaults to 1,
+# since Spheral otherwise starts one OpenMP thread per VM core on every rank; set it in the environment to override.
+#
+# The image tag comes from pin.json; SPHERAL_IMAGE overrides it. Exit 2 with a one-line message when Docker is not
+# running, the image is missing or the arguments are bad; otherwise the exit status is the script's.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo="$(cd "$here/../.." && pwd -P)"
+
+die() { echo "spheral: $*" >&2; exit 2; }
+
+nproc=1
+if [[ "${1:-}" == "-n" ]]; then
+    [[ $# -ge 2 ]] || die "-n needs a process count"
+    nproc="$2"
+    shift 2
+fi
+[[ "$nproc" =~ ^[1-9][0-9]*$ ]] || die "process count must be a positive integer, got '$nproc'"
+[[ $# -ge 1 ]] || die "usage: spheral [-n NPROC] script.py [args...] | spheral [-n NPROC] -c CODE"
+
+image="${SPHERAL_IMAGE:-$(sed -n 's/^ *"image_tag": *"\([^"]*\)".*/\1/p' "$here/pin.json")}"
+[[ -n "$image" ]] || die "no image_tag in $here/pin.json"
+
+cwd="$(pwd -P)"
+case "$cwd/" in
+    "$repo"/*) reldir="${cwd#"$repo"}" ;;
+    *) die "run from inside the repository ($repo); the container only sees it at /work" ;;
+esac
+
+command -v docker >/dev/null 2>&1 || die "docker is not installed"
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || die "Docker is not running"
+    die "image $image is missing (build it with spheral_frag/container/build.sh)"
+fi
+
+if [[ "$nproc" -eq 1 ]]; then
+    run=(/opt/spheral/bin/spheral)
+else
+    run=(mpirun -np "$nproc" --bind-to none /opt/spheral/bin/spheral)
+fi
+
+exec docker run --rm --platform linux/arm64 \
+    --shm-size=8g \
+    -e OMPI_ALLOW_RUN_AS_ROOT=1 -e OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 -e OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}" \
+    -v "$repo":/work -w "/work$reldir" \
+    "$image" \
+    "${run[@]}" "$@"
