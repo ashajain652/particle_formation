@@ -1,0 +1,50 @@
+# spack find -lv in particle-formation/spheral:116c71f-arm64 (image 0d5aed398992), Spack 1.2.2 (3e19345b), env scripts/spack/environments/linux-ubuntu24.04-aarch64
+==> In environment /home/spheral/workspace/scripts/spack/environments/linux-ubuntu24.04-aarch64 (1 root spec)
+ -  2ex5jhi spheral
+
+-- linux-ubuntu24.04-aarch64 / %c,cxx,fortran=gcc@13.3.0 --------
+dliqkbl adiak@0.5.0~ipo+mpi~python~shared~tests build_system=cmake build_type=Release commit=f08c8375c613e13e9b9c6a1db271cbf8f0d3f3e3 generator=make
+reswdkg blt@0.7.2 build_system=generic
+i6yfjku conduit@0.9.1~adios+blt_find_mpi~caliper~doc~doxygen+examples+fortran+hdf5~hdf5_compat~ipo+mpi~parmetis~python+shared~silo~test+utilities~zfp build_system=cmake build_type=Release generator=make
+tsgp5xl silo@4.12.0+fortran~fpzip+hdf5~hzip~ipo+pic+python~shared~silex+zfp build_system=cmake build_type=Release generator=make license=bsdonly patches:=4626644
+uphzdmz sundials@7.7.0+ARKODE+CVODE+CVODES+IDA+IDAS+KINSOL~cuda+examples+examples-install~f2003~fcmix~ginkgo~hypre~int64~ipo~klu~kokkos~kokkos-kernels~lapack~magma~monitoring+mpi~openmp~petsc~profiling~pthread~raja~rocm~shared+static~superlu-dist~superlu-mt~sycl~trilinos build_system=cmake build_type=Release commit=0a1024b7fb902a5eae3142adf8c13561c6989543 cstd=99 cxxstd=17 generator=make logging-level=2 precision=double
+
+-- linux-ubuntu24.04-aarch64 / %c,cxx=gcc@13.3.0 ----------------
+ie2ofq5 axom@0.14.0~adiak~caliper+conduit+cpp14~cuda~devtools~examples~fortran+hdf5+int64~ipo~lua~mfem+mpi~opencascade+openmp~python+raja~rocm~scr+shared+tools+tutorials+umpire build_system=cmake build_type=Release commit=146c8c15386a810791b7ab5c7fcb288cadea6151 components:=all,bump,inlet,klee,lumberjack,mint,mir,multimat,primal,quest,sidre,sina,slam,slic,spin generator=make
+4axkoby boost@1.90.0~atomic~charconv~chrono~clanglibcpp~container~context~contract~conversion~date_time~debug~exception~fiber+filesystem~graph~graph_parallel~icu~iostreams~json~locale~log~math~mpi~mqtt5+multithreaded~nowide~numpy~openmethod+pic~program_options~python~random~regex~serialization+shared~signals2~singlethreaded~stacktrace+system~taggedlayout~test~thread~timer~type_erasure~url~versionedlayout~wave build_system=generic cxxstd=11 patches:=a440f96 visibility=hidden
+npy33bo caliper@2.14.0+adiak~cuda~fortran+gotcha~ipo+kokkos~libdw~libpfm~libunwind+mpi~papi~python~rocm+sampler~shared~tests+tools~variorum~vtune build_system=cmake build_type=Release generator=make
+2nq3ymy camp@2025.12.0~cuda~ipo~omptarget+openmp~rocm~sycl~tests build_system=cmake build_type=Release commit=a8caefa9f4c811b1a114b4ed2c9b681d40f12325 generator=make
+dvvfdup chai@2025.12.0~cuda~disable_rm+examples~ipo+mpi+openmp+raja~rocm+separable_compilation+shared build_system=cmake build_type=Release commit=26d5646707e1848b0524379b12a7716e4a830a27 generator=make tests=none
+dufydk2 eigen@5.0.0~blas~ipo~lapack~nightly~rocm build_system=cmake build_type=Release generator=make
+ct7atsk fmt@11.0.2~ipo+pic~shared build_system=cmake build_type=Release cxxstd=11 generator=make
+gn4qnrv opensubdiv@3.4.3~cuda~ipo~openmp+pic~tbb build_system=cmake build_type=Release generator=make
+nig574o polytope@v0.7.5~ipo+python build_system=cmake build_type=Release commit=949fc7723e7a013edb0d00ac993bbb746eccdf9d generator=make patches:=2af39a7
+a4y5zw2 qhull@2020.2~ipo+pic build_system=cmake build_type=Release generator=make
+hkvpnfz raja@2025.12.2~caliper~cuda~desul+examples+exercises~gpu-profiling~ipo~lowopttest~omptarget~omptask+openmp~plugins~rocm~run-all-tests~shared~sycl~tests+vectorization build_system=cmake build_type=Release commit=eca7c5015a5cf8bf7cc8ad1829fd36d3276ab274 cxxstd=20 generator=make
+bitojbe umpire@2025.12.0~asan~backtrace+c~cuda~dev_benchmarks~device_alloc~deviceconst~examples+fmt_header_only~fortran~ipc_shmem~ipo+mpi+mpi3_shmem~numa~omptarget+openmp~rocm~sanitizer_tests+shared~sqlite_experimental~tools~werror build_system=cmake build_type=Release commit=0372fbd6e1f17d7e6dd72693f8b857f3ec7559e9 generator=make tests=none
+q6pjbgc zlib@1.3.2+optimize+pic+shared build_system=makefile
+
+-- linux-ubuntu24.04-aarch64 / %c=gcc@13.3.0 --------------------
+ljxqo75 hdf5@1.14.6~cxx~fortran+hl~ipo~java~map+mpi+shared~subfiling~szip~threadsafe+tools api=default build_system=cmake build_type=Release generator=make
+xg7zdca readline@8.3 build_system=autotools patches:=21f0a03,72dee13,e273643
+
+-- linux-ubuntu24.04-aarch64 / %fortran=gcc@13.3.0 --------------
+466d74s m-aneos@1.0 build_system=makefile
+
+-- linux-ubuntu24.04-aarch64 / no compilers ---------------------
+hqcm4an autoconf@2.71 build_system=autotools
+fcworud automake@1.16.5 build_system=autotools
+mkb2wt2 cmake@3.28.3~doc+ncurses+ownlibs~qtgui build_system=generic build_type=Release
+6zpo3h7 compiler-wrapper@1.1.0 build_system=generic
+ecodgxi gcc@13.3.0+binutils+bootstrap~graphite+libsanitizer~mold~nvptx~piclibs~profiled~strip build_system=autotools build_type=RelWithDebInfo languages:='c,c++,fortran'
+usx5bqs gcc-runtime@13.3.0 build_system=generic
+wqjtbsv glibc@2.39 build_system=autotools
+olxnda5 gmake@4.3~guile build_system=generic
+jvnxyfr gnuconfig@2025-07-10 build_system=generic
+m2dqqvd libtool@2.4.7 build_system=autotools
+il2z657 ncurses@6.4.20240113~symlinks+termlib abi=6 build_system=autotools
+myah4ke openmpi@4.1.6+atomics~cuda+cxx~cxx_exceptions~debug+fortran~gpfs~internal-hwloc~internal-libevent~internal-pmix~ipv6+java~legacylaunchers~lustre~memchecker~openshmem~orterunprefix+pmi~rocm+romio+rsh~static~two_level_namespace+vt~wrapper-rpath build_system=autotools fabrics:=ofi,ucx romio-filesystem:=none schedulers:=slurm
+js4vpvy perl@5.38.2~cpanm+opcode+open+shared+threads build_system=generic
+woa4ll7 pkgconf@1.8.1 build_system=autotools
+qnk2yfp python@3.12.3+bz2+crypt+ctypes+dbm~debug+libxml2+lzma~optimizations+pic+pyexpat~pythoncmd+readline+shared+sqlite3+ssl~static~tests+tix+tkinter+uuid+zlib build_system=generic
+bnnwwda python-venv@1.0 build_system=generic

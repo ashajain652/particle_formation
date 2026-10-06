@@ -1,0 +1,40 @@
+{
+  "spheral_commit": "116c71f2ea559d569456ba694194e5a6de3c75f7",
+  "spheral_commit_date": "2026-09-28T16:51:47Z",
+  "spheral_commit_subject": "Merge pull request #520 from llnl/bugfix/strainPorositySean",
+  "upstream_pr": "LLNL/spheral#520 (Bugfixes for Strain-Porosity model and Jaumann rate definition, fixes #534)",
+  "spin_correction_line": "src/SPH/SolidSPH.cc:767: const auto spinCorrection = (spin*Si - Si*spin).Symmetric();",
+  "image_tag": "particle-formation/spheral:116c71f-arm64",
+  "image_id": "sha256:0d5aed3989927ca98aa8ecac95219e821c831020ab28a786575b6e36640ecdf0",
+  "image_platform": "linux/arm64",
+  "image_size_bytes": 16927444727,
+  "build_date": "2026-10-06T02:52:31Z",
+  "build_wall_time_s": 6690,
+  "build_wall_time_breakdown_s": {
+    "spack_tpls": 142,
+    "python_build_env": 92,
+    "python_runtime_env": 21,
+    "Spheral_CXX_j16": 933,
+    "python_bindings_j4": 5092,
+    "make_install": 121,
+    "image_export": 239
+  },
+  "build_host": "Mac Studio, Apple M5 Max (18 cores), Docker Desktop 29.8.2, Linux VM with 18 CPUs and ~47 GB",
+  "build_args": {"JCXX": 16, "JPY": 4, "SPEC": "gcc"},
+  "spack_version": "1.2.2 (3e19345b6e12f5ff1b874f4059622fc6a1fd804a)",
+  "spack_target": "aarch64 (generic; gcc flags -march=armv8-a -mtune=generic). Detected by Spack, not pinned: the VM reports the Apple CPU as implementer 0x61, part 0x000, which archspec maps to generic aarch64. All 25 Spack-built TPL specs carry target=aarch64 (read from .spack/spec.json, e.g. axom-0.14.0).",
+  "spheral_cxx_flags_target": "Spheral itself is compiled by /usr/bin/g++ outside Spack's wrapper, with no -march (gcc default armv8-a).",
+  "compiler": "gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04.1), system external",
+  "python_version": "3.12.3",
+  "numpy_version": "1.26.4",
+  "mpi4py_version": "4.0.3",
+  "mpi": "Open MPI 4.1.6 (Ubuntu openmpi-bin, system external)",
+  "install_prefix": "/opt/spheral (real CMake install prefix via host-config-build.py --install-dir; not a symlink). Launcher /opt/spheral/bin/spheral, venv /opt/spheral/.venv.",
+  "source_tree": "/home/spheral/workspace (git clone at the full SHA, submodules initialised); build tree build_docker-gcc/ kept in the image",
+  "tpl_install_tree": "/home/installs (Spack at /home/spack)",
+  "recipe": "LLNL Dockerfile at 116c71f, unchanged in substance: no arm64 fixes were needed",
+  "notes": [
+    "Spheral starts 18 OpenMP threads per rank when OMP_NUM_THREADS is unset; set it explicitly for timed runs.",
+    "Spheral silences print() on MPI ranks other than 0; the 2-rank smoke test confirmed both ranks with os.write and an allreduce."
+  ]
+}
