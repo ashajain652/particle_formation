@@ -120,6 +120,30 @@ def run_name(a, nproc):
             f"_steps{a.steps}_wu{a.warmup}_{SPHERAL_COMMIT}")
 
 
+def lattice_generator(geometry, R, dx):
+    """(node generator, expected particle count) for the body of the module docstring; R and dx in metres.
+
+    Imports Spheral's generators, so it runs only under Spheral; subclass_check.py builds the same body with it."""
+    k = int(math.floor(R/dx*(1.0 + 1e-12)))
+    rclip = R*(1.0 + 1e-9)
+    if geometry == "3d":
+        from GenerateNodeDistribution3d import GenerateNodeDistribution3d
+        n1 = 2*k + 1
+        lo = -(k + 0.5)*dx
+        gen = GenerateNodeDistribution3d(n1, n1, n1, RHO0, "lattice", xmin=(lo, lo, lo), xmax=(-lo, -lo, -lo),
+                                         rmax=rclip, origin=(0.0, 0.0, 0.0), nNodePerh=NPERH, SPH=True)
+        expected = (4.0/3.0)*math.pi*R**3/dx**3
+    else:
+        from GenerateNodeDistribution2d import GenerateNodeDistribution2d, RZGenerator
+        nz = 2*k + 1
+        nr = int(math.ceil(R/dx - 0.5)) + 1
+        zlo = -(k + 0.5)*dx
+        gen = RZGenerator(GenerateNodeDistribution2d(nz, nr, RHO0, "lattice", xmin=(zlo, 0.0),
+                                                     xmax=(-zlo, nr*dx), rmax=rclip, nNodePerh=NPERH, SPH=True))
+        expected = 0.5*math.pi*R**2/dx**2
+    return gen, expected
+
+
 def stats(xs):
     xs = sorted(xs)
     n = len(xs)
@@ -157,11 +181,11 @@ def main(argv):
     import mpi
     if a.geometry == "3d":
         import Spheral3d as S
-        from GenerateNodeDistribution3d import GenerateNodeDistribution3d
+        import GenerateNodeDistribution3d  # noqa: F401 -- imported here so that its cost counts as import time
         from PeanoHilbertDistributeNodes import distributeNodes3d as distributeNodes
     else:
         import SpheralRZ as S
-        from GenerateNodeDistribution2d import GenerateNodeDistribution2d, RZGenerator
+        import GenerateNodeDistribution2d  # noqa: F401 -- as above
         from PeanoHilbertDistributeNodes import distributeNodes2d as distributeNodes
     from SpheralController import SpheralController
     mpi.barrier()
@@ -190,21 +214,7 @@ def main(argv):
 
     # ---------------------------------------------------------------- body
     t0 = time.perf_counter()
-    k = int(math.floor(R/dx*(1.0 + 1e-12)))
-    rclip = R*(1.0 + 1e-9)
-    if a.geometry == "3d":
-        n1 = 2*k + 1
-        lo = -(k + 0.5)*dx
-        gen = GenerateNodeDistribution3d(n1, n1, n1, RHO0, "lattice", xmin=(lo, lo, lo), xmax=(-lo, -lo, -lo),
-                                         rmax=rclip, origin=(0.0, 0.0, 0.0), nNodePerh=NPERH, SPH=True)
-        expected = (4.0/3.0)*math.pi*R**3/dx**3
-    else:
-        nz = 2*k + 1
-        nr = int(math.ceil(R/dx - 0.5)) + 1
-        zlo = -(k + 0.5)*dx
-        gen = RZGenerator(GenerateNodeDistribution2d(nz, nr, RHO0, "lattice", xmin=(zlo, 0.0),
-                                                     xmax=(-zlo, nr*dx), rmax=rclip, nNodePerh=NPERH, SPH=True))
-        expected = 0.5*math.pi*R**2/dx**2
+    gen, expected = lattice_generator(a.geometry, R, dx)
     distributeNodes((nodes, gen))
     nlocal = nodes.numInternalNodes
     ntotal = mpi.allreduce(nlocal, mpi.SUM)
