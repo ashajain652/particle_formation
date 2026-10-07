@@ -2,7 +2,9 @@
 
 Date: 2026-10-02
 Status: design of record, presented and approved section by section with Asha between 2026-09-30 and 2026-10-02;
-awaiting her review of this document; amended on 2026-10-02 with milestone MC, the coupling at the surface (§14.1).
+awaiting her review of this document; amended on 2026-10-02 with milestone MC, the coupling at the surface (§14.1), and
+on 2026-10-07 with milestone M0's measurements on the laptop (§§2, 5, 8.5, 9.1, 13.2, 15, 16, 20; plan
+`docs/superpowers/plans/2026-10-05-spheral-m0.md`).
 Next: the implementation plan for milestones M0 and M1 only (§14).
 Builds on: Step 3 (`2026-09-20-melt-spraying-design.md`; live sub-plans in
 `docs/superpowers/plans/melt-spraying-subplans/`; executed prototype `prototype/proto3/`) for the flight, the heat, the
@@ -49,16 +51,16 @@ gravity across the flow makes one tail (Asha, 2026-10-01).
 
 | Topic | Fact | Source |
 |---|---|---|
-| Spheral version | Latest release v2026.06.0 (23 June 2026). The development branch carries the second fix to the stress-rotation (Jaumann) term, merged 28 September 2026 — the release rotates stress the wrong way under rigid rotation — and damage in axisymmetric runs, merged 14 August 2026. | research of 2026-09-30: releases, PR #507, issue #534, PR #518, `src/SPH/SolidSPH.cc` line 767 |
-| Platforms | Documented and tested on Linux only; no macOS or arm64 continuous integration. The only prebuilt image is `ghcr.io/llnl/spheral:latest`: linux/amd64, about 4.8 GB compressed, rebuilt on every push to the development branch. A full build took 3 h 24 min on a 4-vCPU runner, 2 h 16 min of it the Python bindings. Python 3.12, numpy 1.26 or older. | build guide; container manifest; Actions run 36454078958 |
+| Spheral version | Pinned: the development branch at `116c71f` (28 September 2026, 16:51 UTC; still its head on 5 October), the merge of PR #520 "Bugfixes for Strain-Porosity model and Jaumann rate definition, fixes #534", the second fix to the stress-rotation (Jaumann) term: `src/SPH/SolidSPH.cc` line 767 evaluates `spinCorrection = (spin*Si - Si*spin).Symmetric()` with `spin = localDvDxi.SkewSymmetric()`. Damage in axisymmetric runs (PR #518, 14 August 2026) is an ancestor. Measured on the arm64 build: a 20 × 20 AA7075-like square in pure shear, held to an exact rigid rotation, follows R S₀ Rᵀ to 0.069 % of \|S₀\| over a quarter turn in 75 steps, with 0.003 % drift in the von Mises stress and an error second order in the step; a wrong-sign term would be off by 2 \|S₀\| at an eighth of a turn. The latest release, v2026.06.0 (23 June 2026), rotates stress the wrong way under rigid rotation. | research of 2026-09-30: releases, PR #507, issue #534, PR #518; `spheral_frag/container/pin.json`; `spheral_frag/m0/rigid_rotation.py`, commit 0f63928 |
+| Platforms | Documented and tested on Linux only; no macOS or arm64 continuous integration. The only prebuilt image is `ghcr.io/llnl/spheral:latest`: linux/amd64, about 4.8 GB compressed, rebuilt on every push to the development branch. A full build took 3 h 24 min on a 4-vCPU runner, 2 h 16 min of it the Python bindings. Python 3.12, numpy 1.26 or older. **That image cannot run on Apple Silicon** (measured 2026-10-05 on digest `sha256:fee841c5…`, built 28 September 2026): it starts under Rosetta, but `import Spheral` dies with `Illegal instruction`, because Spack built 97 of its 200 package specs for `x86_64_v4` and `libSpheral_CXX.so` holds 8,751 instructions on AVX-512 registers, which Rosetta does not provide; the target comes from Spack's compiler wrapper on the build runner, not from Spheral's flags, so a later `:latest` may or may not run, and a cluster running it needs AVX-512. **Built from source instead, natively for arm64** (Asha, 2026-10-05): an `ubuntu:24.04` arm64 container under Docker Desktop following LLNL's own `Dockerfile` at `116c71f`, with no arm64 fixes needed (gcc 13.3, Open MPI 4.1.6, Python 3.12.3, numpy 1.26.4, Spack's third-party libraries for generic `aarch64`). Wall time 1 h 51 min on the Mac Studio (Python bindings 1 h 25 min at 4 jobs, `Spheral_CXX` 16 min at 16); image 16.9 GB. Spheral starts one OpenMP thread per core in every rank unless `OMP_NUM_THREADS` is set. | build guide; container manifest; Actions run 36454078958; plan 2026-10-05 fact 1; `spheral_frag/container/pin.json` and `Dockerfile`, commit 02d67b0 |
 | Physics present | Elastic–plastic solids (SolidSPH, SolidCRKSPH, SolidFSISPH; axisymmetric variants of the first two). Strength: ConstantStrength, SteinbergGuinan, JohnsonCook, Collins, iSALE rock, porous, null. Damage: ProbabilisticDamageModel (Weibull flaws; cracks grow at 0.4 times the longitudinal sound speed), Grady–Kipp tensor damage, IvanoviSALEDamageModel, JohnsonCookDamage. `identifyFragments` (friends-of-friends; linking distance in smoothing lengths; damage threshold; optional attachment of dust) and `fragmentProperties`. | `src/` of v2026.06.0 |
 | Physics absent | No physical heat conduction (only an artificial smoothing of energy jumps), no physical viscosity, no surface tension, no surface-traction boundary condition (only a uniform external pressure in the equation of state). | source search |
-| Extensibility | Physics packages can be written in Python (README; `RadiativeLosses` in `tests/functional/Hydro/ConvectionTest/ConvectionTest.py`); `dt()` must return a Python tuple from v2026.06.0. Equation-of-state, strength and damage classes have pybind11 trampolines, but no published Python subclass exists, and Python overrides run on CPUs only. | `src/PYB11/Physics/Physics.py`; release notes |
-| Traps | The library's aluminium uses atomic weight 24.032 (real 26.98), so its Dulong–Petit heat capacity is 1,038 J/(kg·K). The Grüneisen equation of state's temperature relation is unit-inconsistent (the agent's reading of the code, untested). JohnsonCookDamage's thermal term is silently inactive unless paired with SteinbergGuinan strength. The default damage strain (PseudoPlasticStrain) ignores hydrostatic tension; StrainHistory and MeloshRyanAsphaugStrain count free thermal expansion as tensile strain. | `MaterialPropertiesLib.py` line 170; `GruneisenEquationOfState.cc` lines 262–305; `JohnsonCookFailureStrainPolicy.cc` line 106; `TensorStrainPolicy.cc` lines 102–140 |
+| Extensibility | Physics packages can be written in Python (README; `RadiativeLosses` in `tests/functional/Hydro/ConvectionTest/ConvectionTest.py`); `dt()` must return a Python tuple from v2026.06.0. Equation-of-state, strength and damage classes have pybind11 trampolines; Python overrides run on CPUs only. **Measured at `116c71f` (M0):** Python subclasses copying the Murnaghan and linear-polynomial equations of state and `SteinbergGuinanStrength`, and a damage model that forwards every virtual to a C++ `ProbabilisticDamageModel` except `computeScalarDDDt` (the damage rate, which the tearing law of §8.4 replaces), reproduce the built-ins **bitwise**: all 29 compared methods on synthetic inputs reaching every branch, and position, velocity, deviatoric stress, pressure, damage, density, energy and plastic strain of every particle after 110 steps on 18 processes (axisymmetric at 1.1 mm, 3,243 particles; 3D at 3.0 mm, 19,381). Exact copies repeat the fused multiply-adds that g++ 13 `-O3` forms on aarch64 (290 in SteinbergGuinan), in IEEE quad precision; plain numpy arithmetic ends 1.7e-11 (3D) and 3.0e-11 (axisymmetric) of the largest velocity and stress away. An x86-64 cluster build contracts differently (unmeasured). Added cost per step: the Cost row. Untried: Python update policies, which the tearing law will probably also need (its flaw activation and its strain replace `ProbabilisticDamagePolicy` and the strain policy; trampolines exist). | `src/PYB11/Physics/Physics.py`; release notes; `spheral_frag/m0/subclass_check.py`, commit 091c2bc |
+| Traps | The library's aluminium uses atomic weight 24.032 (real 26.98), so its Dulong–Petit heat capacity is 1,038 J/(kg·K). **The Grüneisen equation of state returns dP/dρ = ρ₀C₀² instead of C₀² for ρ ≤ ρ₀** at `116c71f` (introduced in c77981253, 2023-08-29; reaching the sound speed and bulk modulus through `computeDPDrho` since 18a8420d1, 2023-09-26; no upstream issue): in SI its sound speed at rest and in tension is √ρ₀ = 53 times C₀ for aluminium, the damage model's longitudinal sound speed 44 times too high and the step 44–53 times too small (found through Spheral's time-step votes, 2026-10-06); its temperature relation is also unit-inconsistent (read from the code, untested). This design does not use it (§8.2: a custom equation of state, and Murnaghan, whose sound speed √(K/ρ₀) was checked correct on both sides of ρ₀ in SI and CGS); the custom equation of state must give the sound speed and bulk modulus consistently with its own dP/dρ, since the damage model reads them. JohnsonCookDamage's thermal term is silently inactive unless paired with SteinbergGuinan strength. The default damage strain (PseudoPlasticStrain) ignores hydrostatic tension; StrainHistory and MeloshRyanAsphaugStrain count free thermal expansion as tensile strain. `Physics::appendBoundary` is not virtual, so a Python package that delegates to a C++ one must copy its boundaries (in parallel the distributed boundary) to the delegate, or the delegate fills no ghost values (a 2-process run drifted by 1e-11 in 7 steps). `controller.step()` forces a global sum, a print and garbage collection after every step. | `MaterialPropertiesLib.py` line 170; `GruneisenEquationOfState.cc` lines 262–305 and `pressureAndDerivs`; `JohnsonCookFailureStrainPolicy.cc` line 106; `TensorStrainPolicy.cc` lines 102–140; `Physics/Physics.hh` line 98; `spheral_frag/m0/bench.py` (commit 90b38d5) and `subclass_check.py` (commit 091c2bc) docstrings |
 | Particle placement | A lattice clipped to a closed surface (`PolyhedralSurfaceRejecter`, `fillFacetedVolume2`), or a centroidally relaxed fill of an arbitrary closed surface (`MedialGenerator3d(n, rho, boundary=FacetedVolume, …)`). Surface particles by `detectSurface` or `VoronoiCells.surfacePoint`. | `src/NodeGenerators/`; `src/CRKSPH/detectSurface.hh` |
 | Time stepping | Explicit integrators (CheapSynchronousRK2 and others), Courant number 0.25 by default. Implicit CrankNicolson and BackwardEuler exist but are exercised only by one-dimensional tests. | `GenericHydro::dtImplicit`; test scripts |
-| Cost (not yet measured) | 0.1–0.5 ms of processor time per particle per step, bracketed by PR #491's upper bound of 0.46–0.8 ms, which includes start-up. Hence about 2.5–17 ms of simulated time per day for 50,000 particles on the 8-core M3, and about 2.5–18 ms per day for 500,000 particles on 256 cores. The largest published runs: 3.9 million particles on 1,680 processors for 59 days reached 145 ms; each 3D airburst run used over 10⁶ processor-hours. | research of 2026-09-30; Santistevan et al. 2026; Stokes et al. 2025 |
-| Explicit step in AA7075 | Longitudinal sound speed about 6.1 km/s (Young's modulus 71.7 GPa, Poisson's ratio 0.33, density 2,813 kg/m³): a step of about 0.09–0.12 µs at 2.2 mm spacing, 0.04–0.06 µs at 1 mm and about 15 ns at 0.25 mm. | research; this design |
+| Cost (measured on the laptop; cluster not yet measured) | Measured at `116c71f` on the Mac Studio (Apple M5 Max, 18 cores, 64 GB; Docker Desktop's Linux VM with 18 CPUs and about 47 GB), native arm64 with no Rosetta (the cluster will be x86-64): SolidSPH with SteinbergGuinan strength on a Murnaghan equation of state, the 100 mm sphere, 100 timed steps after 10 warm-up steps, start-up excluded. **3D: 3.2–4.4 × 10⁻⁵ processor-seconds per particle per step** (19,000–394,000 particles on 18 processes; median step 0.047, 0.10, 0.30 and 0.71 s at 3.0, 2.2, 1.5 and 1.1 mm, damage off). **Axisymmetric: 2.7–9.3 × 10⁻⁶** (800–52,000 particles; 2.5 ms at 2.2 mm on 1 process, 3.4 ms at 1.1 mm on 6, 6.7 ms at 0.55 mm and 19 ms at 0.275 mm on 18). `ProbabilisticDamageModel` adds 5–10 % in 3D and 12–25 % in axisymmetric runs on an intact body (no flaw activated; a breaking body is unmeasured). Parallel efficiency on 18 processes: 0.51 in 3D at 49,000 particles, 0.29–0.31 axisymmetric at 13,000. Peak memory: a fixed 250–300 MiB per process plus 7–11 KiB per particle (8.9 GB for 394,000 particles on 18). Hence about 77 ms of simulated time per day for 50,000 particles in 3D at real stiffness (damage on), 2–16 times cheaper per particle than the 0.1–0.5 ms first estimated. **The Python material classes** (all three together, the Extensibility row) add 19.7 % to a 47.5 ms 3D step (3.0 mm, about 1,080 particles per process) and 79.6 % to a 3.45 ms axisymmetric step (1.1 mm, about 180 per process); separately 5.0, 13.2 and 3.5 % (3D) and 18.7, 41.1 and 33.9 % (axisymmetric) for the equation of state, strength and damage; a repeat of the built-in run came out 2.3 and 2.0 % slower, the noise floor. The overhead is mostly per call (Field transfers on about 30 virtual calls a step), so it is a large share of a small step. Cluster (estimate, from the first estimate of 0.1–0.5 ms): about 2.5–18 ms per day for 500,000 particles on 256 cores. The largest published runs: 3.9 million particles on 1,680 processors for 59 days reached 145 ms; each 3D airburst run used over 10⁶ processor-hours. | `data/spheral/m0_benchmark.csv` and `analysis/spheral_m0_benchmark.py`, commit 6b898d4; `spheral_output/m0/subclass/summary.json`, commit 091c2bc; research of 2026-09-30; Santistevan et al. 2026; Stokes et al. 2025 |
+| Explicit step in AA7075 | Longitudinal sound speed about 6.1 km/s (Young's modulus 71.7 GPa, Poisson's ratio 0.33, density 2,813 kg/m³; 6,170 m/s for the benchmark's bulk modulus of 70.3 GPa and shear modulus of 27.6 GPa). **Spheral's own step, measured** (its time-step vote; Courant number 0.25, WendlandC4 kernel, 2.01 smoothing lengths per spacing, CheapSynchronousRK2): dt = 4.54 × 10⁻⁵ s/m × Δx in 3D and 4.43 × 10⁻⁵ s/m × Δx in axisymmetric runs, so sound travels 0.28 spacings per step: 0.136 µs at 3.0 mm, 0.100 µs at 2.2 mm (3D; 0.097 axisymmetric), 0.050 µs at 1.1 mm, 0.024 µs at 0.55 mm and 0.012 µs at 0.275 mm; about 11 ns at 0.25 mm. The first estimate (0.09–0.12 µs at 2.2 mm, 0.04–0.06 µs at 1 mm, about 15 ns at 0.25 mm) held. | research; `data/spheral/m0_benchmark.csv` (`dt_median_s`), commit 6b898d4 |
 | Softening precedent | Korneyeva et al. (2026, Icarus 449, 116964) modelled nylon spheres in a Mach 4 tunnel with a Murnaghan equation of state (exponent 1), bulk modulus 100 MPa, Poisson's ratio 0.2 and the real density 1,120 kg/m³, to keep the spheres quasi-rigid without the time step being set by their stiffness. | paper text |
 | Flight loads (100 mm, Step 2 physics run) | Dynamic pressure peaks at 16.6 kPa at 152.5 s (41.0 km); deceleration peaks at 8.2 g. Flight-path angle −2.0° at 80 s, −7.9° at 160 s, −26.5° at 200 s, −89.4° at 300 s. | `reentry_model_output/verification_thermal/d100__physics.csv` |
 | Material (`AA7075_scheil`) | f_l = ((933 − T)/25)^(−1/0.6) (partition coefficient 0.4); liquidus 908 K; half solid at 895.1 K; 3.6 % eutectic liquid melting over 748–752 K at the 750 K solidus; latent heat 390 kJ/kg; c_p held at 1,131.6 J/(kg·K) above 850 K; conductivity 128 W/(m·K) at 850 K; solid 2,813 kg/m³; liquid 2,400 kg/m³, 1.3 mPa·s, 0.80 N/m. | sub-plan 02, amendments of 2026-09-27 and 2026-09-28; Step 4 plan §4 and material values |
@@ -171,23 +173,81 @@ spheral_output/               git-ignored outputs
 
 ## 5. Installation, environments and the benchmark (milestone M0)
 
+M0's laptop half was done between 2026-10-05 and 2026-10-07 (plan `2026-10-05-spheral-m0.md`); its cluster half is
+deferred (Asha, 2026-10-05) until the cluster is known (§16, item 6).
+
 - **Version.** The development branch at or after 28 September 2026, for the stress-rotation fix and damage in
-  axisymmetric runs. M0 checks that `src/SPH/SolidSPH.cc` carries the corrected rotation term.
-- **Laptop.** A container runtime (Docker Desktop, OrbStack or Colima, each able to run x86-64 images through Apple's
-  Rosetta translation), installed with Asha's go-ahead, running LLNL's image pinned by digest. Fallback if translation is
-  too slow: an arm64 Ubuntu 24.04 virtual machine building Spheral from source (untested upstream; about 3–4 hours).
-- **Cluster.** Apptainer running the same image (identical environment, simplest for one node), or a source build with
-  LLNL's third-party-library manager for runs across several nodes (supported on Rocky and Red Hat Enterprise Linux 8).
+  axisymmetric runs. M0 checks that `src/SPH/SolidSPH.cc` carries the corrected rotation term. *Done:* pinned at
+  `116c71f`, which carries it, and checked numerically (§2, Spheral version).
+- **Laptop.** *Done as a native arm64 source build* (Asha, 2026-10-05), because LLNL's x86-64 image cannot run under
+  Rosetta (§2, Platforms): `spheral_frag/container/` holds the `Dockerfile` (LLNL's recipe at `116c71f`, cloned by full
+  SHA), `build.sh`, `pin.json` (commit, image digest, toolchain, build times) and `spack-find.txt`, and the launcher
+  `spheral`, which runs a script in the image on one rank or under `mpirun` (root allowed, 8 GB shared memory, one
+  OpenMP thread per rank) and exits 2 when Docker or the image is absent; the `spheral` pytest marker skips on that
+  probe. Built in 1 h 51 min, under the 3–4 hours estimated. The Rosetta container and the virtual-machine fallback
+  are not needed.
+- **Cluster** (deferred). Apptainer running LLNL's image (identical environment, simplest for one node) only on nodes
+  with AVX-512, which that image requires (§2, Platforms); otherwise, or for runs across several nodes, a source build
+  with LLNL's third-party-library manager (supported on Rocky and Red Hat Enterprise Linux 8), which the arm64 build
+  shows to work from the same recipe.
 - **Smoke tests.** LLNL's regression examples `TaylorImpact.py` and `TensileRod-1d.py` reproduce their regression
-  results.
+  results. *Done on the laptop:* `TensileRod-1d` (the ATS lines t10–t13 and t20–t23: serial with `--checkRef`, 4
+  domains, restarts from cycle 500) passes, every output file of the 4-domain and restarted runs is byte-identical to the
+  serial run, and the largest relative difference from LLNL's reference files is 8.8e-6 (`GradyKippTensorDamageOwen`)
+  and 1.2e-5 (`ProbabilisticDamageModel`), within the comparison's 1e-4; `TaylorImpact` (SPH, 100 steps), which has no
+  stored reference, runs to completion in 2D and axisymmetric form on 1 and 8 processes and in 3D on 8 (commit
+  d61b194).
 - **Benchmark.** On both machines: processor time per particle per step for SolidSPH with strength, with and without
   damage, in 3D and axisymmetric form, at two or three particle counts; memory per particle; scaling with the number of
-  processes. These measurements replace §2's estimates everywhere in this design.
+  processes. These measurements replace §2's estimates everywhere in this design. *Done on the laptop:* 36 runs at four
+  spacings in each form and two scaling series (3D at 2.2 mm and axisymmetric at 0.55 mm on 1–18 processes),
+  `data/spheral/m0_benchmark.csv`; results in §2 (Cost, Explicit step).
 - **Python subclasses.** A minimal Python subclass of the equation-of-state, strength and damage classes, set to mimic
-  a built-in class, must give the built-in's results; its added cost per step is measured.
+  a built-in class, must give the built-in's results; its added cost per step is measured. *Done on the laptop:*
+  bitwise identical; the cost in §2 (Extensibility, Cost).
 - **Decision gate.** If a 3D replay at 50,000 particles would take more than about a week on the laptop, the laptop
   runs only axisymmetric replays and short 3D windows. If the subclasses fail or add more than about a quarter of a
-  step, the material model is written in C++ in a source build.
+  step, the material model is written in C++ in a source build. The replay is costed over the hot phase only (Asha,
+  2026-10-05).
+
+**Gate outcome (2026-10-07): the first part passes; the second is split, and its axisymmetric half is open for
+Asha's decision (§16, item 9).** Reproduced by `analysis/spheral_m0_benchmark.py --gate` from the committed table.
+
+- *Hot phase.* Melt onset to the end of spraying on the 100 mm physics flight: 25.5–225.0 s, 199.5 s, 399 intervals of
+  0.5 s. No run directory of that flight exists (Step 3 is not yet in `reentry_model`), so both ends come from the Step 3
+  shared context's facts (`melt-spraying-subplans/00-shared-context.md`): 25.5 s is the start of its window "while the
+  equator is intact", which on the 50 mm flight begins at that flight's melt onset (174.5 s, sub-plan 02); 225.0 s is
+  the end of spraying in the seeded whole flight to the ground at the default step without the deep runoff, which lands
+  at 582.5 s. The Scheil material melts slightly earlier (2.5 s on the 50 mm flight).
+- *Steps.* §9.1's mass scaling at Spheral's measured step: D / (c_l dt) steps per sound crossing of the 100 mm
+  diameter, at the cold c_l of 6,170 m/s (an upper bound: the body shrinks and softens), times 10 crossings per
+  interval.
+- *Wall time* = steps × the measured median step (damage on), and the same with the measured Python overhead of that
+  form.
+
+| Form, spacing | Particles, processes | Median step | Steps per 0.5 s | Steps over the hot phase | Wall time | With the Python classes |
+|---|---|---|---|---|---|---|
+| 3D, 3.0 mm | 19,381 on 18 | 49.8 ms | 1,190 | 475,000 | 6.6 h | 7.9 h |
+| **3D, 2.2 mm** | **49,173 on 18** | **113 ms** | **1,620** | **647,000** | **20.3 h** | **24.3 h** |
+| 3D, 1.5 mm | 155,331 on 18 | 318 ms | 2,380 | 950,000 | 84 h (3.5 days) | 101 h |
+| 3D, 1.1 mm | 393,719 on 18 | 760 ms | 3,250 | 1.29 million | 274 h (11.4 days) | 328 h |
+| Axisymmetric, 2.2 mm | 813 on 1 | 3.0 ms | 1,660 | 663,000 | 0.6 h | 1.0 h |
+| Axisymmetric, 1.1 mm | 3,243 on 6 (on 18) | 4.2 ms (3.45 ms) | 3,330 | 1.33 million | 1.6 h (1.3 h) | 2.8 h (2.3 h, measured) |
+| Axisymmetric, 0.55 mm | 12,977 on 18 | 7.6 ms | 6,650 | 2.65 million | 5.6 h | 10.1 h |
+| Axisymmetric, 0.275 mm | 51,932 on 18 | 21 ms | 13,300 | 5.31 million | 32 h | 57 h |
+
+"With the Python classes" multiplies by the fraction measured for that form, +19.7 % in 3D (at 3.0 mm) and +79.6 %
+axisymmetric (at 1.1 mm, the bracketed entries: 3.45 ms built-in against 6.20 ms in Python), both on 18 processes; at
+other spacings and process counts the fraction is not measured.
+
+- *First part: passes.* The 3D replay at 50,000 particles takes 20 hours over the hot phase (24 with the Python
+  classes), a seventh of a week; the whole flight to the ground at the same rate would take 59 hours. **The laptop is
+  not restricted to axisymmetric replays and short 3D windows**: a 3D replay at 2.2 mm fits in a day. 3D at 1.1 mm
+  (11–14 days) and anything finer stay on the cluster.
+- *Second part: split.* The subclasses do not fail (bitwise identical). In 3D they add 19.7 %, within the quarter of a
+  step. In the axisymmetric form on 18 processes they add 79.6 %, over it. Read literally, the gate sends the material
+  model to C++ for axisymmetric runs; in absolute terms the axisymmetric replay at 1.1 mm takes 2.3 hours in Python
+  against 1.3 in C++. The choice is Asha's (§16, item 9).
 
 ## 6. Inputs and the particle body
 
@@ -334,7 +394,10 @@ coherent core intact, and uses the viscous rows for slurry and liquid.
 
 Python subclasses of Spheral's equation-of-state, strength and damage classes, working on whole arrays with NumPy. M0
 proves the mechanism; if it fails or costs more than about a quarter of a step, the classes are written in C++ in a
-source build.
+source build. *M0 (2026-10-07):* the mechanism works, bitwise; 3D pays 19.7 %, the axisymmetric form on 18 processes
+79.6 % (§2, Extensibility and Cost); whether the axisymmetric runs keep Python is open (§16, item 9). The source build
+exists already (§5). The tearing law will probably also need Python update policies (flaw activation and strain), not
+yet tried.
 
 ## 9. The replay, the windows and the hand-over between them
 
@@ -348,7 +411,11 @@ source build.
   the body a set number of times per interval: default 10, bracket 5 and 20, fixed by the heated-sphere check (§12).
   Consistent rescalings: the energy per kilogram and the free density in the pressure law; the deceleration follows
   automatically from the scaled masses. With 10 crossings the 100 mm sphere needs a density factor of about ten million
-  and about 1,200 steps per 0.5 s interval: about 240,000 steps per 100 s of the hot phase.
+  (9.5 million: sound crosses the 100 mm diameter in 16.2 µs at 6,170 m/s, and must take 0.05 s). Sound speed and step
+  scale alike, so the steps per crossing are Spheral's unscaled ones, D / (c_l dt): at the measured step (§2) 119 at
+  3.0 mm and 162 at 2.2 mm. Hence about 1,620 steps per 0.5 s interval at 2.2 mm, about 325,000 per 100 s of the hot
+  phase, scaling as 1/Δx (3,330 per interval at 1.1 mm, 6,650 at 0.55 mm). The first estimate here, 1,200 per
+  interval and 240,000 per 100 s, is what the measured step gives at 3.0 mm.
 - **Damping.** Light damping (a labelled device) removes the ringing each increment excites; the heated-sphere check
   shows it leaves the balanced state unchanged.
 - **Slow enough.** Kinetic energy is kept below 5 % of the stored elastic energy; otherwise the interval is repeated
@@ -356,8 +423,11 @@ source build.
 - **Material leaving.** At each frame boundary, particles whose centres the finite-element surface has passed are
   removed to the film account with their mass and enthalpy (§10).
 - **Restarts** at every frame boundary: any window can branch from any frame, and an interrupted replay resumes.
-- **Cost (estimate).** Axisymmetric: about an hour at 2.2 mm, a few hours at 1.1 mm, about a day at 0.55 mm. 3D: days
-  on the laptop at 2.2 mm, so 3D replays belong on the cluster.
+- **Cost (measured step, 2026-10-07; §5's gate table).** Over the 100 mm hot phase (199.5 s), damage on, built-in
+  material classes, and in brackets with the Python classes at their measured overhead: axisymmetric 0.6 h at 2.2 mm (1.0
+  h), 1.3 h at 1.1 mm (2.3 h), 5.6 h at 0.55 mm (10 h); 3D on the laptop 20 h at 2.2 mm (24 h), 3.5 days at 1.5 mm and 11
+  days at 1.1 mm. 3D replays at 2.2 mm therefore fit on the laptop; finer 3D replays belong on the cluster. A breaking
+  body's damage cost and the tearing law's own cost are not in these numbers.
 
 ```mermaid
 flowchart TD
@@ -619,9 +689,12 @@ reduction that breaks it ("the ring would need three to ten times the flight loa
 **Verdict** (`analysis/spheral_scoping.py`), per flight and route: whether it fires; the time, altitude and position of
 the first event; its fragments; the margin; the change with spacing and across the brackets; plots of the accumulated
 tearing strain against the critical strain along the flight, the bulk-slurry volume and the thinnest-neck thickness over
-time. The verdict decides M5 and M6. Cost (estimate): roughly 100–200 runs; replays take hours at 2.2 and 1.1 mm and
-about a day at 0.55 mm, soft windows minutes to hours, stiff windows about one to four hours; days to a few weeks in
-all.
+time. The verdict decides M5 and M6. Cost: roughly 100–200 runs; replays of the 100 mm hot phase take, at the measured
+step (§9.1), 0.6–1.0 h at 2.2 mm, 1.3–2.3 h at 1.1 mm and 5.6–10 h at 0.55 mm (the higher numbers with the Python
+classes); the 50 mm flight's hot phase is about a seventh as long (174.5–203.5 s, 29 s), with half the steps per interval and a
+quarter of the particles; a stiff window of 50 ms at real stiffness on 18 processes takes 1.0 h at 1.1 mm and 4.3 h at
+0.55 mm (+80 % with the Python classes); soft windows minutes to hours (estimate). Days to a few weeks in all
+(estimate), less if independent runs share the machine (axisymmetric runs use 18 processes at an efficiency of 0.3).
 
 ### 13.3 Production fragment table (M5) and feedback (M6)
 
@@ -793,10 +866,10 @@ windows fall back to whole-particle deletion (§19), with fragment masses report
 
 | Risk | Why it matters | Handling | Retired by |
 |---|---|---|---|
-| Installation on the laptop | Linux only; x86-64 container under translation at unknown speed | container first; arm64 virtual machine or the cluster alone | M0 |
-| Cost | every budget rests on one documented timing that includes start-up | measured benchmark; axisymmetric scoping; 3D on the cluster | M0 |
-| Python material classes | allowed but unpublished; CPUs only | M0 test; C++ fallback | M0 |
-| Stress rotation in the release | rotates stress the wrong way under rotation | pin develop at or after 28 September 2026; check the source | M0 |
+| Installation on the laptop | Linux only; x86-64 container under translation at unknown speed | container first; arm64 virtual machine or the cluster alone | laptop: retired by M0 (2026-10-05): LLNL's image cannot run under Rosetta (AVX-512), the native arm64 source build of `116c71f` worked unchanged in 1 h 51 min, and the regressions pass (§5). Cluster: open |
+| Cost | every budget rests on one documented timing that includes start-up | measured benchmark; axisymmetric scoping; 3D on the cluster | laptop: retired by M0 (2026-10-06): 3.2–4.4 × 10⁻⁵ processor-s per particle-step in 3D, 2.7–9.3 × 10⁻⁶ axisymmetric; a 3D replay at 2.2 mm over the hot phase in 20 h (§2; §5's gate, 2026-10-07). A breaking body's damage cost unmeasured. Cluster (x86-64): open |
+| Python material classes | allowed but unpublished; CPUs only | M0 test; C++ fallback | laptop, mechanism: retired by M0 (2026-10-07): bitwise identical to the built-ins, +19.7 % in 3D. Open: +79.6 % axisymmetric on 18 processes, over the gate (§16, item 9); Python update policies for the tearing law untried; on the cluster, exact copies depend on its compiler's fused multiply-adds |
+| Stress rotation in the release | rotates stress the wrong way under rotation | pin develop at or after 28 September 2026; check the source | retired by M0 (2026-10-05): `116c71f` carries the fix and turns stress with a rigid rotation to 0.069 % of \|S₀\| over a quarter turn (§2). Cluster: the same commit; the check is rerun on its build |
 | Mass scaling | the slow phase depends on it | heated-sphere check with and without scaling; option B | M2 |
 | Tensile instability | spurious clumping under tension could fake cracks in exactly the stress state that tears the mush | tension checks; choice of SPH or CRKSPH | M2–M3 |
 | Brittle-window resolution | 5.5–10 mm thick at the nose: 2.5–4.5 particles at 2.2 mm | axisymmetric runs at 1.1 and 0.55 mm; convergence reported | M3 |
@@ -825,6 +898,30 @@ Each needs Asha's approval before use:
 7. Step 4's ring geometry, once it exists.
 8. Shared with Step 4: ESA's measured heat capacity and heat of fusion of 7075 (Pagan 2025; Bonvoisin et al. 2022),
    which would change the material table both models use.
+9. **Python or C++ for the material classes of the axisymmetric runs** (Asha's decision; open since 2026-10-07, §5's
+   gate). Measured: the three Python classes together add 79.6 % to an axisymmetric step at 1.1 mm on 18 processes
+   (3.45 to 6.20 ms, about 180 particles per process; 2.75 ms per step), against the gate's quarter; in 3D they add
+   19.7 % (3.0 mm, 18 processes, about 1,080 per process; 9.4 ms per step), within it. The options:
+   - **(a) C++ material classes** in the existing source build (§8.5's fallback): no overhead in either form. Costs
+     development in C++ and a rebuild of the image when a law changes (the C++ library alone built in 16 min from
+     scratch; an incremental rebuild of one class and its bindings is unmeasured). It could be partial: alone, the strength
+     class adds 41 %, the damage rate 34 % and the equation of state 19 %.
+   - **(b) Axisymmetric runs on fewer processes**, where a fixed cost per call would be a smaller share of a longer step.
+     Unmeasured: the 1.1 mm run is the only axisymmetric Python measurement. Estimated on the 0.55 mm scaling series
+     (built-in steps of 42, 26, 18, 15.5, 10.6 and 7.6 ms on 1, 2, 4, 8, 12 and 18 processes), the overhead is +6, +11,
+     +15, +18, +26 and +36 % if it is a fixed 2.75 ms per step, but 145–470 % if it is a cost per particle per process
+     (15 µs per particle-step). The two measurements together suggest a mix: a line through them (two forms, so only
+     indicative) is 1.4 ms per step plus 7.4 µs per particle-step per process, under which fewer processes make the
+     share worse (+89 % on 18, +138 % on 4). Even under the fixed reading, fewer processes lengthen each run (0.55 mm
+     hot phase 15.6 h on 4 processes against 7.6 h on 18) and pay only as throughput, several independent scoping runs
+     side by side (four runs on four processes each, about 3.9 h per run; contention between runs unmeasured). One
+     subclass run at 0.55 mm on 4 processes would tell the readings apart.
+   - **(c) Accept the overhead**, since axisymmetric runs are cheap in absolute terms: the hot-phase replay takes 1.0 h at
+     2.2 mm, 2.3 h at 1.1 mm (measured pair; 1.3 h built-in) and 10 h at 0.55 mm (5.6 h built-in), and a 50 ms stiff
+     window 1.8 h at 1.1 mm (1.0 h). The scoping study (§13.2, 100–200 runs) then takes about 1.8 times the wall time it
+     would in C++.
+   Read literally, the gate of §5 points to (a); in 3D the Python classes pass it as they stand. The scoping study
+   (§13.2) is axisymmetric throughout, so the choice is needed before M2's plan.
 
 ## 17. Dependencies on other steps
 
@@ -903,3 +1000,16 @@ Each needs Asha's approval before use:
   spray mass leaves Spheral's particles continuously rather than by whole-particle deletion, with integrated density,
   mass-over-density volumes if CRKSPH is chosen, a deletion floor defaulting to a quarter of a particle's starting mass,
   and removed mass carrying the sprayed liquid's enthalpy.
+- 2026-10-05 (M0 plan): LLNL's prebuilt image cannot run on Apple Silicon (built for `x86_64_v4` with AVX-512, which
+  Rosetta lacks), so the laptop builds Spheral natively for arm64 from source, in an `ubuntu:24.04` container under
+  Docker Desktop with LLNL's own recipe, pinned at `116c71f` (the merge of the Jaumann-rate fix, PR #520); the cluster
+  half of M0 deferred; the numerical rotation check kept; the benchmark times SteinbergGuinan strength; the decision
+  gate applied to the hot phase only; one commit per task on `main`. On 2026-10-06 the benchmark's equation of state
+  became Murnaghan instead of Grüneisen, whose sound speed at `116c71f` is 53 times too high in SI (§2, Traps). Done:
+  the build (1 h 51 min, no arm64 fixes), the regressions, the rotation check, the benchmark and the Python subclasses
+  (§§2, 5).
+- 2026-10-07 (M0 gate, §5): first part passed — a 3D replay at 50,000 particles over the 100 mm hot phase takes 20 h
+  on the laptop (24 h with the Python classes), so the laptop is not restricted to axisymmetric replays; second part
+  split — the Python classes are bitwise exact, add 19.7 % in 3D (within the quarter) and 79.6 % in axisymmetric runs
+  on 18 processes (over it). Whether axisymmetric runs move to C++, run on fewer processes or accept the overhead is
+  pending Asha's decision (§16, item 9).
