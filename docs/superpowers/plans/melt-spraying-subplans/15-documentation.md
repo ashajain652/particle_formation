@@ -1,6 +1,6 @@
 # Sub-plan: Task 15 — Documentation: README, assumptions, spec amendments, facts note
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the film's flux and the step study in the README, assumptions and spec** (the section after the seed's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -301,6 +301,100 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
    because those runs were unseeded; since amendment 29 two runs of one build agree bit for bit —". The 3.1e-8
    measurement stands as what was measured.
 7. In amendment 27, after "disappears with numpy's seed fixed" insert ", as every run fixes it since amendment 29".
+
+## Amendment of 2026-10-05 (runoff flux) — the film's flux and the step study in the README, assumptions and spec
+
+> Part of the runoff-flux amendment (sub-plan 06's amendment of this date holds the change; facts 69–77 in
+> `00-shared-context.md`). These changes stack on the blocks of 2026-09-27, 2026-10-02, 2026-10-03 and 2026-10-05
+> (seeding) above, which still apply except where a change below replaces their wording. The blocks are prose, so re-run
+> `prototype/plan3/audit_docs.py`'s checks against them after these edits: no flag and no history column is added, so
+> the flag and column checks are unaffected; and add to its `SUPERSEDED` list the clause of the 2026-10-03 change 7 that
+> change 4 below retracts, "the cascade has not yet been measured at 0.25 and 0.125 s" (the cascade has now been
+> measured at fine steps, in the switched-step series).
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Findings.* Append the bullet: "The film's runoff flux on a thick patch, and the time step (2026-10-05). A patch is
+   on Girin's thick branch when the liquid beneath it — film, molten material and deep liquid together — is deeper than
+   his conjugate depth δ_m, however little of that liquid is film. The film's runoff flux on such a patch was the flux
+   of the whole conjugate layer, which does not vanish with the film, so a nearly dry thick patch was emptied at a rate
+   that grew without bound as the film vanished; with the macro step shortened to 0.0125 s once the flight enters the
+   continuum regime, that broke the runoff's linear solve and the run stopped with a NaN film on every patch at 61.6 s.
+   The film now carries only its own part of the layer's flux — the shear-driven velocity is linear within the layer,
+   from the surface velocity at the top to zero at δ_m, and the film is its top — which bounds the rate by the surface
+   velocity. It changes nothing on the 50 mm flight, which never has Girin's closure (bit for bit), and on the 100 mm
+   flight at the default step it moves the masses by about the run-to-run scatter and the droplet count within it, and
+   lowers the front-surface Rayleigh–Taylor release by 16 %. A switched-step series — 0.5 s until the flight enters the
+   continuum regime at 49.5 s, then 0.05, 0.025, 0.0125 or 0.00625 s to 120 s — answers whether the melt runs off before
+   it sprays: hardly; at most about 7 % of the film formed inside any latitude cap leaves it, the melt is sprayed within
+   about a degree of latitude of where it entered the film, and the equatorial ring sprays 8–9 % of the mass. It also
+   answers whether shortening the step makes the droplet population converge: it does not. The sprayed mass settles at
+   1.03–1.05 kg from 0.05 s down, within the scatter between seeds at those steps, and the median droplet radius by
+   number at about 70 µm; but from 0.05 to 0.00625 s the droplet count still rises from 88 to 141 million, the median
+   radius by mass falls from 159 to 97 µm and the share of the mass sprayed by Girin's thick branch from 47 % to 21 %,
+   the last halving still moving them by 12 %, 8 % and 4.6 points, far beyond the scatter between seeds (under 1 %, 0.16
+   points). Each branch makes the same droplets at every step — about 180 µm on the thick branch and 70 µm on the thin —
+   so what the step changes is which branch takes the mass, through the thick/thin test's molten depth, which counts
+   whole elements and is read at the end of the conduction step. The droplet population is not to be quoted except with
+   the step it was computed at (plan facts 69–77)."
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+2. In the bullet "Film and runoff", after "lubrication velocity and flux with a thin (b ≤ δ_m) and a thick (b > δ_m)
+   branch;" insert: "the branch is decided on the liquid layer beneath the wall (the film, the contiguous molten
+   material and the deep liquid), and on a thick patch whose film is thinner than δ_m the film carries only its own part
+   of the conjugate layer's shear-driven flux, V_s b (1 − b/(2 δ_m)) — the shear-driven velocity being linear within the
+   layer, V_s at the surface and zero at δ_m, and the film its top b — so that its runoff rate stays below V_s ℓ/A
+   however thin it is (2026-10-05; before, a thin film there moved like a whole conjugate layer and a nearly dry patch's
+   rate grew without bound);".
+3. In the bullet "Runoff and stripping happen at once, and that is not double counting", after the sentence the
+   2026-10-02 change 5 put there ("Since 2026-10-02 the runoff carries both depth limits: ...") insert: "Where the film
+   is thinner than the conjugate depth it carries only its own part of that layer's shear-driven flux (2026-10-05); the
+   rest of the layer is liquid held in its elements, which nothing moves, so the column's flux there is fact 29's less
+   τ (δ_m − b)²/(2 μ_l)."
+4. Replace the bullet "The droplet population depends on the macro step (measured 2026-10-02 and 2026-10-03)" of the
+   2026-10-03 change 7 with:
+   "- **The droplet population and the macro step (measured 2026-10-02, 2026-10-03 and 2026-10-05).** Measured on the
+   100 mm physics flight to 120 s. With a uniform step and without the molten cascade (2026-10-02), from 0.5 to 0.25 to
+   0.125 s the share of wet windward patches on Girin's thick branch fell from 12.4 % to 8.0 % to 2.6 %, the droplet
+   count rose from 1.72e7 to 2.82e7 to 5.85e7 and the median radius by number fell from 180 to 105 to 76 µm; the molten
+   cascade (2026-10-03) removed the backlog of molten elements first blamed for this, but not the dependence. With the
+   step shortened only once the flight enters the continuum regime (2026-10-05: 0.5 s until 49.5 s, then 0.05, 0.025,
+   0.0125 or 0.00625 s), the sprayed mass settles at 1.03–1.05 kg, within the scatter between seeds, and the median
+   radius by number at about 70 µm, while over 49.5–120 s the droplet count rises from 88 to 141 million, the median
+   radius by mass falls from 159 to 97 µm and the thick branch's share of the sprayed mass from 47 % to 21 %, the last
+   halving still moving them by 12 %, 8 % and 4.6 points against a scatter between seeds below 1 % and 0.16 points. Each
+   branch makes the same droplets at every step (median radius by number about 180 µm on the thick branch and 70 µm on
+   the thin); the step decides the split, through the branch test's molten depth, which counts whole elements and is
+   read at the end of the conduction step. Status: not converged at 0.00625 s; extrapolated, it would need a step
+   between about 0.0008 and 0.00005 s, which is not affordable. The droplet count, the branch split, the median radius
+   by mass and the front-surface Rayleigh–Taylor release are not to be quoted except with their step, and the
+   re-solidified mass not at all (it counts freeze-and-re-melt cycles), until the branch test reads a liquid depth by
+   mass or decides the regime on rates (plan facts 58, 61 and 69–77)."
+
+**Spec amendments block (`## 18. Amendments`).** Append:
+
+5. "30. §8 (decided 2026-10-05) — **the film's runoff flux on a thick patch scales with the film present.** On a
+   thick-branch patch (the liquid layer beneath the wall deeper than δ_m) the film's shear-driven flux is
+   V_s b (1 − b/(2 δ_m)) while the film is thinner than δ_m and V_s δ_m/2 once it fills the layer, the integral of the
+   linear conjugate-layer profile over the film's own depth; the pressure and deceleration part, the surface velocity,
+   the branch test and the thin branch are unchanged. The whole layer's flux handed to a vanishing film had made the
+   runoff's emptying rate grow like 1/b — to 4.4·10¹⁹⁷ per second — and broken the transport's linear solve at a
+   0.0125 s macro step; it also overstated the runoff of thin films on thick patches. The film's flux plus the deep
+   runoff's is now amendment 22's column flux where the film fills the conjugate layer and short of it by the shear flux
+   of the part of that layer held in the elements where it does not. Measured: the 50 mm flight unchanged bit for bit;
+   the 100 mm flight to 120 s at the default step bit-identical until its first step under Girin's closure (49.5 s),
+   then moving by about the run-to-run scatter of amendment 29 in sprayed mass (−0.14 % against 0.13 %) and mass at
+   120 s (+0.37 % against 0.33 %), within it in droplet count and median radius by number, and lowering the
+   front-surface Rayleigh–Taylor release by 16 %; the two thermal backends agree to 1e-9 in mass with deep liquid
+   present (1.3e-7 before: the runaway rates, not the deep transport, had carried their last-bit differences). A
+   switched-step series (0.5 s to the continuum onset at 49.5 s, then 0.05 to 0.00625 s) shows the runoff minor at every
+   step and the sprayed mass settled within its scatter, but the droplet population not converged at 0.00625 s (droplet
+   count +12 % and thick-branch share −4.6 points at the last halving), because the thick/thin test's molten depth is
+   counted in whole elements; each branch's droplets are the same at every step (plan facts 69–77)."
+6. In amendment 28, after "A liquid depth by mass is the proposed next amendment" insert " (the switched-step series of
+   amendment 30 has since measured the population at fine steps with the cascade on: it does not converge at
+   0.00625 s)".
 
 ---
 

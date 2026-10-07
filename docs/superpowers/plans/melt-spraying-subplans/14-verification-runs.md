@@ -1,6 +1,6 @@
 # Sub-plan: Task 14 — Verification and sensitivity drivers, the reference-tier test, the runs
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -270,6 +270,51 @@
 6. **The `fenicsx` row is seed-independent.** The FEniCSx backend draws nothing from numpy's generator and two of its
    runs with different seeds are identical (fact 66), so its difference from `base` contains `base`'s own scatter; read
    it against the `seed1` row, not against zero.
+
+## Amendment of 2026-10-05 (runoff flux) — the verification and sensitivity runs, and the switched-step study
+
+> Part of the runoff-flux amendment (sub-plan 06's amendment of this date holds the change; facts 69–77 in
+> `00-shared-context.md`). No driver or sensitivity code changes: the change has no flag, so there is no new row.
+
+1. **The bookkeeping devices are unaffected, by construction.** `--removal instant` evaluates no surface flow and so
+   moves no film, and the bookkeeping device also runs `--runoff off`; their six figures and thresholds stand as this
+   sub-plan's amendment of 2026-09-27 left them. The **resolved mode** (SESAM-equivalent heating with Girin's removal,
+   D₀ and R₀) does transport a film, and where the flow branch is the shock layer it has a conjugate depth, so its two
+   rows can move: re-measure them (not run here; the comparison needs the melting references of Task 11).
+2. **The 50 mm physics flight is unaffected, measured rather than assumed.** It never has Girin's closure, so no patch
+   is thick and the change never acts: the whole flight is bit-identical with and without it (fact 73).
+3. **The 100 mm physics flight moves from 49.5 s, its first step under Girin's closure** (fact 73): at the default step,
+   to 120 s, its masses by about the scatter between seeds of fact 65 (sprayed −0.14 % against 0.13 %, mass at 120 s
+   +0.37 % against 0.33 %), its droplet count and median radius by number within it, and its front-surface
+   Rayleigh–Taylor release (−16 %) and re-solidified mass (+3.7 %) outside it. Its row in the verification table and
+   every sensitivity row of the 100 mm case are to be re-measured with the change.
+4. **The switched-step study** (facts 69, 74 and 75), the time-step study of items 5 of the amendments of 2026-10-02 and
+   2026-10-03 continued in the continuum regime, where the step matters. It was made with a measurement harness outside
+   the package (`dtswitch.py`, which shortens the macro step once the body Knudsen number falls below the model's own
+   continuum boundary of 0.01, and `compare.py`, which reports only measures that do not depend on the step); neither
+   belongs in `analysis/`, because the switch is not a model option (fact 77 (b) asks whether it should become one).
+   Measured with the change: the masses settle within their scatter from 0.05 s down (sprayed mass 1.050, 1.052, 1.032
+   and 1.035 kg at 0.05, 0.025, 0.0125 and 0.00625 s, against 1.0585 kg at the default step); runoff stays minor at
+   every step (at most 2.8–7.2 % of the film formed inside a latitude cap leaves it, and the equatorial ring sprays
+   7.9–9.2 % of the mass); and the droplet population does not converge even at 0.00625 s (87.7, 106.6, 126.5 and 141.2
+   million droplets over the continuum window; the thick branch's share of the sprayed mass 47.0, 35.3, 25.1 and
+   20.5 %), because the step decides which branch takes the mass while each branch's droplets stay the same (fact 75).
+   The 0.0125 s flight that crashed now runs to 120 s with its emptying rates bounded (fact 74); the runs, the probe and
+   their cost are in fact 76. Repeat the series once fact 77 (a)'s branch-test decision is taken.
+5. **What remains of the earlier time-step items.** The uniform-step runs that items 5 of 2026-10-02 and 2026-10-03
+   asked for (the cascade at 0.25 and 0.125 s throughout, the whole 100 mm flight and the 50 mm flight with the cascade,
+   at a smaller step) were not made; the switched-step series covers the continuum window of the 100 mm flight, where
+   the step changes the answer, and keeps the default step before it, where the flight is in the merged branch and only
+   the thin-film mode acts (the 87 g sprayed before 49.5 s, fact 69, whose own step dependence was not measured). Repeat
+   the series on the prototype as Task 14 runs it (sub-plan 02's materials, Task 16's derived surface, fact 44's
+   `PHI_DEATH`) once the time-step decision of fact 77 is taken.
+6. **Quote every difference against the scatter at its own step.** Fact 65's scatter was measured at the default step;
+   at fine steps it is not the same, so one more seed was run at 0.05 s and at 0.0125 s (seeds 12345 and 1, fact 75). At
+   0.05 s the two runs differ by 0.008 % in sprayed mass, 0.72 % in droplet count, 0.37 % and 0.25 % in the median
+   radius by number and by mass, and 17 % in the front-surface Rayleigh–Taylor release; at 0.0125 s by 1.45 % in sprayed
+   mass and 3.5 % in the mass at 120 s — the shape feedback amplifies the round-off more at the finer step — but by only
+   0.43 % in droplet count, 0.96 % and 0.47 % in the medians and 0.16 points in thick share. Run a seed pair at whatever
+   step a result is quoted at; at a fine step the masses need it more than the droplet population does.
 
 ---
 

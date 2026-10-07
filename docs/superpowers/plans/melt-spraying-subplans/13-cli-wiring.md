@@ -1,6 +1,6 @@
 # Sub-plan: Task 13 — Command line
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -566,6 +566,31 @@ run's output; the test looks for it by the run name. The CLI module: 34 passed a
 missing melting reference (Task 11), against 29 and the same failure before. Whole unit tier: 234 passed, 1 skipped, and
 the five known failures and errors from the missing melting SESAM references, against 229, 1 and the same five, in 179 s
 either way.
+
+## Amendment of 2026-10-05 (runoff flux) — no flag, and the exit code of a model failure (no code change)
+
+> Part of the runoff-flux amendment (sub-plan 06's amendment of this date holds the change; facts 69–77 in
+> `00-shared-context.md`). Nothing in `cli.py` changes.
+
+**No flag.** The change to the film's flux on thick patches has no `--` switch, unlike the deep runoff and the molten
+cascade: the old flux is a defect — it crashed the transport at fine steps and moved a thin film like a whole conjugate
+layer — not a modelling alternative to keep selectable, and every earlier run remains reproducible from the amendments
+that made it. Run names, the run JSON's settings and the printed summary are therefore unchanged, which means that a run
+made before the change and one made after it carry the same name and must not share an output directory if both are to
+be kept (fact 35's rule — fresh output directories — covers it).
+
+**Found, not changed: a model failure is reported as bad arguments.** The crashed run of fact 70 ended with "ERROR: film
+mass must be one finite non-negative value per node" and exit code 2. That message is the thermal solver's input check
+in `set_film_mass` (both backends raise `ValueError` for a non-finite or negative nodal film mass), and `cli.main` maps
+every `ValueError` to exit 2, the code the command-line interface reserves for bad arguments or a missing optional
+library (`CLAUDE.md`: "0 ok, 1 a model/integration failure ..., 2 bad arguments or a missing optional library"); a NaN
+produced by the model mid-flight is a model failure, exit 1. The fix of this amendment removes the cause of that
+particular NaN, but the mapping would report any future one the same way. Options for Asha (fact 77): (1) leave it; (2)
+raise a dedicated exception (or `RuntimeError`, which `cli.main` already maps to exit 1) from the solvers' input checks
+when they are called by the melt step rather than by argument handling; (3) check the film for finite values at the end
+of `MeltingBody.melt_step` and raise `RuntimeError` there, naming the stage, which also points at the cause instead of
+at the solver that tripped over it. Recommendation: (3), with a unit test that a NaN film ends a run with exit 1, in a
+change of its own.
 
 ---
 

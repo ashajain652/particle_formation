@@ -1,6 +1,6 @@
 # Sub-plan: Task 9 — The melting body
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 4349–5703). Read `00-shared-context.md` first — this is the largest and highest-risk task in the plan and needs the most context, not the least. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 4349–5703). Read `00-shared-context.md` first — this is the largest and highest-risk task in the plan and needs the most context, not the least. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the body sees of the film's new flux** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -1358,6 +1358,184 @@ by mass, as an amendment of its own with the time-step study repeated, and until
 the default step. Then: keep the cascade on and re-measure it at the smaller steps; keep the deep runoff on, its effect
 now about half a per cent; measure again with fact 44's `PHI_DEATH = 0.50`; whether the cascade should run before the
 deep stage; and seeding.
+
+## Amendment of 2026-10-05 (runoff flux) — what the melting body sees of the film's new flux (no change to `body.py`)
+
+> Part of the runoff-flux amendment: sub-plan 06's amendment of this date holds the change to `film.lubrication`, its
+> design and the alternatives; facts 69–77 in `00-shared-context.md` carry the measurements. Measured in the same
+> throwaway copy as sub-plan 06's amendment (the amendments of 2026-10-02, 2026-10-03 and 2026-10-05 (seeding) applied
+> to `prototype/proto3/`, verified first to be reproduced byte for byte by their 20 diff blocks). The copy keeps
+> `PHI_DEATH = 0.05`, as every amendment since 2026-10-02 has: fact 44's 0.50 exists only as a plan.
+
+**No change to this task's code, and why none is needed.** The melting body calls `film.lubrication` twice in each melt
+step, both times in `_film_and_spray`. The first call is inside the film's runoff transport (`q_of_b`, with the layer
+`b_layer = bb + molten + deep` deciding the branch); that is the flux sub-plan 06 changes, and it is where the change
+acts. The second call, after the transport, uses only the surface velocity V_s (handed to the spray, whose Weber number
+reads it) and the branch flag (for `thick_branch_fraction`); neither changes. The deep stage `_deep_runoff` moves the
+deep liquid with `film.deep_flux`, which is unchanged, and its emptying rate stays bounded as the deep liquid vanishes
+(sub-plan 06's amendment shows why; fact 74 measures it in flight). One property of the existing code makes the
+amendment of 2026-10-02's column identity hold wherever deep liquid sits: the deep stage tops the film up from the deep
+account to the conjugate depth before the film moves, so a patch that carries deep liquid starts the film transport with
+b ≥ δ_m, where the film's flux is exactly what it was. The change acts only on windward patches under Girin's closure
+(the only place a conjugate depth exists) whose liquid layer is deeper than δ_m while their film is thinner, so a flight
+that never has his closure is bit-identical with and without it — measured on the whole 50 mm flight — and the 100 mm
+flight is bit-identical until its first step under his closure, at 49.5 s (fact 73).
+
+**One melting test's tolerance moves, and why that is legitimate.**
+`test_full_steps_with_the_molten_cascade_keep_the_books_exact` (this task's amendment of 2026-10-03) runs six coupled
+steps over a 6 mm molten pool and holds the mass to 1e-12 of the body. With the new flux it failed by 1.6e-12. The drift
+is the film transport's: fact 48 measured that its direct solve conserves the total only to its conditioning, and the
+deep stage was then made exact by scaling its arrivals to its departures, while the film transport was left as it was
+because correcting it would change every existing run in the last bits. This pool drives up to a quarter of a kilogram
+of film per step through pairs of patches that drain into each other, with emptying rates that, multiplied by the
+sub-step, reach about 10⁷ in both directions, and the cancellation in those pairs sets the drift. Measured over ten
+states of numpy's generator (seeds 12345 and 1 to 9), the largest drift over the six steps, as a share of the body's
+mass, is 6.8·10⁻¹³ to 2.8·10⁻¹² before the amendment (one state of ten already failing the 1e-12 check) and 9·10⁻¹⁴ to
+4.4·10⁻¹² after it (six of ten failing), the largest single film transport changing the total by 4.0·10⁻¹² kg before and
+6.4·10⁻¹² kg after it, 1.7·10⁻¹¹ and 2.6·10⁻¹¹ of the mass it moved. The check was therefore at the edge of the
+transport's round-off before the amendment and passed in the seeded unit tier by chance; it now holds the mass to 1e-11
+of the body, more than twice the largest drift measured. The same sweep on the deep-runoff test's 3 mm pool, which keeps
+its 1e-12, drifts by at most 4.8·10⁻¹⁴ before and after. Correcting the film transport's books exactly is recorded as an
+option for Asha (fact 77), not taken here, because it would move every run, the 50 mm flight included, in the last bits.
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -580,7 +580,11 @@
+     """Six coupled macro steps from 69.8 km with a pool 6 mm deep under the nose and the physics loads: the cascade acts
+     (deaths expose fully molten elements and the surface recedes through them within the step), the deep runoff and
+     the spray act with it, and the energy balance and the mass stay exact by the same measures as every other melting
+-    test; the solver carries the film and the deep liquid, and the history's two new columns report the cascade."""
++    test; the solver carries the film and the deep liquid, and the history's two new columns report the cascade. The
++    mass is exact to the film transport's round-off, which its direct solve conserves only to its conditioning (plan
++    fact 48): this 6 mm pool moves up to a quarter of a kilogram of film per step through strongly coupled patch pairs,
++    and with the runoff flux of 2026-10-05 the six steps drift by up to 4.4e-12 of the body (measured over ten states
++    of numpy's generator; up to 2.8e-12 before that amendment), so the mass is held to 1e-11 here."""
+     b = melting_body(layered_mesh)
+     sim, a = girin_state(b)
+     molten_pool(b, depth=6e-3)
+@@ -594,7 +598,7 @@
+         b.advance(sim.t, 0.5, loads, state=a)
+         passes.append(b.last_melt["cascade_passes"])
+         assert abs(b.energy_balance_residual()) < 1e-7
+-        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
++        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-11)
+         assert b.solver.film_mass.sum() == pytest.approx(b.m_f.sum() + b.m_d.sum())
+     assert b.cascade_mass > 0.0 and max(passes) >= 2 and b.cascade_capped_steps == 0
+     assert b.sprayed_mass > 0.0 and b.deep_runoff_mass > 0.0
+```
+
+**The two backends, with the change active.** A new FEniCSx test puts the cascade test's 6 mm pool at 69.8 km through
+ten steps of 0.05 s, where every film transport has thick patches carrying films thinner than δ_m, and asserts that the
+change is exercised, that the largest emptying rate stays below 10⁹ per second (it reached 3.9·10²⁵ per second in this
+setting before the change and is 2.7·10⁷ with it, set by the G b³ term of the deepest piles, not by a vanishing film)
+and that the backends agree. The change also revises the reason facts 49 and 56 gave for the backends' looser agreement
+when deep liquid is present: in the cascade test's own setting (six steps of 0.5 s) the passes are the same with and
+without the change (4, 3, 16, 4, 5, 4), and the agreement improves from 1.3·10⁻⁷ to 7.6·10⁻¹⁰ in mass, 6.3·10⁻⁷ to
+3.6·10⁻⁹ in sprayed mass, 2.4·10⁻⁷ to 1.0·10⁻¹⁰ in cascade mass, 3.7·10⁻⁶ to 6.9·10⁻¹¹ in the deep account and 0.11 K to
+2.5·10⁻⁵ K in temperature. The deep transport is unchanged, so what carried the backends' last-bit differences further
+was the film's runaway emptying rates on thick patches; the cascade test's docstring says so.
+
+```diff
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -152,7 +152,10 @@
+     generator is seeded for each backend because pyamg draws its starting vectors from it (plan fact 52). Measured on
+     2026-10-03: passes 4, 3, 16, 4, 5, 4 in both; mass 1.3e-7, sprayed 6.3e-7, cascade mass 2.4e-7, deep account 3.7e-6,
+     temperatures 0.11 K, balances 4.7e-10 and 2.4e-11 -- the stiff deep transport carries the backends' last-bit
+-    differences further (plan fact 49); with the deep runoff off they agree to 1e-10 and 4e-6 K."""
++    differences further (plan fact 49); with the deep runoff off they agree to 1e-10 and 4e-6 K. With the runoff flux
++    of 2026-10-05 the passes are the same and the backends agree to 7.6e-10 in mass, 3.6e-9 in sprayed mass, 1.0e-10 in
++    cascade mass, 6.9e-11 in the deep account and 2.5e-5 K: what carried the last-bit differences was the film's
++    runaway emptying rates on thick patches, not the deep transport (plan fact 72)."""
+     pytest.importorskip("cantera")
+     from reentry_model import body, heating, mesh
+     from test_reentry_model_coupled import MASS_100MM, simulator
+@@ -183,3 +186,60 @@
+     assert f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5) and f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
+     assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
+     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
++
++
++def test_the_thick_film_flux_matches_the_skfem_backend(coarse_sphere_mesh, monkeypatch):
++    """The runoff flux on a thick patch (amendment of 2026-10-05) in both backends: the 6 mm pool at 69.8 km of the
++    cascade test above, at ten steps of 0.05 s, where every film transport has thick patches carrying films thinner
++    than delta_m -- the case the amendment changes. Both backends give the same active set, mass, sprayed mass, runoff,
++    film, deep account and temperatures, with both energy balances exact, and the largest emptying rate of any edge
++    stays bounded: before the amendment it grew from sub-step to sub-step and reached 3.9e25 per second in this setting
++    (measured 2026-10-05); with it 2.7e7, set by the deepest piles' G b^3 / (3 mu) term, not by a vanishing film.
++    Measured: the same 7 983 active elements, mass 5.8e-10, sprayed mass 5.9e-9, runoff 7.5e-10, film 1.7e-8, deep
++    account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11."""
++    pytest.importorskip("cantera")
++    from reentry_model import body, film, heating, mesh
++    from test_reentry_model_coupled import MASS_100MM, simulator
++    seen = {"thin_on_thick": 0, "c_max": 0.0}
++    lub, coeff = film.lubrication, film.Runoff.edge_coefficients
++
++    def lubrication(tau, G, b, delta_m, mu_l, b_layer=None):
++        out = lub(tau, G, b, delta_m, mu_l, b_layer)
++        bb = np.asarray(b, dtype=float)
++        seen["thin_on_thick"] += int((out[3] & (bb > 0.0) & (bb < np.asarray(delta_m, dtype=float))).sum())
++        return out
++
++    def edge_coefficients(self, q, b, t_hat, areas):
++        c_ij, c_ji = coeff(self, q, b, t_hat, areas)
++        if len(c_ij):
++            seen["c_max"] = max(seen["c_max"], float(c_ij.max()), float(c_ji.max()))
++        return c_ij, c_ji
++
++    monkeypatch.setattr(film, "lubrication", lubrication)
++    monkeypatch.setattr(film.Runoff, "edge_coefficients", edge_coefficients)
++    out = {}
++    for name in ("skfem", "fenicsx"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM)
++        sim = simulator(b, t_max=90.0)
++        sim.advance(50.0)
++        p = b.mesh.points
++        r = np.linalg.norm(p, axis=1)
++        b.solver.set_temperature(np.where((r > 0.05 - 6e-3) & (p[:, 0] > 0.5 * r), 960.0, 850.0))
++        b.energy0 = b.energy()
++        model = heating.PhysicsHeating()
++        for _ in range(10):
++            sim.advance(0.05)
++            a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++            b.advance(sim.t, 0.05, model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature()),
++                      state=a)
++        out[name] = b
++    s, f = out["skfem"], out["fenicsx"]
++    assert seen["thin_on_thick"] > 0 and seen["c_max"] < 1e9 and f.runoff_mass > 0.0 and f.sprayed_mass > 0.0
++    assert np.array_equal(s.mesh.active, f.mesh.active)
++    assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6) and f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5)
++    assert f.runoff_mass == pytest.approx(s.runoff_mass, rel=1e-5) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
++    assert f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
++    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
++    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
+```
+
+### Measured (2026-10-05)
+
+- **Base verified.** A fresh copy of `prototype/proto3/` (unchanged since 2026-10-03: all 114 files match that
+  amendment's final manifest) with the 20 diff blocks of 2026-10-02, 2026-10-03 and 2026-10-05 (seeding) applied is
+  byte-identical to the tested copy of the seeding amendment across the whole tree.
+- **Tests.** The whole unit tier gives 236 passed, 1 skipped, 2 failed and 3 errors — the base's 234 passed plus the two
+  new film tests, the failures and errors being the five known ones from the missing melting SESAM references (Task 11);
+  before the tolerance change above it gave 235 passed and one more failure, that test.
+  `tests/test_reentry_model_fenicsx.py` in `fenicsx_env`: 11 passed (the ten of before and the new one).
+- **The flights** (facts 73–75): the 50 mm flight bit-identical; the 100 mm flight at the default step bit-identical to
+  49.5 s, its masses then moving by about the run-to-run scatter of fact 65, its droplet count and median radius by
+  number within it, its front-surface Rayleigh–Taylor release (−16 %) outside it, and the film depth at release down by
+  14 %; the switched-step flight at 0.0125 s, which crashed, now runs to 120 s with its emptying rates bounded, and so
+  does 0.00625 s.
+
+### Not done here — for Asha to decide (fact 77)
+
+First the time step (fact 77 (a)): the switched-step series of fact 75 leaves the droplet population unconverged at
+0.00625 s, each branch's droplets the same at every step and the branch split not, and the recommendation is the branch
+test on a liquid depth by mass, with the series repeated. Then: whether to make the film transport's books exact as the
+deep stage's are; the exit code a model failure is reported with; the re-solidification counter, which counts
+freeze-and-re-melt cycles; and whether the step switch should become a model option.
 
 ---
 
