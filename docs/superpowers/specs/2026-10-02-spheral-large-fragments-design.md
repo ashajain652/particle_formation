@@ -3,7 +3,7 @@
 Date: 2026-10-02
 Status: design of record, presented and approved section by section with Asha between 2026-09-30 and 2026-10-02;
 awaiting her review of this document; amended on 2026-10-02 with milestone MC, the coupling at the surface (§14.1), and
-on 2026-10-07 with milestone M0's measurements on the laptop (§§2, 5, 8.5, 9.1, 13.2, 15, 16, 20; plan
+on 2026-10-07 with milestone M0's measurements on the laptop (§§2, 5, 8.5, 9.1, 13.2, 15, 19, 20; plan
 `docs/superpowers/plans/2026-10-05-spheral-m0.md`).
 Next: the implementation plan for milestones M0 and M1 only (§14).
 Builds on: Step 3 (`2026-09-20-melt-spraying-design.md`; live sub-plans in
@@ -210,8 +210,8 @@ deferred (Asha, 2026-10-05) until the cluster is known (§16, item 6).
   step, the material model is written in C++ in a source build. The replay is costed over the hot phase only (Asha,
   2026-10-05).
 
-**Gate outcome (2026-10-07): the first part passes; the second is split, and its axisymmetric half is open for
-Asha's decision (§16, item 9).** Reproduced by `analysis/spheral_m0_benchmark.py --gate` from the committed table.
+**Gate outcome (2026-10-07): the first part passes; the second is split, and Asha accepted the axisymmetric
+overhead (2026-10-07, §20).** Reproduced by `analysis/spheral_m0_benchmark.py --gate` from the committed table.
 
 - *Hot phase.* Melt onset to the end of spraying on the 100 mm physics flight: 25.5–225.0 s, 199.5 s, 399 intervals of
   0.5 s. No run directory of that flight exists (Step 3 is not yet in `reentry_model`), so both ends come from the Step 3
@@ -247,7 +247,8 @@ other spacings and process counts the fraction is not measured.
 - *Second part: split.* The subclasses do not fail (bitwise identical). In 3D they add 19.7 %, within the quarter of a
   step. In the axisymmetric form on 18 processes they add 79.6 %, over it. Read literally, the gate sends the material
   model to C++ for axisymmetric runs; in absolute terms the axisymmetric replay at 1.1 mm takes 2.3 hours in Python
-  against 1.3 in C++. The choice is Asha's (§16, item 9).
+  against 1.3 in C++. Asha chose (2026-10-07) to accept the overhead: axisymmetric runs keep the Python classes, since
+  they cost hours, not days (§20); C++ classes and fewer processes are recorded as alternatives (§19).
 
 ## 6. Inputs and the particle body
 
@@ -395,7 +396,7 @@ coherent core intact, and uses the viscous rows for slurry and liquid.
 Python subclasses of Spheral's equation-of-state, strength and damage classes, working on whole arrays with NumPy. M0
 proves the mechanism; if it fails or costs more than about a quarter of a step, the classes are written in C++ in a
 source build. *M0 (2026-10-07):* the mechanism works, bitwise; 3D pays 19.7 %, the axisymmetric form on 18 processes
-79.6 % (§2, Extensibility and Cost); whether the axisymmetric runs keep Python is open (§16, item 9). The source build
+79.6 % (§2, Extensibility and Cost); the axisymmetric runs keep Python at that cost (Asha, 2026-10-07; §19, §20). The source build
 exists already (§5). The tearing law will probably also need Python update policies (flaw activation and strain), not
 yet tried.
 
@@ -868,7 +869,7 @@ windows fall back to whole-particle deletion (§19), with fragment masses report
 |---|---|---|---|
 | Installation on the laptop | Linux only; x86-64 container under translation at unknown speed | container first; arm64 virtual machine or the cluster alone | laptop: retired by M0 (2026-10-05): LLNL's image cannot run under Rosetta (AVX-512), the native arm64 source build of `116c71f` worked unchanged in 1 h 51 min, and the regressions pass (§5). Cluster: open |
 | Cost | every budget rests on one documented timing that includes start-up | measured benchmark; axisymmetric scoping; 3D on the cluster | laptop: retired by M0 (2026-10-06): 3.2–4.4 × 10⁻⁵ processor-s per particle-step in 3D, 2.7–9.3 × 10⁻⁶ axisymmetric; a 3D replay at 2.2 mm over the hot phase in 20 h (§2; §5's gate, 2026-10-07). A breaking body's damage cost unmeasured. Cluster (x86-64): open |
-| Python material classes | allowed but unpublished; CPUs only | M0 test; C++ fallback | laptop, mechanism: retired by M0 (2026-10-07): bitwise identical to the built-ins, +19.7 % in 3D. Open: +79.6 % axisymmetric on 18 processes, over the gate (§16, item 9); Python update policies for the tearing law untried; on the cluster, exact copies depend on its compiler's fused multiply-adds |
+| Python material classes | allowed but unpublished; CPUs only | M0 test; C++ fallback | laptop, mechanism: retired by M0 (2026-10-07): bitwise identical to the built-ins, +19.7 % in 3D. +79.6 % axisymmetric on 18 processes, over the gate, accepted (Asha, 2026-10-07; §20). Open: Python update policies for the tearing law untried; on the cluster, exact copies depend on its compiler's fused multiply-adds |
 | Stress rotation in the release | rotates stress the wrong way under rotation | pin develop at or after 28 September 2026; check the source | retired by M0 (2026-10-05): `116c71f` carries the fix and turns stress with a rigid rotation to 0.069 % of \|S₀\| over a quarter turn (§2). Cluster: the same commit; the check is rerun on its build |
 | Mass scaling | the slow phase depends on it | heated-sphere check with and without scaling; option B | M2 |
 | Tensile instability | spurious clumping under tension could fake cracks in exactly the stress state that tears the mush | tension checks; choice of SPH or CRKSPH | M2–M3 |
@@ -898,30 +899,6 @@ Each needs Asha's approval before use:
 7. Step 4's ring geometry, once it exists.
 8. Shared with Step 4: ESA's measured heat capacity and heat of fusion of 7075 (Pagan 2025; Bonvoisin et al. 2022),
    which would change the material table both models use.
-9. **Python or C++ for the material classes of the axisymmetric runs** (Asha's decision; open since 2026-10-07, §5's
-   gate). Measured: the three Python classes together add 79.6 % to an axisymmetric step at 1.1 mm on 18 processes
-   (3.45 to 6.20 ms, about 180 particles per process; 2.75 ms per step), against the gate's quarter; in 3D they add
-   19.7 % (3.0 mm, 18 processes, about 1,080 per process; 9.4 ms per step), within it. The options:
-   - **(a) C++ material classes** in the existing source build (§8.5's fallback): no overhead in either form. Costs
-     development in C++ and a rebuild of the image when a law changes (the C++ library alone built in 16 min from
-     scratch; an incremental rebuild of one class and its bindings is unmeasured). It could be partial: alone, the strength
-     class adds 41 %, the damage rate 34 % and the equation of state 19 %.
-   - **(b) Axisymmetric runs on fewer processes**, where a fixed cost per call would be a smaller share of a longer step.
-     Unmeasured: the 1.1 mm run is the only axisymmetric Python measurement. Estimated on the 0.55 mm scaling series
-     (built-in steps of 42, 26, 18, 15.5, 10.6 and 7.6 ms on 1, 2, 4, 8, 12 and 18 processes), the overhead is +6, +11,
-     +15, +18, +26 and +36 % if it is a fixed 2.75 ms per step, but 145–470 % if it is a cost per particle per process
-     (15 µs per particle-step). The two measurements together suggest a mix: a line through them (two forms, so only
-     indicative) is 1.4 ms per step plus 7.4 µs per particle-step per process, under which fewer processes make the
-     share worse (+89 % on 18, +138 % on 4). Even under the fixed reading, fewer processes lengthen each run (0.55 mm
-     hot phase 15.6 h on 4 processes against 7.6 h on 18) and pay only as throughput, several independent scoping runs
-     side by side (four runs on four processes each, about 3.9 h per run; contention between runs unmeasured). One
-     subclass run at 0.55 mm on 4 processes would tell the readings apart.
-   - **(c) Accept the overhead**, since axisymmetric runs are cheap in absolute terms: the hot-phase replay takes 1.0 h at
-     2.2 mm, 2.3 h at 1.1 mm (measured pair; 1.3 h built-in) and 10 h at 0.55 mm (5.6 h built-in), and a 50 ms stiff
-     window 1.8 h at 1.1 mm (1.0 h). The scoping study (§13.2, 100–200 runs) then takes about 1.8 times the wall time it
-     would in C++.
-   Read literally, the gate of §5 points to (a); in 3D the Python classes pass it as they stand. The scoping study
-   (§13.2) is axisymmetric throughout, so the choice is needed before M2's plan.
 
 ## 17. Dependencies on other steps
 
@@ -980,6 +957,8 @@ Each needs Asha's approval before use:
 | A strength ratio for solid fragments | rejected (Asha, 2026-10-02) | in the fragment-fate work |
 | Simulating the air in the main design | not used | a CFD solution exists |
 | A single film/bulk threshold at 2–3 mm | replaced by the three-zone rule (§10) | — |
+| C++ material classes for the axisymmetric runs (in the existing source build; partial possible: alone, strength adds 41 %, the damage rate 34 %, the equation of state 19 %) | not used (Asha, 2026-10-07): the Python classes' 79.6 % on an axisymmetric step is accepted (§5) | the overhead grows on a breaking body or with Python update policies for the tearing law, or the scoping study's wall time becomes the limit |
+| Axisymmetric runs on fewer processes to dilute the Python overhead | not used; unmeasured (estimated on the 0.55 mm scaling series as +6 % to +470 % depending on whether the overhead is per step or per particle; each run gets longer and pays only as throughput, several runs side by side) | one subclass run at 0.55 mm on 4 processes, if throughput of the scoping study matters |
 | Whole-particle deletion for the spray sink (each particle keeps a running record of the mass it owes and is deleted when the record reaches its mass) | replaced by continuous loss (Asha, 2026-10-02; §14.1); the fallback | check 15 shows false tension or motion that the floor and the density and volume options cannot remove |
 | Droplet spraying as a sub-grid model in Spheral now | deferred to M9: it needs the whole chain of heating, feed, film and spraying below the particle scale | an M9 trigger fires |
 
@@ -1011,5 +990,6 @@ Each needs Asha's approval before use:
 - 2026-10-07 (M0 gate, §5): first part passed — a 3D replay at 50,000 particles over the 100 mm hot phase takes 20 h
   on the laptop (24 h with the Python classes), so the laptop is not restricted to axisymmetric replays; second part
   split — the Python classes are bitwise exact, add 19.7 % in 3D (within the quarter) and 79.6 % in axisymmetric runs
-  on 18 processes (over it). Whether axisymmetric runs move to C++, run on fewer processes or accept the overhead is
-  pending Asha's decision (§16, item 9).
+  on 18 processes (over it). Asha chose to accept the overhead (2026-10-07): axisymmetric runs keep the Python classes, whose
+  hot-phase replay takes 1.0, 2.3 and 10 h at 2.2, 1.1 and 0.55 mm against 0.6, 1.3 and 5.6 h in C++, about 1.8 times
+  the scoping study's wall time; C++ classes and fewer processes are recorded alternatives (§19).
