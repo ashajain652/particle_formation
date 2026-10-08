@@ -1560,4 +1560,23 @@ class MeltingBody(ThermalBody):
                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
                 "fitted_nose_radius_mm": self.fitted_nose_radius * 1e3,
-                "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active)}
+                "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active), **self._skin_stats()}
+
+    def _skin_stats(self):
+        """The skins' history columns (sub-plan 18); zero or nan without skins."""
+        sk = self.skins
+        th = sk.thickness() if sk is not None and sk.n else np.zeros(0)
+        on = self.skin_of_patch >= 0
+        liq = self.last_skin_liquid if self.last_skin_liquid is not None and len(self.last_skin_liquid) == len(on) else None
+        nr = self.last_skin_nonrigid if self.last_skin_nonrigid is not None and len(self.last_skin_nonrigid) == len(on) else None
+        some = bool(on.any())
+        return {"skin_count": float(sk.n) if sk is not None else 0.0, "skin_mass_kg": sk.mass() if sk is not None else 0.0,
+                "skin_thickness_min_mm": float(th.min() * 1e3) if th.size else float("nan"),
+                "skin_thickness_median_mm": float(np.median(th) * 1e3) if th.size else float("nan"),
+                "skin_drawn_mass_kg": self.skin_drawn_mass, "skin_handover_mass_kg": self.skin_handover_mass,
+                "skin_short_events": float(self.skin_short_events), "interface_mismatch_J": self.last_mismatch,
+                "interface_repeats": float(self.interface_repeats),
+                "liquid_depth_mean_um": float(liq[on].mean() * 1e6) if liq is not None and some else float("nan"),
+                "liquid_depth_max_um": float(liq[on].max() * 1e6) if liq is not None and some else float("nan"),
+                "nonrigid_depth_skin_mean_um": float(nr[on].mean() * 1e6) if nr is not None and some else float("nan"),
+                "skin_wall_s": self.skin_wall}
