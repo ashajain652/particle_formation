@@ -24,12 +24,13 @@ class StepResult:
     iterations: int               # Newton/Picard iterations taken
     Q_extra: float = 0.0          # W, nodal load applied over the step (Step 3 deferred melt energy)
     Q_dropped: float = 0.0        # W, load that fell on pinned (material-free) nodes and was not applied
+    Q_interface: float = 0.0      # W, heat the skins passed in through their facets (Step 3 sub-plan 18)
 
 
 class ThermalSolver(Protocol):
     def setup(self, mesh, material, emissivity) -> None: ...
     def set_temperature(self, T) -> None: ...                       # uniform float or nodal array
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None) -> StepResult: ...
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None) -> StepResult: ...
     def temperature(self) -> np.ndarray: ...
     def energy(self) -> float: ...                                  # stored enthalpy above material.T_REF [J]
     def element_energies(self, T=None) -> np.ndarray: ...           # phi_e rho V_e h(T_e) per element [J]
@@ -38,6 +39,8 @@ class ThermalSolver(Protocol):
     def set_film_mass(self, mass) -> None: ...                      # nodal mass of the melt film [kg], Step 3
     def nodal_capacity(self): ...                                   # J/K per node, material + film (Step 3)
     def film_weight(self): ...                                      # the film's share of each node's mass, 0-1 (Step 3)
+    def state(self): ...                                            # what set_state needs to repeat a step (sub-plan 18)
+    def set_state(self, state) -> None: ...
 
 
 def thermal_solver(name, **options):

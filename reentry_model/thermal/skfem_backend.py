@@ -104,6 +104,7 @@ class SkfemThermalSolver:
         n = len(self.points)
         self.facet_pattern = _Pattern(np.repeat(self.faces, 3, axis=1).ravel(), np.tile(self.faces, (1, 3)).ravel(), n)
         self.Bf = np.ones((3, 3))[None] * (self.areas / 9.0)[:, None, None]
+        self._radiating = None                            # the facets changed: last step's skin mask no longer applies
         self._update_pinned()
 
     def _update_pinned(self):
@@ -145,6 +146,15 @@ class SkfemThermalSolver:
 
     def temperature(self):
         return self.T.copy()
+
+    def state(self):
+        """What set_state needs to repeat a step: the temperatures, the predictor's previous field, the solve counter."""
+        return (self.T.copy(), None if self._T_prev is None else self._T_prev.copy(), self._solves)
+
+    def set_state(self, state):
+        self.T = state[0].copy()
+        self._T_prev = None if state[1] is None else state[1].copy()
+        self._solves = state[2]
 
     def facet_temperature(self, T=None):
         return (self.T if T is None else T)[self.faces].mean(axis=1)
@@ -195,7 +205,11 @@ class SkfemThermalSolver:
 
     def radiated_power(self, T_amb, T=None):
         Tf = self.facet_temperature(T)
-        return float((self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4) * self.areas).sum())
+        q = self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4) * self.areas
+        radiating = getattr(self, "_radiating", None)
+        if radiating is not None and radiating.shape == q.shape:
+            q = np.where(radiating, q, 0.0)                    # a facet under a skin radiates from the skin's top
+        return float(q.sum())
 
     def film_weight(self):
         """Share of each node's mass that is melt film, 0 to 1. The film is liquid: its enthalpy has no latent
@@ -227,9 +241,11 @@ class SkfemThermalSolver:
         h = self.material.enthalpy(self.T if T is None else T)
         return self.phi * self.material.rho * self.vol * h[self.tets].mean(axis=1)
 
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None):
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None):
         """One backward-Euler step with the per-facet convective flux q_conv [W/m2] and an optional nodal load vector
-        [W] (Step 3: the deferred melt energy; loads on pinned nodes are dropped and reported in StepResult.Q_dropped)."""
+        [W] (Step 3: the deferred melt energy; loads on pinned nodes are dropped and reported in StepResult.Q_dropped).
+        `interface = (mask, a, b)` per facet: the skins' base law, heat a + b T_f [W/m2] into the body through the
+        masked facets, which neither take q_conv's place nor radiate (Step 3 sub-plan 18)."""
         T_old = self.T
         # predictor: extrapolate the previous step (saves ~1 Newton iteration per step); plain T_old on the first step
         T_k = T_old + (T_old - self._T_prev) if self._T_prev is not None and dirichlet is None else T_old.copy()
@@ -241,15 +257,28 @@ class SkfemThermalSolver:
         last_relative_change, previous_change, damping, decreases = None, None, 1.0, 0
         mat = self.material
         film_w = self.film_weight() if self.film_mass.any() else np.zeros(len(self.points))
+        # the skins' base law (Step 3 sub-plan 18): on the facets under a skin the heat flux a + b T_f enters
+        # implicitly, linearised like the radiation, and the facet does not radiate (its skin's top does)
+        mask = None
+        if interface is not None and np.any(interface[0]):
+            mask = np.asarray(interface[0], dtype=bool)
+            a_int = np.where(mask, np.asarray(interface[1], dtype=float), 0.0)
+            b_int = np.where(mask, np.asarray(interface[2], dtype=float), 0.0)
+        eps_f = self.emissivity if mask is None else np.where(mask, 0.0, self.emissivity)
+        self._radiating = None if mask is None else ~mask
         for iteration in range(1, self.max_iterations + 1):
             K, M, E = self.operators(T_k, T_old)
             Tf = self.facet_temperature(T_k)
-            B = self.facet_pattern.assemble(self.Bf * (4.0 * self.emissivity * SIGMA_SB * Tf ** 3)[:, None, None])
-            F_rad = self.facet_load(self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4))
+            B = self.facet_pattern.assemble(self.Bf * (4.0 * eps_f * SIGMA_SB * Tf ** 3)[:, None, None])
+            F_rad = self.facet_load(eps_f * SIGMA_SB * (Tf ** 4 - T_amb ** 4))
+            F_int = 0.0
+            if mask is not None:
+                B = B + self.facet_pattern.assemble(self.Bf * (-b_int)[:, None, None])
+                F_int = self.facet_load(a_int + b_int * Tf)
             # Newton on R(T) = E(T)/dt + K T - F_conv + F_rad(T) - F_extra with the tangent M/dt + K + B:
             # A T_new = A T_k - R(T_k); with a smooth c_p (c_tan = c_sec) this is the Step 2 iteration unchanged
             A = (M / dt + K + B).tocsr()
-            b = M @ T_k / dt + B @ T_k - E / dt + F_conv - F_rad + F_extra
+            b = M @ T_k / dt + B @ T_k - E / dt + F_conv - F_rad + F_extra + F_int
             if self.pinned.any():                              # material-free nodes keep their temperature (identity rows)
                 A = A + sp.diags(self.pinned.astype(float), format="csr")
                 b[self.pinned] = T_old[self.pinned]
@@ -281,7 +310,9 @@ class SkfemThermalSolver:
                 self.max_iterations, last_relative_change, self.newton_tol))
         self._T_prev, self.T = T_old, T_new
         self.last_damping = damping
-        return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()), Q_dropped)
+        Q_int = float(((a_int + b_int * self.facet_temperature(T_new)) * self.areas).sum()) if mask is not None else 0.0
+        return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()),
+                          Q_dropped, Q_int)
 
     def _solve_with_dirichlet(self, A, b, x0, dirichlet):
         if dirichlet is None:

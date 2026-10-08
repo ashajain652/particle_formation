@@ -290,3 +290,19 @@ def test_the_rigid_substrate_matches_the_skfem_backend(coarse_sphere_mesh):
     assert f.runoff_mass == pytest.approx(s.runoff_mass, rel=1e-5) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
     assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
+
+
+def test_backends_agree_with_an_interface_flux(coarse_sphere_mesh):
+    """Step 3 skins (sub-plan 18): the same affine interface flux and radiation mask in both backends."""
+    from reentry_model import material, thermal
+    out = []
+    for name in ("skfem", "fenicsx"):
+        s = thermal.thermal_solver(name)
+        s.setup(coarse_sphere_mesh, material.Material.from_drama_json("AA7075_scheil"), 0.3)
+        s.set_temperature(700.0)
+        nf = len(s.areas)
+        mask = np.arange(nf) % 2 == 0
+        r = s.step(0.5, np.where(mask, 0.0, 2e5), 0.0, interface=(mask, np.full(nf, 3e5), np.full(nf, -2e3)))
+        out.append((r, s.temperature()))
+    (ra, Ta), (rb, Tb) = out
+    assert np.allclose(Ta, Tb, rtol=0.0, atol=1e-6) and ra.Q_interface == pytest.approx(rb.Q_interface, rel=1e-9)

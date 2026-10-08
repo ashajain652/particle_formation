@@ -314,3 +314,44 @@ def test_film_mass_rides_the_boundary_nodes_with_the_solid_s_capacity(coarse_sph
     assert wet.size and not s.pinned[wet].any()                                # ... but with film: still live
     s.set_film_mass(np.zeros(m.n_nodes))
     assert s.pinned[wet].all()                                                 # film gone: pinned again, in one breath
+
+
+def _interface_solver(mesh_, name="skfem"):
+    s = thermal.thermal_solver(name)
+    s.setup(mesh_, material.Material.from_drama_json("AA7075_scheil"), 0.3)
+    s.set_temperature(700.0)
+    return s
+
+
+def test_interface_flux_replaces_heating_and_radiation_on_masked_facets(coarse_sphere_mesh):
+    """Step 3 skins (sub-plan 18): q = a + b T_f enters implicitly on the masked facets, which do not radiate; the
+    discrete balance holds; an all-False mask is the plain step bit for bit. (The AMG set-up draws on numpy's global
+    generator, so each compared step is seeded alike, as the model's --seed does for a run.)"""
+    s0, s1 = _interface_solver(coarse_sphere_mesh), _interface_solver(coarse_sphere_mesh)
+    nf = len(s0.areas)
+    q = np.full(nf, 2e5)
+    np.random.seed(1)
+    r0 = s0.step(0.5, q, 0.0)
+    np.random.seed(1)
+    r1 = s1.step(0.5, q, 0.0, interface=(np.zeros(nf, dtype=bool), np.zeros(nf), np.zeros(nf)))
+    assert np.array_equal(r0.T, r1.T) and r1.Q_interface == 0.0 and r0.Q_rad == r1.Q_rad
+    s2 = _interface_solver(coarse_sphere_mesh)
+    mask = np.arange(nf) % 2 == 0
+    a, b = np.full(nf, 3e5), np.full(nf, -2e3)
+    E0 = s2.energy()
+    r2 = s2.step(0.5, np.where(mask, 0.0, q), 0.0, interface=(mask, a, b))
+    Tf = s2.facet_temperature()
+    assert r2.Q_interface == pytest.approx(float(((a + b * Tf) * s2.areas)[mask].sum()), rel=1e-12)
+    assert s2.energy() - E0 == pytest.approx((r2.Q_conv + r2.Q_interface - r2.Q_rad) * 0.5, rel=1e-6)
+    assert r2.Q_rad == pytest.approx(float((0.3 * SIGMA_SB * Tf ** 4 * s2.areas)[~mask].sum()), rel=1e-12)
+
+
+def test_state_round_trip_repeats_a_step(coarse_sphere_mesh):
+    s = _interface_solver(coarse_sphere_mesh)
+    q = np.full(len(s.areas), 2e5)
+    s.step(0.5, q, 0.0)
+    snap = s.state()
+    r1 = s.step(0.5, q, 0.0)
+    s.set_state(snap)
+    r2 = s.step(0.5, q, 0.0)
+    assert np.allclose(r1.T, r2.T, rtol=0.0, atol=1e-6)
