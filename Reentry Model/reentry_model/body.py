@@ -146,6 +146,7 @@ LOAD_DT_MAX = 1000.0             # K, the most a deferred melt load may move one
 PHI_DEATH = 0.05                 # a patch owner below this fraction dies (its remainder goes to the film): keeps the surface
                                  # nodes' thermal mass above 5 % of an element's, which the Newton iteration needs (measured
                                  # 2026-09-20: owners at 1e-3 made surface nodes swing by hundreds of K between iterates)
+DEATH_TOLERANCE = 1.0e-9           # skins drain an element to PHI_DEATH only to rounding: within this it dies (sub-plan 18)
 MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in one macro step; what it leaves waits for the
                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
 NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
@@ -610,9 +611,10 @@ class MeltingBody(ThermalBody):
         n_dead, passes, cascade, capped = 0, 0, 0.0, False
         # fully molten as `molten_depth` has it -- the element's mean nodal temperature at or above T_feed -- so the cascade
         # removes exactly the contiguous molten layer the branch test reads, wherever a death exposes it
-        full = T[tets].mean(axis=1) >= mat.T_feed if s.molten_cascade and s.removal != "instant" and self.skins is None else None
+        full = T[tets].mean(axis=1) >= mat.T_feed if s.molten_cascade and s.removal != "instant" and (self.skins is None or not self.skins.n) else None
+        death_level = PHI_DEATH if self.skins is None or not self.skins.n else PHI_DEATH * (1.0 + DEATH_TOLERANCE)
         while not self.consumed:
-            dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= PHI_DEATH))
+            dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= death_level))
             if dead.size == 0:
                 break
             rest = self.phi[dead] * self.element_mass[dead]
