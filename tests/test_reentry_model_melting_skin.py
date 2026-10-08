@@ -208,12 +208,12 @@ def test_freeze_back_into_a_skin_is_limited_by_energy(coarse_sphere_mesh):
     assert_books(b)
 
 
-def thick_skin(the_mesh, full):
-    """A body at 760 K with skins, the skin of the patch whose element has the most metal per unit of its area made
-    2.5 s thick by moving metal from that element into its bottom (at the element's own enthalpy, so nothing is
-    booked); with `full`, the element is then made full (phi = 1). The books are reckoned from there."""
+def thick_skin(the_mesh, full, T0=760.0):
+    """A body at T0 (760 K unless given) with skins, the skin of the patch whose element has the most metal per unit of
+    its area made 2.5 s thick by moving metal from that element into its bottom (at the element's own enthalpy, so
+    nothing is booked); with `full`, the element is then made full (phi = 1). The books are reckoned from there."""
     b = make_body(the_mesh, solver_options=EXACT)
-    start_at(b, 760.0)
+    start_at(b, T0)
     b._create_skins(b.solver.temperature())
     owner = b.surface.owner
     p = int(np.argmax(b.phi[owner] * b.element_mass[owner] / b.surface.areas))
@@ -247,6 +247,33 @@ def test_a_skin_above_twice_its_thickness_returns_metal_to_its_element(coarse_sp
     r = b.skins.rows_of(np.array([face]))[0]
     assert r >= 0 and b.skins.thickness()[r] > 1.2 * s2                # it kept its metal
     assert b.skin_returned_mass == 0.0 and b.skin_full_events >= 1 and b.phi[e] == 1.0
+    assert_books(b)
+
+
+def test_a_thick_skin_that_melts_is_recorded(coarse_sphere_mesh):
+    """Skins on elements with no room grow beyond 2s by freeze-back (accepted 2026-10-08 on condition that it is
+    measured whether such skins later melt): a skin above 2s at the start of a step that hands liquid to the film or
+    the deep account is counted that step, with its start-of-step thickness, and in the cumulative events."""
+    s2 = skin.MAX_THICKNESS_FACTOR * DEV.thickness
+    b, face, e = thick_skin(coarse_sphere_mesh, full=True)
+    assert b.skin_thick_feed_events == 0 and b.last_thick_feeding[0] == 0 and np.isnan(b.last_thick_feeding[1])
+    r = b.skins.rows_of(np.array([face]))[0]
+    th0 = float(b.skins.thickness()[r])
+    assert th0 > 1.2 * s2
+    b.advance(0.5, 0.5, uniform(b, 1e5))                               # cold: the thick skin feeds nothing
+    assert b.last_thick_feeding[0] == 0 and np.isnan(b.last_thick_feeding[1])
+    assert b.skin_thick_feed_events == 0 and b.melt_stats()["skin_thick_feeding_count"] == 0.0
+    assert np.isnan(b.melt_stats()["skin_thick_feeding_max_mm"])
+    b, face, e = thick_skin(coarse_sphere_mesh, full=True, T0=900.0)
+    r = b.skins.rows_of(np.array([face]))[0]
+    th0 = float(b.skins.thickness()[r])
+    assert th0 > 1.2 * s2
+    b.advance(0.5, 0.5, uniform(b, 3e6))
+    assert b.skin_thick_feed_events >= 1
+    stats = b.melt_stats()
+    assert stats["skin_thick_feeding_count"] >= 1.0 and stats["skin_thick_feed_events"] == float(b.skin_thick_feed_events)
+    assert stats["skin_thick_feeding_max_mm"] == pytest.approx(th0 * 1e3, rel=1e-9)   # the start-of-step thickness
+    assert b.last_thick_feeding[0] == int(stats["skin_thick_feeding_count"])
     assert_books(b)
 
 
