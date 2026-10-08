@@ -999,6 +999,302 @@ made on mains power under `caffeinate -i` (the power source logged at the start 
     does not need (fact 63) and which would still have to be recorded in the JSON and the name; (d) parallel FEniCSx
     runs, whose reproducibility was not measured (fact 66).
 
+## Amendment of 2026-10-05 (runoff flux) — the film's flux on a thick patch, and the switched-step study (facts 69–77)
+
+Asha's two decisions of 2026-10-05, taken on the switched-step experiment of fact 69 and the crash of fact 70: (1) fix
+the runoff flux on thick patches by option (a), scaling the film's flux on a thick patch by the film actually present,
+and verify it by re-running the case that crashed; (2) keep shrinking the time step to make the droplet population
+converge, rather than reformulating the spray release, running the switched-step series with the fixed model down to
+0.00625 s and saying plainly whether it converges. It amends sub-plans 06 (the change to `film.lubrication` and its
+tests), 07 (no code change), 09 (no change to `body.py`; one melting test's tolerance and a two-backend test), 13 (no
+code change; an open item), 14 and 15. Facts 1–68 stand except where these say otherwise. **The 2026-10-02 amendment's
+statement that the film's flux plus `deep_flux` is fact 29's column flux now holds only where the film fills the
+conjugate layer (fact 71); facts 49 and 56's reason for the backends' looser agreement with deep liquid present is
+replaced by fact 72's; fact 48's film-transport round-off is re-measured in fact 72; and facts 50 and 57's time-step
+findings are extended by facts 69 and 75.** Measured in a throwaway copy of `prototype/proto3/` with the amendments of
+2026-10-02, 2026-10-03 and 2026-10-05 (seeding) applied — verified before any change to be reproduced byte for byte by
+their 20 diff blocks, applied in date order to a fresh copy of `prototype/proto3/`, itself unchanged since 2026-10-03
+(all 114 files match the manifest taken then) — so everything facts 49, 54 and 62 list about the copy holds:
+`AA7075_range`, US76, physics heating, the dense band, `PHI_DEATH = 0.05`, the deep runoff and the molten cascade on,
+every run seeded by the model itself with the default 12345, and every other setting at its default. The measurement
+runs were made from a frozen copy of the amended package, never edited while a run was in flight (fact 31), on mains
+power under `caffeinate -i`, the power source logged at the start and end of each.
+
+69. **The switched-step experiment, and what it showed before the fix (2026-10-05).** Two questions: does the melt that
+    forms on the windward face run off before it is sprayed, and does the droplet population converge if the macro step
+    is shortened where it matters? A harness that wraps the model from outside (`dtswitch.py`; no package file is
+    edited, as with the cascade study's measurement harness) runs the command line's step, 0.5 s, until the body Knudsen
+    number first falls below 0.01 — the model's own continuum boundary `surface_flow.KN_BODY_SHOCK`, where Girin's
+    closure begins to apply — and a fine step from then on, latched; on the 100 mm flight it fires at 49.5 s and
+    69.9 km. It writes a frame every 10 s of flight time and records, per melt step, the film available to the spray
+    stage, the runoff's arrivals and departures and the release, binned by the polar angle about the flight axis through
+    the mass centre, plus the equatorial ring's arrivals and releases and the deep transport's arrivals. Its summary
+    (`compare.py`) uses only measures that do not depend on the step: the net runoff across fixed latitude lines (15,
+    30, 45, 60, 75, 85 and 90 degrees), the mass-weighted shift between the latitude where film entered and where it was
+    sprayed, the ring's share of the sprayed mass and, from the source table, the droplet count, the median radius by
+    number and the thick branch's share of the sprayed mass. Per-step net arrivals are not comparable between steps,
+    because film that creeps across N patches in N small steps counts N times. Measured on the 100 mm flight to 120 s at
+    0.5 s throughout and switched to 0.05 and 0.025 s, all over the continuum window 49.5–120 s unless stated:
+    * **Runoff is minor at every step.** At most 6.3 %, 3.1 % and 5.8 % of the film formed inside any latitude cap
+      crosses its edge; the mass-weighted shift between where film entered and where it was sprayed is 1.14, 0.55 and
+      0.72 degrees of latitude; the equatorial ring sprays 9.5 %, 7.8 % and 8.5 % of the mass.
+    * **The droplet population does not converge.** 15.4, 87.2 and 110.9 million droplets; median radius by number 182,
+      73 and 71 µm, by mass 191, 158 and 126 µm; the thick branch's share of the sprayed mass 92 %, 47 % and 34 %; the
+      mass-weighted mean film depth at release 3.30, 0.34 and 0.26 mm. At 0.025 s the thick share rises through the
+      flight, from 29 % over 49.5–60 s to 53 % over 100–120 s.
+    * **Two effects vanish at small steps:** the front-surface Rayleigh–Taylor release, 56, 5.2 and 3.3 g, and the deep
+      runoff, 91, 0.9 and 0.8 g.
+    * **The masses move by 1–3 %:** sprayed 1.060, 1.050 and 1.047 kg, the body at 120 s 0.412, 0.422 and 0.425 kg.
+    * **The re-solidification counter is not a result.** It reads 6.4, 146 and 287 g and grows by 0.10 g per fine step
+      at both small steps: it counts the same film freezing and re-melting from step to step, not lasting refreezing.
+    * **Cost.** The 0.05 and 0.025 s runs took 2 569 and 4 557 s of wall time with three or four runs in parallel; a
+      fine step costs about 1.7 s alone. The 87 g sprayed before the switch (49.5 s) is the thin-film mode under the
+      Couette closure (94.9 % of the 92.1 g released by then), identical in every run because every run computes that
+      part of the flight at 0.5 s; whether it depends on the step there was not measured.
+
+70. **The crash at 0.0125 s, and its cause.** The run switched to 0.0125 s failed at 61.5875 s of flight time, after 967
+    fine steps, with this chain in its log: an overflow warning in `film.lubrication`'s shear rate; "Matrix is exactly
+    singular" from `spsolve` in `film.Runoff.transport`; a NaN film mass on all 16 966 patches; and the thermal solver's
+    input check, "film mass must be one finite non-negative value per node", which `cli.main` reports as exit code 2
+    (fact 77). A re-run with a probe that re-implements the transport operation for operation and records every
+    sub-step's largest edge emptying rate and smallest positive film depth (`dtswitch_diag.py`) crashed at the same step
+    — the run is deterministic — and confirmed the cause. `Runoff.edge_coefficients` uses the emptying rate
+    c = q ℓ (t̂·n̂)⁺/(A b). On a thin patch the flux q = τ b²/(2 μ_l) + G b³/(3 μ_l) vanishes with the film b, so c
+    stays bounded. On a thick patch — where the liquid layer, film plus molten depth plus deep liquid, is deeper than
+    δ_m — `lubrication` gave q = V_s δ_m/2 + G b³/(3 μ_l) with V_s = τ δ_m/μ_l: the flux of a whole conjugate layer,
+    which does not vanish with the film, so c grows like 1/b. How often: 95 % of the film transport's sub-steps at
+    0.0125 s had a largest rate above 10⁶ per second, 66 % above 10²⁰ and 8.6 % above 10¹⁰⁰; the largest was 4.4·10¹⁹⁷
+    per second. The runaway: the implicit sub-step empties such a film by a factor of about c Δt_s, which raises the
+    next sub-step's rate by the same factor, so the film's depth roughly squares from one sub-step to the next — in one
+    call 5.3·10⁻²⁴, 3.8·10⁻⁴³, 2.1·10⁻⁸² and 5.5·10⁻¹²² m with rates 3.2·10²⁰, 1.2·10⁴², 2.3·10⁸¹ and 8.4·10¹²⁰ per
+    second, the rate times the depth staying at 0.46 m/s as the formula says it must. In the failing call, sub-step 2
+    (rate 1.7·10⁴³ per second, film 2.3·10⁻⁴⁴ m) returned non-finite values, which the solve spread to every patch. A
+    unit test reproduces the failure exactly (fact 72): two such patches that drain into each other form a two-by-two
+    block whose second pivot is 1 + c Δt − c Δt, which is 0 in floating point once c Δt exceeds about 10¹⁶; which pair
+    failed in the flight was not identified, because the probe kept the state of the last non-finite sub-step, by which
+    time every patch was NaN. The 0.05 and 0.025 s runs logged the same overflow warning but finished. The same formula
+    was a physics error as well: it moved a film thinner than δ_m on a thick patch as fast as a whole conjugate layer,
+    overstating the runoff there. The deep transport was not involved: its largest rate in the probe was 5.3·10⁵ per
+    second.
+
+71. **The fix, option (a): the film carries only its own part of the conjugate layer's flux** (sub-plan 06's amendment
+    has the code and the alternatives). The thick branch's shear-driven velocity is linear within the conjugate layer,
+    V_s at the free surface and zero at depth δ_m, and the film is the top b of that layer, so for b < δ_m its
+    shear-driven flux is the integral of that profile over its own depth, V_s b (1 − b/(2 δ_m)); for b ≥ δ_m it stays
+    V_s δ_m/2, computed by the same expression as before. The flux is continuous at b = δ_m, tends to V_s b as the film
+    vanishes, so that the emptying rate's shear part is at most V_s ℓ/A, and is monotone in b; the pressure and
+    deceleration part G b³/(3 μ_l) is unchanged, and so are V_s (which the spray's Weber number reads), the shear rate,
+    the branch flag and the whole thin branch. `lubrication` has two callers, both in `MeltingBody._film_and_spray`: the
+    film transport, whose flux changes, and the call after it, which uses only V_s and the branch flag. `deep_flux`
+    needs no change: its emptying rate per unit edge length, G (b² + b h_D + h_D²/3)/(μ_l A), stays bounded as the deep
+    liquid h_D vanishes. One statement of the 2026-10-02 amendment changes: the film's flux plus `deep_flux` is fact
+    29's column flux τ d²/(2 μ_l) + G h³/(3 μ_l) where the film fills the conjugate layer, and falls short by
+    τ (δ_m − b)²/(2 μ_l) where it does not — the shear flux of the part of the conjugate layer that lies in the
+    elements, mostly the wall-owning element that `molten_depth` counts whole after its liquid has been fed into the
+    film (fact 58), which no account moves. Where deep liquid lies under a patch the identity holds at the start of
+    every film transport, because the deep stage tops the film up to δ_m first. Alternatives rejected: a floor on the
+    film depth and a cap on the emptying rate (both treat the symptom, add a constant with no physical meaning and leave
+    a micron of film moving like a whole conjugate layer); the layer's flux scaled by the share of it present, V_s b/2
+    (moves the skin at half the surface speed the spray credits it with); the thin branch's Couette flux τ b²/(2 μ_l)
+    (contradicts the thick branch's own V_s; at b = δ_m/10 nineteen times slower than the profile); moving the lower
+    part of the conjugate layer too (fact 53 (f)'s open decision, not a fix); and a switch to keep the old flux (it is a
+    defect, not a modelling alternative).
+
+72. **Tests, the two backends, and the film transport's round-off.** Two new film tests and one changed one (sub-plan
+    06): a thick patch's flux vanishes with its film and stays below V_s b, matches the profile's integral by quadrature
+    to 1e-9, is continuous at δ_m and is bit-identical at b ≥ δ_m and on thin patches; the transport stays finite,
+    non-negative and conservative (to 2.5e-14 over eight steps of 0.0125 s) on a pair of nearly dry thick patches that
+    drain into each other, for films down to 5e-324 kg, the smallest positive double, with its largest rate 1.15e4 per
+    second — where the old flux gave "Matrix is exactly singular" and NaN on every patch for six of seven film masses
+    between 1e-25 and 1e-300 kg; and the deep liquid's rate stays bounded as it vanishes. The 2026-10-02 test of the
+    column flux now asserts the shortfall of fact 71. All three fail on the unamended module. **One melting test's
+    tolerance moved** (sub-plan 09): the cascade's six-step books test held the mass to 1e-12 of the body and failed by
+    1.6e-12. The drift is the film transport's direct solve, which conserves only to its conditioning (fact 48); over
+    ten states of numpy's generator its largest six-step drift was 6.8e-13 to 2.8e-12 of the body before the fix (one
+    state of ten already failing) and 9e-14 to 4.4e-12 after it (six of ten), the worst single transport moving the
+    total by 4.0e-12 and 6.4e-12 kg, 1.7e-11 and 2.6e-11 of the mass it moved; the pool drives up to a quarter of a
+    kilogram of film per step through pairs of patches draining into each other with c Δt_s near 10⁷. The check passed
+    in the seeded unit tier by chance and now holds the mass to 1e-11; the deep-runoff test's 3 mm pool, which keeps its
+    1e-12, drifts by at most 4.8e-14 before and after. **The two backends agree better with the fix than without it.** A
+    new FEniCSx test (the 6 mm pool at 69.8 km, ten steps of 0.05 s, the change exercised in every film transport) holds
+    them to the same 7 983 active elements, 5.8e-10 in mass, 5.9e-9 in sprayed mass, 7.5e-10 in runoff, 1.7e-8 in film,
+    2.8e-10 in the deep account and 2.3e-4 K, with both balances exact (5.1e-9 and 1.1e-11), and the largest emptying
+    rate at 2.7e7 per second, where it reached 3.9e25 before the fix. In the cascade test's own setting (six steps of
+    0.5 s) the passes are the same with and without the fix (4, 3, 16, 4, 5, 4), and the agreement improves from 1.3e-7
+    to 7.6e-10 in mass, 6.3e-7 to 3.6e-9 in sprayed mass, 2.4e-7 to 1.0e-10 in cascade mass, 3.7e-6 to 6.9e-11 in the
+    deep account and 0.11 K to 2.5e-5 K; the deep transport is unchanged, so the amplifier that facts 49 and 56
+    attributed to it was the film's runaway emptying rates. Unit tier: 236 passed, 1 skipped, and the five known
+    failures and errors from the missing melting SESAM references (Task 11) — the base's 234 passed and the two new film
+    tests; `tests/test_reentry_model_fenicsx.py` in `fenicsx_env`: 11 passed, the ten of before and the new one.
+
+73. **The fix at the default step: the 50 mm flight bit for bit, the 100 mm flight by about the scatter in its masses.**
+    The **50 mm whole flight**, which never has Girin's closure, is bit-identical: all 399 rows of all 86 history
+    columns at full precision, the final state (nodal temperatures, element fractions, active set, film and deep
+    accounts), all 21 010 source-table rows of all 22 columns and every result field but the run time. The **100 mm
+    flight to 120 s** is bit-identical until its first step under Girin's closure, at 49.5 s, and then moves; against
+    the seeding amendment's default run, and read against the scatter between four seeds of fact 65: sprayed mass 1.0600
+    to 1.0585 kg (−0.14 %, the scatter 0.13 %); the body at 120 s 0.4120 to 0.4136 kg (+0.37 %, scatter 0.33 %);
+    droplets 1.779e7 to 1.789e7 (+0.6 %, scatter 2.0 %); median radius by number 179.9 to 179.7 µm (−0.1 %, scatter
+    0.29 %) and by mass 190.3 to 190.6 µm (+0.2 %, scatter 0.16 %); re-solidified 6.39 to 6.62 g (+3.7 %, scatter
+    1.4 %); the front-surface Rayleigh–Taylor release 56.3 to 47.4 g (−16 %, scatter 6.7 %), spread over the whole cap
+    inside 15 degrees; the deep runoff 91.1 to 90.9 g (−0.2 %) and the cascade 157.1 to 158.0 g (+0.6 %). What the fix
+    changes is which film reaches the spray and where: the source table has 25 % more rows (197 075 against 157 663, a
+    median of 1 287 releasing patches per step against 927), the thick branch's share of the sprayed mass rises from
+    84.4 % to 85.1 % over the flight (92.0 % to 92.8 % over the continuum window), the mass-weighted mean film depth at
+    release falls from 3.30 to 2.85 mm, and the share of wet windward patches on the thick branch (the median over the
+    continuum steps) rises from 21.1 % to 27.5 %: thick patches now keep thin films that the old flux swept off within a
+    sub-step, so more of them are wet when the spray runs. No film piles up instead: the thickest film where a depth
+    means anything is a median 1.97 mm over the continuum steps (2.23 mm before) and at most 3.9 mm (5.6 mm), and the
+    share of the film deeper than its facet is wide a median 0.112 (0.121). The runoff measures barely move: at most
+    6.1 % of the film formed inside a latitude cap crosses its edge (6.3 % before), the shift between where film entered
+    and where it was sprayed is 1.19 degrees (1.14), the ring sprays 9.3 % of the mass (9.5 %). The energy balance stays
+    exact (−8.5e-11 of the absorbed heat, against −7.5e-11), Newton takes 3.02 iterations per step (3.03), and the peak
+    surface temperature is 981 K (974 K). The run time cannot be compared from these runs: they ran eight at a time
+    (fact 76).
+
+74. **The fine steps now run, with bounded emptying rates.** The 0.0125 s flight that crashed at 61.6 s runs to 120 s
+    with the fix, and so does the 0.00625 s flight; neither log has an overflow warning or a singular matrix, and the
+    energy balance stays at round-off (8.4e-10 and 2.3e-9 of the absorbed heat; it accumulates with the number of steps,
+    −8.5e-11 at the default step). Both ran under the same probe as the crash (`dtswitch_diag.py`, unchanged), which
+    records every transport sub-step. At 0.0125 s the film transport's largest edge rate has a median of 9.7·10³ per
+    second over 22 756 sub-steps, a 99th percentile of 3.1·10⁵ and a maximum of 1.5·10⁶, and 14 sub-steps (0.06 %)
+    exceed 10⁶ per second — before the fix a median of 1.0·10²⁶, a maximum of 4.4·10¹⁹⁷ and 95 % above 10⁶. Within one
+    call the last sub-step's rate is a median 1.01 times the first's and at most 147 times, against a median of 3.7·10⁴⁰
+    before: the runaway is gone. At 0.00625 s, over 45 320 sub-steps, the median is 9.8·10³ per second, the maximum
+    1.45·10⁶ (two sub-steps above 10⁶) and the within-call growth a median 1.01, at most 83. Films of 10⁻¹⁹¹ m
+    (0.0125 s) and 10⁻¹²⁶ m (0.00625 s) still appear inside the transport — round-off left by the direct solve, cleared
+    at the end of each spray stage — and are now harmless, because a vanishing film's rate stays below V_s ℓ/A; the
+    rates that remain are bounded by (V_s + |G| b²/(3 μ_l)) ℓ/A, which grows with the film, not as it vanishes. The deep
+    transport is unchanged: its largest rate is 5.3·10⁵ per second at 0.0125 s and 4.6·10⁵ at 0.00625 s, as in the
+    crashed run's probe (5.3·10⁵).
+
+75. **The switched-step series with the fix: the masses settle within their scatter, the droplet population does not
+    converge, even at 0.00625 s.** The 100 mm flight to 120 s at 0.5 s throughout and switched at 49.5 s to 0.05, 0.025,
+    0.0125 and 0.00625 s, values in that order and over the continuum window 49.5–120 s unless stated. The scatter
+    quoted beside a change is the spread between seeds 12345 and 1, measured for this fact at 0.05 s and at 0.0125 s
+    (one pair each), because fact 65's four seeds were run at the default step only.
+    * **The masses settle within their scatter, and the scatter grows as the step shrinks.** Sprayed mass 1.0585,
+      1.0500, 1.0521, 1.0316 and 1.0353 kg; the body at 120 s 0.4136, 0.4220, 0.4200, 0.4404 and 0.4368 kg. Between the
+      two seeds the sprayed mass differs by 0.008 % at 0.05 s but by 1.45 % at 0.0125 s (1.0316 against 1.0467 kg), and
+      the mass at 120 s by 3.5 %: at 0.0125 s the two seeds' sprayed masses part by more than 0.1 % from 52.6 s and by
+      more than 1 % from 72.6 s, as their fitted nose radii part between 70 and 90 s (a median of 81 against 72 mm) and,
+      through the size feedback of fact 14, the stagnation heating with them (the convective heat integrated over
+      70–90 s differs by 3.2 %). So the 2 % fall of the sprayed mass at 0.0125 s is round-off amplified by the shape
+      feedback, not the step: from 0.05 s down the step-to-step changes (+0.2 %, −1.9 %, +0.4 %) lie within the spread
+      at 0.0125 s, and the sprayed mass sits 0.6–2.5 % below the default step's.
+    * **Runoff stays minor at every step, and its measures do not resolve between steps.** At most 6.1, 2.8, 3.2, 6.5
+      and 7.2 % of the film formed inside any latitude cap leaves it, while the cap inside 15 degrees gains film net
+      (2.5–13.5 % of what forms in it, the deceleration pushing the film toward the nose late in the flight); the
+      mass-weighted shift between where film entered and where it was sprayed is 1.19, 0.67, 0.62, 0.89 and 0.83 degrees
+      of latitude, against a spread of 0.13 and 0.18 degrees between seeds at 0.05 and 0.0125 s; the equatorial ring
+      sprays 9.3, 7.9, 8.6, 8.8 and 9.2 % of the mass (spread 0.02 and 0.25 points). Fact 69's runoff question has the
+      same answer at every step: the melt is sprayed within about a degree of latitude of where it entered the film, and
+      less than a tenth of it is sprayed at the equator.
+    * **The droplet population does not converge.** 15.5, 87.7, 106.6, 126.5 and 141.2 million droplets; median radius
+      by number 181.6, 72.5, 71.9, 70.4 and 69.9 µm and by mass 190.9, 159.0, 131.1, 105.2 and 97.2 µm; the thick
+      branch's share of the sprayed mass 92.8, 47.0, 35.3, 25.1 and 20.5 %; the mass-weighted mean film depth at release
+      2.85, 0.33, 0.26, 0.23 and 0.21 mm. Per halving from 0.05 s the droplet count rises by 21.5, 18.6 and 11.6 %, the
+      median radius by mass falls by 17.5, 19.8 and 7.6 % and the thick share by 11.7, 10.2 and 4.6 points; the last
+      changes are 27, 16 and 29 times the spread between seeds at 0.0125 s (0.43 % in count, 0.47 % in the median by
+      mass, 0.16 points in thick share). Only the median radius by number has settled: about 70 µm from 0.05 s down, its
+      last change (−0.6 %) inside its 0.96 % spread. The thick share still rises through the flight at every fine step
+      (at 0.00625 s from 17.7 % over 49.5–60 s to 35.0 % over 100–120 s).
+    * **Within each branch the droplets do not depend on the step; what does is which branch takes the mass.** The thick
+      branch's droplets have a median radius by number of 186, 177, 179, 186 and 186 µm (by mass 188–196 µm) and the
+      thin branch's of 67, 71, 71, 70 and 70 µm (by mass 85–92 µm) at every step, while the thick branch's mass falls
+      from 897 to 450, 339, 236 and 193 g and the thin branch's rises from 22 to 499, 617, 698 and 744 g. The droplet
+      count follows the thin branch's mass, which makes about sixteen times as many droplets per gram. The branch split
+      is set by fact 58's branch test, which reads a molten depth counted in whole elements at the end of the conduction
+      step: the shorter the step, the less often the wall-owning element is above the top of the feed ramp when the
+      spray runs, so the fewer patches are thick.
+    * **Small quantities.** The front-surface Rayleigh–Taylor release is 47.4, 8.9, 4.1, 5.3 and 5.8 g (spread 17 % at
+      0.05 s and 30 % at 0.0125 s, so from 0.025 s down it is 4–6 g within its scatter); the deep runoff 90.9, 0.85,
+      0.84, 0.84 and 0.83 g; the re-solidification counter 6.6, 143, 286, 502 and 882 g, still 0.08–0.10 g per fine step
+      — a count of freeze-and-re-melt cycles, not a result (fact 69).
+    * **Against the pre-fix series** (fact 69), at the steps both have: at 0.05 s the fix moves the droplet count by
+      +0.6 %, the median radius by number by −0.6 % and by mass by +0.7 %, and the thick share from 46.8 % to 47.0 %; at
+      0.025 s by −3.9 %, +0.9 % and +4.5 %, and from 33.5 % to 35.3 %. The fix neither causes the step dependence nor
+      removes it.
+    **Verdict: the droplet population is not converged at 0.00625 s, and shrinking the step alone will not converge it
+    at an affordable cost.** The last changes are smaller than the ones before (11.6 against 18.6 % in count, 7.6
+    against 19.8 % in the median by mass, 4.6 against 10.2 points in thick share), the first sign of slowing. If they
+    kept shrinking by those last ratios — 0.62, 0.38 and 0.45 per halving — they would fall below the spread between
+    seeds after seven, three and five more halvings: a fine step between about 0.0008 and 0.00005 s, which is 90 000 to
+    1.4 million fine steps for the 70.5 s after the switch, from about a day to three weeks of one core at the measured
+    1.2 s per fine step. Two ratios do not establish a geometric sequence, so this is an order of magnitude at best.
+    Followed to its limit, the same extrapolation points to a population in which the thin-film branch takes most of the
+    mass after the switch — about 165 million droplets, a median radius by mass near 92 µm and a thick share near 17 % —
+    numbers that show the direction of travel and are not results. Not measured: whether the part of the flight before
+    the switch, computed at 0.5 s in every run, depends on the step too.
+
+76. **Run times and power.** Every run of facts 72–75 was made on mains power under `caffeinate -i`; every log records
+    "AC Power" at its start and end (the battery at 100 %, charged), from 22:47 on 2026-10-05 to 03:50 on 2026-10-06.
+    The runs shared the machine (eight cores, four of them performance cores): eight at a time for the first twenty
+    minutes, then four, three and two, so their wall times say as much about the load as about the model. The fix's own
+    cost was measured like for like: the unamended and the amended copy run side by side on the 100 mm flight to 120 s
+    at the default step, beside two other runs, took 821 and 823 s of model time (+0.2 %) — nothing measurable — and
+    each reproduced its earlier run bit for bit, the unamended one the seeding amendment's default run (a check that the
+    copy is what the diff blocks say it is). Wall times: the default-step flight 1 142 s eight at a time (761 s for the
+    seeding amendment's run four at a time); the switched flights 3 605 s at 0.05 s, 6 169 s at 0.025 s, 10 968 s at
+    0.0125 s and 18 139 s (5.0 h) at 0.00625 s; the two runs with seed 1, 2 985 s at 0.05 s and 8 557 s at 0.0125 s; the
+    50 mm flight 412 s. A fine step cost a median 1.24 s at 0.00625 s and 1.66 s at 0.0125 s, falling through the flight
+    as the body shrinks and the load eased: 2.4 s per step over 50–70 s, eight and four at a time, against 0.9 s over
+    110–120 s with the run alone. The probe adds a few array reductions per sub-step and changes no result (it
+    re-implements the transport operation for operation).
+
+77. **Not done, and for Asha to decide.** (a) **The time step and the droplet population — decide this first.** Fact 75
+    answers decision (2) of 2026-10-05: shrinking the step makes the masses settle within their scatter but not the
+    droplet population, and the population's trend at 0.00625 s implies a fine step between about 0.0008 and 0.00005 s —
+    a day to three weeks of computing per flight — before it would settle, if it does. Options: (1) keep shrinking: the
+    next halving, 0.003125 s, costs six to eight hours alone on this machine and would show whether the slowing seen at
+    the last halving continues, but would not reach convergence; (2) fact 61 (a)'s option (2), the branch test on a
+    liquid depth by mass — the film, the deep account and the liquid inventory of the contiguous chain below the
+    wall-owning element, divided by ρ_l A — which removes the whole-element counting that fact 75 identifies as what the
+    step changes; (3) fact 61 (a)'s option (3), Girin's own statement of the regimes on rates, melting speed against
+    stripping speed, which would make the thin branch the rule on this flight, the direction the series is travelling in
+    anyway; (4) quote the droplet population only with its step, the series as its uncertainty. Recommendation: (2), as
+    an amendment of its own with this series repeated (the five runs take about five hours in parallel with the harness
+    as it is), and (3) as the check on whether the result is physical; until then (4): the masses may be quoted from
+    0.05 s down to within about 2.5 % and the median radius by number as about 70 µm, and nothing else of the droplet
+    population.
+    (b) **Whether the Knudsen-based step switch should become a model option.** The series was made with a harness
+    outside the package. Options: (1) leave it there until a converged step is known, the harness reproducing every run
+    of the series meanwhile; (2) add `--dt-continuum <s>`, a second macro step applied from the first step at which the
+    body Knudsen number falls below `KN_BODY_SHOCK`, latched, and recorded in the run name and JSON. Recommendation: (1)
+    for now, since there is no step to give it; (2) once (a) is settled, because the part of the flight before the
+    switch is 41 % of the flight time to 120 s, so the switch saves about 40 % of what the same fine step would cost
+    over the whole flight — provided that part needs no fine step, which was not measured: every run of the series
+    computes it at 0.5 s.
+    (c) **The exit code of a model failure** (sub-plan 13's amendment of this date). The crash reached the user as exit
+    code 2, "bad arguments", because the thermal solver's input check raises `ValueError` and `cli.main` maps every
+    `ValueError` to 2. Options: leave it; raise `RuntimeError` (exit 1) from the solvers' input checks when the melt
+    step calls them; or check the film for finite values at the end of each melt step and raise `RuntimeError` there,
+    naming the stage. Recommendation: the last, with a unit test, in a change of its own.
+    (d) **The re-solidification counter counts freeze-and-re-melt cycles, not lasting refreezing** (facts 69 and 75: it
+    grows by 0.08–0.10 g per fine step whatever the step, from 143 g at 0.05 s to 882 g at 0.00625 s, against 6.6 g at
+    0.5 s). The feed and the freeze-back are netted per element within a step (fact 25), but a film that freezes into
+    its owner at one step and is fed out again at the next is counted every time. Options: (1) keep the counter and
+    document it as gross; (2) count only the frozen-back mass still held in the elements at the end of each step (a
+    per-element ledger debited when the element feeds again); (3) report the film's frozen share alone
+    (`film_frozen_fraction` already exists). Recommendation: (2), in its own change; until then the column is not a
+    result.
+    (e) **The 87 g sprayed before the continuum switch** (fact 69). Before 49.5 s the flight is in the merged branch,
+    where Girin's closure is not certified and the thin-film mode acts on the Couette closure; it sprays 87.4 g in every
+    run of the series, all of which compute that part at 0.5 s. Asha questioned it on 2026-10-05 and it is left as it is
+    pending her decision: whether the merged branch should spray at all is the gate's declared conservatism of the
+    Global Constraints, not a question this amendment answers.
+    (f) **Exact books for the film transport** (fact 72). Options: (1) leave it, its drift at most 3e-11 of the mass it
+    moves per call and the cascade's books test held at 1e-11; (2) scale its arrivals to its departures, as fact 48 did
+    for the deep stage, making the mass exact by construction, at the cost of changing every run in the last bits, the
+    50 mm flight included. Recommendation: (2), in the same change as the next amendment that changes results anyway, so
+    that one re-measurement covers both.
+    (g) **Not measured, and recorded so it is not lost.** The resolved-mode verification rows (they transport a film
+    under Girin's closure and so can move; their comparison needs Task 11's melting references); the whole 100 mm flight
+    to the ground with the fix; the 50 mm flight at a fine step; why the front-surface Rayleigh–Taylor release falls by
+    16 % at the default step and rises by 73 % at 0.05 s with the fix (a small, threshold-sensitive quantity whose
+    scatter between two seeds is 17 % at 0.05 s); and fact 44's `PHI_DEATH = 0.50`, which every time-step study since
+    2026-10-02 has left out.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

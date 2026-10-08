@@ -1,6 +1,6 @@
 # Sub-plan: Task 7 — Spraying: instability branches, release bookkeeping, published reference values
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the spray sees of the film's new flux on thick patches** (the section after that).
 
 ## Amendment of 2026-10-02 — what the spray sees of the deep liquid (no code change)
 
@@ -55,6 +55,38 @@ Nothing in `spray.py` changes, and these are the consequences, checked rather th
   Rayleigh–Taylor release between the default step and 0.125 s that the amendment of 2026-10-02 recorded is therefore
   not the backlog's doing; it follows the branch test's step dependence (fact 58), which this amendment does not
   change.
+
+## Amendment of 2026-10-05 (runoff flux) — what the spray sees of the film's new flux on thick patches (no code change)
+
+> Part of the runoff-flux amendment (sub-plan 06's amendment of this date holds the change; facts 69–77 in
+> `00-shared-context.md`).
+
+`film.lubrication` now gives a film thinner than δ_m on a thick patch only its own part of the conjugate layer's
+shear-driven flux, V_s b (1 − b/(2 δ_m)), instead of the whole layer's V_s δ_m / 2. Nothing in `spray.py` changes, and
+these are the consequences, checked rather than assumed:
+
+- **Every input the branches read is computed as before.** The surface velocity V_s = τ δ_m / μ_l on a thick patch,
+  which enters Girin's surface Weber number ρ_l V_s² min(δ_m, layer)/Σ, the critical-Weber gate and the thick branch's
+  growth time, is unchanged; so are the branch flag, the layer that the regime test and the Rayleigh–Taylor criteria
+  read, and the contiguous molten region the wave-fits test measures against. For a given film on a given patch the
+  release is therefore exactly what it was.
+- **What changes is which film reaches the spray, and where.** A thin film on a thick patch used to be swept off the
+  patch within a sub-step by an emptying rate that grew as the film vanished; it now leaves at most at the surface
+  velocity, so more of it can stay on the thick patch it formed on and be sprayed there by the thick branch instead of
+  being carried to a neighbour. Measured on the 100 mm flight to 120 s at the default step (fact 73), and consistent
+  with that: the source table has 25 % more rows (197 075 against 157 663; a median of 1 287 releasing patches per step
+  against 927), the thick branch's share of the sprayed mass rises from 84.4 % to 85.1 % over the flight, the
+  mass-weighted mean film depth at release falls from 3.30 to 2.85 mm, and the front-surface Rayleigh–Taylor release
+  falls from 56.3 to 47.4 g (−16 %, against the 6.7 % that four seeds span, fact 65). That fall is spread over the whole
+  cap inside 15 degrees, where the mode acts, and the film it releases is thinner there (a mass-weighted 8.2 against
+  9.7 mm); the mode's release is the film on the patch shaken off within one growth time, so it follows the film that
+  collects on the nose, and why less collects there with the change was not isolated. The droplet count (+0.6 %) and the
+  median radius by number (−0.1 %) move within the run-to-run scatter of fact 65 and the median radius by mass (+0.2 %)
+  by about it. At the fine steps of the switched-step series the change moves the droplet population as little — at
+  0.05 s the count by +0.6 %, the median radius by number by −0.6 % and by mass by +0.7 %, the thick share from 46.8 %
+  to 47.0 % — and the Rayleigh–Taylor release, small and threshold-sensitive there, from 5.1 to 8.9 g (fact 75).
+- **Nothing is released twice and nothing skips a gate.** The runoff runs before the spray within the step, as before;
+  each branch still draws only from the film present on its patch after the runoff, capped by it.
 
 ---
 
