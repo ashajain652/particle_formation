@@ -1,0 +1,36 @@
+--- a/reentry_model/film.py
++++ b/reentry_model/film.py
+@@ -10,6 +10,13 @@
+ gradient for the instability is V_s / b or V_s / delta_m). Where delta_m is undefined (free-molecular patches) the
+ film is thin-branch (Couette) by definition.
+ 
++The liquid below the film (amendment of 2026-10-02): where contiguous liquid lies beneath the film, the column's
++runoff flux needs two depth limits in one expression -- the shear-driven part over min(delta_m, h), the pressure-
++gradient and deceleration-driven part over the whole liquid depth h (plan fact 29):
++    q_column = tau d^2 / (2 mu_l) + G h^3 / (3 mu_l),    d = min(delta_m, h).
++The film keeps its own share above; `deep_flux` is the rest, G (h^3 - b^3) / (3 mu_l), carried by the liquid
++beneath it, which the shear does not reach.
++
+ Runoff: for every edge shared by patches i and j, flux = q_donor * l_edge * (t_donor . n_edge)^+ with n_edge the
+ in-plane edge normal pointing out of the donor; both directions are evaluated (a negative q reverses the flow toward
+ the nose). The transport over a macro step is the linearly implicit upwind scheme (I + dt C) m_new = m_old with the
+@@ -50,6 +57,19 @@
+     return V, q, rate, thick
+ 
+ 
++def deep_flux(G, b, h, mu_l):
++    """Flux per unit width [m^2/s] of the liquid beneath the film: the pressure-gradient and deceleration-driven part
++    of a column of contiguous liquid of depth h whose top b is the film,
++        q_deep = G (h^3 - b^3) / (3 mu_l)            (zero where h <= b; signed like G, negative toward the nose).
++    G h^3 / (3 mu_l) is the Poiseuille flux of a half-channel of depth h -- no slip at the solid, no stress from this
++    part at the free surface -- and `lubrication` already gives the film G b^3 / (3 mu_l) of it, so with the film's
++    shear-driven share over the conjugate depth the column carries exactly plan fact 29's
++    tau d^2 / (2 mu_l) + G h^3 / (3 mu_l). There is no shear term here: the gas shear reaches only Girin's conjugate
++    depth, and that layer is the film's (amendment of 2026-10-02)."""
++    G, b, h = (np.asarray(x, dtype=float) for x in (G, b, h))
++    return G * (np.maximum(h, b) ** 3 - b ** 3) / (3.0 * mu_l)
++
++
+ class Runoff:
+     """Explicit upwind transport of the film mass on a SurfaceMesh (rebuilt whenever the surface changes)."""
+ 

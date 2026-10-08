@@ -1,0 +1,24 @@
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -580,7 +580,11 @@
+     """Six coupled macro steps from 69.8 km with a pool 6 mm deep under the nose and the physics loads: the cascade acts
+     (deaths expose fully molten elements and the surface recedes through them within the step), the deep runoff and
+     the spray act with it, and the energy balance and the mass stay exact by the same measures as every other melting
+-    test; the solver carries the film and the deep liquid, and the history's two new columns report the cascade."""
++    test; the solver carries the film and the deep liquid, and the history's two new columns report the cascade. The
++    mass is exact to the film transport's round-off, which its direct solve conserves only to its conditioning (plan
++    fact 48): this 6 mm pool moves up to a quarter of a kilogram of film per step through strongly coupled patch pairs,
++    and with the runoff flux of 2026-10-05 the six steps drift by up to 4.4e-12 of the body (measured over ten states
++    of numpy's generator; up to 2.8e-12 before that amendment), so the mass is held to 1e-11 here."""
+     b = melting_body(layered_mesh)
+     sim, a = girin_state(b)
+     molten_pool(b, depth=6e-3)
+@@ -594,7 +598,7 @@
+         b.advance(sim.t, 0.5, loads, state=a)
+         passes.append(b.last_melt["cascade_passes"])
+         assert abs(b.energy_balance_residual()) < 1e-7
+-        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
++        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-11)
+         assert b.solver.film_mass.sum() == pytest.approx(b.m_f.sum() + b.m_d.sum())
+     assert b.cascade_mass > 0.0 and max(passes) >= 2 and b.cascade_capped_steps == 0
+     assert b.sprayed_mass > 0.0 and b.deep_runoff_mass > 0.0

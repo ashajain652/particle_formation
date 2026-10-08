@@ -1,6 +1,6 @@
 # Sub-plan: Task 14 — Verification and sensitivity drivers, the reference-tier test, the runs
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the drivers switch by default, and the harness retires** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -315,6 +315,177 @@
    mass and 3.5 % in the mass at 120 s — the shape feedback amplifies the round-off more at the finer step — but by only
    0.43 % in droplet count, 0.96 % and 0.47 % in the medians and 0.16 points in thick share. Run a seed pair at whatever
    step a result is quoted at; at a fine step the masses need it more than the droplet population does.
+
+## Amendment of 2026-10-07 — the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated
+
+> Asha's decisions of 2026-10-07 (facts 88–96 in `00-shared-context.md`; the rigid substrate is the amendment of
+> 2026-10-06, facts 78–87). The code below is the tested code, as a diff against the copy of the rigid-substrate
+> amendment. These changes stack on this sub-plan's amendments above, which still apply except where an item below
+> replaces their wording.
+
+1. **The drivers run the new default.** `melt_verification.py`'s `physics` mode and `melt_sensitivity.py`'s `base` run
+   name `--material AA7075_scheil` (they named `AA7075_range`), so every physics row and every sensitivity row is now on
+   Scheil's curve with the rigid substrate on. The bookkeeping device (`AA7075`, `--removal instant`, `--runoff off`) is
+   untouched: with instant removal there is no film, so the rule never acts, and its rows and thresholds stand. The
+   resolved mode (`AA7075`, Girin removal, D₀ and R₀) transports a film and, under Girin's closure, can now take the
+   thick branch over slurry — on `AA7075` the slurry band is the 2 K above its 850 K half-liquid point, so the effect is
+   expected to be small, which was not measured — and its two rows are to be re-measured with the melting references of
+   Task 11.
+2. **Two new sensitivity variants.** `norigid` (`--rigid-substrate off`: the regime test reads the fully molten depth,
+   as before 2026-10-06) and `range` (`--material AA7075_range`: the linear law, `base`'s material before 2026-10-07).
+   Between them they carry the two changes the table's earlier rows were measured without, so each can be read against
+   `base` and `seed1` at the default step.
+3. **What moves, measured rather than assumed** (facts 82–84 and 89–95). At the default step on the 100 mm flight to 120
+   s the rule raises the sprayed mass by 1.2 % on the linear law and 0.6 % on Scheil's, lowers the droplet count by 32 %
+   and 26 %, and raises the median radius by number by 4 % and 3 %; on the 50 mm flight, which never has Girin's
+   closure, two-thirds of the sprayed mass leaves by the front-surface Rayleigh–Taylor mode and the median radius by
+   mass is 7.4 times larger. Every physics and sensitivity row is therefore to be re-run; none was here.
+4. **The switched-step series, repeated with the rule on** (facts 91–95), with the 2026-10-05 harness unchanged
+   (`dtswitch.py` and `compare.py`, kept with the throwaway copy; fact 77 (b) still asks whether the switch should
+   become a model option). It replaces item 4 of the 2026-10-05 amendment's measured values as the series for the
+   default model; the 2026-10-05 series stays the record of the linear law with the rule off.
+5. **Quote every difference against the scatter at its own step** (item 6 of 2026-10-05, unchanged): this series ran
+   seed 1 at 0.05 and 0.0125 s again, and fact 92 gives the spreads.
+
+In `analysis/melt_verification.py`:
+
+```diff
+--- a/analysis/melt_verification.py
++++ b/analysis/melt_verification.py
+@@ -11,7 +11,8 @@
+ time within 2 %); `resolved` -- the same heating and material with the real conductivity, film + runoff + Girin
+ spraying on the default layered mesh, D0/R0 kept as SESAM keeps them (reported: the surface melts before the
+ interior is hot, so the mass leaves earlier and, per unit heat, the interior's sensible heating delays the end);
+-`physics` -- physics-mode heating, AA7075_range, Girin removal with the size feedback (the model proper; the SESAM
++`physics` -- physics-mode heating, AA7075_scheil (the melting default since 2026-10-07), Girin removal with the size
++feedback (the model proper; the SESAM
+ overlay is context, not a target). Every run writes its
+ overlay + residual plots and metrics JSON through the CLI; cases left out are read back from existing JSONs so
+ summary.md / summary.json cover everything available."""
+@@ -32,7 +33,7 @@
+ MODES = {
+     "bookkeeping": ["--heating", "sesam", "--material", "AA7075", "--removal", "instant", "--runoff", "off", "--k-scale", "1e4", "--prism-layers", "0"],
+     "resolved": ["--heating", "sesam", "--material", "AA7075", "--removal", "girin", "--size-feedback", "initial"],
+-    "physics": ["--heating", "physics", "--material", "AA7075_range", "--removal", "girin"],
++    "physics": ["--heating", "physics", "--material", "AA7075_scheil", "--removal", "girin"],
+ }
+ THRESHOLDS = {"mass_rel_m0": 0.02, "onset_km": 0.5, "demise_time_rel": 0.02}     # bookkeeping mode only
+ COLUMNS = ["case", "mode", "max |dm| (of m0)", "melt onset [km] (model / SESAM)", "1 %-mass time [s] (model / SESAM)",
+```
+
+In `analysis/melt_sensitivity.py`:
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,14 +2,16 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+ turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
+ `nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
+-material by one element per macro step; `seed1` reruns `base` with another seed of numpy's generator -- every run is
++material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the
++regime test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the
++linear melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `seed1` reruns `base` with another seed of numpy's generator -- every run is
+ seeded, `base` with the default 12345 (amendment of 2026-10-05) -- so its change relative to `base` is the run-to-run
+ scatter, the floor against which every other row is read); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+@@ -30,9 +32,9 @@
+ VARIANTS = {
+     "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+-    "nocascade": ["--molten-cascade", "off"], "we308": ["--we-critical", "3.08"],
++    "nocascade": ["--molten-cascade", "off"], "norigid": ["--rigid-substrate", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+-    "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
++    "AA7075": ["--material", "AA7075"], "range": ["--material", "AA7075_range"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+     "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],
+ }
+ KEYS = ["sprayed_mass_kg", "r_median_um", "melt_onset_altitude_km", "spraying_onset_altitude_km", "demise_altitude_km", "runtime_s"]
+@@ -41,7 +43,7 @@
+ 
+ def argv_for(key, variant, outdir):
+     return ["run"] + CASES[key] + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+-                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_range", "--no-particles",
++                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_scheil", "--no-particles",
+                                    "--outdir", outdir, "--name", "{}__{}".format(key, variant), "--quiet"] + VARIANTS[variant]
+ 
+ 
+```
+
+## Amendment of 2026-10-07 (continuum step) — the drivers switch by default, and the harness retires
+
+> Asha's decision of 2026-10-07 on fact 96 (a) (facts 97–100 in `00-shared-context.md`). The code below is the tested
+> code, as a diff against the copy of this date's earlier amendment. These items stack on this sub-plan's amendments
+> above.
+
+1. **Every physics and sensitivity run now switches.** `melt_verification.py`'s `physics` mode and every
+   `melt_sensitivity.py` variant run with `--removal girin`, so from the first step under the continuum boundary they
+   take 0.0125 s steps (sub-plan 13's default). The bookkeeping and resolved modes run `--removal instant` and Girin
+   removal with `--size-feedback initial` respectively: the first keeps the default step throughout (the flag's default
+   is off for instant removal), the second switches like the physics mode. The 50 mm flight never crosses the continuum
+   boundary, so it is unchanged bit for bit (fact 99); the 100 mm flight switches at 49.5 s and to 120 s costs about
+   twelve times as much (fact 99 gives the measured times).
+2. **A `dtcoff` variant** (`--dt-continuum off`): the default 0.5 s step throughout, as every row before this amendment
+   was run, so the table carries the step's effect against `base` like every other switch's. `dt025` now halves the step
+   before the switch only.
+3. **The switched-step harness retires.** `dtswitch.py` and `compare.py` (2026-10-05) wrapped the model from outside the
+   package to switch the step; `--dt-continuum <s>` does the same from the model's own command line, and reproduces the
+   harness's 0.0125 s and 0.5 s runs of the 2026-10-07 series bit for bit (fact 99). A step series is now a set of
+   ordinary runs with `--dt-continuum 0.05`, `0.025`, `0.0125`, `0.00625` and `off`; the harness's runoff-by-latitude
+   instrumentation stays in the throwaway copy, as it never belonged in `analysis/`.
+
+In `analysis/melt_sensitivity.py`:
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,18 +2,22 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,seed1,layers2,layers6,dt025,dtcoff,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,
++                    kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+ turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
+ `nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
+-material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the
+-regime test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the
+-linear melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `seed1` reruns `base` with another seed of numpy's generator -- every run is
+-seeded, `base` with the default 12345 (amendment of 2026-10-05) -- so its change relative to `base` is the run-to-run
+-scatter, the floor against which every other row is read); the table
++material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the regime
++test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the linear
++melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `dtcoff` keeps the
++default 0.5 s step through the continuum regime instead of the 0.0125 s continuum step every melting run with Girin
++removal now switches to there (amendment of 2026-10-07; `dt025` halves the step before the switch); `seed1` reruns
++`base` with another seed of numpy's generator -- every run is seeded, `base` with the default 12345 (amendment of
++2026-10-05) -- so its change relative to `base` is the run-to-run scatter, the floor against which every other row is
++read); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -30,7 +34,7 @@
+ 
+ CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
+ VARIANTS = {
+-    "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
++    "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"], "dtcoff": ["--dt-continuum", "off"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+     "nocascade": ["--molten-cascade", "off"], "norigid": ["--rigid-substrate", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+```
 
 ---
 

@@ -117,7 +117,8 @@ protocol — `skfem_backend` rescales precomputed element matrices and is ~3× f
   is the design; `plans/<date>-<name>.md` is the task-by-task implementation plan. Step 1 (trajectory)
   and Step 2 (coupled 3D heat transfer) are done and verified; **Step 3 (melting, melt film, Girin
   melt spraying) is planned but not implemented** — nothing in `reentry_model/` melts yet.
-- **The Step 3 plan is generated, never hand-edited.** `prototype/` (git-ignored) holds `proto3/`, a
+- **The Step 3 plan is generated, never hand-edited.** `prototype/` (code tracked since 2026-10-08, run outputs
+  git-ignored) holds `proto3/`, a
   throwaway working copy of the package with Step 3 applied, and `plan3/make_plan.py`, which
   assembles `docs/superpowers/plans/2026-09-20-melt-spraying.md` by reading the code blocks straight
   out of `proto3/`. Regenerating must produce a byte-identical file. To change a code block, edit
@@ -126,7 +127,7 @@ protocol — `skfem_backend` rescales precomputed element matrices and is ~3× f
   `plans/melt-spraying-subplans/` splits that plan into one file per task for sub-agent refinement;
   `00-shared-context.md` is required reading before any of the others.
 - **Outputs are git-ignored, inputs are committed.** `sphere_sweep_output/` (tens of GB),
-  `reentry_model_output/`, `prototype/` and the DRAMA GUI folders stay out of git; the four SESAM
+  `reentry_model_output/`, the run outputs under `prototype/` and the DRAMA GUI folders stay out of git; the four SESAM
   reference runs in `data/reference_runs/`, the material JSONs, the fap space-weather files and the
   test fixtures in `tests/fixtures/` are committed because the verification depends on them.
 - **Run names encode the whole configuration** (`sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind`)

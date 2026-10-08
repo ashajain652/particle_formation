@@ -1,0 +1,5 @@
+FAILED tests/test_reentry_model_cli.py::test_bookkeeping_device_against_the_melting_reference
+FAILED tests/test_reentry_model_data.py::test_melting_reference_runs_are_committed_and_consistent
+2 failed, 258 passed, 1 skipped, 16 deselected, 3 errors in 303.27s (0:05:03)
+............                                                             [100%]
+12 passed in 121.94s (0:02:01)

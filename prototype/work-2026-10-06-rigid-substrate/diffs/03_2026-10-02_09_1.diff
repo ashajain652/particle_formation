@@ -1,0 +1,155 @@
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -275,3 +275,152 @@
+     assert b.m_f[exposed] == pytest.approx(carried * w / w.sum())
+     floor = exposed[int(np.argmax(cosine))]                         # the face most nearly parallel to the old patch
+     assert b.m_f[floor] > 0.5 * carried and cosine.max() > 0.9      # takes the bulk of it
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-02: the liquid below the conjugate depth runs off, and only the skin sprays
++
++
++def girin_state(b, t=50.0):
++    """The 100 mm flight at 69.8 km (t = 50 s on the intact sphere's trajectory): the shock-layer branch, every windward
++    patch under Girin's closure with a conjugate depth of 0.17-0.30 mm, and G positive from the nose to about 80 deg
++    (measured 2026-10-02)."""
++    sim = simulator(b, t_max=90.0)
++    sim.advance(t)
++    return sim, sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++
++
++def molten_pool(b, T_pool=960.0, T_rest=850.0, depth=3e-3, theta_max=60.0):
++    """A molten pool: the nodes within `depth` of the surface and `theta_max` of the flight direction (+x) above the
++    liquidus, the rest of the body below it."""
++    p = b.mesh.points
++    r = np.linalg.norm(p, axis=1)
++    near = (r > 0.05 - depth) & (p[:, 0] > r * math.cos(math.radians(theta_max)))
++    b.solver.set_temperature(np.where(near, T_pool, T_rest))
++
++
++def flow_and_delta_m(b, a):
++    from reentry_model import spray
++    flow = b.flow.evaluate(a, b.theta, b.nose_radius(), b.liquid.rho, b.surface_temperature())
++    return flow, spray.melt_layer(flow, b.liquid)[0]
++
++
++def deep_stage_args(b, delta_m):
++    """What melt_step hands the deep stage: the shear-reach gate, the temperatures and the three enthalpies."""
++    T, mat = b.solver.temperature(), b.material
++    h_node = mat.enthalpy(T)
++    return b._shear_reaches(delta_m), T, h_node, h_node[b.mesh.tets].mean(axis=1), b.film_enthalpy(mat.enthalpy_liquid(T))
++
++
++def test_the_deep_runoff_moves_the_liquid_below_the_conjugate_depth_and_books_it_exactly(layered_mesh):
++    """Fact 28(b) holds melt in its element unless the gas shear reaches it; fact 29 asked that the pressure-gradient
++    and deceleration-driven flux integrate over the whole liquid depth. A pool 3 mm deep under the nose at 70 km: the
++    deep stage takes liquid only from the buried elements the feed gate held back (never from an owner, never from an
++    element the shear reaches, never below PHI_MIN), moves it outward as G pushes it there, and books mass and
++    enthalpy exactly -- what the elements lost is on the patches, and every enthalpy difference is in the deferred
++    loads. Only the skin is film afterwards: deep liquid became film only as far as the conjugate depth had room."""
++    from reentry_model import surface_flow as sf
++    b = melting_body(layered_mesh)
++    sim, a = girin_state(b)
++    molten_pool(b)
++    flow, delta_m = flow_and_delta_m(b, a)
++    assert flow.branch == sf.BRANCH_SHOCK_LAYER and np.isfinite(delta_m[b.windward]).all()
++    reach, T, h_node, h_e, h_p = deep_stage_args(b, delta_m)
++    phi0, mass0 = b.phi.copy(), b.mass(0.0)
++    E0 = b.energy() + b.pending_load.sum()
++    seen = b._deep_runoff(0.5, flow, delta_m, reach, T, h_node, h_e, h_p)
++    b.solver.set_fractions(b.phi)                                   # as melt_step does at its end
++    assert seen > 0.0 and b.deep_runoff_mass > 0.0                  # liquid lay below the conjugate depth, and it moved
++    assert b.deep_runoff_mass == pytest.approx(((phi0 - b.phi) * b.element_mass).sum(), rel=1e-12)   # what left the elements
++    assert b.deep_surfaced_mass == pytest.approx(b.m_f.sum(), rel=1e-12)                              # what became film
++    assert b.mass(0.0) == pytest.approx(mass0, rel=1e-12)
++    assert b.energy() + b.pending_load.sum() == pytest.approx(E0, rel=1e-12)
++    lost = phi0 - b.phi
++    owners = b.owner_area > 0.0
++    assert (lost >= 0.0).all() and lost.sum() > 0.0 and not lost[owners].any() and not lost[reach > 0.0].any()
++    assert (b.phi[lost > 0.0] >= body.PHI_MIN * (1.0 - 1e-12)).all()
++    left = lost * b.element_mass                                    # where it came from and where it went: outward
++    c = b.mesh.points[b.mesh.tets].mean(axis=1)
++    theta_from = np.arccos(c[:, 0] / np.linalg.norm(c, axis=1))
++    arrived = b.m_d + b.m_f
++    assert (arrived * b.theta).sum() / arrived.sum() > (left * theta_from).sum() / left.sum()
++    skin = b.liquid.rho * b.surface.areas * np.where(b.windward, delta_m, np.inf)
++    deep = b.m_d > 0.0
++    assert deep.any() and (b.m_f[deep] >= skin[deep] * (1.0 - 1e-12)).all() and (b.m_f <= skin * (1.0 + 1e-12)).all()
++    assert not b.m_d[~b.windward].any()                             # no conjugate depth on the lee: no deep liquid there
++
++
++def test_the_deep_liquid_is_never_sprayed_only_the_skin_is(layered_mesh):
++    """A millimetre of deep liquid on every windward patch and no film, over a body with nothing molten beneath its
++    surface: the deep stage tops the film up to the conjugate depth from the top of the deep liquid and leaves the
++    rest deep; spraying then strips only the film and leaves the deep liquid exactly as it was."""
++    b = melting_body(layered_mesh)
++    sim, a = girin_state(b)
++    b.solver.set_temperature(905.0)                                 # below T_feed: no element holds liquid
++    flow, delta_m = flow_and_delta_m(b, a)
++    liq = b.liquid
++    b.m_d = np.where(b.windward, 1e-3 * liq.rho * b.surface.areas, 0.0)
++    reach, T, h_node, h_e, h_p = deep_stage_args(b, delta_m)
++    total = b.m_d.sum()
++    seen = b._deep_runoff(0.5, flow, delta_m, reach, T, h_node, h_e, h_p)
++    assert seen == pytest.approx(total) and b.m_f.sum() + b.m_d.sum() == pytest.approx(total, rel=1e-12)
++    skin = liq.rho * b.surface.areas * np.where(b.windward, delta_m, np.inf)
++    deep = b.m_d > 0.0
++    assert deep.any() and b.m_f[deep] == pytest.approx(skin[deep], rel=1e-12)       # where any stays deep, the skin is full
++    film0, deep0 = b.m_f.copy(), b.m_d.copy()
++    assert b.deep_surfaced_mass == pytest.approx(film0.sum(), rel=1e-12) and b.deep_runoff_mass == 0.0   # none from elements
++    assert 0.0 <= b.deep_blob_fraction() <= 1.0
++    released = b._film_and_spray(sim.t, 0.5, a, h_p, flow, delta_m)
++    assert 0.0 < released <= film0.sum() * (1.0 + 1e-12)            # the skin sprays ...
++    assert np.array_equal(b.m_d, deep0)                             # ... and not a gram of the deep liquid
++    assert b.m_f.sum() + released == pytest.approx(film0.sum(), rel=1e-12)
++
++
++def test_nothing_changes_where_no_liquid_lies_below_the_conjugate_depth(layered_mesh):
++    """The deep runoff adds a transfer; it changes nothing else. At 70 km, with Girin's closure on every windward patch
++    and a surface just above the liquidus over a body that is not fully molten beneath its owner elements, there is
++    no liquid below the conjugate depth: a whole melt step is bit-identical with the deep runoff on and off. (Where the
++    closure is not Girin's there is no conjugate depth at all; the 50 mm flight, which never has it, is the
++    flight-level check, measured 2026-10-02.)"""
++    runs = []
++    for deep in (True, False):
++        b = melting_body(layered_mesh, deep_runoff=deep)
++        sim, a = girin_state(b)
++        boundary = np.zeros(b.mesh.n_nodes, dtype=bool)
++        boundary[np.unique(b.surface.faces)] = True
++        b.solver.set_temperature(np.where(boundary, 930.0, 880.0))  # owners molten, nothing beneath them
++        b.melt_step(sim.t, 0.5, a)
++        runs.append(b)
++    on, off = runs
++    assert on.last_melt["deep_liquid"] == 0.0 and on.deep_runoff_mass == 0.0 and on.sprayed_mass > 0.0
++    for name in ("phi", "m_f", "m_d", "pending_load"):
++        assert np.array_equal(getattr(on, name), getattr(off, name)), name
++    assert on.sprayed_mass == off.sprayed_mass and on.removed_enthalpy == off.removed_enthalpy
++    assert on.runoff_mass == off.runoff_mass and np.array_equal(on.last_delta_m, off.last_delta_m, equal_nan=True)
++
++
++def test_full_steps_with_the_deep_runoff_keep_the_books_exact(layered_mesh):
++    """Six coupled macro steps from 70 km with a molten pool under the nose and the physics loads: the deep runoff
++    acts (liquid below the conjugate depth is found and moved), elements die with deep liquid on their patches, and
++    the energy balance and the mass stay exact by the same measures as every other melting test."""
++    b = melting_body(layered_mesh)
++    sim, a = girin_state(b)
++    molten_pool(b)
++    b.energy0 = b.energy()
++    model = heating.PhysicsHeating()
++    seen = 0.0
++    for _ in range(6):
++        sim.advance(0.5)
++        a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++        loads = model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature())
++        b.advance(sim.t, 0.5, loads, state=a)
++        seen += b.last_melt["deep_liquid"]
++        assert abs(b.energy_balance_residual()) < 1e-7
++        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
++        assert b.m_d.shape == (b.surface.n_patches,) and (b.m_d >= 0.0).all()
++        assert b.solver.film_mass.sum() == pytest.approx(b.m_f.sum() + b.m_d.sum())   # the solver carries both
++    assert seen > 0.0 and b.deep_runoff_mass > 0.0 and b.sprayed_mass > 0.0 and b.mesh.n_active < layered_mesh.n_elements
++    stats = b.melt_stats()
++    assert stats["deep_runoff_mass_kg"] == b.deep_runoff_mass and stats["deep_mass_kg"] == pytest.approx(b.m_d.sum())
++    assert stats["deep_surfaced_mass_kg"] == b.deep_surfaced_mass and 0.0 <= stats["deep_blob_fraction"] <= 1.0
++    assert stats["deep_liquid_kg"] == b.last_melt["deep_liquid"]

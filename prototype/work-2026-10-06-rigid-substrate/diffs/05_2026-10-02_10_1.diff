@@ -1,0 +1,49 @@
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -115,7 +115,8 @@
+     grid = pv.read(os.path.join(run_dir, "vtk", "field_1.vtu"))
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+-    for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate"):
++    for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
++                "deep_thickness"):
+         assert key in poly.cell_data
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+@@ -146,6 +147,36 @@
+         assert fh.readline().startswith("time_s,altitude_km,velocity_kms,released_mass_kg")
+ 
+ 
++def test_surface_frames_carry_the_conjugate_depth_per_patch(coarse_sphere_mesh, tmp_path):
++    """Girin's conjugate depth is the boundary between the skin the shear strips and the liquid that only runs off, and
++    the large-fragment model that reads these frames needs it patch by patch (amendment of 2026-10-02). Three seconds
++    from 69.8 km, where the windward face is under Girin's closure: the frame carries the step's own delta_m -- carried
++    across the step's element deaths like p_w and tau, nan wherever the closure is not Girin's, where no conjugate depth
++    exists -- and the thickness of the deep liquid on each patch. The body starts at 880 K so that it melts at once:
++    the closure field is the spray step's, written only where there is film, while delta_m is written from every step
++    that evaluates the flow."""
++    pytest.importorskip("cantera")
++    import pyvista as pv
++    from reentry_model import spray, surface_flow as sf
++    m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++    b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"), MASS_100MM, T0=880.0)
++    sim = simulator(b, t_max=53.0)
++    sim.advance(50.0)
++    out = os.path.join(str(tmp_path), "vtk")
++    hist = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5, frames_every=2, output_dir=out)).run()
++    assert hist.end_reason == "t_max" and hist.results["n_frames"] == 4               # steps 0, 2, 4 and 6
++    first, last = pv.read(os.path.join(out, "surface_0.vtp")), pv.read(os.path.join(out, "surface_3.vtp"))
++    assert np.isnan(np.asarray(first.cell_data["delta_m"])).all()        # before any step there is no evaluation yet
++    dm, closure = np.asarray(last.cell_data["delta_m"]), np.asarray(last.cell_data["closure"])
++    girin = closure == sf.CLOSURE_GIRIN
++    assert girin.sum() > 100 and (~girin).any()                           # windward patches with it, the lee without
++    assert np.isfinite(dm[girin]).all() and (dm[girin] > 1e-4).all() and (dm[girin] < 1e-3).all()   # 0.1-1 mm
++    assert np.isnan(dm[~girin]).all()
++    expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
++    np.testing.assert_array_equal(dm, expected)
++    assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
++
++
+ def test_demise_ends_the_run(coarse_sphere_mesh):
+     """The lumped instant-removal device with a 60 % demise fraction: the loop stops with end_reason demise."""
+     m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))

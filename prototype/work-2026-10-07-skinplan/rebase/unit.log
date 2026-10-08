@@ -1,0 +1,136 @@
+...........................................................F............ [ 24%]
+...............EEE.............F........................................ [ 48%]
+........................................................................ [ 72%]
+........................................................................ [ 96%]
+.........                                                                [100%]
+==================================== ERRORS ====================================
+____________ ERROR at setup of test_melting_reference_and_has_melt _____________
+
+    @pytest.fixture(scope="module")
+    def melt_ref():
+>       return sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, MELT100 + ".csv"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_reentry_model_compare.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+csv_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv'
+json_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json'
+
+    def load_reference(csv_path, json_path=None):
+        """Read <run>.csv and <run>.json (default: same stem) into a Reference."""
+        if json_path is None:
+            json_path = os.path.splitext(csv_path)[0] + ".json"
+        if not os.path.isfile(json_path):
+>           raise FileNotFoundError("reference JSON not found next to {}: {}".format(csv_path, json_path))
+E           FileNotFoundError: reference JSON not found next to /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv: /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json
+
+reentry_model/sesam_io.py:70: FileNotFoundError
+___________ ERROR at setup of test_melt_metrics_recover_a_known_lag ____________
+
+    @pytest.fixture(scope="module")
+    def melt_ref():
+>       return sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, MELT100 + ".csv"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_reentry_model_compare.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+csv_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv'
+json_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json'
+
+    def load_reference(csv_path, json_path=None):
+        """Read <run>.csv and <run>.json (default: same stem) into a Reference."""
+        if json_path is None:
+            json_path = os.path.splitext(csv_path)[0] + ".json"
+        if not os.path.isfile(json_path):
+>           raise FileNotFoundError("reference JSON not found next to {}: {}".format(csv_path, json_path))
+E           FileNotFoundError: reference JSON not found next to /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv: /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json
+
+reentry_model/sesam_io.py:70: FileNotFoundError
+________________ ERROR at setup of test_melt_plots_are_written _________________
+
+    @pytest.fixture(scope="module")
+    def melt_ref():
+>       return sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, MELT100 + ".csv"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_reentry_model_compare.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+csv_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv'
+json_path = '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainabili...cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json'
+
+    def load_reference(csv_path, json_path=None):
+        """Read <run>.csv and <run>.json (default: same stem) into a Reference."""
+        if json_path is None:
+            json_path = os.path.splitext(csv_path)[0] + ".json"
+        if not os.path.isfile(json_path):
+>           raise FileNotFoundError("reference JSON not found next to {}: {}".format(csv_path, json_path))
+E           FileNotFoundError: reference JSON not found next to /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv: /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json
+
+reentry_model/sesam_io.py:70: FileNotFoundError
+=================================== FAILURES ===================================
+____________ test_bookkeeping_device_against_the_melting_reference _____________
+
+tmp_path = PosixPath('/private/var/folders/h2/sj91_4x568z5z3d6q0rh9wsh0000gn/T/pytest-of-ashajain/pytest-588/test_bookkeeping_device_agains0')
+
+    def test_bookkeeping_device_against_the_melting_reference(tmp_path):
+        """SESAM-equivalent heating + AA7075 + instant removal + k x 1e4 on the coarse mesh over the whole flight: the
+        melt metrics are written and the mass follows SESAM's lumped law (2 % / 0.5 km / 2 %, spec 13.1; measured
+        0.82-0.98 % / 0.10 km / -1.3 %)."""
+        argv = MELT + ["--material", "AA7075", "--removal", "instant", "--runoff", "off", "--k-scale", "1e4", "--reference", MELT_100,
+                       "--outdir", str(tmp_path), "--name", "bookkeeping"]
+>       assert cli.main(argv) == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = <function main at 0x10f24b100>(['run', '--diameter', '100', '--velocity', '7.5', '--altitude', ...])
+E        +    where <function main at 0x10f24b100> = cli.main
+
+tests/test_reentry_model_cli.py:304: AssertionError
+----------------------------- Captured stderr call -----------------------------
+ERROR: reference JSON not found next to /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv: /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json
+___________ test_melting_reference_runs_are_committed_and_consistent ___________
+
+    def test_melting_reference_runs_are_committed_and_consistent():
+        """The two Step 3 melting references: DRAMA's drama-AA7075 (850 K, 400 kJ/kg) on the US76 table, winds off; the
+        sphere melts completely (mass 0 at the end, 'demised')."""
+        for name, onset_km, end_km in zip(MELTING_REFERENCE_NAMES, (71.005, 77.104), (66.476, 73.094)):
+            csv_path = os.path.join(REFERENCE_DIR, name + ".csv")
+>           doc = json.load(open(os.path.join(REFERENCE_DIR, name + ".json")))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.json'
+
+tests/test_reentry_model_data.py:69: FileNotFoundError
+=============================== warnings summary ===============================
+tests/test_fixtures.py:28
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_fixtures.py:28: PytestUnknownMarkWarning: Unknown pytest.mark.drama - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.drama
+
+tests/test_reentry_model_reference.py:44
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_reentry_model_reference.py:44: PytestUnknownMarkWarning: Unknown pytest.mark.reference - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.reference
+
+tests/test_reentry_model_reference_melt.py:34
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_reentry_model_reference_melt.py:34: PytestUnknownMarkWarning: Unknown pytest.mark.reference - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.reference
+
+tests/test_reentry_model_reference_thermal.py:54
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_reentry_model_reference_thermal.py:54: PytestUnknownMarkWarning: Unknown pytest.mark.reference - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.reference
+
+tests/test_reentry_model_reference_thermal.py:68
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_reentry_model_reference_thermal.py:68: PytestUnknownMarkWarning: Unknown pytest.mark.reference - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.reference
+
+tests/test_reentry_model_reference_thermal.py:79
+  /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/rebase/code/tests/test_reentry_model_reference_thermal.py:79: PytestUnknownMarkWarning: Unknown pytest.mark.reference - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.reference
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_reentry_model_cli.py::test_bookkeeping_device_against_the_melting_reference
+FAILED tests/test_reentry_model_data.py::test_melting_reference_runs_are_committed_and_consistent
+ERROR tests/test_reentry_model_compare.py::test_melting_reference_and_has_melt
+ERROR tests/test_reentry_model_compare.py::test_melt_metrics_recover_a_known_lag
+ERROR tests/test_reentry_model_compare.py::test_melt_plots_are_written - File...
+2 failed, 292 passed, 1 skipped, 16 deselected, 6 warnings, 3 errors in 456.14s (0:07:36)

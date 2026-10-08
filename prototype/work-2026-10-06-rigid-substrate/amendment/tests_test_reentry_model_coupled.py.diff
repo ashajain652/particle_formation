@@ -1,0 +1,22 @@
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -119,7 +119,7 @@
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+-                "deep_thickness"):
++                "deep_thickness", "nonrigid_depth"):
+         assert key in poly.cell_data
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+@@ -178,6 +178,10 @@
+     expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
+     np.testing.assert_array_equal(dm, expected)
+     assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
++    # the non-rigid depth the regime test read (amendment of 2026-10-06): the spray step's own, carried; nan where none
++    nr = np.asarray(last.cell_data["nonrigid_depth"])
++    np.testing.assert_array_equal(nr, b.on_current_surface(b.last_nonrigid, np.nan))
++    assert np.isfinite(nr).any() and (nr[np.isfinite(nr)] >= 0.0).all()
+ 
+ 
+ def test_demise_ends_the_run(coarse_sphere_mesh):

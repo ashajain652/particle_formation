@@ -1,0 +1,30 @@
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -171,6 +171,8 @@
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin").endswith("_fem-physics_melt-girin")
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
+                               deep_runoff=False).endswith("_fem-physics_melt-girin_deeprunoff-off")    # amendment of 2026-10-02
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              molten_cascade=False).endswith("_fem-physics_melt-girin_moltencascade-off")   # the molten cascade
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -190,6 +192,10 @@
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on"
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
++    assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
++    assert r["cascade_mass_kg"] == pytest.approx(float(rows[-1]["cascade_mass_kg"])) and r["cascade_mass_kg"] >= 0.0
++    assert r["cascade_capped_steps"] == 0
++    assert r["cascade_passes_max"] == max(int(float(row["cascade_passes"])) for row in rows)
+     assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
+     assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
+     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
+@@ -226,6 +232,7 @@
+     MELT + ["--removal", "magic"],
+     MELT + ["--size-feedback", "shrinking"],
+     MELT + ["--deep-runoff", "maybe"],
++    MELT + ["--molten-cascade", "maybe"],
+ ])
+ def test_bad_melt_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:

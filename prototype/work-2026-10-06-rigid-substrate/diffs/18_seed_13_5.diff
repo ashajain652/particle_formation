@@ -1,0 +1,108 @@
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -3,9 +3,10 @@
+ import json
+ import os
+ 
++import numpy as np
+ import pytest
+ 
+-from reentry_model import cli, compare, sesam_io
++from reentry_model import cli, compare, coupled, sesam_io
+ 
+ R100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind.csv")
+ BASE = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.500133", "--flight-path-angle", "-0.959331"]
+@@ -14,6 +15,13 @@
+ def test_run_name():
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none") == \
+         "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    # the seed of numpy's generator (amendment of 2026-10-05): the default keeps the name, any other seed ends it in
++    # _seed-<n>, so runs that differ only in the seed never overwrite each other
++    assert cli.DEFAULT_SEED == 12345
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", seed=cli.DEFAULT_SEED) == \
++        "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", seed=7) == \
++        "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_seed-7"
+ 
+ 
+ def test_run_us76_short_flight(tmp_path):
+@@ -24,6 +32,7 @@
+     assert [float(r["time_s"]) for r in rows] == [0.0, 5.0, 10.0, 15.0, 20.0]
+     doc = json.load(open(tmp_path / (name + ".json")))
+     assert doc["settings"]["atmosphere"] == "us76" and doc["results"]["end_reason"] == "t_max"
++    assert doc["settings"]["seed"] == cli.DEFAULT_SEED                         # every run records its seed (2026-10-05)
+     assert doc["inputs"]["mass_kg"] == pytest.approx(1.4728833557580150) and doc["comparison"] is None
+     assert doc["provenance"]["package_version"] and "git_commit" in doc["provenance"]
+     assert doc["provenance"]["reference_sha256"] is None and doc["provenance"]["replay_sha256"] is None
+@@ -72,6 +81,10 @@
+     BASE + ["--gravity", "j6"],
+     ["run", "--diameter", "-1", "--velocity", "7.5", "--altitude", "77.5"],
+     BASE + ["--epoch", "yesterday"],
++    BASE + ["--seed", "abc"],                     # the seed (amendment of 2026-10-05): an integer in [0, 2**32 - 1],
++    BASE + ["--seed", "1.5"],                     # the range numpy's generator accepts
++    BASE + ["--seed", "-1"],
++    BASE + ["--seed", "4294967296"],
+ ])
+ def test_bad_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
+@@ -160,6 +173,42 @@
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics").endswith("_fem-physics")
+ 
+ 
++def test_the_seed_makes_a_run_reproducible_and_another_seed_changes_it(tmp_path, monkeypatch, capsys):
++    """numpy's global generator is seeded at the start of every run (amendment of 2026-10-05): pyamg draws from it the
++    starting vector of the spectral-radius estimate that weights the prolongation smoother of every hierarchy it
++    builds, which made two runs of one build differ from the first solve on (plan fact 52). Three 5 s coupled runs on
++    the coarse mesh, whose conduction solves go through pyamg: two with the default seed -- the second started with the
++    generator scrambled, so a run cannot depend on what drew from it before -- agree bit for bit in every history column
++    and every result field but the run time, while one with another seed differs, at round-off, under its own name."""
++    histories = []
++    original_run = coupled.CoupledRun.run
++
++    def run_and_keep(self):
++        histories.append(original_run(self))
++        return histories[-1]
++
++    monkeypatch.setattr(coupled.CoupledRun, "run", run_and_keep)
++    argv = FEM + ["--t-max", "5", "--dt", "0.5"]
++    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam")
++    np.random.seed(1)
++    assert cli.main(argv + ["--outdir", str(tmp_path / "a")]) == 0
++    np.random.seed(2)
++    np.random.rand(1000)
++    assert cli.main(argv + ["--outdir", str(tmp_path / "b")]) == 0
++    capsys.readouterr()
++    assert cli.main([a for a in argv if a != "--quiet"] + ["--outdir", str(tmp_path / "c"), "--seed", "7"]) == 0
++    assert name + "_seed-7 (seed 7): t_max at t = 5.0 s" in capsys.readouterr().out     # the printed summary names it
++    a, b, c = histories
++    ra, rb = (json.load(open(tmp_path / d / (name + ".json")))["results"] for d in ("a", "b"))
++    assert set(a.columns) == set(b.columns) and all(np.array_equal(a.columns[k], b.columns[k], equal_nan=True) for k in a.columns)
++    assert {k: v for k, v in ra.items() if k != "runtime_s"} == {k: v for k, v in rb.items() if k != "runtime_s"}
++    assert not all(np.array_equal(a.columns[k], c.columns[k], equal_nan=True) for k in a.columns)
++    for k in a.columns:                                       # the seed acts at round-off; the melting model amplifies it
++        np.testing.assert_allclose(c.columns[k], a.columns[k], rtol=1e-6, atol=1e-9)
++    doc = json.load(open(tmp_path / "c" / (name + "_seed-7.json")))
++    assert doc["settings"]["seed"] == 7 and doc["run_name"] == name + "_seed-7"
++
++
+ # ---------------------------------------------------------------------------------------------------------------
+ # Step 3: melting flags, the melting run's files, the bookkeeping device against the melting reference
+ 
+@@ -173,6 +222,8 @@
+                               deep_runoff=False).endswith("_fem-physics_melt-girin_deeprunoff-off")    # amendment of 2026-10-02
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
+                               molten_cascade=False).endswith("_fem-physics_melt-girin_moltencascade-off")   # the molten cascade
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", deep_runoff=False,
++                              molten_cascade=False, seed=7).endswith("_melt-girin_deeprunoff-off_moltencascade-off_seed-7")
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -189,7 +240,7 @@
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+-    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on"
++    assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+     assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade

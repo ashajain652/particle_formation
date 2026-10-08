@@ -1,0 +1,56 @@
+{
+  "controlOutputs": {"runStatus": "Finished", "progress": 100, "logs": []},
+  "singleModuleOutputs": {
+    "satellites": [
+      {
+        "name": "Mini Sat",
+        "id": "sat-1",
+        "missionPhases": [
+          {
+            "name": "Operational",
+            "id": "phase-1",
+            "epochs": [
+              {
+                "epoch": "2024-08-01T12:00:00.00Z",
+                "analysisModules": [
+                  {
+                    "analysisModule": "sara",
+                    "process_id": ["p-1"],
+                    "results": {
+                      "PySara.Main_Body.aaaa0000-0000-4000-8000-000000000001_Trajectory.txt": [
+                        {"time": 0.0,    "altitude": 125.0, "lat": 10.0,  "lon": 117.0,  "velocity": 7.910, "downrange": 0.0,    "path": -0.06, "heading": 192.0},
+                        {"time": 100.0,  "altitude": 124.0, "lat": 5.0,   "lon": 116.0,  "velocity": 7.905, "downrange": 790.0,  "path": 0.02,  "heading": 192.0},
+                        {"time": 200.0,  "altitude": 126.0, "lat": 0.0,   "lon": 115.0,  "velocity": 7.900, "downrange": 1580.0, "path": 0.08,  "heading": 193.0},
+                        {"time": 300.0,  "altitude": 128.0, "lat": -30.0, "lon": 100.0,  "velocity": 7.905, "downrange": 2370.0, "path": -0.10, "heading": 200.0},
+                        {"time": 400.0,  "altitude": 120.0, "lat": -20.0, "lon": 110.0,  "velocity": 7.900, "downrange": 3160.0, "path": -0.20, "heading": 210.0},
+                        {"time": 500.0,  "altitude": 100.0, "lat": -10.0, "lon": 120.0,  "velocity": 7.800, "downrange": 3950.0, "path": -0.50, "heading": 350.0},
+                        {"time": 600.0,  "altitude": 80.0,  "lat": 0.0,   "lon": 178.0,  "velocity": 7.000, "downrange": 4700.0, "path": -1.00, "heading": 10.0},
+                        {"time": 700.0,  "altitude": 60.0,  "lat": 10.0,  "lon": -178.0, "velocity": 5.000, "downrange": 5300.0, "path": -3.00, "heading": 20.0},
+                        {"time": 800.0,  "altitude": 50.0,  "lat": 15.0,  "lon": -170.0, "velocity": 2.000, "downrange": 5650.0, "path": -10.0, "heading": 30.0},
+                        {"time": 900.0,  "altitude": 40.0,  "lat": 20.0,  "lon": -160.0, "velocity": 1.000, "downrange": 5800.0, "path": -30.0, "heading": 40.0},
+                        {"time": 1000.0, "altitude": 30.0,  "lat": 22.0,  "lon": -155.0, "velocity": 0.500, "downrange": 5870.0, "path": -50.0, "heading": 50.0},
+                        {"time": 1100.0, "altitude": 20.0,  "lat": 23.0,  "lon": -152.0, "velocity": 0.200, "downrange": 5900.0, "path": -70.0, "heading": 60.0},
+                        {"time": 1200.0, "altitude": 10.0,  "lat": 24.0,  "lon": -151.0, "velocity": 0.100, "downrange": 5910.0, "path": -85.0, "heading": 70.0},
+                        {"time": 1300.0, "altitude": 0.0,   "lat": 25.0,  "lon": -150.0, "velocity": 0.050, "downrange": 5912.0, "path": -90.0, "heading": 80.0}
+                      ],
+                      "PySara.Main_Body.aaaa0000-0000-4000-8000-000000000001_AeroThermalHistory.txt": [
+                        {"time": 0.0, "altitude": 125.0, "temp": 300.0, "mass": 740.0, "thick": 7.0},
+                        {"time": 1300.0, "altitude": 0.0, "temp": 400.0, "mass": 81.0, "thick": 1.0}
+                      ],
+                      "PySara.Other_Part.bbbb0000-0000-4000-8000-000000000002_Trajectory.txt": [
+                        {"time": 0.0,   "altitude": 90.0, "lat": 1.0, "lon": 2.0, "velocity": 7.500, "downrange": 0.0,   "path": -1.0, "heading": 100.0},
+                        {"time": 100.0, "altitude": 70.0, "lat": 2.0, "lon": 3.0, "velocity": 6.000, "downrange": 600.0, "path": -2.0, "heading": 100.0},
+                        {"time": 200.0, "altitude": 50.0, "lat": 3.0, "lon": 4.0, "velocity": 3.000, "downrange": 900.0, "path": -5.0, "heading": 100.0}
+                      ],
+                      "PySara.RiskResults.dat": {}
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

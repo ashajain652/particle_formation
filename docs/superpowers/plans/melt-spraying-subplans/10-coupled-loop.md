@@ -1,6 +1,6 @@
 # Sub-plan: Task 10 — The coupled loop: melt columns, demise, VTK melt fields, particle files
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-06: the rigid substrate's four history columns and its frame field** (the section after that). **Amended 2026-10-07 (continuum step): the macro step shortens where Girin's closure begins** (the section after the rigid substrate's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -261,6 +261,275 @@ the 240 steps, from 33.5 s to 108 s, with a median of 3 (90th percentile 4, at m
 0.245 kg, `cascade_passes_max` is 6 and `cascade_capped_steps` 0 (157 g, at most 6 passes and 0 capped steps with the
 deep runoff on). With `--molten-cascade off` the history is bit-identical with the deep-runoff amendment's in every
 shared column (fact 55): the two columns are the only addition.
+
+## Amendment of 2026-10-06 — the rigid substrate's four history columns and its frame field
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements). The code below is the tested code, as a diff against the throwaway copy
+> described there.
+
+`MELT_COLUMNS` gains `nonrigid_depth_mean_mm`, `slurry_thick_fraction`, `rigid_thin_fraction` and `slurry_held_mass_kg`
+(defined in sub-plan 09's amendment; nan with `--rigid-substrate off`, so a run with the switch off has every column it
+had before, bit for bit, and four more that are nan). `write_vtk_frame` writes `nonrigid_depth` per patch on the surface
+frame: the spray step's own value, carried across the step's deaths by `on_current_surface` like `delta_m`, nan where
+the step did not evaluate it. The coupled run's frame test checks the field exists, and the conjugate-depth frame test
+that it is the step's own, carried.
+
+In `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -27,7 +27,8 @@
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+-                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg"]
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
++                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -157,7 +158,8 @@
+     local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+     flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+     (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+-    nan wherever the closure is not Girin's) -- and the thickness of the deep liquid beneath the film (PyVista/VTK XML)."""
++    nan wherever the closure is not Girin's) -- the thickness of the deep liquid beneath the film, and the non-rigid
++    depth the regime test read (PyVista/VTK XML)."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -193,6 +195,9 @@
+         # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
+         poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
+         poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
++        # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
++        # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
++        poly.cell_data["nonrigid_depth"] = carry(body.last_nonrigid, np.nan)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 
+```
+
+In `tests/test_reentry_model_coupled.py`:
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -119,7 +119,7 @@
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+-                "deep_thickness"):
++                "deep_thickness", "nonrigid_depth"):
+         assert key in poly.cell_data
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+@@ -178,6 +178,10 @@
+     expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
+     np.testing.assert_array_equal(dm, expected)
+     assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
++    # the non-rigid depth the regime test read (amendment of 2026-10-06): the spray step's own, carried; nan where none
++    nr = np.asarray(last.cell_data["nonrigid_depth"])
++    np.testing.assert_array_equal(nr, b.on_current_surface(b.last_nonrigid, np.nan))
++    assert np.isfinite(nr).any() and (nr[np.isfinite(nr)] >= 0.0).all()
+ 
+ 
+ def test_demise_ends_the_run(coarse_sphere_mesh):
+```
+
+## Amendment of 2026-10-07 (continuum step) — the macro step shortens where Girin's closure begins
+
+> Asha's decision of 2026-10-07 on fact 96 (a): make the switched step a model option at 0.0125 s (facts 97–100 in
+> `00-shared-context.md`). The code below is the tested code, as a diff against the copy of this date's earlier
+> amendment (the Scheil default and the freeze-back fix). Sub-plan 13's amendment of this date holds the flag.
+
+**The change.** `CoupledSettings` gains `dt_continuum` (s; `None`, the default, for no switch) and `kn_switch` (the body
+Knudsen number of the switch, default `surface_flow.KN_BODY_SHOCK`, 0.01). After each macro step, on the aero state the
+body was just given — before any re-evaluation on a surface the step's deaths changed — `CoupledRun._switch` sets the
+macro step to `dt_continuum` the first time the trajectory's body Knudsen number (`AeroState.kn`, the mean free path
+over the body's current reference length, the history's `knudsen` column) is below `kn_switch`, and latches it. That is
+the rule of the 2026-10-05 harness (`dtswitch.py`), which applied it from outside the package, so the option reproduces
+the harness's runs bit for bit (fact 98). `dt_continuum` must be greater than zero and no longer than `dt`.
+
+**Frames.** `frames_every` counts macro steps until the switch and flight time after it — a frame every `frames_every`
+first steps — so a fine step does not write a frame per step; that is also the harness's rule, which wrote frames every
+10 s of flight time.
+
+**Results.** With `dt_continuum` set the run's results gain `dt_continuum_s`, `dt_switch_time_s`, `dt_switch_kn` and
+`dt_switch_altitude_km` (the three `None` if the flight never crosses). History rows stay one per macro step, so a run
+with the switch has many more of them after it (5 740 rows to 120 s at 0.0125 s on the 100 mm flight, against 241).
+
+**Tests.** `test_the_continuum_step_reproduces_the_switched_step_harness`: a hot body on the coarse mesh from 48 s, at
+0.5 s to the switch (48.5 s there: the body's Knudsen number reads its shrinking size) and 0.05 s to 50.5 s, once with
+the option and once with the harness's rule applied by hand: every history column identical, the switch recorded where
+the harness switched, the steps 0.5 s before and 0.05 s after it, and frames at 48.0, 48.5, 49.0, 49.5, 50.0 and 50.5 s
+— by step, then by flight time. `test_the_continuum_step_is_off_by_default_and_rejects_a_coarser_step`. Both failed
+before the change (no such setting) and pass after it.
+
+In `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -14,6 +14,7 @@
+ import numpy as np
+ 
+ from . import trajectory as tj
++from .surface_flow import KN_BODY_SHOCK
+ 
+ THERMAL_COLUMNS = ["convective_heat_W", "rad_cooling_W", "integrated_heat_J", "absorbed_heat_J",
+                    "surface_T_max_K", "surface_T_min_K", "surface_T_mean_K", "T_stagnation_K", "T_back_K",
+@@ -35,11 +36,18 @@
+ @dataclass
+ class CoupledSettings:
+     dt: float = 0.5                  # s, macro step
+-    frames_every: int = 0            # VTK frame every n macro steps (0: none)
++    frames_every: int = 0            # VTK frame every n macro steps (0: none); by flight time after a continuum switch
+     output_dir: str = None           # directory of the VTK series (required when frames_every > 0)
+     frames: list = field(default_factory=list)
++    dt_continuum: float = None       # s, the macro step from the first step whose body Knudsen number is below kn_switch,
++                                     # latched (None: no switch; amendment of 2026-10-07, the continuum step)
++    kn_switch: float = KN_BODY_SHOCK  # the body Knudsen number of the switch: the surface flow's own continuum boundary
+ 
++    def __post_init__(self):
++        if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
++            raise ValueError("dt_continuum must be > 0 and no longer than dt, got {!r}".format(self.dt_continuum))
+ 
++
+ class CoupledRun:
+     def __init__(self, sim, body, heating_model, settings=None):
+         """`body` must be a ThermalBody (uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
+@@ -73,6 +81,8 @@
+     def run(self):
+         started = time.perf_counter()
+         sim, body, s = self.sim, self.body, self.settings
++        self.switched_at = None                                    # (t, Kn, altitude km) of the continuum switch
++        self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
+         a, loads = self.loads_at(sim.t, sim.y)
+         rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
+         self._frame(step, sim.t, loads)
+@@ -81,6 +91,7 @@
+             a, loads = self.loads_at(sim.t, sim.y)
+             body.advance(sim.t, dt, loads, state=a)
+             step += 1
++            self._switch(sim.t, a)
+             if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+                 a, loads = self.loads_at(sim.t, sim.y)
+             rows.append(self.row(sim.t, sim.y, a, loads))
+@@ -95,7 +106,23 @@
+         history.results.update(self.thermal_results(history))
+         if self.melting:
+             history.results.update(self.melt_results(history))
++        if s.dt_continuum is not None:
++            t_sw, kn_sw, h_sw = self.switched_at or (None, None, None)
++            history.results.update({"dt_continuum_s": s.dt_continuum, "dt_switch_time_s": t_sw, "dt_switch_kn": kn_sw,
++                                    "dt_switch_altitude_km": h_sw})
+         return history
++
++    def _switch(self, t, a):
++        """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
++        just given, before any re-evaluation on a surface the step's deaths changed -- has a body Knudsen number below
++        kn_switch, the macro step is dt_continuum, latched. Girin's closure begins there and the droplet population needs
++        the fine step from there on (plan facts 92-96); before it the default step serves, as the 2026-10-05 harness
++        that this replaces bit for bit had it."""
++        s = self.settings
++        if s.dt_continuum is None or self.switched_at is not None or not (np.isfinite(a.kn) and a.kn < s.kn_switch):
++            return
++        s.dt = s.dt_continuum
++        self.switched_at = (float(t), float(a.kn), float(a.h) / 1e3)
+ 
+     def melt_results(self, history):
+         c, body = history.columns, self.body
+@@ -134,12 +161,21 @@
+         }
+ 
+     def _frame(self, step, t, loads):
++        """Every `frames_every` steps; after a continuum switch by flight time instead, every `frames_every` first
++        steps, so that a fine step does not write a frame per step."""
+         s = self.settings
+-        if not s.frames_every or step % s.frames_every:
++        if not s.frames_every:
+             return
++        if self.switched_at is None or t <= self.switched_at[0] + 1e-9:
++            if step % s.frames_every:
++                return
++        elif t + 1e-9 < self._next_frame:
++            return
+         k = len(s.frames)
+         write_vtk_frame(s.output_dir, k, self.body, loads)
+         s.frames.append((t, k))
++        while self._next_frame <= t + 1e-9:
++            self._next_frame += self._frame_dt
+ 
+     def _collection(self):
+         s = self.settings
+```
+
+In `tests/test_reentry_model_coupled.py`:
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -194,3 +194,56 @@
+     hist = coupled.CoupledRun(simulator(b), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5)).run()
+     assert hist.end_reason == "demise" and hist.results["end_reason"] == "demise" and hist.results["demise_altitude_km"] < 71.0
+     assert 0.55 * MASS_100MM < hist.columns["mass_kg"][-1] < 0.6 * MASS_100MM and hist.results["final_mass_kg"] == hist.columns["mass_kg"][-1]
++
++
++def test_the_continuum_step_reproduces_the_switched_step_harness(coarse_sphere_mesh, tmp_path):
++    """`CoupledSettings.dt_continuum` (amendment of 2026-10-07, the continuum step): the macro step shortens to
++    dt_continuum from the first step whose aero state, the one handed to the body, has a body Knudsen number below
++    `kn_switch`, and stays there. That is what the 2026-10-05 harness (`dtswitch.py`) did from outside the package, and
++    the option reproduces it bit for bit: from 48 s at 0.5 s to the switch (48.5 s for this hot body on the coarse mesh,
++    whose Knudsen number reads its shrinking size), then 0.05 s to 50.5 s, against the harness's rule applied by hand. Frames are written every `frames_every` steps until the switch and by flight time
++    after it, every `frames_every` first steps, so a fine step does not write one frame per step."""
++    pytest.importorskip("cantera")
++    runs, seen = {}, {}
++    for label in ("option", "harness"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver("skfem"), MASS_100MM, T0=880.0)
++        sim = simulator(b, t_max=50.5)
++        sim.advance(48.0)
++        if label == "option":
++            s = coupled.CoupledSettings(dt=0.5, dt_continuum=0.05, kn_switch=0.01, frames_every=1,
++                                        output_dir=str(tmp_path / "vtk"))
++            run = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), s)
++        else:
++            run = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5))
++            advance = b.advance
++
++            def switched(t, dt, loads, state=None):          # the harness's rule: after the step, on the state it was given
++                advance(t, dt, loads, state)
++                if "t" not in seen and state is not None and np.isfinite(state.kn) and state.kn < 0.01:
++                    run.settings.dt, seen["t"] = 0.05, t
++            b.advance = switched
++        runs[label] = (run.run(), run)
++    (h, run), (g, _) = runs["option"], runs["harness"]
++    t_sw = seen["t"]
++    assert h.results["dt_switch_time_s"] == t_sw and h.results["dt_continuum_s"] == 0.05 and 48.0 < t_sw < 50.5
++    assert 0.0 < h.results["dt_switch_kn"] < 0.01 and h.results["dt_switch_altitude_km"] > 0.0
++    t = h.columns["time_s"]
++    fine, coarse = np.diff(t)[t[1:] > t_sw + 1e-9], np.diff(t)[t[1:] <= t_sw + 1e-9]
++    # the last step is whatever reaches t_max: here a sliver of ~1e-13 s, the fine steps summing to just short of it
++    assert np.allclose(coarse, 0.5) and np.allclose(fine[:-1], 0.05) and 0.0 < fine[-1] <= 0.05 + 1e-12
++    assert set(h.columns) == set(g.columns)
++    for k in h.columns:
++        np.testing.assert_array_equal(h.columns[k], g.columns[k], err_msg=k)
++    frame_times = [ft for ft, _ in run.settings.frames]
++    assert frame_times == pytest.approx([48.0, 48.5, 49.0, 49.5, 50.0, 50.5])          # by step, then by flight time
++
++
++def test_the_continuum_step_is_off_by_default_and_rejects_a_coarser_step():
++    s = coupled.CoupledSettings()
++    assert s.dt_continuum is None
++    with pytest.raises(ValueError):
++        coupled.CoupledSettings(dt=0.5, dt_continuum=1.0)
++    with pytest.raises(ValueError):
++        coupled.CoupledSettings(dt=0.5, dt_continuum=0.0)
+```
 
 ---
 

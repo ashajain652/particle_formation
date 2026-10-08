@@ -1,0 +1,47 @@
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -142,3 +142,44 @@
+         s.set_temperature(450.0)
+         assert s.facet_temperature() == pytest.approx(np.full(len(s.areas), 450.0)), name
+         assert s.facet_temperature() == pytest.approx(s.facet_temperature(s.temperature())), name
++
++
++def test_the_molten_cascade_matches_the_skfem_backend(coarse_sphere_mesh):
++    """The molten cascade (amendment of 2026-10-03) in both backends: a pool 6 mm deep under the nose at 69.8 km and six
++    coupled steps with the physics loads -- deaths expose fully molten elements and the cascade feeds them within the
++    step, while the deep runoff and the spray act -- give the same cascade passes, the same active set, the same mass,
++    sprayed mass, cascade mass and deep account, and the same temperatures, with both energy balances exact. numpy's
++    generator is seeded for each backend because pyamg draws its starting vectors from it (plan fact 52). Measured on
++    2026-10-03: passes 4, 3, 16, 4, 5, 4 in both; mass 1.3e-7, sprayed 6.3e-7, cascade mass 2.4e-7, deep account 3.7e-6,
++    temperatures 0.11 K, balances 4.7e-10 and 2.4e-11 -- the stiff deep transport carries the backends' last-bit
++    differences further (plan fact 49); with the deep runoff off they agree to 1e-10 and 4e-6 K."""
++    pytest.importorskip("cantera")
++    from reentry_model import body, heating, mesh
++    from test_reentry_model_coupled import MASS_100MM, simulator
++    out = {}
++    for name in ("skfem", "fenicsx"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM)
++        sim = simulator(b, t_max=90.0)
++        sim.advance(50.0)
++        p = b.mesh.points
++        r = np.linalg.norm(p, axis=1)
++        b.solver.set_temperature(np.where((r > 0.05 - 6e-3) & (p[:, 0] > 0.5 * r), 960.0, 850.0))
++        b.energy0 = b.energy()
++        model = heating.PhysicsHeating()
++        passes = []
++        for _ in range(6):
++            sim.advance(0.5)
++            a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++            b.advance(sim.t, 0.5, model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature()),
++                      state=a)
++            passes.append(b.last_melt["cascade_passes"])
++        out[name] = (b, passes)
++    (s, ps), (f, pf) = out["skfem"], out["fenicsx"]
++    assert ps == pf and max(pf) >= 2 and f.cascade_mass > 0.0 and f.deep_runoff_mass > 0.0
++    assert np.array_equal(s.mesh.active, f.mesh.active)
++    assert f.cascade_mass == pytest.approx(s.cascade_mass, rel=1e-6) and f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6)
++    assert f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5) and f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
++    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
++    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8

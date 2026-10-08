@@ -1,0 +1,25 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -539,14 +539,19 @@
+         room = np.maximum(1.0 - self.phi, 0.0) * self.element_mass
+         with np.errstate(divide="ignore", invalid="ignore"):
+             share = np.where(have > 0.0, np.minimum(want, room) / np.where(have > 0.0, have, 1.0), 0.0)
+-        taken = np.minimum(solid * share[owner], self.m_f + self.m_d)
++        # each account gives up at most what it holds, the film's part taken directly: as the capped sum less the deep
++        # part, (m_f + m_d) - m_d, it came out one rounding unit above m_f whenever m_d dwarfs m_f, leaving a negative
++        # film the solver rejects (amendment of 2026-10-07)
++        wanted = solid * share[owner]
++        from_deep = np.minimum(self.m_d, wanted)
++        from_film = np.minimum(self.m_f, wanted - from_deep)
++        taken = from_deep + from_film
+         if not taken.any():
+             return 0.0
+         per_element = np.bincount(owner, taken, self.mesh.n_elements)
+         self.phi = np.clip(self.phi + per_element / self.element_mass, 0.0, 1.0)
+-        from_deep = np.minimum(self.m_d, taken)
+         self.m_d = self.m_d - from_deep
+-        self.m_f = self.m_f - (taken - from_deep)
++        self.m_f = self.m_f - from_film
+         # the film arrives in the element it froze onto, which is colder than the surface it left
+         self._defer_to_elements(np.bincount(owner, taken * h_p, self.mesh.n_elements) - per_element * h_e)
+         return float(taken.sum())

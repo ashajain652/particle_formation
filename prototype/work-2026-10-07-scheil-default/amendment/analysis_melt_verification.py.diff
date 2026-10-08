@@ -1,0 +1,21 @@
+--- a/analysis/melt_verification.py
++++ b/analysis/melt_verification.py
+@@ -11,7 +11,8 @@
+ time within 2 %); `resolved` -- the same heating and material with the real conductivity, film + runoff + Girin
+ spraying on the default layered mesh, D0/R0 kept as SESAM keeps them (reported: the surface melts before the
+ interior is hot, so the mass leaves earlier and, per unit heat, the interior's sensible heating delays the end);
+-`physics` -- physics-mode heating, AA7075_range, Girin removal with the size feedback (the model proper; the SESAM
++`physics` -- physics-mode heating, AA7075_scheil (the melting default since 2026-10-07), Girin removal with the size
++feedback (the model proper; the SESAM
+ overlay is context, not a target). Every run writes its
+ overlay + residual plots and metrics JSON through the CLI; cases left out are read back from existing JSONs so
+ summary.md / summary.json cover everything available."""
+@@ -32,7 +33,7 @@
+ MODES = {
+     "bookkeeping": ["--heating", "sesam", "--material", "AA7075", "--removal", "instant", "--runoff", "off", "--k-scale", "1e4", "--prism-layers", "0"],
+     "resolved": ["--heating", "sesam", "--material", "AA7075", "--removal", "girin", "--size-feedback", "initial"],
+-    "physics": ["--heating", "physics", "--material", "AA7075_range", "--removal", "girin"],
++    "physics": ["--heating", "physics", "--material", "AA7075_scheil", "--removal", "girin"],
+ }
+ THRESHOLDS = {"mass_rel_m0": 0.02, "onset_km": 0.5, "demise_time_rel": 0.02}     # bookkeeping mode only
+ COLUMNS = ["case", "mode", "max |dm| (of m0)", "melt onset [km] (model / SESAM)", "1 %-mass time [s] (model / SESAM)",

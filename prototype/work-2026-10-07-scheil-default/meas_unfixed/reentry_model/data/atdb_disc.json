@@ -1,0 +1,43 @@
+{
+  "_provenance": "Values of /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_CYLINDER.nc (ESA DRAMA 4.1.4 aerothermal database for the primitive CYLINDER, Hyperschall Technologie Goettingen GmbH) at angle of attack 0 (the flat face normal to the flow) and the thinnest tabulated aspect ratio L/D = 2.5e-05, read on 2026-09-22. This is the flat-disc limit of the sphere-to-disc shape family: the face-on continuum C_D is independent of L/D over six decades (1.824 at Ma 10 for every thickness), because hypersonic drag on a blunt body is pressure drag on the frontal area while the side wall is parallel to the flow and the base sits in a near-vacuum wake. HTG's continuum database is modified Newtonian: sphere/disc = 0.4990-0.4991 at every Mach number, i.e. exactly the Newtonian ratio 1/2, so cd_continuum here IS C_p,max(Ma).",
+  "mach": [
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    30.0
+  ],
+  "cd_free_molecular": [
+    2.440813,
+    2.202072,
+    2.128815,
+    2.093372,
+    2.072485,
+    2.058719
+  ],
+  "cd_continuum": [
+    1.801341,
+    1.824148,
+    1.828404,
+    1.829896,
+    1.830587,
+    1.830962
+  ],
+  "heat_flux_factor_free_molecular": [
+    0.518978,
+    0.497696,
+    0.49366,
+    0.492214,
+    0.49153,
+    0.49115
+  ],
+  "heat_flux_factor_continuum": [
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561
+  ]
+}
