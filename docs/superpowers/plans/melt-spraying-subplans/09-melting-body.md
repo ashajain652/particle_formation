@@ -1,6 +1,6 @@
 # Sub-plan: Task 9 — The melting body
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 4349–5703). Read `00-shared-context.md` first — this is the largest and highest-risk task in the plan and needs the most context, not the least. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the body sees of the film's new flux** (the section after that). **Amended 2026-10-06: the thin branch needs a rigid substrate — the non-rigid depth and the regime layer** (the section after the runoff flux's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 4349–5703). Read `00-shared-context.md` first — this is the largest and highest-risk task in the plan and needs the most context, not the least. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the body sees of the film's new flux** (the section after that). **Amended 2026-10-06: the thin branch needs a rigid substrate — the non-rigid depth and the regime layer** (the section after the runoff flux's). **Amended 2026-10-07: freeze-back never leaves a negative film** (the section after the rigid substrate's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -2030,6 +2030,116 @@ In `tests/test_reentry_model_fenicsx.py` (the 2026-10-05 test with the rule off,
 (a) Whether the front-surface Rayleigh–Taylor mode should also be held over slurry off the closure — decide this first;
 (b) the material branch splits are quoted with; (c) the time-step series with the rule on; (d) sub-plans 14 and 15;
 (e) the 64-element cap; (f) the φ weighting's assumption.
+
+*Answered on 2026-10-07 (`00-shared-context.md` fact 88):* (a) it is not held; (b) `AA7075_scheil` is the melting
+default; (c) the series repeated (facts 91–95); (d) sub-plans 14 and 15 amended.
+
+## Amendment of 2026-10-07 — freeze-back never leaves a negative film
+
+> Found by the time-step series of 2026-10-07 (facts 88–96 in `00-shared-context.md`). The code below is the tested
+> code, as a diff against the copy of the rigid-substrate amendment of 2026-10-06 with sub-plan 13's Scheil default of
+> this date applied.
+
+**What failed.** The 0.00625 s run of the series stopped at its first fine step, at 49.50625 s, with the thermal
+solver's input check "film mass must be one finite non-negative value per node" (exit code 2, fact 77 (c)). A probe that
+checks the film and deep accounts after every stage of the melt step, re-running the same seeded flight, found the first
+bad value right after `_freeze_back`: a film of −1.29e-25 kg on one windward patch, 51° from the stagnation point, whose
+deep liquid freeze-back had just taken whole. Nothing was non-finite; the non-rigid depth, `film.lubrication`'s outputs
+and the runoff transport were all clean up to that point.
+
+**Why.** The deep-runoff amendment of 2026-10-02 caps what freeze-back takes from a patch at its film plus its deep
+liquid, takes the deep liquid first and debits the film by the rest, computed as the capped amount less the deep part:
+the film is left with m_f − ((m_f + m_d) − m_d). In floating point (m_f + m_d) − m_d is m_f rounded to the precision of
+m_d, so when the deep liquid dwarfs the film, the film's part comes out one rounding unit above the film for about half
+of all such pairs (measured on 200 000 random pairs: 99 860), and the film is left at about −1e-25 kg. The spray stage's
+clean-up, which zeroes films below 1e-30 kg, runs before freeze-back, so the negative reaches the solver. It needs a
+patch holding both film and deep liquid whose liquid all freezes back in one step. No earlier run stopped on it, and
+none of the 2026-10-06 flights is changed by the fix: re-run on the fixed code, the 100 mm and 50 mm flights on the
+linear range with the rule on and off and the 100 mm flight on Scheil's curve with the rule off are bit-identical to the
+originals in every history column, result and source-table column (fact 89). The Scheil series met it at its first fine
+step.
+
+**The change.** Each account gives up at most what it holds, and the film's part is taken directly: `from_deep =
+min(m_d, wanted)`, `from_film = min(m_f, wanted - from_deep)`, `taken = from_deep + from_film`. Each subtraction then
+takes from a number no smaller than what it takes, which correctly rounded arithmetic never rounds below zero. Where the
+cap does not bind, the amounts are those of before; where it binds they can differ in the last bit.
+
+**Test.** `test_freeze_back_of_film_and_deep_liquid_leaves_neither_negative`: one patch with 2.34e-14 kg of film over
+1.88e-9 kg of deep liquid — a pair the old arithmetic gets wrong, which the test asserts — all of it freezing back into
+an owner element with room. Both accounts must be exactly zero afterwards and the owner must gain their mass. It failed
+before the change with the film negative and passes after it. Unit tier 252 passed, with Task 11's five known reference
+failures; FEniCSx tier 12 passed.
+
+In `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -539,14 +539,19 @@
+         room = np.maximum(1.0 - self.phi, 0.0) * self.element_mass
+         with np.errstate(divide="ignore", invalid="ignore"):
+             share = np.where(have > 0.0, np.minimum(want, room) / np.where(have > 0.0, have, 1.0), 0.0)
+-        taken = np.minimum(solid * share[owner], self.m_f + self.m_d)
++        # each account gives up at most what it holds, the film's part taken directly: as the capped sum less the deep
++        # part, (m_f + m_d) - m_d, it came out one rounding unit above m_f whenever m_d dwarfs m_f, leaving a negative
++        # film the solver rejects (amendment of 2026-10-07)
++        wanted = solid * share[owner]
++        from_deep = np.minimum(self.m_d, wanted)
++        from_film = np.minimum(self.m_f, wanted - from_deep)
++        taken = from_deep + from_film
+         if not taken.any():
+             return 0.0
+         per_element = np.bincount(owner, taken, self.mesh.n_elements)
+         self.phi = np.clip(self.phi + per_element / self.element_mass, 0.0, 1.0)
+-        from_deep = np.minimum(self.m_d, taken)
+         self.m_d = self.m_d - from_deep
+-        self.m_f = self.m_f - (taken - from_deep)
++        self.m_f = self.m_f - from_film
+         # the film arrives in the element it froze onto, which is colder than the surface it left
+         self._defer_to_elements(np.bincount(owner, taken * h_p, self.mesh.n_elements) - per_element * h_e)
+         return float(taken.sum())
+```
+
+In `tests/test_reentry_model_melting.py`:
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -725,3 +725,33 @@
+         assert np.isin(b.last_spray.branch[wet], [spray.BRANCH_THIN, spray.BRANCH_RAREFIED]).all()
+         assert b.sprayed_mass > 0.0
+     assert out["rigid"][0].last_melt["slurry_held_mass_kg"] == 0.0
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-07: freeze-back never leaves a negative film
++
++
++def test_freeze_back_of_film_and_deep_liquid_leaves_neither_negative(layered_mesh):
++    """Freeze-back draws a patch's deep liquid first and its film after, capped at what the two hold. Taking the cap as
++    their sum and the film's part as that sum less the deep liquid leaves the film one rounding unit below zero whenever
++    the deep liquid dwarfs the film -- for about half of all such pairs -- and the solver's film-mass check rejects the
++    negative: it stopped the 0.00625 s run of the 2026-10-07 time-step series at its first fine step, a film of -1.3e-25
++    kg on one patch. A patch whose film and deep liquid all freeze back must be left with exactly none of either, and its
++    owner element must gain exactly their mass."""
++    b = melting_body(layered_mesh)
++    b.solver.set_temperature(800.0)                                 # below the feed ramp: every patch's liquid freezes
++    i = b.i_stag
++    owner = b.surface.owner[i]
++    b.phi[owner] = 0.5                                              # room for it in the owner element
++    b.m_f[:], b.m_d[:] = 0.0, 0.0
++    b.m_f[i], b.m_d[i] = 2.3351899704880006e-14, 1.8789852661499484e-09   # (m_f + m_d) - m_d > m_f in floating point
++    assert b.m_f[i] - ((b.m_f[i] + b.m_d[i]) - b.m_d[i]) < 0.0      # the pair the old arithmetic got wrong
++    before = b.m_f[i] + b.m_d[i]
++    solid = (1.0 - b.material.feed_fraction(b.film_temperature())) * (b.m_f + b.m_d)
++    want = np.bincount(b.surface.owner, solid, b.mesh.n_elements)
++    _, _, _, h_e, h_p = deep_stage_args(b, np.full(b.surface.n_patches, np.nan))
++    frozen = b._freeze_back(want, solid, h_e, h_p)
++    assert (b.m_f >= 0.0).all() and (b.m_d >= 0.0).all()
++    assert b.m_f[i] == 0.0 and b.m_d[i] == 0.0
++    assert frozen == pytest.approx(before, rel=1e-15)
++    assert (b.phi[owner] - 0.5) * b.element_mass[owner] == pytest.approx(before, rel=1e-9)
+```
 
 ---
 

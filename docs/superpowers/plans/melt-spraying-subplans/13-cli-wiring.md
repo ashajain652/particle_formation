@@ -1,6 +1,6 @@
 # Sub-plan: Task 13 — Command line
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -711,6 +711,109 @@ In `tests/test_reentry_model_cli.py`:
  ])
  def test_bad_melt_arguments_exit_2(argv, tmp_path):
      with pytest.raises(SystemExit) as exc:
+```
+
+## Amendment of 2026-10-07 — `AA7075_scheil` is the melting default
+
+> Asha's decision of 2026-10-07 (facts 88–96 in `00-shared-context.md`). The code below is the tested code, as a diff
+> against the copy of the rigid-substrate amendment of 2026-10-06, which that amendment's diff blocks rebuild exactly.
+
+**The change.** `--melt on` without `--material` now selects `AA7075_scheil` — sub-plan 02's Scheil variant, with Step
+4's latent heat of 390 kJ/kg and liquid surface tension of 0.80 N/m — instead of `AA7075_range`. The decision to give
+the body one Scheil material was taken on 2026-09-27 (sub-plan 02, which named this one-line change as Task 13's); it
+needs sub-plan 02's material code and its two new JSON files. `AA7075_range` and the three other packaged materials stay
+selectable by name, and the help text now lists all five. A non-melting run keeps `AA7075_nomelt`. `MeltingBody`'s error
+message for a material without a latent heat names the Scheil variant too.
+
+**Run names.** Unchanged, and that is an open item (fact 96 (c)). `model_run_name` has never encoded the material, so a
+default run made now carries the name a linear-range run carried before, and a run with `--material AA7075_range` the
+name of a default run: in one output directory the second overwrites the first. Until the name carries the material,
+compare runs by the JSON's `settings.material` and give runs of different materials their own `--name` or `--outdir`
+(both analysis drivers already pass `--name`).
+
+**Test.** `test_melting_run_writes_columns_files_and_json` expects `AA7075_scheil`, 390 kJ/kg and 0.80 N/m; it failed on
+the material before the change, as it should, and passes after it. Unit tier: 251 passed, with only Task 11's five known
+reference failures; FEniCSx tier 12 passed.
+
+In `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -3,7 +3,7 @@
+     python -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
+         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+-        [--melt on --material AA7075_range --removal girin|instant ...] (Step 3: melting, film, spraying)
++        [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+@@ -162,7 +162,8 @@
+     th.add_argument("--accommodation", type=float, default=0.8, help="free-molecular energy accommodation A_cq (default %(default)s)")
+     th.add_argument("--catalycity", type=float, default=1.0, help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
+     th.add_argument("--material", default=None,
+-                    help="AA7075_nomelt | AA7075 | AA7075_range | <DRAMA material JSON> (default: AA7075_nomelt, or AA7075_range with --melt on)")
++                    help="AA7075_nomelt | AA7075 | AA7075_range | AA7075_scheil | AA7075-empiricaldata | <DRAMA material JSON> "
++                         "(default: AA7075_nomelt, or AA7075_scheil with --melt on)")
+     th.add_argument("--emissivity", type=float, default=None, help="override the material's emissivity")
+     th.add_argument("--k-scale", type=float, default=1.0,
+                     help="multiplies the material's conductivity (default 1): a verification device for the near-isothermal (lumped) limit, not physical")
+@@ -244,7 +245,9 @@
+                                                     # verification numbers were measured on it (fact 12)
+     the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
+                                band=band)
+-    material_name = args.material or ("AA7075_range" if melting else "AA7075_nomelt")
++    # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
++    # selectable by name
++    material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
+     mat = material.Material.from_drama_json(material_name)
+     if args.k_scale != 1.0:
+         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
+```
+
+In `reentry_model/body.py` (the error message only):
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -237,7 +237,7 @@
+     def __init__(self, mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0=300.0,
+                  emissivity=None, T_ambient=0.0, v_hat=(1.0, 0.0, 0.0)):
+         if not material.melts or material.liquid is None:
+-            raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075 or AA7075_range)")
++            raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075, AA7075_range or AA7075_scheil)")
+         super().__init__(mesh, material, solver, mass_kg, T0, emissivity, T_ambient, v_hat)
+         from . import film as film_mod, spray as spray_mod, surface_flow
+         self.settings = settings or MeltSettings()
+```
+
+In `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -243,8 +243,9 @@
+     assert float(rows[-1]["mass_kg"]) < float(rows[0]["mass_kg"]) and float(rows[-1]["sprayed_mass_kg"]) > 0.0
+     doc = json.load(open(tmp_path / "melt_short.json"))
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+-    assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
+-    assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
++    # AA7075_scheil is the material of --melt on (amendment of 2026-10-07): Scheil's curve, 390 kJ/kg, 0.80 N/m
++    assert s["melt"] == "on" and s["material"] == "AA7075_scheil" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
++    assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.80
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+@@ -255,7 +256,7 @@
+     assert r["cascade_capped_steps"] == 0
+     assert r["cascade_passes_max"] == max(int(float(row["cascade_passes"])) for row in rows)
+     assert s["size_feedback"] == "current" and "nose_radius_mm" in rows[0] and float(rows[-1]["nose_radius_mm"]) > 0.0
+-    assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 400e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
++    assert s["T_liquidus_K"] == 908.0 and s["latent_heat_Jkg"] == 390e3 and s["demise_fraction"] == 0.01 and s["particles"] is True
+     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
+     for key in ("particles", "particles_summary", "size_distribution"):
+         assert os.path.isfile(f[key])
 ```
 
 ---

@@ -1294,6 +1294,8 @@ power under `caffeinate -i`, the power source logged at the start and end of eac
     16 % at the default step and rises by 73 % at 0.05 s with the fix (a small, threshold-sensitive quantity whose
     scatter between two seeds is 17 % at 0.05 s); and fact 44's `PHI_DEATH = 0.50`, which every time-step study since
     2026-10-02 has left out.
+    *Forward pointer (2026-10-07):* (a) is answered for the rule on, on Scheil's curve, by facts 92–94, and (b)'s step
+    is proposed in fact 96 (a).
 
 ## Amendment of 2026-10-06 — the thin branch needs a rigid substrate (facts 78–87)
 
@@ -1470,6 +1472,147 @@ interruption of the mains; its results match fact 73 to the last digit, as a see
     fact 86), which leaves the branch unchanged — anything deeper than δ_m is thick — but truncates
     `nonrigid_depth_mean_mm`. Not measured. (f) **The φ weighting assumes the fed part of an element came evenly from
     along the line**; in a wall-owning element it is in fact the hottest part, at the wall. Not measured.
+    *Answered on 2026-10-07 (fact 88):* (a) option (1), the mode is not held; (b) `AA7075_scheil` is the melting
+    default; (c) the series repeated on Scheil's curve with the rule on (facts 91–95); (d) sub-plans 14 and 15 amended.
+
+## Amendment of 2026-10-07 — the Rayleigh–Taylor mode stays, Scheil's curve is the melting default, a freeze-back round-off fixed, and the time-step series with the rule on (facts 88–96)
+
+Asha's decisions of 2026-10-07 on fact 87: (a) the front-surface Rayleigh–Taylor mode is **not** held back over slurry
+off Girin's closure — option (1), so the film held from the shear modes there is still shed by it (facts 83 and 85
+stand, and their caveat on the sizes it gives on blob facets with them); (b) `AA7075_scheil` becomes the melting
+default; (c) the switched-step series is repeated with the rule on, on Scheil's curve, the new default (chosen over
+repeating it on the linear range, which would have isolated the rule's effect from the material's); (d) sub-plans 14 and
+15 are brought up to date. The series found a round-off in the deep runoff's freeze-back (fact 89), which is fixed here.
+It amends sub-plans 02 (no code change), 09 (the freeze-back), 13 (the default), 14 (the drivers and the series) and 15
+(the README, the assumptions and the spec, for this amendment and the one of 2026-10-06). Facts 1–87 stand except where
+these say otherwise; **fact 87 (a), (b), (c) and (d) are answered here, and fact 77 (a)'s question — does the droplet
+population converge in the step — is answered for the rule on by facts 92–94.** Measured in a throwaway copy
+(`prototype/work-2026-10-07-scheil-default/`, git-ignored) made from the copy of fact 78's amendment, which that
+amendment's ten diff blocks rebuild exactly from the earlier copy (checked file by file); the measurement copy was
+frozen with a checksum manifest before the runs, re-frozen once for the fix of fact 89, and never edited while a run was
+in flight; every run was made on mains power under `caffeinate -i`, the power source logged at the start and the end.
+
+88. **What changed, in date order.** (1) The default (sub-plan 13): `--melt on` without `--material` selects
+    `AA7075_scheil` — Scheil's curve between 750 and 908 K, 390 kJ/kg, Σ 0.80 N/m — instead of `AA7075_range`; the four
+    other packaged materials stay selectable by name, and the help text lists all five. (2) The drivers (sub-plan 14):
+    `melt_verification.py`'s physics mode and `melt_sensitivity.py`'s base run use `AA7075_scheil`, and the sensitivity
+    table gains `range` (the linear law) and `norigid` (`--rigid-substrate off`). (3) The freeze-back (sub-plan 09, fact
+    89). The CLI test of the melting run expects the Scheil default (it failed on the material first, as it should); one
+    melting test is added (fact 89). Unit tier 252 passed, 1 skipped, with only Task 11's five known reference failures;
+    FEniCSx tier 12 passed.
+
+89. **A negative film from the freeze-back's round-off, and its fix.** The series' 0.00625 s run, first launched on the
+    copy with only (1) and (2), stopped at its first fine step, 49.50625 s, with the thermal solver's input check "film
+    mass must be one finite non-negative value per node" (exit code 2, fact 77 (c)); the six other runs, then about
+    twenty minutes in, were stopped and the seven relaunched after the fix. A probe that re-ran the seeded flight and
+    checked the film and deep accounts after every stage of the melt step found the first bad value right after
+    `_freeze_back`: a film of −1.29e-25 kg on one windward patch 51° from the stagnation point, whose deep liquid the
+    freeze-back had just taken whole; nothing was non-finite, and the non-rigid depth, `film.lubrication`'s outputs and
+    the runoff transport were clean. The cause is the 2026-10-02 amendment's arithmetic: freeze-back takes the deep
+    liquid first and debits the film by the capped amount less the deep part, m_f − ((m_f + m_d) − m_d), which in
+    floating point is negative by a rounding unit for about half of all pairs whose deep liquid dwarfs the film (99 860
+    of 200 000 random pairs), and the spray stage's clean-up of films below 1e-30 kg runs before freeze-back. The fix
+    takes each account's part directly — from_deep = min(m_d, wanted), from_film = min(m_f, wanted − from_deep) — so no
+    subtraction can round below zero; amounts where the cap does not bind are those of before. A unit test with one such
+    pair (2.34e-14 kg of film over 1.88e-9 kg of deep liquid) failed before the fix and passes after it. **None of the
+    2026-10-06 flights is changed by it:** re-run on the fixed copy, the 100 mm flight to 120 s and the 50 mm flight on
+    the linear range with the rule on and off, the 100 mm flight on Scheil's curve with the rule off, and (as the
+    series' 0.5 s run, fact 91) with the rule on are bit-identical to the runs of facts 81–84 in all 90 history columns,
+    every result field but the run time, and all 22 source-table columns. So facts 81–86 stand as written.
+
+90. **The default changes no explicit run.** The re-runs of fact 89 name `--material AA7075_range` or `AA7075_scheil`
+    explicitly and reproduce the runs made under the old default bit for bit; the series' 0.5 s run, which names no
+    material, reproduces fact 84's explicit `AA7075_scheil` run bit for bit, so the default selects exactly that
+    material. The run name does not carry the material (fact 96 (c)).
+
+91. **The series.** The 2026-10-05 harness, unchanged (`dtswitch.py`, recovered from that session's scratchpad and kept
+    with the copy; fact 69): the 100 mm flight to 120 s at 0.5 s throughout, and switched at the body Knudsen number's
+    first value below 0.01 — 49.5 s, as before — to 0.05, 0.025, 0.0125 and 0.00625 s, latched; seed 1 beside the
+    default 12345 at 0.05 and 0.0125 s, for the scatter between seeds at those steps (fact 75 measured it the same way);
+    the same command line as fact 75's runs but without `--material`, so `AA7075_scheil`, the rule on and every other
+    setting at its default. Before 49.5 s the runs with the default seed are identical: each sprays 80.3 g, 16.0 g by
+    the thin mode where the wall is below T_rigid and 64.3 g by the front-surface Rayleigh–Taylor mode (fact 84), and
+    the step at 49.5 s, the first under Girin's closure and still 0.5 s long, 18.1 g (the seed-1 runs 80.1 and 18.2 g).
+    Values below are over the continuum window 49.5–120 s unless stated, as fact 75's are, and each is read against the
+    scatter between seeds measured at its own step.
+
+92. **The masses settle within their scatter from 0.0125 s down.** At 0.5 s throughout and switched to 0.05, 0.025,
+    0.0125 and 0.00625 s, in that order: sprayed mass 1.1789, 1.1458, 1.1602, 1.1654 and 1.1642 kg; the body at 120 s
+    0.2931, 0.3262, 0.3118, 0.3066 and 0.3079 kg. Between seeds 12345 and 1 the sprayed mass differs by 0.12 % at 0.05 s
+    and 0.14 % at 0.0125 s, the mass at 120 s by 0.42 % and 0.53 %. The last change, from 0.0125 to 0.00625 s, is −0.10
+    % in sprayed mass and +0.40 % in the mass at 120 s, both inside the scatter at 0.0125 s; the default step sprays 1.3
+    % more and leaves 4.8 % less at 120 s than the finest. Before the switch every run is the same (fact 91).
+
+93. **The droplet population nearly converges, and from 0.0125 s it is within a few per cent.** Over the continuum
+    window: droplets 12.97, 51.42, 69.24, 76.49 and 78.57 million; median radius by number 186.9, 69.5, 68.5, 68.5 and
+    68.7 µm and by mass 196.8, 190.4, 188.6, 187.3 and 185.8 µm; the thick branch's share of the sprayed mass 94.8,
+    80.2, 73.5, 71.2 and 71.4 %; the mass-weighted mean film depth at release 3.59, 0.245, 0.169, 0.134 and 0.102 mm.
+    Per halving from 0.05 s the droplet count rises by 34.7, 10.5 and 2.7 %, the thick share changes by −6.7, −2.3 and
+    +0.2 points, the median radius by number by −1.4, −0.1 and +0.3 % and by mass by −0.9, −0.7 and −0.8 %. Against the
+    scatter between seeds at 0.0125 s — 0.74 % in count, 0.31 points in thick share, 0.16 % and 0.07 % in the medians by
+    number and by mass — the last changes are 3.7 times, within, 2 times and 12 times. So the branch split and the
+    median by number have converged at 0.0125 s, the count is converging fast (each halving's change a quarter to a
+    third of the one before; one more halving would be expected to move it by about 0.7 %, within its scatter — an
+    expectation from two ratios, not a measurement), and the median by mass drifts slowly, by under 1 % per halving
+    (fact 94 says where from). Against the 2026-10-05 series (linear law, rule off; fact 75), whose last halving still
+    moved the count by 11.6 %, the thick share by 4.6 points and the median by mass by 7.6 %, this is the convergence
+    fact 77 (a) asked for; but two things changed at once, the rule and the material (decision (c)), so how much of it
+    is the rule's was not measured. The default 0.5 s step remains unfit for the droplet population — 6 times fewer
+    droplets than the fine steps, because the thin branch is almost absent there (11 g against 304 g) — while its masses
+    are within a few per cent (fact 92).
+
+94. **The branch split by mass converges; each branch's droplets nearly do.** The thick branch sprays 1 025, 840, 780,
+    760 and 761 g over the window and the thin branch 11, 205, 279, 305 and 304 g: from 0.0125 s the split is fixed to
+    within 2 g. The thin branch's droplets have a median radius by number of 72, 65, 66, 66 and 66 µm (by mass 156, 86,
+    82, 81 and 81 µm) and the thick branch's of 188, 188, 188, 187 and 184 µm (by mass 194.6, 194.6, 194.4, 193.7 and
+    192.0 µm); the thick branch's droplet count rises from 10.1 to 11.4 million at the last halving, which is where the
+    last rise in the count and the drift in the median by mass come from — its own droplets getting slightly smaller at
+    the finest step, not a shift of mass between branches. Why was not isolated (fact 96 (b)). The thick share still
+    varies through the flight at every fine step — 72 % over 49.5–60 s, 60 % over 60–80 s, 78 % over 80–100 s and 97 %
+    over 100–120 s at 0.00625 s — and those sub-window shares agree between 0.0125 and 0.00625 s to within a point.
+    Under the closure the median share of the wet windward patches on the thick branch is 56, 36, 31, 27 and 24 %, of
+    which 6, 33, 28, 25 and 23 % are thick only because of slurry; the non-rigid depth under them is a median 1.47,
+    0.41, 0.34, 0.30 and 0.28 mm against a conjugate depth of 288–295 µm. At fine steps the non-rigid depth therefore
+    sits on the conjugate depth, so the regime test is decided near its threshold, and the slurry under the film is a
+    fifth of what the default step, which lets the surface overshoot the liquidus for half a second between feeds,
+    reports.
+
+95. **Runoff, small quantities, cost.** Runoff stays minor at every step: at most 13.0, 10.2, 8.3, 10.0 and 9.7 % of the
+    film formed inside any latitude cap leaves it (fact 75: 6.1–7.2 % with the rule off on the linear law — the film on
+    a patch made thick by slurry moves as the top of the conjugate layer, sub-plan 06's amendment of 2026-10-06); the
+    mass-weighted shift between where film entered and where it was sprayed is 1.92, 0.98, 0.92, 0.97 and 0.96 degrees
+    of latitude (0.95 and 1.02 at the second seed's 0.05 and 0.0125 s); the equatorial ring sprays 11.1, 7.7, 8.5, 8.9
+    and 9.0 % of the mass. The front-surface Rayleigh–Taylor release over the window is 44.6, 2.9, 2.6, 2.7 and 0.5 g (a
+    3 % spread between seeds at 0.05 s and 31 % at 0.0125 s: a few grams, within its scatter from 0.05 s down), on top
+    of the 64.3 g it sheds before the switch; the deep runoff moves 116.9 g at 0.5 s and 0.88–0.90 g at every fine step;
+    the re-solidification counter reads 4.5, 107, 238, 486 and 941 g, still about 0.08 g per fine step —
+    freeze-and-re-melt cycles, not a result (fact 77 (d)). The energy balance is 1.1e-10 at 0.5 s and grows with the
+    number of steps to 4.1e-9 at 0.00625 s, as before (fact 74). All seven runs started together at 14:16 on 2026-10-07
+    and took 0.37, 1.30, 2.14, 3.74 and 5.92 h of wall time (the seed-1 runs 1.30 and 3.75 h), seven, then six, four,
+    three and one at a time on the eight-core machine; every log records mains power at its start and end. The 0.00625 s
+    run took 21 298 s against 18 139 s for fact 75's under a different load, so the rule's cost at fine steps was not
+    measured cleanly.
+
+96. **Not done, and for Asha to decide.** (a) **The step to quote droplet populations at — decide this first.** From
+    0.0125 s the population is within a few per cent of the finest step's, its branch split within its scatter (fact
+    93); 0.0125 s costs 3.7 h of wall time for the 100 mm flight to 120 s with up to seven runs sharing the machine.
+    Options: (1) quote the population from a 0.0125 s run made with the harness, labelled with its step; (2) make the
+    switch a model option — fact 77 (b)'s `--dt-continuum <s>`, a second macro step from the first step at which the
+    body Knudsen number falls below `KN_BODY_SHOCK`, latched and recorded in the run name and JSON — now that there is a
+    step to give it; (3) keep 0.5 s and quote only masses from it. Recommendation: (2) with 0.0125 s, in its own change
+    with a test that the option reproduces the harness's run bit for bit, because every quoted number should come from
+    the model's own command line; masses may meanwhile be quoted from the default step within about 5 % (fact 92). (b)
+    **The thick branch's own droplets shrink slightly at the finest step** (median by number 187 to 184 µm, fact 94),
+    which is the remaining drift in the median by mass; a seed-1 run at 0.00625 s (about 6 h) would show whether it is
+    outside the scatter there. (c) **The run name does not carry the material** (fact 90): with the Scheil default a run
+    with `--material AA7075_range` and a default run of the same settings have the same name and overwrite each other in
+    one output directory — a gap since Step 3 began (it held for `AA7075` against `AA7075_range` too) that the new
+    default makes easier to hit, against the repository's rule that run names encode the whole configuration. Options:
+    append `_mat-<name>` when the material is not the mode's default, so existing default names stay; or leave it, every
+    driver already passing `--name`. Recommendation: the suffix, in its own change. (d) **Not measured.** How much of
+    fact 93's convergence is the rule's rather than the material's (a Scheil series with the rule off, five runs, about
+    6 h); the 50 mm flight at a fine step; fact 44's `PHI_DEATH = 0.50`; and every physics and sensitivity row of Task
+    14 on the new default (sub-plan 14's amendment of this date).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
