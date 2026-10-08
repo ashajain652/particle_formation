@@ -1,4 +1,5 @@
-"""Point location, centre crossing and the thickness map (Spheral M1 plan, Task 5; check "Thickness map").
+"""Point location, centre crossing, the thickness map (Spheral M1 plan, Task 5; check "Thickness map"), and the
+slurry depth and the three zones (Task 6; check "Zones").
 
 On the committed synthetic runs of tests/fixtures/spheral_frag/ (their README lists the answers), read back with
 pyvista through `spheral_frag_synthetic.read_frame_pyvista` (the tests' independent reader; Task 4's
@@ -17,7 +18,17 @@ pyvista through `spheral_frag_synthetic.read_frame_pyvista` (the tests' independ
   sphere patches within the same faceted bounds about their own sphere, and within one far cell (h_far = 5 mm) of 2R
   (measured worst 4.35 mm short, under three 13 mm facets at the left sphere's pole).
 - slab: an exact box, so every patch's thickness is the box's extent along its normal to 1e-12 m.
-- brute force and vtk agree to 1e-12 m (plan; measured 0.0, bitwise: both evaluate the same Moller-Trumbore test)."""
+- brute force and vtk agree to 1e-12 m (plan; measured 0.0, bitwise: both evaluate the same Moller-Trumbore test).
+- depths, slab: f_l is linear in depth below every exact top patch, so the crossing is exact up to round-off (the
+  plan's "within ds/10" is the looser statement of the same; measured 5e-18 m), and 1e-12 m is used. Below a top
+  patch whose cube spans two columns the P1 value is 0.5 + (sum lambda_i D_i - d)/G, so its crossing lies between
+  the two columns' depths (a priori).
+- depths, sphere: the plan's "within one element size" (h = 8 mm, the fixture's surface size); measured on the
+  committed fixture: slurry depth 3.662-9.029 mm against 3.051 mm on frame 1 (error +0.61 to +5.98 mm) and on frame
+  2's 1,184 patches on the sphere 4.211-9.635 mm against 5.236 mm (-1.02 to +4.40 mm); liquid depth 0 against 2.010 mm
+  (P1 cannot hold a liquid layer thinner than the first element: the nodes below the surface are under the liquidus).
+  A priori, independent of the fixture: where P1 f_l = 0.5 the containing tetrahedron has nodes on both sides of the
+  f_l = 0.5 sphere, so |r(x) - r_half| <= its diameter (+ ds for the sampling)."""
 import json
 import os
 import time
@@ -27,8 +38,11 @@ import pytest
 
 import spheral_frag_synthetic as syn
 from helpers import REPO_ROOT
+from spheral_frag import frames as fr
 from spheral_frag import geometry
-from spheral_frag.geometry import TetLocator, centre_crossed, thickness_map, thickness_summary, thin_patches
+from spheral_frag.geometry import (ZONE_BULK, ZONE_INVALID, ZONE_NONE, ZONE_RUNOFF, ZONE_SKIN, TetLocator,
+                                   bulk_slurry_area, centre_crossed, classify_zones, layer_depths, thickness_map,
+                                   thickness_summary, thin_patches, zone_summary)
 
 pytest.importorskip("pyvista")
 
@@ -276,3 +290,212 @@ def test_auto_method_and_cost_per_frame(frames, thickness):
     # cost per frame on the fixtures (measured 2026-10-07: 0.05 s sphere, 0.12 s dumbbell, 0.07 s slab); a loose
     # ceiling so that a quadratic blow-up of the brute force is caught, not a slow machine
     assert all(v["seconds"] < 5.0 for v in thickness.values())
+
+
+# ------------------------------------------------------------------------------------------- depths and zones
+SLAB_COLS = range(len(syn.SLAB_SLURRY_DEPTH))
+
+
+@pytest.fixture(scope="module")
+def oriented(frames):
+    """The frames as the API requires them: wound outward (frames.orient_outward) with their derived patch arrays,
+    a locator and the thickness map. The fixtures are written outward, so nothing is flipped here; on the real
+    export about 18 % of the triangles are (Task 5)."""
+    out = {}
+    for key in (("sphere_run", 0), ("sphere_run", 1), ("sphere_run", 2), ("slab_frame", 0)):
+        f, flipped = fr.orient_outward(frames[key])
+        assert len(flipped) == 0
+        d = fr.derived_patch_arrays(f)
+        th = thickness_map(f.points, f.faces, d["normal"], d["centroid"], method="bruteforce")
+        out[key] = dict(frame=f, d=d, loc=TetLocator.from_frame(f), thickness=th)
+    return out
+
+
+@pytest.fixture(scope="module")
+def slab_depths(oriented):
+    o = oriented[("slab_frame", 0)]
+    liq, slu, info = layer_depths(o["frame"], o["loc"], o["d"]["normal"], o["d"]["centroid"],
+                                  max_depth=o["thickness"], return_info=True)
+    top, col, exact = syn.slab_exact_patches(o["frame"])
+    return dict(liquid=liq, slurry=slu, info=info, top=top, col=col, exact=exact)
+
+
+def slab_zones(o, sd, **kw):
+    p = o["frame"].patch
+    return classify_zones(p["film_thickness"], sd["liquid"], sd["slurry"], p["delta_m"],
+                          deep_thickness=p["deep_thickness"], **kw)
+
+
+def per_column(values, sd):
+    """The value on each column's exact top patches, checked to be one value per column (to round-off)."""
+    out = []
+    for c in SLAB_COLS:
+        v = np.asarray(values)[sd["exact"] & (sd["col"] == c)]
+        assert len(v) == (32 if c == 4 else 24)
+        if v.dtype.kind == "f" and np.isnan(v).any():
+            assert np.isnan(v).all()
+            out.append(np.nan)
+            continue
+        np.testing.assert_allclose(v, v[0], rtol=0, atol=EXACT)
+        out.append(v[0])
+    return np.array(out)
+
+
+def test_slab_slurry_depth_is_exact_below_every_exact_top_patch(oriented, slab_depths):
+    sd = slab_depths
+    np.testing.assert_allclose(per_column(sd["slurry"], sd), syn.SLAB_SLURRY_DEPTH, rtol=0, atol=EXACT)
+    assert (sd["liquid"][sd["top"]] == 0.0).all()                    # the surface f_l stays below 1 everywhere
+    # a top patch over two columns: its crossing lies between the two columns' depths (P1, a priori)
+    D = np.asarray(syn.SLAB_SLURRY_DEPTH)
+    o = oriented[("slab_frame", 0)]
+    cube = np.floor(o["d"]["centroid"][:, 0] / syn.SLAB["h"]).astype(int)
+    for i in np.flatnonzero(sd["top"] & ~sd["exact"]):
+        a, b = D[min(cube[i] // 4, 4)], D[min((cube[i] + 1) // 4, 4)]
+        assert min(a, b) - EXACT <= sd["slurry"][i] <= max(a, b) + EXACT
+    # only patches whose surface value exceeds 0.5 are marched (cost scales with the molten area)
+    f = o["frame"]
+    assert sd["info"]["n_marched"] == np.count_nonzero(f.node["f_l"][f.faces].mean(axis=1) > 0.5)
+    assert sd["info"]["n_wrong_way"] == 0
+    assert (sd["slurry"][f.node["f_l"][f.faces].mean(axis=1) <= 0.5] == 0.0).all()
+
+
+def test_slab_zones_at_film_limits_2_and_3_mm_with_both_zone_3_readings(oriented, slab_depths):
+    o, sd = oriented[("slab_frame", 0)], slab_depths
+    z = slab_zones(o, sd, film_limit=2e-3, dx=1.1e-3)
+    np.testing.assert_allclose(per_column(z.layer, sd), [0.25e-3, 1.1e-3, 2.6e-3, 4.1e-3, 1.1e-3], rtol=0, atol=EXACT)
+    np.testing.assert_array_equal(per_column(z.zone, sd), [ZONE_SKIN, ZONE_RUNOFF, ZONE_BULK, ZONE_BULK, ZONE_RUNOFF])
+    np.testing.assert_allclose(per_column(z.skin, sd), [1e-4, 1e-4, 1e-4, 1e-4, np.nan], rtol=0, atol=EXACT)
+    np.testing.assert_allclose(per_column(z.runoff, sd), [0.15e-3, 1.0e-3, 1.9e-3, 1.9e-3, 1.1e-3], rtol=0, atol=EXACT)
+    np.testing.assert_allclose(per_column(z.bulk, sd), [0.0, 0.0, 0.6e-3, 2.1e-3, 0.0], rtol=0, atol=EXACT)
+    # decision 6: the whole layer (zone 3, `layer`) or only the part below the film limit (`bulk`)
+    np.testing.assert_array_equal(per_column(z.under_resolved, sd), [False, False, True, True, False])   # < 4.4 mm
+    np.testing.assert_array_equal(per_column(z.under_resolved_below_limit, sd), [False, False, True, True, False])
+    z05 = slab_zones(o, sd, film_limit=2e-3, dx=0.5e-3)                                                 # 2 mm
+    np.testing.assert_array_equal(per_column(z05.under_resolved, sd), [False] * 5)
+    np.testing.assert_array_equal(per_column(z05.under_resolved_below_limit, sd), [False, False, True, False, False])
+    assert not slab_zones(o, sd).under_resolved.any()                                                   # dx None
+    z3 = slab_zones(o, sd, film_limit=3e-3)
+    np.testing.assert_array_equal(per_column(z3.zone, sd), [ZONE_SKIN, ZONE_RUNOFF, ZONE_RUNOFF, ZONE_BULK,
+                                                             ZONE_RUNOFF])
+    np.testing.assert_allclose(per_column(z3.bulk, sd), [0.0, 0.0, 0.0, 1.1e-3, 0.0], rtol=0, atol=EXACT)
+    # the three parts add up to the layer (skin <= delta_m < film limit here); patches without film or melt: none
+    for zz in (z, z3):
+        total = np.where(np.isnan(zz.skin), 0.0, zz.skin) + zz.runoff + zz.bulk
+        np.testing.assert_allclose(total[sd["top"]], zz.layer[sd["top"]], rtol=0, atol=EXACT)
+    side = ~sd["top"] & (sd["slurry"] == 0.0)
+    assert (z.zone[side] == ZONE_NONE).all() and side.any()
+    # route-2 input: the zone-3 area, identical under both readings (zone 3 exactly where bulk > 0)
+    area = o["d"]["area"]
+    assert ((z.zone == ZONE_BULK) == (z.bulk > 0)).all()
+    assert bulk_slurry_area(z, area) == pytest.approx(float(area[z.zone == ZONE_BULK].sum()), rel=1e-15)
+    s = zone_summary(z, area)
+    assert s["bulk_area_m2"] == bulk_slurry_area(z, area) and s["film_limit_m"] == 2e-3
+    assert s["n_patches"]["bulk"] == int(np.count_nonzero(z.zone == ZONE_BULK))
+    assert s["bulk_volume_below_limit_m3"] < s["bulk_volume_whole_layer_m3"]
+
+
+def test_include_deep_adds_deep_thickness_to_the_layer_and_nothing_else(oriented, slab_depths):
+    o, sd = oriented[("slab_frame", 0)], slab_depths
+    z0 = slab_zones(o, sd)
+    z1 = slab_zones(o, sd, include_deep=True)
+    assert not z0.include_deep and z1.include_deep
+    np.testing.assert_allclose(per_column(z1.layer, sd), [0.45e-3, 1.3e-3, 2.8e-3, 4.3e-3, 1.3e-3], rtol=0, atol=EXACT)
+    np.testing.assert_array_equal(z1.layer, z0.layer + o["frame"].patch["deep_thickness"])
+    np.testing.assert_array_equal(z1.skin, z0.skin)
+    # the rule applied to the thicker layer: column 0 (0.45 mm > delta_m 0.3 mm) leaves the skin zone
+    np.testing.assert_array_equal(per_column(z1.zone, sd), [ZONE_RUNOFF, ZONE_RUNOFF, ZONE_BULK, ZONE_BULK,
+                                                             ZONE_RUNOFF])
+    np.testing.assert_allclose(per_column(z1.bulk, sd), [0.0, 0.0, 0.8e-3, 2.3e-3, 0.0], rtol=0, atol=EXACT)
+    with pytest.raises(ValueError):
+        classify_zones(0.0, 0.0, 0.0, 0.0, include_deep=True)
+
+
+def test_classify_zones_rule_on_scalars():
+    # film, liquid, slurry, delta_m -> zone at the 2 mm limit
+    cases = [((0.0, 0.0, 0.0, 3e-4), ZONE_NONE), ((1e-4, 0.0, 0.0, 3e-4), ZONE_SKIN),
+             ((1e-4, 0.0, 1.5e-4, 3e-4), ZONE_SKIN), ((0.0, 0.0, 3e-4, 3e-4), ZONE_SKIN),
+             ((1e-4, 0.0, 2e-4 + 1e-9, 3e-4), ZONE_RUNOFF),
+             ((1e-4, 0.0, 0.0, np.nan), ZONE_RUNOFF), ((0.0, 0.0, 2e-3, 3e-4), ZONE_RUNOFF),
+             ((1e-4, 0.0, 1.9e-3 + 1e-9, 3e-4), ZONE_BULK), ((1e-4, 0.0, 5e-3, np.nan), ZONE_BULK),
+             ((1e-4, 0.0, np.nan, 3e-4), ZONE_INVALID)]
+    for (film, liq, slu, dm), zone in cases:
+        z = classify_zones(np.array([film]), np.array([liq]), np.array([slu]), np.array([dm]))
+        assert z.zone[0] == zone, (film, liq, slu, dm)
+    z = classify_zones(np.array([1e-4]), np.array([5e-4]), np.array([8e-4]), np.array([3e-4]))
+    assert z.skin[0] == 3e-4 and z.runoff[0] == pytest.approx(6e-4, abs=1e-15)   # skin capped at delta_m
+    assert z.zone.dtype == np.int8
+
+
+def test_layer_depths_thresholds_f_l_source_cap_and_wrong_way_normals(oriented, slab_depths):
+    o, sd = oriented[("slab_frame", 0)], slab_depths
+    f, d, loc = o["frame"], o["d"], o["loc"]
+    # the material's f_l as a callable of the nodal temperature (Task 3's MaterialTable.liquid_fraction) gives the
+    # same answer as the frame's own nodal f_l when it is the same law
+    liq, slu = layer_depths(f, loc, d["normal"], d["centroid"], max_depth=o["thickness"],
+                            f_l=syn.synthetic_liquid_fraction)
+    np.testing.assert_allclose(slu, sd["slurry"], rtol=0, atol=EXACT)
+    # another threshold: f_l > 0.6 at D - 0.1 G = D - 2.4 mm (columns 2 and 3), none where the surface is below 0.6
+    _, slu6 = layer_depths(f, loc, d["normal"], d["centroid"], slurry_fl=0.6)
+    np.testing.assert_allclose(per_column(slu6, sd), [0.0, 0.0, 0.1e-3, 1.6e-3, 0.0], rtol=0, atol=EXACT)
+    # a liquid threshold the slab reaches: f_l >= 0.6 is "liquid" with slurry_fl 0.55 -> D - 2.4 mm again
+    liq6, slu55 = layer_depths(f, loc, d["normal"], d["centroid"], slurry_fl=0.55, liquid_fl=0.6)
+    np.testing.assert_allclose(per_column(liq6, sd), [0.0, 0.0, 0.1e-3, 1.6e-3, 0.0], rtol=0, atol=EXACT)
+    np.testing.assert_allclose(per_column(slu55, sd), [0.0, 0.0, 1.3e-3, 2.8e-3, 0.0], rtol=0, atol=EXACT)
+    assert (liq6 <= slu55).all()
+    with pytest.raises(ValueError):
+        layer_depths(f, loc, d["normal"], d["centroid"], slurry_fl=0.6, liquid_fl=0.5)
+    # the cap: both depths at most max_depth, and the rays that hit it are flagged
+    liq_c, slu_c, info = layer_depths(f, loc, d["normal"], d["centroid"], max_depth=2e-3, return_info=True)
+    np.testing.assert_allclose(per_column(slu_c, sd), np.minimum(syn.SLAB_SLURRY_DEPTH, 2e-3), rtol=0, atol=EXACT)
+    assert info["left_body"][sd["exact"] & np.isin(sd["col"], [3])].all()
+    assert not info["left_body"][sd["exact"] & np.isin(sd["col"], [0, 1, 4])].any()
+    # without a cap the march still ends where the ray leaves the body (at the last sample inside, within ds)
+    _, slu_n = layer_depths(f, loc, d["normal"], d["centroid"])
+    np.testing.assert_allclose(slu_n[sd["top"]], sd["slurry"][sd["top"]], rtol=0, atol=EXACT)
+    capped = np.isclose(sd["slurry"], o["thickness"], rtol=0, atol=EXACT) & (sd["slurry"] > 0)
+    assert capped.any() and (np.abs(slu_n[capped] - o["thickness"][capped]) <= geometry.DEPTH_DS_M).all()
+    # a normal pointing out of the body (the file's winding, not orient_outward's) is detected: NaN, counted
+    n = d["normal"].copy()
+    wrong = np.flatnonzero(sd["exact"] & (sd["col"] == 2))[:5]
+    n[wrong] *= -1.0
+    liq_w, slu_w, info = layer_depths(f, loc, n, d["centroid"], return_info=True)
+    assert info["n_wrong_way"] == len(wrong)
+    assert np.isnan(slu_w[wrong]).all() and np.isnan(liq_w[wrong]).all()
+    assert np.isfinite(np.delete(slu_w, wrong)).all()
+    z = classify_zones(f.patch["film_thickness"], liq_w, slu_w, f.patch["delta_m"])
+    assert (z.zone[wrong] == ZONE_INVALID).all()
+    with pytest.raises(ValueError):
+        layer_depths(f, loc, d["normal"], d["centroid"], f_l=np.zeros(3))
+
+
+def test_sphere_slurry_depth_within_one_element_of_the_radial_profile(oriented):
+    """Frames 1 and 2 of the sphere run: T = 300 + (T_wall - 300)(r/R)^2 with the linear f_l (README)."""
+    R = syn.SPHERE_R
+    answers = syn.sphere_answers()
+    o0 = oriented[("sphere_run", 0)]
+    _, slu0, info0 = layer_depths(o0["frame"], o0["loc"], o0["d"]["normal"], o0["d"]["centroid"], return_info=True)
+    assert info0["n_marched"] == 0 and (slu0 == 0.0).all()             # 300 K: nothing marched
+    measured = {1: (0.61e-3, 5.98e-3), 2: (-1.02e-3, 4.40e-3)}         # 2026-10-07, committed fixture
+    for k in (1, 2):
+        o = oriented[("sphere_run", k)]
+        f, d, loc = o["frame"], o["d"], o["loc"]
+        liq, slu, info = layer_depths(f, loc, d["normal"], d["centroid"], max_depth=o["thickness"], return_info=True)
+        on = (np.abs(np.linalg.norm(f.points[f.faces], axis=2) - R) < 1e-9).all(axis=1)   # not the staircase
+        assert on.sum() == (1194 if k == 1 else 1184)
+        err = slu[on] - answers["slurry_depth_m"][k]
+        assert np.abs(err).max() <= syn.SPHERE_H                       # within one element size (plan)
+        assert err.min() == pytest.approx(measured[k][0], abs=1e-5) and err.max() == pytest.approx(measured[k][1],
+                                                                                                    abs=1e-5)
+        # a priori: the crossing's tetrahedron straddles the f_l = 0.5 sphere
+        r_half = R * np.sqrt((0.5 * (syn.T_SOLIDUS + syn.T_LIQUIDUS) - 300.0) / (syn.SPHERE_T_WALL[k] - 300.0))
+        ok = ~info["left_body"]
+        x = d["centroid"][ok] - slu[ok][:, None] * d["normal"][ok]
+        idx, _ = loc.locate(x)
+        assert (idx >= 0).all()
+        xt = f.points[f.tets[idx]]
+        diam = np.max([np.linalg.norm(xt[:, i] - xt[:, j], axis=1) for i in range(4) for j in range(i + 1, 4)], axis=0)
+        assert (np.abs(np.linalg.norm(x, axis=1) - r_half) <= diam + geometry.DEPTH_DS_M).all()
+        # liquid: P1 holds none below the surface (the first interior nodes are under the liquidus), against the
+        # continuum's 2.010 mm on frame 2
+        assert (liq[on] <= 1e-9).all() and (liq <= slu).all()
+    assert answers["liquid_depth_m"][2] == pytest.approx(2.010e-3, abs=1e-6)

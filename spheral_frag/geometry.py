@@ -23,6 +23,7 @@ function (prepare side only); the brute force is numpy and is the default up to 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -269,3 +270,246 @@ def thickness_summary(thickness) -> dict:
     finite = t[np.isfinite(t)]
     return {"min_m": float(finite.min()) if len(finite) else math.nan,
             "n_nan": int(np.count_nonzero(~np.isfinite(t)))}
+
+
+# ---------------------------------------------------------------------------------------------- depths and zones
+# Task 6 (spec §10, §9.2 trigger 2; check "Zones").
+#
+# Thresholds on the liquid fraction. Spec §10 defines the sprayable skin by the liquidus ("liquid, above 908 K") and
+# the slurry depth by "the depth where the material becomes more than half solid", i.e. f_l = 0.5 (895.1 K on the
+# Scheil curve; spec §2). Both are thresholds on f_l, so they hold for any material: the finite element's own nodal
+# f_l (the frame's `liquid_fraction`) is marched by default, and Task 3's `MaterialTable.liquid_fraction` can be
+# passed instead as a callable of the nodal temperature (`layer_depths(..., f_l=table.liquid_fraction)`).
+SLURRY_FL = 0.5                # f_l above this: more than half liquid (spec §10 "more than half solid" below it)
+LIQUID_FL = 1.0 - 1e-9         # f_l at or above this: liquid (spec §10 "above 908 K"; plan Task 6, Step 1)
+DEPTH_DS_M = 5e-5              # m, the march's sample spacing: a fifth of the 0.25 mm outer cell (plan Task 6)
+_PROBE_M = 1e-9                # m: the orientation probe's depth below the centroid
+_SAMPLES_PER_BATCH = 64        # samples evaluated per marched ray and pass
+
+ZONE_INVALID, ZONE_NONE, ZONE_SKIN, ZONE_RUNOFF, ZONE_BULK = -1, 0, 1, 2, 3
+FILM_LIMIT_M = 2e-3            # m, spec §10's default film limit (bracket 3 mm; naming.BRACKET_DEFAULTS film_limit_mm)
+
+
+def _crossing(s0, s1, f0, f1, thr):
+    """Depth where the linear interpolant between samples (s0, f0) and (s1, f1) reaches thr (f0 above, f1 not)."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        w = np.where(f0 != f1, (f0 - thr) / (f0 - f1), 1.0)
+    return s0 + np.clip(w, 0.0, 1.0) * (s1 - s0)
+
+
+def layer_depths(frame, locator, normals, centroids, ds=DEPTH_DS_M, max_depth=None, f_l=None,
+                 slurry_fl=SLURRY_FL, liquid_fl=LIQUID_FL, return_info=False):
+    """(liquid_depth, slurry_depth) in m per patch of `frame`, measured in the mesh along each patch's inward normal
+    (spec §10: "casting rays inward to the depth where the material becomes more than half solid").
+
+    **The frame must be wound outward and `normals` must be its outward unit normals** -- that is,
+    `frames.orient_outward(frame)` then `frames.derived_patch_arrays(...)["normal"]`. The real Step 3 export winds
+    some triangles inward (about 18 % on the prototype's frames, Task 5), so the file's own winding must never be
+    used here. A patch whose normal points out of the body is detected (a probe `_PROBE_M` below the centroid lies
+    outside every tetrahedron) and gets NaN in both depths, counted in `info["n_wrong_way"]`.
+
+    liquid_depth  contiguous f_l >= liquid_fl from the surface;
+    slurry_depth  contiguous f_l > slurry_fl from the surface.
+    The surface value is the P1 value at the centroid (the mean of the face's three nodes). A patch whose surface
+    value fails a threshold has zero depth at once; only patches above `slurry_fl` are marched, so the cost scales
+    with the molten area. The ray is sampled every `ds` from the centroid; the field at each sample is the P1
+    interpolant of the nodal f_l in the active tetrahedra (`locator`, a `TetLocator` of the same frame), and the
+    crossing is placed by linear interpolation between the last sample that passes and the first that fails --
+    exact wherever f_l is linear along the ray between them, otherwise within ds. A sample outside the body ends
+    the layer at the last inside sample (the ray left the body: the whole remaining thickness is layer).
+
+    max_depth: None, a scalar or a per-patch array (the thickness map, Task 5; NaN = no cap): the march stops there
+    and both depths are capped at it. Without it the march stops when the ray leaves the body or after the bounding
+    box's diagonal.
+    f_l: None (the frame's nodal `f_l`), a nodal array, or a callable of the nodal temperature `frame.node["T"]`
+    (Task 3's `MaterialTable.liquid_fraction`). The thresholds are arguments so that a material's own definition
+    of "liquid" or "half solid" can be passed.
+
+    With return_info=True, also a dict: n_marched, n_wrong_way, n_samples, and left_body (bool per patch) /
+    n_left_body: rays whose slurry layer reached the body's far side or max_depth instead of a crossing.
+    Numpy only (uses `TetLocator`); prepare side by role."""
+    if not liquid_fl > slurry_fl:
+        raise ValueError("liquid_fl must exceed slurry_fl")
+    faces = np.asarray(frame.faces, dtype=np.int64)
+    nf = len(faces)
+    if f_l is None:
+        nodal = np.asarray(frame.node["f_l"], dtype=np.float64)
+    elif callable(f_l):
+        nodal = np.asarray(f_l(np.asarray(frame.node["T"], dtype=np.float64)), dtype=np.float64)
+    else:
+        nodal = np.asarray(f_l, dtype=np.float64)
+    if nodal.shape != (len(frame.points),):
+        raise ValueError("nodal f_l must have one value per node of the frame")
+    n = np.asarray(normals, dtype=np.float64)
+    n = n / np.linalg.norm(n, axis=1, keepdims=True)
+    c = np.asarray(centroids, dtype=np.float64)
+    if max_depth is None:
+        cap = np.full(nf, np.inf)
+    else:
+        cap = np.broadcast_to(np.asarray(max_depth, dtype=np.float64), (nf,)).copy()
+        cap[~np.isfinite(cap)] = np.inf
+    span = float(np.linalg.norm(frame.points.max(axis=0) - frame.points.min(axis=0)))
+    cap = np.minimum(cap, span)
+
+    f_surf = nodal[faces].mean(axis=1)
+    liquid = np.zeros(nf)
+    slurry = np.zeros(nf)
+    info = {"n_marched": 0, "n_wrong_way": 0, "n_left_body": 0, "n_samples": 0, "left_body": np.zeros(nf, bool)}
+    march = np.flatnonzero(f_surf > slurry_fl)
+    if len(march):
+        probe = locator.locate(c[march] - _PROBE_M * n[march])[0]
+        wrong = march[probe < 0]
+        liquid[wrong] = np.nan
+        slurry[wrong] = np.nan
+        info["n_wrong_way"] = int(len(wrong))
+        march = march[probe >= 0]
+    info["n_marched"] = int(len(march))
+
+    # state per marched ray: the last sample's depth and value, whether each layer is still open
+    s_prev = np.zeros(len(march))
+    f_prev = f_surf[march].copy()
+    liq_open = f_prev >= liquid_fl
+    slu_open = np.ones(len(march), bool)
+    liq_d = np.zeros(len(march))
+    slu_d = np.zeros(len(march))
+    j0 = 1
+    active = np.arange(len(march))
+    while len(active):
+        rays = march[active]
+        steps = np.arange(j0, j0 + _SAMPLES_PER_BATCH, dtype=np.float64) * ds          # (b,)
+        s = np.minimum(steps[None, :], cap[rays][:, None])                              # (a, b): last at the cap
+        x = c[rays][:, None, :] - s[:, :, None] * n[rays][:, None, :]
+        vals = locator.interpolate(x.reshape(-1, 3), nodal).reshape(s.shape)            # NaN outside the body
+        info["n_samples"] += int(vals.size)
+        sp, fp = s_prev[active].copy(), f_prev[active].copy()
+        lo_, so_ = liq_open[active].copy(), slu_open[active].copy()
+        ld, sd = liq_d[active].copy(), slu_d[active].copy()
+        left = np.zeros(len(active), bool)
+        for b in range(s.shape[1]):
+            sb, fb = s[:, b], vals[:, b]
+            outside = np.isnan(fb)
+            # liquid layer
+            close = lo_ & ~outside & ~(fb >= liquid_fl)
+            ld[close] = _crossing(sp[close], sb[close], fp[close], fb[close], liquid_fl)
+            stop = lo_ & outside
+            ld[stop] = sp[stop]
+            lo_ &= ~(close | stop)
+            # slurry layer
+            close = so_ & ~outside & ~(fb > slurry_fl)
+            sd[close] = _crossing(sp[close], sb[close], fp[close], fb[close], slurry_fl)
+            stop = so_ & outside
+            sd[stop] = sp[stop]
+            left |= stop
+            so_ &= ~(close | stop)
+            # the cap: a layer still open at the cap ends there
+            at_cap = so_ & (sb >= cap[rays])
+            ld[at_cap & lo_] = sb[at_cap & lo_]
+            lo_ &= ~at_cap
+            sd[at_cap] = sb[at_cap]
+            left |= at_cap
+            so_ &= ~at_cap
+            upd = ~outside
+            sp[upd], fp[upd] = sb[upd], fb[upd]
+        s_prev[active], f_prev[active] = sp, fp
+        liq_open[active], slu_open[active] = lo_, so_
+        liq_d[active], slu_d[active] = ld, sd
+        info["left_body"][rays[left]] = True
+        active = active[so_]                       # the liquid layer is inside the slurry layer: it is closed too
+        j0 += _SAMPLES_PER_BATCH
+    info["n_left_body"] = int(np.count_nonzero(info["left_body"]))
+    liquid[march] = np.minimum(liq_d, cap[march])
+    slurry[march] = np.minimum(slu_d, cap[march])
+    return (liquid, slurry, info) if return_info else (liquid, slurry)
+
+
+@dataclass
+class ZoneMap:
+    """Spec §10's three zones per patch (all lengths in m). Decision 6 of the M1 review: for a layer thicker than the
+    film limit both readings are reported -- the whole layer is Spheral's (`zone == ZONE_BULK`, thickness `layer`,
+    resolution `under_resolved`), or only the part below the film limit (`bulk`, resolution
+    `under_resolved_below_limit`); the choice is made before M4."""
+    layer: np.ndarray          # film_thickness + slurry_depth (+ deep_thickness when include_deep)
+    skin: np.ndarray           # min(film + liquid_depth, delta_m) where delta_m is finite, else NaN
+    runoff: np.ndarray         # max(min(layer, film_limit) - skin, 0), skin taken as 0 where undefined
+    bulk: np.ndarray           # max(layer - film_limit, 0)
+    zone: np.ndarray           # int8: the deepest zone the layer reaches (ZONE_NONE where layer = 0, ZONE_INVALID NaN)
+    under_resolved: np.ndarray             # bool: zone 3 and layer < n_spacings dx (whole-layer reading)
+    under_resolved_below_limit: np.ndarray  # bool: zone 3 and bulk < n_spacings dx (below-the-limit reading)
+    film_limit: float
+    include_deep: bool
+
+
+def classify_zones(film_thickness, liquid_depth, slurry_depth, delta_m, film_limit=FILM_LIMIT_M, dx=None,
+                   n_spacings=4.0, deep_thickness=None, include_deep=False) -> ZoneMap:
+    """Spec §10's rule as the M1 plan (Task 6, Step 2) states it, per patch:
+
+    zone 1 (sprayable skin)  layer <= delta_m;
+    zone 2 (thin runoff)     delta_m < layer <= film_limit (where delta_m is NaN: 0 < layer <= film_limit);
+    zone 3 (bulk, Spheral)   layer > film_limit.
+    The layer is the film plus the contiguous more-than-half-liquid depth (spec §9.2 trigger 2's "region more than
+    half liquid"). Note that zone 1 is decided on that layer, while `skin` is the liquid part (film + liquid depth)
+    within delta_m (spec §10: "liquid (above 908 K) within the conjugate depth"): a slurry layer thinner than delta_m
+    is zone 1 with a skin of only its film (the inconsistency the plan flags; both quantities are reported).
+
+    `deep_thickness` (a mass per area, m_d / (rho_l A)) is excluded by default: at the 0.5 s step it is a time-step
+    artefact (spec §2, §6.1; decision 6). `include_deep=True` adds it to the layer and changes nothing else.
+    `dx` (particle spacing, m): flags zone-3 patches thinner than n_spacings dx under both readings; None flags
+    nothing. NaN in the film, depths or (with include_deep) deep_thickness gives ZONE_INVALID and NaN lengths."""
+    film = np.asarray(film_thickness, dtype=np.float64)
+    liq = np.asarray(liquid_depth, dtype=np.float64)
+    slu = np.asarray(slurry_depth, dtype=np.float64)
+    dm = np.asarray(delta_m, dtype=np.float64)
+    layer = film + slu
+    if include_deep:
+        if deep_thickness is None:
+            raise ValueError("include_deep=True needs deep_thickness")
+        layer = layer + np.asarray(deep_thickness, dtype=np.float64)
+    limit = float(film_limit)
+    girin = np.isfinite(dm)
+    valid = np.isfinite(layer) & np.isfinite(liq)
+    skin = np.where(girin & valid, np.minimum(film + liq, dm), np.nan)
+    with np.errstate(invalid="ignore"):
+        runoff = np.maximum(np.minimum(layer, limit) - np.where(girin, skin, 0.0), 0.0)
+        bulk = np.maximum(layer - limit, 0.0)
+        zone = np.full(layer.shape, ZONE_NONE, dtype=np.int8)
+        zone[layer > 0.0] = ZONE_RUNOFF
+        zone[girin & (layer > 0.0) & (layer <= dm)] = ZONE_SKIN
+        zone[layer > limit] = ZONE_BULK
+    zone[~valid] = ZONE_INVALID
+    runoff[~valid] = np.nan
+    bulk[~valid] = np.nan
+    if dx is None:
+        under = np.zeros(layer.shape, bool)
+        under_b = np.zeros(layer.shape, bool)
+    else:
+        thin = n_spacings * float(dx)
+        is3 = zone == ZONE_BULK
+        under = is3 & (layer < thin)
+        under_b = is3 & (bulk < thin)
+    return ZoneMap(layer=layer, skin=skin, runoff=runoff, bulk=bulk, zone=zone, under_resolved=under,
+                   under_resolved_below_limit=under_b, film_limit=limit, include_deep=bool(include_deep))
+
+
+def bulk_slurry_area(zones, area) -> float:
+    """m^2 of zone-3 patches (spec §9.2 trigger 2's input, per frame). The same under both of decision 6's readings:
+    a patch is zone 3 exactly where `bulk` > 0."""
+    a = np.asarray(area, dtype=np.float64)
+    return float(math.fsum(a[zones.zone == ZONE_BULK]))
+
+
+def zone_summary(zones, area) -> dict:
+    """Per-frame numbers for the prepare JSON: zone-3 area, the largest layer, the patch count per zone, and the
+    zone-3 volume under both readings (whole layer: sum A layer; below the limit: sum A bulk)."""
+    a = np.asarray(area, dtype=np.float64)
+    is3 = zones.zone == ZONE_BULK
+    finite = zones.layer[np.isfinite(zones.layer)]
+    return {"film_limit_m": zones.film_limit, "include_deep": zones.include_deep,
+            "bulk_area_m2": bulk_slurry_area(zones, a),
+            "max_layer_m": float(finite.max()) if len(finite) else math.nan,
+            "n_patches": {name: int(np.count_nonzero(zones.zone == z)) for name, z in
+                          (("invalid", ZONE_INVALID), ("none", ZONE_NONE), ("skin", ZONE_SKIN),
+                           ("runoff", ZONE_RUNOFF), ("bulk", ZONE_BULK))},
+            "bulk_volume_whole_layer_m3": float(math.fsum(a[is3] * zones.layer[is3])),
+            "bulk_volume_below_limit_m3": float(math.fsum(a[is3] * zones.bulk[is3])),
+            "n_under_resolved": int(np.count_nonzero(zones.under_resolved)),
+            "n_under_resolved_below_limit": int(np.count_nonzero(zones.under_resolved_below_limit))}

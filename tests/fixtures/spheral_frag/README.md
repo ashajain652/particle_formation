@@ -72,7 +72,11 @@ Answers:
 - **Girin patches:** 306 (frame 1), 304 (frame 2).
 - **Depths of the radial T** (continuum): f_l = 0.5 at 829 K, at depth R(1 − √(529/(T_wall − 300))) = 3.051 mm
   (frame 1) and 5.236 mm (frame 2); liquid (908 K) to 2.010 mm on frame 2, none on frame 1. P1 on 8–20 mm elements
-  is far from these; Task 6 measures its own.
+  is far from these; Measured by Task 6
+  (`spheral_frag.geometry.layer_depths`, ds 0.05 mm): slurry depth 3.662–9.029 mm on frame 1 (+0.61 to +5.98 mm)
+  and 4.211–9.635 mm on frame 2's 1,184 patches on the sphere (−1.02 to +4.40 mm; the 14 staircase patches
+  excluded), all within one surface element (8 mm); liquid depth 0 on every patch (the first interior nodes are
+  under the liquidus, so P1 holds no liquid below the surface).
 - **Centre crossing 1 → 2:** exactly the ten dead elements' interiors leave the body.
 
 ## `dumbbell_frame/` — `synthetic_dumbbell_R20.0mm_neck4.0mm`
@@ -113,5 +117,9 @@ column: 24, 24, 24, 24 and 32 patches; `slab_exact_patches`).
 
 Zones (M1 plan, Task 6): skin = min(film + liquid depth, δ_m) = 0.1 mm in columns 0–3, NaN in column 4; zones 1, 2,
 3, 3 at film limit 2 mm and 1, 2, 2, 3 at 3 mm; bulk 0, 0, 0.6, 2.1 mm at 2 mm; column 4 zone 2; under-resolved at
-dx = 1.1 mm for the 2.6 and 4.1 mm layers, at dx = 0.5 mm for neither. Mass: solid 2.70048e-3 kg, film 1.92e-5 kg,
+dx = 1.1 mm for the 2.6 and 4.1 mm layers, at dx = 0.5 mm for neither. Both zone-3 readings (decision 6): the
+whole layer (2.6 and 4.1 mm) or the part below the limit (`bulk`); under the second, dx = 0.5 mm flags column 2
+(0.6 mm < 2 mm) and not column 3. With `include_deep` the layers are 0.45, 1.3, 2.8, 4.3, 1.3 mm, so column 0
+(0.45 mm > δ_m) becomes zone 2: zones 2, 2, 3, 3, 2 and bulk 0, 0, 0.8, 2.3 mm at 2 mm. Measured by Task 6: every
+exact patch's slurry depth equals its column's to 5e-18 m. Mass: solid 2.70048e-3 kg, film 1.92e-5 kg,
 deep 3.84e-5 kg.
