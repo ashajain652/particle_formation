@@ -395,3 +395,43 @@ class SkinField:
         L_new = L + R
         self._set_cells(rows, m_new, H_new, L_new, E_liq + E_rem)
         return to_film, to_deep, D, D * hD, L_new, S_new
+
+    # -- the macro step ---------------------------------------------------------------------------------------------
+    def advance(self, dt, q_top, T_amb, emissivity, T_b0, L, room, avail, T_b1=None):
+        """The macro step's sub-steps (spec section 6). T_b1=None: the trial pass, on a copy, base held at T_b0, returning
+        the base law (a, b) -- q_b(T) = a + b T [W/m2] of heat into the 3D model -- from the pass's base energy and its
+        derivative with respect to the base temperature. Otherwise the real pass with the base held at T_b1, the 3D
+        model's end-of-step facet temperature (what its backward-Euler step assumed for the boundary): feeds, draws and
+        returns a SkinBook."""
+        n = self.n
+        N = max(1, int(math.ceil(dt / self.settings.substep - 1e-9)))
+        h = dt / N
+        trial = T_b1 is None
+        saved = self.state() if trial else None
+        T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(n)
+        L = np.array(L, dtype=float)
+        avail = np.array(avail, dtype=float)
+        book = SkinBook(*(np.zeros(n) for _ in range(7)), L)
+        sens = (np.zeros((n, self.nc)), np.zeros(n)) if trial else None
+        for _ in range(N):
+            E_top, E_rad, E_base, sens = self.conduct(h, q_top, T_amb, emissivity, T_b, L, sens=sens)
+            to_film, to_deep, drawn, drawn_H, L, S = self.feed_and_draw(L, room, avail, T_b, None if sens is None else sens[0])
+            if sens is not None:
+                sens = (S, sens[1])
+            avail = avail - drawn
+            book.E_top += E_top
+            book.E_rad += E_rad
+            book.E_base += E_base
+            book.to_film += to_film
+            book.to_deep += to_deep
+            book.drawn += drawn
+            book.drawn_H += drawn_H
+        book.L = L
+        if trial:
+            self.set_state(saved)
+            # the slope is clipped at zero: near the liquidus a warmer base can feed more and pass more heat down, and a
+            # law rising with the base temperature would cost the 3D matrix its diagonal dominance; what the clip
+            # misses is the interface mismatch's to book
+            b = np.minimum(sens[1] / (self.area * dt), 0.0)
+            return book.E_base / (self.area * dt) - b * T_b, b
+        return book
