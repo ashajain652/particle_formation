@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "run_name": "synthetic_sphere_d100.00mm_seed12345",
+  "inputs": {
+    "diameter_mm": 100.0,
+    "mass_kg": 1.472883355758015
+  },
+  "settings": {
+    "thermal": "fem",
+    "heating": "physics",
+    "melt": "on",
+    "atmosphere": "us76",
+    "wind": "none",
+    "macro_step_s": 0.5,
+    "frames_every": 1,
+    "seed": 12345,
+    "material": "synthetic_linear_fl"
+  },
+  "results": {
+    "initial_mass_kg": 1.4590495779659125,
+    "n_frames": 3
+  },
+  "v_hat": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "synthetic": {
+    "device": "sphere_run",
+    "R_m": 0.05,
+    "h_surface_m": 0.008,
+    "h_core_m": 0.02,
+    "rho_kgm3": 2813.0,
+    "rho_liquid_kgm3": 2400.0,
+    "fl_law": "linear in T",
+    "T_solidus_K": 750.0,
+    "T_liquidus_K": 908.0,
+    "T_wall_K": [
+      300.0,
+      900.0,
+      960.0
+    ],
+    "dead_elements_frame2": [
+      1404,
+      678,
+      1016,
+      770,
+      1413,
+      441,
+      12,
+      1182,
+      1878,
+      1063
+    ],
+    "partial_elements_frame2": [
+      1362,
+      429
+    ],
+    "phi_frame2": [
+      0.5,
+      0.25
+    ]
+  }
+}

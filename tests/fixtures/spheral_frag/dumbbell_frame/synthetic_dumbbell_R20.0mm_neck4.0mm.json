@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "run_name": "synthetic_dumbbell_R20.0mm_neck4.0mm",
+  "inputs": {
+    "diameter_mm": 40.0,
+    "mass_kg": 0.1914139471307802
+  },
+  "settings": {
+    "thermal": "fem",
+    "heating": "physics",
+    "melt": "on",
+    "atmosphere": "us76",
+    "wind": "none",
+    "macro_step_s": 0.5,
+    "frames_every": 1,
+    "seed": 12345,
+    "material": "synthetic_linear_fl"
+  },
+  "results": {
+    "initial_mass_kg": 0.18748481614984722,
+    "n_frames": 1
+  },
+  "v_hat": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "synthetic": {
+    "device": "dumbbell_frame",
+    "R_m": 0.02,
+    "r_neck_m": 0.004,
+    "L_neck_m": 0.02,
+    "h_neck_m": 0.0015,
+    "h_far_m": 0.005,
+    "sphere_centres_x_m": [
+      -0.03,
+      0.03
+    ],
+    "rho_kgm3": 2813.0,
+    "T_K": 600.0
+  }
+}

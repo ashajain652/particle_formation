@@ -1,0 +1,2 @@
+time_s,altitude_km,velocity_kms,mass_kg,flight_path_deg,lat_deg,lon_deg,density_kgm3,dynamic_pressure_Pa,load_factor_g,surface_T_max_K,n_active_elements,p_w_stag_Pa,film_mass_kg,deep_mass_kg,sprayed_mass_kg
+0,77.5,7.5,0.187484816,-0.959331,29.546,-82.134,3e-05,843.75,1.02990146,600,6042,1552.5,0,0,0
