@@ -128,7 +128,7 @@ def test_prepare_writes_every_file_and_a_valid_json(prepared):
     assert all(c["passed"] is not False for c in doc["checks"].values())
     assert doc["flight"] == {**doc["flight"], "v_hat": [1.0, 0.0, 0.0], "diameter_m": 0.1, "frames_every": 1,
                              "macro_step_s": 0.5, "seed": syn.SEED, "material": syn.SYNTHETIC_MATERIAL}
-    assert doc["contract"]["missing"] == [] and doc["contract"]["absent_optional"] == ["n_derived"]
+    assert doc["contract"]["missing"] == [] and sorted(doc["contract"]["absent_optional"]) == sorted(contract.FIXTURE_OMITTED)
     assert doc["depth_normals"] == "facet" and all(f["depths"]["normals"] == "facet" for f in doc["frames"])
     # the reduced frame: one mesh version, started by frame 0 (the later frames lose elements, nothing else)
     assert doc["frame_format"] == contract.PREPARED_FRAME_FORMAT
@@ -164,7 +164,7 @@ def test_prepared_frames_loads_and_flight_read_back(prepared):
     # the table of frame 1 is the one loads.build_table makes of the prepared frame's own patches
     f1 = frames.load_prepared_frame(os.path.join(d, "frames", "frame_00001.npz"))
     want = loads.build_table(f1.patch["theta"], f1.patch["area"], f1.patch["p_w"], f1.patch["tau"],
-                             run.history["p_w_stag_Pa"][1])
+                             run.history["p_w_stag_step_Pa"][1])
     assert np.array_equal(tables[1].p, want.p, equal_nan=True) and np.array_equal(tables[1].tau, want.tau,
                                                                                   equal_nan=True)
     hdr = json.load(open(os.path.join(d, "loads.json")))

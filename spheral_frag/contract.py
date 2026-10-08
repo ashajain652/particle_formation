@@ -8,16 +8,23 @@ Where the items live in a run directory `<outdir>/<run>` (plan, facts 1-5):
 
   node   point data of `<run>/vtk/field_<k>.vtu` (all mesh nodes, dead ones included, unreferenced)
   tet    cell data of the same vtu (the active tetrahedra only)
-  patch  cell data of `<run>/vtk/surface_<k>.vtp` (the outward surface triangles, on the same node array)
+  patch  cell data of `<run>/vtk/surface_<k>.vtp` (the surface triangles, on the same node array; the export
+         winds 8-18 % of them inward, so prepare orients every triangle by its owning tetrahedron)
   frame  per frame, from the `field.pvd` collection (time printed with 6 significant digits)
   history  columns of `<outdir>/<run>.csv` (one row per macro step, 9 significant digits)
   run    keys of `<outdir>/<run>.json`; a dotted name is a path into the JSON (`settings.seed`)
 
 Units of the per-step fields (review focus 3): `release_rate` is kg/m^2 **per macro step**, not per second;
 `deep_thickness` is a mass per area expressed as a thickness, m_d / (rho_l A); `p_w` = 0 means "not evaluated"
-(the export writes 0.0 where the surface flow was not evaluated, e.g. before the first step or on a face exposed
-by that step's deaths; under decision 4 of the plan it writes the loads on every step that evaluated the flow,
-with or without film).
+(the export writes the loads on every step that evaluated the flow, with or without film (decision 4), and on the
+faces a step's deaths exposed from the same flow evaluated on the current surface; `flow_eval` says which: 0 none,
+which on the 2026-10-08 flight is frame 0 alone, 1 the step's own evaluation, 2 the record's).
+
+Confirmed on the 2026-10-08 Scheil flight (M1 Task 10, frames 0, 48 = first film, 182 = peak dynamic pressure, 1254 =
+last, and the patch sums on all 1,255 frames): every item is present under its name, `confirmed` is set on each.
+`release_rate` is per macro step, but its sum over a frame's surface, sum rate * A, is 12 % below the history's
+sprayed mass over the flight (1.025 of 1.169 kg; -30 % to +4 % per step): what was released from the faces a step's
+deaths removed is not carried onto the frame's surface.
 
 Numpy and the standard library only (the runner imports this module under Spheral's Python)."""
 from __future__ import annotations
@@ -54,6 +61,11 @@ def _f(key, name, location, units, required, consumer, note="", nan_allowed=Fals
     return FieldSpec(key, name, location, units, required, nan_allowed, confirmed, consumer, note, components)
 
 
+def _c(*args, **kw):
+    """An item confirmed on the 2026-10-08 Scheil flight (M1 Task 10)."""
+    return _f(*args, confirmed=True, **kw)
+
+
 _HISTORY = (
     ("time_s", "s", "§7.1, §9.1", "on main"),
     ("altitude_km", "km", "§11.2", "on main"),
@@ -66,7 +78,9 @@ _HISTORY = (
     ("dynamic_pressure_Pa", "Pa", "§7", "on main"),
     ("load_factor_g", "g0 (|a_drag| / g0)", "§7.1 body force; drag = mass_kg * load_factor_g * g0",
      "on main; there is no deceleration or drag column (fact 4)"),
-    ("p_w_stag_Pa", "Pa", "§7.2 lee base pressure reference", "Step 3 melt column"),
+    ("p_w_stag_step_Pa", "Pa", "§7.2 lee base pressure reference",
+     "export addition of 2026-10-07: every step's own stagnation wall pressure, NaN on row 0 only; the melt column "
+     "p_w_stag_Pa is NaN until the first film (rows 0-47 of the 2026-10-08 flight), whose frames already carry loads"),
     ("film_mass_kg", "kg", "mass check, §11.3", "Step 3 melt column"),
     ("deep_mass_kg", "kg", "mass check, §11.3", "Step 3 melt column"),
     ("sprayed_mass_kg", "kg (cumulative)", "release_rate check, §11.3", "Step 3 melt column"),
@@ -87,59 +101,62 @@ _RUN = (
 
 FE_FIELDS: tuple[FieldSpec, ...] = (
     # geometry: arrays rather than named fields; the "name" says where the reader finds them
-    _f("points", "points", "node", "m, body frame, flight toward +x", True, "§6.2 body, all geometry",
+    _c("points", "points", "node", "m, body frame, flight toward +x", True, "§6.2 body, all geometry",
        "on main; vtu and vtp share one node array (confirm)"),
-    _f("tets", "TETRA", "tet", "node indices", True, "§6.2-6.3",
+    _c("tets", "TETRA", "tet", "node indices", True, "§6.2-6.3",
        "on main; the active tetrahedra only"),
-    _f("faces", "triangles", "patch", "node indices, outward", True, "§6.2, §7, §10",
-       "on main; orientation (confirm)"),
+    _c("faces", "triangles", "patch", "node indices; prepare winds them outward", True, "§6.2, §7, §10",
+       "on main; the export's winding is inward on some faces (1,489 of 10,586 at 91 s), none of them unowned"),
     # node (vtu point data)
-    _f("T", "T", "node", "K", True, "§6.3, §9.1", "on main"),
-    _f("f_l", "liquid_fraction", "node", "-", True, "§6.3, §10",
+    _c("T", "T", "node", "K", True, "§6.3, §9.1", "on main"),
+    _c("f_l", "liquid_fraction", "node", "-", True, "§6.3, §10",
        "Step 3; equals the material's f_l(T) (confirm)"),
     # tet (vtu cell data)
-    _f("phi", "phi", "tet", "-", True, "mass, §6.2", "Step 3; the element's remaining fraction"),
+    _c("phi", "phi", "tet", "-", True, "mass, §6.2", "Step 3; the element's remaining fraction"),
     # patch (vtp cell data)
-    _f("q_conv", "q_conv", "patch", "W/m^2", True, "§9.4 heating package", "on main"),
-    _f("q_rad", "q_rad", "patch", "W/m^2", False, "informational", "on main"),
-    _f("T_patch", "T_patch", "patch", "K", False, "informational", "on main"),
-    _f("film_thickness", "film_thickness", "patch", "m", True, "§10 zones", "Step 3"),
-    _f("film_T", "film_T", "patch", "K", True, "§14.1 sink enthalpy", "Step 3"),
-    _f("p_w", "p_w", "patch", "Pa; 0 = not evaluated", True, "§7.2 loads",
+    _c("q_conv", "q_conv", "patch", "W/m^2", True, "§9.4 heating package", "on main"),
+    _c("q_rad", "q_rad", "patch", "W/m^2", False, "informational", "on main"),
+    _c("T_patch", "T_patch", "patch", "K", False, "informational", "on main"),
+    _c("film_thickness", "film_thickness", "patch", "m", True, "§10 zones", "Step 3"),
+    _c("film_T", "film_T", "patch", "K", True, "§14.1 sink enthalpy", "Step 3"),
+    _c("p_w", "p_w", "patch", "Pa; 0 = not evaluated", True, "§7.2 loads",
        "Step 3; written on every evaluated step (decision 4, confirm)"),
-    _f("tau", "tau", "patch", "Pa, magnitude along the flow-direction tangent", True, "§7.2 loads",
+    _c("tau", "tau", "patch", "Pa, magnitude along the flow-direction tangent", True, "§7.2 loads",
        "Step 3; sign convention (confirm); 0 where p_w is 0"),
-    _f("release_rate", "release_rate", "patch", "kg/m^2 per macro step", True, "§10, §14.1 sink",
+    _c("release_rate", "release_rate", "patch", "kg/m^2 per macro step", True, "§10, §14.1 sink",
        "Step 3; sum rate * A = the step's sprayed mass (confirm)"),
-    _f("delta_m", "delta_m", "patch", "m; NaN = undefined", True, "§10 zones",
+    _c("delta_m", "delta_m", "patch", "m; NaN = undefined", True, "§10 zones",
        "Step 3 amendment of 2026-10-02; NaN where the closure is not Girin's", nan_allowed=True),
-    _f("deep_thickness", "deep_thickness", "patch", "m (mass per area, m_d / (rho_l A))", False,
+    _c("deep_thickness", "deep_thickness", "patch", "m (mass per area, m_d / (rho_l A))", False,
        "§10, §2 backlog", "Step 3 amendment of 2026-10-02; read, not physical at 0.5 s"),
-    _f("closure", "closure", "patch", "0 Girin / 1 Couette", False, "consistency with delta_m",
+    _c("closure", "closure", "patch", "0 Girin / 1 Couette", False, "consistency with delta_m",
        "Step 3; 1 where not evaluated or not Girin's (decision 4, confirm)"),
-    _f("r_droplet", "r_droplet", "patch", "m; NaN where nothing released", False, "informational", "Step 3",
+    _c("r_droplet", "r_droplet", "patch", "m; NaN where nothing released", False, "informational", "Step 3",
        nan_allowed=True),
-    _f("we_s", "we_s", "patch", "-", False, "informational", "Step 3"),
-    _f("kn_local", "kn_local", "patch", "-", False, "informational", "Step 3; NaN where not evaluated (decision 4, confirm)",
+    _c("we_s", "we_s", "patch", "-", False, "informational", "Step 3"),
+    _c("kn_local", "kn_local", "patch", "-", False, "informational", "Step 3; NaN where not evaluated (decision 4, confirm)",
        nan_allowed=True),
-    _f("n_derived", "n_derived", "patch", "-, outward unit normal of the derived surface (sub-plan 01), 3 components",
+    _c("n_derived", "n_derived", "patch", "-, outward unit normal of the derived surface (sub-plan 01), 3 components",
        False, "§10 layer depths (decision 9)",
        "Step 3 export change of 2026-10-07 (decision 9); prepare marches the depths along it when present and "
-       "along the facet normals otherwise", components=3),
+       "along the facet normals otherwise; unit, and n_derived . n_facet > 0 on every patch", components=3),
+    _c("flow_eval", "flow_eval", "patch", "0 none / 1 the step's own flow evaluation / 2 the record's", False,
+       "informational", "export addition of 2026-10-08: the faces a step's deaths exposed take the record's (2)"),
     # frame
-    _f("frame_time_s", "field.pvd:timestep", "frame", "s, 6 significant digits", True, "§9.1",
+    _c("frame_time_s", "field.pvd:timestep", "frame", "s, 6 significant digits", True, "§9.1",
        "on main; matched to the history row within 1e-6 s * max(1, t)"),
     # history (<run>.csv)
-    *(_f(col, col, "history", units, True, consumer, note) for col, units, consumer, note in _HISTORY),
+    *(_c(col, col, "history", units, True, consumer, note) for col, units, consumer, note in _HISTORY),
     # run (<run>.json)
-    *(_f(key, name, "run", units, True, consumer, note) for key, name, units, consumer, note in _RUN),
-    _f("v_hat", "settings.v_hat_body", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
+    *(_c(key, name, "run", units, True, consumer, note) for key, name, units, consumer, note in _RUN),
+    _c("v_hat", "settings.v_hat_body", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
        "exported by the reconstructed prototype as settings.v_hat_body (decision 4); value (confirm)"),
 )
 
-# Optional items the Step 3 export is being changed to write and the committed synthetic fixtures therefore do not
-# carry yet (decision 9): the fixture tests exempt them. Task 10 empties this once the export writes them.
-NOT_YET_EXPORTED = frozenset({"n_derived"})
+# Optional items the export writes (the 2026-10-08 flight carries both) but the committed synthetic fixtures leave out,
+# so that prepare's fallback to the facet normals stays tested (`with_derived_normals` adds n_derived to a copy): the
+# fixture tests exempt them.
+FIXTURE_OMITTED = frozenset({"n_derived", "flow_eval"})
 
 FRAME_TIME_RTOL = 1e-6          # frame time matches a history row within FRAME_TIME_RTOL * max(1, t) seconds
 

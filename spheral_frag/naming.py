@@ -25,7 +25,7 @@ FORMS = ("rz", "3d")
 # is the order of the suffixes and a renamed key would rename every run that set it.
 BRACKET_DEFAULTS: dict[str, object] = {
     "film_limit_mm": 2.0,        # §10: zone 3 below this layer thickness
-    "base_pressure_pct": 3.0,    # §7.2 lee extension: base pressure, % of p_w_stag_Pa (Question 4)
+    "base_pressure_pct": 3.0,    # §7.2 lee extension: base pressure, % of p_w_stag_step_Pa (Question 4)
     "separation_deg": 180.0,     # §7.2 lee extension: shear set to zero beyond this inclination (Question 4)
     "lee_shear": 0.5,            # §7.2 lee extension: shear as a fraction of the last windward bin's (Question 4)
     "min_particles": 30,         # §11.1: smallest group recorded as a fragment

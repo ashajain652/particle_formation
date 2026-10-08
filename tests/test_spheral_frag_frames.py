@@ -66,7 +66,7 @@ def test_read_fe_run_accepts_run_dir_json_and_outdir():
         assert "surface_T_max_K" in run.history                 # extra columns are kept, not required
         assert frames.run_value(run, "seed") == 12345 and frames.run_value(run, "material") == syn.SYNTHETIC_MATERIAL
         np.testing.assert_array_equal(frames.run_v_hat(run), [1.0, 0.0, 0.0])
-    assert frames.history_row(runs[0], 1)["p_w_stag_Pa"] == 1715.32034
+    assert frames.history_row(runs[0], 1)["p_w_stag_step_Pa"] == 1715.32034
 
 
 def test_read_fe_run_errors(tmp_path):
@@ -107,7 +107,7 @@ def test_read_frame_equals_pyvista_bitwise(fixture, k):
         assert set(g) == set(w)
         for key in w:
             assert g[key].dtype == w[key].dtype and g[key].tobytes() == w[key].tobytes(), (where, key)
-    assert frames.missing(got) == [] and frames.absent_optional(got) == sorted(contract.NOT_YET_EXPORTED)
+    assert frames.missing(got) == [] and sorted(frames.absent_optional(got)) == sorted(contract.FIXTURE_OMITTED)
 
 
 def test_frame_times_map_to_their_rows(tmp_path):
@@ -143,7 +143,7 @@ def test_missing_required_field_is_reported(sphere, tmp_path):
     syn.write_fe_run(str(tmp_path), lack, run.history, doc)
     run2 = frames.read_fe_run(tmp_path / run.name)
     g = frames.read_frame(run2, 2)
-    assert frames.missing(g) == ["p_w"] and frames.absent_optional(g) == ["q_rad", *sorted(contract.NOT_YET_EXPORTED)]
+    assert frames.missing(g) == ["p_w"] and sorted(frames.absent_optional(g)) == sorted(["q_rad", *contract.FIXTURE_OMITTED])
     assert frames.missing(Frame(k=0, time_s=0.0, points=f.points, tets=f.tets[:0], faces=f.faces)) == \
         ["tets"] + [x.key for loc in ("node", "tet", "patch") for x in contract.data_fields(loc) if x.required]
 
@@ -351,7 +351,7 @@ def test_prepared_frame_round_trip_bitwise(sphere, tmp_path):
             assert a.shape == tuple(sizes[s] if isinstance(s, str) else s for s in shape), name
         assert set(contract.PREPARED_FRAME_ARRAYS) - set(full) == {
             "patch_thickness", "patch_slurry_depth", "patch_liquid_depth",
-            *("patch_" + key for key in contract.NOT_YET_EXPORTED)}
+            *("patch_" + key for key in contract.FIXTURE_OMITTED if key not in contract.PREPARED_DROPPED)}
         raw = frames.load_stored_arrays(str(path))
         assert not set(raw) & set(contract.PREPARED_FRAME_RECOMPUTED)
         for name, a in raw.items():

@@ -52,16 +52,16 @@ def test_history_and_run_items():
     hist = [f.name for f in contract.required("history")]
     assert hist[:10] == ["time_s", "altitude_km", "velocity_kms", "mass_kg", "flight_path_deg", "lat_deg", "lon_deg",
                          "density_kgm3", "dynamic_pressure_Pa", "load_factor_g"]
-    assert set(hist[10:]) == {"p_w_stag_Pa", "film_mass_kg", "deep_mass_kg", "sprayed_mass_kg"}
+    assert set(hist[10:]) == {"p_w_stag_step_Pa", "film_mass_kg", "deep_mass_kg", "sprayed_mass_kg"}
     run = {f.name for f in contract.required("run")}
     assert {"run_name", "inputs.diameter_mm", "inputs.mass_kg", "settings.atmosphere", "settings.wind",
             "settings.macro_step_s", "settings.frames_every", "settings.seed", "settings.v_hat_body"} <= run
     assert contract.V_HAT == (1.0, 0.0, 0.0)
 
 
-def test_nothing_confirmed_before_task_10():
-    """`confirmed` is set only by checking the real flight's frames (Task 10)."""
-    assert contract.unconfirmed() == [f.key for f in FE_FIELDS]
+def test_every_item_confirmed_by_task_10():
+    """`confirmed` is set only by checking the real flight's frames: Task 10 did, on the 2026-10-08 Scheil flight."""
+    assert contract.unconfirmed() == []
 
 
 def test_prepared_frame_schema_covers_the_patch_fields():
@@ -69,7 +69,7 @@ def test_prepared_frame_schema_covers_the_patch_fields():
     for f in contract.data_fields("patch"):
         assert ("patch_" + f.key in arrays) == (f.key not in contract.PREPARED_DROPPED)
     # the reduced frame (2026-10-08) drops exactly the informational fields, never one a consumer reads
-    assert contract.PREPARED_DROPPED == {"q_rad", "T_patch", "r_droplet", "we_s", "kn_local"}
+    assert contract.PREPARED_DROPPED == {"q_rad", "T_patch", "r_droplet", "we_s", "kn_local", "flow_eval"}
     assert all(not contract.field_spec(key).required for key in contract.PREPARED_DROPPED)
     for name, (dtype, shape, units) in arrays.items():
         assert dtype in ("f8", "i8", "i4"), name

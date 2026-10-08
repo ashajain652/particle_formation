@@ -1,4 +1,4 @@
-"""Pytest configuration: repo root on sys.path, 'drama' and 'spheral' marker auto-skip.
+"""Pytest configuration: repo root on sys.path, 'drama', 'spheral' and 'fe_flight' marker auto-skip.
 
 The 'spheral' probe runs `$SPHERAL -c "import Spheral"` (default: the container launcher) once per session, and only
 when a 'spheral' test was collected. The launcher exits 2 within a second when Docker is stopped or the image is
@@ -6,7 +6,10 @@ absent, so the probe costs the normal loop nothing then; the 120 s timeout bound
 
 Both mesh fixtures pin band = 0: they are the analytic and fast-solver devices and must not be re-meshed by a
 change to the default band. A default-band mesh perturbed the Carslaw-Jaeger fixture by five nodes and tipped its
-centre-temperature margin, which was only 0.06 percentage points wide (measured 2026-09-27)."""
+centre-temperature margin, which was only 0.06 percentage points wide (measured 2026-09-27).
+
+The 'fe_flight' tests (Spheral M1 Task 10) run only when SPHERAL_FRAG_FE_RUN names a finite-element run directory and
+SPHERAL_FRAG_FE_PACKAGE the package that wrote it; the flight's outputs are git-ignored, so the normal loop skips them."""
 import importlib.util
 import os
 import subprocess
@@ -47,6 +50,12 @@ def pytest_collection_modifyitems(config, items):
         skip = pytest.mark.skip(reason="pyDRAMA (package 'drama') is not importable in this interpreter")
         for item in items:
             if "drama" in item.keywords:
+                item.add_marker(skip)
+    if not (os.environ.get("SPHERAL_FRAG_FE_RUN") and os.environ.get("SPHERAL_FRAG_FE_PACKAGE")):
+        skip = pytest.mark.skip(reason="SPHERAL_FRAG_FE_RUN and SPHERAL_FRAG_FE_PACKAGE must name a finite-element "
+                                       "flight and its package")
+        for item in items:
+            if item.get_closest_marker("fe_flight"):
                 item.add_marker(skip)
     spheral_items = [item for item in items if item.get_closest_marker("spheral")]
     if spheral_items:

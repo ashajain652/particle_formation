@@ -34,7 +34,7 @@ def frames():
         frame, _ = syn.read_frame_pyvista(RUN, k)
         area, normal, centroid, theta = syn.patch_geometry(frame.points, frame.faces)
         out.append({"frame": frame, "row": rows[k], "area": area, "normal": normal, "theta": theta,
-                    "p_w": frame.patch["p_w"], "tau": frame.patch["tau"], "p_stag": rows[k]["p_w_stag_Pa"]})
+                    "p_w": frame.patch["p_w"], "tau": frame.patch["tau"], "p_stag": rows[k]["p_w_stag_step_Pa"]})
     return out
 
 
@@ -181,7 +181,7 @@ def test_smooth_drag_reads_the_loads_at_the_smooth_inclination():
     vectors: pressure p(theta_d) on each facet along -n_facet, shear tau(theta_d) on the facet's area projected on the
     smooth plane along its tangent toward the tail. At the nose D_patch, the facets' own loads, falls short of it."""
     p_stag, tau0, v = 4000.0, 40.0, np.array([1.0, 0.0, 0.0])
-    row = {"mass_kg": 1.0, "load_factor_g": 1.0, "p_w_stag_Pa": p_stag}
+    row = {"mass_kg": 1.0, "load_factor_g": 1.0, "p_w_stag_step_Pa": p_stag}
     for theta_d_deg in (0.5, 40.5):
         normals, area, n_d = sawtooth(theta_d_deg, 25.0)
         theta = np.arccos(np.clip(normals @ v, -1, 1))
@@ -205,10 +205,10 @@ def test_smooth_drag_arguments_go_together():
     th = np.zeros(3)
     with pytest.raises(ValueError):
         loads.drag_comparison(th, np.ones(3), np.ones(3), np.zeros(3), {"mass_kg": 1, "load_factor_g": 1,
-                                                                        "p_w_stag_Pa": 1}, theta_smooth=th)
+                                                                        "p_w_stag_step_Pa": 1}, theta_smooth=th)
     with pytest.raises(ValueError):
         loads.drag_comparison(th, np.ones(3), np.ones(3), np.zeros(3), {"mass_kg": 1, "load_factor_g": 1,
-                                                                        "p_w_stag_Pa": 1},
+                                                                        "p_w_stag_step_Pa": 1},
                               theta_smooth=np.zeros(2), cos_to_smooth=np.ones(2))
 
 
@@ -297,4 +297,4 @@ def test_stack_round_trip_and_header(frames, tmp_path):
         assert a.p_stag == b.p_stag
     h = loads.table_header(tables[1])
     assert h["lee_label"] == "Step 4 §5's lee model, to be replaced by its module"
-    assert h["lee_reference_pressure"] == "p_w_stag_Pa" and len(h["edges_deg"]) == 181
+    assert h["lee_reference_pressure"] == "p_w_stag_step_Pa" and len(h["edges_deg"]) == 181

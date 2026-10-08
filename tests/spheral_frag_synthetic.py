@@ -28,7 +28,7 @@ Synthetic conventions, stated so that later tasks test against them rather than 
 - Evaluated frames carry modified-Newtonian loads in the patch's own inclination theta (outward facet normal against
   v_hat = +x): p_w = p_stag cos^2(theta) for theta < 90 deg, the base pressure BASE_FRACTION p_stag for
   90 <= theta < THETA_EVAL_DEG, and 0 ("not evaluated") beyond, so a load table has bins beyond its last valid one;
-  tau = TAU_FRACTION p_stag sin(2 theta) for theta < 90 deg, 0 elsewhere. p_stag is the history's p_w_stag_Pa as
+  tau = TAU_FRACTION p_stag sin(2 theta) for theta < 90 deg, 0 elsewhere. p_stag is the history's p_w_stag_step_Pa as
   written to the CSV, so p_w at theta = 0 equals it exactly.
 - The surface triangles are wound outward (the contract's "faces: outward"), ordered as `reentry_model.mesh`
   orders boundary faces (ascending sorted node triple).
@@ -237,7 +237,7 @@ def sprayed_this_step(frame):
 HISTORY_MAIN = ("time_s", "altitude_km", "velocity_kms", "mass_kg", "flight_path_deg", "lat_deg", "lon_deg",
                 "density_kgm3", "dynamic_pressure_Pa", "load_factor_g")
 HISTORY_EXTRA = ("surface_T_max_K", "n_active_elements")     # not in the contract: readers must ignore them
-HISTORY_MELT = ("p_w_stag_Pa", "film_mass_kg", "deep_mass_kg", "sprayed_mass_kg")
+HISTORY_MELT = ("p_w_stag_step_Pa", "film_mass_kg", "deep_mass_kg", "sprayed_mass_kg")
 
 
 def flight_state(t):
@@ -248,7 +248,7 @@ def flight_state(t):
     return {"time_s": r9(t), "altitude_km": r9(77.5 - 0.06 * t), "velocity_kms": velocity,
             "flight_path_deg": r9(-0.959331 - 0.01 * t), "lat_deg": r9(29.546 + 0.004 * t),
             "lon_deg": r9(-82.134 + 0.003 * t), "density_kgm3": density, "dynamic_pressure_Pa": q,
-            "p_w_stag_Pa": r9(CP_MAX * q)}
+            "p_w_stag_step_Pa": r9(CP_MAX * q)}
 
 
 def history_rows(frames, states, drags, sprayed_increments):
@@ -383,7 +383,7 @@ def sphere_frame(R=SPHERE_R, h=SPHERE_H, k=0, t=0.0, T=None, fields=None, h_core
         T = T(points)
     T = np.broadcast_to(np.asarray(T, dtype=float), (len(points),)).copy()
     if p_stag is None:
-        p_stag = flight_state(t)["p_w_stag_Pa"]
+        p_stag = flight_state(t)["p_w_stag_step_Pa"]
     frame = make_frame(k, t, points, tets, T, np.ones(len(tets)), p_stag=p_stag, evaluated=evaluated, melt=melt)
     for key, value in (fields or {}).items():
         where = {"node": frame.node, "tet": frame.tet, "patch": frame.patch}[contract.field_spec(key).location]
@@ -422,10 +422,10 @@ def sphere_run_parts(R=SPHERE_R, h=SPHERE_H, h_core=SPHERE_H_CORE):
     for k, (t, T_wall, state) in enumerate(zip(SPHERE_TIMES, SPHERE_T_WALL, states)):
         T = sphere_temperature(points, T_wall, R)
         tk, phik = (tets2, phi2) if k == 2 else (tets, np.ones(len(tets)))
-        frame = make_frame(k, t, points, tk, T, phik, p_stag=state["p_w_stag_Pa"], evaluated=k > 0)
+        frame = make_frame(k, t, points, tk, T, phik, p_stag=state["p_w_stag_step_Pa"], evaluated=k > 0)
         frames.append(frame)
         if k == 0:     # the history's drag at t = 0 is the one the analytic loads would give: the frame has none
-            ev = make_frame(k, t, points, tk, T, phik, p_stag=state["p_w_stag_Pa"], evaluated=True)
+            ev = make_frame(k, t, points, tk, T, phik, p_stag=state["p_w_stag_step_Pa"], evaluated=True)
             drags.append(frame_drag(ev))
         else:
             drags.append(frame_drag(frame))
@@ -448,7 +448,7 @@ def sphere_run(directory, **kw):
 
 def sphere_answers(R=SPHERE_R):
     """Closed forms on the sphere (continuum; the faceted fixture differs by its faceting error)."""
-    p_stag = flight_state(SPHERE_TIMES[1])["p_w_stag_Pa"]
+    p_stag = flight_state(SPHERE_TIMES[1])["p_w_stag_step_Pa"]
     return {
         "thickness_m": 2.0 * R,
         "windward_pressure_drag_over_p_stag": 0.5 * math.pi * R ** 2,           # integral of p_stag cos^2 cos dA
@@ -474,7 +474,7 @@ def dumbbell_parts(R=0.02, r_neck=4e-3, L_neck=0.02, h=1.5e-3, h_far=5e-3):
     points, tets = dumbbell_mesh(R, r_neck, L_neck, h, h_far)
     state = flight_state(0.0)
     frame = make_frame(0, 0.0, points, tets, np.full(len(points), DUMBBELL_T), np.ones(len(tets)),
-                       p_stag=state["p_w_stag_Pa"], evaluated=True, melt=False)
+                       p_stag=state["p_w_stag_step_Pa"], evaluated=True, melt=False)
     history = history_rows([frame], [state], [frame_drag(frame)], [0.0])
     synthetic = {"device": "dumbbell_frame", "R_m": R, "r_neck_m": r_neck, "L_neck_m": L_neck, "h_neck_m": h,
                  "h_far_m": h_far, "sphere_centres_x_m": [-(0.5 * L_neck + R), 0.5 * L_neck + R],
@@ -536,7 +536,7 @@ def slab_parts(L=0.02, W=0.004, H=0.012, h=1e-3):
                  "delta_m": delta_m, "closure": np.where(np.isfinite(delta_m), 0.0, 1.0),
                  "release_rate": np.zeros(len(faces)), "r_droplet": np.full(len(faces), np.nan),
                  "we_s": np.zeros(len(faces))}
-    frame = make_frame(0, 0.0, points, tets, T, np.ones(len(tets)), overrides, p_stag=state["p_w_stag_Pa"],
+    frame = make_frame(0, 0.0, points, tets, T, np.ones(len(tets)), overrides, p_stag=state["p_w_stag_step_Pa"],
                        evaluated=True)
     history = history_rows([frame], [state], [frame_drag(frame)], [0.0])
     synthetic = {"device": "slab_frame", "L_m": L, "W_m": W, "H_m": H, "h_m": h, "exposed": "top face z = H",

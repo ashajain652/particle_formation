@@ -26,7 +26,7 @@ committed meshes (gmsh 4, drama_env, 2026-10-07), not closed forms.
   AA7075_scheil, so a consistency check against the real material table does not apply to these fixtures.
 - **Loads (decision 4 of the M1 review):** `p_w`, `tau` and `closure` are written on every frame whose step evaluated
   the surface flow, film or not. In the patch's own inclination θ (outward facet normal against v_hat = +x) and with
-  p_stag = the row's `p_w_stag_Pa` as written in the CSV:
+  p_stag = the row's `p_w_stag_step_Pa` as written in the CSV:
   p_w = p_stag cos²θ for θ < 90°, 0.01 p_stag for 90° ≤ θ < 150°, and **0 beyond 150° ("not evaluated")**;
   tau = 0.02 p_stag sin 2θ for θ < 90°, 0 elsewhere. The history's drag is the frame's own:
   `mass_kg · load_factor_g · g0` = Σ A (p_w cos θ + tau sin θ), g0 = 9.80665 m/s².
@@ -43,7 +43,7 @@ committed meshes (gmsh 4, drama_env, 2026-10-07), not closed forms.
 A coarse 100 mm sphere (`reentry_model.mesh.sphere_mesh(0.05, 8e-3, 20e-3, band=0)`): 753 nodes, 2,497 tetrahedra,
 1,194 patches. Three frames, one history row each:
 
-| k | t [s] | p_w_stag_Pa | state | T [K] (r = distance from the centre) |
+| k | t [s] | p_w_stag_step_Pa | state | T [K] (r = distance from the centre) |
 |---|---|---|---|---|
 | 0 | 0 | 1552.5 | written before any step: nothing evaluated — p_w = tau = 0, closure 1, delta_m/kn_local/r_droplet NaN, no film, no release | 300 uniform |
 | 1 | 0.5 | 1715.32034 | evaluated, film FILM0 cos θ (5e-5 m), release 1e-3 cos θ kg/m² per step on θ < 60° | 300 + 600 (r/R)² |

@@ -85,8 +85,8 @@ def test_fixture_carries_every_contract_item_under_its_fe_name(fixture):
             assert f.name in grid.point_data, (fixture, k, f.key)
         for f in contract.data_fields("tet"):
             assert f.name in grid.cell_data, (fixture, k, f.key)
-        # required and optional: the export writes all, except what it is being changed to write (NOT_YET_EXPORTED)
-        patch_fields = [f for f in contract.data_fields("patch") if f.key not in contract.NOT_YET_EXPORTED]
+        # required and optional: the export writes all, except what they leave out on purpose (FIXTURE_OMITTED)
+        patch_fields = [f for f in contract.data_fields("patch") if f.key not in contract.FIXTURE_OMITTED]
         for f in patch_fields:
             assert f.name in poly.cell_data, (fixture, k, f.key)
         assert set(grid.point_data) | set(grid.cell_data) == {f.name for f in contract.data_fields("node")
@@ -158,7 +158,7 @@ def test_sphere_run_analytic_content():
     # frames 1-2: the analytic loads in each patch's own inclination; p_stag is the CSV's value exactly
     for k in (1, 2):
         f, (area, normal, centroid, theta) = frames[k], g[k]
-        p_stag = history["p_w_stag_Pa"][k]
+        p_stag = history["p_w_stag_step_Pa"][k]
         p, tau = syn.newtonian_loads(theta, p_stag)
         assert np.array_equal(f.patch["p_w"], p) and np.array_equal(f.patch["tau"], tau)
         assert f.patch["p_w"].max() <= p_stag and (f.patch["p_w"][np.degrees(theta) >= syn.THETA_EVAL_DEG] == 0).all()

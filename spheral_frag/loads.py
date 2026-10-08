@@ -6,7 +6,7 @@ the undeformed body Spheral sees the finite-element model's loads. Behind the la
 a lee extension stands in for Step 4's lee-load module (spec §7.2; plan decision 5):
 
   pressure  steps to the base pressure `base_fraction * p_stag` and holds it out to 180 deg, where p_stag is the
-            history's wall stagnation pressure `p_w_stag_Pa` at the frame's row (Step 4's "pitot"); the frame's own
+            history's wall stagnation pressure `p_w_stag_step_Pa` at the frame's row (Step 4's "pitot"); the frame's own
             p_w already contains Step 3's Prandtl-Meyer expansion up to its last bin, so no ramp is added
   shear     `shear_factor` times the shear of the last valid bin up to `separation_deg`, zero beyond
 
@@ -53,7 +53,7 @@ class LoadTable:
     tau: np.ndarray            # Pa, area-weighted mean tau per bin (NaN where no valid patch)
     area: np.ndarray           # m^2 of valid patches per bin
     theta_last_deg: float      # centre of the last bin with valid patches ("the last patch the frame carries") or NaN
-    p_stag: float              # Pa, the history's p_w_stag_Pa at this frame
+    p_stag: float              # Pa, the history's p_w_stag_step_Pa at this frame
     edges_deg: np.ndarray = field(default_factory=lambda: THETA_EDGES_DEG.copy())   # (n_bins + 1,)
     lee: np.ndarray | None = None    # bool (n_bins,): bins set by the lee extension (all False before `with_lee`)
     lee_params: dict | None = None   # base_fraction, separation_deg, shear_factor once `with_lee` applied
@@ -92,7 +92,7 @@ def bin_index(theta_deg, edges=THETA_EDGES_DEG) -> np.ndarray:
 
 def build_table(theta, area, p_w, tau, p_stag, valid=None, edges=THETA_EDGES_DEG) -> LoadTable:
     """The frame's loads binned by inclination. `theta` in rad (outward normals against v_hat), `area` m^2, `p_w`
-    and `tau` Pa per patch; `p_stag` the history's p_w_stag_Pa at the frame (Pa). `valid` defaults to
+    and `tau` Pa per patch; `p_stag` the history's p_w_stag_step_Pa at the frame (Pa). `valid` defaults to
     `valid_patches(p_w, tau)` (plan fact 2: 0 is the "not evaluated" default)."""
     theta = np.asarray(theta, dtype=float)
     area = np.asarray(area, dtype=float)
@@ -186,8 +186,8 @@ def history_drag(history_row, g0=G0) -> float:
 
 
 def history_p_stag(history_row) -> float:
-    """The lee base pressure's reference: the history's p_w_stag_Pa at the row (Pa)."""
-    return float(history_row[contract.fe_name("p_w_stag_Pa")])
+    """The lee base pressure's reference: the history's p_w_stag_step_Pa at the row (Pa; NaN on row 0)."""
+    return float(history_row[contract.fe_name("p_w_stag_step_Pa")])
 
 
 def drag_comparison(theta, area, p_w, tau, history_row, valid=None, edges=THETA_EDGES_DEG,
@@ -284,7 +284,7 @@ def table_header(table: LoadTable) -> dict:
     return {"schema": "spheral_frag.loads", "schema_version": TABLE_SCHEMA_VERSION,
             "edges_deg": [float(e) for e in table.edges_deg], "valid": "p_w > 0 and finite tau",
             "lee_label": LEE_LABEL, "lee_params": table.lee_params,
-            "lee_reference_pressure": contract.fe_name("p_w_stag_Pa"),
+            "lee_reference_pressure": contract.fe_name("p_w_stag_step_Pa"),
             "units": {"p": "Pa", "tau": "Pa", "area": "m^2", "theta_deg": "deg", "p_stag": "Pa"}}
 
 
