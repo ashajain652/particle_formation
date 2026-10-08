@@ -123,3 +123,20 @@ whole layer (2.6 and 4.1 mm) or the part below the limit (`bulk`); under the sec
 (0.45 mm > δ_m) becomes zone 2: zones 2, 2, 3, 3, 2 and bulk 0, 0, 0.8, 2.3 mm at 2 mm. Measured by Task 6: every
 exact patch's slurry depth equals its column's to 5e-18 m. Mass: solid 2.70048e-3 kg, film 1.92e-5 kg,
 deep 3.84e-5 kg.
+
+## `material/` — the AA7075_scheil material table (Task 3)
+
+`material_AA7075_scheil.npz` + `.json` is exactly what `prepare` writes as `material_table.npz` for the Scheil
+material (decision 1), built from the reconstructed Step 3 prototype, which is git-ignored; it lets the material
+tests run without it. `material_AA7075_scheil_fe_samples.npz` holds the finite-element material's own values
+(h, f_l, c_p, the inverse, the fully liquid enthalpy) at 5,000 uniform temperatures in 250–1,500 K plus every
+enthalpy and liquid-fraction node and its neighbours ± 1e-9 K (5,543 in all). Regenerate with
+
+```bash
+"$PY" tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/proto3 --material AA7075_scheil \
+    --out tests/fixtures/spheral_frag/material --samples 5000
+```
+
+(the command is also in the JSON header, with the package's SHA-256). The arrays regenerate bitwise; the npz bytes
+and the header's absolute paths do not. With `SPHERAL_FRAG_FE_PACKAGE=prototype/proto3` the tests regenerate it
+and compare.

@@ -1,0 +1,29 @@
+{
+  "schema": "spheral_frag.mechanical",
+  "schema_version": 1,
+  "material": "AA7075_scheil",
+  "_comment": "Mechanical inputs of the material table (spec §8.1-8.3, §16 open inputs 1, 2 and 4; M1 plan Task 3, Question 1). 'approved' entries are sourced values; 'provisional' entries are the placeholders of Question 1, approved as labelled M1 placeholders at review (decision 2, 2026-10-07): every column built from one is listed in MaterialTable.provisional and printed by prepare, and M2 cannot run production on them. Temperatures named 'solidus' and 'T_half' are the finite-element material's (AA7075_scheil: 748 K, the foot of its eutectic ramp, and 895.1 K, 50 % liquid on its Scheil curve; decision 1), not values of this file.",
+  "entries": {
+    "rho_solid": {"value": 2813.0, "units": "kg/m^3", "status": "approved",
+                  "source": "the finite-element material's density (AA7075_scheil); the table uses the FE value, this entry must equal it"},
+    "E_room": {"value": 71.7e9, "units": "Pa", "status": "approved",
+               "source": "spec §2 (Explicit step in AA7075): Young's modulus of 7075-T6 at room temperature"},
+    "nu": {"value": 0.33, "units": "-", "status": "approved",
+           "source": "spec §2 and §8.3: Poisson's ratio 0.33, held constant"},
+    "E_T": {"form": "E_room constant to the solidus, then linear in T to zero at 50 % liquid (T_half), zero above",
+            "status": "provisional",
+            "source": "M1 placeholder (decision 2): handbook E(T) to 623 K is open input 1; the linear fall through the mush is spec §8.3's labelled rule, open input 4"},
+    "alpha": {"value": 23.4e-6, "units": "1/K", "status": "provisional",
+              "source": "M1 placeholder (decision 2): linear expansion coefficient of 7075, held constant from 293 K; open input 2"},
+    "volume_change_on_melting": {"value": 0.065, "units": "-", "status": "provisional", "used": false,
+                                 "source": "M1 placeholder (decision 2): pure aluminium, spec §16 open input 2. Not used by rho_free: decision 3 sets the liquid's free density to the finite-element liquid density, which implies its own change at the liquidus (MaterialTable.implied_melting_volume_change)"},
+    "rho_liquid": {"form": "the finite-element material's liquid density (2,400 kg/m^3 for AA7075_scheil); 1/rho_free = (1 - f_l)/rho_solid(T) + f_l/rho_liquid in the mush and slurry",
+                   "status": "approved",
+                   "source": "decision 3 of the M1 review (2026-10-07); the mixture by specific volume between the solidus and the liquidus is this table's choice"},
+    "K_T": {"form": "E/(3(1 - 2 nu)) to the solidus, held at its solidus value through mush, slurry and liquid",
+            "status": "provisional",
+            "source": "M1 placeholder (decision 2); the bulk modulus of mush, slurry and liquid is not stated in the spec (Question 1)"},
+    "yield_strength": {"tabulated": false, "status": "provisional",
+                       "source": "not tabulated in M1: handbook yield of 7075-T6 to 623 K is open input 1 (M2 plan)"}
+  }
+}

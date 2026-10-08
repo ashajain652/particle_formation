@@ -1,0 +1,115 @@
+{
+  "arrays": {
+    "E": "Pa, Young's modulus",
+    "G": "Pa, shear modulus",
+    "K": "Pa, bulk modulus",
+    "T_bridge": "K, f_l = 0.9 (f_s = 0.1) on the table's own curve: start of the viscosity bridge",
+    "T_cp": "K, the c_p table's nodes",
+    "T_feed": "K, the FE's T_feed (the film feed ramp's top); NaN where the FE has none",
+    "T_grid": "K, 250-1,500 K every 1 K",
+    "T_half": "K, 50 % liquid on the table's own f_l curve",
+    "T_liquidus": "K",
+    "T_ref_fe": "K, the FE's zero of enthalpy",
+    "T_solidus": "K, the loaded FE material's solidus (Scheil: the foot of the eutectic ramp, 748 K)",
+    "cp_end": "J/(kg K), the c_p table's first and last values (linear extrapolation beyond h_T)",
+    "cp_table": "J/(kg K), the c_p table",
+    "f_l": "-, = liquid_fraction(T_grid) exactly",
+    "fl": "-, liquid fraction at fl_T",
+    "fl_T": "K, liquid-fraction nodes (Scheil: the FE's _fl_T; linear range: [T_s, T_l]; none: empty)",
+    "fl_kind": "0 none, 1 Scheil (np.interp), 2 linear range",
+    "h300": "J/kg from 300 K, = enthalpy(T_grid) exactly",
+    "h_T": "K, enthalpy-table nodes (the FE's _T_h)",
+    "h_cp0": "J/(kg K), c_p at each interval's lower node, as the FE's enthalpy() computes it",
+    "h_cp1": "J/(kg K), c_p at each interval's upper node",
+    "h_nodes": "J/kg from the FE's T_ref_fe, enthalpy at h_T (the FE's _h_nodes)",
+    "h_offset_300": "J/kg, h_FE(300 K), subtracted from every FE enthalpy",
+    "h_slope": "J/(kg K), latent slope L df_l/dT inside each interval (the FE's _latent_slope; 0 without one)",
+    "latent_heat": "J/kg",
+    "mu_liquid": "Pa s",
+    "nu": "-, Poisson's ratio",
+    "rho_free": "kg/m^3, free density (spec \u00a78.2)",
+    "rho_liquid": "kg/m^3, the FE liquid density (NaN without liquid properties)",
+    "rho_solid": "kg/m^3, the FE density",
+    "sigma_liquid": "N/m"
+  },
+  "command": "tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/proto3 --material AA7075_scheil --out tests/fixtures/spheral_frag/material --samples 5000",
+  "fe_material": "AA7075_scheil",
+  "fe_material_file": "/Users/ashajain/MIT/particle_formation/prototype/proto3/reentry_model/data/materials/AA7075_scheil.json",
+  "fe_package": {
+    "file": "/Users/ashajain/MIT/particle_formation/prototype/proto3/reentry_model/__init__.py",
+    "path": "/Users/ashajain/MIT/particle_formation/prototype/proto3",
+    "sha256": "47cc8f6b7e3faff252b34001377c26e5eb0f47bbfa70ac59348ddc5760ec9af1"
+  },
+  "file": "material_AA7075_scheil.npz",
+  "interp_fma": true,
+  "mechanical": {
+    "_comment": "Mechanical inputs of the material table (spec \u00a78.1-8.3, \u00a716 open inputs 1, 2 and 4; M1 plan Task 3, Question 1). 'approved' entries are sourced values; 'provisional' entries are the placeholders of Question 1, approved as labelled M1 placeholders at review (decision 2, 2026-10-07): every column built from one is listed in MaterialTable.provisional and printed by prepare, and M2 cannot run production on them. Temperatures named 'solidus' and 'T_half' are the finite-element material's (AA7075_scheil: 748 K, the foot of its eutectic ramp, and 895.1 K, 50 % liquid on its Scheil curve; decision 1), not values of this file.",
+    "entries": {
+      "E_T": {
+        "form": "E_room constant to the solidus, then linear in T to zero at 50 % liquid (T_half), zero above",
+        "source": "M1 placeholder (decision 2): handbook E(T) to 623 K is open input 1; the linear fall through the mush is spec \u00a78.3's labelled rule, open input 4",
+        "status": "provisional"
+      },
+      "E_room": {
+        "source": "spec \u00a72 (Explicit step in AA7075): Young's modulus of 7075-T6 at room temperature",
+        "status": "approved",
+        "units": "Pa",
+        "value": 71700000000.0
+      },
+      "K_T": {
+        "form": "E/(3(1 - 2 nu)) to the solidus, held at its solidus value through mush, slurry and liquid",
+        "source": "M1 placeholder (decision 2); the bulk modulus of mush, slurry and liquid is not stated in the spec (Question 1)",
+        "status": "provisional"
+      },
+      "alpha": {
+        "source": "M1 placeholder (decision 2): linear expansion coefficient of 7075, held constant from 293 K; open input 2",
+        "status": "provisional",
+        "units": "1/K",
+        "value": 2.34e-05
+      },
+      "nu": {
+        "source": "spec \u00a72 and \u00a78.3: Poisson's ratio 0.33, held constant",
+        "status": "approved",
+        "units": "-",
+        "value": 0.33
+      },
+      "rho_liquid": {
+        "form": "the finite-element material's liquid density (2,400 kg/m^3 for AA7075_scheil); 1/rho_free = (1 - f_l)/rho_solid(T) + f_l/rho_liquid in the mush and slurry",
+        "source": "decision 3 of the M1 review (2026-10-07); the mixture by specific volume between the solidus and the liquidus is this table's choice",
+        "status": "approved"
+      },
+      "rho_solid": {
+        "source": "the finite-element material's density (AA7075_scheil); the table uses the FE value, this entry must equal it",
+        "status": "approved",
+        "units": "kg/m^3",
+        "value": 2813.0
+      },
+      "volume_change_on_melting": {
+        "source": "M1 placeholder (decision 2): pure aluminium, spec \u00a716 open input 2. Not used by rho_free: decision 3 sets the liquid's free density to the finite-element liquid density, which implies its own change at the liquidus (MaterialTable.implied_melting_volume_change)",
+        "status": "provisional",
+        "units": "-",
+        "used": false,
+        "value": 0.065
+      },
+      "yield_strength": {
+        "source": "not tabulated in M1: handbook yield of 7075-T6 to 623 K is open input 1 (M2 plan)",
+        "status": "provisional",
+        "tabulated": false
+      }
+    },
+    "material": "AA7075_scheil",
+    "schema": "spheral_frag.mechanical",
+    "schema_version": 1
+  },
+  "mechanical_file": "/Users/ashajain/MIT/particle_formation/spheral_frag/data/aa7075_mechanical.json",
+  "npz_sha256": "d8f7ed91bd420ff062cd84a1c05a8902496acf1c4807e12e93572a9723ee0711",
+  "numpy": "2.5.3",
+  "provisional": [
+    "rho_free",
+    "E",
+    "K",
+    "G"
+  ],
+  "schema": "spheral_frag.material_table",
+  "schema_version": 1
+}
