@@ -185,6 +185,8 @@ class MeltSettings:
             raise ValueError("feed_depth must be one of {}, got {!r}".format(FEED_DEPTH_NAMES, self.feed_depth))
         if not 0.0 < self.demise_fraction < 1.0:
             raise ValueError("demise_fraction must be within (0, 1)")
+        if self.surface_model == "skin" and self.removal == "instant":
+            raise ValueError("surface_model 'skin' needs removal 'girin'")
 
 
 def fit_sphere(points):
@@ -284,8 +286,9 @@ class MeltingBody(ThermalBody):
             self.skins = skin_mod.SkinField(material, self.settings.skin or skin_mod.SkinSettings())
         self._draw_m, self._draw_H = np.zeros(mesh.n_elements), np.zeros(mesh.n_elements)   # metal the skins drew this step
         self.skins_created = self.skin_short_events = self.interface_repeats = 0
-        self.skin_drawn_mass = self.skin_handover_mass = self.last_mismatch = self.skin_wall = 0.0
-        self.last_skin_liquid = self.last_skin_nonrigid = None
+        self.skin_drawn_mass = self.skin_handover_mass = self.last_mismatch = 0.0
+        self.skin_wall = 0.0                                       # s of wall time in the skins' passes (trial and real)
+        self.last_skin_shortfall = 0.0                             # kg of metal the skins lack below their target
         self._step_flow = None
         self._refresh_skin_index()
 
@@ -416,7 +419,6 @@ class MeltingBody(ThermalBody):
         import time
         from . import skin as skin_mod
         from . import spray as spray_mod
-        started = time.perf_counter()
         mat, liq, sk = self.material, self.liquid, self.skins
         self._create_skins(self.solver.temperature())
         if not sk.n:
@@ -442,12 +444,16 @@ class MeltingBody(ThermalBody):
         solver_state, skin_state = self.solver.state(), sk.state()
         T_lin = T_b0
         for attempt in (0, 1):
+            started = time.perf_counter()
             a, b = sk.advance(dt, q_top, self.T_ambient, eps, T_lin, L, room, avail)
+            self.skin_wall += time.perf_counter() - started
             A_f, B_f = np.zeros(self.surface.n_patches), np.zeros(self.surface.n_patches)
             A_f[p], B_f[p] = a, b
             res = self.solver.step(dt, q3, self.T_ambient, nodal_load=applied / dt, interface=(on, A_f, B_f))
             T_b1 = self.surface.facet_mean(self.solver.temperature())[p]
+            started = time.perf_counter()
             book = sk.advance(dt, q_top, self.T_ambient, eps, T_b0, L, room, avail, T_b1=T_b1)
+            self.skin_wall += time.perf_counter() - started
             mismatch = book.E_base - (a + b * T_b1) * sk.area * dt
             scale = np.abs(book.E_top) + np.abs(book.E_base) + 1e-30
             if attempt == 0 and (np.abs(mismatch) > skin_mod.INTERFACE_TOLERANCE * scale).any():
@@ -457,6 +463,7 @@ class MeltingBody(ThermalBody):
                 self.interface_repeats += 1
                 continue
             break
+        self.last_skin_shortfall = float(np.maximum(mat.rho * sk.area * sk.settings.thickness - sk.m.sum(axis=1), 0.0).sum())
         self.pending_load = self.pending_load - applied
         full = np.zeros(self.surface.n_patches)
         full[p] = mismatch
@@ -476,11 +483,11 @@ class MeltingBody(ThermalBody):
         np.add.at(self._draw_m, e, book.drawn)
         np.add.at(self._draw_H, e, book.drawn_H)
         self.skin_drawn_mass += float(book.drawn.sum())
+        # skin-steps below s/2: a skin thin for ten steps counts ten times
         self.skin_short_events += int((sk.thickness() < 0.5 * sk.settings.thickness).sum())
         if book.to_film.sum() + book.to_deep.sum() > 0.0 and self.melt_onset is None:
             self.melt_onset = t
         self.melt_step(t, dt, state)
-        self.skin_wall += time.perf_counter() - started
 
     def _advance_elements(self, t, dt, loads, state=None):
         # A deferred melt load is energy the transferred mass delivered to the nodes it arrived at; a node that has
@@ -878,6 +885,9 @@ class MeltingBody(ThermalBody):
         from . import spray as spray_mod
         if state is None or self.m_f.sum() <= 0.0 or flow is None:
             self.last_flow = self.last_spray = self.last_nonrigid = None
+            nan = float("nan")
+            self.last_melt.update({"liquid_depth_mean_um": nan, "liquid_depth_max_um": nan,
+                                   "nonrigid_depth_skin_mean_um": nan, "nonrigid_depth_wet_median_um": nan})
             return 0.0
         areas = self.surface.areas
         # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
@@ -894,7 +904,6 @@ class MeltingBody(ThermalBody):
             molten = self._compose_depth(mat.T_feed, molten)
             if nonrigid is not None:
                 nonrigid = self._compose_depth(mat.T_rigid, nonrigid)
-            self.last_skin_liquid, self.last_skin_nonrigid = molten, nonrigid
         under = molten if nonrigid is None else nonrigid
         # (ii) lubrication and runoff
         n_sub, moved = 0, 0.0
@@ -958,6 +967,16 @@ class MeltingBody(ThermalBody):
             slurry_thick = float((thick & ~liquid_thick)[girin_wet].mean())
             rigid_thin = float((liquid_thick & ~thick)[girin_wet].mean())
         nonrigid_mean = float(nonrigid[wet_w].mean() * 1e3) if nonrigid is not None and wet_w.any() else float("nan")
+        # the resolved depths, at evaluation time on the surface they were evaluated on (final review ruling): over the
+        # skin patches the composed skin + 3D depths [um]; for every run the regime test's depth over the wet windward
+        # patches (fact 94's statistic)
+        nan = float("nan")
+        skinned = self.skin_of_patch >= 0 if self.skins is not None and self.skins.n else np.zeros(molten.shape, dtype=bool)
+        depths = {"liquid_depth_mean_um": float(molten[skinned].mean() * 1e6) if skinned.any() else nan,
+                  "liquid_depth_max_um": float(molten[skinned].max() * 1e6) if skinned.any() else nan,
+                  "nonrigid_depth_skin_mean_um": float(nonrigid[skinned].mean() * 1e6)
+                  if nonrigid is not None and skinned.any() else nan,
+                  "nonrigid_depth_wet_median_um": float(np.median(under[wet_w]) * 1e6) if wet_w.any() else nan}
         # The Rayleigh-Taylor criterion is reported, never applied, so report it usefully: a body-level "any patch"
         # boolean says nothing about how much melt is involved or whether the unstable wave even fits on the nose.
         # `rt_mass_fraction` is the share of the film on unstable patches; `rt_wavelength_over_nose` is the shortest
@@ -998,7 +1017,7 @@ class MeltingBody(ThermalBody):
             "thick_branch_fraction": float(thick[self.windward & (self.m_f > 0.0)].mean())
             if (self.windward & (self.m_f > 0.0)).any() else float("nan"),
             "nonrigid_depth_mean_mm": nonrigid_mean, "slurry_thick_fraction": slurry_thick,
-            "rigid_thin_fraction": rigid_thin, "slurry_held_mass_kg": held_mass})
+            "rigid_thin_fraction": rigid_thin, "slurry_held_mass_kg": held_mass, **depths})
         return released
 
     def _kill(self, dead):
@@ -1144,16 +1163,28 @@ class MeltingBody(ThermalBody):
 
     def _freeze_into_skins(self, solid):
         """Liquid on a skin patch whose top has fallen below the feed ramp refreezes into the skin's top cell, the node's
-        energy unchanged (spec 7.1 (6)); the deep liquid, against the solid, goes first. Returns the mass [kg]."""
+        energy unchanged (spec 7.1 (6)); the deep liquid, against the solid, goes first. A skin takes at most what
+        brings it to MAX_THICKNESS_FACTOR times its target thickness (spec 5.4's upper bound); the excess stays liquid on
+        the patch, as the element model's phi = 1 cap leaves film (final review ruling). Returns the mass [kg]."""
+        from .skin import MAX_THICKNESS_FACTOR
+        sk = self.skins
         p = np.flatnonzero(solid > 0.0)
         if not p.size:
             return 0.0
-        from_deep = np.minimum(self.m_d[p], solid[p])
-        from_film = np.minimum(self.m_f[p], solid[p] - from_deep)
+        r = self.skin_of_patch[p]
+        room = np.maximum(self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness
+                          - sk.m[r].sum(axis=1), 0.0)
+        want = np.minimum(solid[p], room)
+        from_deep = np.minimum(self.m_d[p], want)
+        from_film = np.minimum(self.m_f[p], want - from_deep)
         taken = from_deep + from_film
+        some = taken > 0.0                                       # a skin with nothing to freeze is left as it is
+        if not some.any():
+            return 0.0
+        p, r, from_deep, from_film, taken = p[some], r[some], from_deep[some], from_film[some], taken[some]
         self.m_d[p] = self.m_d[p] - from_deep
         self.m_f[p] = self.m_f[p] - from_film
-        self.skins.refreeze_top(self.skin_of_patch[p], taken, (self.m_f + self.m_d)[p])
+        sk.refreeze_top(r, taken, (self.m_f + self.m_d)[p])
         return float(taken.sum())
 
     def _death_to_skins(self, dead, rest, h_e):
@@ -1563,20 +1594,24 @@ class MeltingBody(ThermalBody):
                 "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active), **self._skin_stats()}
 
     def _skin_stats(self):
-        """The skins' history columns (sub-plan 18); zero or nan without skins."""
-        sk = self.skins
+        """The skins' history columns (sub-plan 18); zero or nan without skins. The resolved depths are the step's, taken
+        in `_film_and_spray` on the surface they were evaluated on."""
+        from .skin import MAX_THICKNESS_FACTOR
+        sk, lm, nan = self.skins, self.last_melt, float("nan")
         th = sk.thickness() if sk is not None and sk.n else np.zeros(0)
-        on = self.skin_of_patch >= 0
-        liq = self.last_skin_liquid if self.last_skin_liquid is not None and len(self.last_skin_liquid) == len(on) else None
-        nr = self.last_skin_nonrigid if self.last_skin_nonrigid is not None and len(self.last_skin_nonrigid) == len(on) else None
-        some = bool(on.any())
         return {"skin_count": float(sk.n) if sk is not None else 0.0, "skin_mass_kg": sk.mass() if sk is not None else 0.0,
                 "skin_thickness_min_mm": float(th.min() * 1e3) if th.size else float("nan"),
                 "skin_thickness_median_mm": float(np.median(th) * 1e3) if th.size else float("nan"),
                 "skin_drawn_mass_kg": self.skin_drawn_mass, "skin_handover_mass_kg": self.skin_handover_mass,
                 "skin_short_events": float(self.skin_short_events), "interface_mismatch_J": self.last_mismatch,
                 "interface_repeats": float(self.interface_repeats),
-                "liquid_depth_mean_um": float(liq[on].mean() * 1e6) if liq is not None and some else float("nan"),
-                "liquid_depth_max_um": float(liq[on].max() * 1e6) if liq is not None and some else float("nan"),
-                "nonrigid_depth_skin_mean_um": float(nr[on].mean() * 1e6) if nr is not None and some else float("nan"),
-                "skin_wall_s": self.skin_wall}
+                "liquid_depth_mean_um": lm.get("liquid_depth_mean_um", nan),
+                "liquid_depth_max_um": lm.get("liquid_depth_max_um", nan),
+                "nonrigid_depth_skin_mean_um": lm.get("nonrigid_depth_skin_mean_um", nan),
+                "skin_wall_s": self.skin_wall,
+                "skin_thickness_max_mm": float(th.max() * 1e3) if th.size else nan,
+                # beyond rounding: a skin refrozen up to the cap sits at it to an ulp or two either side
+                "skin_thick_count": float((th > MAX_THICKNESS_FACTOR * sk.settings.thickness * (1.0 + 1e-9)).sum())
+                if th.size else 0.0,
+                "skin_shortfall_kg": self.last_skin_shortfall,
+                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", nan)}

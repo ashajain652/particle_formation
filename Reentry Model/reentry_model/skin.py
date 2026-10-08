@@ -20,6 +20,7 @@ NEWTON_TOL = 1.0e-6              # K: a sub-step has converged when no cell move
 NEWTON_MAX = 40
 LINE_SEARCH_MAX = 12           # halvings of a Newton step before it is taken anyway
 DZ_FLOOR = 1.0e-12               # m: an emptied cell conducts as if this thin (it holds no heat)
+MAX_THICKNESS_FACTOR = 2.0   # a skin holds at most this multiple of its target thickness of refrozen liquid (spec 5.4)
 
 
 @dataclass

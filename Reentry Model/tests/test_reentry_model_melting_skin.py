@@ -45,6 +45,8 @@ def assert_books(b):
 def test_settings_validate_the_surface_model():
     with pytest.raises(ValueError):
         body.MeltSettings(surface_model="magic")
+    with pytest.raises(ValueError):
+        body.MeltSettings(surface_model="skin", removal="instant")
     assert body.MeltSettings().surface_model == "elements"
 
 
@@ -140,6 +142,8 @@ def test_coupled_flight_steps_with_skins_keep_the_books(coarse_sphere_mesh):
         b.advance(sim.t, 0.5, loads, state=a)
     assert b.skins.n > 0 and b.sprayed_mass > 0.0
     assert_books(b)
+    stats = b.melt_stats()
+    assert np.isfinite(stats["nonrigid_depth_wet_median_um"]) and np.isfinite(stats["liquid_depth_mean_um"])
 
 
 def test_radiated_power_counts_skin_tops_not_the_facets_under_them(coarse_sphere_mesh):
@@ -168,4 +172,24 @@ def test_an_element_its_skins_drained_dies(coarse_sphere_mesh):
     b.mass0, b.energy0 = b.mass(0.0), b.energy()
     b.advance(0.5, 0.5, uniform(b, 1.5e6))
     assert not b.mesh.active[e]
+    assert_books(b)
+
+
+def test_freeze_back_into_a_skin_stops_at_twice_its_thickness(coarse_sphere_mesh):
+    """Liquid piled on a cold skin refreezes into it only up to twice the target thickness; the rest stays liquid
+    (final review ruling)."""
+    b = make_body(coarse_sphere_mesh)
+    start_at(b, 760.0)
+    b._create_skins(b.solver.temperature())
+    face = b.surface.face_ids[0]
+    s = DEV.thickness
+    b.m_f[0] = 10.0 * b.material.rho * b.surface.areas[0] * s
+    b.solver.set_film_mass(b._film_nodal())
+    b.mass0, b.energy0 = b.mass(0.0), b.energy()
+    b.advance(0.5, 0.5, uniform(b, 1e5))
+    r = b.skins.rows_of(np.array([face]))[0]
+    p = b.patch_of_face[face]
+    assert r >= 0 and p >= 0
+    assert b.skins.thickness()[r] <= skin.MAX_THICKNESS_FACTOR * s * (1.0 + 1e-9)
+    assert b.m_f[p] + b.m_d[p] > 0.0
     assert_books(b)
