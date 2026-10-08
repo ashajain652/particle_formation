@@ -9,6 +9,8 @@ import json
 import os
 import shutil
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -223,7 +225,8 @@ def test_inward_faces_detected_and_reoriented(sphere, tmp_path):
     assert same is f and len(none) == 0
     with pytest.raises(ContractError, match="orient"):
         cg, ids = frames.compact(g)
-        frames.write_prepared_frame(str(tmp_path / "x.npz"), cg, ids, frames.derived_patch_arrays(cg))
+        frames.write_prepared_frame(str(tmp_path / "x.npz"), cg, ids, frames.derived_patch_arrays(cg),
+                                    frames.mesh_from_frame(g, 0))
     h = Frame(k=2, time_s=1.0, points=f.points, tets=f.tets[1:], faces=f.faces)
     with pytest.raises(ContractError, match="cannot orient"):
         frames.orient_outward(h)
@@ -307,14 +310,20 @@ def test_derived_patch_arrays(sphere):
 
 
 def test_prepared_frame_round_trip_bitwise(sphere, tmp_path):
-    """compact -> write -> load equals the frame read from the files, bitwise, per original node via node_ids; a
-    rewrite is byte-identical; the file is plain numeric npz without pickles; its arrays follow the schema."""
+    """compact -> write (reduced, on mesh version 0 from frame 0) -> load equals the frame read from the files,
+    bitwise, per original node via node_ids, less the dropped informational fields; the patch geometry recomputed on
+    loading is prepare's bitwise; a rewrite is byte-identical; the files are numeric npz without pickles and follow
+    the stored schema; frame 2 (ten nose elements dead, two at phi < 1) stores only its mask and its two phis."""
     _, fr = sphere
+    mesh = frames.mesh_from_frame(fr[0], 0)
+    frames.write_mesh(str(tmp_path), mesh)
     for f in fr:
+        index = mesh.fits(f)
+        assert index is not None and np.all(np.diff(index) > 0)        # the export keeps the mesh's order
         c, ids = frames.compact(f)
         d = frames.derived_patch_arrays(c)
         path = tmp_path / frames.prepared_frame_name(f.k)
-        frames.write_prepared_frame(str(tmp_path), c, ids, d)
+        frames.write_prepared_frame(str(tmp_path), c, ids, d, mesh)
         assert path.exists()
         g = frames.load_prepared_frame(str(path))
         assert g.k == f.k and g.time_s == f.time_s
@@ -327,25 +336,65 @@ def test_prepared_frame_round_trip_bitwise(sphere, tmp_path):
         for key, v in f.tet.items():
             assert g.tet[key].tobytes() == v.tobytes(), key
         for key, v in f.patch.items():
-            assert g.patch[key].tobytes() == v.tobytes(), key
+            if key in contract.PREPARED_DROPPED:
+                assert key not in g.patch, key
+            else:
+                assert g.patch[key].tobytes() == v.tobytes(), key
         for key, v in d.items():
             assert g.patch[key].tobytes() == v.tobytes(), key
-        # the schema: every array named, typed and shaped as contract.PREPARED_FRAME_ARRAYS says
-        raw = frames.load_prepared_arrays(str(path))
+        # the schemas: the expanded arrays as contract.PREPARED_FRAME_ARRAYS says, the file as PREPARED_FRAME_STORED
+        full = frames.load_prepared_arrays(str(path))
         sizes = {"n": len(ids), "m": len(f.tets), "f": len(f.faces)}
-        for name, a in raw.items():
+        for name, a in full.items():
             dtype, shape, _ = contract.PREPARED_FRAME_ARRAYS[name]
             assert a.dtype == np.dtype(dtype) and a.dtype.kind != "O", name
             assert a.shape == tuple(sizes[s] if isinstance(s, str) else s for s in shape), name
-        assert set(contract.PREPARED_FRAME_ARRAYS) - set(raw) == {
-            "patch_thickness", "patch_slurry_depth", "patch_liquid_depth", "patch_slurry_depth_facet",
-            "patch_liquid_depth_facet", *("patch_" + key for key in contract.NOT_YET_EXPORTED)}
-        with np.load(str(path), allow_pickle=False) as z:
-            assert sorted(z.files) == sorted(raw)
+        assert set(contract.PREPARED_FRAME_ARRAYS) - set(full) == {
+            "patch_thickness", "patch_slurry_depth", "patch_liquid_depth",
+            *("patch_" + key for key in contract.NOT_YET_EXPORTED)}
+        raw = frames.load_stored_arrays(str(path))
+        assert not set(raw) & set(contract.PREPARED_FRAME_RECOMPUTED)
+        for name, a in raw.items():
+            assert a.dtype == np.dtype(contract.PREPARED_FRAME_STORED[name][0]), name
+        assert len(raw["tet_alive"]) == (len(mesh.tets) + 7) // 8 and len(raw["moved_node"]) == 0
+        assert len(raw["phi_index"]) == int(np.sum(f.tet["phi"] != 1.0)) == (2 if f.k == 2 else 0)
         # rebuilt: byte-identical file
         first = path.read_bytes()
-        frames.write_prepared_frame(str(path), c, ids, frames.derived_patch_arrays(c))
+        frames.write_prepared_frame(str(path), c, ids, frames.derived_patch_arrays(c), mesh)
         assert path.read_bytes() == first
+
+
+def test_moved_nodes_and_a_new_mesh_version(sphere, tmp_path):
+    """A receding surface (three nodes moved) is stored as those nodes alone and loads bitwise; a tetrahedron the
+    version does not hold, or another node count, is not the version's (prepare starts a new one); a frame whose
+    tetrahedra are out of the version's order is put in it, fields with them, and is refused by the writer if not."""
+    _, fr = sphere
+    mesh = frames.mesh_from_frame(fr[0], 0)
+    frames.write_mesh(str(tmp_path), mesh)
+    f = fr[1]
+    pts = f.points.copy()
+    moved = np.unique(f.faces[:3].ravel())[:3]
+    pts[moved] *= 0.999
+    g = replace(f, points=pts)
+    c, ids = frames.compact(g)
+    frames.write_prepared_frame(str(tmp_path), c, ids, frames.derived_patch_arrays(c), mesh)
+    path = str(tmp_path / frames.prepared_frame_name(1))
+    assert sorted(frames.load_stored_arrays(path)["moved_node"]) == sorted(moved)
+    back = frames.load_prepared_frame(path)
+    assert back.points.tobytes() == pts[back.node["node_ids"]].tobytes()
+    assert back.patch["area"].tobytes() == frames.derived_patch_arrays(c)["area"].tobytes()
+    # re-gridding
+    other = replace(f, tets=np.vstack([f.tets[1:], f.tets[:1, [1, 0, 2, 3]]]))
+    assert mesh.fits(other) is None
+    assert mesh.fits(replace(f, points=np.vstack([f.points, f.points[:1]]))) is None
+    # order: reversed tetrahedra are put back in the version's order, fields with them
+    rev = replace(f, tets=f.tets[::-1], tet={key: v[::-1] for key, v in f.tet.items()})
+    put, index = frames.in_mesh_order(rev, mesh.fits(rev))
+    assert np.array_equal(put.tets, f.tets) and np.all(np.diff(index) > 0)
+    assert all(np.array_equal(put.tet[key], f.tet[key]) for key in f.tet)
+    c, ids = frames.compact(rev)
+    with pytest.raises(ValueError, match="order"):
+        frames.write_prepared_frame(str(tmp_path / "x.npz"), c, ids, frames.derived_patch_arrays(c), mesh)
 
 
 def test_prepared_frame_schema_refusals(sphere, tmp_path):

@@ -67,11 +67,26 @@ def test_nothing_confirmed_before_task_10():
 def test_prepared_frame_schema_covers_the_patch_fields():
     arrays = contract.PREPARED_FRAME_ARRAYS
     for f in contract.data_fields("patch"):
-        assert "patch_" + f.key in arrays
+        assert ("patch_" + f.key in arrays) == (f.key not in contract.PREPARED_DROPPED)
+    # the reduced frame (2026-10-08) drops exactly the informational fields, never one a consumer reads
+    assert contract.PREPARED_DROPPED == {"q_rad", "T_patch", "r_droplet", "we_s", "kn_local"}
+    assert all(not contract.field_spec(key).required for key in contract.PREPARED_DROPPED)
     for name, (dtype, shape, units) in arrays.items():
         assert dtype in ("f8", "i8", "i4"), name
         assert isinstance(shape, tuple) and all(s in ("n", "m", "f") or isinstance(s, int) for s in shape), name
         assert units, name
     assert arrays["points"][1] == ("n", 3) and arrays["tets"] == ("i4", ("m", 4), arrays["tets"][2])
     assert contract.PREPARED_FRAME_OPTIONAL <= set(arrays)
-    assert "patch_p_w" not in contract.PREPARED_FRAME_OPTIONAL and "patch_q_rad" in contract.PREPARED_FRAME_OPTIONAL
+    assert "patch_p_w" not in contract.PREPARED_FRAME_OPTIONAL and "patch_deep_thickness" in contract.PREPARED_FRAME_OPTIONAL
+
+
+def test_stored_frame_schema_is_the_full_one_less_what_loading_recomputes():
+    full, stored = contract.PREPARED_FRAME_ARRAYS, contract.PREPARED_FRAME_STORED
+    assert set(contract.PREPARED_FRAME_RECOMPUTED) <= set(full)
+    for name, spec in full.items():
+        assert (name in stored) == (name not in contract.PREPARED_FRAME_RECOMPUTED), name
+        if name in stored:
+            assert stored[name] == spec, name
+    extra = set(stored) - set(full)
+    assert extra == {"mesh", "tet_alive", "phi_index", "phi_value", "moved_node", "moved_points"}
+    assert set(contract.PREPARED_MESH_ARRAYS) == {"index", "points", "tets", "v_hat"}

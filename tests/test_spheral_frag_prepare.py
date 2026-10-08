@@ -35,7 +35,7 @@ _num = {"type": ["number", "null"]}
 _int = {"type": "integer"}
 FRAME_SCHEMA = {
     "type": "object",
-    "required": ["k", "time_s", "history_row", "file", "sha256", "n_nodes", "n_tets", "n_faces", "volume_m3",
+    "required": ["k", "time_s", "history_row", "file", "sha256", "size_bytes", "mesh", "n_nodes", "n_tets", "n_faces", "volume_m3",
                  "fe_mass_kg", "mass_rel_diff", "fe_heat_content_J", "surface", "loads_valid", "drag", "thickness",
                  "zones", "depths", "timing_s"],
     "properties": {
@@ -64,7 +64,7 @@ PREPARE_SCHEMA = {
                  "git_commit", "fe_run", "flight", "contract", "material_table", "frames", "checks", "timing_s",
                  "size_bytes", "depth_normals", "passed"],
     "properties": {
-        "schema": {"const": "spheral_frag.prepare"}, "schema_version": {"const": 1},
+        "schema": {"const": "spheral_frag.prepare"}, "schema_version": {"const": 2},
         "contract_version": {"const": contract.CONTRACT_VERSION}, "name": {"type": "string"},
         "created_utc": {"type": "string", "pattern": r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$"},
         "spheral_frag_version": {"type": "string"}, "git_commit": {"type": "string"},
@@ -114,7 +114,7 @@ def file_bytes(d, names):
     return {n: open(os.path.join(d, n), "rb").read() for n in names}
 
 
-PRODUCTS = ["frames/frame_00000.npz", "frames/frame_00001.npz", "frames/frame_00002.npz", "loads.npz", "flight.npz"]
+PRODUCTS = ["frames/mesh_000.npz", "frames/frame_00000.npz", "frames/frame_00001.npz", "frames/frame_00002.npz", "loads.npz", "flight.npz"]
 
 
 # --------------------------------------------------------------------------------------------------- the outputs
@@ -130,6 +130,11 @@ def test_prepare_writes_every_file_and_a_valid_json(prepared):
                              "macro_step_s": 0.5, "seed": syn.SEED, "material": syn.SYNTHETIC_MATERIAL}
     assert doc["contract"]["missing"] == [] and doc["contract"]["absent_optional"] == ["n_derived"]
     assert doc["depth_normals"] == "facet" and all(f["depths"]["normals"] == "facet" for f in doc["frames"])
+    # the reduced frame: one mesh version, started by frame 0 (the later frames lose elements, nothing else)
+    assert doc["frame_format"] == contract.PREPARED_FRAME_FORMAT
+    assert [(m["index"], m["first_k"], m["file"]) for m in doc["meshes"]] == [(0, 0, "frames/mesh_000.npz")]
+    assert [f["mesh"]["index"] for f in doc["frames"]] == [0, 0, 0]
+    assert doc["dropped_fields"] == sorted(contract.PREPARED_DROPPED)
     for f in doc["frames"]:
         with open(os.path.join(d, f["file"]), "rb") as fh:
             import hashlib
@@ -205,6 +210,14 @@ def test_interrupted_prepare_rebuilds_only_the_missing_frames(tmp_path, prepared
     assert run_prepare(RUN_DIR, out, table_dir) == 0
     doc = json.load(open(os.path.join(d, "prepare.json")))
     assert doc["timing_s"]["n_frames_reused"] == 1 and doc["timing_s"]["n_frames_built"] == 2
+    assert file_bytes(d, PRODUCTS) == want
+    # a lost mesh version: the frame that starts it is rebuilt and writes it again byte-identical, so the frames
+    # after it still match the sha256 their sidecars record and are reused
+    os.remove(os.path.join(d, "prepare.json"))
+    os.remove(os.path.join(d, "frames", "mesh_000.npz"))
+    assert run_prepare(RUN_DIR, out, table_dir) == 0
+    doc = json.load(open(os.path.join(d, "prepare.json")))
+    assert doc["timing_s"]["n_frames_built"] == 1 and doc["timing_s"]["n_frames_reused"] == 2
     assert file_bytes(d, PRODUCTS) == want
 
 
@@ -288,8 +301,7 @@ def test_depths_march_along_derived_normals_when_the_frame_carries_them(tmp_path
         fr = frames.load_prepared_frame(os.path.join(d, "frames", frames.prepared_frame_name(k)))
         fr0 = frames.load_prepared_frame(os.path.join(d0, "frames", frames.prepared_frame_name(k)))
         assert fr.patch["n_derived"].shape == (len(fr.faces), 3)
-        assert fr.patch["slurry_depth_facet"].tobytes() == fr0.patch["slurry_depth"].tobytes()
-        assert fr.patch["liquid_depth_facet"].tobytes() == fr0.patch["liquid_depth"].tobytes()
+        assert "slurry_depth_facet" not in fr.patch       # the facet-normal diagnostic is prepare.json's summary
         # the radial march: NaN (pointing out of the body) exactly where the radial direction is against the facet
         # normal -- three staircase side walls on frame 2, none on the intact frame 1 -- and different from the facet
         # march where the facets are tilted

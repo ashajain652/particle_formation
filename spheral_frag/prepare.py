@@ -12,7 +12,10 @@ against the history; nodal f_l against the table), compacts it, derives the patc
 and the layer depths and classifies the zones (unless `--no-thickness`), and bins its loads. Writes into
 `<outdir>/<prepare_name>/`:
 
-  frames/frame_<k:05d>.npz   the compact frame (contract.PREPARED_FRAME_ARRAYS)
+  frames/mesh_<i:03d>.npz    a mesh version: the finite-element nodes and tetrahedra its frames draw from
+                             (contract.PREPARED_MESH_ARRAYS)
+  frames/frame_<k:05d>.npz   the reduced compact frame (contract.PREPARED_FRAME_STORED), which
+                             frames.load_prepared_arrays expands to contract.PREPARED_FRAME_ARRAYS on its version
   frames/frame_<k:05d>.json  that frame's entry of prepare.json and the settings it was built with (resume sidecar)
   material_table.npz/.json   the material table (material.MaterialTable)
   loads.npz, loads.json      the windward load tables per frame (loads.stack; the runner applies `loads.with_lee`
@@ -23,9 +26,18 @@ and the layer depths and classifies the zones (unless `--no-thickness`), and bin
 **Layer depths (decision 9).** The depths march along the derived surface's outward normals, the patch field
 `n_derived` (contract), when the frame carries it; the march is then bounded by the body itself (it ends where the
 ray leaves the active tetrahedra), not by the thickness map, which is measured along the facet normal. The facet-
-normal depths (capped by the thickness map, as Task 6 built them) are kept beside them as a diagnostic
-(`patch_*_depth_facet`). Without `n_derived` the depths are the facet-normal ones and the frame records
+normal depths (capped by the thickness map, as Task 6 built them) are summarised beside them in prepare.json as a
+diagnostic (`depths.facet`). Without `n_derived` the depths are the facet-normal ones and the frame records
 `"normals": "facet"`.
+
+**The reduced frame (Asha, 2026-10-08).** The first frame starts mesh version 0 from its own nodes and active
+tetrahedra; each later frame uses the current version if it has the same node count and every tetrahedron is one of
+the version's (it is put in the version's order first), and starts the next version otherwise (re-gridding). The
+frame file then stores which of the version's tetrahedra are active (a bit mask), phi only where it is not 1, the
+nodes whose position differs from the version's (a receding surface), the faces, the nodal and patch fields, and
+the thickness and depths; the patch geometry is recomputed on loading, bitwise. The finite-element fields nothing on
+the Spheral side reads (contract.PREPARED_DROPPED) are not copied: the finite-element run keeps them. Frames and
+versions are deflated.
 
 **Resume.** An existing `prepare.json` with the same finite-element run JSON (sha256), frame selection and options
 is skipped (one line; exit 0, or 1 if it recorded a failed check). Otherwise every frame whose npz exists with the
@@ -60,7 +72,7 @@ from .contract import ContractError
 REPO_ROOT = fe.REPO_ROOT
 DEFAULT_OUTDIR = os.path.join(REPO_ROOT, "spheral_output", "prepare")
 PREPARE_SCHEMA = "spheral_frag.prepare"
-PREPARE_SCHEMA_VERSION = 1
+PREPARE_SCHEMA_VERSION = 2       # 2: the reduced frame and its mesh versions (2026-10-08)
 
 # Thresholds of the checks prepare gates on (each with its source; Task 10 tightens or confirms them on the flight).
 VOLUME_RTOL = 1e-12            # plan Task 4: divergence volume of the oriented surface vs the tetrahedra (round-off)
@@ -201,10 +213,36 @@ def _depth_info(info, liquid, slurry):
             "max_liquid_depth_m": float(l_.max()) if len(l_) else math.nan}
 
 
-def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[dict, loads.LoadTable | None]:
-    """Read, check, compact, measure and write frame k; returns (its prepare.json entry, its windward load table).
-    A frame that misses required contract items or cannot be oriented gets an entry with `missing` or `error` and
-    no table (and no npz)."""
+class MeshBook:
+    """The mesh versions of one prepare, in frame order: `fit` gives a frame its version (the current one, or a new
+    one it writes beside the frames), `use` makes a reused frame's version current."""
+
+    def __init__(self, frames_dir, v_hat):
+        self.dir, self.v_hat, self.current = frames_dir, v_hat, None
+
+    def path(self, index) -> str:
+        return os.path.join(self.dir, frames.mesh_name(index))
+
+    def use(self, index) -> None:
+        if self.current is None or self.current.index != index:
+            self.current = frames.load_mesh(self.path(index))
+
+    def fit(self, fr) -> tuple[frames.PreparedMesh, np.ndarray, bool]:
+        """(version, the version's index of each of the frame's tetrahedra, whether the version is new)."""
+        if self.current is not None:
+            index = self.current.fits(fr)
+            if index is not None:
+                return self.current, index, False
+        mesh = frames.mesh_from_frame(fr, 0 if self.current is None else self.current.index + 1, self.v_hat)
+        frames.write_mesh(self.path(mesh.index), mesh)
+        self.current = mesh
+        return mesh, np.arange(len(fr.tets), dtype=np.int64), True
+
+
+def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True, book=None) -> tuple[dict, loads.LoadTable | None]:
+    """Read, check, compact, measure and write frame k on its mesh version (`book`); returns (its prepare.json entry,
+    its windward load table). A frame that misses required contract items or cannot be oriented gets an entry with
+    `missing` or `error` and no table (and no npz)."""
     timing = {}
     t0 = time.perf_counter()
     fr = frames.read_frame(run, k)
@@ -215,6 +253,13 @@ def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[d
         entry["missing"] = miss
         return entry, None
     hrow = frames.history_row(run, entry["history_row"])
+    book = book if book is not None else MeshBook(os.path.join(out_dir, "frames"), v_hat)
+    mesh, index, new_mesh = book.fit(fr)
+    fr, _ = frames.in_mesh_order(fr, index)             # before anything is computed on it (frames.in_mesh_order)
+    mesh_path = book.path(mesh.index)
+    entry["mesh"] = {"index": mesh.index, "file": os.path.join("frames", frames.mesh_name(mesh.index)),
+                     "sha256": sha256_file(mesh_path), "new": new_mesh, "n_points": len(mesh.points),
+                     "n_tets": len(mesh.tets)}
 
     t = time.perf_counter()
     sc = frames.surface_checks(fr)
@@ -267,7 +312,6 @@ def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[d
             t = time.perf_counter()
             liq, slu, info = geometry.layer_depths(cf, locator, n_derived, der["centroid"], return_info=True)
             timing["depths"] = time.perf_counter() - t
-            extra.update(slurry_depth_facet=slu_f, liquid_depth_facet=liq_f)
             depths = {"normals": "derived", **_depth_info(info, liq, slu), "facet": _depth_info(info_f, liq_f, slu_f)}
         else:
             liq, slu, info = liq_f, slu_f, info_f
@@ -281,12 +325,13 @@ def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[d
 
     t = time.perf_counter()
     path = os.path.join(out_dir, "frames", frames.prepared_frame_name(k))
-    frames.write_prepared_frame(path, cf, node_ids, {**der, **extra})
+    frames.write_prepared_frame(path, cf, node_ids, {**der, **extra}, mesh)
     timing["write"] = time.perf_counter() - t
     timing["total"] = time.perf_counter() - t0
 
     entry.update({
         "file": os.path.join("frames", frames.prepared_frame_name(k)), "sha256": sha256_file(path),
+        "size_bytes": os.path.getsize(path),
         "n_nodes": len(cf.points), "n_tets": len(cf.tets), "n_faces": len(cf.faces),
         "volume_m3": sc["volume_tets"], "fe_mass_kg": mc["fe_mass"], "mass_rel_diff": mc["mass_rel_diff"],
         "mass": {k_: mc[k_] for k_ in mc if k_ not in ("fe_mass", "mass_rel_diff")},
@@ -408,7 +453,7 @@ def _signature(run_json_sha, csv_sha, pkg, table_sha, thickness, v_hat):
     return {"fe_json_sha256": run_json_sha, "fe_csv_sha256": csv_sha, "fe_package_sha256": pkg["sha256"],
             "material_table_arrays_sha256": table_sha, "thickness": bool(thickness), "v_hat": list(map(float, v_hat)),
             "contract_version": contract.CONTRACT_VERSION, "spheral_frag_version": __version__,
-            "depth_ds_m": geometry.DEPTH_DS_M}
+            "depth_ds_m": geometry.DEPTH_DS_M, "frame_format": contract.PREPARED_FRAME_FORMAT}
 
 
 def _material_table(args, out, run, material_name, command):
@@ -497,6 +542,10 @@ def prepare(args) -> int:
         print("contract failure: {}".format(e), file=sys.stderr)
         return 1
     os.makedirs(os.path.join(out, "frames"), exist_ok=True)
+    if args.force:                                     # mesh versions are rebuilt in frame order with the frames
+        for f in os.listdir(os.path.join(out, "frames")):
+            if f.startswith("mesh_") and f.endswith(".npz"):
+                os.remove(os.path.join(out, "frames", f))
     command = " ".join(["python -m spheral_frag"] + list(getattr(args, "argv", None) or ["prepare"]))
     try:
         table, mat, material_check, table_source = _material_table(args, out, run, material_name, command)
@@ -517,6 +566,7 @@ def prepare(args) -> int:
                            options["thickness"], v_hat)
     entries, tables, reused = [], [], 0
     missing = []
+    book = MeshBook(os.path.join(out, "frames"), v_hat)
     for i, k in enumerate(selected):
         npz = os.path.join(out, "frames", frames.prepared_frame_name(k))
         side = os.path.splitext(npz)[0] + ".json"
@@ -525,7 +575,10 @@ def prepare(args) -> int:
             try:
                 with open(side, encoding="utf-8") as fh:
                     doc = json.load(fh)
-                if doc.get("signature") == jsonable(signature) and doc["entry"]["sha256"] == sha256_file(npz):
+                m = doc["entry"]["mesh"]
+                if doc.get("signature") == jsonable(signature) and doc["entry"]["sha256"] == sha256_file(npz) \
+                        and os.path.isfile(book.path(m["index"])) and sha256_file(book.path(m["index"])) == m["sha256"]:
+                    book.use(m["index"])
                     entry = doc["entry"]
                     table_k = table_from_prepared(npz, run, k)
                     reused += 1
@@ -533,7 +586,7 @@ def prepare(args) -> int:
             except (OSError, ValueError, KeyError):
                 entry = None
         if entry is None:
-            entry, table_k = process_frame(run, k, table, mat, v_hat, out, thickness=options["thickness"])
+            entry, table_k = process_frame(run, k, table, mat, v_hat, out, thickness=options["thickness"], book=book)
             if "sha256" in entry:
                 write_json(side, {"signature": signature, "entry": entry})
         entries.append(jsonable(entry))
@@ -609,6 +662,10 @@ def prepare(args) -> int:
         "loads": {"file": "loads.npz" if tables else None, "header": "loads.json" if tables else None,
                   "n_frames": len(tables), "lee_applied": False},
         "depth_normals": depth_kinds[0] if len(depth_kinds) == 1 else ("mixed" if depth_kinds else None),
+        "frame_format": contract.PREPARED_FRAME_FORMAT,
+        "meshes": [{**{key: e["mesh"][key] for key in ("index", "file", "sha256", "n_points", "n_tets")},
+                    "first_k": e["k"]} for e in entries if e.get("mesh", {}).get("new")],
+        "dropped_fields": sorted(contract.PREPARED_DROPPED),
         "frames": entries,
         "checks": checks, "passed": passed,
         "timing_s": {"total": time.perf_counter() - t_start, "per_frame_median": median("total"),

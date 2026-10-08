@@ -12,7 +12,9 @@ Three parts:
    material table, delta_m against the closure, NaN where the contract forbids it).
 3. **The compact frame**: `orient_outward` (each surface triangle wound away from its owning tetrahedron),
    `compact` (unreferenced nodes dropped, renumbered), `derived_patch_arrays`, `write_prepared_frame` and the
-   runner's numpy-only reader `load_prepared_frame`.
+   runner's numpy-only reader `load_prepared_frame`. The file is stored reduced on a mesh version (`PreparedMesh`,
+   `write_mesh`; Asha, 2026-10-08): an active-tetrahedron mask, phi where it is not 1, moved nodes and the fields,
+   with the nodes, tetrahedra and patch geometry rebuilt bitwise on loading (`stored_arrays`, `expanded_arrays`).
 
 Orientation (decision taken here). `read_frame` keeps the file's winding, so that the import can be compared with
 the files bitwise and `surface_checks` can report what the export wrote (`n_inward_faces`). The prepared frame is
@@ -558,30 +560,35 @@ def _sym(shape, sizes):
 def prepared_arrays(frame, node_ids, derived) -> dict[str, np.ndarray]:
     """The arrays of `contract.PREPARED_FRAME_ARRAYS` for a compact frame, cast and shape-checked. `derived` holds
     patch arrays by their key without the prefix (area, normal, centroid, theta, and later thickness,
-    slurry_depth, liquid_depth). ValueError for an array not in the schema, a wrong shape or a missing required one."""
+    slurry_depth, liquid_depth). The frame's patch fields in `contract.PREPARED_DROPPED` are left out. ValueError for
+    an array not in the schema, a wrong shape or a missing required one."""
     sizes = {"n": len(frame.points), "m": len(frame.tets), "f": len(frame.faces)}
     arrays = {"k": frame.k, "time_s": frame.time_s, "points": frame.points, "node_ids": node_ids,
               "tets": frame.tets, "faces": frame.faces}
     arrays.update({"node_" + key: v for key, v in frame.node.items() if key != "node_ids"})
     arrays.update({"tet_" + key: v for key, v in frame.tet.items()})
-    arrays.update({"patch_" + key: v for key, v in frame.patch.items()})
+    arrays.update({"patch_" + key: v for key, v in frame.patch.items() if key not in contract.PREPARED_DROPPED})
     for key, v in derived.items():
         name = "patch_" + key
         if name in arrays and key in frame.patch:
             raise ValueError("derived array {} would replace the frame's patch field".format(key))
         arrays[name] = v
-    schema = contract.PREPARED_FRAME_ARRAYS
+    return _checked(arrays, contract.PREPARED_FRAME_ARRAYS, contract.PREPARED_FRAME_OPTIONAL, sizes,
+                    "contract.PREPARED_FRAME_ARRAYS", "prepared frame")
+
+
+def _checked(arrays, schema, optional, sizes, schema_name, what) -> dict[str, np.ndarray]:
     unknown = sorted(set(arrays) - set(schema))
     if unknown:
-        raise ValueError("arrays not in contract.PREPARED_FRAME_ARRAYS: {}".format(unknown))
-    absent = sorted(set(schema) - set(arrays) - contract.PREPARED_FRAME_OPTIONAL)
+        raise ValueError("arrays not in {}: {}".format(schema_name, unknown))
+    absent = sorted(set(schema) - set(arrays) - optional)
     if absent:
-        raise ValueError("prepared frame lacks required arrays: {}".format(absent))
+        raise ValueError("{} lacks required arrays: {}".format(what, absent))
     out = {}
     for name, value in arrays.items():
         dtype, shape, _ = schema[name]
         a = np.asarray(value)
-        if dtype.startswith("i") and a.size and (a.min() < np.iinfo(dtype).min or a.max() > np.iinfo(dtype).max):
+        if dtype.startswith(("i", "u")) and a.size and (a.min() < np.iinfo(dtype).min or a.max() > np.iinfo(dtype).max):
             raise ValueError("{} does not fit {}".format(name, dtype))
         a = np.asarray(a, dtype=dtype)               # (ascontiguousarray would turn a scalar into shape (1,))
         if not a.flags.c_contiguous:
@@ -592,23 +599,173 @@ def prepared_arrays(frame, node_ids, derived) -> dict[str, np.ndarray]:
     return out
 
 
-def write_npz(path, arrays: dict) -> None:
-    """An uncompressed npz without pickles, byte-identical for identical arrays (fixed zip timestamps, sorted names),
-    written to a temporary file and renamed into place (an interrupted write leaves no partial file)."""
+def write_npz(path, arrays: dict, compress=False) -> None:
+    """An npz without pickles, byte-identical for identical arrays (fixed zip timestamps, sorted names; deflated at
+    zlib's level 6 with `compress`, deterministic for one zlib), written to a temporary file and renamed into place
+    (an interrupted write leaves no partial file)."""
     tmp = path + ".tmp"
-    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+    method = zipfile.ZIP_DEFLATED if compress else zipfile.ZIP_STORED
+    with zipfile.ZipFile(tmp, "w", compression=method, allowZip64=True) as zf:
         for name in sorted(arrays):
             info = zipfile.ZipInfo(name + ".npy", date_time=_NPZ_DATE)
-            info.compress_type = zipfile.ZIP_STORED
+            info.compress_type = method
             info.external_attr = 0o644 << 16
             with zf.open(info, "w", force_zip64=True) as fh:
                 np.lib.format.write_array(fh, np.asarray(arrays[name]), version=(1, 0), allow_pickle=False)
     os.replace(tmp, path)
 
 
-def write_prepared_frame(path, frame, node_ids, derived) -> dict[str, np.ndarray]:
-    """Write `frame_<k:05d>.npz` (or `path` if it names a file) for a compact, outward frame; returns the arrays.
-    Refuses (ContractError) a frame whose surface is not wound outward: the prepared surface is always outward."""
+# ---------------------------------------------------------------------------------------------------------------
+# The reduced prepared frame: mesh versions (Asha, 2026-10-08; contract.PREPARED_FRAME_STORED)
+# ---------------------------------------------------------------------------------------------------------------
+
+def mesh_name(index) -> str:
+    return "mesh_{:03d}.npz".format(int(index))
+
+
+def _row_keys(a) -> np.ndarray:
+    """One opaque key per row of an integer array (its bytes as int64), for exact row lookup."""
+    a = np.ascontiguousarray(np.asarray(a, dtype=np.int64))
+    return a.view(np.dtype((np.void, 8 * a.shape[1]))).ravel()
+
+
+@dataclass
+class PreparedMesh:
+    """A mesh version: every finite-element node and the tetrahedra its frames' active sets are drawn from."""
+    index: int
+    points: np.ndarray                     # (N, 3) float64, finite-element numbering
+    tets: np.ndarray                       # (M, 4) int32, finite-element node indices
+    v_hat: np.ndarray                      # (3,) float64
+    _lookup: tuple | None = field(default=None, repr=False, compare=False)
+
+    def tet_index(self, fe_tets) -> np.ndarray | None:
+        """The version's index of each row of `fe_tets` (finite-element node indices, rows matched exactly), or None
+        if any row is not one of the version's tetrahedra."""
+        if self._lookup is None:
+            keys = _row_keys(self.tets)
+            order = np.argsort(keys, kind="stable")
+            self._lookup = (keys[order], order)
+        skeys, order = self._lookup
+        q = _row_keys(np.asarray(fe_tets).reshape(-1, 4))
+        if len(q) == 0:
+            return np.zeros(0, np.int64)
+        if len(skeys) == 0:
+            return None
+        pos = np.minimum(np.searchsorted(skeys, q), len(skeys) - 1)
+        if not np.array_equal(skeys[pos], q):
+            return None
+        return order[pos].astype(np.int64)
+
+    def fits(self, frame) -> np.ndarray | None:
+        """`tet_index` of a finite-element-numbered frame (all nodes), or None where the frame needs a new version:
+        another node count, or a tetrahedron the version does not hold."""
+        if len(frame.points) != len(self.points):
+            return None
+        return self.tet_index(frame.tets)
+
+
+def mesh_from_frame(frame, index, v_hat=V_HAT) -> PreparedMesh:
+    """A new mesh version from a finite-element-numbered frame (all nodes, its active tetrahedra in its order)."""
+    v = np.asarray(v_hat, dtype=np.float64)
+    return PreparedMesh(index=int(index), points=np.array(frame.points, dtype=np.float64, order="C"),
+                        tets=np.ascontiguousarray(frame.tets, dtype=np.int32), v_hat=v / np.linalg.norm(v))
+
+
+def in_mesh_order(frame, index) -> tuple[Frame, np.ndarray]:
+    """(frame, index) with the tetrahedra and their fields in the version's order (`index` from `fits`); the frame
+    itself when they already are. Prepare puts every frame in that order before computing anything on it, so that
+    a loaded frame, whose tetrahedra come from the version's active set, is the frame prepare measured."""
+    index = np.asarray(index, dtype=np.int64)
+    if len(index) < 2 or np.all(np.diff(index) > 0):
+        return frame, index
+    perm = np.argsort(index, kind="stable")
+    return replace(frame, tets=frame.tets[perm], tet={key: v[perm] for key, v in frame.tet.items()}), index[perm]
+
+
+def write_mesh(path, mesh: PreparedMesh) -> str:
+    """Write `mesh_<i:03d>.npz` into `path` (a directory) or to `path`; returns the file's path."""
+    path = os.fspath(path)
+    if os.path.isdir(path):
+        path = os.path.join(path, mesh_name(mesh.index))
+    arrays = _checked({"index": mesh.index, "points": mesh.points, "tets": mesh.tets, "v_hat": mesh.v_hat},
+                      contract.PREPARED_MESH_ARRAYS, frozenset(),
+                      {"N": len(mesh.points), "M": len(mesh.tets)}, "contract.PREPARED_MESH_ARRAYS", "mesh")
+    write_npz(path, arrays, compress=True)
+    return path
+
+
+_MESH_CACHE: dict = {}
+
+
+def load_mesh(path) -> PreparedMesh:
+    """A mesh version (numpy only), cached by path, size and modification time."""
+    path = os.path.abspath(os.fspath(path))
+    st = os.stat(path)
+    key = (path, st.st_size, st.st_mtime_ns)
+    mesh = _MESH_CACHE.get(key)
+    if mesh is None:
+        with np.load(path, allow_pickle=False) as z:
+            mesh = PreparedMesh(index=int(z["index"]), points=z["points"], tets=z["tets"], v_hat=z["v_hat"])
+        _MESH_CACHE.clear()                            # one flight's versions at a time is plenty
+        _MESH_CACHE[key] = mesh
+    return mesh
+
+
+def stored_arrays(full, mesh: PreparedMesh) -> dict[str, np.ndarray]:
+    """The reduced frame (contract.PREPARED_FRAME_STORED) of a frame's `prepared_arrays` on its mesh version.
+    ValueError if its tetrahedra are not the version's, in the version's order (`in_mesh_order`)."""
+    node_ids = full["node_ids"]
+    index = mesh.tet_index(node_ids[full["tets"]])
+    if index is None or (len(index) > 1 and np.any(np.diff(index) <= 0)):
+        raise ValueError("frame {}: its tetrahedra are not mesh version {}'s in its order".format(
+            int(full["k"]), mesh.index))
+    alive = np.zeros(len(mesh.tets), dtype=bool)
+    alive[index] = True
+    phi = full["tet_phi"]
+    part = np.flatnonzero(phi != 1.0)                    # NaN is stored too
+    ref = np.ascontiguousarray(mesh.points[node_ids])
+    moved = np.flatnonzero(np.any(full["points"].view(np.uint64) != ref.view(np.uint64), axis=1))   # bitwise
+    out = {"mesh": mesh.index, "tet_alive": np.packbits(alive), "phi_index": part, "phi_value": phi[part],
+           "moved_node": node_ids[moved], "moved_points": full["points"][moved]}
+    out.update({name: v for name, v in full.items() if name not in contract.PREPARED_FRAME_RECOMPUTED})
+    sizes = {"n": len(node_ids), "m": len(full["tets"]), "f": len(full["faces"]), "b": (len(mesh.tets) + 7) // 8,
+             "p": len(part), "v": len(moved)}
+    return _checked(out, contract.PREPARED_FRAME_STORED, contract.PREPARED_FRAME_OPTIONAL, sizes,
+                    "contract.PREPARED_FRAME_STORED", "stored frame")
+
+
+def expanded_arrays(stored, mesh: PreparedMesh) -> dict[str, np.ndarray]:
+    """Inverse of `stored_arrays` (numpy only): the frame's `prepared_arrays`, bitwise. The active tetrahedra are
+    the version's in its order, the nodes those they use (ascending, as `compact` keeps them), the patch geometry
+    `derived_patch_arrays` on the version's v_hat, as prepare computed it."""
+    if int(stored["mesh"]) != mesh.index:
+        raise ValueError("frame {} names mesh version {}, given {}".format(int(stored["k"]), int(stored["mesh"]),
+                                                                           mesh.index))
+    alive = np.unpackbits(stored["tet_alive"], count=len(mesh.tets)).astype(bool)
+    fe_tets = mesh.tets[alive].astype(np.int64)
+    node_ids = np.unique(fe_tets.ravel()).astype(np.int64)
+    inv = np.full(len(mesh.points), -1, np.int64)
+    inv[node_ids] = np.arange(len(node_ids))
+    tets = inv[fe_tets]
+    points = np.ascontiguousarray(mesh.points[node_ids])
+    if len(stored["moved_node"]):
+        pos = np.searchsorted(node_ids, stored["moved_node"])
+        points[pos] = stored["moved_points"]
+    phi = np.ones(len(tets))
+    phi[stored["phi_index"]] = stored["phi_value"]
+    faces = stored["faces"].astype(np.int64)
+    der = derived_patch_arrays(Frame(k=int(stored["k"]), time_s=float(stored["time_s"]), points=points, tets=tets,
+                                     faces=faces), mesh.v_hat)
+    out = {name: v for name, v in stored.items() if name in contract.PREPARED_FRAME_ARRAYS}
+    out.update({"points": points, "node_ids": node_ids, "tets": tets.astype(np.int32), "tet_phi": phi,
+                **{"patch_" + key: v for key, v in der.items()}})
+    return out
+
+
+def write_prepared_frame(path, frame, node_ids, derived, mesh: PreparedMesh) -> dict[str, np.ndarray]:
+    """Write the reduced `frame_<k:05d>.npz` (or `path` if it names a file) of a compact, outward frame on its mesh
+    version, whose file must sit beside it (`write_mesh`); returns the full arrays. Refuses (ContractError) a frame
+    whose surface is not wound outward: the prepared surface is always outward."""
     path = os.fspath(path)
     if os.path.isdir(path):
         path = os.path.join(path, prepared_frame_name(frame.k))
@@ -618,7 +775,7 @@ def write_prepared_frame(path, frame, node_ids, derived) -> dict[str, np.ndarray
         raise ContractError("frame {}: not wound outward or not the active tetrahedra's boundary; "
                             "orient_outward it first".format(frame.k))
     arrays = prepared_arrays(frame, node_ids, derived)
-    write_npz(path, arrays)
+    write_npz(path, stored_arrays(arrays, mesh), compress=True)
     return arrays
 
 
@@ -626,9 +783,20 @@ def prepared_frame_name(k) -> str:
     return "frame_{:05d}.npz".format(int(k))
 
 
-def load_prepared_arrays(path) -> dict[str, np.ndarray]:
+def load_stored_arrays(path) -> dict[str, np.ndarray]:
+    """A prepared frame file's arrays as stored (contract.PREPARED_FRAME_STORED)."""
     with np.load(path, allow_pickle=False) as z:
         return {name: z[name] for name in z.files}
+
+
+def load_prepared_arrays(path) -> dict[str, np.ndarray]:
+    """A prepared frame's full arrays (contract.PREPARED_FRAME_ARRAYS), expanded on its mesh version, which sits
+    beside it. ValueError for a frame of the unreduced format (rebuild it with prepare --force)."""
+    stored = load_stored_arrays(path)
+    if "mesh" not in stored:
+        raise ValueError("{} is a prepared frame of the unreduced format; rebuild it (prepare --force)".format(path))
+    return expanded_arrays(stored, load_mesh(os.path.join(os.path.dirname(os.fspath(path)),
+                                                          mesh_name(int(stored["mesh"])))))
 
 
 def load_prepared_frame(path) -> Frame:

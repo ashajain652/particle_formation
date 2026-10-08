@@ -201,9 +201,15 @@ class Frame:                               # one frame in memory, finite-element
     patch: dict[str, np.ndarray] = field(default_factory=dict)   # key -> (n_faces,)
 
 
-# The compact per-frame file `frame_<k:05d>.npz` (Task 4): published name -> (dtype, shape, units). Shapes use the
-# symbols n (nodes kept: those used by an active tetrahedron), m (active tetrahedra), f (surface patches); () is a
-# scalar. `patch_<key>` exists for every patch data field of FE_FIELDS that the frame carries.
+# Patch fields the prepared frame does not keep (the reduced frame, Asha, 2026-10-08): nothing on the Spheral side
+# reads them, and the finite-element run directory, which prepare only reads, keeps them.
+PREPARED_DROPPED = frozenset(f.key for f in data_fields("patch") if f.consumer == "informational")
+
+# The compact prepared frame as `frames.load_prepared_arrays` returns it (Task 4): published name -> (dtype, shape,
+# units). Shapes use the symbols n (nodes kept: those used by an active tetrahedron), m (active tetrahedra), f
+# (surface patches); () is a scalar. `patch_<key>` exists for every patch data field of FE_FIELDS that the frame
+# carries, less PREPARED_DROPPED. On disk the frame is stored reduced (PREPARED_FRAME_STORED): the arrays of
+# PREPARED_FRAME_RECOMPUTED are rebuilt from the frame's mesh version on loading, bitwise.
 PREPARED_FRAME_ARRAYS: dict[str, tuple[str, tuple, str]] = {
     "k": ("i8", (), "frame index"),
     "time_s": ("f8", (), "s"),
@@ -215,22 +221,43 @@ PREPARED_FRAME_ARRAYS: dict[str, tuple[str, tuple, str]] = {
     "node_f_l": ("f8", ("n",), "-"),
     "tet_phi": ("f8", ("m",), "-"),
     **{"patch_" + f.key: ("f8", ("f",) if f.components == 1 else ("f", f.components), f.units)
-       for f in data_fields("patch")},
+       for f in data_fields("patch") if f.key not in PREPARED_DROPPED},
     "patch_area": ("f8", ("f",), "m^2"),
     "patch_normal": ("f8", ("f", 3), "-, outward unit normal"),
     "patch_centroid": ("f8", ("f", 3), "m"),
     "patch_theta": ("f8", ("f",), "rad, angle between the outward normal and v_hat"),
     "patch_thickness": ("f8", ("f",), "m, inward ray to the opposite surface (Task 5)"),
+    # decision 9: the two depths march along the derived surface's normals (`patch_n_derived`) when the frame carries
+    # them, else along the facet normals; the facet-normal depths' summary stays in prepare.json as a diagnostic
     "patch_slurry_depth": ("f8", ("f",), "m, contiguous f_l > 0.5 below the surface (Task 6)"),
     "patch_liquid_depth": ("f8", ("f",), "m, contiguous f_l >= 1 below the surface (Task 6)"),
-    # decision 9: the two depths above march along the derived surface's normals (`patch_n_derived`) when the frame
-    # carries them; then the facet-normal depths are kept beside them as a diagnostic (Task 9)
-    "patch_slurry_depth_facet": ("f8", ("f",), "m, slurry depth along the facet normal (diagnostic, decision 9)"),
-    "patch_liquid_depth_facet": ("f8", ("f",), "m, liquid depth along the facet normal (diagnostic, decision 9)"),
 }
 
 # arrays a prepared frame may lack: optional finite-element fields, and the depth arrays under --no-thickness
 PREPARED_FRAME_OPTIONAL = frozenset(
-    ["patch_" + f.key for f in data_fields("patch") if not f.required]
-    + ["patch_thickness", "patch_slurry_depth", "patch_liquid_depth", "patch_slurry_depth_facet",
-       "patch_liquid_depth_facet"])
+    ["patch_" + f.key for f in data_fields("patch") if not f.required and f.key not in PREPARED_DROPPED]
+    + ["patch_thickness", "patch_slurry_depth", "patch_liquid_depth"])
+
+# The reduced frame (Asha, 2026-10-08). A mesh version `frames/mesh_<i:03d>.npz` (PREPARED_MESH_ARRAYS) holds the
+# finite-element nodes and tetrahedra; each frame names its version and stores which of its tetrahedra are active,
+# phi only where it is not 1, the nodes whose position differs from the version's (surface recession), and its
+# fields. prepare starts a new version when a frame's node count changes or a tetrahedron is not one of the
+# version's (re-gridding). Shapes: N, M the version's nodes and tetrahedra; b = ceil(M / 8); p, v counts.
+PREPARED_FRAME_FORMAT = 2
+PREPARED_MESH_ARRAYS: dict[str, tuple[str, tuple, str]] = {
+    "index": ("i8", (), "mesh version"),
+    "points": ("f8", ("N", 3), "m, body frame, finite-element numbering (every node of the frame files)"),
+    "tets": ("i4", ("M", 4), "finite-element node indices, the first frame of the version's active tetrahedra"),
+    "v_hat": ("f8", (3,), "-, the flight direction the frames' theta is measured from"),
+}
+PREPARED_FRAME_RECOMPUTED = ("points", "node_ids", "tets", "tet_phi", "patch_area", "patch_normal",
+                             "patch_centroid", "patch_theta")
+PREPARED_FRAME_STORED: dict[str, tuple[str, tuple, str]] = {
+    "mesh": ("i8", (), "mesh version: frames/mesh_<i:03d>.npz"),
+    "tet_alive": ("u1", ("b",), "np.packbits of the version's tetrahedra that are active (version order)"),
+    "phi_index": ("i4", ("p",), "active-tetrahedron index of each element whose phi is not 1"),
+    "phi_value": ("f8", ("p",), "-, phi there (1 everywhere else)"),
+    "moved_node": ("i4", ("v",), "finite-element index of each node whose position differs from the version's"),
+    "moved_points": ("f8", ("v", 3), "m"),
+    **{name: spec for name, spec in PREPARED_FRAME_ARRAYS.items() if name not in PREPARED_FRAME_RECOMPUTED},
+}
