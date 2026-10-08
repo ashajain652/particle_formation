@@ -422,7 +422,8 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
    range with 400 kJ/kg released linearly and Σ 0.86 N/m), `AA7075` (DRAMA's single 850 K, a ±2 K numerical ramp, Σ 0.86
    N/m) or `AA7075-empiricaldata` (`AA7075` with Σ 0.80 N/m and the heat capacity above 850 K made explicit) — all with
    ρ_l 2400 kg/m³ and μ_l 1.3 mPa s (`reentry_model/data/materials/*.json`). The run name does not carry the material:
-   give runs of different materials their own `--name` or `--outdir`;".
+   give runs of different materials their own `--name` or `--outdir`;". *(The last sentence is retracted by the
+   amendment of 2026-10-08 (frame export), change 2: the run name now always carries the material.)*
 3. *Options paragraph, the switch.* After the `--molten-cascade on|off (...)` entry of the 2026-10-03 amendment insert:
    "`--rigid-substrate on|off` (default on: Girin's thin branch needs a rigid substrate, so the regime test compares his
    conjugate depth with the film, the deep liquid and the slurry beneath the wall — everything more than half liquid,
@@ -569,6 +570,51 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan for the documentation work itself (what to write, where, and how it will be checked for consistency against the other 14 tasks' actual results).
 
 ---
+
+## Amendment of 2026-10-08 (frame export) — the frames, the history column and the run names in the README, the assumptions and the spec
+
+> Part of the frame-export amendment (facts 101–107 in `00-shared-context.md`; sub-plans 09, 10 and 13 hold the code).
+> These changes stack on the blocks above, which still apply except where a change below replaces their wording. The
+> blocks are prose, so re-run `prototype/plan3/audit_docs.py`'s checks against them after these edits: the history
+> column `p_w_stag_step_Pa` must appear in the README's column list (it is in `coupled.MELT_COLUMNS`); and add to its
+> `SUPERSEDED` list the clause change 2 below retracts from this date's earlier change 2 (2026-10-07), "The run name
+> does not carry the material: give runs of different materials their own `--name` or `--outdir`".
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Outputs, the history.* After `p_w_stag_Pa` insert: "`p_w_stag_step_Pa` (the wall pressure at the stagnation patch
+   from every step's own surface-flow evaluation, film or not; `p_w_stag_Pa` is the spray step's and NaN before the
+   first film)".
+2. *Options paragraph, the materials.* Replace "The run name does not carry the material: give runs of different
+   materials their own `--name` or `--outdir`;" with "The run name always carries the material, default or not, as
+   `_material-<name>` after the heating and melt parts (a material file by its basename);".
+3. *Outputs, the frames.* Replace the description of `surface_<k>.vtp`'s melt fields with: "the film thickness and
+   temperature, We_s, the closure, the local Knudsen number, the wall pressure p_w and shear tau, the droplet radius, the
+   release rate (kg/m² per macro step), Girin's conjugate depth delta_m and the deep liquid's thickness, and on every
+   frame the derived surface's outward unit normal `n_derived` (3 components). The gas-side fields (closure, kn_local,
+   p_w, tau, delta_m) are the step's own surface-flow evaluation, written on every step that evaluated the flow, film or
+   not; on the faces that step's element deaths exposed they are the same flow model evaluated for the record on the
+   current surface, and `flow_eval` says which (1 the step's, 2 the record's, 0 none: frame 0 and `--removal
+   instant`). The spray fields keep their defaults on exposed faces. The triangles' winding is inward on some patches;
+   `n_derived` is outward by construction." Add to the run JSON's settings `v_hat_body` and
+   `freestream_velocity_direction_body`.
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+4. Append a bullet: "**The frames for the large-fragment model.** The frames are an export, not part of the model: they
+   carry the wall loads of every step that evaluated the surface flow and, on the faces a step's element deaths
+   exposed, the same flow model evaluated on the current surface, which the model itself never uses there (the step's
+   physics ran on the surface before the deaths). Writing them changes no history column (measured: a run with a frame
+   at every step and one without are identical). What a step released from the faces its deaths removed is not carried
+   onto the frame's surface, so Σ release_rate · A over a frame is below the step's sprayed mass (22 % over the 100 mm
+   flight, plan fact 106)."
+
+**Spec amendments block (`## 18. Amendments`).** Append:
+
+5. "34. §6, §10 (decided 2026-10-07 and 2026-10-08) — **the frame export for the large-fragment model.** The surface
+   frames carry the wall loads on every evaluated step and on the faces a step's deaths exposed (`flow_eval`), the
+   derived surface's normals (`n_derived`), the history every step's stagnation wall pressure (`p_w_stag_step_Pa`), the
+   run JSON the flight direction, and every thermal run's name its material. Write-only (plan facts 101–107)."
 
 ### Task 15: Documentation — README, assumptions, spec amendments, facts note
 

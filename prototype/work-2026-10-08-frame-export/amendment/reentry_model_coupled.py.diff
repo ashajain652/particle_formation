@@ -1,0 +1,89 @@
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -29,7 +29,8 @@
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+                 "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
+-                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg"]
++                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg",
++                "p_w_stag_step_Pa"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -190,12 +191,18 @@
+ 
+ def write_vtk_frame(output_dir, k, body, loads):
+     """field_<k>.vtu: nodal T on the active volume mesh (plus liquid fraction and element fractions when melting);
+-    surface_<k>.vtp: q_conv, q_rad, T per patch, and when melting the film thickness and temperature, We_s, closure,
+-    local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+-    flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+-    (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+-    nan wherever the closure is not Girin's) -- the thickness of the deep liquid beneath the film, and the non-rigid
+-    depth the regime test read (PyVista/VTK XML)."""
++    surface_<k>.vtp: q_conv, q_rad, T per patch, the derived surface's outward unit normal n_derived, and when melting
++    the film thickness and temperature, We_s, closure, local Knudsen number, wall pressure, shear, droplet radius,
++    release rate and Girin's conjugate depth delta_m -- the flow and spray fields of the step's own evaluation, carried
++    across that step's element deaths by face id (`MeltingBody.on_current_surface`) -- the thickness of the deep liquid
++    beneath the film, and the non-rigid depth the regime test read (PyVista/VTK XML).
++
++    The gas-side fields (closure, kn_local, p_w, tau, delta_m) come from the step's own surface-flow evaluation, which
++    every melt step with an aero state makes, film or not; on the faces that step's deaths exposed they come from the
++    same flow model evaluated for the record on the current surface (`MeltingBody.flow_for_the_record`), and
++    `flow_eval` says which: 1 the step's own, 2 the record's, 0 none (frame 0; --removal instant). The spray fields keep
++    their defaults on exposed faces (nothing was sprayed from a face that did not yet exist): we_s 0, r_droplet and
++    nonrigid_depth nan, release_rate 0. Amendment of 2026-10-08 (frame export), write-only."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -216,20 +223,46 @@
+     poly.cell_data["q_conv"] = loads.q_conv
+     poly.cell_data["q_rad"] = body.emissivity * SIGMA_SB * (Tf ** 4 - body.T_ambient ** 4)
+     poly.cell_data["T_patch"] = Tf
++    # each patch's outward unit normal on the derived surface of sub-plan 01 -- the Taubin-smoothed normal of
++    # `mesh.surface(derived=True)` (spec 2026-09-27 sec. 8 step 4), which the Spheral core's layer depths march along.
++    # Its patches are these patches one to one (the same boundary faces in the same order, checked by face id). The
++    # triangles are written in the face table's node order, whose winding is inward on some patches; this field is
++    # outward by construction, so it, not the winding, is the orientation to trust. Nothing displaces `derived_points`
++    # yet (sub-plan 16), so the derived facets are the staircase's and the field is the smoothing alone.
++    derived = mesh.surface(derived=True)
++    if not np.array_equal(derived.face_ids, surface.face_ids):
++        raise RuntimeError("the derived surface's patches are not the body's surface patches")
++    poly.cell_data["n_derived"] = derived.smoothed_normals() if surface.n_patches else np.zeros((0, 3))
+     if melting:
+         poly.cell_data["film_thickness"] = body.m_f / (body.liquid.rho * surface.areas)
+         poly.cell_data["film_T"] = body.film_temperature()
+         res, flow, carry = body.last_spray, body.last_flow, body.on_current_surface
+         poly.cell_data["we_s"] = carry(res.we_s if res is not None else None, 0.0)
+-        poly.cell_data["closure"] = carry(flow.closure.astype(float) if flow is not None else None, 1.0)
+-        poly.cell_data["kn_local"] = carry(flow.kn_local if flow is not None else None, np.nan)
+-        poly.cell_data["p_w"] = carry(flow.p_w if flow is not None else None, 0.0)
+-        poly.cell_data["tau"] = carry(flow.tau if flow is not None else None, 0.0)
++        step = body.last_flow_step
++        covered, record = body.flow_for_the_record()
++
++        def gas_side(values, fill, record_values):
++            v = carry(values, fill)
++            return np.where(covered, v, np.asarray(record_values, dtype=float)) if record is not None else v
++        poly.cell_data["flow_eval"] = (np.where(covered, 1.0, 2.0 if record is not None else 0.0) if step is not None
++                                       else np.zeros(surface.n_patches))
++        poly.cell_data["closure"] = gas_side(step.closure.astype(float) if step is not None else None, 1.0,
++                                             record.closure.astype(float) if record is not None else None)
++        poly.cell_data["kn_local"] = gas_side(step.kn_local if step is not None else None, np.nan,
++                                              record.kn_local if record is not None else None)
++        poly.cell_data["p_w"] = gas_side(step.p_w if step is not None else None, 0.0,
++                                         record.p_w if record is not None else None)
++        poly.cell_data["tau"] = gas_side(step.tau if step is not None else None, 0.0,
++                                         record.tau if record is not None else None)
+         poly.cell_data["r_droplet"] = carry(np.where(res.dm > 0.0, res.r, np.nan) if res is not None else None, np.nan)
+         poly.cell_data["release_rate"] = carry(res.dm if res is not None else None, 0.0) / surface.areas
+         # Girin's conjugate depth per patch, nan where the patch's closure is not his (no conjugate depth exists there),
+         # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
+-        poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
++        delta_record = None
++        if record is not None:
++            from . import spray as spray_mod
++            delta_record = spray_mod.melt_layer(record, body.liquid)[0]
++        poly.cell_data["delta_m"] = gas_side(body.last_delta_m, np.nan, delta_record)
+         poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
+         # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
+         # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated

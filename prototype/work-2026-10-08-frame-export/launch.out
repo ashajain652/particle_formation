@@ -1,0 +1,10 @@
+Now drawing from 'AC Power'
+
+model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off_dtcontinuum-off (seed 12345): ground at t = 630.6 s, final V 0.0318 km/s, Kn 0.0298 -> 1.13e-06, 37663 RHS evaluations in 1094.2 s
+  thermal: peak surface T 975 K at t = 76 s, peak mean T 894 K, integrated heat 1.51e+06 J, energy balance residual 6.3e-09, 1262 macro steps, 1.6 Newton iterations/step
+  melt: onset 74.2 km, spraying onset 74.0 km, demise n/a km at t = n/a s; sprayed 1.1735 kg of 1.4720, film left 0.0001 kg, 1.32e+07 droplets (median r 193.4 um), 203207 source rows, melt balance 6.3e-09
+  csv  -> /Users/ashajain/MIT/particle_formation/reentry_model_output/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off_dtcontinuum-off.csv
+  json -> /Users/ashajain/MIT/particle_formation/reentry_model_output/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off_dtcontinuum-off.json
+exit 0
+Now drawing from 'AC Power'
+Thu Oct  8 14:45:42 EDT 2026

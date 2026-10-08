@@ -2146,6 +2146,13 @@ the unit tier's counts the previous task's plus 8, every earlier test unchanged 
 
 ### Task 8: CLI flags, run names, history columns, results and frame fields
 
+> **Forward pointer (2026-10-08).** The frame-export amendment of that date (facts 101–107; sub-plan 13) makes every
+> thermal run's name carry `_material-<name>` after the heating and melt parts, and adds `p_w_stag_step_Pa` to
+> `MELT_COLUMNS`, `flow_eval` and `n_derived` to the surface frames and `resolve_material` to `cli.py`. This task's CLI
+> diff was tested on the copy before it, so it merges by hand onto `prototype/work-2026-10-08-frame-export/code/`, and
+> the names it expects gain the material: `..._melt-girin_dtcontinuum-off_surface-skin_skin-dev` becomes
+> `..._melt-girin_material-AA7075_scheil_dtcontinuum-off_surface-skin_skin-dev` for a run of the default material.
+
 **Files:**
 - Modify: `reentry_model/cli.py`, `reentry_model/coupled.py`, `reentry_model/body.py`
 - Test: `tests/test_reentry_model_cli.py` (append)

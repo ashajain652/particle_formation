@@ -2152,6 +2152,95 @@ In `tests/test_reentry_model_melting.py`:
 
 ---
 
+## Amendment of 2026-10-08 (frame export) — the step's own flow evaluation kept, and a record evaluation for exposed faces
+
+> Spheral M1's decisions 4, 9 and 13 and Asha's of 2026-10-08 (facts 101–107 in `00-shared-context.md`): the export
+> additions the Spheral replay reads, which the reconstructed prototype `prototype/work-2026-10-08-spheral-mvp/` made
+> first (its `rebuild/post/` 02, 03, 04 and 06), ported onto the copy of the continuum-step amendment. Write-only:
+> nothing the model integrates changes, so every history column and result keeps its value; the history gains one
+> column, the run JSON two settings, the frames two fields and the loads where they carried defaults, and every thermal
+> run's name gains its material. The code below is the tested code, as a
+> diff against that copy (`prototype/work-2026-10-07-dt-continuum/code/` to `prototype/work-2026-10-08-frame-export/code/`;
+> the five diffs rebuild it exactly).
+
+**Why.** The surface flow is evaluated at the top of every melt step with an aero state, film or not (it feeds Girin's
+conjugate depth to the feed), but only the spray step kept it, as `last_flow`, which is None wherever there is no film —
+so the frames carried no wall loads before the first film (0–23.5 s of the 100 mm Scheil flight) and the history's
+`p_w_stag_Pa` is NaN there. The body now keeps the step's own evaluation (`last_flow_step`), the aero state it was made
+at (`last_state_step`) and its stagnation wall pressure, written as the history column `p_w_stag_step_Pa`, every step's
+own (NaN only on row 0). With the molten cascade a step's element deaths expose many faces at once (1,112 of 18,616 at
+frame 100 of the 100 mm Scheil flight, 10 % of the area, a third of the nose), which the frames carried as "not
+evaluated"; `flow_for_the_record()` returns which current patches the step's evaluation covered (by face id, as
+`on_current_surface` maps them) and, when some are not covered, the same `SurfaceFlow` evaluated at the step's aero state
+on the current surface, for the frame only. Its only side effect is `SurfaceFlow.last_bins`, which nothing reads; a
+coupled test (sub-plan 10's amendment of this date) shows a run with a frame at every step and one without frames give
+identical history columns.
+
+In `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -263,6 +263,9 @@
+         self.last_flow = self.last_spray = None
+         self.last_delta_m = None                                           # the step's conjugate depth per patch [m]
+         self.last_nonrigid = None                                          # the step's non-rigid depth per patch [m]
++        self.last_flow_step = None        # the step's own surface-flow evaluation, film or not (amendment of 2026-10-08)
++        self.last_state_step = None       # ... the aero state it was evaluated at
++        self.last_p_w_stag_step = float("nan")                            # ... and its wall pressure at the stagnation patch
+         self.last_face_ids = None                                          # face ids of the surface they were evaluated on
+         self.last_melt = {"n_dead": 0, "runoff_substeps": 0, "released_mass": 0.0, "n_released": 0.0, "feed_mass": 0.0}
+         self.melt_onset = self.spray_onset = None
+@@ -427,6 +430,13 @@
+             delta_m, _ = spray_mod.melt_layer(flow, liq)
+             self.last_face_ids = self.surface.face_ids.copy()      # the surface delta_m belongs to (the deaths come later)
+         self.last_delta_m = delta_m                                # per patch, nan off Girin's closure; for the VTK frame
++        # The step's own evaluation is kept for the export (amendment of 2026-10-08 (frame export), write-only): it is made
++        # on every melt step with an aero state, film or not, while the spray step's `last_flow` is None wherever there is
++        # no film, so the frames carry p_w, tau and closure, and the history the stagnation wall pressure, on every such
++        # step -- the loads the Spheral replay reads from the start of the flight (Spheral spec 2026-10-02 sec. 6.1, 7.2)
++        self.last_flow_step = flow
++        self.last_state_step = state if flow is not None else None
++        self.last_p_w_stag_step = float(flow.p_w[self.i_stag]) if flow is not None else float("nan")
+         h_node = mat.enthalpy(T)
+         h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
+         h_liq = mat.enthalpy_liquid(T)
+@@ -920,6 +930,25 @@
+         index[self.last_face_ids] = np.arange(self.last_face_ids.size)
+         j = index[self.surface.face_ids]
+         return np.where(j >= 0, np.asarray(values, dtype=float)[np.maximum(j, 0)], fill)
++
++    def flow_for_the_record(self):
++        """(covered, flow): which current patches the step's own surface-flow evaluation covered (by face id, as
++        `on_current_surface` maps them), and -- when the step's element deaths exposed patches it did not cover -- the
++        same SurfaceFlow evaluated at the step's aero state on the current surface, for the frame only (amendment of
++        2026-10-08 (frame export)). With the molten cascade a step's deaths expose many faces at once (1,112 of 18,616 at
++        frame 100 of the 100 mm Scheil flight, 10 % of the area, a third of the nose), which the frames otherwise carried
++        as "not evaluated". Nothing the physics reads changes: the evaluation's only side effect is SurfaceFlow.last_bins,
++        which nothing reads. `flow` is None when every patch is covered or no evaluation exists."""
++        n = self.surface.n_patches
++        if self.last_flow_step is None or self.last_face_ids is None or not self.last_face_ids.size:
++            return np.zeros(n, dtype=bool), None
++        index = np.full(len(self.patch_of_face), -1, dtype=np.int64)
++        index[self.last_face_ids] = np.arange(self.last_face_ids.size)
++        covered = index[self.surface.face_ids] >= 0
++        if covered.all() or self.last_state_step is None:
++            return covered, None
++        return covered, self.flow.evaluate(self.last_state_step, self.theta, self.nose_radius(), self.liquid.rho,
++                                           self.surface_temperature())
+ 
+     def film_temperature(self):
+         """The film's temperature per patch: the surface's own (the film is thermally thin, class docstring)."""
+@@ -1197,6 +1226,7 @@
+                 "kn_body": lm.get("kn_body", float("nan")), "kn_local_stag": lm.get("kn_local_stag", float("nan")),
+                 "re_shock": lm.get("re_shock", float("nan")), "flow_branch": lm.get("flow_branch", float("nan")),
+                 "p_w_stag_Pa": lm.get("p_w_stag", float("nan")), "phi_sonic_deg": lm.get("phi_sonic_deg", float("nan")),
++                "p_w_stag_step_Pa": self.last_p_w_stag_step,
+                 "drag_shape_factor": self.drag_shape_factor(), "frozen_mass_kg": self.frozen_mass,
+                 "film_T_max_K": float(self.film_temperature().max()) if self.m_f.size else float("nan"),
+                 "film_T_mean_K": float((self.m_f * self.film_temperature()).sum() / self.m_f.sum()) if self.m_f.sum() > 0.0 else float("nan"),
+```
+
 ### Task 9: The melting body
 
 **Files:**

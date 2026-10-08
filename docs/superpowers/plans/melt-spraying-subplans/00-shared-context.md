@@ -1685,6 +1685,109 @@ copy was frozen; no run uses the driver.
      that ends this way, so it belongs in a change of its own with the runs re-measured. (c) Facts 96 (b) — the thick
      branch's drift at the finest step — and 96 (c) — the run name does not carry the material — stand.
 
+## Amendment of 2026-10-08 (frame export) — the frames carry what the Spheral replay reads (facts 101–107)
+
+The large-fragment model's core (Spheral M1, plan `docs/superpowers/plans/2026-10-07-spheral-m1.md`) was built on frames
+written by a reconstruction of the prototype with five write-only export additions (`prototype/work-2026-10-08-spheral-mvp/`,
+its `rebuild/post/`). M1's decisions 4, 9 and 13, and Asha's of 2026-10-08 that a run name always carries its material,
+ask Step 3 to adopt four of them. This amendment ports them onto the current copy. It amends sub-plans 09 (the body keeps
+the step's flow evaluation and evaluates the flow for the record), 10 (the history column and the frame fields), 13 (the
+run name and the run JSON) and 15 (the README, the assumptions and the spec), and puts a forward pointer in sub-plan 18.
+Facts 1–100 stand except where these say otherwise; **fact 96 (c) and fact 100 (c) — the run name does not carry the
+material — are answered.** Made in `prototype/work-2026-10-08-frame-export/` (tracked; run outputs ignored). Its base is
+the continuum-step copy of facts 97–100 (`prototype/work-2026-10-07-dt-continuum/code/`, tracked); `code/` is the same
+with the additions, and the five diffs in `amendment/` rebuild `code/` from that base exactly. The measurement copy `meas/` was frozen with a checksum manifest before its run, which was
+made on mains power under `caffeinate -i`.
+
+101. **The wall loads on every evaluated step** (addition 02).
+     - The surface flow is evaluated at the top of every melt step with an aero state, film or not, but only the spray
+       step kept it, as `last_flow`, which is None without film.
+     - So the frames carried `p_w`, `tau` and `closure` only from the first film, and the history's `p_w_stag_Pa` is NaN
+       before it: rows 0–47, 0–23.5 s of the 100 mm Scheil flight.
+     - The body now keeps the step's own evaluation and its aero state. The frames write the gas-side fields (`closure`,
+       `kn_local`, `p_w`, `tau`, `delta_m`) from it.
+     - The history gains `p_w_stag_step_Pa`, every step's own stagnation wall pressure, NaN on row 0 only. The spray
+       step's `p_w_stag_Pa` is kept as it was.
+
+102. **The faces a step's deaths exposed** (addition 06).
+     - With the molten cascade a step's element deaths expose many faces at once (1,112 of 18,616 at frame 100 of the reconstruction's
+       flight, a third of the nose), which the frames carried as "not evaluated".
+     - `MeltingBody.flow_for_the_record()` evaluates the same surface flow at the step's aero state on the current
+       surface, for the frame only. Its one side effect, `SurfaceFlow.last_bins`, is read by nothing.
+     - The exposed faces take the gas-side fields from it, and `flow_eval` says which evaluation a patch carries: 1 the
+       step's, 2 the record's, 0 none (frame 0; `--removal instant`).
+     - The spray fields keep their defaults there, since nothing sprayed from a face that did not yet exist.
+
+103. **The derived surface's normals and the flight direction** (additions 04 and 02).
+     - Every surface frame carries `n_derived`, each patch's outward unit normal on sub-plan 01's derived surface (its
+       Taubin-smoothed normal, matched to the body's patches by face id).
+     - The Spheral core marches its layer depths along it: along the staircase facets' normals 43 % of the rays left the
+       body before f_l fell to 0.5 (M1 decision 9).
+     - The triangles keep the face table's node order, whose winding is inward on 8–18 % of the patches; `n_derived` is
+       outward by construction.
+     - The run JSON's settings record `v_hat_body`, (1, 0, 0), and `freestream_velocity_direction_body`, its negative.
+
+104. **The run name always names the material** (addition 03, made unconditional).
+     - A run with a thermal model carries `_material-<name>` after the heating and melt parts, default or not; a material
+       file is named by its basename.
+     - Runs without a thermal model keep their names. Task 14's drivers pass `--name` and are unaffected.
+     - It renames every thermal run, the default ones included, so a default run made before this amendment no longer
+       shares a name with one made after it.
+     - `resolve_material` chooses the default in one place, for the name and for the body.
+     - The reconstruction's addition 03 named only a non-default material; Asha asked for it always (2026-10-08).
+     - Addition 05, a bound on the runoff's emptying number, is not ported: the runoff-flux amendment (facts 69–77)
+       replaced the flux it bounded.
+
+105. **Tests.**
+     - Unit tier: 261 passed, 1 skipped, with only Task 11's five known reference failures. The base copy gives 258
+       passed and the same five failures.
+     - Two new coupled tests:
+       - A cold body for 2 s from 69.8 km: no film, yet the loads appear on every frame after the first, equal to the
+         step's evaluation, and `flow_eval` is 1 everywhere.
+       - A hot body for 6 s with deaths every step, run with frames at every step and without: every history column is
+         identical, and the record evaluation ran. Both runs are seeded as the CLI seeds; without the seed, pyamg's
+         random starts alone move the altitude by 1e-12.
+     - New CLI test: `test_run_name_always_names_the_material`.
+     - The FEniCSx tier was not run: `fenicsx_env` is not installed on this machine, and nothing here touches a thermal
+       backend.
+
+106. **The 100 mm Scheil frames flight on this copy** (`launch.sh`).
+     - Configuration: the reconstruction's flight flags (`--material AA7075_scheil --removal girin --deep-runoff off
+       --molten-cascade on --frames-every 1`) plus `--dt-continuum off`. That is the 0.5 s step Asha asked for the
+       pipeline's development, on the current physics: runoff flux, rigid substrate, the freeze-back fix.
+     - Name:
+       `model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off_dtcontinuum-off`.
+     - The run: 1,094 s of model time for 1,262 macro steps; the ground at 630.6 s; 1,263 frames, 5.1 GB.
+     - Melting: onset at 24 s (74.2 km), spraying from 25 s. Sprayed 1.1735 kg of 1.4720, a remnant of 0.298 kg,
+       1.32e7 droplets (median radius 193 µm), cascade mass 0.323 kg. Energy and melt balances close to 6.3e-9.
+     - The frames carry the loads on every frame but frame 0, and `flow_eval` 2 on 201 frames (up to 1,493 faces). The
+       largest `p_w` equals `p_w_stag_step_Pa` to a median 6e-10, except where the stagnation patch died that step
+       (worst 6.2 %).
+     - Release: Σ release_rate · A over a frame's surface is 22 % below the history's sprayed mass over the flight
+       (0.913 of 1.174 kg; −40 % to +13 % per step). On the reconstruction's flight it was 12 % (1.025 of 1.169 kg).
+     - Spheral M1's `prepare` reads it through its contract with nothing missing, nothing optional
+       absent and every gating check passed, on the package of `meas/` (SHA-256 64d949ea…). It processed the 1,263
+       frames in 1,190 s and wrote 801.5 MB.
+     - Measured by that prepare: mass to 4.3e-9 of the history; open edges 0 once wound outward; f_l bitwise; one
+       frame without loads; drag binning 9.3e-4, above the 8e-4 that M1's flight test set on the reconstruction's
+       frames; the drag against the history worst at 34 %, which is minor for Asha (M1 decision 15).
+
+107. **Not done, and for Asha to decide.**
+     - (a) **The release on removed faces.** `release_rate` is the spray step's, carried onto the frame by face id, so
+       what a step released from the faces its own deaths then removed is in the history's sprayed mass but on no
+       frame's surface: 22 % of the flight's spray. A Spheral sink that reads `release_rate` (its spec §10, milestone
+       MC) inherits that deficit. Options:
+       - (1) write the removed faces' release onto the faces their deaths exposed, by the rule the film's hand-over at element
+         deaths uses (`MeltingBody._hand_over`);
+       - (2) write it as a per-frame scalar (`release_removed_kg`) beside the per-patch field;
+       - (3) leave it, since the sink belongs to milestone MC, which is not planned yet.
+
+       Recommendation: (2) now (one number per frame, write-only); (1) if MC needs the distribution.
+     - (b) Sub-plan 18's Task 8 was tested on the copy before this one, so its CLI diff merges by hand, and its expected
+       run names gain the material (its forward pointer).
+     - (c) Spheral M1's thresholds stay on the reconstruction's frames (its decision 13). These frames supersede them as
+       Spheral's input once Asha chooses; `prepare`'s contract checks pass on both.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

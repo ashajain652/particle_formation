@@ -1,0 +1,99 @@
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -119,8 +119,15 @@
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+-                "deep_thickness", "nonrigid_depth"):
++                "deep_thickness", "nonrigid_depth", "n_derived", "flow_eval"):
+         assert key in poly.cell_data
++    # the frame export (amendment of 2026-10-08): the derived surface's unit normals, and the record's flow evaluation on
++    # the faces the frame's deaths exposed, so that every windward patch carries a wall pressure
++    n_d = np.asarray(poly.cell_data["n_derived"])
++    assert n_d.shape == (poly.n_cells, 3) and np.allclose(np.linalg.norm(n_d, axis=1), 1.0)
++    ev = np.asarray(poly.cell_data["flow_eval"])
++    assert set(np.unique(ev)) <= {1.0, 2.0} and (ev == 2.0).any() and (ev == 1.0).sum() > 0.5 * ev.size
++    assert (np.asarray(poly.cell_data["p_w"])[n_d[:, 0] > 0.2] > 0.0).all()
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+     p_w = np.asarray(poly.cell_data["p_w"])
+@@ -176,6 +183,9 @@
+     assert np.isfinite(dm[girin]).all() and (dm[girin] > 1e-4).all() and (dm[girin] < 1e-3).all()   # 0.1-1 mm
+     assert np.isnan(dm[~girin]).all()
+     expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
++    covered, record = b.flow_for_the_record()                             # and on the faces the deaths exposed, the record's
++    if record is not None:                                                # (amendment of 2026-10-08 (frame export))
++        expected = np.where(covered, expected, spray.melt_layer(record, b.liquid)[0])
+     np.testing.assert_array_equal(dm, expected)
+     assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
+     # the non-rigid depth the regime test read (amendment of 2026-10-06): the spray step's own, carried; nan where none
+@@ -247,3 +257,69 @@
+         coupled.CoupledSettings(dt=0.5, dt_continuum=1.0)
+     with pytest.raises(ValueError):
+         coupled.CoupledSettings(dt=0.5, dt_continuum=0.0)
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# The frame export for the Spheral replay (amendment of 2026-10-08; Spheral spec 2026-10-02 sec. 6.1 and 7.2)
++
++
++def test_frames_carry_the_wall_loads_on_steps_without_film(coarse_sphere_mesh, tmp_path):
++    """Two seconds from 69.8 km of a cold body (300 K): nothing melts, so the spray step never runs and `last_flow` stays
++    None -- yet the surface flow is evaluated at the top of every melt step, and the frames carry its closure, p_w, tau
++    and kn_local, and the history its stagnation wall pressure, on every step after the first (frame 0 precedes any
++    evaluation). No element dies, so every patch is the step's own evaluation (flow_eval 1), and n_derived is the
++    derived surface's smoothed normal, unit and outward whatever the triangle's winding."""
++    pytest.importorskip("cantera")
++    import pyvista as pv
++    m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++    b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"), MASS_100MM)
++    sim = simulator(b, t_max=52.0)
++    sim.advance(50.0)
++    out = os.path.join(str(tmp_path), "vtk")
++    hist = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5, frames_every=1, output_dir=out)).run()
++    c = hist.columns
++    assert b.last_flow is None and c["sprayed_mass_kg"][-1] == 0.0 and np.isnan(c["p_w_stag_Pa"]).all()
++    assert np.isnan(c["p_w_stag_step_Pa"][0]) and (c["p_w_stag_step_Pa"][1:] > 0.0).all()
++    first, last = pv.read(os.path.join(out, "surface_0.vtp")), pv.read(os.path.join(out, "surface_4.vtp"))
++    assert not np.asarray(first.cell_data["p_w"]).any() and not np.asarray(first.cell_data["flow_eval"]).any()
++    p_w, tau = np.asarray(last.cell_data["p_w"]), np.asarray(last.cell_data["tau"])
++    np.testing.assert_array_equal(p_w, b.last_flow_step.p_w)                       # no deaths: the surface is the evaluated one
++    np.testing.assert_array_equal(tau, b.last_flow_step.tau)
++    np.testing.assert_array_equal(np.asarray(last.cell_data["closure"]), b.last_flow_step.closure.astype(float))
++    np.testing.assert_array_equal(np.asarray(last.cell_data["kn_local"]), b.last_flow_step.kn_local)
++    assert (p_w > 0.0).all() and p_w.max() == pytest.approx(c["p_w_stag_step_Pa"][-1], rel=0.05) and tau.max() > 0.0
++    assert (np.asarray(last.cell_data["flow_eval"]) == 1.0).all()
++    n_d = np.asarray(last.cell_data["n_derived"])
++    np.testing.assert_array_equal(n_d, m.surface(derived=True).smoothed_normals())
++    tri = np.asarray(last.faces).reshape(-1, 4)[:, 1:]
++    centre = np.asarray(last.points)[tri].mean(axis=1)
++    assert np.allclose(np.linalg.norm(n_d, axis=1), 1.0) and (np.einsum("ij,ij->i", n_d, centre) > 0.0).all()
++
++
++def test_the_record_evaluation_changes_nothing_the_physics_reads(coarse_sphere_mesh, tmp_path):
++    """The frame export is write-only: the same 6 s of a hot body (880 K, deaths every step) run with frames at every step
++    and without frames gives identical history columns, so writing a frame -- and evaluating the flow for the faces the
++    deaths exposed -- changes nothing the model integrates. Both runs seed numpy as the CLI does, without which pyamg's
++    random starts alone move the altitude by 1e-12."""
++    pytest.importorskip("cantera")
++
++    def run(frames):
++        np.random.seed(12345)                    # pyamg's random starts, seeded as every CLI run is (amendment of 2026-10-05)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"),
++                             MASS_100MM, T0=880.0)
++        sim = simulator(b, t_max=56.0)
++        sim.advance(50.0)
++        st = coupled.CoupledSettings(dt=0.5, frames_every=1 if frames else 0,
++                                     output_dir=os.path.join(str(tmp_path), "vtk") if frames else None)
++        return coupled.CoupledRun(sim, b, heating.PhysicsHeating(), st).run(), b
++
++    (with_frames, b), (without, _) = run(True), run(False)
++    import pyvista as pv
++    vtk = os.path.join(str(tmp_path), "vtk")
++    n_record = sum(int((np.asarray(pv.read(os.path.join(vtk, f)).cell_data["flow_eval"]) == 2.0).sum())
++                   for f in os.listdir(vtk) if f.endswith(".vtp"))
++    assert with_frames.columns["n_dead_elements"][-1] > 0 and n_record > 0     # the record evaluation did run
++    for key, v in without.columns.items():
++        np.testing.assert_array_equal(with_frames.columns[key], v, err_msg=key)
++

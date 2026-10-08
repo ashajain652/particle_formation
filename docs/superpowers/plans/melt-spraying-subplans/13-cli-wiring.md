@@ -1038,6 +1038,159 @@ In `tests/test_reentry_model_cli.py`:
 
 ---
 
+## Amendment of 2026-10-08 (frame export) — the material always in the run name, and the flight direction in the JSON
+
+> Spheral M1's decisions 4, 9 and 13 and Asha's of 2026-10-08 (facts 101–107 in `00-shared-context.md`): the export
+> additions the Spheral replay reads, which the reconstructed prototype `prototype/work-2026-10-08-spheral-mvp/` made
+> first (its `rebuild/post/` 02, 03, 04 and 06), ported onto the copy of the continuum-step amendment. Write-only:
+> nothing the model integrates changes, so every history column and result keeps its value; the history gains one
+> column, the run JSON two settings, the frames two fields and the loads where they carried defaults, and every thermal
+> run's name gains its material. The code below is the tested code, as a
+> diff against that copy (`prototype/work-2026-10-07-dt-continuum/code/` to `prototype/work-2026-10-08-frame-export/code/`;
+> the five diffs rebuild it exactly).
+
+**The run name names the material, default or not** (Asha, 2026-10-08; fact 96 (c) and 100 (c) answered). A run with a
+thermal model carries `_material-<name>` after the heating and melt parts and before every switch suffix:
+`..._fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off`. A material given as a file is named by its basename
+without `.json`. Runs without a thermal model (Step 1, `--thermal none`) have no material and keep their names. Before
+this, a run of one material overwrote a run of another made with the same flags, and a name did not say which default it
+was made under (the melting default changed on 2026-10-07). It renames every thermal run, the default ones included;
+Task 14's drivers pass `--name` and are unaffected. `resolve_material(arg, melting)` is the one place the default is
+chosen, for the name and for the body.
+
+**The flight direction.** The run JSON's settings record `v_hat_body`, the fixed attitude in the body (mesh) frame —
+the direction of motion, which the stagnation patch faces — and `freestream_velocity_direction_body`, its negative, the
+oncoming flow relative to the body; (1, 0, 0) and (−1, 0, 0) for every body so far.
+
+**Tests.** `test_run_name_always_names_the_material` (five names and the default per mode); the melting run's JSON test
+checks the two directions; the seed test expects the material in the name its runs print.
+
+In `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -90,24 +90,38 @@
+ 
+ 
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+-                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default"):
++                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default",
++                   material_name=None):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
+     `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
+     `_dtcontinuum-off` or `_dtcontinuum-<s>`, and any run with a seed other than DEFAULT_SEED (amendment of 2026-10-05)
+-    in `_seed-<n>`; the defaults keep the old name."""
++    in `_seed-<n>`; the defaults keep the old name. A run with a thermal model always names its material, default or
++    not, as `_material-<name>` after the heating and melt parts (amendment of 2026-10-08 (frame export): before it, a
++    run of one material overwrote a run of another with the same flags, and a name did not say which default it was
++    made under); a material given as a file is named by its basename without `.json`. Runs without a thermal model
++    (Step 1) have no material and keep their names."""
+     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
+     dtc = dtc_default if dt_continuum == "default" else dt_continuum
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+-    return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
++    material_part = ""
++    if heating_name and material_name:
++        material_part = "_material-" + os.path.splitext(os.path.basename(material_name))[0]
++    return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "") + material_part
+             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
+             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
+             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
+             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
++def resolve_material(material_arg, melting):
++    """The material a thermal run uses: the one named, else the mode's default -- Scheil's curve when melting (decided
++    2026-09-27, made the default on 2026-10-07; the linear range stays selectable by name), AA7075_nomelt otherwise."""
++    return material_arg or ("AA7075_scheil" if melting else "AA7075_nomelt")
++
++
+ def make_atmosphere(spec, epoch, wind_name):
+     """(atmosphere object, short name, provenance dict) for an --atmosphere value."""
+     wind = atmosphere.NoWind() if wind_name == "none" else atmosphere.StaticProfileWind()
+@@ -283,7 +297,7 @@
+                                band=band)
+     # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
+     # selectable by name
+-    material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
++    material_name = resolve_material(args.material, melting)
+     mat = material.Material.from_drama_json(material_name)
+     if args.k_scale != 1.0:
+         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
+@@ -311,7 +325,11 @@
+             "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
+             "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
+             "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
+-            "k_scale": args.k_scale, "melt": args.melt}
++            "k_scale": args.k_scale, "melt": args.melt,
++            # the fixed attitude in the body (mesh) frame (amendment of 2026-10-08 (frame export)): v_hat is the direction
++            # of motion and the stagnation patch the one facing it; the oncoming flow relative to the body is along -v_hat
++            "v_hat_body": [float(x) for x in getattr(the_body, "v_hat", (1.0, 0.0, 0.0))],
++            "freestream_velocity_direction_body": [-float(x) for x in getattr(the_body, "v_hat", (1.0, 0.0, 0.0))]}
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -375,7 +393,8 @@
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+                                        deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
+-                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum)
++                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
++                                       material_name=resolve_material(args.material, args.melt == "on") if args.thermal == "fem" else None)
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+```
+
+In `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -189,7 +189,7 @@
+ 
+     monkeypatch.setattr(coupled.CoupledRun, "run", run_and_keep)
+     argv = FEM + ["--t-max", "5", "--dt", "0.5"]
+-    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam")
++    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam", material_name="AA7075_nomelt")
+     np.random.seed(1)
+     assert cli.main(argv + ["--outdir", str(tmp_path / "a")]) == 0
+     np.random.seed(2)
+@@ -240,6 +240,20 @@
+                               dt_continuum=None).endswith("_fem-sesam_melt-instant")           # off is the device's default
+ 
+ 
++def test_run_name_always_names_the_material():
++    """Amendment of 2026-10-08 (frame export): a run with a thermal model names its material whichever it is, default
++    included, after the heating and melt parts; a material file by its basename; a run without one (Step 1) has none."""
++    base = (0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics")
++    assert cli.model_run_name(*base, "girin", material_name="AA7075_scheil").endswith("_fem-physics_melt-girin_material-AA7075_scheil")
++    assert cli.model_run_name(*base, "girin", deep_runoff=False, material_name="AA7075_range").endswith(
++        "_melt-girin_material-AA7075_range_deeprunoff-off")
++    assert cli.model_run_name(*base, "girin", material_name="/x/y/my_alloy.json").endswith("_melt-girin_material-my_alloy")
++    assert cli.model_run_name(*base, material_name="AA7075_nomelt").endswith("_fem-physics_material-AA7075_nomelt")
++    assert cli.model_run_name(*base[:6], material_name="AA7075_scheil").endswith("_none")      # no thermal model
++    assert cli.resolve_material(None, True) == "AA7075_scheil" and cli.resolve_material(None, False) == "AA7075_nomelt"
++    assert cli.resolve_material("AA7075_range", True) == "AA7075_range"
++
++
+ def test_the_continuum_step_defaults_to_0p0125_s_for_girin_removal_only():
+     """--dt-continuum (amendment of 2026-10-07): 0.0125 s by default for the model proper, melting with Girin removal,
+     where the switched-step series converges (plan facts 92-94); off for the instant-removal device, which has no film and
+@@ -273,6 +287,7 @@
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     # AA7075_scheil is the material of --melt on (amendment of 2026-10-07): Scheil's curve, 390 kJ/kg, 0.80 N/m
+     assert s["melt"] == "on" and s["material"] == "AA7075_scheil" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
++    assert s["v_hat_body"] == [1.0, 0.0, 0.0] and s["freestream_velocity_direction_body"] == [-1.0, -0.0, -0.0]   # 2026-10-08
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.80
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+```
+
 ### Task 13: Command line
 
 **Files:**

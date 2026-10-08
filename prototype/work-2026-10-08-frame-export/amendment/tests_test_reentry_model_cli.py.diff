@@ -1,0 +1,40 @@
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -189,7 +189,7 @@
+ 
+     monkeypatch.setattr(coupled.CoupledRun, "run", run_and_keep)
+     argv = FEM + ["--t-max", "5", "--dt", "0.5"]
+-    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam")
++    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam", material_name="AA7075_nomelt")
+     np.random.seed(1)
+     assert cli.main(argv + ["--outdir", str(tmp_path / "a")]) == 0
+     np.random.seed(2)
+@@ -240,6 +240,20 @@
+                               dt_continuum=None).endswith("_fem-sesam_melt-instant")           # off is the device's default
+ 
+ 
++def test_run_name_always_names_the_material():
++    """Amendment of 2026-10-08 (frame export): a run with a thermal model names its material whichever it is, default
++    included, after the heating and melt parts; a material file by its basename; a run without one (Step 1) has none."""
++    base = (0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics")
++    assert cli.model_run_name(*base, "girin", material_name="AA7075_scheil").endswith("_fem-physics_melt-girin_material-AA7075_scheil")
++    assert cli.model_run_name(*base, "girin", deep_runoff=False, material_name="AA7075_range").endswith(
++        "_melt-girin_material-AA7075_range_deeprunoff-off")
++    assert cli.model_run_name(*base, "girin", material_name="/x/y/my_alloy.json").endswith("_melt-girin_material-my_alloy")
++    assert cli.model_run_name(*base, material_name="AA7075_nomelt").endswith("_fem-physics_material-AA7075_nomelt")
++    assert cli.model_run_name(*base[:6], material_name="AA7075_scheil").endswith("_none")      # no thermal model
++    assert cli.resolve_material(None, True) == "AA7075_scheil" and cli.resolve_material(None, False) == "AA7075_nomelt"
++    assert cli.resolve_material("AA7075_range", True) == "AA7075_range"
++
++
+ def test_the_continuum_step_defaults_to_0p0125_s_for_girin_removal_only():
+     """--dt-continuum (amendment of 2026-10-07): 0.0125 s by default for the model proper, melting with Girin removal,
+     where the switched-step series converges (plan facts 92-94); off for the instant-removal device, which has no film and
+@@ -273,6 +287,7 @@
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     # AA7075_scheil is the material of --melt on (amendment of 2026-10-07): Scheil's curve, 390 kJ/kg, 0.80 N/m
+     assert s["melt"] == "on" and s["material"] == "AA7075_scheil" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
++    assert s["v_hat_body"] == [1.0, 0.0, 0.0] and s["freestream_velocity_direction_body"] == [-1.0, -0.0, -0.0]   # 2026-10-08
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.80
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0

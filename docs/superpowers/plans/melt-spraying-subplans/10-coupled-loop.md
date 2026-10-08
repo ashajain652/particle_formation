@@ -541,6 +541,244 @@ In `tests/test_reentry_model_coupled.py`:
 
 ---
 
+## Amendment of 2026-10-08 (frame export) — the frames carry the loads on every step, the derived normals and the record's loads
+
+> Spheral M1's decisions 4, 9 and 13 and Asha's of 2026-10-08 (facts 101–107 in `00-shared-context.md`): the export
+> additions the Spheral replay reads, which the reconstructed prototype `prototype/work-2026-10-08-spheral-mvp/` made
+> first (its `rebuild/post/` 02, 03, 04 and 06), ported onto the copy of the continuum-step amendment. Write-only:
+> nothing the model integrates changes, so every history column and result keeps its value; the history gains one
+> column, the run JSON two settings, the frames two fields and the loads where they carried defaults, and every thermal
+> run's name gains its material. The code below is the tested code, as a
+> diff against that copy (`prototype/work-2026-10-07-dt-continuum/code/` to `prototype/work-2026-10-08-frame-export/code/`;
+> the five diffs rebuild it exactly).
+
+**The history.** `MELT_COLUMNS` gains `p_w_stag_step_Pa` (sub-plan 09's amendment of this date), last.
+
+**The surface frame.** `write_vtk_frame` writes three things it did not:
+
+- `n_derived` (3 components, on every frame, melting or not): each patch's outward unit normal on the derived surface of
+  sub-plan 01, the Taubin-smoothed normal of `mesh.surface(derived=True)`, along which the Spheral core marches its layer
+  depths (Spheral M1 decision 9: along the staircase facets' normals 43 % of the rays left the body before f_l fell to
+  0.5). The derived surface's patches are the body's one to one, checked by face id. The triangles keep the face table's
+  node order, whose winding is inward on some patches; `n_derived` is outward by construction and is the orientation to
+  trust. Nothing displaces `derived_points` yet (sub-plan 16), so the field is the smoothing alone.
+- the gas-side fields `closure`, `kn_local`, `p_w`, `tau` and `delta_m` from the step's own evaluation
+  (`last_flow_step`) instead of the spray step's, so they are written on every step that evaluated the flow; and on the
+  faces the step's deaths exposed, from the record's evaluation (`flow_for_the_record`). The spray fields (`we_s`,
+  `r_droplet`, `release_rate`, `nonrigid_depth`) keep their defaults there: nothing was sprayed from a face that did not
+  yet exist.
+- `flow_eval` per patch: 1 the step's own evaluation, 2 the record's, 0 none (frame 0, before any step; `--removal
+  instant`, which never evaluates the flow).
+
+**Tests.** `test_coupled_melting_run_and_writers` checks the two new fields on its frame 1 (20 steps of a warm body:
+`flow_eval` 2 on some patches, 1 on more than half, a positive wall pressure on every windward patch);
+`test_surface_frames_carry_the_conjugate_depth_per_patch` expects the record's δ_m on exposed faces; two new tests:
+`test_frames_carry_the_wall_loads_on_steps_without_film` (a cold body for 2 s from 69.8 km: no film and no spray, yet
+p_w, tau, closure and kn_local on every frame after the first, equal to the step's evaluation, `p_w_stag_step_Pa`
+positive from row 1, `flow_eval` 1 everywhere, `n_derived` the derived surface's smoothed normal, unit and outward) and
+`test_the_record_evaluation_changes_nothing_the_physics_reads` (6 s of a hot body with deaths every step, frames at
+every step against none, both seeded as the CLI seeds: every history column identical, and the record evaluation ran).
+Unit tier 261 passed, 1 skipped, with only Task 11's five known reference failures (the base copy: 258 passed, the same
+five).
+
+In `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -29,7 +29,8 @@
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+                 "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
+-                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg"]
++                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg",
++                "p_w_stag_step_Pa"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -190,12 +191,18 @@
+ 
+ def write_vtk_frame(output_dir, k, body, loads):
+     """field_<k>.vtu: nodal T on the active volume mesh (plus liquid fraction and element fractions when melting);
+-    surface_<k>.vtp: q_conv, q_rad, T per patch, and when melting the film thickness and temperature, We_s, closure,
+-    local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+-    flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+-    (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+-    nan wherever the closure is not Girin's) -- the thickness of the deep liquid beneath the film, and the non-rigid
+-    depth the regime test read (PyVista/VTK XML)."""
++    surface_<k>.vtp: q_conv, q_rad, T per patch, the derived surface's outward unit normal n_derived, and when melting
++    the film thickness and temperature, We_s, closure, local Knudsen number, wall pressure, shear, droplet radius,
++    release rate and Girin's conjugate depth delta_m -- the flow and spray fields of the step's own evaluation, carried
++    across that step's element deaths by face id (`MeltingBody.on_current_surface`) -- the thickness of the deep liquid
++    beneath the film, and the non-rigid depth the regime test read (PyVista/VTK XML).
++
++    The gas-side fields (closure, kn_local, p_w, tau, delta_m) come from the step's own surface-flow evaluation, which
++    every melt step with an aero state makes, film or not; on the faces that step's deaths exposed they come from the
++    same flow model evaluated for the record on the current surface (`MeltingBody.flow_for_the_record`), and
++    `flow_eval` says which: 1 the step's own, 2 the record's, 0 none (frame 0; --removal instant). The spray fields keep
++    their defaults on exposed faces (nothing was sprayed from a face that did not yet exist): we_s 0, r_droplet and
++    nonrigid_depth nan, release_rate 0. Amendment of 2026-10-08 (frame export), write-only."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -216,20 +223,46 @@
+     poly.cell_data["q_conv"] = loads.q_conv
+     poly.cell_data["q_rad"] = body.emissivity * SIGMA_SB * (Tf ** 4 - body.T_ambient ** 4)
+     poly.cell_data["T_patch"] = Tf
++    # each patch's outward unit normal on the derived surface of sub-plan 01 -- the Taubin-smoothed normal of
++    # `mesh.surface(derived=True)` (spec 2026-09-27 sec. 8 step 4), which the Spheral core's layer depths march along.
++    # Its patches are these patches one to one (the same boundary faces in the same order, checked by face id). The
++    # triangles are written in the face table's node order, whose winding is inward on some patches; this field is
++    # outward by construction, so it, not the winding, is the orientation to trust. Nothing displaces `derived_points`
++    # yet (sub-plan 16), so the derived facets are the staircase's and the field is the smoothing alone.
++    derived = mesh.surface(derived=True)
++    if not np.array_equal(derived.face_ids, surface.face_ids):
++        raise RuntimeError("the derived surface's patches are not the body's surface patches")
++    poly.cell_data["n_derived"] = derived.smoothed_normals() if surface.n_patches else np.zeros((0, 3))
+     if melting:
+         poly.cell_data["film_thickness"] = body.m_f / (body.liquid.rho * surface.areas)
+         poly.cell_data["film_T"] = body.film_temperature()
+         res, flow, carry = body.last_spray, body.last_flow, body.on_current_surface
+         poly.cell_data["we_s"] = carry(res.we_s if res is not None else None, 0.0)
+-        poly.cell_data["closure"] = carry(flow.closure.astype(float) if flow is not None else None, 1.0)
+-        poly.cell_data["kn_local"] = carry(flow.kn_local if flow is not None else None, np.nan)
+-        poly.cell_data["p_w"] = carry(flow.p_w if flow is not None else None, 0.0)
+-        poly.cell_data["tau"] = carry(flow.tau if flow is not None else None, 0.0)
++        step = body.last_flow_step
++        covered, record = body.flow_for_the_record()
++
++        def gas_side(values, fill, record_values):
++            v = carry(values, fill)
++            return np.where(covered, v, np.asarray(record_values, dtype=float)) if record is not None else v
++        poly.cell_data["flow_eval"] = (np.where(covered, 1.0, 2.0 if record is not None else 0.0) if step is not None
++                                       else np.zeros(surface.n_patches))
++        poly.cell_data["closure"] = gas_side(step.closure.astype(float) if step is not None else None, 1.0,
++                                             record.closure.astype(float) if record is not None else None)
++        poly.cell_data["kn_local"] = gas_side(step.kn_local if step is not None else None, np.nan,
++                                              record.kn_local if record is not None else None)
++        poly.cell_data["p_w"] = gas_side(step.p_w if step is not None else None, 0.0,
++                                         record.p_w if record is not None else None)
++        poly.cell_data["tau"] = gas_side(step.tau if step is not None else None, 0.0,
++                                         record.tau if record is not None else None)
+         poly.cell_data["r_droplet"] = carry(np.where(res.dm > 0.0, res.r, np.nan) if res is not None else None, np.nan)
+         poly.cell_data["release_rate"] = carry(res.dm if res is not None else None, 0.0) / surface.areas
+         # Girin's conjugate depth per patch, nan where the patch's closure is not his (no conjugate depth exists there),
+         # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
+-        poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
++        delta_record = None
++        if record is not None:
++            from . import spray as spray_mod
++            delta_record = spray_mod.melt_layer(record, body.liquid)[0]
++        poly.cell_data["delta_m"] = gas_side(body.last_delta_m, np.nan, delta_record)
+         poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
+         # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
+         # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
+```
+
+In `tests/test_reentry_model_coupled.py`:
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -119,8 +119,15 @@
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+-                "deep_thickness", "nonrigid_depth"):
++                "deep_thickness", "nonrigid_depth", "n_derived", "flow_eval"):
+         assert key in poly.cell_data
++    # the frame export (amendment of 2026-10-08): the derived surface's unit normals, and the record's flow evaluation on
++    # the faces the frame's deaths exposed, so that every windward patch carries a wall pressure
++    n_d = np.asarray(poly.cell_data["n_derived"])
++    assert n_d.shape == (poly.n_cells, 3) and np.allclose(np.linalg.norm(n_d, axis=1), 1.0)
++    ev = np.asarray(poly.cell_data["flow_eval"])
++    assert set(np.unique(ev)) <= {1.0, 2.0} and (ev == 2.0).any() and (ev == 1.0).sum() > 0.5 * ev.size
++    assert (np.asarray(poly.cell_data["p_w"])[n_d[:, 0] > 0.2] > 0.0).all()
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+     p_w = np.asarray(poly.cell_data["p_w"])
+@@ -176,6 +183,9 @@
+     assert np.isfinite(dm[girin]).all() and (dm[girin] > 1e-4).all() and (dm[girin] < 1e-3).all()   # 0.1-1 mm
+     assert np.isnan(dm[~girin]).all()
+     expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
++    covered, record = b.flow_for_the_record()                             # and on the faces the deaths exposed, the record's
++    if record is not None:                                                # (amendment of 2026-10-08 (frame export))
++        expected = np.where(covered, expected, spray.melt_layer(record, b.liquid)[0])
+     np.testing.assert_array_equal(dm, expected)
+     assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
+     # the non-rigid depth the regime test read (amendment of 2026-10-06): the spray step's own, carried; nan where none
+@@ -247,3 +257,69 @@
+         coupled.CoupledSettings(dt=0.5, dt_continuum=1.0)
+     with pytest.raises(ValueError):
+         coupled.CoupledSettings(dt=0.5, dt_continuum=0.0)
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# The frame export for the Spheral replay (amendment of 2026-10-08; Spheral spec 2026-10-02 sec. 6.1 and 7.2)
++
++
++def test_frames_carry_the_wall_loads_on_steps_without_film(coarse_sphere_mesh, tmp_path):
++    """Two seconds from 69.8 km of a cold body (300 K): nothing melts, so the spray step never runs and `last_flow` stays
++    None -- yet the surface flow is evaluated at the top of every melt step, and the frames carry its closure, p_w, tau
++    and kn_local, and the history its stagnation wall pressure, on every step after the first (frame 0 precedes any
++    evaluation). No element dies, so every patch is the step's own evaluation (flow_eval 1), and n_derived is the
++    derived surface's smoothed normal, unit and outward whatever the triangle's winding."""
++    pytest.importorskip("cantera")
++    import pyvista as pv
++    m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++    b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"), MASS_100MM)
++    sim = simulator(b, t_max=52.0)
++    sim.advance(50.0)
++    out = os.path.join(str(tmp_path), "vtk")
++    hist = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5, frames_every=1, output_dir=out)).run()
++    c = hist.columns
++    assert b.last_flow is None and c["sprayed_mass_kg"][-1] == 0.0 and np.isnan(c["p_w_stag_Pa"]).all()
++    assert np.isnan(c["p_w_stag_step_Pa"][0]) and (c["p_w_stag_step_Pa"][1:] > 0.0).all()
++    first, last = pv.read(os.path.join(out, "surface_0.vtp")), pv.read(os.path.join(out, "surface_4.vtp"))
++    assert not np.asarray(first.cell_data["p_w"]).any() and not np.asarray(first.cell_data["flow_eval"]).any()
++    p_w, tau = np.asarray(last.cell_data["p_w"]), np.asarray(last.cell_data["tau"])
++    np.testing.assert_array_equal(p_w, b.last_flow_step.p_w)                       # no deaths: the surface is the evaluated one
++    np.testing.assert_array_equal(tau, b.last_flow_step.tau)
++    np.testing.assert_array_equal(np.asarray(last.cell_data["closure"]), b.last_flow_step.closure.astype(float))
++    np.testing.assert_array_equal(np.asarray(last.cell_data["kn_local"]), b.last_flow_step.kn_local)
++    assert (p_w > 0.0).all() and p_w.max() == pytest.approx(c["p_w_stag_step_Pa"][-1], rel=0.05) and tau.max() > 0.0
++    assert (np.asarray(last.cell_data["flow_eval"]) == 1.0).all()
++    n_d = np.asarray(last.cell_data["n_derived"])
++    np.testing.assert_array_equal(n_d, m.surface(derived=True).smoothed_normals())
++    tri = np.asarray(last.faces).reshape(-1, 4)[:, 1:]
++    centre = np.asarray(last.points)[tri].mean(axis=1)
++    assert np.allclose(np.linalg.norm(n_d, axis=1), 1.0) and (np.einsum("ij,ij->i", n_d, centre) > 0.0).all()
++
++
++def test_the_record_evaluation_changes_nothing_the_physics_reads(coarse_sphere_mesh, tmp_path):
++    """The frame export is write-only: the same 6 s of a hot body (880 K, deaths every step) run with frames at every step
++    and without frames gives identical history columns, so writing a frame -- and evaluating the flow for the faces the
++    deaths exposed -- changes nothing the model integrates. Both runs seed numpy as the CLI does, without which pyamg's
++    random starts alone move the altitude by 1e-12."""
++    pytest.importorskip("cantera")
++
++    def run(frames):
++        np.random.seed(12345)                    # pyamg's random starts, seeded as every CLI run is (amendment of 2026-10-05)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"),
++                             MASS_100MM, T0=880.0)
++        sim = simulator(b, t_max=56.0)
++        sim.advance(50.0)
++        st = coupled.CoupledSettings(dt=0.5, frames_every=1 if frames else 0,
++                                     output_dir=os.path.join(str(tmp_path), "vtk") if frames else None)
++        return coupled.CoupledRun(sim, b, heating.PhysicsHeating(), st).run(), b
++
++    (with_frames, b), (without, _) = run(True), run(False)
++    import pyvista as pv
++    vtk = os.path.join(str(tmp_path), "vtk")
++    n_record = sum(int((np.asarray(pv.read(os.path.join(vtk, f)).cell_data["flow_eval"]) == 2.0).sum())
++                   for f in os.listdir(vtk) if f.endswith(".vtp"))
++    assert with_frames.columns["n_dead_elements"][-1] > 0 and n_record > 0     # the record evaluation did run
++    for key, v in without.columns.items():
++        np.testing.assert_array_equal(with_frames.columns[key], v, err_msg=key)
++
+```
+
 ### Task 10: The coupled loop — melt columns, demise, VTK melt fields, particle files
 
 **Files:**

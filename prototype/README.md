@@ -13,6 +13,10 @@ are not (`.gitignore`).
   the export additions Spheral M1 reads (wall loads on every step, `v_hat_body`, the derived surface's normals,
   loads on newly exposed faces, the material in the run name). It wrote the 100 mm Scheil frames that Spheral M1
   is built on as an MVP input; it is not the Step 3 line of record (its README says what it lacks).
+- `work-2026-10-08-frame-export/` — the frame-export amendment (facts 101–107): `code/` is the continuum-step copy
+  (`work-2026-10-07-dt-continuum/code`) with the reconstruction's export additions 02, 03 (the material now named
+  always), 04 and 06 ported onto it, `amendment/` the five diffs that rebuild `code/` from that copy, `meas/`
+  the frozen measurement copy (`meas_manifest.md5`) and `launch.sh` the 100 mm Scheil frames flight it ran.
 - `plan3/` — the generator. `make_plan.py` assembles the plan from the prose parts
   (`part_header.py`, `part_tasks_*.py`, `readme_step3.md`, `assumptions_step3.md`) and reads every
   code block **straight out of `proto3/`**, so a regeneration that matches the committed plan proves
