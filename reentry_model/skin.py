@@ -278,3 +278,93 @@ class SkinField:
         if full.size:
             self.T[full] = self.material.temperature_from_enthalpy(self.H[full] / np.where(self.m[full] > 0.0, self.m[full], 1.0))
         return recv, float(self.m[src].sum())
+
+    # -- the sub-step -----------------------------------------------------------------------------------------------
+    def conduct(self, dt, q_top, T_amb, emissivity, T_b, L, T_surface=None, sens=None):
+        """One implicit (backward-Euler) sub-step for every skin (spec section 5.4): the patch's convective flux q_top
+        [W/m2] in at the top, radiation from the top cell, conduction through the cells (harmonic conductances), and the
+        base held at T_b [K]. The liquid L [kg] on each top node shares cell 0's temperature and heat capacity. Newton
+        on the enthalpy with the enthalpy-consistent update the 3D solver uses, damped if the change grows. T_surface
+        (tests only) holds the top face at that temperature instead of the flux. `sens = (S, dEb)` carries dT/dT_b and
+        the derivative of the base energy through the sub-step (the trial pass). Returns (E_top, E_rad, E_base, sens)
+        [J per skin]; E_base is what the books leave, so they close exactly whatever the iteration error."""
+        mat, n, nc = self.material, self.n, self.nc
+        if n == 0:
+            z = np.zeros(0)
+            return z, z, z, sens
+        A = self.area
+        dz = np.maximum(self.m / (mat.rho * A[:, None]), DZ_FLOOR)
+        Mt = self.m.copy()
+        Mt[:, 0] += L
+        w = np.zeros_like(Mt)
+        w[:, 0] = np.divide(L, Mt[:, 0], out=np.zeros(n), where=Mt[:, 0] > 0.0)
+        T_old = self.T.copy()
+        E_old = Mt * mat.enthalpy_mixed(T_old, w)
+        eps_s = np.asarray(emissivity, dtype=float) * SIGMA_SB
+        q = np.asarray(q_top, dtype=float)
+        T_b = np.asarray(T_b, dtype=float)
+
+        def system(T):
+            """Residual R [W] of every cell at T, the conductances, and the diagonal of the Newton matrix."""
+            k = mat.k(T)
+            G = A[:, None] / (0.5 * dz[:, :-1] / k[:, :-1] + 0.5 * dz[:, 1:] / k[:, 1:])
+            Gb = A * k[:, -1] / (0.5 * dz[:, -1])
+            flux = G * (T[:, :-1] - T[:, 1:])
+            net = np.zeros((n, nc))
+            diag = Mt * mat.cp_mixed(T, w) / dt
+            if T_surface is None:
+                net[:, 0] += q * A - eps_s * A * (T[:, 0] ** 4 - T_amb ** 4)
+                diag[:, 0] += 4.0 * eps_s * A * T[:, 0] ** 3
+            else:
+                Gs = A * k[:, 0] / (0.5 * dz[:, 0])
+                net[:, 0] += Gs * (T_surface - T[:, 0])
+                diag[:, 0] += Gs
+            net[:, :-1] -= flux
+            net[:, 1:] += flux
+            net[:, -1] -= Gb * (T[:, -1] - T_b)
+            diag[:, :-1] += G
+            diag[:, 1:] += G
+            diag[:, -1] += Gb
+            return (Mt * mat.enthalpy_mixed(T, w) - E_old) / dt - net, G, Gb, diag
+
+        # Newton in the temperature with a backtracking line search per skin on the residual's norm. Not the 3D solver's
+        # enthalpy-consistent update: in 10-micrometre cells conduction outweighs the heat capacity some five hundred
+        # times over a 10 ms sub-step, so a cell must move with its neighbours, and inverting each cell's own h(T) moved
+        # them apart by a tenth of the step wherever c_p,eff varies through the Scheil range -- the iteration stalled at
+        # a 0.4 K change (measured while planning). Across a sharp latent ramp the line search does what that update did.
+        T = T_old.copy()
+        R, G, Gb, diag = system(T)
+        for _ in range(NEWTON_MAX):
+            dT = thomas(-G, diag, -G, -R)
+            r0 = np.sqrt((R * R).sum(axis=1))
+            lam = np.ones(n)
+            for _ in range(LINE_SEARCH_MAX):
+                T_try = T + lam[:, None] * dT
+                R_try, G_try, Gb_try, diag_try = system(T_try)
+                moved = np.abs(T_try - T).max(axis=1)
+                worse = (np.sqrt((R_try * R_try).sum(axis=1)) > (1.0 - 1e-4 * lam) * r0) & (moved > NEWTON_TOL)
+                if not worse.any():
+                    break
+                lam = np.where(worse, 0.5 * lam, lam)
+            T, R, G, Gb, diag = T_try, R_try, G_try, Gb_try, diag_try
+            if moved.max() <= NEWTON_TOL:
+                break
+        else:
+            raise RuntimeError("a skin sub-step did not converge in {} iterations (last change {:.2e} K)".format(NEWTON_MAX, moved.max()))
+        E_new = Mt * mat.enthalpy_mixed(T, w)
+        if T_surface is None:
+            E_top = q * A * dt
+            E_rad = eps_s * A * (T[:, 0] ** 4 - T_amb ** 4) * dt
+        else:
+            E_top = A * mat.k(T[:, 0]) / (0.5 * dz[:, 0]) * (T_surface - T[:, 0]) * dt
+            E_rad = np.zeros(n)
+        E_base = E_top - E_rad - (E_new.sum(axis=1) - E_old.sum(axis=1))
+        if sens is not None:
+            S, dEb = sens
+            rhs = Mt * mat.cp_mixed(T_old, w) / dt * S
+            rhs[:, -1] += Gb
+            S = thomas(-G, diag, -G, rhs)
+            sens = (S, dEb + dt * Gb * (S[:, -1] - 1.0))
+        self.T = T
+        self.H = self.m * mat.enthalpy(T)
+        return E_top, E_rad, E_base, sens
