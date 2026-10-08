@@ -154,3 +154,18 @@ def test_radiated_power_counts_skin_tops_not_the_facets_under_them(coarse_sphere
     sig = b.emissivity * thermal.SIGMA_SB
     expected = float((sig * Tf[~on] ** 4 * b.surface.areas[~on]).sum() + (sig * b.skins.T[:, 0] ** 4 * b.skins.area).sum())
     assert b.radiated_power() == pytest.approx(expected, rel=1e-12)
+
+
+def test_an_element_its_skins_drained_dies(coarse_sphere_mesh):
+    """Skins draw an element down to PHI_DEATH only to rounding; a few ulps above it the element must still die and
+    hand its remainder to its skins (Task 7 review ruling)."""
+    b = make_body(coarse_sphere_mesh)
+    start_at(b, 860.0)
+    b._create_skins(b.solver.temperature())
+    e = b.surface.owner[0]
+    b.phi[e] = body.PHI_DEATH * (1.0 + 1e-13)
+    b.solver.set_fractions(b.phi)
+    b.mass0, b.energy0 = b.mass(0.0), b.energy()
+    b.advance(0.5, 0.5, uniform(b, 1.5e6))
+    assert not b.mesh.active[e]
+    assert_books(b)
