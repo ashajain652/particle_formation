@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .material import MELT_RAMP
 from .thermal import SIGMA_SB
 
 SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}  # m, the presets' cell sizes (spec section 11.1)
@@ -20,7 +21,9 @@ NEWTON_TOL = 1.0e-6              # K: a sub-step has converged when no cell move
 NEWTON_MAX = 40
 LINE_SEARCH_MAX = 12           # halvings of a Newton step before it is taken anyway
 DZ_FLOOR = 1.0e-12               # m: an emptied cell conducts as if this thin (it holds no heat)
-MAX_THICKNESS_FACTOR = 2.0   # a skin holds at most this multiple of its target thickness of refrozen liquid (spec 5.4)
+MAX_THICKNESS_FACTOR = 2.0       # the resolution bound (spec 5.4, "Thickness bounds"): above this multiple of its target
+                                 # thickness a skin's cells are too coarse for the melt layer, so it returns its bottom
+                                 # metal to its element where the element has room (MeltingBody._return_from_skins)
 
 
 @dataclass
@@ -51,6 +54,7 @@ class SkinBook:
     drawn: np.ndarray        # metal drawn from the element below
     drawn_H: np.ndarray      # the enthalpy that metal brought
     L: np.ndarray            # the liquid on each top node after the pass
+    frozen: np.ndarray       # liquid frozen into the skin's top cell (spec 5.4, freeze-back)
 
 
 def thomas(sub, diag, sup, rhs):
@@ -102,6 +106,15 @@ class SkinField:
         self.m = np.zeros((0, self.nc))
         self.H = np.zeros((0, self.nc))
         self.T = np.zeros((0, self.nc))
+        # freeze-back (spec 5.4): liquid on a top node below T_low = T_feed - 2 MELT_RAMP, the bottom of the feed ramp,
+        # freezes into the top cell; h(T_low) and h_l(T_low) are fixed by the material, so they are computed once
+        self.T_low = self.h_low = self.hl_low = None
+        if material.melts:
+            self.T_low = material.T_feed - 2.0 * MELT_RAMP
+            self.h_low = float(material.enthalpy(self.T_low))
+            self.hl_low = float(material.enthalpy_liquid(self.T_low))
+            if not self.hl_low - self.h_low > 0.0:
+                raise ValueError("freeze-back needs h_l(T_low) > h(T_low): the material releases no latent heat at T_feed - 2 MELT_RAMP")
 
     # -- books ------------------------------------------------------------------------------------------------------
     @property
@@ -181,6 +194,27 @@ class SkinField:
         self.equilibrate_top(rows, L_after, E)
         self.remap(rows, L_after)
 
+    def freeze_top(self, L):
+        """Freeze-back, limited by the top node's energy (spec 5.4, decided 2026-10-08), for every skin; L [kg] is the
+        liquid on each top node. Where the node -- the top cell's metal m0 and the liquid on it, at one temperature -- has
+        fallen below T_low = T_feed - 2 MELT_RAMP, the bottom of the feed ramp, liquid freezes into the top cell with the
+        node's energy E held fixed: as much as leaves the node exactly at T_low,
+            x = (m0 h(T_low) + L h_l(T_low) - E) / (h_l(T_low) - h(T_low)),
+        or all of it if even then the node stays colder. h_l - h at T_low is the latent heat a kilogram gives up by
+        freezing there; it stays in the node, and the following sub-steps' conduction carries it into the skin, so the
+        conduction sets the rate of solidification and no thickness enters the rule. Between T_low and T_feed the liquid
+        neither freezes nor feeds: the ramp is a dead band. Skins that freeze are remapped onto equal cells; the others
+        are left as they are. Returns (frozen, L_new) [kg] per skin."""
+        L = np.array(L, dtype=float)
+        if not self.n or self.T_low is None:
+            return np.zeros(self.n), L
+        E = self.top_energy(np.arange(self.n), L)
+        x = np.clip((self.m[:, 0] * self.h_low + L * self.hl_low - E) / (self.hl_low - self.h_low), 0.0, L)
+        some = np.flatnonzero(x > 0.0)
+        if some.size:
+            self.refreeze_top(some, x[some], (L - x)[some])
+        return x, L - x
+
     # -- rezoning ---------------------------------------------------------------------------------------------------
     def _rezone(self, rows, start, D, hD, S=None, S_drawn=1.0):
         """Rows' columns below mass coordinate `start` [kg from the top], with D [kg] of metal added at the bottom at
@@ -233,6 +267,26 @@ class SkinField:
         self.m[rows, -1] += mass
         self.H[rows, -1] += H
         self.remap(rows, L)
+
+    def take_bottom(self, rows, mass, L):
+        """Metal `mass` [kg] (0 <= mass < the column's mass) leaves the bottom of `rows` (distinct rows; the return of a
+        skin's metal above MAX_THICKNESS_FACTOR times its target thickness to its element, spec 5.4 "Thickness bounds").
+        The top M - mass stays, rezoned onto nc equal cells as `_rezone` does (the cumulative enthalpy is linear within
+        each old cell and the new cells' enthalpies are exact differences of it); L [kg] is the liquid on the top nodes,
+        whose energy stays with the node. Returns the enthalpy [J] that left with the metal, per row: what stays and what
+        left add up to the column's enthalpy before."""
+        rows = np.asarray(rows, dtype=np.int64)
+        if not rows.size:
+            return np.zeros(0)
+        m, H = self.m[rows], self.H[rows]
+        keep = m.sum(axis=1) - np.asarray(mass, dtype=float)
+        E_liq = L * self.material.enthalpy_liquid(self.T[rows, 0])
+        cH = cumulative(m, H, keep[:, None] * np.linspace(0.0, 1.0, self.nc + 1)[None, :])
+        cH[:, 0] = 0.0
+        H_new = np.diff(cH, axis=1)
+        taken = H.sum(axis=1) - H_new.sum(axis=1)
+        self._set_cells(rows, np.repeat((keep / self.nc)[:, None], self.nc, axis=1), H_new, L, E_liq)
+        return taken
 
     # -- depths -----------------------------------------------------------------------------------------------------
     def depth_above(self, T_level):
@@ -407,8 +461,8 @@ class SkinField:
         """The macro step's sub-steps (spec section 6). T_b1=None: the trial pass, on a copy, base held at T_b0, returning
         the base law (a, b) -- q_b(T) = a + b T [W/m2] of heat into the 3D model -- from the pass's base energy and its
         derivative with respect to the base temperature. Otherwise the real pass with the base held at T_b1, the 3D
-        model's end-of-step facet temperature (what its backward-Euler step assumed for the boundary): feeds, draws and
-        returns a SkinBook."""
+        model's end-of-step facet temperature (what its backward-Euler step assumed for the boundary): feeds, draws,
+        freezes back and returns a SkinBook. Each sub-step conducts, feeds and draws, then freezes back (spec 7.1)."""
         n = self.n
         N = max(1, int(math.ceil(dt / self.settings.substep - 1e-9)))
         h = dt / N
@@ -417,13 +471,16 @@ class SkinField:
         T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(n)
         L = np.array(L, dtype=float)
         avail = np.array(avail, dtype=float)
-        book = SkinBook(*(np.zeros(n) for _ in range(7)), L)
+        book = SkinBook(*(np.zeros(n) for _ in range(7)), L, np.zeros(n))
         sens = (np.zeros((n, self.nc)), np.zeros(n)) if trial else None
         for _ in range(N):
             E_top, E_rad, E_base, sens = self.conduct(h, q_top, T_amb, emissivity, T_b, L, sens=sens)
             to_film, to_deep, drawn, drawn_H, L, S = self.feed_and_draw(L, room, avail, T_b, None if sens is None else sens[0])
             if sens is not None:
                 sens = (S, sens[1])
+            # freeze-back (spec 5.4). In the trial pass the sensitivity S is not rezoned for it -- remap does not carry
+            # S -- so the law ignores how freezing moves the cells; that error is the interface mismatch's to absorb
+            frozen, L = self.freeze_top(L)
             avail = avail - drawn
             book.E_top += E_top
             book.E_rad += E_rad
@@ -432,6 +489,7 @@ class SkinField:
             book.to_deep += to_deep
             book.drawn += drawn
             book.drawn_H += drawn_H
+            book.frozen += frozen
         book.L = L
         if trial:
             self.set_state(saved)

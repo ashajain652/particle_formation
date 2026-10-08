@@ -267,7 +267,81 @@ def test_the_real_pass_closes_its_books():
     M0 = f.mass()
     book = f.advance(0.5, q, 0.0, eps, T_b0, L, room, avail, T_b1=T_b0 + np.array([3.0, 1.0]))
     after = sum(node_total(f, i, book.L[i]) for i in range(2))
+    # freezing keeps the top node's energy, so the energy identity does not see it; the masses do
     assert after - before == pytest.approx(float((book.E_top - book.E_rad - book.E_base + book.drawn_H).sum()), rel=1e-12)
-    assert f.mass() + float((book.to_film + book.to_deep).sum()) == pytest.approx(M0 + float(book.drawn.sum()), rel=1e-13)
-    assert np.allclose(book.L, L + book.to_film + book.to_deep, rtol=1e-13)
-    assert (book.to_film > 0.0).all() and book.to_deep[1] > 0.0 and (book.drawn > 0.0).all()
+    assert f.mass() + float((book.to_film + book.to_deep - book.frozen).sum()) == pytest.approx(
+        M0 + float(book.drawn.sum()), rel=1e-13)
+    assert np.allclose(book.L, L + book.to_film + book.to_deep - book.frozen, rtol=1e-13)
+    assert (book.to_film > 0.0).all() and book.to_deep[1] > 0.0 and (book.drawn > 0.0).all() and (book.frozen >= 0.0).all()
+
+
+# -- freeze-back on the sub-steps and the return of metal above 2s (spec 5.4, decided 2026-10-08) ---------------------
+def top_at(f, T0):
+    """Every skin's top cell at T0 [K], the cells below as they were."""
+    f.T[:, 0] = T0
+    f.H[:, 0] = f.m[:, 0] * f.material.enthalpy(f.T[:, 0])
+
+
+def test_freeze_top_stops_where_the_node_reaches_the_ramp():
+    """Liquid on a top node below T_low = T_feed - 2 MELT_RAMP freezes into the top cell as far as the node's energy
+    allows: until the node reaches T_low, or all of it if even then the node stays colder; a row with nothing to freeze is
+    left as it is. The binding case starts near the ramp: at 850 K ten top cells of liquid all freeze, because liquid
+    that far below the liquidus still holds its latent heat and warming it to T_low takes more than freezing releases."""
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    T_low = mat.T_feed - 2.0 * material.MELT_RAMP
+    f = field(mat)
+    top_at(f, 900.0)
+    L = np.array([10.0 * f.m[0, 0], 0.0, 0.0])
+    before, M = node_total(f, 0, L[0]), f.m[0].sum() + L[0]
+    untouched = tuple(a[1].copy() for a in (f.m, f.H, f.T))
+    frozen, L_new = f.freeze_top(L)
+    assert 0.0 < frozen[0] < L[0] and frozen[1] == 0.0 and L_new[0] == pytest.approx(L[0] - frozen[0], rel=1e-14)
+    assert f.T[0, 0] == pytest.approx(T_low, abs=1e-6)
+    assert node_total(f, 0, L_new[0]) == pytest.approx(before, rel=1e-12)
+    assert f.m[0].sum() + L_new[0] == pytest.approx(M, rel=1e-12)
+    assert np.allclose(f.m[0], f.m[0].mean(), rtol=1e-12)                 # remapped onto equal cells
+    assert all(np.array_equal(a, b) for a, b in zip(untouched, (f.m[1], f.H[1], f.T[1])))
+    # a little liquid on a very cold top: all of it freezes, and the node stays at or below T_low
+    f = field(mat)
+    top_at(f, 760.0)
+    L = np.array([0.1 * f.m[0, 0], 0.0, 0.0])
+    before, M = node_total(f, 0, L[0]), f.m[0].sum() + L[0]
+    frozen, L_new = f.freeze_top(L)
+    assert frozen[0] == L[0] and L_new[0] == 0.0
+    assert f.T[0, 0] <= T_low
+    assert node_total(f, 0, 0.0) == pytest.approx(before, rel=1e-12) and f.m[0].sum() == pytest.approx(M, rel=1e-12)
+
+
+def test_no_freeze_in_the_dead_band():
+    """Between T_low (906 K for Scheil) and T_feed (910 K) the liquid on a top node neither freezes nor feeds."""
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    assert mat.T_feed - 2.0 * material.MELT_RAMP < 908.0 < mat.T_feed
+    f = field(mat)
+    top_at(f, 908.0)
+    L = np.full(3, 5.0 * f.m[0, 0])
+    before = f.state()
+    frozen, L_new = f.freeze_top(L)
+    assert (frozen == 0.0).all() and np.array_equal(L_new, L)
+    assert all(np.array_equal(a, b) for a, b in zip(before, f.state()))
+    to_film, to_deep, _, _, _, _ = f.feed_and_draw(L, np.full(3, np.inf), np.zeros(3), np.full(3, 820.0))
+    assert (to_film + to_deep == 0.0).all()
+
+
+def test_take_bottom_conserves_and_keeps_the_top():
+    """Metal leaves the bottom of a column (the resolution device, spec 5.4 "Thickness bounds"): the rest stays on equal
+    cells, mass and enthalpy split exactly, and the top node with its liquid is as it was."""
+    f = field()
+    mu = f.m[0, 0]
+    L = np.array([3.0 * mu, 0.0, 1e-9])
+    rows, mass = np.array([0, 2]), np.array([mu, 2.5 * mu])
+    before = [node_total(f, i, L[i]) for i in range(3)]
+    M, T0, H_last = f.m.sum(axis=1), f.T[:, 0].copy(), f.H[0, -1]
+    untouched = tuple(a[1].copy() for a in (f.m, f.H, f.T))
+    H = f.take_bottom(rows, mass, L[rows])
+    assert H[0] == pytest.approx(H_last, rel=1e-12)                       # one cell's worth: the bottom cell's enthalpy
+    for k, i in enumerate(rows):
+        assert f.m[i].sum() == pytest.approx(M[i] - mass[k], rel=1e-13)
+        assert np.allclose(f.m[i], (M[i] - mass[k]) / f.nc, rtol=1e-13)    # equal cells
+        assert node_total(f, i, L[i]) + H[k] == pytest.approx(before[i], rel=1e-12)
+        assert f.T[i, 0] == pytest.approx(T0[i], abs=1e-9)
+    assert all(np.array_equal(a, b) for a, b in zip(untouched, (f.m[1], f.H[1], f.T[1])))

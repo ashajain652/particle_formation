@@ -10,12 +10,17 @@ from test_reentry_model_coupled import MASS_100MM, simulator
 pytest.importorskip("cantera")
 
 DEV = skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], substep=0.05)
+# The 3D step solved directly: the default AMG-preconditioned CG stops at a relative residual of 1e-10, which leaves
+# 1e-8 to 1e-7 of a 0.5 s step's heat unbooked on a body held in the mushy range (measured at 880-900 K with and without
+# skins) -- more than assert_books allows, and enough to hide an error in the skins' books. Solved directly, the same
+# steps close to about 1e-13, so the energy check sees the skins' books.
+EXACT = dict(linear_solver="direct")
 
 
-def make_body(the_mesh, surface_model="skin", name="AA7075_scheil", solver="skfem", **settings):
+def make_body(the_mesh, surface_model="skin", name="AA7075_scheil", solver="skfem", solver_options=None, **settings):
     mat = material.Material.from_drama_json(name)
     m = mesh.VolumeMesh(the_mesh.points, the_mesh.tets, dict(the_mesh.params), the_mesh.element_layer.copy())
-    return body.MeltingBody(m, mat, thermal.thermal_solver(solver), MASS_100MM,
+    return body.MeltingBody(m, mat, thermal.thermal_solver(solver, **(solver_options or {})), MASS_100MM,
                             settings=body.MeltSettings(surface_model=surface_model, skin=DEV, **settings))
 
 
@@ -175,21 +180,68 @@ def test_an_element_its_skins_drained_dies(coarse_sphere_mesh):
     assert_books(b)
 
 
-def test_freeze_back_into_a_skin_stops_at_twice_its_thickness(coarse_sphere_mesh):
-    """Liquid piled on a cold skin refreezes into it only up to twice the target thickness; the rest stays liquid
-    (final review ruling)."""
-    b = make_body(coarse_sphere_mesh)
-    start_at(b, 760.0)
+FREEZE_T0 = 880.0     # K: below T_low (906 K) and near enough to it for the top node's energy to bind. From 760 K or 850 K
+                      # all ten skin-masses freeze: liquid that far below the liquidus still holds its latent heat, and
+                      # warming it to T_low takes more than freezing releases there (measured: 100 % at both, 68 % here)
+
+
+def test_freeze_back_into_a_skin_is_limited_by_energy(coarse_sphere_mesh):
+    """Liquid piled on a skin whose top is below the feed ramp freezes into it on the sub-steps only as far as the top
+    node's energy allows (spec 5.4, decided 2026-10-08): some freezes, the rest stays liquid, and the books close."""
+    b = make_body(coarse_sphere_mesh, solver_options=EXACT)
+    start_at(b, FREEZE_T0)
     b._create_skins(b.solver.temperature())
     face = b.surface.face_ids[0]
     s = DEV.thickness
-    b.m_f[0] = 10.0 * b.material.rho * b.surface.areas[0] * s
+    L0 = 10.0 * b.material.rho * b.surface.areas[0] * s
+    b.m_f[0] = L0
     b.solver.set_film_mass(b._film_nodal())
     b.mass0, b.energy0 = b.mass(0.0), b.energy()
     b.advance(0.5, 0.5, uniform(b, 1e5))
-    r = b.skins.rows_of(np.array([face]))[0]
     p = b.patch_of_face[face]
-    assert r >= 0 and p >= 0
-    assert b.skins.thickness()[r] <= skin.MAX_THICKNESS_FACTOR * s * (1.0 + 1e-9)
-    assert b.m_f[p] + b.m_d[p] > 0.0
+    assert p >= 0 and b.skin_frozen_mass > 0.0
+    assert b.m_f[p] + b.m_d[p] > 0.0                                   # not all of it
+    assert b.skin_frozen_mass == pytest.approx(L0 - (b.m_f[p] + b.m_d[p]), rel=1e-9)
+    assert b.frozen_mass == pytest.approx(b.skin_frozen_mass, rel=1e-14)  # one counter of re-solidified liquid
+    assert_books(b)
+
+
+def thick_skin(the_mesh, full):
+    """A body at 760 K with skins, the skin of the patch whose element has the most metal per unit of its area made
+    2.5 s thick by moving metal from that element into its bottom (at the element's own enthalpy, so nothing is
+    booked); with `full`, the element is then made full (phi = 1). The books are reckoned from there."""
+    b = make_body(the_mesh, solver_options=EXACT)
+    start_at(b, 760.0)
+    b._create_skins(b.solver.temperature())
+    owner = b.surface.owner
+    p = int(np.argmax(b.phi[owner] * b.element_mass[owner] / b.surface.areas))
+    r, e = b.skin_of_patch[p], owner[p]
+    extra = 1.5 * b.material.rho * b.skins.area[r] * DEV.thickness
+    h_e = float(b.material.enthalpy(b.solver.temperature())[b.mesh.tets[e]].mean())
+    b.skins.add_bottom(np.array([r]), np.array([extra]), np.array([extra * h_e]), np.array([0.0]))
+    b.phi[e] = 1.0 if full else b.phi[e] - extra / b.element_mass[e]
+    assert b.phi[e] > 2.0 * body.PHI_DEATH
+    b.solver.set_fractions(b.phi)
+    b.mass0, b.energy0 = b.mass(0.0), b.energy()
+    return b, b.surface.face_ids[p], e
+
+
+def test_a_skin_above_twice_its_thickness_returns_metal_to_its_element(coarse_sphere_mesh):
+    """Spec 5.4, "Thickness bounds": a skin above 2s returns its bottom metal in excess of 2s to its element where the
+    element has room; where the element is full, the skin keeps it and the event is counted."""
+    s2 = skin.MAX_THICKNESS_FACTOR * DEV.thickness
+    b, face, e = thick_skin(coarse_sphere_mesh, full=False)
+    r = b.skins.rows_of(np.array([face]))[0]
+    assert b.skins.thickness()[r] > 1.2 * s2
+    phi0 = b.phi[e]
+    b.advance(0.5, 0.5, uniform(b, 1e5))
+    r = b.skins.rows_of(np.array([face]))[0]
+    assert r >= 0 and b.skins.thickness()[r] <= s2 * (1.0 + 1e-9)
+    assert b.skin_returned_mass > 0.0 and b.phi[e] > phi0 and b.skin_full_events == 0
+    assert_books(b)
+    b, face, e = thick_skin(coarse_sphere_mesh, full=True)
+    b.advance(0.5, 0.5, uniform(b, 1e5))
+    r = b.skins.rows_of(np.array([face]))[0]
+    assert r >= 0 and b.skins.thickness()[r] > 1.2 * s2                # it kept its metal
+    assert b.skin_returned_mass == 0.0 and b.skin_full_events >= 1 and b.phi[e] == 1.0
     assert_books(b)
