@@ -1235,11 +1235,17 @@ class MeltingBody(ThermalBody):
         return Tf
 
     def radiated_power(self):
-        P = self.solver.radiated_power(self.T_ambient)
-        if getattr(self, "skins", None) is not None and self.skins.n:   # skins radiate from their tops, at patch area
-            T0 = self.skins.T[:, 0]
-            P += float((self.emissivity * SIGMA_SB * (T0 ** 4 - self.T_ambient ** 4) * self.skins.area).sum())
-        return P
+        """Radiated power [W]. With skins (sub-plan 18) the facets under skins do not radiate -- their skins' tops do,
+        at patch area -- read from the current skin index rather than from the solver's mask of its last step, which
+        the surface refresh at the end of every melt step clears."""
+        sk = getattr(self, "skins", None)
+        if sk is None or not sk.n:
+            return self.solver.radiated_power(self.T_ambient)
+        Tf = self.surface.facet_mean(self.solver.temperature())
+        bare = self.skin_of_patch < 0
+        P = float((self.emissivity * SIGMA_SB * (Tf[bare] ** 4 - self.T_ambient ** 4) * self.surface.areas[bare]).sum())
+        T0 = sk.T[:, 0]
+        return P + float((self.emissivity * SIGMA_SB * (T0 ** 4 - self.T_ambient ** 4) * sk.area).sum())
 
     def film_temperature(self):
         """The film's temperature per patch: the surface's own (the film is thermally thin, class docstring)."""
