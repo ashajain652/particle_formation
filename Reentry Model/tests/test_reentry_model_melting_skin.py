@@ -203,6 +203,8 @@ def test_freeze_back_into_a_skin_is_limited_by_energy(coarse_sphere_mesh):
     assert b.m_f[p] + b.m_d[p] > 0.0                                   # not all of it
     assert b.skin_frozen_mass == pytest.approx(L0 - (b.m_f[p] + b.m_d[p]), rel=1e-9)
     assert b.frozen_mass == pytest.approx(b.skin_frozen_mass, rel=1e-14)  # one counter of re-solidified liquid
+    # the liquid left waits at T_low to freeze in the next sub-steps: not film the model cannot freeze (review F2-1)
+    assert b.film_frozen_fraction() == 0.0
     assert_books(b)
 
 
@@ -236,8 +238,9 @@ def test_a_skin_above_twice_its_thickness_returns_metal_to_its_element(coarse_sp
     phi0 = b.phi[e]
     b.advance(0.5, 0.5, uniform(b, 1e5))
     r = b.skins.rows_of(np.array([face]))[0]
-    assert r >= 0 and b.skins.thickness()[r] <= s2 * (1.0 + 1e-9)
-    assert b.skin_returned_mass > 0.0 and b.phi[e] > phi0 and b.skin_full_events == 0
+    assert r >= 0 and b.skins.thickness()[r] == pytest.approx(s2, rel=1e-9)          # back at the bound, not below it
+    assert b.skin_returned_mass > 0.0 and b.skin_full_events == 0
+    assert b.phi[e] - phi0 == pytest.approx(b.skin_returned_mass / b.element_mass[e], rel=1e-12)
     assert_books(b)
     b, face, e = thick_skin(coarse_sphere_mesh, full=True)
     b.advance(0.5, 0.5, uniform(b, 1e5))
@@ -245,3 +248,23 @@ def test_a_skin_above_twice_its_thickness_returns_metal_to_its_element(coarse_sp
     assert r >= 0 and b.skins.thickness()[r] > 1.2 * s2                # it kept its metal
     assert b.skin_returned_mass == 0.0 and b.skin_full_events >= 1 and b.phi[e] == 1.0
     assert_books(b)
+
+
+def test_round_off_above_twice_the_thickness_is_not_an_excess(coarse_sphere_mesh):
+    """A skin returned to 2s sits at it only to rounding; an excess below 1e-9 of the bound -- the margin of
+    skin_thick_count -- is none: nothing is returned where the element has room, and no event is counted where it is
+    full (review F2-2)."""
+    for full in (False, True):
+        b = make_body(coarse_sphere_mesh)
+        start_at(b, 760.0)
+        b._create_skins(b.solver.temperature())
+        r, e = b.skin_of_patch[0], b.surface.owner[0]
+        bound = b.material.rho * b.skins.area[r] * skin.MAX_THICKNESS_FACTOR * DEV.thickness
+        T = b.solver.temperature()
+        h_e = b.material.enthalpy(T)[b.mesh.tets].mean(axis=1)
+        extra = bound * (1.0 + 1e-15) - b.skins.m[r].sum()
+        b.skins.add_bottom(np.array([r]), np.array([extra]), np.array([extra * h_e[e]]), np.array([0.0]))
+        assert b.skins.m[r].sum() > bound                                  # above the bound by round-off only
+        b.phi[e] = 1.0 if full else 0.5
+        b._return_from_skins(h_e)
+        assert b.skin_full_events == 0 and b.skin_returned_mass == 0.0

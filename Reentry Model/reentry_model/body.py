@@ -1183,7 +1183,12 @@ class MeltingBody(ThermalBody):
         sk, s = self.skins, self.surface
         p = np.flatnonzero(self.skin_of_patch >= 0)
         r, e = self.skin_of_patch[p], s.owner[p]
-        excess = np.maximum(sk.m[r].sum(axis=1) - self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness, 0.0)
+        bound = self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness
+        excess = sk.m[r].sum(axis=1) - bound
+        # a skin returned to the bound sits at it only to rounding (up to about 4e-16 of it above): an excess below 1e-9
+        # of the bound, skin_thick_count's margin, is none -- else the next step returns 1e-21 kg, or counts a full
+        # event on a full element. What is given is still measured from the bound itself.
+        excess = np.where(excess > 1e-9 * bound, excess, 0.0)
         if not excess.any():
             return
         skin_area = np.bincount(e, s.areas[p], self.mesh.n_elements)
@@ -1323,11 +1328,17 @@ class MeltingBody(ThermalBody):
     def film_frozen_fraction(self):
         """Fraction of the film sitting on patches below the feed ramp: mass the enthalpy calls solid but the model
         still treats as liquid, because the mesh cannot grow a crust outside itself and its own element may be gone
-        (section 9.5). It is the honest measure of that limitation, so it is recorded every step."""
-        total = float(self.m_f.sum())
+        (section 9.5). It is the honest measure of that limitation, so it is recorded every step. Skin patches are left
+        out of both sums (sub-plan 18): their liquid freezes in the skins' sub-steps as far as the top node's energy
+        allows, and what is left waits at T_low -- where the feed fraction is zero -- to freeze in the next ones, so it
+        is not film the model cannot freeze."""
+        m_f = self.m_f
+        if getattr(self, "skins", None) is not None and self.skins.n:
+            m_f = np.where(self.skin_of_patch >= 0, 0.0, m_f)
+        total = float(m_f.sum())
         if total <= 0.0:
             return 0.0
-        return float(self.m_f[self.material.feed_fraction(self.film_temperature()) <= 0.0].sum() / total)
+        return float(m_f[self.material.feed_fraction(self.film_temperature()) <= 0.0].sum() / total)
 
     @staticmethod
     def _mean_conjugate_um(delta_m):
