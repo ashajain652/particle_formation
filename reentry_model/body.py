@@ -287,6 +287,9 @@ class MeltingBody(ThermalBody):
         self._draw_m, self._draw_H = np.zeros(mesh.n_elements), np.zeros(mesh.n_elements)   # metal the skins drew this step
         self.skins_created = self.skin_short_events = self.interface_repeats = 0
         self.skin_drawn_mass = self.skin_handover_mass = self.last_mismatch = 0.0
+        self.skin_frozen_mass = 0.0                                # kg of liquid frozen into skins (spec 5.4, freeze-back)
+        self.skin_returned_mass = 0.0                              # kg of metal skins above 2s returned to their elements
+        self.skin_full_events = 0                                  # skin-steps above 2s whose element had too little room
         self.skin_wall = 0.0                                       # s of wall time in the skins' passes (trial and real)
         self.last_skin_shortfall = 0.0                             # kg of metal the skins lack below their target
         self._step_flow = None
@@ -479,6 +482,15 @@ class MeltingBody(ThermalBody):
         self._dropped_total = getattr(self, "_dropped_total", 0.0) + res.Q_dropped * dt
         self.m_f[p] = self.m_f[p] + book.to_film
         self.m_d[p] = self.m_d[p] + book.to_deep
+        # the liquid the sub-steps froze into the skins leaves the patch's accounts (spec 5.4): the deep liquid, which
+        # lies against the solid, first, then the film; both ride the same top node, so the split books nothing
+        from_deep = np.minimum(self.m_d[p], book.frozen)
+        from_film = np.minimum(self.m_f[p], book.frozen - from_deep)
+        self.m_d[p] = np.maximum(self.m_d[p] - from_deep, 0.0)
+        self.m_f[p] = np.maximum(self.m_f[p] - from_film, 0.0)
+        frozen = float(book.frozen.sum())
+        self.skin_frozen_mass += frozen
+        self.frozen_mass += frozen                                 # the model's one re-solidified counter, as with elements
         e = self.surface.owner[p]
         np.add.at(self._draw_m, e, book.drawn)
         np.add.at(self._draw_H, e, book.drawn_H)
@@ -550,6 +562,8 @@ class MeltingBody(ThermalBody):
             self.phi = self.phi - self._draw_m / self.element_mass
             self._defer_to_elements(self._draw_m * h_e - self._draw_H)     # the element keeps what the drawn metal left
             self._draw_m[:], self._draw_H[:] = 0.0, 0.0
+        if self.skins is not None and self.skins.n:              # skins above 2s give their bottom metal back
+            self._return_from_skins(h_e)
         # (i) feed and (iv) re-solidification, netted. The feed hands the molten fraction of what each element still
         # holds to the film (f_feed of phi_e, so an element that is a quarter molten hands over a quarter of its
         # remainder); the mirror rule hands back the fraction of the film that has fallen below the ramp. What stops
@@ -574,10 +588,8 @@ class MeltingBody(ThermalBody):
         gross = np.minimum(f * self.phi, cap) * self.element_mass
         # the liquid on each patch below the ramp re-solidifies: the film and the deep liquid beneath it alike
         solid = (1.0 - mat.feed_fraction(self.film_temperature())) * (self.m_f + self.m_d) if s.removal != "instant" else np.zeros(0)
-        skin_solid = None
-        if self.skins is not None and self.skins.n and solid.size:      # on a skin it freezes into the skin's top cell
-            on = self.skin_of_patch >= 0
-            skin_solid, solid = np.where(on, solid, 0.0), np.where(on, 0.0, solid)
+        if self.skins is not None and self.skins.n and solid.size:      # on a skin it freezes in the skins' sub-steps
+            solid = np.where(self.skin_of_patch >= 0, 0.0, solid)          # (spec 5.4), never into the element
         want = np.bincount(self.surface.owner, solid, self.mesh.n_elements) if solid.size else np.zeros(self.mesh.n_elements)
         net = gross - want
         fed, want = np.maximum(net, 0.0), np.maximum(-net, 0.0)
@@ -610,8 +622,6 @@ class MeltingBody(ThermalBody):
                 h_p = self.film_enthalpy(h_liq)
             released = self._film_and_spray(t, dt, state, h_p, flow, delta_m)
         frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
-        if skin_solid is not None:
-            frozen += self._freeze_into_skins(skin_solid)
         # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed --
         # and, with the molten cascade (amendment of 2026-10-03), are fed within the step if the death exposed them
         # fully molten (`_feed_exposed`), so that they die in the next pass and expose the next
@@ -1161,31 +1171,35 @@ class MeltingBody(ThermalBody):
         if e.any():
             np.add.at(self.pending_load, self.surface.faces.ravel(), np.repeat(e / 3.0, 3))
 
-    def _freeze_into_skins(self, solid):
-        """Liquid on a skin patch whose top has fallen below the feed ramp refreezes into the skin's top cell, the node's
-        energy unchanged (spec 7.1 (6)); the deep liquid, against the solid, goes first. A skin takes at most what
-        brings it to MAX_THICKNESS_FACTOR times its target thickness (spec 5.4's upper bound); the excess stays liquid on
-        the patch, as the element model's phi = 1 cap leaves film (final review ruling). Returns the mass [kg]."""
+    def _return_from_skins(self, h_e):
+        """The resolution device (spec 5.4, "Thickness bounds"): a skin above MAX_THICKNESS_FACTOR times its target
+        thickness has cells too coarse for the melt layer, so it returns its bottom metal in excess of that to its
+        element where the element has room (phi_e < 1), the room shared among the element's skin patches by area. The
+        metal leaves at the enthalpy of the bottom cells and arrives in the element at its mean nodal enthalpy h_e [J/kg];
+        the difference is booked to the element's nodes, as with the draw. Where the element is full the skin keeps the
+        metal and the event is counted. It moves metal between two accounts of the same solid and changes neither how
+        much freezes nor how much melts."""
         from .skin import MAX_THICKNESS_FACTOR
-        sk = self.skins
-        p = np.flatnonzero(solid > 0.0)
-        if not p.size:
-            return 0.0
-        r = self.skin_of_patch[p]
-        room = np.maximum(self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness
-                          - sk.m[r].sum(axis=1), 0.0)
-        want = np.minimum(solid[p], room)
-        from_deep = np.minimum(self.m_d[p], want)
-        from_film = np.minimum(self.m_f[p], want - from_deep)
-        taken = from_deep + from_film
-        some = taken > 0.0                                       # a skin with nothing to freeze is left as it is
+        sk, s = self.skins, self.surface
+        p = np.flatnonzero(self.skin_of_patch >= 0)
+        r, e = self.skin_of_patch[p], s.owner[p]
+        excess = np.maximum(sk.m[r].sum(axis=1) - self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness, 0.0)
+        if not excess.any():
+            return
+        skin_area = np.bincount(e, s.areas[p], self.mesh.n_elements)
+        room = np.maximum(1.0 - self.phi[e], 0.0) * self.element_mass[e] * s.areas[p] / skin_area[e]
+        give = np.minimum(excess, room)
+        self.skin_full_events += int(((excess > 0.0) & (give < excess)).sum())
+        some = give > 0.0
         if not some.any():
-            return 0.0
-        p, r, from_deep, from_film, taken = p[some], r[some], from_deep[some], from_film[some], taken[some]
-        self.m_d[p] = self.m_d[p] - from_deep
-        self.m_f[p] = self.m_f[p] - from_film
-        sk.refreeze_top(r, taken, (self.m_f + self.m_d)[p])
-        return float(taken.sum())
+            return
+        p, r, e, give = p[some], r[some], e[some], give[some]
+        H = sk.take_bottom(r, give, (self.m_f + self.m_d)[p])
+        # a new array, as with the draw (the solver may hold the old one until set_fractions); the shares of an
+        # element's room add up to it only to rounding, so phi is held at 1
+        self.phi = np.minimum(self.phi + np.bincount(e, give / self.element_mass[e], self.mesh.n_elements), 1.0)
+        self._defer_to_elements(np.bincount(e, H - give * h_e[e], self.mesh.n_elements))
+        self.skin_returned_mass += float(give.sum())
 
     def _death_to_skins(self, dead, rest, h_e):
         """Dying elements under skins pass their remainder `rest` [kg] into those skins' bottoms, shared by area among
@@ -1610,8 +1624,10 @@ class MeltingBody(ThermalBody):
                 "nonrigid_depth_skin_mean_um": lm.get("nonrigid_depth_skin_mean_um", nan),
                 "skin_wall_s": self.skin_wall,
                 "skin_thickness_max_mm": float(th.max() * 1e3) if th.size else nan,
-                # beyond rounding: a skin refrozen up to the cap sits at it to an ulp or two either side
+                # beyond rounding: a skin that returned its metal down to 2s sits at it to an ulp or two either side
                 "skin_thick_count": float((th > MAX_THICKNESS_FACTOR * sk.settings.thickness * (1.0 + 1e-9)).sum())
                 if th.size else 0.0,
                 "skin_shortfall_kg": self.last_skin_shortfall,
-                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", nan)}
+                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", nan),
+                "skin_frozen_mass_kg": self.skin_frozen_mass, "skin_returned_mass_kg": self.skin_returned_mass,
+                "skin_full_events": float(self.skin_full_events)}
