@@ -1,25 +1,38 @@
 # Resolving the melt layer: a one-dimensional skin under every melting patch (Step 3 amendment) — Design
 
 Date: 2026-10-07
-Status: design for review, awaiting implementation plan
+Status: approved 2026-10-07; revised the same day after facts 88–96 (§1, §2, §12, §14, §17) and while planning and
+checking the plan's code (§5.4, §6.2); implementation plan in sub-plan 18 and the amendments it lists
 Amends: `2026-09-20-melt-spraying-design.md` §8 (melting), §9 (film and spraying) and §10 (geometry and accounting),
 and therefore sub-plans `02-material-properties.md`, `03-thermal-core.md`, `06-melt-film.md`, `07-spraying.md`,
 `09-melting-body.md`, `10-coupled-loop.md`, `13-cli-wiring.md`, `14-verification-runs.md` and `15-documentation.md`.
 Builds on: the Step 3 amendments of 2026-10-02 (deep runoff), 2026-10-03 (molten cascade), 2026-10-05 (seeding;
-runoff flux) and 2026-10-06 (rigid substrate, facts 78–87 — uncommitted when this was written; this design assumes it
-is committed first). Fits, but does not depend on: `2026-09-27-surface-recession-remeshing-design.md` (sub-plans 16 and
+runoff flux), 2026-10-06 (rigid substrate, facts 78–87) and 2026-10-07 (Scheil's curve the melting default, the
+freeze-back round-off fixed, and the switched-step series converging from 0.0125 s, facts 88–96). Fits, but does not depend on: `2026-09-27-surface-recession-remeshing-design.md` (sub-plans 16 and
 17, not yet built). Nothing in Step 1 or Step 2 changes, and a run is bit-identical to today's until the first patch
 reaches the solidus (§5.2). Numbers marked *measured* come from runs of the prototype; numbers marked *estimated* are
 calculations made for this design and are to be measured in build stage 1.
 
 ## 1. Purpose
 
-Step 3's droplet population depends on the macro step and, by every indication, on the surface mesh. Two mechanisms
-were measured (§2): surface elements hand over liquid in pieces about one conjugate depth δ_m thick (the "lumps"), and
-the runoff moves a whole step's film before the spray acts (the "pile-up"). Underneath both lies a resolution fact: the
-first temperature node below the surface sits 4.6 to 17 conjugate depths down on every patch, so the 3D solution cannot
-represent the melt layer that Girin's theory describes, its depth, or where the melting front is within it. Refining
-the 3D mesh to resolve δ_m is unaffordable, because the eroding front recedes through most of the sphere's radius (§2).
+With the rigid-substrate rule and Scheil's curve (facts 78–96), Step 3's droplet population converges in the time
+step: from a 0.0125 s step after the continuum switch the branch split, the median radius by number and the masses are
+within their scatter between seeds, and the droplet count within 2.7 % of the finest step's (facts 92–94). Two problems
+remain, and this design addresses both.
+
+1. **Convergence in space is unknown.** At the fine steps the thick/thin regime test is decided at its threshold: the
+   non-rigid depth under the wet windward patches is a median 0.28–0.34 mm against a conjugate depth δ_m of 0.29 mm, and
+   23–33 % of those patches are thick only because of slurry (fact 94). That depth is read from a linear temperature
+   profile across a surface element whose first interior node sits 4.6 to 17 δ_m down on every patch (§2), so the 3D
+   solution cannot represent the melt layer Girin's theory describes, its depth, or where the melting front lies within
+   it. Whether the converged population moves when the mesh is refined has not been measured; stage 0 (§12.1) measures
+   it before any skin code is built. Refining the 3D mesh until δ_m is resolved is unaffordable, because the eroding
+   front recedes through most of the sphere's radius (§2).
+2. **Cost.** The converged population needs about 0.0125 s steps for the 3D conduction too: 3.7 h of wall time for the
+   100 mm flight to 120 s against 0.37 h at the default 0.5 s, which remains unfit for the droplet population (six times
+   fewer droplets, fact 93). Why coarse steps fail was measured on the earlier model (§2): surface elements hand over
+   liquid in pieces about one δ_m thick (the "lumps"), and the runoff moves a whole step's film before the spray acts
+   (the "pile-up"); both are resolved here at the sub-step, so the 3D conduction can keep the 0.5 s macro step.
 
 This design gives every melting surface patch a **skin**: a one-dimensional column of fine cells, with the patch's
 area, that owns the outermost metal of that patch. The skin resolves the melt layer and the slurry beneath it on its own
@@ -42,10 +55,13 @@ and (6) a droplet population that no longer depends on the macro step or the sur
 | Thin layers fixed to the original surface are unaffordable | Prism layers of 0.1 mm over the 2 mm facets add about 56 000 tetrahedra per layer: 8.5 million to 15 mm deep, 28 million to 50 mm, against today's 177 000. Graded layers (0.1 mm growing 10 % per layer) reach 50 mm in about 40 layers but are already about 1 mm thick at 10 mm depth. | estimated 2026-10-07 |
 | What builds the films that go to the thick branch | Probe run at 0.0125 s after the continuum switch, 49.5–80 s: films deeper than δ_m at release carry 19.5 % of the released mass (median 1.43 δ_m); the liquid below the film adds nothing to the branch test at this step. For 63 % of that mass the patch held no film at its previous spray stage. By route: runoff converging onto the patch 47 %, the patch's own surface element's feed 32 %, hand-over at a death 10 %, carry-over 11 %, deep surfacing 0.2 %, molten cascade about 0. The feed lumps are about a quarter of large exposed elements (2–6 times the median facet area), about 1.2 δ_m at once. | measured 2026-10-06 (film-provenance probe; not yet recorded as Step 3 facts) |
 | The lumps do not shrink with the step | Over 49.5–59.5 s, the films deeper than δ_m at release have a median 1.47–1.54 δ_m and a largest single arrival of 1.10–1.15 δ_m at every step from 0.05 to 0.00625 s; their share of the mass falls 37.1, 27.6, 20.4, 15.8 %; the surface elements' feed events of at least δ_m fall 653, 462, 368, 322 per second (29, 20, 13 % fewer per halving). Gross feed and freeze-back both rise with every halving (feed 14.5 to 21.8 g/s, freeze-back 1.5 to 8.5 g/s); their difference stays near the release, about 13.3 g/s. | measured 2026-10-06 (same probe) |
-| Shrinking the step alone does not converge | Fixed-flux model, 100 mm flight, switched at 49.5 s to 0.05/0.025/0.0125/0.00625 s: droplets 87.7, 106.6, 126.5, 141.2 million; thick share 47.0, 35.3, 25.1, 20.5 %; the last halving still moves the count 11.6 % and the thick share 4.6 points, 27 and 29 times their scatter between seeds. | facts 75 and 77 |
+| Shrinking the step alone did not converge (linear law, rule off) | Fixed-flux model, 100 mm flight, switched at 49.5 s to 0.05/0.025/0.0125/0.00625 s: droplets 87.7, 106.6, 126.5, 141.2 million; thick share 47.0, 35.3, 25.1, 20.5 %; the last halving still moves the count 11.6 % and the thick share 4.6 points, 27 and 29 times their scatter between seeds. | facts 75 and 77 |
 | The release is limited by supply | The spray's capacity exceeds the melt supply by hundreds of times; the spray instability grows in a median 0.16–0.19 ms. | facts 9 and 69 |
 | Film speeds | Wall shear about 30–32 Pa on the windward patches at 60–80 s; a 10 µm film moves at about 0.25 m/s, a layer sheared over δ_m at about 8 m/s, a 1 mm layer under the pressure gradient at about 10 m/s. | measured 2026-10-05; fact 47 |
-| The slurry is deep on the linear law | Under the rigid-substrate rule the non-rigid depth under wet windward patches is a median 8.1 mm on `AA7075_range` and 1.45 mm on `AA7075_scheil`; T_rigid (half liquid) is 829.0 K and 895.10 K. | facts 78, 82 and 84 |
+| The slurry is deep on the linear law | Under the rigid-substrate rule the non-rigid depth under wet windward patches is a median 8.1 mm on `AA7075_range` and 1.45 mm on `AA7075_scheil` (at 0.5 s); T_rigid (half liquid) is 829.0 K and 895.10 K. | facts 78, 82 and 84 |
+| With the rule on and Scheil's curve the series converges from 0.0125 s | `AA7075_scheil` is the melting default. Switched at 49.5 s to 0.05/0.025/0.0125/0.00625 s: sprayed mass 1.1458, 1.1602, 1.1654, 1.1642 kg (0.5 s: 1.1789); droplets 51.4, 69.2, 76.5, 78.6 million (0.5 s: 13.0); thick share of the sprayed mass 80.2, 73.5, 71.2, 71.4 % (0.5 s: 94.8); median radius by number 69.5, 68.5, 68.5, 68.7 µm and by mass 190.4, 188.6, 187.3, 185.8 µm. Scatter between two seeds at 0.0125 s: 0.74 % in count, 0.31 points in thick share, 0.16 % and 0.07 % in the medians, 0.14 % in sprayed mass and 0.53 % in the mass at 120 s. | facts 88, 92 and 93 |
+| At fine steps the regime test sits on its threshold | Under the closure, the non-rigid depth under the thick wet windward patches is a median 0.41, 0.34, 0.30, 0.28 mm at the four fine steps (1.47 mm at 0.5 s) against δ_m of 288–295 µm; 33, 28, 25, 23 % of the wet windward patches are thick only because of slurry. The slurry at fine steps fits inside a 0.4 mm skin. | fact 94 |
+| What the converged series costs | Wall time for the 100 mm flight to 120 s with up to seven runs sharing the eight-core laptop: 0.37 h at 0.5 s, 1.30, 2.14, 3.74 and 5.92 h at the four fine steps. | fact 95 |
 | Slurry viscosity | Li Yageng et al. (2014): η = [0.871 − 0.00849 γ̇^0.74924] exp(3.7311 f_s) Pa·s, 0.87–5.6 Pa·s at low shear rates, measured at f_s = 0.1–0.5 and γ̇ = 61–490 1/s (γ̇ held at most 367 1/s); a log-linear bridge to liquid aluminium's 1.3 mPa·s near the liquidus (labelled, no data). That is 670–4 300 times the liquid. | Step 4 plan §4; semisolid AA7075 report |
 | What a step costs today | About 2.4 s per 0.5 s step on this laptop; 1.2–1.9 s per fine step at 0.0125–0.00005 s. | facts 50 and 76; measured 2026-10-06 |
 | The skin–3D coupling must be implicit | The skin's base conductance is about k/s = 128 W m⁻¹ K⁻¹ / 0.4 mm ≈ 3.2 × 10⁵ W m⁻² K⁻¹; a 3D surface node holds about 2 × 10³ J m⁻² K⁻¹ (ρ c_p ≈ 3.2 × 10⁶ J m⁻³ K⁻¹ over about 0.6 mm). An explicit hand-over is stable only for macro steps below about 6 ms and amplifies a base-temperature error about eighty-fold at 0.5 s. | estimated 2026-10-07 |
@@ -56,8 +72,7 @@ In scope: the skin (§5); its coupling to the 3D conduction in time (§6); the f
 sub-steps (§7); the slurry cascade, switched (§8); deaths, hand-over and remeshing with skins (§9); settings, outputs
 and code layout (§11); verification (§12).
 
-Out of scope, recorded in §14: slurry runoff (slurry moves only by spraying); raising `PHI_DEATH` to 0.50; the choice
-of Step 3's default material law; lateral conduction within skins; a skin that refines anything other than the depth
+Out of scope, recorded in §14: slurry runoff (slurry moves only by spraying); raising `PHI_DEATH` to 0.50; lateral conduction within skins; a skin that refines anything other than the depth
 direction. Step 4's rigid-mesh mechanics and the large-fragment (Spheral) model are not changed; §8.5 records the one
 boundary that moves.
 
@@ -122,14 +137,20 @@ design (§13).
 ### 5.4 Inside a sub-step
 
 The skin's enthalpy equation is solved implicitly on each sub-step (backward Euler, the cells' conductivities at their
-current temperatures, Newton on the enthalpy as the 3D solver does), with the heat flux and radiation at the top and
-the base condition of §6. The film's heat capacity is added to the top cell (§7.2). All skins are solved together: each
+current temperatures, Newton in the temperature with a backtracking line search on each skin's residual), with the heat
+flux and radiation at the top and the base condition of §6. Not the 3D solver's enthalpy-consistent update (revised
+2026-10-07 while checking the plan's code): in 10 µm cells conduction outweighs the heat capacity some five hundred
+times over a 10 ms sub-step, so the cells must move together, and inverting each cell's own h(T) moved neighbours apart
+wherever the Scheil curve's effective heat capacity varies — the iteration stalled at a 0.4 K change on 888 of 2000
+skins. The line search does across a sharp latent ramp what that update did. The film's heat capacity is added to the top cell (§7.2). All skins are solved together: each
 is a tridiagonal system, and the systems are solved side by side in one vectorised sweep.
 
 **Feed.** After conduction, the contiguous cells from the top at or above `T_feed` (the model's existing top-of-ramp
 temperature, 910 K for `AA7075_range`) are liquid. On a patch under Girin's closure, the part within δ_m of the top
 goes to the film and the contiguous liquid deeper than δ_m goes to the deep account, never sprayed (the three-zone rule
-of fact 46). Off the closure there is no δ_m and all of it goes to the film, as today. Partly liquid cells — the slurry
+of fact 46). The reach is measured from the skin's top as a depth of metal, ρ A δ_m, whatever film is already on the
+patch (revised 2026-10-07 while planning: in stage 1 the film accumulates over a whole macro step, and a reach that
+shrank with it would send liquid to the deep account that the shear could reach). Off the closure there is no δ_m and all of it goes to the film, as today. Partly liquid cells — the slurry
 and the mush — stay in the skin.
 
 **Draw.** The skin keeps its thickness by drawing the same mass in at its base from the patch's surface element, at the
@@ -174,18 +195,27 @@ implicit by a linearised flux law solved inside the 3D step:
    temperature T_b⁰ and records the energy E_b⁰ that left its base, and, by one extra tridiagonal solve per sub-step,
    the derivative of that energy with respect to the base temperature, giving a per-patch law
    q_b(T_b) = (E_b⁰ + (∂E_b/∂T_b)(T_b − T_b⁰)) / Δt. The trial pass applies the feed and draw to a copy of the skins'
-   state, so that its base energy reflects them, and then discards the copy: nothing it does is kept.
+   state, so that its base energy reflects them, and then discards the copy: nothing it does is kept. The law's slope
+   is clipped at zero (revised 2026-10-07 while checking the plan's code): with the base inside the top of the mushy
+   range a warmer base can feed more and pass more heat down (a slope of +1.65·10⁵ W/(m² K) was measured), and a law
+   rising with the base temperature would cost the 3D matrix its diagonal dominance. The law is exact at T_b⁰, good to
+   10⁻⁴ per kelvin where nothing feeds, and to about 1 % per kelvin while a skin feeds, because the feed comes in whole
+   cells (measured on single cases while planning); the mismatch below absorbs the rest.
 2. **3D solve.** Each backend applies, on the facets of skin patches, the boundary flux q_b(T_b) with T_b the facet's
    own temperature — an affine boundary condition that enters the implicit solve exactly as the radiation condition
    does today — and no radiation. Other facets keep q_conv and radiation.
-3. **Real pass.** The skins run the sub-steps again with the base temperature moving linearly in time from T_b⁰ to
-   the new 3D facet temperature T_b¹. This pass feeds, draws, moves the film, sprays, freezes back and books every
-   transfer.
+3. **Real pass.** The skins run the sub-steps again with the base held at the new 3D facet temperature T_b¹, which
+   is what the 3D model's backward-Euler step assumed for its boundary over the whole step (revised 2026-10-07 while
+   planning: a base ramping from T_b⁰ to T_b¹ would differ from the law by about half the step's change of base
+   temperature times the base conductance — comparable with the base energy itself — and force a repeat almost every
+   step). This pass feeds, draws, moves the film, sprays, freezes back and books every transfer.
 4. **Books.** The energy E_b¹ that the real pass sent through each base differs from what the 3D solve received,
    q_b(T_b¹) Δt, by a small mismatch; it is booked to the facet's three nodes as a deferred load, so the global energy
    balance is exact. The mismatch is recorded every step; if on any patch its magnitude exceeds `INTERFACE_TOLERANCE` (a
-   constant, 10⁻³ of that patch's base energy over the step), the whole step repeats the 3D solve and the real pass once,
-   with every law re-linearised about T_b¹. Repeats are counted, and stage 1 measures how often they happen.
+   constant, 10⁻³ of that patch's energy throughput over the step, |E_top| + |E_b¹|, rather than of the base energy
+   alone, which passes through zero when a skin absorbs what it is heated with; revised 2026-10-07 while checking the
+   plan's code), the whole step repeats the 3D solve and the real pass once, with every law re-linearised about T_b¹.
+   Repeats are counted, and stage 1 measures how often they happen.
 
 Rejected: a **monolithic** solve with the skin cells as extra unknowns in the 3D system (exact and unconditionally
 stable, but it embeds thousands of one-dimensional chains in both backends' assembled systems — awkward in FEniCSx —
@@ -260,7 +290,7 @@ so the cascade can work through slurry deeper than the skin.
 ### 8.3 What to expect (estimated, to be measured in stage 3)
 
 The slurry is 670–4 300 times as viscous as the liquid (§2). δ_m grows as the two-thirds power of the melt's kinematic
-viscosity, so the slurry's δ_m is about 75–260 times the liquid's — centimetres — and a slurry layer of 1.5–8 mm will
+viscosity, so the slurry's δ_m is about 75–260 times the liquid's — centimetres — and a slurry layer of 0.3–8 mm (Scheil at fine steps to the linear law at 0.5 s) will
 usually take the thin branch. On the thin branch the surface speed of a sheared layer is inversely proportional to the
 viscosity, so the surface Weber number falls by the square of the viscosity ratio, and by this estimate exposed slurry
 will rarely pass the stability gate We_s > 4.62. If it does pass, Girin & Kopyt's thin mode is inviscid, so its
@@ -378,6 +408,13 @@ skin is independent within a sub-step, so they can be split across processes lat
 
 ### 12.1 Build stages
 
+0. **Stage 0 — the grid gate, on the current model, before any skin code.** The 100 mm flight to 120 s with the
+   current model (Scheil, the rule on, every default), switched at the continuum boundary to 0.0125 s by the
+   switched-step harness of fact 91, with `--h-surface 1.4` against the 2.0 mm series of facts 91–95, at seeds 12345
+   and 1. If any of the droplet count, the thick share of the sprayed mass, the medians by number and by mass, the
+   sprayed mass or the mass at 120 s moves by more than the scatter between seeds at 0.0125 s, the converged
+   population depends on the mesh and the skin is needed for correctness; if none does, the skin is a cost measure.
+   Either way the result is recorded as a fact, and Asha decides whether and when stages 1–3 proceed.
 1. **Stage 1 — skins with melting only.** Creation, the interface (§6), feed and draw, deaths and hand-over. The film
    and spray still run once per macro step, fed by what the skins melted over the step.
 2. **Stage 2 — the film and spray on the sub-steps** (§7), including freeze-back into the skin and deep liquid on the
@@ -410,6 +447,11 @@ between two seeds measured at the same step, because the scatter grows at small 
   radius by number and by mass, the sprayed mass and the mass at 120 s each agree within the scatter between seeds when
   (i) the macro step is halved, 0.5 against 0.25 s, and (ii) the surface mesh is refined, `--h-surface` 2.0 against
   1.4 mm. A 0.125 s run is made as a check on (i) but is not part of the criterion.
+- **Against the converged reference** (end of stage 2): the skin model at the 0.5 s macro step is compared with the
+  current model's 0.0125 s switched runs (facts 92–94, and stage 0's). If stage 0 found the reference independent of the
+  mesh, the skin model must reproduce it within the scatter between seeds. If stage 0 found it mesh-dependent, the skin
+  model must instead lie on the refined mesh's side: closer to the 1.4 mm reference than the 2.0 mm reference is — the
+  skin then being the better-resolved answer, not a copy of the coarse one.
 - If acceptance fails, the film-provenance probe (§2) is adapted to the skins and the cause is diagnosed before anything
   is tuned.
 - Cost: seconds per macro step and peak memory at each preset on the laptop.
@@ -435,7 +477,8 @@ between two seeds measured at the same step, because the scatter grows at small 
   median 8.1 mm deep (fact 82), so this may be among the most consequential open physics questions in Step 3.
 - `PHI_DEATH` 0.50 (fact 44): recommended for elements consumed in large bites; with skins an element is drawn smoothly
   and its death is a geometric event, so the question is re-measured once the skins work.
-- Step 3's default material law: the slurry depth differs fivefold between the linear range and Scheil (facts 82, 84).
+- Fact 96 (a)'s `--dt-continuum`: with skins a second macro step is not needed, but the option remains the way to make
+  the current model's converged reference runs from its own command line.
 - Whether the macro step itself can be raised once the skins and film are sub-stepped.
 
 ## 15. Assumptions to state in the thesis
@@ -477,4 +520,7 @@ between two seeds measured at the same step, because the scatter grows at small 
 - 2026-10-07: Section 2 (two clocks, the linearised interface) approved.
 - 2026-10-07: Asha's slurry cascade, behind `--slurry-spray`, off for the resolution tests and measured in stage 3.
 - 2026-10-07: deep liquid becomes film on the shear's renewal time (option b).
-- 2026-10-07: Sections 3–6 approved.
+- 2026-10-07: Sections 3–6 approved; the spec approved and committed.
+- 2026-10-07 (after facts 88–96): option (a) — §1, §2, §12 and §14 revised; stage 0, the grid gate on the current
+  model at 0.0125 s, comes before any skin code; acceptance adds the comparison with the converged reference. Step 3's
+  default material law is no longer open: Scheil's curve (fact 88).
