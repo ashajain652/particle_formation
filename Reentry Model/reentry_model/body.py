@@ -290,6 +290,8 @@ class MeltingBody(ThermalBody):
         self.skin_frozen_mass = 0.0                                # kg of liquid frozen into skins (spec 5.4, freeze-back)
         self.skin_returned_mass = 0.0                              # kg of metal skins above 2s returned to their elements
         self.skin_full_events = 0                                  # skin-steps above 2s whose element had too little room
+        self.skin_thick_feed_events = 0                            # skin-steps that began above 2s and handed liquid on (cumulative)
+        self.last_thick_feeding = (0, float("nan"))                # the step's (count, start-of-step thickness max [m])
         self.skin_wall = 0.0                                       # s of wall time in the skins' passes (trial and real)
         self.last_skin_shortfall = 0.0                             # kg of metal the skins lack below their target
         self._step_flow = None
@@ -426,7 +428,11 @@ class MeltingBody(ThermalBody):
         self._create_skins(self.solver.temperature())
         if not sk.n:
             self._step_flow = None
+            self.last_thick_feeding = (0, float("nan"))
             return self._advance_elements(t, dt, loads, state)
+        # the skins above 2s at the start of the step (skin_thick_count's margin): which of them feed this step
+        th0 = sk.thickness().copy()
+        thick0 = th0 > skin_mod.MAX_THICKNESS_FACTOR * sk.settings.thickness * (1.0 + 1e-9)
         on = self.skin_of_patch >= 0
         p = self.patch_of_skin
         flow = delta_m = None
@@ -466,6 +472,11 @@ class MeltingBody(ThermalBody):
                 self.interface_repeats += 1
                 continue
             break
+        # a skin that began the step above 2s and handed liquid to the film or the deep account: the thick skins that melt
+        fed = (book.to_film + book.to_deep) > 0.0
+        sel = thick0 & fed
+        self.last_thick_feeding = (int(sel.sum()), float(th0[sel].max()) if sel.any() else float("nan"))
+        self.skin_thick_feed_events += int(sel.sum())
         self.last_skin_shortfall = float(np.maximum(mat.rho * sk.area * sk.settings.thickness - sk.m.sum(axis=1), 0.0).sum())
         self.pending_load = self.pending_load - applied
         full = np.zeros(self.surface.n_patches)
@@ -1641,4 +1652,7 @@ class MeltingBody(ThermalBody):
                 "skin_shortfall_kg": self.last_skin_shortfall,
                 "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", nan),
                 "skin_frozen_mass_kg": self.skin_frozen_mass, "skin_returned_mass_kg": self.skin_returned_mass,
-                "skin_full_events": float(self.skin_full_events)}
+                "skin_full_events": float(self.skin_full_events),
+                "skin_thick_feeding_count": float(self.last_thick_feeding[0]),
+                "skin_thick_feeding_max_mm": self.last_thick_feeding[1] * 1e3,
+                "skin_thick_feed_events": float(self.skin_thick_feed_events)}

@@ -34,7 +34,8 @@ SKIN_COLUMNS = ["skin_count", "skin_mass_kg", "skin_thickness_min_mm", "skin_thi
                 "skin_handover_mass_kg", "skin_short_events", "interface_mismatch_J", "interface_repeats",
                 "liquid_depth_mean_um", "liquid_depth_max_um", "nonrigid_depth_skin_mean_um", "skin_wall_s",
                 "skin_thickness_max_mm", "skin_thick_count", "skin_shortfall_kg", "nonrigid_depth_wet_median_um",
-                "skin_frozen_mass_kg", "skin_returned_mass_kg", "skin_full_events"]   # sub-plan 18
+                "skin_frozen_mass_kg", "skin_returned_mass_kg", "skin_full_events", "skin_thick_feeding_count",
+                "skin_thick_feeding_max_mm", "skin_thick_feed_events"]   # sub-plan 18
 MELT_COLUMNS = MELT_COLUMNS + SKIN_COLUMNS
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
@@ -152,7 +153,7 @@ class CoupledRun:
                 "skins_created": body.skins_created, "skin_drawn_mass_kg": body.skin_drawn_mass,
                 "skin_handover_mass_kg": body.skin_handover_mass, "interface_repeats": body.interface_repeats,
                 "skin_wall_s": body.skin_wall, "skin_frozen_mass_kg": body.skin_frozen_mass,
-                "skin_returned_mass_kg": body.skin_returned_mass,
+                "skin_returned_mass_kg": body.skin_returned_mass, "skin_thick_feed_events": body.skin_thick_feed_events,
                 "melt_energy_balance_residual": body.energy_balance_residual()}
 
     def thermal_results(self, history):
