@@ -100,6 +100,7 @@ class FenicsxThermalSolver:
         if not np.array_equal(pinned, self.pinned):
             self._structure_changed = True
         self.pinned = pinned
+        self._radiating = None                            # the facets changed: last step's skin mask no longer applies
 
     def set_film_mass(self, mass):
         """Nodal mass [kg] of the melt film riding on the boundary (see the skfem backend)."""
@@ -121,6 +122,15 @@ class FenicsxThermalSolver:
 
     def temperature(self):
         return self.T.copy()
+
+    def state(self):
+        """What set_state needs to repeat a step: the temperatures, the predictor's previous field, the solve counter."""
+        return (self.T.copy(), None if self._T_prev is None else self._T_prev.copy(), self._solves)
+
+    def set_state(self, state):
+        self.T = state[0].copy()
+        self._T_prev = None if state[1] is None else state[1].copy()
+        self._solves = state[2]
 
     # -- nodal pieces (mesh numbering) -----------------------------------------------------------------------------
     def facet_load(self, q):
@@ -159,7 +169,11 @@ class FenicsxThermalSolver:
 
     def radiated_power(self, T_amb, T=None):
         Tf = self.facet_temperature(self.T if T is None else T)
-        return float((self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4) * self.areas).sum())
+        q = self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4) * self.areas
+        radiating = getattr(self, "_radiating", None)
+        if radiating is not None and radiating.shape == q.shape:
+            q = np.where(radiating, q, 0.0)                    # a facet under a skin radiates from the skin's top
+        return float(q.sum())
 
     def _assemble_stiffness(self, T):
         from dolfinx.fem.petsc import assemble_matrix
@@ -176,7 +190,7 @@ class FenicsxThermalSolver:
         m.sum_duplicates()
         return PETSc.Mat().createAIJ(size=m.shape, csr=(m.indptr.astype(np.int32), m.indices.astype(np.int32), m.data), comm=self.msh.comm)
 
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None):
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None):
         from petsc4py import PETSc
         mat, n = self.material, self.mesh.n_nodes
         T_old = self.T
@@ -191,6 +205,15 @@ class FenicsxThermalSolver:
             fixed_values[np.asarray(dirichlet[0])] = dirichlet[1]
         vol = self.mesh.element_volumes()
         film_w = self.film_weight() if self.film_mass.any() else np.zeros(n)
+        # the skins' base law (Step 3 sub-plan 18): on the facets under a skin the heat flux a + b T_f enters
+        # implicitly, linearised like the radiation, and the facet does not radiate (its skin's top does)
+        mask = None
+        if interface is not None and np.any(interface[0]):
+            mask = np.asarray(interface[0], dtype=bool)
+            a_int = np.where(mask, np.asarray(interface[1], dtype=float), 0.0)
+            b_int = np.where(mask, np.asarray(interface[2], dtype=float), 0.0)
+        eps_f = self.emissivity if mask is None else np.where(mask, 0.0, self.emissivity)
+        self._radiating = None if mask is None else ~mask
         converged, last_relative_change, previous_change, damping, decreases = False, None, None, 1.0, 0
         T_new, iteration = T_k, 0
         for iteration in range(1, self.max_iterations + 1):
@@ -204,9 +227,13 @@ class FenicsxThermalSolver:
             M_tan = self.lumped(mat.rho * c_tan, mat.rho * c_liq)
             E = self.lumped(mat.rho * c_sec, mat.rho * c_sec_l) * dT
             Tf = self.facet_temperature(T_k)
-            B = sp.csr_matrix((np.repeat(4.0 * self.emissivity * SIGMA_SB * Tf ** 3 * self.areas / 9.0, 9), (self._facet_rows, self._facet_cols)), shape=(n, n))
-            F_rad = self.facet_load(self.emissivity * SIGMA_SB * (Tf ** 4 - T_amb ** 4))
-            b = M_tan * T_k / dt + B @ T_k - E / dt + F_conv - F_rad + F_extra
+            B = sp.csr_matrix((np.repeat(4.0 * eps_f * SIGMA_SB * Tf ** 3 * self.areas / 9.0, 9), (self._facet_rows, self._facet_cols)), shape=(n, n))
+            F_rad = self.facet_load(eps_f * SIGMA_SB * (Tf ** 4 - T_amb ** 4))
+            F_int = 0.0
+            if mask is not None:
+                B = B + sp.csr_matrix((np.repeat(-b_int * self.areas / 9.0, 9), (self._facet_rows, self._facet_cols)), shape=(n, n))
+                F_int = self.facet_load(a_int + b_int * Tf)
+            b = M_tan * T_k / dt + B @ T_k - E / dt + F_conv - F_rad + F_extra + F_int
             # operator in dof numbering: K (dolfinx) + diag(M_tan/dt) + B
             A = self.K.copy()
             extra = sp.diags(M_tan / dt) + B
@@ -249,4 +276,6 @@ class FenicsxThermalSolver:
                 self.max_iterations, last_relative_change, self.newton_tol))
         self._T_prev, self.T = T_old, T_new
         self.last_damping = damping
-        return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()), Q_dropped)
+        Q_int = float(((a_int + b_int * self.facet_temperature(T_new)) * self.areas).sum()) if mask is not None else 0.0
+        return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()),
+                          Q_dropped, Q_int)
