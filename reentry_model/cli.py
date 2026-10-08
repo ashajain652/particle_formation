@@ -406,6 +406,8 @@ def cmd_run(args, parser):
     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
     if 2.0 * cell_um * 1e-3 > args.skin_thickness * (1.0 + 1e-12):
         parser.error("--skin-cell must be at most half of --skin-thickness")
+    if args.surface_model == "skin" and args.removal != "girin":
+        parser.error("--surface-model skin needs --removal girin")
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
