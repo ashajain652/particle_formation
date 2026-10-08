@@ -1,6 +1,6 @@
 # Sub-plan: Task 13 — Command line
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -591,6 +591,127 @@ when they are called by the melt step rather than by argument handling; (3) chec
 of `MeltingBody.melt_step` and raise `RuntimeError` there, naming the stage, which also points at the cause instead of
 at the solver that tripped over it. Recommendation: (3), with a unit test that a NaN film ends a run with exit 1, in a
 change of its own.
+
+## Amendment of 2026-10-06 — `--rigid-substrate on|off`
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements). The code below is the tested code, as a diff against the throwaway copy
+> described there.
+
+**The flag.** `--rigid-substrate on|off` in the Step 3 group, default `on`, sets `MeltSettings.rigid_substrate`. With
+`off` the regime test reads the film plus the fully molten material, as in every run before this amendment, and the
+amended code reproduces the copy before the change bit for bit on both flights (fact 81).
+
+**Run names and the JSON.** A melting run with `--rigid-substrate off` ends in `_rigidsubstrate-off`, after
+`_moltencascade-off` and before `_seed-<n>`; the default keeps the existing name, as the deep runoff's and the cascade's
+switches did, so a default run made after this amendment carries the name of one made before it although its physics
+differs — compare runs by their JSON settings, which now record `"rigid_substrate": "on"` or `"off"`. A bad value exits
+2 like every other bad argument.
+
+In `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -62,15 +62,17 @@
+ 
+ 
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+-                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED):
++                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+-    (amendment of 2026-10-03) in `_moltencascade-off`, and any run with a seed other than DEFAULT_SEED (amendment of
+-    2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
++    (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
++    `_rigidsubstrate-off`, and any run with a seed other than DEFAULT_SEED (amendment of 2026-10-05) in `_seed-<n>`;
++    the defaults keep the old name."""
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+     return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
+             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
++            + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
+             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
+@@ -193,6 +195,11 @@
+                          "(default on). off: an exposed element waits for the next step's feed, so the surface recedes through "
+                          "molten material by one element per macro step, as in every run before the molten-cascade amendment of "
+                          "2026-10-03")
++    me.add_argument("--rigid-substrate", choices=("on", "off"), default="on",
++                    help="the thin spraying branch needs a rigid substrate: the regime test compares Girin's conjugate depth "
++                         "with the film plus everything more than half liquid beneath it (slurry included), and where there "
++                         "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
++                         "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
+     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
+                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
+                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
+@@ -249,7 +256,8 @@
+         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
+         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
+                                           particles=args.particles, size_feedback=size_feedback,
+-                                          deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on")
++                                          deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
++                                          rigid_substrate=args.rigid_substrate == "on")
+         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
+                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
+     else:
+@@ -270,7 +278,7 @@
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+     if melting:
+         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
+-                     "molten_cascade": args.molten_cascade, "rt_spray": args.rt_spray,
++                     "molten_cascade": args.molten_cascade, "rigid_substrate": args.rigid_substrate, "rt_spray": args.rt_spray,
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+@@ -322,7 +330,8 @@
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+-                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed)
++                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
++                                       rigid_substrate=args.rigid_substrate == "on")
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+```
+
+In `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -224,6 +224,11 @@
+                               molten_cascade=False).endswith("_fem-physics_melt-girin_moltencascade-off")   # the molten cascade
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", deep_runoff=False,
+                               molten_cascade=False, seed=7).endswith("_melt-girin_deeprunoff-off_moltencascade-off_seed-7")
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              rigid_substrate=False).endswith("_fem-physics_melt-girin_rigidsubstrate-off")  # 2026-10-06
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", deep_runoff=False,
++                              molten_cascade=False, rigid_substrate=False,
++                              seed=7).endswith("_melt-girin_deeprunoff-off_moltencascade-off_rigidsubstrate-off_seed-7")
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+@@ -244,6 +249,8 @@
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+     assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
++    assert s["rigid_substrate"] == "on" and all(k in rows[0] for k in ("nonrigid_depth_mean_mm", "slurry_thick_fraction",
++                                                                       "rigid_thin_fraction", "slurry_held_mass_kg"))
+     assert r["cascade_mass_kg"] == pytest.approx(float(rows[-1]["cascade_mass_kg"])) and r["cascade_mass_kg"] >= 0.0
+     assert r["cascade_capped_steps"] == 0
+     assert r["cascade_passes_max"] == max(int(float(row["cascade_passes"])) for row in rows)
+@@ -284,6 +291,7 @@
+     MELT + ["--size-feedback", "shrinking"],
+     MELT + ["--deep-runoff", "maybe"],
+     MELT + ["--molten-cascade", "maybe"],
++    MELT + ["--rigid-substrate", "maybe"],
+ ])
+ def test_bad_melt_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
+```
 
 ---
 

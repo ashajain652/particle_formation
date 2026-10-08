@@ -1,12 +1,84 @@
 # Sub-plan: Task 2 — Material with latent heat, melting ranges and liquid properties
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 769–1108), **amended 2026-09-27: Scheil solidification as its own material variant**, and **amended 2026-09-28: Step 4's latent heat and surface tension in the Scheil variant, and the new `AA7075-empiricaldata` file** (sections below; the code blocks are the re-tested code). Read `00-shared-context.md` first.
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 769–1108), **amended 2026-09-27: Scheil solidification as its own material variant**, and **amended 2026-09-28: Step 4's latent heat and surface tension in the Scheil variant, and the new `AA7075-empiricaldata` file** (sections below; the code blocks are the re-tested code), and **amended 2026-10-06: `Material.T_rigid`, the temperature at which the material is half liquid** (the first section below). Read `00-shared-context.md` first.
 
 **Depends on:** Step 2's existing material loader only.
 **Produces, for later tasks:** latent heat, the solidus/liquidus melting range (linear in `AA7075_range`, Scheil's law in the new `AA7075_scheil`), the empirical-data copy of AA7075 (`AA7075-empiricaldata`), feed fraction, and — critically — four separate enthalpy-related functions (mixed-phase enthalpy, liquid-only enthalpy, mixed-phase heat capacity, temperature-from-mixed-enthalpy) that Tasks 3, 6, and 9 all consume by name.
 **Character:** physics/data — small in scope, mostly formulas plus four JSON data files (Step 3's two checked materials, the Scheil variant and the empirical-data copy of AA7075).
 **Read before implementing:** Measured facts 4, 5, and 25 in the shared context describe two specific wrong implementations that were tried and rejected during prototyping (debiting only the destination element on feed; booking the film at mixture enthalpy instead of liquid-only enthalpy) — both reproduced real bugs (melt reappearing, a "free melting" runaway). Do not collapse the four enthalpy functions into one general-purpose formula; that simplification is exactly what caused the rejected version. Read the amendment of 2026-09-27 below as well: Scheil is a separate material variant, and `AA7075_range` must not be edited to implement it.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan — file list, function signatures, test plan, and acceptance criteria.
+
+## Amendment of 2026-10-06 — `Material.T_rigid`, the temperature at which the material is half liquid
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements). The code below is the tested code, as a diff against this sub-plan's
+> `material.py` of 2026-09-28 (the copy the measurements used carried it for the Scheil runs).
+
+`RIGID_LIQUID_FRACTION = 0.5` and the property `Material.T_rigid`: the temperature at which the material's own liquid
+fraction is one half, found by bisection (the liquid fraction is monotonic), infinite for a material that does not melt.
+Below it mush is coherent and carries load, a rigid substrate for the melt film; above it mush is a slurry that flows —
+Chen et al. 2016's semi-solid law ends at 50 % liquid and Li et al. 2014's slurry data begin there, the boundary Step 4
+and the large-fragment design use. Values (fact 78): 829.0 K for `AA7075_range`, 895.10 K for `AA7075_scheil`, 850.0 K
+for `AA7075`. Nothing else in the material changes; the existing tests are unchanged and the new one is appended after
+the empirical-data test.
+
+In `reentry_model/material.py`:
+
+```diff
+--- a/reentry_model/material.py
++++ b/reentry_model/material.py
+@@ -35,6 +35,7 @@
+ MELT_RAMP = 2.0                    # K, half-width of the numerical melting/feed ramps
+ NO_MELT_ABOVE = 5000.0             # K: a melting temperature above this means "never melts"
+ SCHEIL_DT = 1.0                    # K, spacing of the tabulated Scheil liquid fraction (interpolation error < 1e-3)
++RIGID_LIQUID_FRACTION = 0.5        # above this liquid fraction mush is a slurry, not a rigid substrate (amendment of 2026-10-06)
+ 
+ 
+ @dataclass
+@@ -119,6 +120,20 @@
+         """Specific enthalpy of the film (liquid at the liquidus) [J/kg]."""
+         return float(self.enthalpy(self.T_feed))
+ 
++    @property
++    def T_rigid(self):
++        """Temperature at which the material is RIGID_LIQUID_FRACTION liquid [K]; inf for a non-melting material. Below it
++        the mush is coherent and carries load, a rigid substrate for the melt film; above it the mush is a slurry that
++        flows (Chen et al. 2016's semi-solid law ends at 50 % liquid and Li et al. 2014's slurry data begin there;
++        amendment of 2026-10-06). Found by bisection on the material's own liquid fraction, which is monotonic."""
++        if not self.melts:
++            return np.inf
++        lo, hi = self.T_solidus, self.T_liquidus
++        for _ in range(100):
++            mid = 0.5 * (lo + hi)
++            lo, hi = (mid, hi) if self._liquid_fraction_raw(mid) < RIGID_LIQUID_FRACTION else (lo, mid)
++        return 0.5 * (lo + hi)
++
+     @classmethod
+     def from_drama_json(cls, path=None):
+         """A DRAMA material file; `path` may also be a name in MATERIAL_NAMES (AA7075_nomelt, AA7075, AA7075_range,
+```
+
+Append to `tests/test_reentry_model_material.py`, after the empirical-data test:
+
+```python
+# ---------------------------------------------------------------------------------------------------------------
+# Step 3 amendment of 2026-10-06: the rigid substrate -- the temperature at which the material is half liquid
+
+def test_the_rigid_temperature_is_where_half_the_material_is_liquid():
+    """T_rigid separates the coherent mush, which carries load, from the slurry, which flows: 50 % liquid, where Chen
+    et al.'s (2016) semi-solid strength law ends and Li et al.'s (2014) slurry viscosity data begin. It follows each
+    material's own liquid-fraction law."""
+    assert material.RIGID_LIQUID_FRACTION == 0.5
+    r = material.Material.from_drama_json("AA7075_range")
+    assert r.T_rigid == pytest.approx(750.0 + 0.5 * 158.0, abs=1e-9)                     # 829 K on the linear range
+    s = material.Material.from_drama_json("AA7075_scheil")
+    assert s.T_rigid == pytest.approx(895.1, abs=0.05)                                    # Scheil: 13 K below the liquidus
+    a = material.Material.from_drama_json("AA7075")
+    assert a.T_rigid == pytest.approx(850.0, abs=1e-9)                                    # single temperature: mid-ramp
+    for m in (r, s, a):
+        assert float(m.liquid_fraction(m.T_rigid)) == pytest.approx(0.5, abs=1e-9)
+    assert np.isinf(material.Material.from_drama_json("AA7075_nomelt").T_rigid)          # never melts: never slurry
+```
 
 ## Amendment of 2026-09-28 — Step 4's values in the Scheil variant, and `AA7075-empiricaldata`
 

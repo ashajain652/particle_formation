@@ -1,6 +1,6 @@
 # Sub-plan: Task 7 — Spraying: instability branches, release bookkeeping, published reference values
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the spray sees of the film's new flux on thick patches** (the section after that).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the spray sees of the film's new flux on thick patches** (the section after that). **Amended 2026-10-06: the regime test reads the non-rigid layer, and off the closure a film on slurry takes no shear mode** (the section after the runoff flux's).
 
 ## Amendment of 2026-10-02 — what the spray sees of the deep liquid (no code change)
 
@@ -87,6 +87,176 @@ these are the consequences, checked rather than assumed:
   to 47.0 % — and the Rayleigh–Taylor release, small and threshold-sensitive there, from 5.1 to 8.9 g (fact 75).
 - **Nothing is released twice and nothing skips a gate.** The runoff runs before the spray within the step, as before;
   each branch still draws only from the film present on its patch after the runoff, capped by it.
+
+## Amendment of 2026-10-06 — the regime test reads the non-rigid layer, and off the closure a film on slurry takes no shear mode
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements and Asha's decisions). The code below is the tested code, as a diff against
+> the throwaway copy described there.
+
+**The change: two optional arguments to `SprayModel.evaluate`.**
+
+- `regime_layer` replaces `b_layer` in the regime test only: `deep = has_film & isfinite(delta_m) & (regime > delta_m)`,
+  with `regime` the non-rigid layer the body passes — the film, the deep account and everything more than half liquid
+  beneath the wall. Girin's first stage asks whether the conjugate layer can form in the melt that is present, and with
+  a slurry base it can: the patch is deep melt, and the second stage (kinematic viscosities) then gives the thick branch
+  for liquid aluminium, as before. On a patch the test makes deep the shear depth of the Weber number is δ_m (Girin's
+  We_s = ρ_l V_s² δ_m / Σ); everywhere else it is `min(delta_m, layer)` as before — the expression is written so that
+  without `regime_layer` it is the old one bit for bit.
+- `on_slurry` flags the patches whose film rests on slurry. Where δ_m is not finite such a film is `held`: it takes
+  neither the thin nor the rarefied mode, since the thin mode needs a rigid wall and no deep-melt mode exists without
+  Girin's closure (decision (3) of fact 78's amendment).
+
+**What does not change.** The Rayleigh–Taylor criteria — the reported one and the applied front-surface mode — keep
+`b_layer`, the liquid layer; the applied mode is not covered by the hold, so a held film that collects on the cap can
+still be shed by it (fact 85; fact 87 (a) asks whether it should). The wave-fits test, the critical Weber number gate, the
+release rates and the droplet caps are untouched. With neither argument given every result is the old one bit for bit
+(the flights of fact 81).
+
+**Tests.** Three, appended to `tests/test_reentry_model_spray.py` (diff below): a 20 µm film whose slurry ends at half δ_m
+stays thin with its Weber number on the film, one whose slurry reaches three times δ_m takes the thick branch with
+Girin's Weber number on δ_m, and without `regime_layer` both are thin; the Rayleigh–Taylor flag reads `b_layer` at a
+deceleration where the regime layer would pass its depth criterion; and off the closure a film on slurry takes no shear
+mode under the Couette closure and in the free-molecular branch, while one on a rigid wall keeps the thin or rarefied mode.
+
+In `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -234,7 +234,7 @@
+         self.table = table or dispersion.DispersionTable()
+ 
+     def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None,
+-                 extent=None, deceleration_n=None):
++                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None):
+         """Per-patch instability and release for the film thickness b, melt-layer thickness delta_m and film surface
+         velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's.
+ 
+@@ -243,10 +243,19 @@
+         while the release rates and the droplet cap stay on the film, which is the mass that can actually leave.
+         `extent`, if given, is the lateral extent of the contiguous molten region each patch belongs to, for the
+         wave-fits test; `deceleration_n` is the surface-normal deceleration W cos(phi) for the reported
+-        Rayleigh-Taylor flag, defaulting to the whole deceleration when it is not supplied."""
++        Rayleigh-Taylor flag, defaulting to the whole deceleration when it is not supplied.
++
++        `regime_layer`, if given, replaces `b_layer` in the regime test only: the depth of non-rigid material under the
++        wall, the film plus everything more than half liquid beneath it (`MeltingBody.nonrigid_depth`). The thin branch
++        is Girin's dominant ablation, where the rigid core stabilises the disturbances, and slurry is no rigid core, so
++        a film on slurry deeper than delta_m is deep melt and takes the thick branch. `on_slurry`, if given, flags the
++        patches whose film rests on slurry; where there is no delta_m (off Girin's closure) such a film takes no shear
++        mode at all, since the thin mode needs a rigid wall and no deep-melt mode exists there. The Rayleigh-Taylor
++        criteria, a liquid pool's, keep `b_layer` (amendment of 2026-10-06)."""
+         liq = self.liquid
+         n = b.size
+         layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
++        regime = layer if regime_layer is None else np.maximum(np.asarray(regime_layer, dtype=float), b)
+         branch = np.full(n, -1)
+         growth = np.full(n, np.nan)          # the mode's growth time per patch [s], for comparison with other modes
+         r = np.full(n, np.nan)
+@@ -258,7 +267,7 @@
+         # the layer did not form, the rigid core still stabilises the disturbances and the case is Girin's dominant
+         # ablation: regime 1, his Girin & Kopyt (1994) mode, the thin branch below. If it did form, layer > delta_m, the
+         # profile is the conjugated pair (delta_a in air, delta_m in melt) and the case is dominant fusion.
+-        deep = has_film & np.isfinite(delta_m) & (layer > delta_m)         # delta_m fits in the liquid: it formed
++        deep = has_film & np.isfinite(delta_m) & (regime > delta_m)        # delta_m fits in the liquid: it formed
+         # Stage two, only where it formed: which mechanism the conjugated profile carries, decided on the kinematic
+         # viscosities. nu_melt > nu_gas puts the thicker viscous layer in the melt, V_s << V_a and the profile close to a
+         # tangential discontinuity -- classical Kelvin-Helmholtz, regime 2. nu_gas > nu_melt makes the two thicknesses
+@@ -272,8 +281,10 @@
+         regime2 = deep & step_profile                                     # Kelvin-Helmholtz
+         thick = deep & ~step_profile                                      # regime 3: Girin 2017's gradient instability
+         free_molecular = flow.branch == BRANCH_FREE_MOLECULAR
+-        rarefied = has_film & ~deep & free_molecular                      # no edge state exists: the freestream drives the mode
+-        thin = has_film & ~deep & ~rarefied
++        # a film on slurry with no delta_m: the thin mode needs a rigid wall and there is no deep-melt mode to take it
++        held = np.zeros(n, dtype=bool) if on_slurry is None else has_film & ~np.isfinite(delta_m) & np.asarray(on_slurry, dtype=bool)
++        rarefied = has_film & ~deep & free_molecular & ~held              # no edge state exists: the freestream drives the mode
++        thin = has_film & ~deep & ~rarefied & ~held
+         # Girin's (2017) stability criterion, now on *every* branch. His phi_cr comes from We_s > We_cr with the sphere's
+         # own edge solution substituted in; evaluated locally instead of through that closed form it holds on an eroded
+         # body too, which a single critical angle does not. The shear acts over the liquid it can reach, min(delta_m,
+@@ -281,9 +292,11 @@
+         # conjugate layer is measured on its own depth. Below We_cr the surface is stable and nothing leaves. The thin
+         # branch had no stability threshold before this (Girin & Kopyt's inviscid side mode has none of its own, being
+         # unstable at every wavelength), so it stripped film at any angle however small the shear (added 2026-09-24).
++        # A patch the regime test makes deep is measured on delta_m whatever its liquid depth -- a film on slurry deeper
++        # than delta_m included (2026-10-06); everywhere else the expression is the one above, bit for bit.
+         L = None if extent is None else np.asarray(extent, dtype=float)
+         with np.errstate(invalid="ignore"):
+-            d_shear = np.where(np.isfinite(delta_m), np.minimum(delta_m, layer), layer)
++            d_shear = np.where(deep, delta_m, np.where(np.isfinite(delta_m), np.minimum(delta_m, layer), layer))
+             we_s = np.where(has_film, liq.rho * v_s ** 2 * d_shear / liq.sigma, 0.0)
+         supercritical = we_s > self.we_critical
+         # thick: Girin 2017
+```
+
+In `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -312,3 +312,59 @@
+     areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+     res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f)
+     assert res.branch.tolist() == [spray.BRANCH_THICK] * 2
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Step 3 amendment of 2026-10-06: the thin branch needs a rigid substrate
++
++def test_a_thin_film_on_slurry_deeper_than_the_conjugate_depth_takes_the_thick_branch():
++    """Girin's dominant ablation -- the thin branch, Girin & Kopyt's (1994) mode -- is the case where "the rigid core
++    still stabilises the disturbances". Slurry (more than half liquid) is no rigid core, so the regime test reads the
++    non-rigid layer, the film plus everything above 50 % liquid beneath it (`regime_layer`), against delta_m. A film on
++    slurry deeper than delta_m is deep melt and takes Girin's (2017) thick branch with his Weber number on delta_m; one
++    whose slurry ends within delta_m keeps the thin branch, its Weber number unchanged. Under Girin's closure the
++    `on_slurry` flag holds nothing back: the depth decides."""
++    flow = FakeFlow(2)
++    model = spray.SprayModel(LIQ)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    b = np.full(2, 2e-5)                                    # a film well inside the conjugate depth, nothing molten beneath
++    regime = np.array([0.5, 3.0]) * delta_m                 # slurry ending within delta_m / slurry deeper than delta_m
++    v_s = np.full(2, 20.0)
++    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
++    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.ones(2, bool), 0.5, areas, m_f, b_layer=b,
++                         regime_layer=regime, on_slurry=np.array([True, True]))
++    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THICK]
++    assert res.we_s[1] == pytest.approx(LIQ.rho * 400.0 * delta_m[1] / LIQ.sigma)       # Girin's, on delta_m
++    assert res.we_s[0] == pytest.approx(LIQ.rho * 400.0 * b[0] / LIQ.sigma)             # the thin branch's, on the film
++    assert res.dm[0] > 0.0                                   # rigid material within the shear's reach: the thin mode acts
++    old = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.ones(2, bool), 0.5, areas, m_f, b_layer=b)
++    assert old.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]                 # the liquid layer alone: both thin
++
++
++def test_the_rayleigh_taylor_criteria_keep_the_liquid_layer():
++    """The slurry counts for the regime test only: the Rayleigh-Taylor depth criterion W h^2 rho_l > 3 Sigma describes a
++    liquid pool, so it still reads the liquid layer (`b_layer`), not the non-rigid one."""
++    flow = FakeFlow(1, decel=1e5)                            # deep enough a regime layer would pass the depth criterion
++    model = spray.SprayModel(LIQ)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    b, regime = np.array([2e-5]), 3.0 * delta_m
++    assert spray.rayleigh_taylor(1e5, regime, LIQ)[0][0] and not spray.rayleigh_taylor(1e5, b, LIQ)[0][0]
++    res = model.evaluate(flow, FakeState(), b, delta_m, np.array([20.0]), np.ones(1, bool), 0.5, np.full(1, 1e-5),
++                         b * LIQ.rho * 1e-5, b_layer=b, regime_layer=regime)
++    assert not res.rt_active and res.branch[0] == spray.BRANCH_THICK
++
++
++def test_without_a_conjugate_depth_a_film_on_slurry_takes_no_shear_mode():
++    """Off Girin's closure there is no conjugate depth and so no deep-melt mode, and the thin mode needs a rigid wall:
++    a film whose base is slurry (`on_slurry`) is not sprayed by either, under the Couette closure and in the
++    free-molecular branch alike. A film on a rigid wall keeps the thin (or rarefied) mode."""
++    model = spray.SprayModel(LIQ)
++    for branch, code in ((sf.BRANCH_SHOCK_LAYER, spray.BRANCH_THIN), (sf.BRANCH_FREE_MOLECULAR, spray.BRANCH_RAREFIED)):
++        flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE, branch=branch)
++        delta_m, _ = spray.melt_layer(flow, LIQ)
++        b = np.full(2, 2e-5)
++        areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
++        res = model.evaluate(flow, FakeState(), b, delta_m, np.full(2, 20.0), np.ones(2, bool), 0.5, areas, m_f,
++                             on_slurry=np.array([True, False]))
++        assert res.branch.tolist() == [-1, code]
++        assert res.dm[0] == 0.0 and not res.unstable[0] and res.dm[1] > 0.0
+```
 
 ---
 

@@ -1,6 +1,6 @@
 # Sub-plan: Task 6 — The melt film: lubrication and runoff
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 2778–3009). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-05 (runoff flux): on a thick patch the film carries only its own part of the conjugate layer's flux** (the section after it).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 2778–3009). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-05 (runoff flux): on a thick patch the film carries only its own part of the conjugate layer's flux** (the section after it). **Amended 2026-10-06: what the film sees of the rigid substrate, no code change** (the section after that).
 
 ## Amendment of 2026-10-02 — the flux of the liquid below the conjugate depth
 
@@ -410,6 +410,28 @@ for that strip. The flights are in facts 73–75: the 50 mm flight, which never 
 100 mm flight at the default step is bit-identical until the first step under his closure (49.5 s) and then moves its
 masses by about the run-to-run scatter; and the switched-step flights at 0.0125 s, which crashed, and at 0.00625 s now
 run to 120 s.
+
+## Amendment of 2026-10-06 — what the film sees of the rigid substrate (no code change)
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements).
+
+Nothing in `film.py` changes. With `--rigid-substrate on` the body hands `film.lubrication` the regime layer — the film,
+the deep account and the non-rigid depth down to the first point at most half liquid — as `b_layer`, in both of its
+calls, instead of the film, the deep account and the fully molten depth. Consequences, checked rather than assumed:
+
+- **The branch flag and the surface velocity follow the spray's regime test.** On a patch the slurry makes thick,
+  `lubrication` returns Girin's surface velocity V_s = τ δ_m / μ_l, which the spray's thick branch needs for its Weber
+  number and growth time; one patch never carries two surface velocities.
+- **The film on such a patch moves as the top b of the conjugate layer**, by the 2026-10-05 formula V_s b (1 − b/(2 δ_m))
+  plus the pressure-driven G b³/(3 μ_l), instead of as a Couette film over a rigid wall, τ b²/(2 μ_l). The ratio of the
+  two shear-driven fluxes is 2 δ_m / b − 1: 59 for a 10 µm film under a 300 µm conjugate depth. This is the treatment the
+  film has had over fully molten elements since 2026-10-05; the slurry's own viscosity (700 to 4 000 times the liquid's)
+  is not represented, as the deep liquid's is not.
+- **The emptying rate stays bounded** by the same argument as on 2026-10-05: the shear part of the flux is at most V_s b,
+  so the rate is at most V_s ℓ / A however thin the film. None of the flights of facts 82–84 logged an overflow
+  warning or a singular matrix, and every one closed its energy balance to round-off; the rates themselves were not
+  probed as fact 74's were.
 
 ---
 

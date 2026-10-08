@@ -1,6 +1,6 @@
 # Sub-plan: Task 10 — The coupled loop: melt columns, demise, VTK melt fields, particle files
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-06: the rigid substrate's four history columns and its frame field** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -261,6 +261,83 @@ the 240 steps, from 33.5 s to 108 s, with a median of 3 (90th percentile 4, at m
 0.245 kg, `cascade_passes_max` is 6 and `cascade_capped_steps` 0 (157 g, at most 6 passes and 0 capped steps with the
 deep runoff on). With `--molten-cascade off` the history is bit-identical with the deep-runoff amendment's in every
 shared column (fact 55): the two columns are the only addition.
+
+## Amendment of 2026-10-06 — the rigid substrate's four history columns and its frame field
+
+> Part of the rigid-substrate amendment (sub-plan 09's amendment of this date holds the design; facts 78–87 in
+> `00-shared-context.md` the measurements). The code below is the tested code, as a diff against the throwaway copy
+> described there.
+
+`MELT_COLUMNS` gains `nonrigid_depth_mean_mm`, `slurry_thick_fraction`, `rigid_thin_fraction` and `slurry_held_mass_kg`
+(defined in sub-plan 09's amendment; nan with `--rigid-substrate off`, so a run with the switch off has every column it
+had before, bit for bit, and four more that are nan). `write_vtk_frame` writes `nonrigid_depth` per patch on the surface
+frame: the spray step's own value, carried across the step's deaths by `on_current_surface` like `delta_m`, nan where
+the step did not evaluate it. The coupled run's frame test checks the field exists, and the conjugate-depth frame test
+that it is the step's own, carried.
+
+In `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -27,7 +27,8 @@
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+-                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg"]
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
++                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -157,7 +158,8 @@
+     local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+     flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+     (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+-    nan wherever the closure is not Girin's) -- and the thickness of the deep liquid beneath the film (PyVista/VTK XML)."""
++    nan wherever the closure is not Girin's) -- the thickness of the deep liquid beneath the film, and the non-rigid
++    depth the regime test read (PyVista/VTK XML)."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -193,6 +195,9 @@
+         # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
+         poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
+         poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
++        # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
++        # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
++        poly.cell_data["nonrigid_depth"] = carry(body.last_nonrigid, np.nan)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 
+```
+
+In `tests/test_reentry_model_coupled.py`:
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -119,7 +119,7 @@
+     assert "liquid_fraction" in grid.point_data and "phi" in grid.cell_data and grid.n_cells == int(c["n_active_elements"][20])
+     poly = pv.read(os.path.join(run_dir, "vtk", "surface_1.vtp"))
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+-                "deep_thickness"):
++                "deep_thickness", "nonrigid_depth"):
+         assert key in poly.cell_data
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+@@ -178,6 +178,10 @@
+     expected = b.on_current_surface(spray.melt_layer(b.last_flow, b.liquid)[0], np.nan)   # the step's own, carried
+     np.testing.assert_array_equal(dm, expected)
+     assert (np.asarray(last.cell_data["deep_thickness"]) >= 0.0).all()
++    # the non-rigid depth the regime test read (amendment of 2026-10-06): the spray step's own, carried; nan where none
++    nr = np.asarray(last.cell_data["nonrigid_depth"])
++    np.testing.assert_array_equal(nr, b.on_current_surface(b.last_nonrigid, np.nan))
++    assert np.isfinite(nr).any() and (nr[np.isfinite(nr)] >= 0.0).all()
+ 
+ 
+ def test_demise_ends_the_run(coarse_sphere_mesh):
+```
 
 ---
 
