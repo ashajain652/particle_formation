@@ -368,3 +368,30 @@ class SkinField:
         self.T = T
         self.H = self.m * mat.enthalpy(T)
         return E_top, E_rad, E_base, sens
+
+    # -- feed and draw ----------------------------------------------------------------------------------------------
+    def feed_and_draw(self, L, room, avail, T_b, S=None):
+        """The contiguous fully liquid cells at the top (T >= T_feed) leave the skin for the liquid on its patch -- the
+        part within `room` [kg] (rho A delta_m, measured from the top, spec 5.4) to the film, the rest to the deep
+        account -- and the skin draws metal from the element below, at most `avail` [kg], at its base temperature T_b,
+        back to its target thickness. The remaining column and the drawn metal are rezoned onto equal cells, exactly in
+        mass and enthalpy. S (the trial pass's dT/dT_b, optional) is rezoned with them, drawn metal carrying 1.
+        Returns (to_film, to_deep, drawn, drawn_H, L_new, S_new) per skin."""
+        mat, n = self.material, self.n
+        if n == 0:
+            z = np.zeros(0)
+            return z, z, z, z, z, S
+        contig = np.cumprod(self.T >= mat.T_feed, axis=1).astype(bool)
+        R = (self.m * contig).sum(axis=1)
+        E_rem = (self.H * contig).sum(axis=1)
+        to_film = np.minimum(R, room)
+        to_deep = R - to_film
+        rest = self.m.sum(axis=1) - R
+        D = np.minimum(np.clip(mat.rho * self.area * self.settings.thickness - rest, 0.0, None), np.maximum(avail, 0.0))
+        hD = mat.enthalpy(np.asarray(T_b, dtype=float) * np.ones(n))
+        E_liq = L * mat.enthalpy_liquid(self.T[:, 0])
+        rows = np.arange(n)
+        m_new, H_new, S_new = self._rezone(rows, R, D, hD, S, 1.0)
+        L_new = L + R
+        self._set_cells(rows, m_new, H_new, L_new, E_liq + E_rem)
+        return to_film, to_deep, D, D * hD, L_new, S_new
