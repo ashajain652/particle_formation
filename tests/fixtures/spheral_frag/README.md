@@ -59,7 +59,8 @@ Answers:
 
 - **Thickness** 2R = 0.1 m. Facet centroids lie between 0.25 % and 0.70 % of R inside the sphere (measured:
   centroid radius 49.651–49.878 mm), so the centroid-to-opposite-facet distance is 2R minus up to about 1 %;
-  Task 5's "below 0.5 %" expectation is for a finer sphere.
+  Task 5's "below 0.5 %" expectation is for a finer sphere. Measured by Task 5: 99.184–99.841 mm, ε_sphere 0.816 %
+  (mean 0.369 %), inside the faceting bound 1 − r_in/R = 0.907 % (r_in = 49.546 mm, the nearest facet plane).
 - **Drag** (= `D_patch` = `D_hist`): frame 1 6.866822220 N, frame 2 7.311101107 N; row 0 records 6.215014915 N,
   the drag the analytic loads would give, while frame 0 carries none (a frame without loads).
   Continuum: D = π R² p_stag (1/2 + 0.02 − 0.75 · 0.01) = 0.5125 π R² p_stag; the faceted sphere gives 0.509707
@@ -80,10 +81,16 @@ Two spheres R = 20 mm centred at x = ∓30 mm, fused (gmsh OCC) with a cylinder 
 so the free neck is L_neck = 20 mm long; size 1.5 mm within 3 mm of the neck, 5 mm elsewhere. 1,551 nodes, 6,042
 tetrahedra, 2,068 patches; one frame at t = 0, evaluated, no melting (film 0, closure 1, delta_m NaN, T = 600 K).
 
-- **Thickness:** 2 r_neck = 8 mm on the neck's 495 lateral patches (`dumbbell_neck_patches`; their vertices lie on
-  r = 4 mm within 1e-9 m; longest edge 2.04 mm), 2R = 40 mm on the 1,484 sphere patches whose inward ray exits the
-  same sphere (`dumbbell_sphere_patches`: antipode more than 10° outside the neck's cap, half-angle asin(r/R)).
-- **thin_patches:** at dx = 2.2 mm exactly the neck (8 mm < 4 × 2.2 = 8.8 mm); at dx = 1.5 mm none (6 mm < 8 mm).
+- **Thickness:** 2 r_neck = 8 mm on the neck's 567 lateral patches (`dumbbell_neck_patches`: every vertex on
+  r = 4 mm within 1e-9 m; longest edge 2.04 mm; the free lateral surface runs to the junction circles at
+  |x| = 10.404 mm, so it is 20.808 mm long at r = r_neck, not L_neck), 2R = 40 mm on the 1,471 sphere patches whose
+  inward ray exits the same sphere (`dumbbell_sphere_patches`: antipode more than 10° outside the neck's cap,
+  half-angle asin(r/R), neck patches excluded). Measured by Task 5 (`spheral_frag.geometry.thickness_map`): neck
+  7.879–7.992 mm; spheres 35.65–39.98 mm, the short ones under three 13 mm facets at the left sphere's pole
+  (−30, 0, 20) mm — every patch within the faceted bounds of `tests/test_spheral_frag_geometry.py`.
+- **thin_patches:** at dx = 2.2 mm exactly the neck's 567 patches (8 mm < 4 × 2.2 = 8.8 mm); at dx = 1.5 mm none
+  (6 mm < 8 mm). (Before Task 5 this README said 495 neck and 1,484 sphere patches: the old selection kept only
+  centroids with |x| ≤ L_neck / 2 and counted 13 neck patches as sphere patches.)
 - **Volume:** exact 6.80462e-5 m³ (`dumbbell_volume`); meshed 6.66494e-5 m³ (−2.05 %, faceting).
 
 ## `slab_frame/` — `synthetic_slab_L20.0mm_H12.0mm`

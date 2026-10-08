@@ -488,16 +488,18 @@ def dumbbell_frame(R=0.02, r_neck=4e-3, L_neck=0.02, h=1.5e-3, h_far=5e-3):
     return dumbbell_parts(R, r_neck, L_neck, h, h_far)[0][0]
 
 
-def dumbbell_neck_patches(frame, R=0.02, r_neck=4e-3, L_neck=0.02, tol=0.25e-3):
-    """Lateral patches of the neck: centroid within the neck's free length and its triangle on the cylinder."""
+def dumbbell_neck_patches(frame, R=0.02, r_neck=4e-3, L_neck=0.02, tol=1e-9):
+    """Lateral patches of the neck: every vertex on the cylinder r = r_neck (within `tol`). The free lateral surface
+    runs between the junction circles at |x| = 0.5 L_neck + R - sqrt(R^2 - r_neck^2) (10.404 mm), so it is 20.808 mm
+    long at r = r_neck, not L_neck (Task 5's measurement: 567 patches, all thinner than 8.8 mm)."""
     radial = np.linalg.norm(frame.points[frame.faces][:, :, 1:], axis=2)       # (f, 3) vertex distance from the axis
-    cx = frame.points[frame.faces][:, :, 0]
-    return (np.abs(cx) <= 0.5 * L_neck).all(axis=1) & (np.abs(radial - r_neck) < tol).all(axis=1)
+    return (np.abs(radial - r_neck) < tol).all(axis=1)
 
 
 def dumbbell_sphere_patches(frame, R=0.02, r_neck=4e-3, L_neck=0.02, margin_deg=10.0):
     """Sphere patches whose inward ray through the sphere's centre exits on the same sphere (thickness 2R): the
-    antipode lies more than `margin_deg` outside the cap the neck occupies (half-angle asin(r_neck/R))."""
+    antipode lies more than `margin_deg` outside the cap the neck occupies (half-angle asin(r_neck/R)); patches of
+    the neck's lateral surface (whose centroids can lie within 5 % of R of the sphere) are excluded."""
     a = 0.5 * L_neck + R
     c = frame.points[frame.faces].mean(axis=1)
     side = np.sign(c[:, 0])
@@ -505,7 +507,8 @@ def dumbbell_sphere_patches(frame, R=0.02, r_neck=4e-3, L_neck=0.02, margin_deg=
     on_sphere = np.abs(np.linalg.norm(u, axis=1) - 1.0) < 0.05
     cap = math.cos(math.asin(r_neck / R) + math.radians(margin_deg))
     toward_neck_of_antipode = -u[:, 0] * (-side)       # cos(angle between the antipode and the neck direction)
-    return on_sphere & (toward_neck_of_antipode < cap) & (np.abs(c[:, 0]) > 0.5 * L_neck)
+    return (on_sphere & (toward_neck_of_antipode < cap) & (np.abs(c[:, 0]) > 0.5 * L_neck)
+            & ~dumbbell_neck_patches(frame, R, r_neck, L_neck))
 
 
 # ------------------------------------------------------------------------------------------------------------ slab
