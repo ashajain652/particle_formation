@@ -160,6 +160,24 @@ def drag(theta, area, p, tau) -> float:
                                                          + np.asarray(tau, dtype=float) * np.sin(theta))))
 
 
+def smooth_drag(theta, area, theta_smooth, cos_to_smooth, p, tau) -> float:
+    """The drag of the faceted body under the smooth surface's loads (N, along -v_hat), with `p` and `tau` the loads
+    at the smooth inclination `theta_smooth` (rad) and `cos_to_smooth` = n_facet . n_smooth per patch:
+
+      D = sum A [p cos(theta) + tau sin(theta_smooth) max(cos_to_smooth, 0)]
+
+    Pressure acts normal to the facet, so each facet carries p on its own projected area A cos(theta): those areas
+    sum to the body's frontal area exactly and a uniform pressure gives no force on the closed surface. Shear acts
+    along the smooth surface's tangent (component sin(theta_smooth) along -v_hat) on the facet's area projected onto
+    the smooth surface, A (n_facet . n_smooth). Reading p at the facet's own theta instead (`drag` on the staircase)
+    loses most of the drag on a staircase whose facets scatter by tens of degrees about the smooth surface, since p
+    falls like cos^2 of the facet's own tilt (prototype README, findings of 2026-10-08)."""
+    theta = np.asarray(theta, dtype=float)
+    shear_area = np.asarray(area, dtype=float) * np.maximum(np.asarray(cos_to_smooth, dtype=float), 0.0)
+    return float(np.sum(np.asarray(area, dtype=float) * np.asarray(p, dtype=float) * np.cos(theta)
+                        + shear_area * np.asarray(tau, dtype=float) * np.sin(np.asarray(theta_smooth, dtype=float))))
+
+
 def history_drag(history_row, g0=G0) -> float:
     """The history's drag at a row: mass_kg * load_factor_g * g0 (N; plan fact 4: there is no drag column).
     `history_row` maps contract history keys to values."""
@@ -174,10 +192,19 @@ def history_p_stag(history_row) -> float:
 
 def drag_comparison(theta, area, p_w, tau, history_row, valid=None, edges=THETA_EDGES_DEG,
                     base_fraction=BASE_FRACTION, separation_deg=SEPARATION_DEG, shear_factor=LEE_SHEAR,
-                    g0=G0) -> dict:
-    """The three drags of plan Task 7, Step 2, for one frame (N), and their split into windward and lee parts:
+                    g0=G0, theta_smooth=None, cos_to_smooth=None) -> dict:
+    """The drags of plan Task 7, Step 2, for one frame (N), and their split into windward and lee parts:
 
-      D_patch            the frame's own p_w and tau summed over its patches
+      D_smooth           the headline against the history: the lee-extended table evaluated at every patch's smooth
+                         inclination `theta_smooth` (the derived surface's normal, n_derived) and summed by
+                         `smooth_drag` with `cos_to_smooth` = n_facet . n_derived; without them theta_smooth = theta
+                         and cos_to_smooth = 1, and D_smooth equals D_table_lee to round-off
+      D_smooth_lee       D_smooth over the patches whose smooth inclination is at or beyond the windward edge
+      smooth_lee_share   D_smooth_lee / D_smooth
+      rel_smooth_hist    D_smooth / D_hist - 1 (spec §7.3's comparison)
+      drag_normals       "derived" or "facet": which inclination D_smooth read the loads at
+      D_patch            the frame's own p_w and tau summed over its patches (staircase facets at their own theta;
+                         a diagnostic since 2026-10-08)
       D_table            the windward table evaluated at each valid patch's theta and summed (the binning error)
       D_hist             the history's mass_kg * load_factor_g * g0 at the frame's row
       D_table_lee        the lee-extended table evaluated at every patch (what Spheral's undeformed body would see)
@@ -189,11 +216,21 @@ def drag_comparison(theta, area, p_w, tau, history_row, valid=None, edges=THETA_
       rel_table_lee_hist D_table_lee / D_hist - 1
 
     plus `loads_valid` (the frame carries any loads), `n_valid`, `n_lee_patches`, `theta_last_deg` and `p_stag`.
-    On a frame without loads the table drags and shares are NaN, and D_patch is 0 (rel_patch_hist = -1)."""
+    On a frame without loads the table drags and shares are NaN, and D_patch is 0 (rel_patch_hist = -1).
+
+    The table is binned by the facets' own theta in every case: the frame's p_w and tau were evaluated there, so the
+    table is the surface flow's p(theta), and only where it is read changes."""
     theta = np.asarray(theta, dtype=float)
     area = np.asarray(area, dtype=float)
     p_w = np.asarray(p_w, dtype=float)
     tau = np.asarray(tau, dtype=float)
+    if (theta_smooth is None) != (cos_to_smooth is None):
+        raise ValueError("theta_smooth and cos_to_smooth go together")
+    drag_normals = "facet" if theta_smooth is None else "derived"
+    theta_s = theta if theta_smooth is None else np.asarray(theta_smooth, dtype=float)
+    cos_s = np.ones_like(theta) if cos_to_smooth is None else np.asarray(cos_to_smooth, dtype=float)
+    if theta_s.shape != theta.shape or cos_s.shape != theta.shape:
+        raise ValueError("theta_smooth and cos_to_smooth must have theta's shape")
     valid = valid_patches(p_w, tau) if valid is None else np.asarray(valid, dtype=bool)
     p_stag = history_p_stag(history_row)
     table = build_table(theta, area, p_w, tau, p_stag, valid=valid, edges=edges)
@@ -205,12 +242,13 @@ def drag_comparison(theta, area, p_w, tau, history_row, valid=None, edges=THETA_
     D_hist = history_drag(history_row, g0)
     nan = float("nan")
     out = {"loads_valid": table.has_loads, "n_valid": int(valid.sum()), "theta_last_deg": table.theta_last_deg,
-           "p_stag": p_stag, "D_patch": D_patch, "D_hist": D_hist,
+           "p_stag": p_stag, "D_patch": D_patch, "D_hist": D_hist, "drag_normals": drag_normals,
            "rel_patch_hist": D_patch / D_hist - 1.0 if D_hist != 0.0 else nan}
     if not table.has_loads:
         out.update({"D_table": nan, "D_table_lee": nan, "D_windward_patch": D_patch, "D_windward_table": nan,
                     "D_lee": nan, "lee_share": nan, "n_lee_patches": 0, "rel_table_patch": nan,
-                    "rel_table_lee_hist": nan})
+                    "rel_table_lee_hist": nan, "D_smooth": nan, "D_smooth_lee": nan, "smooth_lee_share": nan,
+                    "rel_smooth_hist": nan})
         return out
     pt, tt = evaluate(table, deg[valid])
     D_table = drag(theta[valid], area[valid], pt, tt)
@@ -219,7 +257,16 @@ def drag_comparison(theta, area, p_w, tau, history_row, valid=None, edges=THETA_
     D_windward_table = drag(theta[~lee_side], area[~lee_side], pl[~lee_side], tl[~lee_side])
     D_lee = drag(theta[lee_side], area[lee_side], pl[lee_side], tl[lee_side])
     D_table_lee = D_windward_table + D_lee
+    deg_s = np.degrees(theta_s)
+    ps, ts = evaluate(lee_table, deg_s)
+    lee_s = deg_s >= table.windward_edge_deg
+    D_smooth_wind = smooth_drag(theta[~lee_s], area[~lee_s], theta_s[~lee_s], cos_s[~lee_s], ps[~lee_s], ts[~lee_s])
+    D_smooth_lee = smooth_drag(theta[lee_s], area[lee_s], theta_s[lee_s], cos_s[lee_s], ps[lee_s], ts[lee_s])
+    D_smooth = D_smooth_wind + D_smooth_lee
     out.update({
+        "D_smooth": D_smooth, "D_smooth_lee": D_smooth_lee,
+        "smooth_lee_share": D_smooth_lee / D_smooth if D_smooth != 0.0 else nan,
+        "rel_smooth_hist": D_smooth / D_hist - 1.0 if D_hist != 0.0 else nan,
         "D_table": D_table, "D_table_lee": D_table_lee,
         "D_windward_patch": drag(theta[~lee_side], area[~lee_side], own_p[~lee_side], own_tau[~lee_side]),
         "D_windward_table": D_windward_table, "D_lee": D_lee,

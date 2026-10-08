@@ -10,6 +10,7 @@ The fixture's material (`synthetic_linear_fl`) is no finite-element material, so
 table (`spheral_frag_synthetic.synthetic_material_table`) with --material-table; one test checks that without it the
 missing material exits 2."""
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ FRAME_SCHEMA = {
                                                    "n_nonmanifold_vertices", "volume_rel_diff",
                                                    "n_inward_faces_as_written", "n_flipped"]},
         "loads_valid": {"type": "boolean"},
-        "drag": {"type": "object", "required": ["patch_N", "table_N", "history_N", "lee_share"],
+        "drag": {"type": "object", "required": ["smooth_N", "normals", "rel_smooth_hist", "patch_N", "table_N", "history_N", "lee_share"],
                  "properties": {"patch_N": {"type": "number"}, "table_N": _num, "history_N": {"type": "number"},
                                 "lee_share": _num}},
         "thickness": {"type": "object", "required": ["min_m", "n_nan"]},
@@ -138,6 +139,8 @@ def test_prepare_writes_every_file_and_a_valid_json(prepared):
     assert (f0["n_tets"], f0["n_faces"], f2["n_tets"], f2["n_faces"], f2["n_nodes"]) == (2497, 1194, 2487, 1198, 752)
     assert f0["loads_valid"] is False and f1["loads_valid"] is True
     assert abs(f1["drag"]["patch_N"] - 6.866822220) < 5e-9 and abs(f2["drag"]["patch_N"] - 7.311101107) < 5e-9
+    assert all(f["drag"]["normals"] == "facet" for f in doc["frames"])          # no n_derived: the table at theta
+    assert math.isclose(f1["drag"]["smooth_N"], f1["drag"]["table_lee_N"], rel_tol=1e-12)
     assert max(f["mass_rel_diff"] for f in doc["frames"]) <= 5e-9       # the CSV's 9 digits (Task 4)
     assert f2["surface"]["n_open_directed_edges"] == 0 and f2["surface"]["volume_rel_diff"] <= 1e-12
     assert doc["checks"]["material_table_h"]["passed"] is None          # --material-table: no FE material to check
@@ -298,3 +301,9 @@ def test_depths_march_along_derived_normals_when_the_frame_carries_them(tmp_path
     e2 = doc["frames"][2]["depths"]
     assert e2["n_wrong_way"] == 3 and doc["frames"][2]["depths"]["facet"]["n_wrong_way"] == 0
     assert e2["n_left_body"] <= e2["facet"]["n_left_body"]
+    # the drag reads the table at the radial normals' inclination; on the intact frame 1 they are the facets' within
+    # the faceting, so the two drags agree to the fixture's faceting error (plan Task 7: below 1 %)
+    for e in doc["frames"][1:]:
+        assert e["drag"]["normals"] == "derived" and math.isfinite(e["drag"]["smooth_N"])
+    f1 = doc["frames"][1]["drag"]
+    assert abs(f1["smooth_N"] / f1["table_lee_N"] - 1.0) < 1e-2

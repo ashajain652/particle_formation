@@ -153,6 +153,65 @@ def test_lee_share_and_windward_split(frames, k):
     assert math.isclose(c["rel_table_lee_hist"], c["D_table_lee"] / c["D_hist"] - 1.0, rel_tol=ROUNDOFF)
 
 
+@pytest.mark.parametrize("k", [1, 2])
+def test_smooth_drag_without_derived_normals_is_the_lee_extended_table(frames, k):
+    f = frames[k]
+    c = loads.drag_comparison(f["theta"], f["area"], f["p_w"], f["tau"], f["row"])
+    assert c["drag_normals"] == "facet"
+    assert math.isclose(c["D_smooth"], c["D_table_lee"], rel_tol=ROUNDOFF)        # summation order differs
+    assert math.isclose(c["D_smooth_lee"], c["D_lee"], rel_tol=ROUNDOFF)
+    assert math.isclose(c["rel_smooth_hist"], c["D_smooth"] / c["D_hist"] - 1.0, rel_tol=ROUNDOFF)
+
+
+def sawtooth(theta_d_deg, alpha_deg, n=40):
+    """Facets about one smooth plane whose outward normal is at theta_d to v_hat = +x: per tooth one facet tilted by
+    +alpha, one by -alpha (in the plane of v_hat and the smooth normal) and one untilted, areas 1, 2 and 0.5 m^2."""
+    td, a = np.radians(theta_d_deg), np.radians(alpha_deg)
+    unit = lambda t: np.array([np.cos(t), np.sin(t), 0.0])
+    normals = np.array([unit(td + a), unit(td - a), unit(td)] * n)
+    area = np.array([1.0, 2.0, 0.5] * n)
+    n_d = np.tile(unit(td), (len(area), 1))
+    return normals, area, n_d
+
+
+def test_smooth_drag_reads_the_loads_at_the_smooth_inclination():
+    """Analytic staircase (decision of 2026-10-08): the loads p_stag cos^2 theta and tau_0 sin 2 theta are what the
+    surface flow gives each facet at its own theta; the untilted facets put the smooth inclination's values in the
+    table exactly (theta_d is a bin centre). D_smooth is then the force of the smooth plane's loads, built here from
+    vectors: pressure p(theta_d) on each facet along -n_facet, shear tau(theta_d) on the facet's area projected on the
+    smooth plane along its tangent toward the tail. At the nose D_patch, the facets' own loads, falls short of it."""
+    p_stag, tau0, v = 4000.0, 40.0, np.array([1.0, 0.0, 0.0])
+    row = {"mass_kg": 1.0, "load_factor_g": 1.0, "p_w_stag_Pa": p_stag}
+    for theta_d_deg in (0.5, 40.5):
+        normals, area, n_d = sawtooth(theta_d_deg, 25.0)
+        theta = np.arccos(np.clip(normals @ v, -1, 1))
+        p_w, tau = p_stag * np.cos(theta) ** 2, tau0 * np.sin(2 * theta)
+        theta_d = np.arccos(np.clip(n_d @ v, -1, 1))
+        cos_to = np.einsum("ij,ij->i", normals, n_d)
+        c = loads.drag_comparison(theta, area, p_w, tau, row, theta_smooth=theta_d, cos_to_smooth=cos_to)
+        assert c["drag_normals"] == "derived" and c["n_lee_patches"] == 0
+        td = np.radians(theta_d_deg)
+        t_d = -v - (n_d @ -v)[:, None] * n_d
+        t_d /= np.linalg.norm(t_d, axis=1)[:, None]            # the smooth tangent toward the tail (theta_d > 0)
+        force = -(p_stag * np.cos(td) ** 2) * area[:, None] * normals \
+            + (tau0 * np.sin(2 * td)) * (area * cos_to)[:, None] * t_d
+        D_vec = math.fsum(force @ -v)
+        assert abs(c["D_smooth"] - D_vec) <= ROUNDOFF * abs(D_vec)
+        if theta_d_deg < 1.0:      # at the nose every tilt lowers cos^3; further aft the tilt toward the flow wins
+            assert c["D_patch"] < c["D_smooth"]
+
+
+def test_smooth_drag_arguments_go_together():
+    th = np.zeros(3)
+    with pytest.raises(ValueError):
+        loads.drag_comparison(th, np.ones(3), np.ones(3), np.zeros(3), {"mass_kg": 1, "load_factor_g": 1,
+                                                                        "p_w_stag_Pa": 1}, theta_smooth=th)
+    with pytest.raises(ValueError):
+        loads.drag_comparison(th, np.ones(3), np.ones(3), np.zeros(3), {"mass_kg": 1, "load_factor_g": 1,
+                                                                        "p_w_stag_Pa": 1},
+                              theta_smooth=np.zeros(2), cos_to_smooth=np.ones(2))
+
+
 def test_uniform_pressure_on_the_closed_surface_gives_no_force(frames):
     for f in frames:
         A_total = f["area"].sum()

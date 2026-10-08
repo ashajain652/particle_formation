@@ -236,11 +236,16 @@ def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[d
     t = time.perf_counter()
     p_w, tau = cf.patch["p_w"], cf.patch["tau"]
     table_k = loads.build_table(der["theta"], der["area"], p_w, tau, loads.history_p_stag(hrow))
-    dc = loads.drag_comparison(der["theta"], der["area"], p_w, tau, hrow)
+    n_derived = cf.patch.get("n_derived")
+    smooth = {}
+    if n_derived is not None:      # the drag reads the loads at the derived surface's inclination (Asha, 2026-10-08)
+        v = np.asarray(v_hat, dtype=np.float64) / np.linalg.norm(v_hat)
+        smooth = {"theta_smooth": np.arccos(np.clip(n_derived @ v, -1.0, 1.0)),
+                  "cos_to_smooth": np.einsum("ij,ij->i", der["normal"], n_derived)}
+    dc = loads.drag_comparison(der["theta"], der["area"], p_w, tau, hrow, **smooth)
     timing["loads"] = time.perf_counter() - t
 
     extra = {}
-    n_derived = cf.patch.get("n_derived")
     if n_derived is not None:
         norm = np.linalg.norm(n_derived, axis=1)
         entry["n_derived"] = {"max_norm_error": float(np.nanmax(np.abs(norm - 1.0))) if len(norm) else 0.0,
@@ -291,7 +296,9 @@ def process_frame(run, k, table, mat, v_hat, out_dir, thickness=True) -> tuple[d
                         "nan_forbidden": cc["nan_forbidden"]},
         "absent_optional": frames.absent_optional(fr),
         "loads_valid": dc["loads_valid"],
-        "drag": {"patch_N": dc["D_patch"], "table_N": dc["D_table"], "history_N": dc["D_hist"],
+        "drag": {"smooth_N": dc["D_smooth"], "normals": dc["drag_normals"], "rel_smooth_hist": dc["rel_smooth_hist"],
+                 "smooth_lee_share": dc["smooth_lee_share"],
+                 "patch_N": dc["D_patch"], "table_N": dc["D_table"], "history_N": dc["D_hist"],
                  "table_lee_N": dc["D_table_lee"], "lee_share": dc["lee_share"], "n_valid": dc["n_valid"],
                  "theta_last_deg": dc["theta_last_deg"], "rel_table_patch": dc["rel_table_patch"],
                  "rel_patch_hist": dc["rel_patch_hist"]},
@@ -379,10 +386,11 @@ def aggregate_checks(entries, material_check, material_name, table_name, missing
                                     if e["drag"]["rel_table_patch"] is not None
                                     and math.isfinite(e["drag"]["rel_table_patch"])] or [0.0]),
                                None, measured + ": max |D_table / D_patch - 1|", None)
-    c["drag_vs_history"] = _check(max([abs(e["drag"]["rel_patch_hist"]) for e in with_loads
-                                       if e["drag"]["rel_patch_hist"] is not None
-                                       and math.isfinite(e["drag"]["rel_patch_hist"])] or [0.0]),
-                                  None, measured + ": max |D_patch / D_hist - 1| (spec §7.3)", None)
+    c["drag_vs_history"] = _check(max([abs(e["drag"]["rel_smooth_hist"]) for e in with_loads
+                                       if e["drag"]["rel_smooth_hist"] is not None
+                                       and math.isfinite(e["drag"]["rel_smooth_hist"])] or [0.0]),
+                                  None, measured + ": max |D_smooth / D_hist - 1| (spec §7.3; loads read at the "
+                                  "derived normals' inclination where the frame carries n_derived)", None)
     with_depths = [e for e in ok if "depths" in e]
     if with_depths:
         c["thickness_nan"] = _check(sum(e["thickness"]["n_nan"] for e in with_depths), None,
