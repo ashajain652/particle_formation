@@ -171,3 +171,53 @@ def test_a_substep_closes_the_skin_books_with_the_conducted_base_flux():
     dz = f.thickness() / f.nc
     conducted = f.area * f.material.k(f.T[:, -1]) / (0.5 * dz) * (f.T[:, -1] - 800.0) * 0.01
     assert np.allclose(E_base, conducted, rtol=1e-6)
+
+
+
+# -- feed and draw (Task 4) -----------------------------------------------------------------------------------------
+def test_feed_takes_only_the_contiguous_liquid_at_the_top_and_the_draw_restores_the_thickness():
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    Tf = mat.T_feed
+    T = np.array([[Tf + 5, Tf + 3, Tf + 1, Tf - 30, Tf + 4, 850.0, 840.0, 830.0]])
+    f = field(mat, n=1, nc=8, T=T)
+    M0 = f.mass()
+    mu = M0 / 8
+    L = np.array([1e-9])
+    before = node_total(f, 0, L[0])
+    to_film, to_deep, drawn, drawn_H, L_new, _ = f.feed_and_draw(L, np.array([1.5 * mu]), np.array([1.0]), np.array([820.0]))
+    assert to_film[0] + to_deep[0] == pytest.approx(3 * mu, rel=1e-13) and to_film[0] == pytest.approx(1.5 * mu, rel=1e-13)
+    assert drawn[0] == pytest.approx(3 * mu, rel=1e-12) and f.mass() == pytest.approx(M0, rel=1e-13)
+    assert L_new[0] == pytest.approx(L[0] + 3 * mu, rel=1e-13)
+    assert node_total(f, 0, L_new[0]) == pytest.approx(before + drawn_H[0], rel=1e-12)
+    assert drawn_H[0] == pytest.approx(drawn[0] * float(mat.enthalpy(820.0)), rel=1e-14)
+
+
+def test_an_exhausted_skin_empties_without_nan():
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    f = field(mat, n=1, nc=8, T=np.full((1, 8), mat.T_feed + 10.0))
+    M0 = f.mass()
+    to_film, to_deep, drawn, _, L_new, _ = f.feed_and_draw(np.array([0.0]), np.array([np.inf]), np.array([0.0]), np.array([900.0]))
+    assert to_film[0] == pytest.approx(M0, rel=1e-13) and drawn[0] == 0.0 and f.mass() == 0.0
+    assert np.isfinite(f.T).all() and L_new[0] == pytest.approx(M0, rel=1e-13)
+    E_top, E_rad, E_base, _ = f.conduct(0.01, np.array([1e6]), 0.0, np.array([0.3]), np.array([900.0]), L_new)
+    assert np.isfinite(f.T).all() and np.isfinite(E_base).all()
+
+
+def test_steady_ablation_speed():
+    """Melt removed as it forms under a constant flux: the steady recession speed is q / (rho (c (T_feed - T_i) + L));
+    the base is held at the steady profile's value T_i + (T_feed - T_i) exp(-v s / alpha) and draws at it."""
+    mat = constant_material(latent=4.0e5, T_melt=900.0)
+    s, nc, q, T_i = 4.0e-3, 200, 2.0e7, 700.0
+    v = q / (2800.0 * (1000.0 * (mat.T_feed - T_i) + 4.0e5))
+    alpha = 150.0 / (2800.0 * 1000.0)
+    T_b = T_i + (mat.T_feed - T_i) * math.exp(-v * s / alpha)
+    z = (np.arange(nc) + 0.5) * s / nc
+    f = field(mat, n=1, nc=nc, thickness=s, T=(T_i + (mat.T_feed - T_i) * np.exp(-v * z / alpha))[None, :])
+    fed, dt = 0.0, 1.0e-3
+    for step in range(1000):
+        f.conduct(dt, np.array([q]), 0.0, np.array([0.0]), np.array([T_b]), np.array([0.0]))
+        to_film, to_deep, _, _, _, _ = f.feed_and_draw(np.array([0.0]), np.array([np.inf]), np.array([1.0]), np.array([T_b]))
+        if step >= 700:                                  # the liquid leaves at once: nothing rides the top node
+            fed += float(to_film[0] + to_deep[0])
+    speed = fed / (0.3 * 2800.0 * f.area[0])
+    assert speed == pytest.approx(v, rel=0.02)
