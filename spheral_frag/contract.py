@@ -15,7 +15,9 @@ Where the items live in a run directory `<outdir>/<run>` (plan, facts 1-5):
 
 Units of the per-step fields (review focus 3): `release_rate` is kg/m^2 **per macro step**, not per second;
 `deep_thickness` is a mass per area expressed as a thickness, m_d / (rho_l A); `p_w` = 0 means "not evaluated"
-(fact 3: the export writes 0.0 where the step had no film or the face was exposed by that step's deaths).
+(the export writes 0.0 where the surface flow was not evaluated, e.g. before the first step or on a face exposed
+by that step's deaths; under decision 4 of the plan it writes the loads on every step that evaluated the flow,
+with or without film).
 
 Numpy and the standard library only (the runner imports this module under Spheral's Python)."""
 from __future__ import annotations
@@ -25,7 +27,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 CONTRACT_VERSION = 1
-V_HAT = (1.0, 0.0, 0.0)        # body-frame flight direction: not exported, the default of every body class (confirm)
+V_HAT = (1.0, 0.0, 0.0)        # body-frame flight direction: the default of every body class; exported as v_hat (decision 4, confirm)
 LOCATIONS = ("node", "tet", "patch", "frame", "history", "run")
 
 
@@ -103,7 +105,7 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     _f("film_thickness", "film_thickness", "patch", "m", True, "§10 zones", "Step 3"),
     _f("film_T", "film_T", "patch", "K", True, "§14.1 sink enthalpy", "Step 3"),
     _f("p_w", "p_w", "patch", "Pa; 0 = not evaluated", True, "§7.2 loads",
-       "Step 3; zero without film (fact 3, confirm)"),
+       "Step 3; written on every evaluated step (decision 4, confirm)"),
     _f("tau", "tau", "patch", "Pa, magnitude along the flow-direction tangent", True, "§7.2 loads",
        "Step 3; sign convention (confirm); 0 where p_w is 0"),
     _f("release_rate", "release_rate", "patch", "kg/m^2 per macro step", True, "§10, §14.1 sink",
@@ -113,11 +115,11 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     _f("deep_thickness", "deep_thickness", "patch", "m (mass per area, m_d / (rho_l A))", False,
        "§10, §2 backlog", "Step 3 amendment of 2026-10-02; read, not physical at 0.5 s"),
     _f("closure", "closure", "patch", "0 Girin / 1 Couette", False, "consistency with delta_m",
-       "Step 3; 1 where the step had no film"),
+       "Step 3; 1 where not evaluated or not Girin's (decision 4, confirm)"),
     _f("r_droplet", "r_droplet", "patch", "m; NaN where nothing released", False, "informational", "Step 3",
        nan_allowed=True),
     _f("we_s", "we_s", "patch", "-", False, "informational", "Step 3"),
-    _f("kn_local", "kn_local", "patch", "-", False, "informational", "Step 3; NaN where the step had no film",
+    _f("kn_local", "kn_local", "patch", "-", False, "informational", "Step 3; NaN where not evaluated (decision 4, confirm)",
        nan_allowed=True),
     # frame
     _f("frame_time_s", "field.pvd:timestep", "frame", "s, 6 significant digits", True, "§9.1",
@@ -127,7 +129,7 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     # run (<run>.json)
     *(_f(key, name, "run", units, True, consumer, note) for key, name, units, consumer, note in _RUN),
     _f("v_hat", "v_hat", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
-       "not exported; assumed V_HAT = (1, 0, 0) (confirm; Question 3 asks to export it)"),
+       "exported into the run JSON (decision 4); key path and value (confirm)"),
 )
 
 FRAME_TIME_RTOL = 1e-6          # frame time matches a history row within FRAME_TIME_RTOL * max(1, t) seconds
