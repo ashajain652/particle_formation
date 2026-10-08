@@ -696,7 +696,7 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--frames", default=None, help="K0:K1, inclusive (default: every frame of the run)")
     p.add_argument("--every", type=int, default=1, help="every N-th frame from K0 (default 1)")
     p.add_argument("--fe-package", default=None, help="directory holding the finite-element package that produced the run "
-                   "(default: this repository's); e.g. prototype/proto3 until Step 3 lands")
+                   "(default: this repository's); e.g. prototype/work-2026-10-08-spheral-mvp/code until Step 3 lands")
     p.add_argument("--mechanical", default=fe.DEFAULT_MECHANICAL, help="mechanical input file of the material table")
     p.add_argument("--material-table", default=None, help="use this material table (npz with its JSON header) "
                    "instead of building one from the finite-element material (the synthetic fixtures' material)")

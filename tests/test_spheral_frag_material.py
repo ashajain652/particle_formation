@@ -34,7 +34,7 @@ ENV = fe.FE_PACKAGE_ENV
 def fe_package_or_skip():
     path = os.environ.get(ENV)
     if not path:
-        pytest.skip("{} is not set: set it to Step 3's package directory (e.g. prototype/proto3) to compare against "
+        pytest.skip("{} is not set: set it to Step 3's package directory (e.g. prototype/work-2026-10-08-spheral-mvp/code) to compare against "
                     "AA7075_scheil and AA7075_range; the committed table fixture covers the core".format(ENV))
     path = os.path.join(REPO_ROOT, path) if not os.path.isabs(path) else path
     if not os.path.isfile(os.path.join(path, "reentry_model", "__init__.py")):

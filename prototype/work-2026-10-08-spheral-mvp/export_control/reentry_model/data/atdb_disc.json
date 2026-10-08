@@ -1,0 +1,43 @@
+{
+  "_provenance": "RECONSTRUCTED 2026-10-07 without DRAMA (prototype/rebuild/rebuild.py): only the values the committed plan states are present, the rest are null. The original was the values of /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_CYLINDER.nc (ESA DRAMA 4.1.4 aerothermal database for the primitive CYLINDER, Hyperschall Technologie Goettingen GmbH) at angle of attack 0 (the flat face normal to the flow) and the thinnest tabulated aspect ratio; re-extract it with the script of plan Task 9 step 4.",
+  "mach": [
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    25.0,
+    30.0
+  ],
+  "cd_free_molecular": [
+    null,
+    2.202072,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cd_continuum": [
+    1.801341,
+    1.824148,
+    1.828404,
+    1.829896,
+    1.830587,
+    1.830962
+  ],
+  "heat_flux_factor_free_molecular": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "heat_flux_factor_continuum": [
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561,
+    0.329561
+  ]
+}

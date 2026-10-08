@@ -1,0 +1,127 @@
+rebuild of /Users/ashajain/MIT/particle_formation/prototype/proto3_export_control from the documents at /Users/ashajain/MIT/particle_formation (HEAD f70c894)
+stage base: git archive ee70f6b reentry_model tests data analysis
+  93 files
+stage task1: mesh.py, its tests and the band = 0 test pins from 187cd51 (sub-plan 01 = Task 1 + the dense band, ported from the prototype)
+  reentry_model/mesh.py (470 lines)
+  tests/test_reentry_model_mesh.py (326 lines)
+  tests/conftest.py (39 lines)
+  tests/test_reentry_model_reference_thermal.py (109 lines)
+stage plan: Tasks 2-15 of docs/superpowers/plans/2026-09-20-melt-spraying.md
+ Task 2
+  ran plan:796 (material files) -> exit 0; stdout: written
+  append tests/test_reentry_model_material.py (+61 lines, now 109)
+  replace reentry_model/material.py (207 lines)
+ Task 3
+  edit tests/test_reentry_model_thermal.py (plan:1138 -> plan:1151)
+  append tests/test_reentry_model_thermal.py (+141 lines, now 314)
+  edit tests/test_reentry_model_fenicsx.py (plan:1316 prose)
+  append tests/test_reentry_model_fenicsx.py (+39 lines, now 144)
+  replace reentry_model/thermal/__init__.py (50 lines)
+  replace reentry_model/thermal/skfem_backend.py (335 lines)
+  replace reentry_model/thermal/fenicsx_backend.py (252 lines)
+  edit reentry_model/cli.py (plan:2027)
+  edit reentry_model/cli.py (plan:2031 a)
+  edit reentry_model/cli.py (plan:2031 b)
+ Task 4
+  create tests/test_reentry_model_dispersion.py (45 lines)
+  create reentry_model/dispersion.py (96 lines)
+  ran plan:2226 line 1 (girin_dispersion.json) -> exit 0; stdout: 200 1.2256422569027612 0.2469009885666046
+ Task 5
+  create tests/test_reentry_model_surface_flow.py (128 lines)
+  insert after line 16 of reentry_model/gas.py (plan:2400 a)
+  insert after line 40 of reentry_model/gas.py (plan:2402 b)
+  edit reentry_model/gas.py (plan:2410 c)
+  insert before line 146 of reentry_model/gas.py (plan:2418 d)
+  create reentry_model/surface_flow.py (336 lines)
+ Task 6
+  create tests/test_reentry_model_film.py (75 lines)
+  create reentry_model/film.py (112 lines)
+ Task 7
+  create data/reference_values/girin2017_table1.json (81 lines)
+  create data/reference_values/girin1994_tables.json (83 lines)
+  create tests/test_reentry_model_spray.py (314 lines)
+  create reentry_model/spray.py (403 lines)
+ Task 8
+  create tests/test_reentry_model_girin.py (51 lines)
+  create reentry_model/girin_case.py (133 lines)
+  create analysis/girin_reference.py (160 lines)
+ Task 9
+  create tests/test_reentry_model_melting.py (277 lines)
+  replace reentry_model/body.py (923 lines)
+  wrote reentry_model/data/atdb_disc.json PARTIALLY (no DRAMA: the plan's stated values only, the rest null)
+  insert after line 16 of reentry_model/aero.py (plan:5625 DISC_ATDB)
+  replace definition 'def drag_coefficient(' in reentry_model/aero.py (lines 150-155)
+  edit reentry_model/trajectory.py (plan:5650 -> 5658)
+  insert after line 16 of reentry_model/aero.py (plan:5670 MACH_SWITCH)
+  replace definition 'def cd_continuum(' in reentry_model/aero.py (lines 60-65)
+  edit reentry_model/aero.py (plan:5688 docstring)
+  edit tests/test_reentry_model_aero.py (plan:5690)
+ Task 10
+  append tests/test_reentry_model_coupled.py (+55 lines, now 144)
+  replace reentry_model/coupled.py (226 lines)
+ Task 11 (references NOT generated: DRAMA 4.1.4 is not installed; tests transcribed)
+  append tests/test_reentry_model_data.py (+32 lines, now 89)
+  edit tests/test_reentry_model_aero.py (plan:6115 -> 6121)
+  edit tests/test_reentry_model_data.py (reconstructed: import pytest)
+ Task 12
+  append tests/test_reentry_model_compare.py (+59 lines, now 172)
+  append tests/test_reentry_model_viz.py (+49 lines, now 110)
+  insert after line 54 of reentry_model/sesam_io.py (plan:6284)
+  insert after line 100 of reentry_model/sesam_io.py (plan:6291)
+  edit reentry_model/compare.py (plan:6299)
+  append reentry_model/compare.py (+154 lines, now 391)
+  replace reentry_model/viz.py (175 lines)
+ Task 13
+  append tests/test_reentry_model_cli.py (+66 lines, now 228)
+  replace reentry_model/cli.py (431 lines)
+ Task 14
+  create tests/test_reentry_model_reference_melt.py (46 lines)
+  create analysis/melt_verification.py (104 lines)
+  create analysis/melt_sensitivity.py (79 lines)
+ Task 15 (package docstring only)
+  edit reentry_model/__init__.py (plan:8107)
+stage band13: sub-plan 13's dense-band line (reconstructed, 3 lines)
+  edit reentry_model/cli.py (reconstructed)
+stage fact37
+  edit reentry_model/body.py (fact 37: __init__)
+  insert after line 610 of reentry_model/body.py (fact 37: step iii)
+  insert after line 701 of reentry_model/body.py (fact 37: on_current_surface)
+  edit reentry_model/coupled.py (fact 37: the writer)
+  edit reentry_model/coupled.py (fact 37: write_vtk_frame docstring from the 2026-10-02 context)
+  edit tests/test_reentry_model_coupled.py (fact 37: test lines, 2 from the 2026-10-02 context + 12 reconstructed from fact 37's prose)
+stage d1002: 9 diff blocks
+  diff 06-melt-film.md:49: every hunk exactly at its stated line
+  diff 06-melt-film.md:90: every hunk exactly at its stated line
+  diff 09-melting-body.md:174: every hunk exactly at its stated line
+  diff 09-melting-body.md:583: every hunk exactly at its stated line
+  diff 10-coupled-loop.md:81: every hunk exactly at its stated line
+  diff 10-coupled-loop.md:132: every hunk exactly at its stated line
+  diff 13-cli-wiring.md:56: every hunk exactly at its stated line
+  diff 13-cli-wiring.md:121: every hunk exactly at its stated line
+  diff 14-verification-runs.md:73: every hunk exactly at its stated line
+stage d1003: 8 diff blocks
+  diff 09-melting-body.md:890: every hunk exactly at its stated line
+  diff 09-melting-body.md:1074: every hunk exactly at its stated line
+  diff 09-melting-body.md:1268: every hunk exactly at its stated line
+  diff 10-coupled-loop.md:216: every hunk exactly at its stated line
+  diff 10-coupled-loop.md:241: every hunk exactly at its stated line
+  diff 13-cli-wiring.md:187: every hunk exactly at its stated line
+  diff 13-cli-wiring.md:254: every hunk exactly at its stated line
+  diff 14-verification-runs.md:141: every hunk exactly at its stated line
+stage d1005: 3 diff blocks
+  diff 13-cli-wiring.md:340: every hunk exactly at its stated line
+  diff 13-cli-wiring.md:445: every hunk exactly at its stated line
+  diff 14-verification-runs.md:224: every hunk exactly at its stated line
+stage post: 6 post-reconstruction additions (NOT part of the recovered state)
+ post 01: sub-plan 02 (AA7075_scheil, AA7075-empiricaldata)
+  ran 02-material-properties.md:134 (four material files) -> exit 0; stdout: written
+  AA7075.json and AA7075_range.json byte-identical after sub-plan 02's generator
+  append tests/test_reentry_model_material.py (+63 lines, now 174)
+  append tests/test_reentry_model_material.py (+17 lines, now 193)
+  replace reentry_model/material.py (252 lines)
+  diff post/02-frame-loads-every-step-and-v-hat.diff: every hunk exactly at its stated line
+  diff post/03-run-name-encodes-the-material.diff: every hunk exactly at its stated line
+  post/04-derived-surface-normals-in-the-frames.diff: skipped (--post-skip)
+  diff post/05-runoff-emptying-number-bound.diff: every hunk exactly at its stated line
+  post/06-frames-flow-record-on-exposed-faces.diff: skipped (--post-skip)
+done: 116 files

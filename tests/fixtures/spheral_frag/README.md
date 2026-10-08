@@ -133,10 +133,10 @@ tests run without it. `material_AA7075_scheil_fe_samples.npz` holds the finite-e
 enthalpy and liquid-fraction node and its neighbours ± 1e-9 K (5,543 in all). Regenerate with
 
 ```bash
-"$PY" tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/proto3 --material AA7075_scheil \
+"$PY" tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/work-2026-10-08-spheral-mvp/code --material AA7075_scheil \
     --out tests/fixtures/spheral_frag/material --samples 5000
 ```
 
 (the command is also in the JSON header, with the package's SHA-256). The arrays regenerate bitwise; the npz bytes
-and the header's absolute paths do not. With `SPHERAL_FRAG_FE_PACKAGE=prototype/proto3` the tests regenerate it
+and the header's absolute paths do not. With `SPHERAL_FRAG_FE_PACKAGE=prototype/work-2026-10-08-spheral-mvp/code` the tests regenerate it
 and compare.

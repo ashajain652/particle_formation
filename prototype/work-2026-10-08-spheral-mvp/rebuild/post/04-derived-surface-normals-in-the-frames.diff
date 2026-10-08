@@ -1,0 +1,52 @@
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -154,7 +154,7 @@
+ 
+ def write_vtk_frame(output_dir, k, body, loads):
+     """field_<k>.vtu: nodal T on the active volume mesh (plus liquid fraction and element fractions when melting);
+-    surface_<k>.vtp: q_conv, q_rad, T per patch, and when melting the film thickness and temperature, We_s, closure,
++    surface_<k>.vtp: q_conv, q_rad, T per patch, the derived surface's outward unit normal n_derived, and when melting the film thickness and temperature, We_s, closure,
+     local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+     flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+     (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+@@ -179,6 +179,18 @@
+     poly.cell_data["q_conv"] = loads.q_conv
+     poly.cell_data["q_rad"] = body.emissivity * SIGMA_SB * (Tf ** 4 - body.T_ambient ** 4)
+     poly.cell_data["T_patch"] = Tf
++    # post-reconstruction addition (2026-10-07, write-only; Spheral M1 decision 9): each patch's outward unit normal on
++    # the derived surface of sub-plan 01 -- the Taubin-smoothed normal of `mesh.surface(derived=True)` (spec 2026-09-27
++    # sec. 8 step 4) -- which the layer depths march along. The derived surface's patches are these patches one to one
++    # (the same boundary faces, in the same order: checked by face id). The triangles are written with the face table's
++    # node order, whose winding is inward on some patches; this field is outward by construction (oriented by the
++    # patch's opposite vertex, like `surface.normals`), so it, not the winding, is the orientation to trust. Nothing in
++    # the prototype displaces `derived_points` yet (sub-plan 16, plans only), so the derived surface's facets are the
++    # staircase's and the field is the smoothing alone.
++    derived = mesh.surface(derived=True)
++    if not np.array_equal(derived.face_ids, surface.face_ids):
++        raise RuntimeError("the derived surface's patches are not the body's surface patches")
++    poly.cell_data["n_derived"] = derived.smoothed_normals() if surface.n_patches else np.zeros((0, 3))
+     if melting:
+         poly.cell_data["film_thickness"] = body.m_f / (body.liquid.rho * surface.areas)
+         poly.cell_data["film_T"] = body.film_temperature()
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -121,6 +121,8 @@
+     for key in ("film_thickness", "we_s", "closure", "kn_local", "p_w", "tau", "r_droplet", "release_rate", "delta_m",
+                 "deep_thickness"):
+         assert key in poly.cell_data
++    n_d = np.asarray(poly.cell_data["n_derived"])                                 # post-reconstruction addition (2026-10-07)
++    assert n_d.shape == (poly.n_cells, 3) and np.allclose(np.linalg.norm(n_d, axis=1), 1.0)
+     # the flow fields are the frame's own step's, carried across that step's element deaths: the wall pressure is positive
+     # on the windward patches and nowhere above the stagnation value the history recorded from the same evaluation
+     # (the twelve lines below are reconstructed 2026-10-07 from plan fact 37's prose: see prototype/README.md)
+@@ -218,3 +220,10 @@
+     np.testing.assert_array_equal(tau, b.last_flow_step.tau)
+     np.testing.assert_array_equal(np.asarray(last.cell_data["closure"]), b.last_flow_step.closure.astype(float))
+     assert (p_w > 0.0).all() and p_w.max() == pytest.approx(c["p_w_stag_step_Pa"][-1], rel=0.05) and tau.max() > 0.0
++    # the derived surface's outward normal (post-reconstruction addition of 2026-10-07, decision 9): the Taubin-smoothed
++    # normal of the current patches, unit and outward whatever the triangle's winding
++    n_d = np.asarray(last.cell_data["n_derived"])
++    np.testing.assert_array_equal(n_d, m.surface(derived=True).smoothed_normals())
++    tri = np.asarray(last.faces).reshape(-1, 4)[:, 1:]
++    centre = np.asarray(last.points)[tri].mean(axis=1)
++    assert np.allclose(np.linalg.norm(n_d, axis=1), 1.0) and (np.einsum("ij,ij->i", n_d, centre) > 0.0).all()

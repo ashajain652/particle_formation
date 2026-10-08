@@ -1,0 +1,123 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -258,6 +258,8 @@
+         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)
+         self.last_flow = self.last_spray = None
+         self.last_delta_m = None                                           # the step's conjugate depth per patch [m]
++        self.last_flow_step = None        # post-reconstruction addition (2026-10-07): the step's own flow evaluation
++        self.last_p_w_stag_step = float("nan")                            # ... and its wall pressure at the stagnation patch
+         self.last_face_ids = None                                          # face ids of the surface they were evaluated on
+         self.last_melt = {"n_dead": 0, "runoff_substeps": 0, "released_mass": 0.0, "n_released": 0.0, "feed_mass": 0.0}
+         self.melt_onset = self.spray_onset = None
+@@ -422,6 +424,11 @@
+             delta_m, _ = spray_mod.melt_layer(flow, liq)
+             self.last_face_ids = self.surface.face_ids.copy()      # the surface delta_m belongs to (the deaths come later)
+         self.last_delta_m = delta_m                                # per patch, nan off Girin's closure; for the VTK frame
++        # post-reconstruction addition (2026-10-07, write-only): keep the step's own surface-flow evaluation -- made on
++        # every melt step with an aero state, film or not -- so the frames carry p_w, tau and closure, and the history the
++        # stagnation wall pressure, on every such step (None / nan only where the flow was not evaluated)
++        self.last_flow_step = flow
++        self.last_p_w_stag_step = float(flow.p_w[self.i_stag]) if flow is not None else float("nan")
+         h_node = mat.enthalpy(T)
+         h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
+         h_liq = mat.enthalpy_liquid(T)
+@@ -1110,6 +1117,7 @@
+                 "kn_body": lm.get("kn_body", float("nan")), "kn_local_stag": lm.get("kn_local_stag", float("nan")),
+                 "re_shock": lm.get("re_shock", float("nan")), "flow_branch": lm.get("flow_branch", float("nan")),
+                 "p_w_stag_Pa": lm.get("p_w_stag", float("nan")), "phi_sonic_deg": lm.get("phi_sonic_deg", float("nan")),
++                "p_w_stag_step_Pa": self.last_p_w_stag_step,
+                 "drag_shape_factor": self.drag_shape_factor(), "frozen_mass_kg": self.frozen_mass,
+                 "film_T_max_K": float(self.film_temperature().max()) if self.m_f.size else float("nan"),
+                 "film_T_mean_K": float((self.m_f * self.film_temperature()).sum() / self.m_f.sum()) if self.m_f.sum() > 0.0 else float("nan"),
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -264,7 +264,12 @@
+             "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
+             "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
+             "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
+-            "k_scale": args.k_scale, "melt": args.melt}
++            "k_scale": args.k_scale, "melt": args.melt,
++            # post-reconstruction addition (2026-10-07): the fixed attitude, in the body (mesh) frame -- v_hat is the
++            # direction of motion, the stagnation patch the one facing it; the freestream comes from +v_hat, i.e. the
++            # oncoming flow velocity relative to the body is along -v_hat
++            "v_hat_body": [float(x) for x in getattr(the_body, "v_hat", (1.0, 0.0, 0.0))],
++            "freestream_velocity_direction_body": [-float(x) for x in getattr(the_body, "v_hat", (1.0, 0.0, 0.0))]}
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -27,7 +27,8 @@
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+-                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg"]
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
++                "p_w_stag_step_Pa"]      # post-reconstruction addition (2026-10-07): every step's own stagnation wall pressure
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -183,10 +184,16 @@
+         poly.cell_data["film_T"] = body.film_temperature()
+         res, flow, carry = body.last_spray, body.last_flow, body.on_current_surface
+         poly.cell_data["we_s"] = carry(res.we_s if res is not None else None, 0.0)
+-        poly.cell_data["closure"] = carry(flow.closure.astype(float) if flow is not None else None, 1.0)
++        # post-reconstruction addition (2026-10-07, write-only): closure, p_w and tau from the step's own flow evaluation,
++        # which every melt step with an aero state makes; the spray step's `last_flow` is that same object whenever there
++        # is film, and None otherwise, so these fields were the defaults before melt onset and after spraying ended. The
++        # defaults (closure 1, p_w and tau 0) now remain only where the flow was not evaluated -- frame 0, before the
++        # first melt step; --removal instant, which never evaluates it -- and on faces the step's deaths exposed.
++        step_flow = getattr(body, "last_flow_step", None) or flow
++        poly.cell_data["closure"] = carry(step_flow.closure.astype(float) if step_flow is not None else None, 1.0)
+         poly.cell_data["kn_local"] = carry(flow.kn_local if flow is not None else None, np.nan)
+-        poly.cell_data["p_w"] = carry(flow.p_w if flow is not None else None, 0.0)
+-        poly.cell_data["tau"] = carry(flow.tau if flow is not None else None, 0.0)
++        poly.cell_data["p_w"] = carry(step_flow.p_w if step_flow is not None else None, 0.0)
++        poly.cell_data["tau"] = carry(step_flow.tau if step_flow is not None else None, 0.0)
+         poly.cell_data["r_droplet"] = carry(np.where(res.dm > 0.0, res.r, np.nan) if res is not None else None, np.nan)
+         poly.cell_data["release_rate"] = carry(res.dm if res is not None else None, 0.0) / surface.areas
+         # Girin's conjugate depth per patch, nan where the patch's closure is not his (no conjugate depth exists there),
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -239,6 +239,7 @@
+     doc = json.load(open(tmp_path / "melt_short.json"))
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     assert s["melt"] == "on" and s["material"] == "AA7075_range" and s["removal"] == "girin" and s["runoff"] == "on" and s["prism_layers"] == 0
++    assert s["v_hat_body"] == [1.0, 0.0, 0.0] and s["freestream_velocity_direction_body"] == [-1.0, -0.0, -0.0]   # post-reconstruction addition
+     assert s["rarefied_shear"] == "slip" and s["we_critical"] == 4.62 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["liquid"]["sigma"] == 0.86
+     assert s["gamma_pm"] == 1.15 and s["kn_body_shock"] == 0.01 and s["deep_runoff"] == "on" and s["seed"] == cli.DEFAULT_SEED
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -190,3 +190,31 @@
+     hist = coupled.CoupledRun(simulator(b), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5)).run()
+     assert hist.end_reason == "demise" and hist.results["end_reason"] == "demise" and hist.results["demise_altitude_km"] < 71.0
+     assert 0.55 * MASS_100MM < hist.columns["mass_kg"][-1] < 0.6 * MASS_100MM and hist.results["final_mass_kg"] == hist.columns["mass_kg"][-1]
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Post-reconstruction addition (2026-10-07): the wall loads on every frame, for the Spheral replay (spec 2026-10-02 sec. 6.1)
++
++
++def test_frames_carry_the_wall_loads_on_steps_without_film(coarse_sphere_mesh, tmp_path):
++    """Two seconds from 69.8 km of a cold body (300 K): nothing melts, so the spray step never runs and `last_flow` stays
++    None -- yet the surface flow is evaluated at the top of every melt step, and the frames carry its closure, p_w and
++    tau, and the history its stagnation wall pressure, on every step after the first (frame 0 precedes any evaluation)."""
++    pytest.importorskip("cantera")
++    import pyvista as pv
++    m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++    b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver("skfem"), MASS_100MM)
++    sim = simulator(b, t_max=52.0)
++    sim.advance(50.0)
++    out = os.path.join(str(tmp_path), "vtk")
++    hist = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5, frames_every=1, output_dir=out)).run()
++    c = hist.columns
++    assert b.last_flow is None and c["sprayed_mass_kg"][-1] == 0.0 and np.isnan(c["p_w_stag_Pa"]).all()
++    assert np.isnan(c["p_w_stag_step_Pa"][0]) and (c["p_w_stag_step_Pa"][1:] > 0.0).all()
++    first, last = pv.read(os.path.join(out, "surface_0.vtp")), pv.read(os.path.join(out, "surface_4.vtp"))
++    assert not np.asarray(first.cell_data["p_w"]).any()                            # frame 0: no evaluation yet
++    p_w, tau = np.asarray(last.cell_data["p_w"]), np.asarray(last.cell_data["tau"])
++    np.testing.assert_array_equal(p_w, b.last_flow_step.p_w)                       # no deaths: the surface is the evaluated one
++    np.testing.assert_array_equal(tau, b.last_flow_step.tau)
++    np.testing.assert_array_equal(np.asarray(last.cell_data["closure"]), b.last_flow_step.closure.astype(float))
++    assert (p_w > 0.0).all() and p_w.max() == pytest.approx(c["p_w_stag_step_Pa"][-1], rel=0.05) and tau.max() > 0.0

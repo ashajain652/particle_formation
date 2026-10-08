@@ -1,0 +1,15 @@
+E             Obtained: 1.4693212207141535
+E             Expected: 1.4693212207124728 ± 1.5e-12
+
+tests/test_reentry_model_melting.py:597: AssertionError
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_reentry_model_fenicsx.py:12: could not import 'dolfinx': No module named 'dolfinx'
+ERROR tests/test_reentry_model_compare.py::test_melting_reference_and_has_melt
+ERROR tests/test_reentry_model_compare.py::test_melt_metrics_recover_a_known_lag
+ERROR tests/test_reentry_model_compare.py::test_melt_plots_are_written - File...
+FAILED tests/test_reentry_model_cli.py::test_bookkeeping_device_against_the_melting_reference
+FAILED tests/test_reentry_model_data.py::test_melting_reference_runs_are_committed_and_consistent
+FAILED tests/test_reentry_model_data.py::test_disc_aerothermal_table - TypeEr...
+FAILED tests/test_reentry_model_melting.py::test_drag_shape_factor_between_the_two_atdb_endpoints
+FAILED tests/test_reentry_model_melting.py::test_full_steps_with_the_molten_cascade_keep_the_books_exact
+5 failed, 238 passed, 1 skipped, 16 deselected, 3 errors in 277.26s (0:04:37)

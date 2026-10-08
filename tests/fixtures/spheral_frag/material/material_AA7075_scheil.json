@@ -32,13 +32,13 @@
     "rho_solid": "kg/m^3, the FE density",
     "sigma_liquid": "N/m"
   },
-  "command": "tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/proto3 --material AA7075_scheil --out tests/fixtures/spheral_frag/material --samples 5000",
+  "command": "tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/work-2026-10-08-spheral-mvp/code --material AA7075_scheil --out /private/tmp/claude-501/-Users-ashajain-MIT-particle-formation/1519578d-5da8-43fe-8afc-5e7e29b9380e/scratchpad/matfix --samples 5000",
   "fe_material": "AA7075_scheil",
-  "fe_material_file": "/Users/ashajain/MIT/particle_formation/prototype/proto3/reentry_model/data/materials/AA7075_scheil.json",
+  "fe_material_file": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-08-spheral-mvp/code/reentry_model/data/materials/AA7075_scheil.json",
   "fe_package": {
-    "file": "/Users/ashajain/MIT/particle_formation/prototype/proto3/reentry_model/__init__.py",
-    "path": "/Users/ashajain/MIT/particle_formation/prototype/proto3",
-    "sha256": "47cc8f6b7e3faff252b34001377c26e5eb0f47bbfa70ac59348ddc5760ec9af1"
+    "file": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-08-spheral-mvp/code/reentry_model/__init__.py",
+    "path": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-08-spheral-mvp/code",
+    "sha256": "9629f39c77d1f76c317b8640ae046ae88a0fd576f29fee671df16009b9c3687f"
   },
   "file": "material_AA7075_scheil.npz",
   "interp_fma": true,

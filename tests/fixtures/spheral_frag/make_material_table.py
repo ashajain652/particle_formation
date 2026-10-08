@@ -1,6 +1,6 @@
 """Write a material table and the finite-element material's own values at sample temperatures (Spheral M1, Task 3).
 
-    "$PY" tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/proto3 --material AA7075_scheil \
+    "$PY" tests/fixtures/spheral_frag/make_material_table.py --fe-package prototype/work-2026-10-08-spheral-mvp/code --material AA7075_scheil \
         --out tests/fixtures/spheral_frag/material --samples 5000
 
 writes `<out>/material_<name>.npz` + `.json` (exactly what `prepare` writes as `material_table.npz`) and

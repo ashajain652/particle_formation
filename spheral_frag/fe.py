@@ -2,7 +2,7 @@
 
 Prepare side only: every function imports `reentry_model` inside itself, and Spheral's Python never imports this
 module's functions. Which `reentry_model`: `import_fe_package(path)` puts `path` first on `sys.path` (default: this
-repository), so `prepare --fe-package prototype/proto3` reads Step 3's material until Step 3 lands on main; tests
+repository), so `prepare --fe-package prototype/work-2026-10-08-spheral-mvp/code` reads Step 3's material until Step 3 lands on main; tests
 read that path from `SPHERAL_FRAG_FE_PACKAGE`. One process holds one `reentry_model`: asking for a second one from
 another location raises instead of mixing two packages' modules.
 

@@ -1,0 +1,74 @@
+--- a/reentry_model/film.py
++++ b/reentry_model/film.py
+@@ -29,7 +29,18 @@
+ 
+ import numpy as np
+ 
++# Largest emptying number dt_s * (sum of a donor patch's edge coefficients) the implicit runoff step uses (post-
++# reconstruction addition of 2026-10-07). On the thick branch the shear-driven flux V_s delta_m / 2 does not vanish
++# with the film, so the emptying rate q / (A b) of a nearly dry patch grows like 1/b: on the 100 mm default flight
++# (seeds 12345 and 2, ~110 s) a patch holding 5e-39 kg reached dt_s * out = 5e34, the 1 of the diagonal 1 + dt_s * out
++# was lost to round-off, the columns of two such patches summed to exactly zero and SuperLU found the matrix exactly
++# singular. A donor whose emptying number exceeds EMPTYING_MAX keeps a fraction 1 / (1 + dt_s out) < 1e-12 of its film
++# over the sub-step either way, so its coefficients are scaled down to this bound: the solve stays an M-matrix whose
++# diagonal dominance is representable (to ~1e-4 of the 1), the transport stays conservative, and nothing changes
++# unless a patch exceeds the bound.
++EMPTYING_MAX = 1.0e12
+ 
++
+ def lubrication(tau, G, b, delta_m, mu_l, b_layer=None):
+     """(V_s, q, shear_rate, thick) per patch for the thin/thick lubrication branches (module docstring); `thick` is the
+     branch mask, true where the sheared layer does not reach the bottom of the liquid.
+@@ -85,6 +96,7 @@
+         self.n_i = self._edge_normal(x2 - x1, surface.normals[i], mid - surface.centroids[i])
+         self.n_j = self._edge_normal(x2 - x1, surface.normals[j], mid - surface.centroids[j])
+         self.n_patches = surface.n_patches
++        self.capped_rows = 0                                   # donor rows held to EMPTYING_MAX (a diagnostic)
+ 
+     @staticmethod
+     def _edge_normal(edge, normal, outward):
+@@ -122,6 +134,12 @@
+             b = m / (rho_l * areas)
+             c_ij, c_ji = self.edge_coefficients(q_of_thickness(b), b, t_hat, areas)
+             out = np.bincount(self.i, c_ij, self.n_patches) + np.bincount(self.j, c_ji, self.n_patches)
++            over = dt_s * out > EMPTYING_MAX
++            if over.any():                                   # a nearly dry donor (EMPTYING_MAX): drained either way
++                scale = np.where(over, EMPTYING_MAX / (dt_s * np.where(over, out, 1.0)), 1.0)
++                c_ij, c_ji = c_ij * scale[self.i], c_ji * scale[self.j]
++                out = np.bincount(self.i, c_ij, self.n_patches) + np.bincount(self.j, c_ji, self.n_patches)
++                self.capped_rows += int(over.sum())
+             rows = np.concatenate([np.arange(self.n_patches), self.j, self.i])
+             cols = np.concatenate([np.arange(self.n_patches), self.i, self.j])
+             vals = np.concatenate([1.0 + dt_s * out, -dt_s * c_ij, -dt_s * c_ji])
+--- a/tests/test_reentry_model_film.py
++++ b/tests/test_reentry_model_film.py
+@@ -101,3 +101,29 @@
+     # a thin column (h <= delta_m) is all within the shear's reach: lubrication alone is the column, unchanged
+     _, q_thin, _, thick_thin = film.lubrication([tau], [G], [5e-5], [delta_m], mu, b_layer=[2e-4])
+     assert not thick_thin[0] and q_thin[0] == pytest.approx(tau * 5e-5 ** 2 / (2.0 * mu) + G * 5e-5 ** 3 / (3.0 * mu))
++
++
++def test_nearly_dry_patches_that_feed_each_other_do_not_make_the_runoff_singular():
++    """Post-reconstruction addition (2026-10-07): two adjacent patches holding 1e-39 kg whose tangents point at each
++    other, with a flux that does not vanish with the film (the thick branch's V_s delta_m / 2): their emptying numbers
++    are ~1e33, the 1 of each diagonal is lost to round-off and, before EMPTYING_MAX, SuperLU found the matrix exactly
++    singular and returned NaN (the 100 mm default flight's failure at ~110 s). Capped, the solve is finite, positive
++    and conservative, and a third patch's film is untouched."""
++    import warnings
++    pts, s = strip_surface(4)
++    ro = film.Runoff(s, pts)
++    t_hat = np.zeros((s.n_patches, 3))
++    t_hat[0], t_hat[1] = [1.0, 1.0, 0.0], [-1.0, -1.0, 0.0]                            # across their shared diagonal
++    t_hat /= np.maximum(np.linalg.norm(t_hat, axis=1), 1e-300)[:, None]
++    m0 = np.zeros(s.n_patches)
++    m0[:3] = [1e-39, 3e-39, 1e-6]
++    with warnings.catch_warnings():
++        warnings.simplefilter("error")                                                  # a MatrixRankWarning fails the test
++        m, n, _ = ro.transport(m0, lambda b: np.full(b.size, 1e-4), t_hat, LIQ.rho, s.areas, 0.5)
++    assert np.isfinite(m).all() and (m >= 0.0).all() and m.sum() == pytest.approx(m0.sum(), rel=1e-12)
++    assert m[0] + m[1] == pytest.approx(4e-39, rel=1e-9) and m[2] == m0[2] and ro.capped_rows > 0
++    # below the bound nothing changes: an ordinary film moves exactly as before, with no row capped
++    ro2 = film.Runoff(s, pts)
++    m1 = np.where(np.arange(s.n_patches) < 2, 1e-6, 0.0)
++    ro2.transport(m1, lambda b: np.full(b.size, 1e-9), t_hat, LIQ.rho, s.areas, 0.5)
++    assert ro2.capped_rows == 0
