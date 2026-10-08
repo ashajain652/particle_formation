@@ -2,7 +2,8 @@
 
 Date: 2026-10-07
 Status: approved 2026-10-07; revised the same day after facts 88–96 (§1, §2, §12, §14, §17) and while planning and
-checking the plan's code (§5.4, §6.2); implementation plan in sub-plan 18 and the amendments it lists
+checking the plan's code (§5.4, §6.2), and on 2026-10-08 after the freeze-back probe (§5.4, §7.1, §10, §11.2, §12.1,
+§13, §17); implementation plan in sub-plan 18 and the amendments it lists
 Amends: `2026-09-20-melt-spraying-design.md` §8 (melting), §9 (film and spraying) and §10 (geometry and accounting),
 and therefore sub-plans `02-material-properties.md`, `03-thermal-core.md`, `06-melt-film.md`, `07-spraying.md`,
 `09-melting-body.md`, `10-coupled-loop.md`, `13-cli-wiring.md`, `14-verification-runs.md` and `15-documentation.md`.
@@ -158,12 +159,38 @@ temperature of the element's top (the facet mean of the 3D surface nodes); the e
 solver-weighted enthalpy and the difference is booked to its nodes as a deferred load. φ_e therefore falls smoothly, and
 the surface recedes continuously rather than one element per death.
 
-**Regridding.** Removing liquid from the top and adding metal at the base is done by a conservative remap of the cells
-onto an even grid over the skin's current thickness, which keeps the profile, the mass and the enthalpy exactly.
+**Freeze-back (decided 2026-10-08).** After the feed and draw, liquid riding on a top node whose temperature has
+fallen below the bottom of the feed ramp, T_low = T_feed − 2·MELT_RAMP (906 K for `AA7075_scheil`), solidifies into the
+top cell — as much as the node's energy allows. Holding the energy E of the top node (the top cell's metal m₀ and the
+liquid L on it) fixed, the mass that freezes is
 
-**Thickness bounds.** A skin may run between s/2 and 2s. Below s it draws; above s (after a hand-over, §9) it stops
-drawing until melting brings it back. If its element cannot supply enough within a macro step, the skin thins and the
-next element supplies it after the death. Every such event is counted (§11.2).
+  x = min(L, max(0, (m₀ h(T_low) + L h_l(T_low) − E) / (h_l(T_low) − h(T_low)))),
+
+the amount that leaves the node exactly at T_low, or all of the liquid if even then the node stays colder. Here h is the
+metal's specific enthalpy and h_l the liquid's, which carries the latent heat the metal at that temperature has not yet
+released; their difference at T_low is the latent heat one kilogram gives up by freezing there. The latent heat released
+stays in the node and is conducted into the skin in the following sub-steps, so the conduction solve sets the rate of
+solidification; no thickness enters the rule. Between T_low and T_feed the liquid neither freezes nor feeds: the ramp
+is a dead band. The deep liquid, which lies against the solid, freezes before the film. This replaces the element
+model's instant rule, which froze the whole share of the liquid below the ramp in one step: measured once on the 100 mm
+flight to 75 s with skins at the 0.5 s step (the dev preset), that rule asked to freeze 110.6 g, of which the top
+node's energy alone allowed 10.9 g; the excess heated the top back into the melting range, from which it could feed
+again — the freeze-and-remelt cycling of fact 75.
+
+**Regridding.** Removing liquid from the top, freezing liquid onto it and adding metal at the base are done by a
+conservative remap of the cells onto an even grid over the skin's current thickness, which keeps the profile, the mass
+and the enthalpy exactly.
+
+**Thickness bounds.** A skin draws while it is thinner than s and stops drawing above s (after a hand-over, §9, or as
+freeze-back thickens it) until melting brings it back. If its element cannot supply enough within a macro step, the skin
+thins and the next element supplies it after the death; every such event is counted and the mass the skins lack is
+recorded (§11.2). Above 2s a skin's cells, n of them however thick it grows, become too coarse to resolve the melt layer;
+so a skin thicker than 2s returns its bottom metal in excess of 2s to its element where the element has room (φ_e < 1,
+the room shared among the element's skin patches by area), at the enthalpy of the bottom cells, the difference to the
+element's mean booked to its nodes as with the draw. Where the element is full the skin keeps the metal and the event is
+counted. This is a numerical device for resolution: it moves metal between two accounts of the same solid and changes
+neither how much freezes nor how much melts. (Revised 2026-10-08: it replaces a cap at 2s on freeze-back, which held back
+as liquid what the physics would have frozen.)
 
 ### 5.5 Depths read from the skin
 
@@ -229,8 +256,8 @@ with a macro step of a few milliseconds (the cost this design exists to avoid).
 For every skin together: (1) conduction (§5.4); (2) feed and draw (§5.4); (3) deep liquid surfaces into the film
 (§7.3); (4) the film runs off for δt (`film.Runoff.transport`, with the runoff-flux amendment's flux on thick patches);
 (5) the spray releases what each patch's mode allows in δt (`spray.SprayModel.evaluate`), with the slurry cascade if it
-is on (§8); (6) freeze-back: film on a patch whose top cell has fallen below the ramp refreezes into the top cell (the
-mirror of the feed, netted with it in the sub-step, as today but into the skin rather than the 3D element). The
+is on (§8); (6) freeze-back, limited by the top node's energy (§5.4; in the skins' sub-steps from stage 1 on, decided
+2026-10-08). The
 front-surface Rayleigh–Taylor mode is evaluated each sub-step like the other modes.
 
 ### 7.2 Where the film sits
@@ -343,7 +370,7 @@ total mass — 3D elements and skins together — is gone.
 | Molten cascade (`_feed_exposed`) | retired | the skin draws through molten elements continuously |
 | Death hand-over of the remainder to the film | replaced: remainder to the skin | the remainder is solid or mushy metal |
 | Film on the 3D surface nodes | replaced: film on the skin's top cell | the top cell is the real surface |
-| Freeze-back into the 3D element | replaced: into the skin's top cell | as above |
+| Freeze-back into the 3D element | replaced: into the skin's top cell, limited by the top node's energy, on the skins' sub-steps (§5.4) | the top cell is the real surface; the instant rule froze about ten times what the energy allows (2026-10-08) |
 | Whole-element depths in the branch test | replaced: §5.5's resolved depths | resolution |
 | Interior elements' feed to the nearest patches | kept (rare: needs liquid within δ_m of a patch below a skin) | unchanged physics |
 | Deep runoff of liquid held in 3D elements | kept | three-zone rule, zone 2 |
@@ -375,7 +402,9 @@ properties. A malformed value exits with code 2, as every setting does.
 History, per macro step: `skin_count`, `skin_mass_kg`, `skin_thickness_min_mm`, `skin_thickness_median_mm`,
 `skin_drawn_mass_kg` (cumulative), `skin_handover_mass_kg` (cumulative), `skin_short_events` (cumulative, §5.4),
 `interface_mismatch_J` (the step's sum of |mismatch|), `interface_repeats` (cumulative), `liquid_depth_mean_um` and
-`liquid_depth_max_um` (resolved), `nonrigid_depth_skin_mean_um`, `slurry_sprayed_mass_kg` (cumulative) and
+`liquid_depth_max_um` (resolved), `nonrigid_depth_skin_mean_um`, `slurry_sprayed_mass_kg` (cumulative),
+`skin_frozen_mass_kg` (cumulative: liquid frozen into skins, §5.4), `skin_returned_mass_kg` (cumulative: metal returned
+from skins above 2s to their elements) and `skin_full_events` (cumulative: skins above 2s whose element had no room) and
 `skin_wall_s`. Surface frames gain per patch: `skin_T_top`, `skin_liquid_depth`, `skin_nonrigid_depth` and
 `skin_thickness`, so the large-fragment model's inputs carry the resolved near-surface layer. Results gain the
 cumulative skin quantities. The droplet records gain `solid_fraction` and `h_kg` (§7.5).
@@ -415,10 +444,12 @@ skin is independent within a sub-step, so they can be split across processes lat
    sprayed mass or the mass at 120 s moves by more than the scatter between seeds at 0.0125 s, the converged
    population depends on the mesh and the skin is needed for correctness; if none does, the skin is a cost measure.
    Either way the result is recorded as a fact, and Asha decides whether and when stages 1–3 proceed.
-1. **Stage 1 — skins with melting only.** Creation, the interface (§6), feed and draw, deaths and hand-over. The film
-   and spray still run once per macro step, fed by what the skins melted over the step.
-2. **Stage 2 — the film and spray on the sub-steps** (§7), including freeze-back into the skin and deep liquid on the
-   renewal time.
+1. **Stage 1 — skins with melting only.** Creation, the interface (§6), feed and draw, freeze-back limited by the top
+   node's energy on the sub-steps (§5.4; brought into stage 1 on 2026-10-08), the return of metal above 2s, deaths and
+   hand-over. The film and spray still run once per macro step, fed by what the skins melted over the step; liquid the
+   runoff carries onto a cold skin freezes in the next step's sub-steps.
+2. **Stage 2 — the film and spray on the sub-steps** (§7), between the skins' feed and freeze-back, and deep liquid on
+   the renewal time.
 3. **Stage 3 — the slurry cascade** (§8), on against off.
 
 Each stage is tested and measured before the next begins.
@@ -466,6 +497,9 @@ between two seeds measured at the same step, because the scatter grows at small 
 - Lateral conduction within the skins is neglected: gradients along the surface (over about 2 mm) are far weaker than
   through the melt layer (over about 0.3 mm).
 - The runoff on sub-steps may cost more than estimated (about 1–2 s per macro step at 50 sub-steps, estimated).
+- Freeze-back treats the liquid on a patch as one node with the top cell: a thick pile's own solidification front, inside
+  the liquid, is not resolved; the rate is set by conduction from that node into the skin. Where a skin's element is full
+  (φ_e = 1) freeze-back can still thicken the skin beyond 2s, coarsening its cells; such skins are counted.
 - The cascade applies Girin's theory to a non-Newtonian layer with a viscosity law measured only at 61–490 1/s.
 - Neither remeshing (sub-plan 17) nor the derived surface (sub-plan 16) is built; the design fits them but is untested
   with them.
@@ -524,3 +558,6 @@ between two seeds measured at the same step, because the scatter grows at small 
 - 2026-10-07 (after facts 88–96): option (a) — §1, §2, §12 and §14 revised; stage 0, the grid gate on the current
   model at 0.0125 s, comes before any skin code; acceptance adds the comparison with the converged reference. Step 3's
   default material law is no longer open: Scheil's curve (fact 88).
+- 2026-10-08 (after stage 0, fact 101, and the freeze-back probe): option (a) — freeze-back is limited by the top node's
+  energy and runs on the skins' sub-steps already in stage 1; the cap at 2s on freeze-back is retired, and a numerical
+  device returns a skin's metal above 2s to its element where the element has room.
