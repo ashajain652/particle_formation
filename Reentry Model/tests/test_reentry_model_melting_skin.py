@@ -140,3 +140,17 @@ def test_coupled_flight_steps_with_skins_keep_the_books(coarse_sphere_mesh):
         b.advance(sim.t, 0.5, loads, state=a)
     assert b.skins.n > 0 and b.sprayed_mass > 0.0
     assert_books(b)
+
+
+def test_radiated_power_counts_skin_tops_not_the_facets_under_them(coarse_sphere_mesh):
+    """The history's radiated power with skins: bare facets plus skin tops, never the facets under skins, after the
+    melt step's surface refresh (Task 6 review ruling)."""
+    b = make_body(coarse_sphere_mesh)
+    start_at(b, 740.0)
+    run(b, 1.5e6, 4)
+    assert b.skins.n > 0
+    on = b.skin_of_patch >= 0
+    Tf = b.surface.facet_mean(b.solver.temperature())
+    sig = b.emissivity * thermal.SIGMA_SB
+    expected = float((sig * Tf[~on] ** 4 * b.surface.areas[~on]).sum() + (sig * b.skins.T[:, 0] ** 4 * b.skins.area).sum())
+    assert b.radiated_power() == pytest.approx(expected, rel=1e-12)
