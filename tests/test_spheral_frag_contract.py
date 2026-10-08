@@ -55,7 +55,7 @@ def test_history_and_run_items():
     assert set(hist[10:]) == {"p_w_stag_Pa", "film_mass_kg", "deep_mass_kg", "sprayed_mass_kg"}
     run = {f.name for f in contract.required("run")}
     assert {"run_name", "inputs.diameter_mm", "inputs.mass_kg", "settings.atmosphere", "settings.wind",
-            "settings.macro_step_s", "settings.frames_every", "settings.seed", "v_hat"} <= run
+            "settings.macro_step_s", "settings.frames_every", "settings.seed", "settings.v_hat_body"} <= run
     assert contract.V_HAT == (1.0, 0.0, 0.0)
 
 

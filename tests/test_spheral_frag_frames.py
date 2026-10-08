@@ -84,7 +84,7 @@ def test_read_fe_run_errors(tmp_path):
     shutil.rmtree(dst)
     dst, name = copy_run(tmp_path)
     doc = json.loads((dst / (name + ".json")).read_text())
-    del doc["v_hat"], doc["settings"]["seed"]
+    del doc["settings"]["v_hat_body"], doc["settings"]["seed"]
     (dst / (name + ".json")).write_text(json.dumps(doc))
     with pytest.raises(ContractError, match=r"v_hat.*|seed"):
         frames.read_fe_run(dst)

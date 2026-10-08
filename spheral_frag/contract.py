@@ -128,8 +128,8 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     *(_f(col, col, "history", units, True, consumer, note) for col, units, consumer, note in _HISTORY),
     # run (<run>.json)
     *(_f(key, name, "run", units, True, consumer, note) for key, name, units, consumer, note in _RUN),
-    _f("v_hat", "v_hat", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
-       "exported into the run JSON (decision 4); key path and value (confirm)"),
+    _f("v_hat", "settings.v_hat_body", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
+       "exported by the reconstructed prototype as settings.v_hat_body (decision 4); value (confirm)"),
 )
 
 FRAME_TIME_RTOL = 1e-6          # frame time matches a history row within FRAME_TIME_RTOL * max(1, t) seconds

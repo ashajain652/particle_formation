@@ -14,17 +14,17 @@
     "macro_step_s": 0.5,
     "frames_every": 1,
     "seed": 12345,
-    "material": "synthetic_linear_fl"
+    "material": "synthetic_linear_fl",
+    "v_hat_body": [
+      1.0,
+      0.0,
+      0.0
+    ]
   },
   "results": {
     "initial_mass_kg": 0.18748481614984722,
     "n_frames": 1
   },
-  "v_hat": [
-    1.0,
-    0.0,
-    0.0
-  ],
   "synthetic": {
     "device": "dumbbell_frame",
     "R_m": 0.02,
