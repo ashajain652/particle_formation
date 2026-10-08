@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, spray, surface_flow, thermal, viz
+from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin, spray, surface_flow, thermal, viz
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend
@@ -90,13 +90,15 @@ def continuum_step(args):
 
 
 def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
-                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default"):
+                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default",
+                   surface_model="elements", skin_suffix=""):
     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
     `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
-    `_dtcontinuum-off` or `_dtcontinuum-<s>`, and any run with a seed other than DEFAULT_SEED (amendment of 2026-10-05)
-    in `_seed-<n>`; the defaults keep the old name."""
+    `_dtcontinuum-off` or `_dtcontinuum-<s>`, one with skins (sub-plan 18) in `_surface-skin` followed by `skin_suffix`
+    (the skins' non-default settings, `skin_name_suffix`), and any run with a seed other than DEFAULT_SEED (amendment of
+    2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
     dtc = dtc_default if dt_continuum == "default" else dt_continuum
     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
@@ -105,7 +107,22 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
+            + ("_surface-skin" + skin_suffix if melt and surface_model == "skin" else "")
             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+
+
+def skin_name_suffix(thickness_mm, cell_um, substep_ms, preset):
+    """The run-name suffix of a skin run's non-default settings (sub-plan 18): `_skin-dev` for the dev preset,
+    `_skin<mm>mm` for another thickness, `_cell<um>um` for an explicit cell other than the preset's, `_sub<ms>ms` for
+    another sub-step; empty for the defaults."""
+    out = "_skin-dev" if preset == "dev" else ""
+    if thickness_mm != 0.4:
+        out += "_skin{:g}mm".format(thickness_mm)
+    if cell_um is not None and abs(cell_um * 1e-6 - skin.SKIN_PRESETS[preset]) > 1e-12:
+        out += "_cell{:g}um".format(cell_um)
+    if substep_ms != 10.0:
+        out += "_sub{:g}ms".format(substep_ms)
+    return out
 
 
 def make_atmosphere(spec, epoch, wind_name):
@@ -233,6 +250,15 @@ def build_parser():
                          "with the film plus everything more than half liquid beneath it (slurry included), and where there "
                          "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
                          "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
+    me.add_argument("--surface-model", choices=body.SURFACE_MODEL_NAMES, default="elements",
+                    help="skin: a one-dimensional skin of fine cells under every melting patch resolves the melt layer and "
+                         "feeds the film continuously, coupled to the 3D conduction through an implicit interface (Step 3 "
+                         "sub-plan 18). elements: the surface elements melt and feed the film, as in every run before it (default)")
+    me.add_argument("--skin-thickness", type=float, default=0.4, help="skin target thickness [mm] (default %(default)s)")
+    me.add_argument("--skin-cell", type=float, default=None, help="skin cell size [um] (default: the preset's)")
+    me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
+    me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
+                    help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
@@ -296,7 +322,8 @@ def build_thermal(args, settings, mass):
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
                                           particles=args.particles, size_feedback=size_feedback,
                                           deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
-                                          rigid_substrate=args.rigid_substrate == "on")
+                                          rigid_substrate=args.rigid_substrate == "on", surface_model=args.surface_model,
+                                          skin=skin_settings(args))
         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
     else:
@@ -318,12 +345,21 @@ def build_thermal(args, settings, mass):
     if melting:
         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
                      "molten_cascade": args.molten_cascade, "rigid_substrate": args.rigid_substrate, "rt_spray": args.rt_spray,
+                     "surface_model": args.surface_model,
+                     "skin": {"thickness_mm": args.skin_thickness, "cell_um": skin_settings(args).cell * 1e6,
+                              "substep_ms": args.skin_substep, "preset": args.skin_preset},
                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
                      "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus, "latent_heat_Jkg": mat.latent_heat})
     return the_body, heating_model, info
+
+
+def skin_settings(args):
+    """The skins' settings from the command line (sub-plan 18)."""
+    cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
+    return skin.SkinSettings(thickness=args.skin_thickness * 1e-3, cell=cell, substep=args.skin_substep * 1e-3)
 
 
 def cmd_run(args, parser):
@@ -363,6 +399,13 @@ def cmd_run(args, parser):
     dt_continuum = continuum_step(args)
     if dt_continuum is not None and dt_continuum > args.dt:
         parser.error("--dt-continuum must be no longer than --dt")
+    for label, value in (("--skin-thickness", args.skin_thickness), ("--skin-substep", args.skin_substep),
+                         ("--skin-cell", 1.0 if args.skin_cell is None else args.skin_cell)):
+        if value <= 0.0:
+            parser.error("{} must be > 0".format(label))
+    cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
+    if 2.0 * cell_um * 1e-3 > args.skin_thickness * (1.0 + 1e-12):
+        parser.error("--skin-cell must be at most half of --skin-thickness")
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
@@ -375,7 +418,10 @@ def cmd_run(args, parser):
     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
                                        deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
-                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum)
+                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
+                                       surface_model=args.surface_model,
+                                       skin_suffix=skin_name_suffix(args.skin_thickness, args.skin_cell, args.skin_substep,
+                                                                    args.skin_preset))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
