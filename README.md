@@ -352,6 +352,99 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 - The transonic tail is compressed isentropically without a shock because the shock fixed point stalls at Ma 1 —
   found by the first full physics-mode run (facts §16).
 
+## Large fragments — `spheral_frag` core (M1)
+
+The Spheral large-fragment model (spec `docs/superpowers/specs/2026-10-02-spheral-large-fragments-design.md`) replays
+the finite-element flight in Spheral's particle model to find what tears, drips or detaches as whole fragments. M1 is
+its core without Spheral (plan `docs/superpowers/plans/2026-10-07-spheral-m1.md`):
+- frame import through one contract table;
+- material tables shared with the finite element;
+- thickness, layer depths and the three zones;
+- load tables by inclination;
+- the fragment record, the debris log and the mass accounts;
+- the `prepare` and `analyse` entry points.
+
+Everything runs in drama_env with numpy; nothing here imports Spheral. Assumptions, each marked verified, analytic,
+measured or assumed, are in `docs/spheral_frag_assumptions.md`.
+
+`reentry_model` does not melt yet, so the frames come from the reconstructed Step 3 prototype,
+`prototype/work-2026-10-08-spheral-mvp/code` (an MVP input, plan decision 13). The flight below is its 100 mm
+`AA7075_scheil` physics run: 0.5 s step, seed 12345, 1,255 frames, 5.0 GB, git-ignored.
+
+```bash
+FE=reentry_model_output/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off
+PKG=prototype/work-2026-10-08-spheral-mvp/code
+
+# frames -> compact prepared frames, material table, load tables, flight table and prepare.json (26 min, 791 MB)
+"$PY" -m spheral_frag prepare --fe-run "$FE" --fe-package "$PKG" [--frames K0:K1] [--every N] [--force]
+# a Spheral run's checks -> fragments.csv, debris.csv, analyse.json (accounts must close to 1e-12 m0, else exit 1)
+"$PY" -m spheral_frag analyse --run spheral_output/runs/<run> [--prepared <dir>] [--min-particles 30]
+# per-frame measurements -> data/spheral/m1_frames.csv (committed) and plots + summary.json in spheral_output/m1/
+"$PY" analysis/spheral_m1_flight.py [--fake-runs]
+# the thresholds on the real flight (marker fe_flight; skipped unless both variables are set)
+SPHERAL_FRAG_FE_RUN="$FE" SPHERAL_FRAG_FE_PACKAGE="$PKG" "$PY" -m pytest tests/test_spheral_frag_flight.py -q
+```
+
+**Output layout.** `prepare` writes `spheral_output/prepare/prep_<fe run>_k<K0>-<K1>/`, containing:
+
+| File | Contents |
+|---|---|
+| `frames/mesh_<i>.npz` | the finite-element nodes and tetrahedra of a mesh version |
+| `frames/frame_<k>.npz` (+ `.json` sidecar) | per frame, stored reduced: active-tetrahedron mask, φ ≠ 1, moved nodes, the outward faces, T, f_l, the patch fields, thickness and layer depths; nodes, tetrahedra and patch geometry rebuilt bitwise on loading (`frames.load_prepared_frame`, numpy only) |
+| `material_table.npz` | the material table |
+| `loads.npz` | the windward load table per frame |
+| `flight.npz` | the history's contract columns plus air temperature, deceleration and drag |
+| `prepare.json` | provenance (the finite-element run's and package's SHA-256), the contract as found, a per-frame entry, gating checks with a priori thresholds and the measured ones |
+
+`analyse` writes `spheral_output/analyse/<run>/`. Names encode the whole configuration (`spheral_frag/naming.py`).
+Exit codes are as for `reentry_model`: 0 ok, 1 a contract, check or accounts failure, 2 bad arguments or missing
+inputs.
+
+### Verification (`tests/test_spheral_frag_*.py`, `analysis/spheral_m1_flight.py`)
+
+Synthetic devices (`tests/spheral_frag_synthetic.py`, fixtures in `tests/fixtures/spheral_frag/`):
+- a coarse 100 mm sphere whose third frame has ten nose elements dead;
+- a dumbbell with a 4 mm neck;
+- a slab with five columns of known slurry depth.
+
+The real flight is the one above, prepared whole on 2026-10-08.
+
+| Check | Reference | Threshold (source) | Measured |
+|---|---|---|---|
+| Contract | every `FE_FIELDS` item on the flight | all present and confirmed (Task 10) | 47 of 47; `p_w` = 0 on frame 0 only |
+| Frame import | pyvista's own arrays | bitwise (a priori) | bitwise |
+| Open directed edges of the outward-wound surface | closed body | 0 (a priori) | 0 on all 1,255 frames; up to 1,662 faces per frame wound inward in the export, all reoriented |
+| Non-manifold edges / vertices | — | 300 / 20 (flight worst, rounded up) | 288 (1,204 frames) / 15 (131 frames) |
+| Divergence volume vs Σ tetrahedra | round-off | 1e-12 (a priori) | 2.2e-16 |
+| Mass Σ φρV + film + deep vs history `mass_kg` | the CSV's 9 digits | 5e-9 (a priori) | 4.2e-9 |
+| Film mass vs `film_mass_kg` | the CSV's 9 digits | 5e-9 | 4.1e-9 |
+| Material h, f_l, c_p vs the finite element (100,543 temperatures) | the finite-element material | 1e-12 max\|h\| + 1e-9 J/kg; f_l bitwise (a priori) | h, f_l, c_p bitwise; inverse 1.6e-12 K |
+| Nodal `liquid_fraction` vs table f_l(T) | the finite element | bitwise | bitwise on every frame |
+| `delta_m` finite exactly where the closure is Girin's | contract | 0 mismatches | 0 |
+| Thickness: sphere / dumbbell neck / slab | 2R / 2 r_neck / box extent | faceting bound 0.907 % / within the neck's facets / 1e-12 m | 0.816 % / 7.879–7.992 mm / exact |
+| Thickness on the flight's frame 0 | 2R | 6e-4 (flight worst) | 5.8e-4; no escaping ray on any frame; thinnest 0.21 mm (k 166) |
+| Slurry depth on the slab | exact columns | 1e-12 m | 5e-18 m |
+| Zones on the slab at 2 / 3 mm film limits | the rule by hand | exact | zones 1, 2, 3, 3, 2 / 1, 2, 2, 3, 2 |
+| Load table vs Newtonian sphere | p_stag cos²θ | bin averaging; faceting 1 % (plan Task 7) | table within 0.061 %; faceting −0.55 % |
+| Binning \|D_table / D_patch − 1\| on the flight | the frame's own loads | 8e-4 (flight worst) | 7.85e-4 |
+| Largest `p_w` vs `p_w_stag_step_Pa` | the history | 0.2 (flight worst) | median 6e-10, worst 0.129 where the stagnation patch died (k 64) |
+| Σ release_rate · A vs the history's sprayed increment | the history | per step −0.3 to +0.04; flight total 0.2 | −0.295 to +0.038; total −0.123 (1.025 of 1.169 kg; release on removed faces not carried) |
+| **Drag from the frame's loads vs the history's drag** | spec §7.3: "a few percent" (5 %) | 0.4 (flight worst; **5 % not met**) | +10 % before the first film, −36 % to +9 % shock layer, −11.0 % free-molecular and subsonic branch |
+| Record: lattice ellipsoid 10/6/4 mm at 0.5 mm | exact ellipsoid | principal lengths, equivalent diameter | within 0.09 mm, 0.10 % |
+| Record: 10 mm liquid drop at 5 km/s | closed form | We, Oh, threshold | 3,125, 2.967e-4, 12.000 |
+| Accounts (synthetic history; flight frames 100–110 and 800–810, 3D, dx 2.2 mm) | starting mass | 1e-14 m₀ (a priori) | 2e-18; 7e-18 and 4e-17 m₀ |
+
+**The drag gap** is M1's answer for the thesis, reported rather than fitted (plan Review focus 6). The history's drag
+comes from the trajectory's SESAM-table drag coefficient, and the frame's loads from Step 3's surface-flow model. The
+two already differ by 10 % on the intact sphere, before anything melts.
+
+Measured on the flight:
+- **Zones:** the bulk zone exists on 336 frames (24.5–192 s, at most 152 cm² at the 2 mm film limit).
+- **Slurry:** it reaches the far side of the body on 250 frames (25.5–150 s).
+- **Cost:** a median of 0.45 s per frame, of which the thickness map takes 0.26 s.
+
+These are 0.5 s-step frames, so part of the deep layers is spec §2's molten backlog.
+
 ## Tests
 
 ```bash
@@ -364,3 +457,7 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 `tests/test_reentry_model_fenicsx.py` runs only with an interpreter that can import `dolfinx` (the `fenicsx_env`
 environment, see above; the whole unit tier also passes there apart from the sweep wrapper's `tqdm` dependency);
 elsewhere it is skipped. To refresh a fixture see `tests/fixtures/README.md`.
+
+The `spheral_frag` tests marked `fe_flight` run only when `SPHERAL_FRAG_FE_RUN` and `SPHERAL_FRAG_FE_PACKAGE` name the
+M1 flight and its package (see "Large fragments" above); those marked `spheral` only when the Spheral container
+launcher can import Spheral.

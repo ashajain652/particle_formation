@@ -5,6 +5,11 @@ Step 2: coupled 3D heat transfer, spec `superpowers/specs/2026-09-18-thermal-fem
 measured against SESAM or an analytic solution; the numbers are in the README's verification tables. The SESAM facts the
 model relies on are in `Literature Review/Sphere Demise Model - Planning References/sesam_facts/sesam_verified_facts.md`.
 
+The Spheral-free core of the large-fragment model (`spheral_frag`, milestone M1) has its own assumptions document,
+`spheral_frag_assumptions.md`: the frame contract as confirmed on the 2026-10-08 Scheil flight, the material table, the
+thickness, depths and zones, the load tables and their measured gap to the history's drag, and the fragment record's
+definitions.
+
 ## 1. Trajectory (Step 1)
 
 Assumptions

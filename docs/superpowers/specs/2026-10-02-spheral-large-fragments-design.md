@@ -4,7 +4,9 @@ Date: 2026-10-02
 Status: design of record, presented and approved section by section with Asha between 2026-09-30 and 2026-10-02;
 awaiting her review of this document; amended on 2026-10-02 with milestone MC, the coupling at the surface (§14.1), and
 on 2026-10-07 with milestone M0's measurements on the laptop (§§2, 5, 8.5, 9.1, 13.2, 15, 19, 20; plan
-`docs/superpowers/plans/2026-10-05-spheral-m0.md`).
+`docs/superpowers/plans/2026-10-05-spheral-m0.md`), and on 2026-10-08 with milestone M1's core as built and measured on
+a real 100 mm Scheil flight (§§2, 4.3, 4.4, 6.1, 7.2, 7.3, 8.1, 10, 11.2, 12, 14, 15, 17, 20; plan
+`docs/superpowers/plans/2026-10-07-spheral-m1.md`, whose "Decisions at review" are cited as M1 decision n).
 Next: the implementation plan for milestones M0 and M1 only (§14).
 Builds on: Step 3 (`2026-09-20-melt-spraying-design.md`; live sub-plans in
 `docs/superpowers/plans/melt-spraying-subplans/`; executed prototype `prototype/proto3/`) for the flight, the heat, the
@@ -71,6 +73,8 @@ gravity across the flow makes one tail (Asha, 2026-10-01).
 | Ring supply and state | About 1 % of the melt reaches the last windward row (Step 4 fact 1, measured before the dense band); re-measured on the current prototype's true equatorial ring (patches beyond 0.9 of the transverse radius): 4.0 % on the 100 mm flight (25.5–80 s) and 7.7 % on the 50 mm flight. The film at the equator is at most 0.09 mm (100 mm). The equator stays at 508–833 K (100 mm) until about 65 s, so the ring starts as an accretion. The 100 mm remnant (0.49 kg) stays at 820–905 K to 400 s at 1–10 g. Stripping at the equator is marginal (rim Weber number 4.5–13.6). | Step 4 plan, facts 1, 2, 3, 5, 7; Step 3 amendment of 2026-10-02 |
 | Particle identity and mass | No persistent particle ID: local indices change on deletion and redistribution, and global IDs re-sort by position, so a permanent ID must be a user-created integer field filled once at the start (registered fields follow particles through deletion and MPI redistribution). `identifyFragments` numbers are per-call labels. Mass is a per-particle field that SPH, CRKSPH and solid FSISPH never change; a custom package can attach an update policy to it; the default SPH density update is summation, which interacts badly with shrinking masses, and `IntegrateDensity` is available. SolidCRKSPH exists; of its volume types only `MassOverDensity` depends on mass. Within one node list the smoothing-length update weights neighbours by position only, not by mass. | read from develop at 116c71f on 2026-10-02 (another session's note), untested; `Physics/GenericHydro.hh` line 19, `VoronoiCells/VolumeType.hh` line 11, `SmoothingScale/SPHSmoothingScale.cc` lines 206–218 |
 | Finite-element cost | The 100 mm melting flight took 1,191 steps of 0.5 s and 2,357 s of wall time. Meshes: 18,896 nodes (Step 2), 33,355 nodes with the dense band; outermost prism layer 0.25 mm. | Step 3 fact 12; `reentry_model_output/meshes/` |
+| Frames as built (M1, 2026-10-08) | The 100 mm `AA7075_scheil` physics flight of the reconstructed Step 3 prototype (`prototype/work-2026-10-08-spheral-mvp/code`, an MVP input; 0.5 s step, seed 12345, molten cascade on, deep runoff off): 1,255 frames to the ground at 626.5 s, 5.0 GB; first film at 24 s; peak dynamic pressure at 91 s. Every contract item present; `p_w` and `tau` on every frame but frame 0, the faces exposed by a step's deaths from the record's flow evaluation (`flow_eval`). The export winds up to 1,662 faces of a frame inward (all reoriented from their owner tetrahedra); the surface is closed once wound outward but non-manifold on 1,204 frames (up to 288 edges, 15 vertices). Σ `release_rate` · A is 12 % below the history's sprayed mass (the release on faces a step's deaths removed is not carried). Prepared: 791 MB, median frame 0.51 MB, 0.45 s per frame. Slurry (f_l > 0.5) reaches the body's far side on 250 frames (25.5–150 s); bulk zone at the 2 mm limit on 336 frames, at most 152 cm². | M1 Task 10; `data/spheral/m1_frames.csv` |
+| Drag from the frames' loads (M1) | The frame's own `p_w` and `tau`, read at the derived surface's inclination, against the history's drag (mass × load factor): +10 % before the first film, −36 % to +9 % in the shock layer (49.5–192 s), −11.0 % on the free-molecular branch the finite element also takes at Mach ≤ 1 (192.5–626.5 s). The facets' own loads summed on the staircase are 26–37 % below the history at 50–150 s. | M1 Task 10; plan decision 11 |
 
 ## 3. Scope
 
@@ -155,6 +159,14 @@ tests/test_spheral_frag_runner_*.py   runner tests, pytest marker `spheral`
 spheral_output/               git-ignored outputs
 ```
 
+*As built in M1 (2026-10-08):* `contract.py` is the one table that names every finite-element field (47 items, all
+confirmed on the real flight), `fe.py` the one module that imports the finite-element package (to build the material
+table and read the air temperature), and every other module of the core imports numpy and the standard library only,
+so the runner can import it under Spheral's Python (a test enforces it). `frames.py`, `material.py`, `geometry.py`
+(thickness, depths and zones), `loads.py`, `record.py`, `naming.py`, `prepare.py` and `analyse.py` exist as listed;
+the flow-stress and tearing laws are left to M2–M3. `tests/spheral_frag_synthetic.py` holds the synthetic frames and
+`fake_run`, the runner's stand-in until M3; `analysis/spheral_m1_flight.py` measures a prepared flight.
+
 ### 4.4 Environments, tests, outputs and names
 
 - `PY` (drama_env) runs the core and the analysis. A new `SPHERAL` variable holds the Spheral launch command: the
@@ -170,6 +182,10 @@ spheral_output/               git-ignored outputs
 - The Spheral commit and container digest are pinned in a committed file and copied into every run's metadata.
 - Exit codes as in `reentry_model`: 0 success, 1 a model failure (message printed), 2 bad arguments or a missing
   optional library.
+- *As built in M1 (2026-10-08):* prepared inputs are `spheral_output/prepare/prep_<fe run>_k<K0>-<K1>[_every<N>]/`;
+  runs `<prepared>__<mode>_k<k0>-<k1>_<form>_dx<dx>mm_seed<n>[_<label>-<value>...]`, the brackets that differ from
+  their defaults as suffixes; an analysis takes its run's name. A second marker, `fe_flight`, runs the checks on a real
+  flight when `SPHERAL_FRAG_FE_RUN` and `SPHERAL_FRAG_FE_PACKAGE` name it.
 
 ## 5. Installation, environments and the benchmark (milestone M0)
 
@@ -265,6 +281,16 @@ triangulation, tetrahedra with temperature and liquid fraction, per-patch fields
 (material, flight, frame times) plus the material table (§8). The replay needs a frame at every 0.5 s macro step
 (`frames_every = 1`): about a gigabyte per flight.
 
+*The contract as confirmed (M1, 2026-10-08).* The vtu holds every mesh node, dead ones included, and the active
+tetrahedra with the element fractions `phi`, without which the mass is wrong (Σ φρV + film + deep matches the
+history's mass to its 9 digits). `release_rate` is kg/m² per macro step; `deep_thickness` is a mass per area,
+m_d / (ρ_l A); `p_w` = 0 means "not evaluated" (`flow_eval` 0: frame 0 only). The history has no deceleration column
+(`prepare` derives it from the load factor) and no air temperature (`prepare` evaluates the run's atmosphere); the lee
+base pressure reads `p_w_stag_step_Pa`, written every step, because `p_w_stag_Pa` is NaN until the first film; the
+flight direction is the run JSON's `v_hat_body`; the layer depths march along each patch's derived-surface normal
+`n_derived`. The prepared frame is stored reduced on mesh versions (M1 decision 12): **791 MB per flight**, median
+frame 0.51 MB, rebuilt bitwise on loading.
+
 ### 6.2 Building the body
 
 The runner turns the surface triangulation into a closed Spheral polyhedron and fills it at the chosen spacing: a
@@ -327,6 +353,11 @@ Each step, or every few steps:
    to the body's real surface area (or Spheral's Voronoi exposed-face areas if they prove reliable). Shear acts along
    the surface in the direction of the oncoming flow projected onto it.
 
+*As built in M1 (2026-10-08; M1 decisions 5, 11, 14):* the windward table bins the frame's `p_w` and `tau`
+area-weighted in 1° bins of the facet's own inclination (valid where p_w > 0); beyond the last bin with loads the
+pressure is 3 % of the history's `p_w_stag_step_Pa`, held to 180°, and the shear half the last bin's value to the
+separation angle, zero beyond. On the real flight the frames carry loads to 179.5°, so the extension never acts there.
+
 ### 7.3 Checks and limitations
 
 On the undeformed sphere at a chosen frame, the integrated drag matches the finite-element model's within a few
@@ -334,6 +365,14 @@ percent and the pressure along the surface reproduces the table; the same per ri
 Limitations: loads by local inclination ignore how a deforming shape changes the flow (shock position, separation),
 as in Step 4 until a CFD solution exists; the exposure test is crude for strongly concave shapes; the lee loads are
 uncertain by a factor of a few (Step 4's risk).
+
+*Measured in M1 (2026-10-08) on the finite-element body itself:* the table reproduces the frame's own loads to 7.9e-4
+(binning), but the drag of those loads, read at the derived surface's inclination, **misses the history's drag by more
+than a few percent on every phase** of the 100 mm Scheil flight: +10 % before the first film, −36 % to +9 % in the
+shock layer, −11.0 % on the late free-molecular and subsonic branch. The +10 % on the intact sphere shows that the
+history's drag (the trajectory's SESAM-table drag coefficient) and Step 3's surface-flow loads disagree before any
+deformation. Reported, not fitted (M1 Review focus 6); M2's check 6 compares against the history's deceleration and
+inherits this gap.
 
 ## 8. Material model
 
@@ -347,6 +386,16 @@ therefore share one curve, and the runner needs no copy of `reentry_model`.
 **Energy and temperature.** A particle's thermal energy is the finite-element enthalpy measured from 300 K, latent
 heat included; its temperature is read back from the same table. Spheral's built-in temperature relations are not
 used (§2, traps).
+
+*As built in M1 (2026-10-08):* "at every kelvin" cannot be round-off between kelvins against the finite element's
+piecewise-quadratic h(T), so the table also stores the finite element's own enthalpy and Scheil nodes and evaluates
+them operation for operation with numpy alone: h, f_l and c_p bitwise at 100,543 temperatures, the inverse within
+1.6e-12 K, nodal `liquid_fraction` bitwise on every frame of the real flight. The 1 K table (250–1,500 K) is kept for
+inspection and for the free density and moduli. The zero is moved from the finite element's 293 K to 300 K by the
+exact offset h_FE(300 K) = 6,152.3 J/kg. The free-density and modulus columns are labelled M1 placeholders
+(`provisional`; M1 decisions 2 and 3): E 71.7 GPa to the solidus then linear to zero at 50 % liquid, ν 0.33, K held at
+its solidus value, α 23.4 × 10⁻⁶ K⁻¹, and the finite element's 2,400 kg/m³ liquid, which implies 12.3 % on melting
+instead of §16's 6.5 %.
 
 ### 8.2 Pressure and volume
 
@@ -553,6 +602,15 @@ decides on its 0.25 mm cells, and Spheral receives the result:
   continuity equation rather than summed (summation interacts badly with shrinking masses, §2). The sink's design, its
   conditions and its checks belong to milestone MC (§14.1).
 
+*As built in M1 (2026-10-08):* `prepare` marches each patch's derived-surface normal (M1 decision 9; along the
+staircase facets' normals 43 % of the rays left the body before f_l fell to 0.5) through the P1 field every 0.05 mm:
+the slurry depth is contiguous f_l > 0.5, the liquid depth f_l = 1. The layer is the film plus the slurry depth;
+zone 1 is layer ≤ δ_m, zone 2 up to the film limit, zone 3 beyond. A layer thicker than the film limit is reported both
+ways — all of it Spheral's, or only the part below the limit — with the choice made before M4 (M1 decision 6);
+`deep_thickness` stays out of the layer. On the 0.5 s-step real flight zone 3 appears on 336 frames (24.5–192 s, at
+most 152 cm² at 2 mm, 144 cm² at 3 mm) and slurry reaches the far side of the body on 250, part of it the molten
+backlog. The sink's `release_rate` inherits the export's 12 % deficit (§17).
+
 ## 11. Fragments, the fragment record and bookkeeping
 
 ### 11.1 Finding fragments
@@ -586,6 +644,14 @@ Step 4's format plus Spheral's columns:
 
 The debris log carries the same time, position, velocity and thermal columns, the mass, and an upper bound on size.
 
+*As built in M1 (2026-10-08; definitions where this section leaves them open):* principal lengths 2√(5λ) of the
+mass-weighted covariance (exact for a uniform ellipsoid) and the area of that ellipsoid (Thomsen, within 1.061 %); in
+axisymmetric runs a ring (no member within its smoothing length of the axis) has its cross-section's lengths plus its
+circumference and a Pappus area, a cap its body of revolution's moments; the Ohnesorge number uses Li et al.'s
+viscosity at the mass-weighted temperature in the zero-shear limit (M1 decision 7); the debris log's size bound is the
+group's extent plus one spacing; route and mechanism come from the run's mode until M3's runner records each group's
+own. The columns are `record.FRAGMENT_COLUMNS` and `DEBRIS_COLUMNS`, in this table's group order.
+
 ### 11.3 Mass accounts
 
 At every frame boundary and window end, to round-off: starting mass = main body + resolved fragments (with their
@@ -609,6 +675,14 @@ README, `docs/model_assumptions.md` and the tests.
 | Thickness map | a sphere (thickness 2R); a synthetic neck of known width | necks and rims detected at the right size |
 | Zones | synthetic layers of known thickness and liquid fraction | the three-zone rule as specified |
 | Record and accounts | synthetic fragments and debris | columns, phase state, Weber and Ohnesorge applicability, breakup flag, mass balance |
+
+*Thresholds as set in M1 (2026-10-08)*, each the a priori one or the real flight's worst case rounded up to one
+significant figure (README, "Large fragments"; `tests/test_spheral_frag_flight.py`): frame import bitwise; 0 open
+directed edges once wound outward; volume 1e-12; mass and film 5e-9 (the CSV's digits); material h to
+1e-12 max|h| + 1e-9 J/kg, f_l bitwise; thickness within the faceting bound (5.8e-4 of 2R on the flight's mesh); slab
+depths 1e-12 m; binning 8e-4; accounts 1e-14 m₀. "The surface is closed" holds as an oriented surface; it is not
+manifold after element deaths (up to 288 edges), which is recorded (threshold 300) and left to M2's polyhedron. The
+drag against the history is pinned at 0.4, **not** at "a few percent" (§7.3).
 
 **Runner (marker `spheral`):**
 
@@ -779,6 +853,11 @@ M3's results; each later one when triggered. Each milestone's measured facts ame
 in Step 3. The plan is an ordinary task-by-task plan with code and tests (not generated from a prototype; Asha,
 2026-10-01), and it records the three architectural approaches of §19 as alternatives.
 
+*M1 done (2026-10-08).* The core checks pass on the reconstructed prototype's 100 mm Scheil flight (§2). Its two
+answers: the frames carry everything Spheral needs, once the export writes the loads on every step, the flight
+direction, the derived surface's normals and the loads on newly exposed faces (§17); and the load tables reproduce the
+frames' own loads to 8e-4 but not the history's drag (§7.3).
+
 ```mermaid
 flowchart TD
   M0["M0 Spheral runs here<br/>decides feasibility and cost"] --> M2["M2 Heated sphere is right<br/>decides replay or option B"]
@@ -879,7 +958,7 @@ windows fall back to whole-particle deletion (§19), with fragment masses report
 | One-way coupling after the first event | heating does not follow the new shape; droplets may be double counted | flagged; hand-back or surface model | M4, M6 |
 | Laptop resolution gap | layers 3–10 mm thick under-resolved | flagged; cluster resolution | M4–M5 |
 | Fixed attitude late in the flight | the path turns about 80° between 160 and 300 s; a remnant that does not turn with it would let slurry drift sideways | labelled assumption | — |
-| Finite-element dependencies | Scheil material, per-patch conjugate depth and deep runoff exist only in prototype copies; Step 4's ring not built | prototype copy until Step 3 lands; parametric rings | M1, M4 |
+| Finite-element dependencies | Scheil material, per-patch conjugate depth and deep runoff exist only in prototype copies; Step 4's ring not built | prototype copy until Step 3 lands; parametric rings | M1 (2026-10-08): the core runs on the reconstructed prototype's frames (`prototype/work-2026-10-08-spheral-mvp/`, tracked), with export additions not yet in the Step 3 plan (§17). Open until Step 3 adopts them and the frames are rewritten; Step 4's ring: M4 |
 | Molten backlog in the frames | at the default step, centimetre-deep molten layers that are a time-step artefact would look like bulk liquid to Spheral | frames from runs with Step 3's backlog fix or a converged step; triggers report the molten depth they fire on | before M3 |
 | Particle identity and mass | Spheral keeps no permanent particle IDs and never changes masses; the summed density misbehaves with shrinking masses | a registered ID field; a custom mass update policy; integrated density; mass-over-density volumes under CRKSPH; a deletion floor; checks 14 and 15; whole-particle deletion as fallback | MC |
 | Density ratio in the patches | 10⁴–10⁶, never shown in Spheral with viscosity and surface tension | options (a) and (c) first; volume-of-fluid fallback | M8 |
@@ -916,6 +995,13 @@ Each needs Asha's approval before use:
   with a fixed default, recorded in each run's summary, added as a further Step 3 amendment after the backlog fix).
   Needed by M1's checks on real frames (the frame fields) and, through the backlog fix, by M3 and M4 (§13.1).
 - **The Scheil material and frames at every macro step** in the flights (§13.1).
+- **Export additions found necessary by M1 (2026-10-08).** Made in the reconstructed prototype as write-only
+  additions and to be adopted by Step 3 as an export amendment (M1 decision 13): `p_w`, `tau` and `closure` on every
+  step that evaluated the surface flow, and the history column `p_w_stag_step_Pa` (02); the flight direction
+  `settings.v_hat_body` (02); the material in every run name, default or not (03); each patch's derived-surface normal
+  `n_derived` (04); the gas-side fields of the faces a step's deaths exposed, from the same flow evaluated on the
+  current surface, with `flow_eval` saying which (06). One gap remains: the release on faces a step's deaths removed is
+  not carried onto the frame, so Σ `release_rate` · A is 12 % below the sprayed mass over the 100 mm flight.
 - **Later:** a setting in the finite-element film to use M8's closure tables (a Step 3 or Step 4 change, when the
   tables exist); Step 4's lee-load module (replaces §7.2's lee extension) and ring geometry (replaces parametric rings);
   Step 4's tunnel mode (Task 13) for the tunnel heating. The fragment record's format is shared with Step 4; Step 4's
@@ -993,3 +1079,14 @@ Each needs Asha's approval before use:
   on 18 processes (over it). Asha chose to accept the overhead (2026-10-07): axisymmetric runs keep the Python classes, whose
   hot-phase replay takes 1.0, 2.3 and 10 h at 2.2, 1.1 and 0.55 mm against 0.6, 1.3 and 5.6 h in C++, about 1.8 times
   the scoping study's wall time; C++ classes and fewer processes are recorded alternatives (§19).
+- 2026-10-07 and 2026-10-08 (M1 plan and review): the AA7075 properties are the Scheil material's, and M1's real-flight
+  checks run on a 100 mm `AA7075_scheil` flight at the default 0.5 s step with the molten cascade on; the mechanical
+  columns are labelled placeholders; the liquid's free density is the finite element's; the export writes the loads on
+  every evaluated step and the flight direction; the lee extension kept as §7.2 states it; a layer thicker than the film
+  limit reported both ways, chosen before M4, with `deep_thickness` out of the layer; the fragment's Ohnesorge number at
+  Li et al.'s low-shear viscosity; the core's assumptions in `docs/spheral_frag_assumptions.md`; the layer depths along
+  the derived surface's normals; the drag against the history read at the derived surface's inclination; the prepared
+  frame stored reduced on mesh versions; the frames an MVP input written by the reconstructed prototype, tracked as
+  `prototype/work-2026-10-08-spheral-mvp/`, with Step 3 to adopt its export additions; the lee base pressure's reference
+  the every-step stagnation pressure. M1 done on 2026-10-08 (§14): the drag misses §7.3's "few percent" and is reported
+  as measured.
