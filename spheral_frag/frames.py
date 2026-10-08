@@ -253,9 +253,10 @@ def read_frame(run: FERun, k) -> Frame:
         for f in contract.data_fields(location):
             if f.name in data:
                 a = np.asarray(data[f.name])
-                if a.shape != (n,):
-                    raise ContractError("frame {}: {} {} has shape {}, expected ({},)".format(k, location, f.name,
-                                                                                             a.shape, n))
+                want = (n,) if f.components == 1 else (n, f.components)
+                if a.shape != want:
+                    raise ContractError("frame {}: {} {} has shape {}, expected {}".format(k, location, f.name,
+                                                                                          a.shape, want))
                 out[f.key] = a if a.dtype == np.float64 else a.astype(np.float64)
         return out
 

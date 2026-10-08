@@ -105,7 +105,7 @@ def test_read_frame_equals_pyvista_bitwise(fixture, k):
         assert set(g) == set(w)
         for key in w:
             assert g[key].dtype == w[key].dtype and g[key].tobytes() == w[key].tobytes(), (where, key)
-    assert frames.missing(got) == [] and frames.absent_optional(got) == []
+    assert frames.missing(got) == [] and frames.absent_optional(got) == sorted(contract.NOT_YET_EXPORTED)
 
 
 def test_frame_times_map_to_their_rows(tmp_path):
@@ -141,7 +141,7 @@ def test_missing_required_field_is_reported(sphere, tmp_path):
     syn.write_fe_run(str(tmp_path), lack, run.history, doc)
     run2 = frames.read_fe_run(tmp_path / run.name)
     g = frames.read_frame(run2, 2)
-    assert frames.missing(g) == ["p_w"] and frames.absent_optional(g) == ["q_rad"]
+    assert frames.missing(g) == ["p_w"] and frames.absent_optional(g) == ["q_rad", *sorted(contract.NOT_YET_EXPORTED)]
     assert frames.missing(Frame(k=0, time_s=0.0, points=f.points, tets=f.tets[:0], faces=f.faces)) == \
         ["tets"] + [x.key for loc in ("node", "tet", "patch") for x in contract.data_fields(loc) if x.required]
 
@@ -337,8 +337,9 @@ def test_prepared_frame_round_trip_bitwise(sphere, tmp_path):
             dtype, shape, _ = contract.PREPARED_FRAME_ARRAYS[name]
             assert a.dtype == np.dtype(dtype) and a.dtype.kind != "O", name
             assert a.shape == tuple(sizes[s] if isinstance(s, str) else s for s in shape), name
-        assert set(contract.PREPARED_FRAME_ARRAYS) - set(raw) == {"patch_thickness", "patch_slurry_depth",
-                                                                   "patch_liquid_depth"}
+        assert set(contract.PREPARED_FRAME_ARRAYS) - set(raw) == {
+            "patch_thickness", "patch_slurry_depth", "patch_liquid_depth", "patch_slurry_depth_facet",
+            "patch_liquid_depth_facet", *("patch_" + key for key in contract.NOT_YET_EXPORTED)}
         with np.load(str(path), allow_pickle=False) as z:
             assert sorted(z.files) == sorted(raw)
         # rebuilt: byte-identical file

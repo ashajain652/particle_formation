@@ -47,10 +47,11 @@ class FieldSpec:
     confirmed: bool     # checked against real frames (Task 10)
     consumer: str       # spec section that reads it
     note: str = ""      # status as read from the code (plan, contract table); what Task 10 must confirm
+    components: int = 1  # values per node/tet/patch: 1 (a scalar field) or 3 (a vector field, shape (n, 3))
 
 
-def _f(key, name, location, units, required, consumer, note="", nan_allowed=False, confirmed=False):
-    return FieldSpec(key, name, location, units, required, nan_allowed, confirmed, consumer, note)
+def _f(key, name, location, units, required, consumer, note="", nan_allowed=False, confirmed=False, components=1):
+    return FieldSpec(key, name, location, units, required, nan_allowed, confirmed, consumer, note, components)
 
 
 _HISTORY = (
@@ -121,6 +122,10 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     _f("we_s", "we_s", "patch", "-", False, "informational", "Step 3"),
     _f("kn_local", "kn_local", "patch", "-", False, "informational", "Step 3; NaN where not evaluated (decision 4, confirm)",
        nan_allowed=True),
+    _f("n_derived", "n_derived", "patch", "-, outward unit normal of the derived surface (sub-plan 01), 3 components",
+       False, "§10 layer depths (decision 9)",
+       "Step 3 export change of 2026-10-07 (decision 9); prepare marches the depths along it when present and "
+       "along the facet normals otherwise", components=3),
     # frame
     _f("frame_time_s", "field.pvd:timestep", "frame", "s, 6 significant digits", True, "§9.1",
        "on main; matched to the history row within 1e-6 s * max(1, t)"),
@@ -131,6 +136,10 @@ FE_FIELDS: tuple[FieldSpec, ...] = (
     _f("v_hat", "settings.v_hat_body", "run", "-, unit vector in the body frame", True, "§7.2 inclination",
        "exported by the reconstructed prototype as settings.v_hat_body (decision 4); value (confirm)"),
 )
+
+# Optional items the Step 3 export is being changed to write and the committed synthetic fixtures therefore do not
+# carry yet (decision 9): the fixture tests exempt them. Task 10 empties this once the export writes them.
+NOT_YET_EXPORTED = frozenset({"n_derived"})
 
 FRAME_TIME_RTOL = 1e-6          # frame time matches a history row within FRAME_TIME_RTOL * max(1, t) seconds
 
@@ -205,7 +214,8 @@ PREPARED_FRAME_ARRAYS: dict[str, tuple[str, tuple, str]] = {
     "node_T": ("f8", ("n",), "K"),
     "node_f_l": ("f8", ("n",), "-"),
     "tet_phi": ("f8", ("m",), "-"),
-    **{"patch_" + f.key: ("f8", ("f",), f.units) for f in data_fields("patch")},
+    **{"patch_" + f.key: ("f8", ("f",) if f.components == 1 else ("f", f.components), f.units)
+       for f in data_fields("patch")},
     "patch_area": ("f8", ("f",), "m^2"),
     "patch_normal": ("f8", ("f", 3), "-, outward unit normal"),
     "patch_centroid": ("f8", ("f", 3), "m"),
@@ -213,9 +223,14 @@ PREPARED_FRAME_ARRAYS: dict[str, tuple[str, tuple, str]] = {
     "patch_thickness": ("f8", ("f",), "m, inward ray to the opposite surface (Task 5)"),
     "patch_slurry_depth": ("f8", ("f",), "m, contiguous f_l > 0.5 below the surface (Task 6)"),
     "patch_liquid_depth": ("f8", ("f",), "m, contiguous f_l >= 1 below the surface (Task 6)"),
+    # decision 9: the two depths above march along the derived surface's normals (`patch_n_derived`) when the frame
+    # carries them; then the facet-normal depths are kept beside them as a diagnostic (Task 9)
+    "patch_slurry_depth_facet": ("f8", ("f",), "m, slurry depth along the facet normal (diagnostic, decision 9)"),
+    "patch_liquid_depth_facet": ("f8", ("f",), "m, liquid depth along the facet normal (diagnostic, decision 9)"),
 }
 
 # arrays a prepared frame may lack: optional finite-element fields, and the depth arrays under --no-thickness
 PREPARED_FRAME_OPTIONAL = frozenset(
     ["patch_" + f.key for f in data_fields("patch") if not f.required]
-    + ["patch_thickness", "patch_slurry_depth", "patch_liquid_depth"])
+    + ["patch_thickness", "patch_slurry_depth", "patch_liquid_depth", "patch_slurry_depth_facet",
+       "patch_liquid_depth_facet"])

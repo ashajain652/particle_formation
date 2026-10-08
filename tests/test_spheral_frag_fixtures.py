@@ -85,11 +85,13 @@ def test_fixture_carries_every_contract_item_under_its_fe_name(fixture):
             assert f.name in grid.point_data, (fixture, k, f.key)
         for f in contract.data_fields("tet"):
             assert f.name in grid.cell_data, (fixture, k, f.key)
-        for f in contract.data_fields("patch"):                    # required and optional: the export writes all
+        # required and optional: the export writes all, except what it is being changed to write (NOT_YET_EXPORTED)
+        patch_fields = [f for f in contract.data_fields("patch") if f.key not in contract.NOT_YET_EXPORTED]
+        for f in patch_fields:
             assert f.name in poly.cell_data, (fixture, k, f.key)
         assert set(grid.point_data) | set(grid.cell_data) == {f.name for f in contract.data_fields("node")
                                                               + contract.data_fields("tet")}
-        assert set(poly.cell_data) == {f.name for f in contract.data_fields("patch")}
+        assert set(poly.cell_data) == {f.name for f in patch_fields}
         assert set(poly.point_data) == {contract.fe_name("T")}
         # one node array, every mesh node in both files; vtu cells all tetrahedra, vtp cells all triangles
         assert np.asarray(grid.points).dtype == np.float64

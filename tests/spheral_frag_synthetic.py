@@ -644,3 +644,166 @@ def read_frame_pyvista(run_dir, k):
              if f.name in poly.cell_data}
     return Frame(k=k, time_s=float("nan"), points=np.asarray(grid.points), tets=tets, faces=faces, node=node, tet=tet,
                  patch=patch), np.asarray(poly.points)
+
+
+# ------------------------------------------------------------------------------------------- prepare and analyse
+# (M1 plan, Task 9.) The synthetic material as a material table, a sphere run whose surface carries derived normals
+# (decision 9), and `fake_run`, the stand-in for the Spheral runner until M2-M3.
+
+def synthetic_material_table(path):
+    """Write the material table of SYNTHETIC_MATERIAL (`material_table.npz` + its JSON header) at `path` and return
+    it loaded. The finite-element package on main has no melting material, so the table is main's AA7075_nomelt
+    (h(T), c_p, the solid density 2,813 kg/m^3) with the synthetic liquid fraction -- the linear range 750-908 K,
+    `fl_kind` 2, which evaluates exactly as `synthetic_liquid_fraction` (bitwise) -- and the synthetic liquid
+    (2,400 kg/m^3, 1.3 mPa s, 0.80 N/m). No latent heat: h is the nomelt material's."""
+    from spheral_frag import fe, material
+    mat = fe.fe_material("AA7075_nomelt")
+    mech = material.load_mechanical(fe.DEFAULT_MECHANICAL)
+    arrays, _ = fe.material_arrays(mat, mech)
+    arrays.update(fl_kind=material.FL_LINEAR, fl_T=np.array([T_SOLIDUS, T_LIQUIDUS]), fl=np.array([0.0, 1.0]),
+                  T_solidus=T_SOLIDUS, T_liquidus=T_LIQUIDUS, T_half=T_SOLIDUS + 0.5 * (T_LIQUIDUS - T_SOLIDUS),
+                  T_bridge=T_SOLIDUS + 0.9 * (T_LIQUIDUS - T_SOLIDUS), rho_liquid=RHO_LIQUID, mu_liquid=1.3e-3,
+                  sigma_liquid=0.80)
+    arrays["f_l"] = synthetic_liquid_fraction(arrays["T_grid"])
+    cols, prov = material.mechanical_columns(arrays["T_grid"], arrays["f_l"], T_SOLIDUS, arrays["T_half"], RHO,
+                                             RHO_LIQUID, mech)
+    arrays.update(cols)
+    header = {"fe_material": SYNTHETIC_MATERIAL, "provisional": list(prov), "interp_fma": material.interp_fuses(),
+              "numpy": np.__version__, "synthetic": "AA7075_nomelt with the synthetic linear f_l and liquid",
+              "mechanical": mech}
+    material.write_table(path, arrays, header)
+    return material.MaterialTable.load(path)
+
+
+def with_derived_normals(src_outdir, dst_outdir, run_name=SPHERE_RUN_NAME):
+    """A copy of a committed sphere run whose surfaces carry `n_derived` (decision 9): the sphere's own outward
+    normal, the unit radial vector at each patch centroid -- the derived surface of a sphere is the sphere. On frame
+    2's staircase it differs from the facet normals, which is the case decision 9 is for."""
+    from spheral_frag import frames as fr_mod
+    run = fr_mod.read_fe_run(os.path.join(src_outdir, run_name))
+    out = []
+    for k, _, _ in run.frames:
+        f = fr_mod.read_frame(run, k)
+        c = f.points[f.faces].mean(axis=1)
+        f.patch["n_derived"] = c / np.linalg.norm(c, axis=1, keepdims=True)
+        out.append(f)
+    with open(run.json_path) as fh:
+        doc = json.load(fh)
+    return write_fe_run(dst_outdir, out, run.history, doc)
+
+
+FAKE_RING_DEG = (100.0, 130.0)   # the carved ring: angle from the nose, deg (plan Task 9, Step 3)
+FAKE_SHELL = 2.5                 # ring and debris particles lie within FAKE_SHELL spacings of the outermost one
+FAKE_DEBRIS_DEG = (60.0, 80.0)   # where the isolated debris particles come from
+FAKE_N_DEBRIS = 5
+FAKE_SPEED = 20.0                # spacings per second: the ring's outward speed (10 spacings per 0.5 s step)
+
+
+def fake_run(prepared_dir, k0, k1, dx, seed, runs_dir, separate_at=1, n_debris=FAKE_N_DEBRIS, drop_removal=False,
+             form="3d"):
+    """A synthetic Spheral run in Task 8's runner -> analyse format, built from a prepared directory: it stands in for
+    the runner until M2-M3 (plan Task 9, Step 3) and is what Task 10 runs on the real flight.
+
+    The prepared body of frame k0 is filled with a cubic lattice of spacing `dx` (m), shifted by a seed-drawn offset
+    in [0, dx)^3, keeping the points inside the active tetrahedra (`TetLocator`); each particle has mass
+    rho_solid dx^3, smoothing length dx, T and f_l from the frame (P1), h from the table. One check per prepared frame
+    k0..k1 (check n at frame k0 + n's time). At every later frame the main body's particles whose centres left that
+    frame's body are removed (reason 0, all their mass, their h at the previous check). From check `separate_at` on,
+    a ring -- the particles at FAKE_RING_DEG from the nose within FAKE_SHELL spacings of the outermost particle --
+    is a separate group moving radially outward at FAKE_SPEED spacings per second (at `separate_at` not yet
+    displaced, so not yet clear), and `n_debris` particles from FAKE_DEBRIS_DEG on the same shell become isolated
+    dust (damage 1) 10 spacings outside. `drop_removal` leaves the first removal out of removed.npz (accounts that do
+    not close). Returns (run directory, answers): ring and debris IDs, the ring's mass and count, the removals."""
+    from spheral_frag import frames as fr_mod, geometry, material, naming, record
+    with open(os.path.join(prepared_dir, "prepare.json")) as fh:
+        prep = json.load(fh)
+    table = material.MaterialTable.load(os.path.join(prepared_dir, "material_table.npz"))
+    entries = {e["k"]: e for e in prep["frames"] if e.get("file")}
+    ks = [k for k in sorted(entries) if k0 <= k <= k1]
+    if not ks or ks[0] != k0 or ks[-1] != k1:
+        raise ValueError("prepared frames {}..{} not in {}".format(k0, k1, prepared_dir))
+    v_hat = np.asarray(prep["flight"]["v_hat"], dtype=float)
+    frame = fr_mod.load_prepared_frame(os.path.join(prepared_dir, entries[k0]["file"]))
+    loc = geometry.TetLocator.from_frame(frame)
+    rng = np.random.default_rng(seed)
+    lo, hi = frame.points.min(axis=0), frame.points.max(axis=0)
+    shift = rng.uniform(0.0, dx, 3)
+    axes = [np.arange(lo[i] + shift[i], hi[i], dx) for i in range(3)]
+    grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    x0 = grid[loc.locate(grid)[0] >= 0]
+    n = len(x0)
+    T = loc.interpolate(x0, frame.node["T"])
+    f_l = loc.interpolate(x0, frame.node["f_l"])
+    h = table.enthalpy(T)
+    mass = np.full(n, table.rho_solid * dx ** 3)
+    rho = np.full(n, table.rho_solid)
+    ids = np.arange(n, dtype=np.int64)
+    r = np.linalg.norm(x0, axis=1)
+    theta = np.degrees(np.arccos(np.clip(x0 @ v_hat / r, -1.0, 1.0)))
+    shell = r > r.max() - FAKE_SHELL * dx
+    ring = shell & (theta >= FAKE_RING_DEG[0]) & (theta <= FAKE_RING_DEG[1])
+    cand = np.flatnonzero(shell & (theta >= FAKE_DEBRIS_DEG[0]) & (theta <= FAKE_DEBRIS_DEG[1]) & ~ring)
+    deb = np.zeros(n, bool)
+    deb[np.sort(rng.choice(cand, size=n_debris, replace=False))] = True
+    radial = x0 / r[:, None]
+
+    name = naming.run_name(prep["name"], "synthetic", (k0, k1), form, float("{:.6g}".format(dx * 1e3)), {}, seed)
+    run_dir = os.path.join(runs_dir, name)
+    shutil.rmtree(run_dir, ignore_errors=True)
+    alive = np.ones(n, bool)
+    removals = []
+    t_sep = None
+    for c, k in enumerate(ks):
+        fk = frame if k == k0 else fr_mod.load_prepared_frame(os.path.join(prepared_dir, entries[k]["file"]))
+        t = float(fk.time_s)
+        separated = c >= separate_at
+        if separated and t_sep is None:
+            t_sep = t
+        main = alive & ~(separated & (ring | deb))
+        if c > 0:
+            lk = geometry.TetLocator.from_frame(fk)
+            idx = np.flatnonzero(main)
+            out = np.zeros(n, bool)
+            out[idx[geometry.centre_crossed(lk, x0[idx])]] = True
+            for i in np.flatnonzero(out):
+                removals.append((ids[i], t, c, mass[i], h[i]))
+            alive &= ~out
+            main &= ~out
+            Tk = lk.interpolate(x0[main], fk.node["T"])       # the replay imposes the frame's temperatures
+            T[main] = Tk
+            f_l[main] = lk.interpolate(x0[main], fk.node["f_l"])
+            h[main] = table.enthalpy(Tk)
+        x = x0.copy()
+        v = np.zeros((n, 3))
+        group = np.zeros(n, dtype=np.int64)
+        damage = np.zeros(n)
+        if separated:
+            v[ring] = FAKE_SPEED * dx * radial[ring]
+            x[ring] = x0[ring] + (t - t_sep) * v[ring]
+            group[ring] = 1
+            x[deb] = x0[deb] + 10.0 * dx * radial[deb]
+            damage[deb] = 1.0
+            group[deb] = 2 + np.arange(np.count_nonzero(deb))
+        s = alive
+        p = record.Particles(t=t, id=ids[s], mass=mass[s], x=x[s], v=v[s], T=T[s], f_l=f_l[s], h=h[s], rho=rho[s],
+                             damage=damage[s], h_smooth=np.full(np.count_nonzero(s), dx), group=group[s], frame=k,
+                             check=c)
+        record.write_check(run_dir, p, c)
+    if removals:
+        rid, rt, rc, rm, rh = (np.array(col) for col in zip(*removals))
+        rem = record.Removal(id=rid, t=rt, check=rc, mass=rm, h=rh, reason=np.zeros(len(rid), np.int8))
+    else:
+        rem = record.Removal.empty()
+    written = rem.subset(np.arange(len(rem)) > 0) if drop_removal and len(rem) else rem
+    record.write_removed(os.path.join(run_dir, "removed.npz"), written)
+    h0 = table.enthalpy(loc.interpolate(x0, frame.node["T"]))
+    meta = record.make_meta(name, prep["name"], "synthetic", form, float("{:.6g}".format(dx * 1e3)), {}, seed,
+                            math.fsum(mass), math.fsum(mass * h0), n, prepared_dir=os.path.abspath(prepared_dir),
+                            frames=ks, synthetic={"device": "fake_run", "ring_deg": list(FAKE_RING_DEG),
+                                                  "shell_spacings": FAKE_SHELL, "n_debris": n_debris,
+                                                  "separate_at": separate_at, "drop_removal": bool(drop_removal)})
+    record.write_meta(os.path.join(run_dir, "meta.json"), meta)
+    answers = {"n_particles": n, "ring_ids": ids[ring], "ring_mass_kg": math.fsum(mass[ring]),
+               "n_ring": int(np.count_nonzero(ring)), "debris_ids": ids[deb], "n_removals": len(rem),
+               "removed_mass_kg": math.fsum(rem.mass), "m0_kg": math.fsum(mass), "t_release_s": t_sep}
+    return run_dir, answers
