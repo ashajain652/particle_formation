@@ -378,6 +378,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--surface-model", "skin", "--skin-substep", "-1"],
     MELT + ["--surface-model", "skin", "--skin-cell", "300"],          # more than half of the 0.4 mm skin
     MELT + ["--surface-model", "skin", "--skin-preset", "fine"],
+    MELT + ["--surface-model", "skin", "--removal", "instant"],
 ])
 def test_bad_skin_arguments_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:
