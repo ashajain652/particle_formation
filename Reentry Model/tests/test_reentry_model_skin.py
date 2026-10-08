@@ -221,3 +221,45 @@ def test_steady_ablation_speed():
             fed += float(to_film[0] + to_deep[0])
     speed = fed / (0.3 * 2800.0 * f.area[0])
     assert speed == pytest.approx(v, rel=0.02)
+
+
+
+# -- the macro step's passes (Task 5) -------------------------------------------------------------------------------
+def heated_field(q=(2.5e7, 2.5e7), T_top=905.0, T_bottom=860.0, T_b0=(855.0, 860.0)):
+    """Two Scheil skins under a hard heating that melts and feeds them (by default); the second has little room within
+    the conjugate depth, so part of what it feeds goes to the deep account."""
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    f = field(mat, n=2, T=np.linspace(T_top, T_bottom, 8)[None, :].repeat(2, axis=0))
+    return (f, np.array(q), np.array([0.4, 0.4]), np.array([2e-9, 0.0]), np.array([np.inf, 2e-7]), np.array([1.0, 1.0]),
+            np.array(T_b0))
+
+
+def test_the_trial_pass_changes_nothing():
+    f, q, eps, L, room, avail, T_b0 = heated_field()
+    before = f.state()
+    f.advance(0.5, q, 0.0, eps, T_b0, L, room, avail)
+    assert all(np.array_equal(x, y) for x, y in zip(before, f.state()))
+
+
+def test_the_base_law_predicts_the_real_pass():
+    """Exact at the trial pass's own base temperature; a kelvin away, to 1e-4 where nothing feeds (the conduction is
+    nearly linear). While a skin feeds, the feed's discrete steps make the law good to about 1 % per kelvin (measured
+    while planning) -- which is what the interface mismatch and the step's repeat are for."""
+    for case, d, tol in ((dict(), 0.0, 1e-9), (dict(q=(2e7, 1e7), T_top=900.0, T_bottom=820.0, T_b0=(815.0, 820.0)), 1.0, 1e-4)):
+        f, q, eps, L, room, avail, T_b0 = heated_field(**case)
+        a, b = f.advance(0.5, q, 0.0, eps, T_b0, L, room, avail)
+        assert (b <= 0.0).all()                              # a warmer base takes no more heat from the skin
+        book = f.advance(0.5, q, 0.0, eps, T_b0, L, room, avail, T_b1=T_b0 + d)
+        assert np.allclose(book.E_base, (a + b * (T_b0 + d)) * f.area * 0.5, rtol=tol)
+
+
+def test_the_real_pass_closes_its_books():
+    f, q, eps, L, room, avail, T_b0 = heated_field()
+    before = sum(node_total(f, i, L[i]) for i in range(2))
+    M0 = f.mass()
+    book = f.advance(0.5, q, 0.0, eps, T_b0, L, room, avail, T_b1=T_b0 + np.array([3.0, 1.0]))
+    after = sum(node_total(f, i, book.L[i]) for i in range(2))
+    assert after - before == pytest.approx(float((book.E_top - book.E_rad - book.E_base + book.drawn_H).sum()), rel=1e-12)
+    assert f.mass() + float((book.to_film + book.to_deep).sum()) == pytest.approx(M0 + float(book.drawn.sum()), rel=1e-13)
+    assert np.allclose(book.L, L + book.to_film + book.to_deep, rtol=1e-13)
+    assert (book.to_film > 0.0).all() and book.to_deep[1] > 0.0 and (book.drawn > 0.0).all()
