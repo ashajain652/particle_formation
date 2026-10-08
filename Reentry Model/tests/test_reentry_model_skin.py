@@ -173,7 +173,6 @@ def test_a_substep_closes_the_skin_books_with_the_conducted_base_flux():
     assert np.allclose(E_base, conducted, rtol=1e-6)
 
 
-
 # -- feed and draw (Task 4) -----------------------------------------------------------------------------------------
 def test_feed_takes_only_the_contiguous_liquid_at_the_top_and_the_draw_restores_the_thickness():
     mat = material.Material.from_drama_json("AA7075_scheil")
@@ -221,7 +220,6 @@ def test_steady_ablation_speed():
             fed += float(to_film[0] + to_deep[0])
     speed = fed / (0.3 * 2800.0 * f.area[0])
     assert speed == pytest.approx(v, rel=0.02)
-
 
 
 # -- the macro step's passes (Task 5) -------------------------------------------------------------------------------
