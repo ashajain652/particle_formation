@@ -1,6 +1,6 @@
 # Sub-plan: Task 13 — Command line
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's). **Amended 2026-10-07 (continuum step): `--dt-continuum`** (the section after the Scheil default's).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -814,6 +814,218 @@ In `tests/test_reentry_model_cli.py`:
      assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
      for key in ("particles", "particles_summary", "size_distribution"):
          assert os.path.isfile(f[key])
+```
+
+## Amendment of 2026-10-07 (continuum step) — `--dt-continuum off|<s>`, by default 0.0125 s with Girin removal
+
+> Asha's decision of 2026-10-07 on fact 96 (a) (facts 97–100 in `00-shared-context.md`; sub-plan 10's amendment of this
+> date holds the switch). The code below is the tested code, as a diff against the copy of this date's earlier
+> amendment.
+
+**The flag.** `--dt-continuum off|<s>` in the Step 3 group. Its default depends on the removal mode, as
+`--size-feedback`'s does: `DEFAULT_DT_CONTINUUM = 0.0125` s for melting with `--removal girin`, the model proper, where
+the switched-step series converges (facts 92–94); off for `--removal instant`, the bookkeeping device, which has no film
+and whose SESAM thresholds were measured at the default step. `off` keeps `--dt` throughout, as every run before this
+amendment did. The switch's Knudsen number is `--kn-body-shock`, the surface flow's own continuum boundary, so moving
+the gate moves the switch with it. `continuum_step(args)` resolves the value. A value of zero or below, a value longer
+than `--dt`, anything else that is not a number, or `--dt-continuum` without `--melt on` exits 2.
+
+**Run names and the JSON.** Only a value other than the mode's default changes the name: `_dtcontinuum-off` or
+`_dtcontinuum-<s>`, after `_rigidsubstrate-off` and before `_seed-<n>`; the default keeps the existing name, as the
+earlier switches' defaults did, so a default melting run made now carries the name one made before it carried although
+it now switches. The JSON settings record `dt_continuum_s` (the value, or null) and the results the switch (sub-plan
+10).
+
+**Tests.** `test_the_continuum_step_defaults_to_0p0125_s_for_girin_removal_only`; the run-name test's four new cases;
+three new bad-argument cases. `test_melting_run_writes_columns_files_and_json` (15 s from 71 km) crosses the continuum
+boundary on the way, at about 9.5 s, so with the default it ran 460 macro steps instead of 30; it now passes
+`--dt-continuum 0.1` and checks the switch it records, the steps on either side of it and the JSON, which keeps it at
+about 30 s. Unit tier 258 passed, with Task 11's five known reference failures; FEniCSx tier 12 passed.
+
+In `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -41,6 +41,12 @@
+ # so an unseeded run differed from the next from the first solve on. 12345 is the seed the measurement harness of the
+ # amendments of 2026-10-02 and 2026-10-03 set, so the model's default reproduces their runs.
+ DEFAULT_SEED = 12345
++# The macro step once the flight enters the continuum regime, for the model proper (amendment of 2026-10-07): from the
++# first step whose body Knudsen number is below --kn-body-shock, where Girin's closure begins, the step shortens to this,
++# latched. The switched-step series converges from it -- the masses and the branch split within the scatter between
++# seeds, the droplet count within 2.7 % of the 0.00625 s step's (plan facts 92-94) -- while the default 0.5 s step makes
++# six times fewer droplets. Before the switch the default step serves.
++DEFAULT_DT_CONTINUUM = 0.0125
+ 
+ 
+ def parse_epoch(text):
+@@ -61,18 +67,44 @@
+     return seed
+ 
+ 
++def parse_dt_continuum(text):
++    """--dt-continuum: `off`, or a macro step [s] > 0."""
++    if text == "off":
++        return text
++    try:
++        value = float(text)
++    except ValueError:
++        value = -1.0
++    if not value > 0.0:
++        raise argparse.ArgumentTypeError("dt-continuum must be off or a step > 0 s, got {!r}".format(text))
++    return value
++
++
++def continuum_step(args):
++    """The macro step after the continuum switch [s], or None for no switch: --dt-continuum if given (`off`: none), else
++    DEFAULT_DT_CONTINUUM for the model proper -- melting with Girin removal -- and none for the instant-removal device
++    (no film; its SESAM thresholds were measured at the default step) or a run that does not melt."""
++    if args.dt_continuum is not None:
++        return None if args.dt_continuum == "off" else args.dt_continuum
++    return DEFAULT_DT_CONTINUUM if (args.thermal == "fem" and args.melt == "on" and args.removal == "girin") else None
++
++
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+-                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True):
++                   deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default"):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
+-    `_rigidsubstrate-off`, and any run with a seed other than DEFAULT_SEED (amendment of 2026-10-05) in `_seed-<n>`;
+-    the defaults keep the old name."""
++    `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
++    `_dtcontinuum-off` or `_dtcontinuum-<s>`, and any run with a seed other than DEFAULT_SEED (amendment of 2026-10-05)
++    in `_seed-<n>`; the defaults keep the old name."""
++    dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
++    dtc = dtc_default if dt_continuum == "default" else dt_continuum
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+     return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
+             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
+             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
++            + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
+             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
+@@ -211,6 +243,10 @@
+     me.add_argument("--gamma-pm", type=float, default=surface_flow.GAMMA_PM,
+                     help="effective ratio of specific heats of the Prandtl-Meyer expansion that sets the wall pressure beyond the sonic "
+                          "point (default %(default)s; 1.4 frozen air, ~1.15 dissociated -- a factor ~2 on p_w at 90 deg)")
++    me.add_argument("--dt-continuum", type=parse_dt_continuum, default=None,
++                    help="macro step [s] from the first step whose body Knudsen number is below --kn-body-shock, latched "
++                         "(default {} with --removal girin, where the droplet population converges; off with instant "
++                         "removal). off: the --dt step throughout, as every run before 2026-10-07".format(DEFAULT_DT_CONTINUUM))
+     me.add_argument("--kn-body-shock", type=float, default=surface_flow.KN_BODY_SHOCK,
+                     help="body Knudsen number below which a distinct bow shock is assumed and the shock-layer construction is used "
+                          "(default %(default)s); above it the flow is treated as merged and every melt closure is flagged")
+@@ -322,6 +358,11 @@
+         parser.error("--prism-layers must be >= 0")
+     if not 0.0 < args.demise_fraction < 1.0:
+         parser.error("--demise-fraction must be within (0, 1)")
++    if args.dt_continuum is not None and args.melt != "on":
++        parser.error("--dt-continuum needs --melt on")
++    dt_continuum = continuum_step(args)
++    if dt_continuum is not None and dt_continuum > args.dt:
++        parser.error("--dt-continuum must be no longer than --dt")
+ 
+     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
+                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
+@@ -334,7 +375,7 @@
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+                                        args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+                                        deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
+-                                       rigid_substrate=args.rigid_substrate == "on")
++                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum)
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+@@ -344,9 +385,11 @@
+     if args.thermal == "fem":
+         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
+         run = coupled.CoupledRun(sim, the_body, heating_model,
+-                                 coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk")))
++                                 coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
++                                                         dt_continuum=dt_continuum, kn_switch=args.kn_body_shock))
+         history = run.run()
+         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
++        thermal_info["dt_continuum_s"] = dt_continuum
+     else:
+         history = sim.run(extra_times=reference.time if reference is not None else None)
+     csv_path = os.path.join(args.outdir, name + ".csv")
+```
+
+In `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -229,16 +229,44 @@
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", deep_runoff=False,
+                               molten_cascade=False, rigid_substrate=False,
+                               seed=7).endswith("_melt-girin_deeprunoff-off_moltencascade-off_rigidsubstrate-off_seed-7")
++    # the continuum step (amendment of 2026-10-07): only a value other than the mode's default changes the name
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              dt_continuum=cli.DEFAULT_DT_CONTINUUM).endswith("_fem-physics_melt-girin")
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin",
++                              dt_continuum=None).endswith("_melt-girin_dtcontinuum-off")
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "girin", rigid_substrate=False,
++                              dt_continuum=0.025, seed=7).endswith("_melt-girin_rigidsubstrate-off_dtcontinuum-0.025_seed-7")
++    assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam", "instant",
++                              dt_continuum=None).endswith("_fem-sesam_melt-instant")           # off is the device's default
++
++
++def test_the_continuum_step_defaults_to_0p0125_s_for_girin_removal_only():
++    """--dt-continuum (amendment of 2026-10-07): 0.0125 s by default for the model proper, melting with Girin removal,
++    where the switched-step series converges (plan facts 92-94); off for the instant-removal device, which has no film and
++    whose SESAM thresholds were measured at 0.5 s, and for a run that does not melt. `off` or a value overrides it."""
++    p = cli.build_parser()
++    step = lambda argv: cli.continuum_step(p.parse_args(argv))
++    assert cli.DEFAULT_DT_CONTINUUM == 0.0125 and step(MELT) == 0.0125
++    assert step(MELT + ["--removal", "instant"]) is None and step(FEM) is None
++    assert step(MELT + ["--dt-continuum", "off"]) is None and step(MELT + ["--dt-continuum", "0.025"]) == 0.025
++    assert step(MELT + ["--removal", "instant", "--dt-continuum", "0.05"]) == 0.05
+ 
+ 
+ def test_melting_run_writes_columns_files_and_json(tmp_path):
+-    """15 s from 71 km with a warm body: melt columns, the particle files, the melt plots, stills with the melt marks."""
++    """15 s from 71 km with a warm body: melt columns, the particle files, the melt plots, stills with the melt marks. The
++    flight enters the continuum regime on the way, so the continuum step (amendment of 2026-10-07) switches; 0.1 s here
++    instead of the default 0.0125 s, to keep the test short."""
+     pytest.importorskip("cantera")
+     argv = [a for a in MELT if a not in ("--heating", "sesam")] + ["--heating", "physics", "--altitude", "71", "--velocity", "7.24", "--temperature", "800",
+-                                                                   "--t-max", "15", "--outdir", str(tmp_path), "--name", "melt_short", "--stills"]
++                                                                   "--t-max", "15", "--outdir", str(tmp_path), "--name", "melt_short", "--stills",
++                                                                   "--dt-continuum", "0.1"]
+     assert cli.main(argv) == 0
+     rows = list(csv.DictReader(open(tmp_path / "melt_short.csv")))
+-    assert len(rows) == 31 and "sprayed_mass_kg" in rows[0] and "film_mass_kg" in rows[0] and "closure_fraction_girin" in rows[0]
++    t = np.array([float(row["time_s"]) for row in rows])
++    t_sw = json.load(open(tmp_path / "melt_short.json"))["results"]["dt_switch_time_s"]
++    assert 0.0 < t_sw < 15.0 and t[-1] == pytest.approx(15.0)
++    assert np.allclose(np.diff(t)[t[1:] <= t_sw + 1e-9], 0.5) and np.allclose(np.diff(t)[t[1:] > t_sw + 1e-9][:-1], 0.1)
++    assert "sprayed_mass_kg" in rows[0] and "film_mass_kg" in rows[0] and "closure_fraction_girin" in rows[0]
+     assert float(rows[-1]["kn_body"]) > 0.0 and float(rows[-1]["kn_local_stag"]) < float(rows[-1]["kn_body"]) and "flow_branch" in rows[0]
+     assert float(rows[-1]["mass_kg"]) < float(rows[0]["mass_kg"]) and float(rows[-1]["sprayed_mass_kg"]) > 0.0
+     doc = json.load(open(tmp_path / "melt_short.json"))
+@@ -250,6 +278,7 @@
+     assert "deep_runoff_mass_kg" in rows[0] and "deep_mass_kg" in rows[0] and r["deep_runoff_mass_kg"] >= 0.0
+     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
+     assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
++    assert s["dt_continuum_s"] == 0.1 and r["dt_continuum_s"] == 0.1 and r["dt_switch_kn"] < s["kn_body_shock"]
+     assert s["rigid_substrate"] == "on" and all(k in rows[0] for k in ("nonrigid_depth_mean_mm", "slurry_thick_fraction",
+                                                                        "rigid_thin_fraction", "slurry_held_mass_kg"))
+     assert r["cascade_mass_kg"] == pytest.approx(float(rows[-1]["cascade_mass_kg"])) and r["cascade_mass_kg"] >= 0.0
+@@ -293,6 +322,9 @@
+     MELT + ["--deep-runoff", "maybe"],
+     MELT + ["--molten-cascade", "maybe"],
+     MELT + ["--rigid-substrate", "maybe"],
++    MELT + ["--dt-continuum", "fast"],
++    MELT + ["--dt-continuum", "0"],
++    MELT + ["--dt-continuum", "1.0"],                                                             # longer than --dt
+ ])
+ def test_bad_melt_arguments_exit_2(argv, tmp_path):
+     with pytest.raises(SystemExit) as exc:
 ```
 
 ---

@@ -1,6 +1,6 @@
 # Sub-plan: Task 14 — Verification and sensitivity drivers, the reference-tier test, the runs
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the drivers switch by default, and the harness retires** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -418,6 +418,73 @@ In `analysis/melt_sensitivity.py`:
                                     "--outdir", outdir, "--name", "{}__{}".format(key, variant), "--quiet"] + VARIANTS[variant]
  
  
+```
+
+## Amendment of 2026-10-07 (continuum step) — the drivers switch by default, and the harness retires
+
+> Asha's decision of 2026-10-07 on fact 96 (a) (facts 97–100 in `00-shared-context.md`). The code below is the tested
+> code, as a diff against the copy of this date's earlier amendment. These items stack on this sub-plan's amendments
+> above.
+
+1. **Every physics and sensitivity run now switches.** `melt_verification.py`'s `physics` mode and every
+   `melt_sensitivity.py` variant run with `--removal girin`, so from the first step under the continuum boundary they
+   take 0.0125 s steps (sub-plan 13's default). The bookkeeping and resolved modes run `--removal instant` and Girin
+   removal with `--size-feedback initial` respectively: the first keeps the default step throughout (the flag's default
+   is off for instant removal), the second switches like the physics mode. The 50 mm flight never crosses the continuum
+   boundary, so it is unchanged bit for bit (fact 99); the 100 mm flight switches at 49.5 s and to 120 s costs about
+   twelve times as much (fact 99 gives the measured times).
+2. **A `dtcoff` variant** (`--dt-continuum off`): the default 0.5 s step throughout, as every row before this amendment
+   was run, so the table carries the step's effect against `base` like every other switch's. `dt025` now halves the step
+   before the switch only.
+3. **The switched-step harness retires.** `dtswitch.py` and `compare.py` (2026-10-05) wrapped the model from outside the
+   package to switch the step; `--dt-continuum <s>` does the same from the model's own command line, and reproduces the
+   harness's 0.0125 s and 0.5 s runs of the 2026-10-07 series bit for bit (fact 99). A step series is now a set of
+   ordinary runs with `--dt-continuum 0.05`, `0.025`, `0.0125`, `0.00625` and `off`; the harness's runoff-by-latitude
+   instrumentation stays in the throwaway copy, as it never belonged in `analysis/`.
+
+In `analysis/melt_sensitivity.py`:
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,18 +2,22 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,seed1,layers2,layers6,dt025,dtcoff,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,
++                    kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+ turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
+ `nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
+-material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the
+-regime test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the
+-linear melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `seed1` reruns `base` with another seed of numpy's generator -- every run is
+-seeded, `base` with the default 12345 (amendment of 2026-10-05) -- so its change relative to `base` is the run-to-run
+-scatter, the floor against which every other row is read); the table
++material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the regime
++test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the linear
++melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `dtcoff` keeps the
++default 0.5 s step through the continuum regime instead of the 0.0125 s continuum step every melting run with Girin
++removal now switches to there (amendment of 2026-10-07; `dt025` halves the step before the switch); `seed1` reruns
++`base` with another seed of numpy's generator -- every run is seeded, `base` with the default 12345 (amendment of
++2026-10-05) -- so its change relative to `base` is the run-to-run scatter, the floor against which every other row is
++read); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -30,7 +34,7 @@
+ 
+ CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
+ VARIANTS = {
+-    "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
++    "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"], "dtcoff": ["--dt-continuum", "off"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+     "nocascade": ["--molten-cascade", "off"], "norigid": ["--rigid-substrate", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
 ```
 
 ---

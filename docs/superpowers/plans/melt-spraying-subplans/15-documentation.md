@@ -1,6 +1,6 @@
 # Sub-plan: Task 15 — Documentation: README, assumptions, spec amendments, facts note
 
-> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the film's flux and the step study in the README, assumptions and spec** (the section after the seed's). **Amended 2026-10-07: the rigid substrate, the Scheil default and the repeated step series** (the section after the runoff flux's).
+> Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the film's flux and the step study in the README, assumptions and spec** (the section after the seed's). **Amended 2026-10-07: the rigid substrate, the Scheil default and the repeated step series** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the continuum step in the README, the assumptions and the spec** (the section after that).
 
 
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
@@ -454,6 +454,7 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
    stays minor at every step (at most 13 % of the film formed inside any latitude cap leaves it). The rule and the
    material changed together, so how much of the convergence each brings was not measured. Until the fine step is a
    model option, quote the droplet population only from a fine-step run, with its step (plan facts 88–96)."
+   *Its last sentence is superseded by this date's continuum-step amendment, change 3.*
 
 **Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
 
@@ -516,6 +517,48 @@ these edits and add the superseded wording to its `SUPERSEDED` list.
    over 49.5–120 s; the default 0.5 s step makes six times fewer droplets, the thin branch being almost absent there.
    The deep runoff's freeze-back (amendment 27) now debits the film by its own part, not by a difference that rounded
    below zero and stopped a fine-step run; no earlier flight is changed by that (plan facts 88–96)."
+
+## Amendment of 2026-10-07 (continuum step) — the continuum step in the README, the assumptions and the spec
+
+> Part of the continuum-step amendment (facts 97–100 in `00-shared-context.md`; sub-plans 10 and 13 hold the code).
+> These changes stack on the blocks above, which still apply except where a change below replaces their wording. The
+> blocks are prose, so re-run `prototype/plan3/audit_docs.py`'s checks against them after these edits: `--dt-continuum`
+> must exist in `cli.py`; no history column is added (the switch is recorded in the run JSON's results); and add to its
+> `SUPERSEDED` list the clause change 3 below retracts from this date's earlier change 6, "Until the fine step is a
+> model option, quote the droplet population only from a fine-step run, with its step".
+
+**README block (`## Physics model — reentry_model (Step 3 ...)`).**
+
+1. *Options paragraph.* After the `--rigid-substrate on|off (...)` entry insert: "`--dt-continuum off|<s>` (default
+   0.0125 s with `--removal girin`, off with `instant`: from the first macro step whose body Knudsen number is below
+   `--kn-body-shock`, where Girin's closure begins, the step shortens to this, latched, because the droplet population
+   converges from it and not at the default step; `off` keeps `--dt` throughout, as every run before 2026-10-07 did; a
+   default 100 mm flight to 120 s took 2.3 hours, against 11 minutes with `off`, measured);".
+2. *Outputs.* Add to the run JSON's results `dt_continuum_s`, `dt_switch_time_s`, `dt_switch_kn` and
+   `dt_switch_altitude_km`, and note that history rows stay one per macro step, so a run that switches has many more of
+   them after the switch, and that frames are written by flight time after it.
+3. *Findings, the time-step bullet of this date's change 6.* Replace its last sentence, "Until the fine step is a model
+   option, quote the droplet population only from a fine-step run, with its step (plan facts 88–96)." with: "Since
+   2026-10-07 the model switches to 0.0125 s by default at the continuum boundary (`--dt-continuum`), so a default run's
+   droplet population is the converged one; a run with `--dt-continuum off` gives the masses within about 5 % and the
+   droplet population six times too small (plan facts 88–100)."
+
+**Assumptions block (`## 9. Melting and the melt film (Step 3)`).**
+
+4. In the bullet "The droplet population and the macro step" of this date's change 10, append: "Since 2026-10-07 the
+   model takes the converged step by default: from the first macro step whose body Knudsen number is below the continuum
+   boundary (0.01), 0.0125 s, latched (`--dt-continuum`; off for the instant-removal device). The default 0.5 s step
+   serves before it, where the flight is in the merged regime and only the thin mode and the Rayleigh–Taylor mode act;
+   whether that part of the flight depends on the step was not measured."
+
+**Spec amendments block (`## 18. Amendments`).** Append:
+
+5. "33. §7, §13 (decided 2026-10-07) — **the continuum step.** From the first macro step whose body Knudsen number is
+   below the continuum boundary (`--kn-body-shock`, 0.01) the macro step is 0.0125 s, latched (`--dt-continuum`, default
+   with Girin removal, off with instant removal and `off` on request); frames are written by flight time after the
+   switch, and the run's results record it. It reproduces the switched-step harness of amendment 32's series bit for
+   bit, so that series is now a set of ordinary runs; the 50 mm flight never switches and is unchanged; a 100 mm flight
+   to 120 s cost 2.3 hours against 11 minutes (plan facts 97–100)."
 
 ---
 
