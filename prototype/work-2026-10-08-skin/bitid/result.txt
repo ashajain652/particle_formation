@@ -1,0 +1,10 @@
+power at start: Now drawing from 'AC Power'  Thu Oct  8 01:54:07 EDT 2026
+== d100
+rows 540 shared columns 90 new columns 13 differing columns []
+particle arrays 22 rows 249453 differing []
+result fields 59 new ['interface_repeats', 'skin_drawn_mass_kg', 'skin_handover_mass_kg', 'skin_wall_s', 'skins_created'] differing ['runtime_s']
+== d50
+rows 95 shared columns 90 new columns 13 differing columns []
+particle arrays 22 rows 10009 differing []
+result fields 59 new ['interface_repeats', 'skin_drawn_mass_kg', 'skin_handover_mass_kg', 'skin_wall_s', 'skins_created'] differing ['runtime_s']
+power at end: Now drawing from 'AC Power'  Thu Oct  8 02:26:36 EDT 2026

@@ -1,0 +1,60 @@
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -45,10 +45,14 @@
+         raise argparse.ArgumentTypeError("epoch must be YYYY-MM-DDTHH:MM:SS, got {!r}".format(text))
+ 
+ 
+-def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None):
++def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
++                   deep_runoff=True):
++    """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
++    run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`; the default keeps the old name."""
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+         diameter_m * 1e3, velocity_ms / 1e3, altitude_m / 1e3, atmosphere_name, bridging_name, wind_name)
+-    return name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
++    return (name + ("_fem-" + heating_name if heating_name else "") + ("_melt-" + melt if melt else "")
++            + ("_deeprunoff-off" if melt and not deep_runoff else ""))
+ 
+ 
+ def make_atmosphere(spec, epoch, wind_name):
+@@ -152,6 +156,11 @@
+                     help="girin: film + runoff + Girin spraying (default); instant: liquid removed as it forms -- the lumped-melting "
+                          "verification device, not physical")
+     me.add_argument("--runoff", choices=("on", "off"), default="on", help="film runoff transport along the surface (default on)")
++    me.add_argument("--deep-runoff", choices=("on", "off"), default="on",
++                    help="move the contiguous liquid below Girin's conjugate depth along the surface by the pressure-gradient and "
++                         "deceleration-driven lubrication flux over the whole liquid depth, never spraying it; it becomes film only "
++                         "from the top, as the film thins below the conjugate depth (default on; needs --runoff on). off: that "
++                         "liquid stays in its elements until the surface recedes to it, as in every run before 2026-10-02")
+     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
+                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
+                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
+@@ -207,7 +216,8 @@
+                                        rt_spray=args.rt_spray == "on")
+         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
+         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
+-                                          particles=args.particles, size_feedback=size_feedback)
++                                          particles=args.particles, size_feedback=size_feedback,
++                                          deep_runoff=args.deep_runoff == "on")
+         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
+                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
+     else:
+@@ -227,7 +237,7 @@
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+     if melting:
+-        info.update({"removal": args.removal, "runoff": args.runoff, "rt_spray": args.rt_spray,
++        info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff, "rt_spray": args.rt_spray,
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+@@ -274,7 +284,8 @@
+     atm, atm_name, atm_info = make_atmosphere(args.atmosphere, args.epoch, args.wind)
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+     name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+-                                       args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None)
++                                       args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
++                                       deep_runoff=args.deep_runoff == "on")
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)

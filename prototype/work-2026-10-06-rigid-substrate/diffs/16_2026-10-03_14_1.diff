@@ -1,0 +1,28 @@
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,12 +2,14 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+-turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements); the table
++turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
++`nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
++material by one element per macro step); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+ change relative to `base`. Every run is a subprocess of `--python` (default: this interpreter); the `fenicsx` variant
+ needs the fenicsx_env interpreter (run it separately with --variants fenicsx --python <fenicsx_env python>, with CC
+@@ -26,7 +28,7 @@
+ VARIANTS = {
+     "base": [], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+-    "we308": ["--we-critical", "3.08"],
++    "nocascade": ["--molten-cascade", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+     "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+     "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],

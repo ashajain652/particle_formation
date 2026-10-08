@@ -1,0 +1,139 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -144,6 +144,8 @@
+ PHI_DEATH = 0.05                 # a patch owner below this fraction dies (its remainder goes to the film): keeps the surface
+                                  # nodes' thermal mass above 5 % of an element's, which the Newton iteration needs (measured
+                                  # 2026-09-20: owners at 1e-3 made surface nodes swing by hundreds of K between iterates)
++MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in one macro step; what it leaves waits for the
++                                 # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
+ REMOVAL_NAMES = ("girin", "instant")
+ 
+ 
+@@ -157,6 +159,9 @@
+                                       # to the windward cap; initial: D0 and R0 throughout (SESAM's convention, for the devices)
+     feed_depth: str = "conjugate"     # conjugate: only liquid the gas shear reaches leaves its element (fact 28); all: any depth
+     deep_runoff: bool = True          # the liquid below the conjugate depth runs off, never sprayed (amendment of 2026-10-02)
++    molten_cascade: bool = True       # a death that exposes a fully molten element (mean T >= T_feed) feeds it within the
++                                      # step, so the surface recedes through molten material by more than one element per
++                                      # macro step (amendment of 2026-10-03)
+ 
+     def __post_init__(self):
+         if self.removal not in REMOVAL_NAMES:
+@@ -195,8 +200,12 @@
+     (raising phi_e, capped at 1) once the patch falls back through the ramp -- the mirror of the feed rule, netted
+     with it so that no element both melts and freezes in one step; (v) patch owners at phi <= PHI_DEATH die: the
+     mesh's active set, the surface, the film (handed to the nearest surviving patch) and the solver's fractions are
+-    refreshed. With `removal = "instant"` the liquid leaves the body at h_liquid instead, and the difference to the
+-    element's own enthalpy is a nodal load on its nodes over the next step.
++    refreshed; with the molten cascade (`_feed_exposed`, amendment of 2026-10-03) an element a death exposes fully
++    molten (its mean temperature at or above T_feed, `molten_depth`'s test) is fed whole within the step, so that it
++    dies in turn and the surface recedes through molten material by as many elements as are molten rather than by one
++    per macro step. With `removal = "instant"`
++    the liquid leaves the body at h_liquid instead, and the difference to the element's own enthalpy is a nodal load on
++    its nodes over the next step.
+ 
+     The film has the surface's own temperature, because it is thermally thin: q b / k_l = 0.22 K across a 10 um film
+     at 2 MW/m2 (22 K even at 1 mm) and b^2/alpha = 0.3 ms against the 0.5 s macro step. Rather than give it an energy
+@@ -242,6 +251,8 @@
+         self.sprayed_mass = self.runoff_mass = self.removed_mass = self.removed_enthalpy = self.frozen_mass = 0.0
+         self.deep_runoff_mass = 0.0                                         # kg the deep runoff took out of the elements
+         self.deep_surfaced_mass = 0.0                                       # kg of deep liquid that became film from the top
++        self.cascade_mass = 0.0                                             # kg the molten cascade fed (2026-10-03)
++        self.cascade_capped_steps = 0                                       # steps whose cascade stopped at MAX_CASCADE_PASSES
+         self.n_released = 0.0
+         self.source_rows = []
+         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)
+@@ -463,8 +474,13 @@
+                 deep_liquid = self._deep_runoff(dt, flow, delta_m, reach, T, h_node, h_e, h_p)
+             released = self._film_and_spray(t, dt, state, h_p, flow, delta_m)
+         frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
+-        # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed
+-        n_dead = 0
++        # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed --
++        # and, with the molten cascade (amendment of 2026-10-03), are fed within the step if the death exposed them
++        # fully molten (`_feed_exposed`), so that they die in the next pass and expose the next
++        n_dead, passes, cascade, capped = 0, 0, 0.0, False
++        # fully molten as `molten_depth` has it -- the element's mean nodal temperature at or above T_feed -- so the cascade
++        # removes exactly the contiguous molten layer the branch test reads, wherever a death exposes it
++        full = T[tets].mean(axis=1) >= mat.T_feed if s.molten_cascade and s.removal != "instant" else None
+         while not self.consumed:
+             dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= PHI_DEATH))
+             if dead.size == 0:
+@@ -481,16 +497,27 @@
+                 self._defer_to_patches(carried - delta * h_p)
+             self.phi[dead] = 0.0
+             before = float(((self.m_f + self.m_d) * h_p).sum())
++            was_owner = self.owner_area > 0.0
+             self._kill(dead)                                     # the liquid of a dead patch moves to another patch...
+             if self.m_f.size:                                    # ... which is at its own temperature
+                 h_p = self.film_enthalpy(h_liq)
+                 self._spread_to_patches(before - float(((self.m_f + self.m_d) * h_p).sum()), self.m_f + self.m_d)
+             n_dead += int(dead.size)
++            if full is not None and not self.consumed:          # the molten cascade: walls the deaths exposed fully molten
++                exposed = np.flatnonzero(full & (self.owner_area > 0.0) & ~was_owner & (self.phi > PHI_DEATH))
++                if exposed.size and passes < MAX_CASCADE_PASSES:
++                    cascade += self._feed_exposed(exposed, h_e, h_p)
++                    passes += 1
++                elif exposed.size:                               # the cap: these wait for the next step's feed
++                    capped = True
+         self.solver.set_fractions(self.phi)
+         self.solver.set_film_mass(self._film_nodal())
+         self.frozen_mass += frozen
++        self.cascade_mass += cascade
++        self.cascade_capped_steps += int(capped)
+         self.last_melt.update({"n_dead": n_dead, "released_mass": released, "feed_mass": feed_mass, "frozen_mass": frozen,
+-                               "deep_liquid": deep_liquid})
++                               "deep_liquid": deep_liquid, "cascade_mass": cascade, "cascade_passes": passes,
++                               "cascade_capped": capped})
+ 
+     def _freeze_back(self, want, solid, h_e, h_p):
+         """Give each element back the `want` kilograms of film that have fallen below the feed ramp, drawn from its
+@@ -519,6 +546,40 @@
+         self._defer_to_elements(np.bincount(owner, taken * h_p, self.mesh.n_elements) - per_element * h_e)
+         return float(taken.sum())
+ 
++    def _feed_exposed(self, exposed, h_e, h_p):
++        """(v-a) The molten cascade (amendment of 2026-10-03): feed the fully molten elements a death has just exposed,
++        within the step. Returns the mass fed [kg].
++
++        The melt step runs after the conduction, so between two melt steps the heat flux melts the material beneath
++        and beside the wall-owning element as well as the element itself. The feed hands the owner's liquid to the film
++        and the owner dies once consumed, but the element its death exposes was buried a moment earlier, so the feed
++        gate of fact 28(b) held its melt in place, and it used to wait for the next step's feed: the surface receded
++        through molten material by one element per macro step, and whatever melted below the owner waited as a backlog
++        that shrank with the step (plan fact 50). Exposed, the element is a wall owner -- in the sheared layer by
++        definition, which is what the gate admits -- so it is fed now.
++
++        "Fully molten" is `molten_depth`'s definition, the element's mean nodal temperature at or above T_feed, so the
++        cascade removes exactly the contiguous molten layer the branch test reads. It is not "every node above T_feed":
++        the feed's own energy debit keeps every element it is feeding on the feed ramp, so at the melt front no element
++        has all four nodes above it -- on the 100 mm flight not one of the 1700-1900 elements of the chains below the
++        wall-owning elements does, their coldest node sitting at a median 897 K, 93 % liquid by the enthalpy, and a
++        cascade on that test fed 32 g in 120 s (deep runoff off) and left the backlog as it was (measured 2026-10-02).
++        The element is fed whole: its remainder phi rho V leaves at its mean nodal enthalpy h_e and nothing is booked on
++        it, and it arrives on the faces it owns at their liquid enthalpy with the difference released there -- the owner
++        rule of step (i) where every node is above T_feed (the molten part is then all of it), and the death rule of fact
++        4 for the rest, whose residual latent heat the faces it lands on pay (facts 5 and 25). Left at phi = 0, it dies
++        in the next pass of the death loop and hands that liquid down to the faces it exposes, like any dying patch's
++        film; the cascade ends where the elements a death exposes are no longer fully molten -- the contiguity rule of
++        `molten_depth` -- so molten material that cooler material separates from the wall is never fed. Only elements
++        that would survive the pass are fed: one at or below PHI_DEATH dies anyway and leaves its remainder by the death
++        rule, as before."""
++        fed = np.zeros(self.mesh.n_elements)
++        fed[exposed] = self.phi[exposed] * self.element_mass[exposed]
++        self.phi[exposed] = 0.0
++        delta, carried = self._add_to_film(fed, fed * h_e)     # the whole element, at its mean nodal enthalpy
++        self._defer_to_patches(carried - delta * h_p)          # ... and the melt arrives at its patch's temperature
++        return float(fed.sum())
++
+     def _defer_to_elements(self, energy, elements=None):
+         """Book a per-element energy [J] on the elements' nodes, to be applied over the next step."""
+         e = np.asarray(energy, dtype=float)
+@@ -1068,6 +1129,7 @@
+                 "deep_liquid_kg": lm.get("deep_liquid", 0.0), "deep_mass_kg": float(self.m_d.sum()),
+                 "deep_runoff_mass_kg": self.deep_runoff_mass, "deep_surfaced_mass_kg": self.deep_surfaced_mass,
+                 "deep_blob_fraction": self.deep_blob_fraction(),
++                "cascade_passes": float(lm.get("cascade_passes", 0)), "cascade_mass_kg": self.cascade_mass,
+                 "removed_enthalpy_J": self.removed_enthalpy,
+                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
+                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,

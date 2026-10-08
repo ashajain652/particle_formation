@@ -1,0 +1,12 @@
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -110,6 +110,9 @@
+     assert c["mass_kg"][-1] == pytest.approx(c["mass_kg"][0] - c["sprayed_mass_kg"][-1], rel=1e-6)
+     assert r["melt_onset_altitude_km"] is not None and r["spraying_onset_time_s"] >= r["melt_onset_time_s"] and r["demise_time_s"] is None
+     assert r["sprayed_mass_kg"] == c["sprayed_mass_kg"][-1] and r["n_source_rows"] == len(b.source_rows) > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
++    # the molten cascade (amendment of 2026-10-03): its cumulative mass and its passes per step, in the history and results
++    assert r["cascade_mass_kg"] == c["cascade_mass_kg"][-1] and np.all(np.diff(c["cascade_mass_kg"]) >= 0.0)
++    assert r["cascade_passes_max"] == int(c["cascade_passes"].max()) and r["cascade_capped_steps"] == b.cascade_capped_steps
+     assert np.all(c["convective_heat_W"] > 0.0) and c["convective_heat_W"][-1] == pytest.approx(b.last.Q_conv)
+     import pyvista as pv
+     grid = pv.read(os.path.join(run_dir, "vtk", "field_1.vtu"))

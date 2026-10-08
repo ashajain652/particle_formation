@@ -1,0 +1,94 @@
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -14,6 +14,7 @@
+ import numpy as np
+ 
+ from . import trajectory as tj
++from .surface_flow import KN_BODY_SHOCK
+ 
+ THERMAL_COLUMNS = ["convective_heat_W", "rad_cooling_W", "integrated_heat_J", "absorbed_heat_J",
+                    "surface_T_max_K", "surface_T_min_K", "surface_T_mean_K", "T_stagnation_K", "T_back_K",
+@@ -35,11 +36,18 @@
+ @dataclass
+ class CoupledSettings:
+     dt: float = 0.5                  # s, macro step
+-    frames_every: int = 0            # VTK frame every n macro steps (0: none)
++    frames_every: int = 0            # VTK frame every n macro steps (0: none); by flight time after a continuum switch
+     output_dir: str = None           # directory of the VTK series (required when frames_every > 0)
+     frames: list = field(default_factory=list)
++    dt_continuum: float = None       # s, the macro step from the first step whose body Knudsen number is below kn_switch,
++                                     # latched (None: no switch; amendment of 2026-10-07, the continuum step)
++    kn_switch: float = KN_BODY_SHOCK  # the body Knudsen number of the switch: the surface flow's own continuum boundary
+ 
++    def __post_init__(self):
++        if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
++            raise ValueError("dt_continuum must be > 0 and no longer than dt, got {!r}".format(self.dt_continuum))
+ 
++
+ class CoupledRun:
+     def __init__(self, sim, body, heating_model, settings=None):
+         """`body` must be a ThermalBody (uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
+@@ -73,6 +81,8 @@
+     def run(self):
+         started = time.perf_counter()
+         sim, body, s = self.sim, self.body, self.settings
++        self.switched_at = None                                    # (t, Kn, altitude km) of the continuum switch
++        self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
+         a, loads = self.loads_at(sim.t, sim.y)
+         rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
+         self._frame(step, sim.t, loads)
+@@ -81,6 +91,7 @@
+             a, loads = self.loads_at(sim.t, sim.y)
+             body.advance(sim.t, dt, loads, state=a)
+             step += 1
++            self._switch(sim.t, a)
+             if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+                 a, loads = self.loads_at(sim.t, sim.y)
+             rows.append(self.row(sim.t, sim.y, a, loads))
+@@ -95,7 +106,23 @@
+         history.results.update(self.thermal_results(history))
+         if self.melting:
+             history.results.update(self.melt_results(history))
++        if s.dt_continuum is not None:
++            t_sw, kn_sw, h_sw = self.switched_at or (None, None, None)
++            history.results.update({"dt_continuum_s": s.dt_continuum, "dt_switch_time_s": t_sw, "dt_switch_kn": kn_sw,
++                                    "dt_switch_altitude_km": h_sw})
+         return history
++
++    def _switch(self, t, a):
++        """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
++        just given, before any re-evaluation on a surface the step's deaths changed -- has a body Knudsen number below
++        kn_switch, the macro step is dt_continuum, latched. Girin's closure begins there and the droplet population needs
++        the fine step from there on (plan facts 92-96); before it the default step serves, as the 2026-10-05 harness
++        that this replaces bit for bit had it."""
++        s = self.settings
++        if s.dt_continuum is None or self.switched_at is not None or not (np.isfinite(a.kn) and a.kn < s.kn_switch):
++            return
++        s.dt = s.dt_continuum
++        self.switched_at = (float(t), float(a.kn), float(a.h) / 1e3)
+ 
+     def melt_results(self, history):
+         c, body = history.columns, self.body
+@@ -134,12 +161,21 @@
+         }
+ 
+     def _frame(self, step, t, loads):
++        """Every `frames_every` steps; after a continuum switch by flight time instead, every `frames_every` first
++        steps, so that a fine step does not write a frame per step."""
+         s = self.settings
+-        if not s.frames_every or step % s.frames_every:
++        if not s.frames_every:
+             return
++        if self.switched_at is None or t <= self.switched_at[0] + 1e-9:
++            if step % s.frames_every:
++                return
++        elif t + 1e-9 < self._next_frame:
++            return
+         k = len(s.frames)
+         write_vtk_frame(s.output_dir, k, self.body, loads)
+         s.frames.append((t, k))
++        while self._next_frame <= t + 1e-9:
++            self._next_frame += self._frame_dt
+ 
+     def _collection(self):
+         s = self.settings

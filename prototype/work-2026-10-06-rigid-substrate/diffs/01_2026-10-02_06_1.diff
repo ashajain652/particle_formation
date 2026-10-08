@@ -1,0 +1,34 @@
+--- a/tests/test_reentry_model_film.py
++++ b/tests/test_reentry_model_film.py
+@@ -73,3 +73,31 @@
+     assert m.sum() == pytest.approx(m0.sum(), rel=1e-12) and (m >= 0.0).all() and moved > 0.0
+     assert m[~windward].sum() == 0.0 and np.degrees(theta[m > 1e-9 * m.max()].max()) > 35.0        # spread outward (>= 4 patches), never leeward
+     assert ro.transport(np.zeros(s.n_patches), q_of_b, t_hat, LIQ.rho, s.areas, 0.5)[1] == 0    # a dry surface costs nothing
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-02: the liquid below the conjugate depth runs off under the pressure gradient and deceleration
++
++
++def test_deep_flux_is_the_poiseuille_flux_and_completes_fact_29s_two_depth_limits():
++    """With no film on top, the liquid beneath it carries the body-force-driven lubrication flux of a layer of depth h,
++    q = G h^3 / (3 mu): the half-channel profile u(y) = (G / mu)(h y - y^2 / 2), no slip at the solid and no stress
++    from this part at the free surface, integrated over the depth. Under a film of thickness b it carries the rest of
++    that flux, so that the thick branch's film flux plus this is plan fact 29's column flux
++    tau d^2 / (2 mu) + G h^3 / (3 mu) with d = min(delta_m, h): the shear part over the conjugate depth only, the
++    pressure part over the whole liquid depth."""
++    mu, G, h = LIQ.mu, 4.0e4, 1.0e-3
++    y = np.linspace(0.0, h, 200001)
++    u = G / mu * (h * y - 0.5 * y * y)
++    assert film.deep_flux(G, 0.0, h, mu) == pytest.approx(np.trapezoid(u, y), rel=1e-9)
++    assert film.deep_flux(G, 0.0, h, mu) == pytest.approx(G * h ** 3 / (3.0 * mu), rel=1e-12)
++    tau, delta_m, b = 30.0, 2.5e-4, np.array([1e-5, 1e-4, 4e-4])       # films thinner and thicker than delta_m
++    V, q, _, thick = film.lubrication(np.full(3, tau), np.full(3, G), b, np.full(3, delta_m), mu, b_layer=np.full(3, h))
++    assert thick.all()                                                  # the column is deeper than delta_m
++    column = tau * delta_m ** 2 / (2.0 * mu) + G * h ** 3 / (3.0 * mu)
++    assert q + film.deep_flux(G, b, h, mu) == pytest.approx(np.full(3, column), rel=1e-12)
++    assert film.deep_flux(G, 2e-3, h, mu) == 0.0                        # no liquid beneath a film as deep as the column
++    assert film.deep_flux(-G, 0.0, h, mu) == pytest.approx(-G * h ** 3 / (3.0 * mu))   # the deceleration's pull: toward the nose
++    # a thin column (h <= delta_m) is all within the shear's reach: lubrication alone is the column, unchanged
++    _, q_thin, _, thick_thin = film.lubrication([tau], [G], [5e-5], [delta_m], mu, b_layer=[2e-4])
++    assert not thick_thin[0] and q_thin[0] == pytest.approx(tau * 5e-5 ** 2 / (2.0 * mu) + G * 5e-5 ** 3 / (3.0 * mu))

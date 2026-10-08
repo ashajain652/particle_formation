@@ -1,0 +1,184 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -146,6 +146,7 @@
+                                  # 2026-09-20: owners at 1e-3 made surface nodes swing by hundreds of K between iterates)
+ MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in one macro step; what it leaves waits for the
+                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
++NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
+ REMOVAL_NAMES = ("girin", "instant")
+ 
+ 
+@@ -162,6 +163,9 @@
+     molten_cascade: bool = True       # a death that exposes a fully molten element (mean T >= T_feed) feeds it within the
+                                       # step, so the surface recedes through molten material by more than one element per
+                                       # macro step (amendment of 2026-10-03)
++    rigid_substrate: bool = True      # the thin branch needs a rigid substrate: the regime test reads the film plus the slurry
++                                      # (above 50 % liquid) beneath it, and off Girin's closure a film on slurry does not
++                                      # spray (amendment of 2026-10-06)
+ 
+     def __post_init__(self):
+         if self.removal not in REMOVAL_NAMES:
+@@ -258,6 +262,7 @@
+         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)
+         self.last_flow = self.last_spray = None
+         self.last_delta_m = None                                           # the step's conjugate depth per patch [m]
++        self.last_nonrigid = None                                          # the step's non-rigid depth per patch [m]
+         self.last_face_ids = None                                          # face ids of the surface they were evaluated on
+         self.last_melt = {"n_dead": 0, "runoff_substeps": 0, "released_mass": 0.0, "n_released": 0.0, "feed_mass": 0.0}
+         self.melt_onset = self.spray_onset = None
+@@ -724,7 +729,7 @@
+         liq, s, mat = self.liquid, self.settings, self.material
+         from . import spray as spray_mod
+         if state is None or self.m_f.sum() <= 0.0 or flow is None:
+-            self.last_flow = self.last_spray = None
++            self.last_flow = self.last_spray = self.last_nonrigid = None
+             return 0.0
+         areas = self.surface.areas
+         # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
+@@ -732,10 +737,16 @@
+         # and the release stay on the film, which is the mass that can actually move (decided 2026-09-22).
+         molten = self.molten_depth()
+         deep = self.m_d / (liq.rho * areas)          # the deep liquid the runoff delivered: part of the layer, never film
++        # The thin branch needs a rigid substrate (amendment of 2026-10-06): the regime test -- lubrication's branch and
++        # the spray's -- reads what lies under the film down to rigid material, the slurry above 50 % liquid included,
++        # instead of the fully molten material alone. The Rayleigh-Taylor criteria and the molten region the wave-fits
++        # test measures against keep the liquid.
++        nonrigid = self.nonrigid_depth() if s.rigid_substrate else None
++        under = molten if nonrigid is None else nonrigid
+         # (ii) lubrication and runoff
+         n_sub, moved = 0, 0.0
+         if self.runoff is not None:
+-            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + molten + deep)[1]
++            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + under + deep)[1]
+             before = self.m_f
+             self.m_f, n_sub, moved = self.runoff.transport(self.m_f, q_of_b, self.t_hat, liq.rho, areas, dt)
+             self.runoff_mass += moved                                              # mass that arrived on another patch
+@@ -746,7 +757,8 @@
+             self._spread_to_patches(-float((d * h_p).sum()), np.maximum(d, 0.0))
+         b = self.m_f / (liq.rho * areas)
+         layer = b + molten + deep
+-        v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=layer)
++        regime_layer = layer if nonrigid is None else b + nonrigid + deep
++        v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=regime_layer)
+         # the molten surface: the area over which a wave could form at all, either wetted by the film or molten in its
+         # own right. Its contiguous extent is what every mode's wavelength is measured against (2026-09-24).
+         wetted = (b >= spray_mod.B_MIN) | (molten > 0.0)
+@@ -754,9 +766,13 @@
+         # Girin & Kopyt's W sin(Theta): the deceleration normal to the film, which on this body is W cos(phi). It is the
+         # whole deceleration at the stagnation point and vanishes at the equator, where W lies in the surface.
+         w_n = flow.deceleration * np.maximum(np.cos(self.theta), 0.0)
+-        # (iii) spraying
++        # (iii) spraying. Off Girin's closure a film whose base is slurry takes no shear mode; what it holds is recorded
++        on_slurry = None if nonrigid is None else nonrigid > 0.0
++        held = None if nonrigid is None else (self.windward & (b >= spray_mod.B_MIN) & ~np.isfinite(delta_m) & on_slurry)
++        held_mass = float("nan") if held is None else float(self.m_f[held].sum())
+         res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f,
+-                                  self.transverse_radius, b_layer=layer, extent=extent, deceleration_n=w_n)
++                                  self.transverse_radius, b_layer=layer, extent=extent, deceleration_n=w_n,
++                                  regime_layer=None if nonrigid is None else regime_layer, on_slurry=on_slurry)
+         released = float(res.dm.sum())
+         if released > 0.0:
+             if self.spray_onset is None:
+@@ -772,8 +788,21 @@
+             self.removed_mass += released
+             self.n_released += float(res.dn.sum())
+         self.m_f[self.m_f < 1e-30] = 0.0                       # no denormal films (they made 0/0 coefficients in the runoff)
+-        self.last_flow, self.last_spray, self.last_b = flow, res, b
++        self.last_flow, self.last_spray, self.last_b, self.last_nonrigid = flow, res, b, nonrigid
+         self.last_face_ids = self.surface.face_ids.copy()          # deaths later in this step rebuild the surface
++        # what the rigid-substrate test did this step, on the wet windward patches (thick_branch_fraction's set); the two
++        # fractions are over those under Girin's closure, where the depth decides: made thick only by the slurry, and made
++        # thin by the line's depth where the whole-element liquid layer said thick (fact 58's count, removed)
++        wet_w = self.windward & (self.m_f > 0.0)
++        girin_wet = wet_w & np.isfinite(delta_m)
++        if nonrigid is None or not girin_wet.any():
++            slurry_thick = rigid_thin = float("nan")
++        else:
++            with np.errstate(invalid="ignore"):
++                liquid_thick = layer > delta_m
++            slurry_thick = float((thick & ~liquid_thick)[girin_wet].mean())
++            rigid_thin = float((liquid_thick & ~thick)[girin_wet].mean())
++        nonrigid_mean = float(nonrigid[wet_w].mean() * 1e3) if nonrigid is not None and wet_w.any() else float("nan")
+         # The Rayleigh-Taylor criterion is reported, never applied, so report it usefully: a body-level "any patch"
+         # boolean says nothing about how much melt is involved or whether the unstable wave even fits on the nose.
+         # `rt_mass_fraction` is the share of the film on unstable patches; `rt_wavelength_over_nose` is the shortest
+@@ -812,7 +841,9 @@
+             "molten_depth_mean_mm": float((self.m_f * molten).sum() / self.m_f.sum() * 1e3) if self.m_f.sum() > 0.0 else 0.0,
+             "delta_m_mean_um": self._mean_conjugate_um(delta_m),
+             "thick_branch_fraction": float(thick[self.windward & (self.m_f > 0.0)].mean())
+-            if (self.windward & (self.m_f > 0.0)).any() else float("nan")})
++            if (self.windward & (self.m_f > 0.0)).any() else float("nan"),
++            "nonrigid_depth_mean_mm": nonrigid_mean, "slurry_thick_fraction": slurry_thick,
++            "rigid_thin_fraction": rigid_thin, "slurry_held_mass_kg": held_mass})
+         return released
+ 
+     def _kill(self, dead):
+@@ -1024,6 +1055,57 @@
+             return np.zeros(0)
+         a = self.liquid.rho * self.surface.areas
+         return self.m_f / a + self.molten_depth(Te) + self.m_d / a
++
++    def nonrigid_depth(self, T=None, max_crossings=NONRIGID_MAX_CROSSINGS):
++        """Depth of non-rigid material under each patch [m]: how far inward from the wall the material stays more than
++        half liquid (above `Material.T_rigid`), each element's stretch weighed by phi_e (amendment of 2026-10-06).
++
++        A line runs from the patch centre along the inward normal through the elements it actually crosses, leaving each
++        by the face its barycentric coordinates reach first. The P1 field is linear along the line inside an element, so
++        the point where it falls to T_rigid is found exactly instead of being counted in whole elements, and plan fact
++        58's element-size artefact does not arise. Only material continuous with the wall counts: the line stops at the
++        first point at or below T_rigid, at the active mesh's boundary, or after `max_crossings` elements. Each
++        element's stretch counts phi_e of its length, because what it has already fed to the film is in the film
++        account the layer adds on top (fact 58's double count). The thin branch is Girin's dominant ablation, where the
++        rigid core stabilises the disturbances, and slurry is no rigid core: this is the depth the regime test reads."""
++        mat, mesh, surf = self.material, self.mesh, self.surface
++        n = surf.n_patches
++        depth = np.zeros(n)
++        if not n or not mat.melts:
++            return depth
++        T = self.solver.temperature() if T is None else np.asarray(T, dtype=float)
++        T_r = mat.T_rigid
++        c, d = surf.centroids, -surf.normals
++        elem, s_in, live = surf.owner.copy(), np.zeros(n), np.arange(n)
++        for _ in range(max_crossings):
++            if live.size == 0:
++                break
++            e, s0 = elem[live], s_in[live]
++            x = mesh.points[mesh.tets[e]]                                                       # (k, 4, 3)
++            inv = np.linalg.inv(np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2))
++            grad = np.concatenate([-inv.sum(axis=1, keepdims=True), inv], axis=1)               # grad of lambda_0..3
++            lam = np.einsum("kij,kj->ki", inv, c[live] - x[:, 0])
++            lam = np.concatenate([1.0 - lam.sum(axis=1, keepdims=True), lam], axis=1)           # barycentrics of the centre
++            rate = np.einsum("kij,kj->ki", grad, d[live])                                       # d lambda / ds on the line
++            s_face = np.where(rate < 0.0, -lam / np.where(rate < 0.0, rate, -1.0), np.inf)       # where each face is reached
++            exit_face = s_face.argmin(axis=1)
++            rows = np.arange(len(e))
++            s1 = np.maximum(s_face[rows, exit_face], s0)
++            Tn = T[mesh.tets[e]]
++            T0, dT = (lam * Tn).sum(axis=1), (rate * Tn).sum(axis=1)                            # T on the line: T0 + s dT
++            Ta, Tb = T0 + s0 * dT, T0 + s1 * dT
++            hot = Ta > T_r
++            ends = hot & (Tb <= T_r)
++            with np.errstate(divide="ignore", invalid="ignore"):
++                s_end = np.where(ends, s0 + (Ta - T_r) / np.where(ends, Ta - Tb, 1.0) * (s1 - s0), s1)
++            depth[live] += np.where(hot, self.phi[e] * (s_end - s0), 0.0)
++            pair = mesh._face_elements[mesh.element_faces(e)[rows, exit_face]]                  # across the exit face
++            nxt = np.where(pair[:, 0] == e, pair[:, 1], pair[:, 0])
++            go = hot & ~ends & np.isfinite(s1) & (nxt >= 0)
++            go &= mesh.active[np.maximum(nxt, 0)]
++            elem[live[go]], s_in[live[go]] = nxt[go], s1[go]
++            live = live[go]
++        return depth
+ 
+     def film_thickness_max(self):
+         """Thickest film [m] over the patches where a thickness means anything: at least a tenth of the median patch
+@@ -1126,6 +1208,10 @@
+                 "molten_depth_mean_mm": lm.get("molten_depth_mean_mm", float("nan")),
+                 "delta_m_mean_um": lm.get("delta_m_mean_um", float("nan")),
+                 "thick_branch_fraction": lm.get("thick_branch_fraction", float("nan")),
++                "nonrigid_depth_mean_mm": lm.get("nonrigid_depth_mean_mm", float("nan")),
++                "slurry_thick_fraction": lm.get("slurry_thick_fraction", float("nan")),
++                "rigid_thin_fraction": lm.get("rigid_thin_fraction", float("nan")),
++                "slurry_held_mass_kg": lm.get("slurry_held_mass_kg", float("nan")),
+                 "deep_liquid_kg": lm.get("deep_liquid", 0.0), "deep_mass_kg": float(self.m_d.sum()),
+                 "deep_runoff_mass_kg": self.deep_runoff_mass, "deep_surfaced_mass_kg": self.deep_surfaced_mass,
+                 "deep_blob_fraction": self.deep_blob_fraction(),

@@ -1,0 +1,404 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -156,6 +156,7 @@
+     size_feedback: str = "current"    # current: Kn on the equivalent diameter of the remaining mass and the nose radius fitted
+                                       # to the windward cap; initial: D0 and R0 throughout (SESAM's convention, for the devices)
+     feed_depth: str = "conjugate"     # conjugate: only liquid the gas shear reaches leaves its element (fact 28); all: any depth
++    deep_runoff: bool = True          # the liquid below the conjugate depth runs off, never sprayed (amendment of 2026-10-02)
+ 
+     def __post_init__(self):
+         if self.removal not in REMOVAL_NAMES:
+@@ -185,7 +186,11 @@
+     (i) every element's liquid inventory f_feed(T_e) phi_e rho V_e becomes film on its patches (owners) or the
+     nearest patch (interior elements keep PHI_MIN so no cavity can open), netted against (iv) below; what leaves is
+     the element's molten part, at the enthalpy that part carries, so the melt front moves at the energy-limited rate
+-    whatever the element size; (ii) surface flow, delta_m, lubrication, runoff transport; (iii) spraying and release;
++    whatever the element size; (ii-a) the deep runoff (`_deep_runoff`, amendment of 2026-10-02): the contiguous liquid
++    below the conjugate depth, which (i) holds in its elements, moves along the surface under the pressure gradient and
++    the deceleration into a per-patch deep account `m_d` that is never sprayed and becomes film only from the top, as
++    far as the film is thinner than the conjugate depth; (ii) surface flow, delta_m, lubrication, runoff transport;
++    (iii) spraying and release;
+     (iv) re-solidification: the fraction 1 - f_feed(T_patch) of each patch's film returns to its owner element
+     (raising phi_e, capped at 1) once the patch falls back through the ramp -- the mirror of the feed rule, netted
+     with it so that no element both melts and freezes in one step; (v) patch owners at phi <= PHI_DEATH die: the
+@@ -232,12 +237,16 @@
+         self.phi = np.ones(mesh.n_elements)
+         self.mass0 = float(self.element_mass.sum())
+         self.m_f = np.zeros(self.surface.n_patches)
++        self.m_d = np.zeros(self.surface.n_patches)                         # kg, mobile liquid below the conjugate depth
+         self.pending_load = np.zeros(mesh.n_nodes)                          # J, deferred melt energy for the next step
+         self.sprayed_mass = self.runoff_mass = self.removed_mass = self.removed_enthalpy = self.frozen_mass = 0.0
++        self.deep_runoff_mass = 0.0                                         # kg the deep runoff took out of the elements
++        self.deep_surfaced_mass = 0.0                                       # kg of deep liquid that became film from the top
+         self.n_released = 0.0
+         self.source_rows = []
+         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)
+         self.last_flow = self.last_spray = None
++        self.last_delta_m = None                                           # the step's conjugate depth per patch [m]
+         self.last_face_ids = None                                          # face ids of the surface they were evaluated on
+         self.last_melt = {"n_dead": 0, "runoff_substeps": 0, "released_mass": 0.0, "n_released": 0.0, "feed_mass": 0.0}
+         self.melt_onset = self.spray_onset = None
+@@ -325,7 +334,7 @@
+         return 2.0 * self.equivalent_radius()
+ 
+     def mass(self, t):
+-        return float((self.phi * self.element_mass).sum() + self.m_f.sum())
++        return float((self.phi * self.element_mass).sum() + self.m_f.sum() + self.m_d.sum())
+ 
+     def reference_area(self):
+         """Drag reference area: the hull's projected area, paired with the C_D of drag_shape_factor (the raw surface's
+@@ -400,6 +409,8 @@
+         if state is not None and s.removal != "instant" and self.surface.n_patches and self.m_f.size:
+             flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
+             delta_m, _ = spray_mod.melt_layer(flow, liq)
++            self.last_face_ids = self.surface.face_ids.copy()      # the surface delta_m belongs to (the deaths come later)
++        self.last_delta_m = delta_m                                # per patch, nan off Girin's closure; for the VTK frame
+         h_node = mat.enthalpy(T)
+         h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
+         h_liq = mat.enthalpy_liquid(T)
+@@ -416,12 +427,14 @@
+         # net effect, pinning the surface at T_feed and paying Newton iterations for it.
+         fn = mat.feed_fraction(T)[tets]
+         f = fn.mean(axis=1) * self.mesh.active
+-        if s.feed_depth == "conjugate" and s.removal != "instant":
+-            f = f * self._shear_reaches(delta_m)
++        reach = self._shear_reaches(delta_m) if s.feed_depth == "conjugate" and s.removal != "instant" else None
++        if reach is not None:
++            f = f * reach
+         h_hot = (fn * h_node[tets]).mean(axis=1) * self.mesh.active     # what the molten part carries, per kg of element
+         cap = np.where(self.owner_area > 0.0, self.phi, np.maximum(self.phi - PHI_MIN, 0.0))
+         gross = np.minimum(f * self.phi, cap) * self.element_mass
+-        solid = (1.0 - mat.feed_fraction(self.film_temperature())) * self.m_f if s.removal != "instant" else np.zeros(0)
++        # the liquid on each patch below the ramp re-solidifies: the film and the deep liquid beneath it alike
++        solid = (1.0 - mat.feed_fraction(self.film_temperature())) * (self.m_f + self.m_d) if s.removal != "instant" else np.zeros(0)
+         want = np.bincount(self.surface.owner, solid, self.mesh.n_elements) if solid.size else np.zeros(self.mesh.n_elements)
+         net = gross - want
+         fed, want = np.maximum(net, 0.0), np.maximum(-net, 0.0)
+@@ -436,6 +449,7 @@
+         feed_mass = float(fed.sum())
+         if feed_mass > 0.0 and self.melt_onset is None:
+             self.melt_onset = t
++        deep_liquid = 0.0
+         if s.removal == "instant":
+             self.removed_mass += feed_mass
+             self.removed_enthalpy += feed_mass * mat.h_liquid
+@@ -445,6 +459,8 @@
+             self._defer_to_elements(fed * h_e - fed_h)           # the element keeps only what the melt left behind
+             delta, carried = self._add_to_film(fed, fed_h)
+             self._defer_to_patches(carried - delta * h_p)        # ... and the melt arrives at its patch's temperature
++            if s.deep_runoff and flow is not None:
++                deep_liquid = self._deep_runoff(dt, flow, delta_m, reach, T, h_node, h_e, h_p)
+             released = self._film_and_spray(t, dt, state, h_p, flow, delta_m)
+         frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
+         # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed
+@@ -464,23 +480,26 @@
+                 delta, carried = self._add_to_film(extra, extra_h)
+                 self._defer_to_patches(carried - delta * h_p)
+             self.phi[dead] = 0.0
+-            before = float((self.m_f * h_p).sum())
+-            self._kill(dead)                                     # the film of a dead patch moves to another patch...
++            before = float(((self.m_f + self.m_d) * h_p).sum())
++            self._kill(dead)                                     # the liquid of a dead patch moves to another patch...
+             if self.m_f.size:                                    # ... which is at its own temperature
+                 h_p = self.film_enthalpy(h_liq)
+-                self._spread_to_patches(before - float((self.m_f * h_p).sum()), self.m_f)
++                self._spread_to_patches(before - float(((self.m_f + self.m_d) * h_p).sum()), self.m_f + self.m_d)
+             n_dead += int(dead.size)
+         self.solver.set_fractions(self.phi)
+         self.solver.set_film_mass(self._film_nodal())
+         self.frozen_mass += frozen
+-        self.last_melt.update({"n_dead": n_dead, "released_mass": released, "feed_mass": feed_mass, "frozen_mass": frozen})
++        self.last_melt.update({"n_dead": n_dead, "released_mass": released, "feed_mass": feed_mass, "frozen_mass": frozen,
++                               "deep_liquid": deep_liquid})
+ 
+     def _freeze_back(self, want, solid, h_e, h_p):
+         """Give each element back the `want` kilograms of film that have fallen below the feed ramp, drawn from its
+         own patches in proportion to what each wants to give (`solid`). An element can only recover film that is
+         still there -- what ran off or sprayed away is gone -- and phi_e is capped at 1, because a patch may hold
+         what its neighbours' runoff delivered and the mesh cannot grow a layer outside itself, so film with nowhere
+-        to go simply stays film (`film_frozen_fraction` records how much)."""
++        to go simply stays film (`film_frozen_fraction` records how much). The deep liquid beneath the film (amendment
++        of 2026-10-02) lies against the solid, so it is drawn first; both hold the same liquid enthalpy on the same
++        nodes, so which of the two gives up the mass books nothing."""
+         if not self.m_f.size or not want.any():
+             return 0.0
+         owner = self.surface.owner
+@@ -488,12 +507,14 @@
+         room = np.maximum(1.0 - self.phi, 0.0) * self.element_mass
+         with np.errstate(divide="ignore", invalid="ignore"):
+             share = np.where(have > 0.0, np.minimum(want, room) / np.where(have > 0.0, have, 1.0), 0.0)
+-        taken = np.minimum(solid * share[owner], self.m_f)
++        taken = np.minimum(solid * share[owner], self.m_f + self.m_d)
+         if not taken.any():
+             return 0.0
+         per_element = np.bincount(owner, taken, self.mesh.n_elements)
+         self.phi = np.clip(self.phi + per_element / self.element_mass, 0.0, 1.0)
+-        self.m_f = self.m_f - taken
++        from_deep = np.minimum(self.m_d, taken)
++        self.m_d = self.m_d - from_deep
++        self.m_f = self.m_f - (taken - from_deep)
+         # the film arrives in the element it froze onto, which is colder than the surface it left
+         self._defer_to_elements(np.bincount(owner, taken * h_p, self.mesh.n_elements) - per_element * h_e)
+         return float(taken.sum())
+@@ -522,13 +543,95 @@
+ 
+     def _film_nodal(self):
+         """The film's mass per node [kg]: each patch's film shared over its three nodes. The film's thermal state
+-        lives on the nodes because that is where the solver's capacity and the solver's enthalpy live."""
++        lives on the nodes because that is where the solver's capacity and the solver's enthalpy live. The deep liquid
++        beneath the film rides the same nodes in the same way (amendment of 2026-10-02)."""
+         if not self.m_f.size:
+             return np.zeros(self.mesh.n_nodes)
+-        return np.bincount(self.surface.faces.ravel(), np.repeat(self.m_f / 3.0, 3), self.mesh.n_nodes)
++        return np.bincount(self.surface.faces.ravel(), np.repeat((self.m_f + self.m_d) / 3.0, 3), self.mesh.n_nodes)
+ 
++    def _deep_runoff(self, dt, flow, delta_m, reach, T, h_node, h_e, h_p):
++        """(ii-a) The deep runoff (amendment of 2026-10-02): the contiguous liquid below the conjugate depth runs off
++        under the pressure gradient and the deceleration, and is never sprayed. Returns the deep liquid it saw [kg].
+ 
++        Plan fact 28(b) keeps melt in its element unless the gas shear can reach it, and fact 29 asked that the
++        pressure-gradient and deceleration-driven runoff integrate over the whole liquid depth rather than the film's.
++        Both hold here. The deep liquid of a patch is (a) the fully liquid inventory f_feed phi rho V of the elements of
++        its contiguous molten chain (`_molten_chain`, the march of `molten_depth`) that the shear does not reach -- the
++        ones the feed gate held back -- shared among the patches whose chains pass through them by patch area, plus
++        (b) the mobile deep liquid `m_d` the runoff has already delivered to it. With h_D that liquid's thickness and b
++        the film's, it moves by `film.deep_flux` G ((b + h_D)^3 - b^3) / (3 mu_l) on the same linearly implicit upwind
++        transport as the film, on windward patches under Girin's closure only: elsewhere there is no conjugate depth,
++        so there is no layer below the shear's reach. A patch that loses deep liquid gives it up in proportion from
++        its chain's elements and its `m_d`; what arrives goes to `m_d`. In situ the liquid stays where it is: an element
++        is debited only by what actually flows out of it, so the melt pool keeps its place in the mesh and is still
++        delivered to the film by the owner rule as the surface recedes to it.
++        Only the skin sprays. `m_d` is never offered to the spray: it becomes film only from the top, as far as the
++        film is thinner than the conjugate depth (the free surface has receded into it), and all at once where there
++        is no conjugate depth or on a leeward patch. Every transfer is booked by the rule of facts 5 and 25: liquid
++        leaves an element at the enthalpy its molten part carries, the element keeps the difference to its mean, the
++        liquid arrives at its destination patch's liquid enthalpy and the difference is released there; liquid moving
++        between `m_d` and the film of one patch moves at one temperature and books nothing. `deep_runoff_mass` counts
++        what left the elements, `deep_surfaced_mass` what became film from the top."""
++        liq, mat, mesh = self.liquid, self.material, self.mesh
++        n, areas = self.surface.n_patches, self.surface.areas
++        if not n:
++            return 0.0
++        girin = self.windward & np.isfinite(delta_m)          # a conjugate depth exists: liquid can lie below it
++        rows = e = share = None
++        D = self.m_d.copy()
++        if reach is not None:                                  # feed_depth "all" feeds every element: nothing is held back
++            _, chain = self._molten_chain()
++            rows, level = np.nonzero(chain >= 0)
++            e = chain[rows, level]
++            held = girin[rows] & (reach[e] <= 0.0)             # in a chain under a Girin patch, and the feed gate held it
++            rows, e = rows[held], e[held]
++            f = mat.feed_fraction(T)[mesh.tets].mean(axis=1) * mesh.active          # its fully liquid part (facts 5, 28)
++            liquid = np.minimum(f * self.phi, np.maximum(self.phi - PHI_MIN, 0.0)) * self.element_mass   # never below PHI_MIN
++            weight = np.bincount(e, areas[rows], mesh.n_elements)
++            share = liquid[e] * areas[rows] / np.where(weight[e] > 0.0, weight[e], 1.0)
++            D = D + np.bincount(rows, share, n)
++        seen = float(D.sum())
++        if self.runoff is not None and seen > 0.0:
++            b = self.m_f / (liq.rho * areas)
++            G = np.where(girin, flow.G, 0.0)
++            D_new, _, _ = self.runoff.transport(D, lambda hd: self._film_mod.deep_flux(G, b, b + hd, liq.mu),
++                                                    self.t_hat, liq.rho, areas, dt)
++            change = D_new - D
++            gain, loss = np.maximum(change, 0.0), np.maximum(-change, 0.0)
++            with np.errstate(divide="ignore", invalid="ignore"):
++                r = np.where(D > 0.0, np.minimum(loss / np.where(D > 0.0, D, 1.0), 1.0), 0.0)
++            from_m_d = r * self.m_d
++            carried, left = float((from_m_d * h_p).sum()), float(from_m_d.sum())
++            if e is not None and e.size:
++                out = np.bincount(e, r[rows] * share, mesh.n_elements)          # kg leaving each held element
++                fn = mat.feed_fraction(T)[mesh.tets]
++                fl = fn.mean(axis=1)
++                with np.errstate(divide="ignore", invalid="ignore"):            # per kg: what its molten part carries
++                    h_out = np.where(fl > 0.0, (fn * h_node[mesh.tets]).mean(axis=1) / np.where(fl > 0.0, fl, 1.0), h_e)
++                self.phi = self.phi - out / self.element_mass
++                self._defer_to_elements(out * h_e - out * h_out)               # the element keeps what the liquid left
++                carried += float((out * h_out).sum())
++                left += float(out.sum())
++                self.deep_runoff_mass += float(out.sum())                     # mobilised: what left the elements
++            # what arrives is exactly what left: the direct solve conserves only to its conditioning, 1e-12 to 2e-11 of
++            # the mass moved under these stiff coefficients (measured 2026-10-02), so the arrivals are scaled to the
++            # departures -- a correction of that size, which makes the books exact by construction
++            if gain.sum() > 0.0:
++                gain = gain * (left / float(gain.sum()))
++            self.m_d = self.m_d - from_m_d + gain
++            self._spread_to_patches(carried - float((gain * h_p).sum()), gain)  # ... which arrives at its patch's enthalpy
++        # the skin: deep liquid becomes film only from the top, as far as the film is thinner than the conjugate depth
++        with np.errstate(invalid="ignore"):
++            room = np.where(girin, np.maximum(liq.rho * areas * np.where(girin, delta_m, 0.0) - self.m_f, 0.0), np.inf)
++        up = np.minimum(self.m_d, room)
++        if up.any():
++            self.m_f = self.m_f + up
++            self.m_d = self.m_d - up
++            self.deep_surfaced_mass += float(up.sum())
++        return seen
+ 
++
++
+     def _add_to_film(self, fed, carried):
+         """Distribute each element's freed liquid to the film: owners to their own patches by area, interior elements
+         to the NEAREST_PATCHES nearest patches by area. `carried` is the enthalpy that liquid takes with it [J per
+@@ -567,10 +670,11 @@
+         # tests below ask whether the gas shear reaches the bottom of the liquid, so they belong on this; the fluxes
+         # and the release stay on the film, which is the mass that can actually move (decided 2026-09-22).
+         molten = self.molten_depth()
++        deep = self.m_d / (liq.rho * areas)          # the deep liquid the runoff delivered: part of the layer, never film
+         # (ii) lubrication and runoff
+         n_sub, moved = 0, 0.0
+         if self.runoff is not None:
+-            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + molten)[1]
++            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + molten + deep)[1]
+             before = self.m_f
+             self.m_f, n_sub, moved = self.runoff.transport(self.m_f, q_of_b, self.t_hat, liq.rho, areas, dt)
+             self.runoff_mass += moved                                              # mass that arrived on another patch
+@@ -580,7 +684,7 @@
+             d = self.m_f - before
+             self._spread_to_patches(-float((d * h_p).sum()), np.maximum(d, 0.0))
+         b = self.m_f / (liq.rho * areas)
+-        layer = b + molten
++        layer = b + molten + deep
+         v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=layer)
+         # the molten surface: the area over which a wave could form at all, either wetted by the film or molten in its
+         # own right. Its contiguous extent is what every mode's wavelength is measured against (2026-09-24).
+@@ -651,20 +755,26 @@
+         return released
+ 
+     def _kill(self, dead):
+-        old_surface, old_m_f = self.surface, self.m_f
++        old_surface, old_m_f, old_m_d = self.surface, self.m_f, self.m_d
+         gone, new = self.mesh.deactivate(dead)
+         if self.mesh.n_active == 0:                              # nothing left: the run ends (demise) without a surface
+-            self.consumed = True                                 # the film still on it leaves with the body
+-            self.removed_mass += float(self.m_f.sum())
+-            self.removed_enthalpy += float((self.m_f * self.film_enthalpy()).sum())
+-            self.m_f = np.zeros(0)
++            self.consumed = True                                 # the liquid still on it leaves with the body
++            self.removed_mass += float(self.m_f.sum() + self.m_d.sum())
++            self.removed_enthalpy += float(((self.m_f + self.m_d) * self.film_enthalpy()).sum())
++            self.m_f, self.m_d = np.zeros(0), np.zeros(0)
+             return
+         self._refresh_geometry()
+-        m_f = np.zeros(self.surface.n_patches)
+         keep = self.patch_of_face[old_surface.face_ids]
+         kept = keep >= 0
+-        m_f[keep[kept]] += old_m_f[kept]
+-        lost = ~kept & (old_m_f > 0.0)
++        self.m_f = self._hand_over(old_surface, old_m_f, keep, kept)
++        self.m_d = self._hand_over(old_surface, old_m_d, keep, kept)   # the deep liquid beneath it goes the same way
++
++    def _hand_over(self, old_surface, old, keep, kept):
++        """A per-patch liquid mass of the surface before the deaths, carried onto the current surface: kept patches keep
++        theirs; a vanished patch's goes to the faces its own element exposed (below)."""
++        m_f = np.zeros(self.surface.n_patches)
++        m_f[keep[kept]] += old[kept]
++        lost = ~kept & (old > 0.0)
+         if lost.any():
+             # The film on a vanished patch has not moved: the surface receded *into* it, so it now rests on the faces
+             # of that same element which have just become boundary -- the face on its inward side, whose neighbour is
+@@ -691,12 +801,12 @@
+                 total = area.sum(axis=1)
+             has = total > 0.0
+             if has.any():
+-                share = old_m_f[idx[has]][:, None] * area[has] / total[has][:, None]
++                share = old[idx[has]][:, None] * area[has] / total[has][:, None]
+                 np.add.at(m_f, targets[has][ok[has]], share[ok[has]])
+             if (~has).any():                                     # the element exposed nothing: its death opened a
+                 orphan = idx[~has]                               # hole right through, so fall back to the nearest patch
+-                np.add.at(m_f, self._patch_tree.query(old_surface.centroids[orphan])[1], old_m_f[orphan])
+-        self.m_f = m_f
++                np.add.at(m_f, self._patch_tree.query(old_surface.centroids[orphan])[1], old[orphan])
++        return m_f
+ 
+     # -- reporting -----------------------------------------------------------------------------------------------
+     def on_current_surface(self, values, fill):
+@@ -730,8 +840,9 @@
+ 
+     def film_energy(self):
+         """Enthalpy held by the film [J]. Identical to the nodal sum the solver carries (`set_film_mass` gives each
+-        node sum_p m_p/3), so the film's sensible heat is inside 1^T M dT and the balance closes on it exactly."""
+-        return float((self.m_f * self.film_enthalpy()).sum()) if self.m_f.size else 0.0
++        node sum_p m_p/3), so the film's sensible heat is inside 1^T M dT and the balance closes on it exactly. The
++        deep liquid beneath the film holds the same liquid enthalpy on the same nodes (amendment of 2026-10-02)."""
++        return float(((self.m_f + self.m_d) * self.film_enthalpy()).sum()) if self.m_f.size else 0.0
+ 
+     def film_frozen_fraction(self):
+         """Fraction of the film sitting on patches below the feed ramp: mass the enthalpy calls solid but the model
+@@ -807,9 +918,16 @@
+         This is the thickness that belongs in the thick/thin instability test against Girin's conjugate melt-layer
+         depth delta_m: the film mass on a patch is the mobile inventory, not the depth of liquid beneath the wall.
+         Measured on the 100 mm physics flight, the two differ by an order of magnitude and invert the branch choice."""
++        return self._molten_chain(Te, max_levels)[0]
++
++    def _molten_chain(self, Te=None, max_levels=8):
++        """`molten_depth`'s march, also returning the elements it passed through: (depth per patch [m], chain), the
++        chain an (n_patches, max_levels) array of element ids, level 0 the patch's owner and -1 past the chain's end.
++        The deep runoff needs the elements (amendment of 2026-10-02); the branch test needs only the depth."""
+         mat, mesh = self.material, self.mesh
++        chain = np.full((self.surface.n_patches, max_levels), -1, dtype=np.int64)
+         if not self.surface.n_patches or not mat.melts:
+-            return np.zeros(self.surface.n_patches)
++            return np.zeros(self.surface.n_patches), chain
+         if Te is None:
+             Te = self.solver.temperature()[mesh.tets].mean(axis=1)
+         molten = mesh.active & (Te >= mat.T_feed)
+@@ -819,9 +937,10 @@
+         alive = molten[cur]
+         depth = np.zeros(self.surface.n_patches)
+         rows = np.arange(len(cur))
+-        for _ in range(max_levels):
++        for level in range(max_levels):
+             if not alive.any():
+                 break
++            chain[alive, level] = cur[alive]
+             reach = np.einsum("ij,ij->i", centroid[cur] - self.surface.centroids, inward)      # projected depth so far
+             depth = np.where(alive, np.maximum(depth, reach), depth)
+             pair = mesh._face_elements[mesh.element_faces(cur)]                               # (n, 4, 2)
+@@ -834,14 +953,16 @@
+             alive = alive & good & molten[np.where(good, nxt, 0)]
+             cur = np.where(good, nxt, cur)
+         # the chain's last centroid sits half an element short of the far wall of that element: add that half
+-        return np.maximum(depth, 0.0) * 1.5
++        return np.maximum(depth, 0.0) * 1.5, chain
+ 
+     def liquid_layer_depth(self, Te=None):
+-        """Depth of liquid at each patch [m]: its film plus the contiguous molten material beneath it. What the gas
+-        shear sees, and so what decides whether the film is thick or thin against the conjugate melt-layer depth."""
++        """Depth of liquid at each patch [m]: its film plus the contiguous molten material beneath it, plus the deep
++        liquid the runoff has delivered there (amendment of 2026-10-02). What the gas shear sees, and so what decides
++        whether the film is thick or thin against the conjugate melt-layer depth."""
+         if not self.m_f.size:
+             return np.zeros(0)
+-        return self.m_f / (self.liquid.rho * self.surface.areas) + self.molten_depth(Te)
++        a = self.liquid.rho * self.surface.areas
++        return self.m_f / a + self.molten_depth(Te) + self.m_d / a
+ 
+     def film_thickness_max(self):
+         """Thickest film [m] over the patches where a thickness means anything: at least a tenth of the median patch
+@@ -858,6 +979,17 @@
+         ok = (a >= 0.1 * np.median(a)) & (b <= np.sqrt(a))
+         return float(b[ok].max()) if ok.any() else 0.0
+ 
++    def deep_blob_fraction(self):
++        """Fraction of the deep liquid (`m_d`) sitting deeper than its patch is wide (b > sqrt(A)), the deep account's
++        counterpart of `film_blob_fraction`. The deep runoff carries the liquid below the conjugate depth to where the
++        flow converges and nothing strips it there, so it piles up on the patches the patch graph cannot drain -- on
++        the 100 mm flight almost all of it (amendment of 2026-10-02). The mass is exact; the depth is not a film's."""
++        total = float(self.m_d.sum())
++        if total <= 0.0:
++            return 0.0
++        a = self.surface.areas
++        return float(self.m_d[self.m_d / (self.liquid.rho * a) > np.sqrt(a)].sum() / total)
++
+     def film_blob_fraction(self):
+         """Fraction of the film sitting deeper than its patch is wide (b > sqrt(A)) -- melt the lubrication film
+         model cannot describe, because it no longer fits on the facet it is booked to. It is a geometry limit of the
+@@ -933,6 +1065,9 @@
+                 "molten_depth_mean_mm": lm.get("molten_depth_mean_mm", float("nan")),
+                 "delta_m_mean_um": lm.get("delta_m_mean_um", float("nan")),
+                 "thick_branch_fraction": lm.get("thick_branch_fraction", float("nan")),
++                "deep_liquid_kg": lm.get("deep_liquid", 0.0), "deep_mass_kg": float(self.m_d.sum()),
++                "deep_runoff_mass_kg": self.deep_runoff_mass, "deep_surfaced_mass_kg": self.deep_surfaced_mass,
++                "deep_blob_fraction": self.deep_blob_fraction(),
+                 "removed_enthalpy_J": self.removed_enthalpy,
+                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
+                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,

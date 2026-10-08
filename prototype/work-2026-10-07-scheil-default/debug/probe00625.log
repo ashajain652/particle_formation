@@ -1,0 +1,15 @@
+
+switch at 49.5
+BAD at t=49.50625 step 100 stage after _freeze_back: m_f nonfinite 0 negative 1; m_d nonfinite 0 negative 0; {}
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/meas/reentry_model/coupled.py", line 82, in run
+    body.advance(sim.t, dt, loads, state=a)
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/debug/probe_nan.py", line 48, in advance
+    orig_adv(self, t, dt, loads, state)
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/meas/reentry_model/body.py", line 398, in advance
+    self.melt_step(t, dt, state)
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/meas/reentry_model/body.py", line 481, in melt_step
+    frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/debug/probe_nan.py", line 60, in f
+    check(self, "after " + name)
+  File "/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-07-scheil-default/debug/probe_nan.py", line 41, in check
+    traceback.print_stack(limit=6)

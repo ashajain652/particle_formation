@@ -1,0 +1,1 @@
+286 passed, 1 skipped, 2 failed, 3 errors — 34 more passing than the baseline (17 skin, 2 thermal, 8 body, 7 CLI) and the same five known failures; about 5 minutes

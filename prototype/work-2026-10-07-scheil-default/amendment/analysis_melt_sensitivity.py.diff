@@ -1,0 +1,42 @@
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -2,14 +2,16 @@
+ """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
+ 
+     "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+-        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,we308,kr-30,kr+30,kt-30,kt+30,AA7075,sizeinitial,gammapm14,knbody003,fenicsx]
++        [--variants base,seed1,layers2,layers6,dt025,bridged,norunoff,nodeep,nocascade,norigid,we308,kr-30,kr+30,kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
+ 
+ Each variant is one physics-mode melting flight (US76, winds off) differing from `base` in one setting (`layers6`:
+ six layers from 0.125 mm, 15.9 mm in all -- eight layers of 0.25 mm with growth 2 would exceed the radius; `gammapm14` and
+ `knbody003` bound the two modelling choices of the 2026-09-22 amendment, the Prandtl-Meyer gamma and the body gate; `nodeep`
+ turns off the deep runoff of the 2026-10-02 amendment, the liquid below the conjugate depth then staying in its elements;
+ `nocascade` turns off the molten cascade of the 2026-10-03 amendment, the surface then receding through molten
+-material by one element per macro step; `seed1` reruns `base` with another seed of numpy's generator -- every run is
++material by one element per macro step; `norigid` turns off the rigid substrate of the 2026-10-06 amendment, the
++regime test then reading the fully molten depth instead of the depth down to the half-liquid point; `range` runs the
++linear melting range instead of Scheil's curve, the melting default and `base`'s material since 2026-10-07; `seed1` reruns `base` with another seed of numpy's generator -- every run is
+ seeded, `base` with the default 12345 (amendment of 2026-10-05) -- so its change relative to `base` is the run-to-run
+ scatter, the floor against which every other row is read); the table
+ lists sprayed mass, median droplet radius, melt-onset, spraying-onset and demise altitudes and the runtime, with the
+@@ -30,9 +32,9 @@
+ VARIANTS = {
+     "base": [], "seed1": ["--seed", "1"], "layers2": ["--prism-layers", "2"], "layers6": ["--prism-layers", "6", "--layer-thickness", "0.125"], "dt025": ["--dt", "0.25"],
+     "bridged": ["--rarefied-shear", "bridged"], "norunoff": ["--runoff", "off"], "nodeep": ["--deep-runoff", "off"],
+-    "nocascade": ["--molten-cascade", "off"], "we308": ["--we-critical", "3.08"],
++    "nocascade": ["--molten-cascade", "off"], "norigid": ["--rigid-substrate", "off"], "we308": ["--we-critical", "3.08"],
+     "kr-30": ["--kr", "0.119"], "kr+30": ["--kr", "0.221"], "kt-30": ["--kt", "0.77"], "kt+30": ["--kt", "1.43"],
+-    "AA7075": ["--material", "AA7075"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
++    "AA7075": ["--material", "AA7075"], "range": ["--material", "AA7075_range"], "sizeinitial": ["--size-feedback", "initial"], "gammapm14": ["--gamma-pm", "1.4"],
+     "knbody003": ["--kn-body-shock", "0.003"], "fenicsx": ["--thermal-solver", "fenicsx"],
+ }
+ KEYS = ["sprayed_mass_kg", "r_median_um", "melt_onset_altitude_km", "spraying_onset_altitude_km", "demise_altitude_km", "runtime_s"]
+@@ -41,7 +43,7 @@
+ 
+ def argv_for(key, variant, outdir):
+     return ["run"] + CASES[key] + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+-                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_range", "--no-particles",
++                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_scheil", "--no-particles",
+                                    "--outdir", outdir, "--name", "{}__{}".format(key, variant), "--quiet"] + VARIANTS[variant]
+ 
+ 

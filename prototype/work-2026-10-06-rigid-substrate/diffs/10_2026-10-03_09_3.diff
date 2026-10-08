@@ -1,0 +1,191 @@
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -210,7 +210,11 @@
+     element once the surface falls through the feed ramp, and feed and freeze are netted, so neither runs while the
+     other does. Mass and the coupled energy balance are exact throughout."""
+     import types
+-    b = melting_body(layered_mesh, name="AA7075")
++    # the molten cascade (amendment of 2026-10-03) stays off here: this device puts 2.2 MW/m2 on every facet, crater walls
++    # and lee included, of a body 50 K below its melting point, and once the surface may recede through molten material
++    # within the step the whole body melts in the 8 s of heating (measured: consumed at step 16, the books exact
++    # throughout), leaving no film to freeze back; the cascade's own books are tested with the amendment's tests below
++    b = melting_body(layered_mesh, name="AA7075", molten_cascade=False)
+     b.solver.set_temperature(800.0)                                    # just below AA7075's melting point
+     b.energy0 = b.energy()
+     loads = lambda q: types.SimpleNamespace(q_conv=np.full(b.surface.n_patches, q))
+@@ -424,3 +428,175 @@
+     assert stats["deep_runoff_mass_kg"] == b.deep_runoff_mass and stats["deep_mass_kg"] == pytest.approx(b.m_d.sum())
+     assert stats["deep_surfaced_mass_kg"] == b.deep_surfaced_mass and 0.0 <= stats["deep_blob_fraction"] <= 1.0
+     assert stats["deep_liquid_kg"] == b.last_melt["deep_liquid"]
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-03: the molten cascade, the surface receding through molten material within the step
++
++
++def fully_molten(b):
++    """Per element: fully molten as `molten_depth` has it -- the mean nodal temperature at or above the top of the feed
++    ramp -- which is the test the molten cascade uses."""
++    return b.solver.temperature()[b.mesh.tets].mean(axis=1) >= b.material.T_feed
++
++
++def test_the_molten_cascade_empties_a_fully_molten_column_within_one_step(layered_mesh):
++    """Fact 50: the melt step runs after the conduction, so the material beneath the wall-owning element melts as well,
++    and the element the owner's death exposes was buried a moment earlier -- the feed gate held its melt in place --
++    so it waited, fully molten, for the next step's feed: the surface receded through molten material by one element
++    per macro step. The molten cascade feeds such an element within the step, so that it dies in turn and exposes the
++    next. A pool 4 mm deep under the nose, every node in it above the top of the feed ramp, over a body at 850 K: with
++    the cascade one melt step leaves no newly exposed wall-owning element fully molten -- the surface has receded
++    through the whole pool to material that is not -- every element the cascade fed was fully molten, and its whole
++    mass went to the film; without it the elements the first deaths exposed are still there, fully molten. Mass and
++    enthalpy books exact."""
++    out = {}
++    for cascade in (True, False):
++        b = melting_body(layered_mesh, molten_cascade=cascade)
++        molten_pool(b, depth=4e-3)
++        full, start = fully_molten(b), b.owner_area > 0.0
++        mass0, E0 = b.mass(0.0), b.energy() + b.pending_load.sum()
++        b.melt_step(0.0, 0.5, None)
++        assert b.mass(0.0) == pytest.approx(mass0, rel=1e-12)
++        assert b.energy() + b.pending_load.sum() == pytest.approx(E0, rel=1e-12)
++        out[cascade] = (b, full, start)
++    (on, full, start), (off, _, _) = out[True], out[False]
++    exposed = lambda b: (b.owner_area > 0.0) & b.mesh.active & ~start          # the wall this step's deaths exposed
++    assert (exposed(off) & full).sum() > 0                              # without: the exposed layer waits, fully molten
++    assert exposed(on).any() and not (exposed(on) & full).any()        # with: the surface receded through the pool
++    lm = on.last_melt
++    assert lm["cascade_passes"] >= 2 and not lm["cascade_capped"] and on.cascade_mass == lm["cascade_mass"] > 0.0
++    fed = off.phi - on.phi > 0.0                                        # what the cascade took beyond the step without it
++    assert fed.any() and full[fed].all() and not on.mesh.active[fed].any()     # fully molten elements only, now gone
++    assert on.cascade_mass == pytest.approx(((off.phi - on.phi) * on.element_mass)[fed].sum(), rel=1e-12)
++    assert on.m_f.sum() - off.m_f.sum() == pytest.approx(on.cascade_mass, rel=1e-9)   # ... all of it into the film
++    assert off.cascade_mass == 0.0 and off.last_melt["cascade_passes"] == 0 and not off.last_melt["cascade_capped"]
++    stats = on.melt_stats()
++    assert stats["cascade_passes"] == lm["cascade_passes"] and stats["cascade_mass_kg"] == on.cascade_mass
++
++
++def test_the_molten_cascade_changes_nothing_where_the_exposed_elements_are_not_fully_molten(layered_mesh):
++    """The cascade adds a feed and changes nothing else. At 69.8 km under Girin's closure, with the surface nodes at
++    960 K over a body at 850 K and a millimetre of deep liquid on every windward patch: the wall-owning elements (three
++    surface nodes of four) are molten, so the feed takes three quarters of what they hold and they die; every element
++    their deaths expose has at most two surface nodes, a mean temperature of at most 905 K, and so is not fully molten;
++    the deep runoff moves the deep liquid and the film sprays -- and the whole melt step is bit-identical with the
++    cascade on and off."""
++    runs = []
++    for cascade in (True, False):
++        b = melting_body(layered_mesh, molten_cascade=cascade)
++        sim, a = girin_state(b)
++        boundary = np.zeros(b.mesh.n_nodes, dtype=bool)
++        boundary[np.unique(b.surface.faces)] = True
++        b.solver.set_temperature(np.where(boundary, 960.0, 850.0))
++        owners = b.owner_area > 0.0
++        b.phi[owners] = 0.15                                             # the feed takes 3/4 of it: the owners die
++        b.solver.set_fractions(b.phi)
++        b.m_d = np.where(b.windward, 1e-3 * b.liquid.rho * b.surface.areas, 0.0)
++        b.melt_step(sim.t, 0.5, a)
++        runs.append(b)
++    on, off = runs
++    assert on.last_melt["n_dead"] > 0 and on.sprayed_mass > 0.0 and on.deep_surfaced_mass > 0.0
++    assert on.cascade_mass == 0.0 and on.last_melt["cascade_passes"] == 0 and not on.last_melt["cascade_capped"]
++    for name in ("phi", "m_f", "m_d", "pending_load"):
++        assert np.array_equal(getattr(on, name), getattr(off, name)), name
++    assert np.array_equal(on.mesh.active, off.mesh.active) and on.sprayed_mass == off.sprayed_mass
++    assert on.removed_enthalpy == off.removed_enthalpy and on.runoff_mass == off.runoff_mass
++    assert on.deep_runoff_mass == off.deep_runoff_mass and on.deep_surfaced_mass == off.deep_surfaced_mass
++
++
++def test_the_molten_cascade_feeds_only_the_wall_and_stops_at_material_that_is_not_fully_molten(layered_mesh, monkeypatch):
++    """The cascade respects the feed gate of fact 28(b) by construction: it feeds an element only once a death has made
++    it a wall owner -- in the sheared layer by definition, which is what the gate admits -- and it stops at the first
++    exposed element that is not fully molten, so molten material separated from the wall by material that is not is
++    never fed (the contiguity rule of `molten_depth`). A fully molten skin 2 mm deep, a layer at 880 K beneath it and a
++    fully molten core below that, at 69.8 km under Girin's closure, with the deep runoff on and off: one melt step feeds
++    the skin through the cascade -- every element it fed a wall owner at that moment and fully molten -- and leaves
++    every element of the buried core exactly as it was."""
++    for deep in (True, False):
++        b = melting_body(layered_mesh, deep_runoff=deep)
++        sim, a = girin_state(b)
++        r = np.linalg.norm(b.mesh.points, axis=1)
++        b.solver.set_temperature(np.where(r > 0.048, 960.0, np.where(r > 0.040, 880.0, 960.0)))
++        full = fully_molten(b)
++        core = (r[b.mesh.tets] < 0.040).all(axis=1)                     # every node in the buried molten core
++        calls, feed = [], b._feed_exposed
++
++        def spy(exposed, h_e, h_p, b=b, feed=feed, calls=calls):
++            calls.append(((b.owner_area[exposed] > 0.0).all(), full[exposed].all(), exposed.size))
++            return feed(exposed, h_e, h_p)
++
++        monkeypatch.setattr(b, "_feed_exposed", spy)
++        phi0 = b.phi.copy()
++        b.melt_step(sim.t, 0.5, a)
++        assert calls and all(owner and molten for owner, molten, _ in calls), deep
++        assert sum(n for _, _, n in calls) > 0 and b.cascade_mass > 0.0
++        assert core.sum() > 100 and full[core].all()
++        assert np.array_equal(b.phi[core], phi0[core]) and b.mesh.active[core].all(), deep   # the buried pool is untouched
++        assert not ((b.owner_area > 0.0) & b.mesh.active & full).any()  # and the skin above the 880 K layer is gone
++
++
++def test_with_the_molten_cascade_the_deep_liquid_is_still_never_sprayed(layered_mesh, monkeypatch):
++    """The cascade feeds the film, never the deep account, and it runs after the spray; so with both on, a step in which
++    the deep runoff moves the liquid below the conjugate depth and the cascade carries the surface through a molten
++    pool still sprays only the film. Checked stage by stage on a pool 4 mm deep at 69.8 km with a millimetre of deep
++    liquid already on every windward patch: the spray stage leaves the deep account bit-identical, every element death
++    moves deep liquid without changing its total, and each cascade feed lands in the film alone."""
++    b = melting_body(layered_mesh)
++    sim, a = girin_state(b)
++    molten_pool(b, depth=4e-3)
++    b.m_d = np.where(b.windward, 1e-3 * b.liquid.rho * b.surface.areas, 0.0)
++    seen = {"spray": [], "kill": [], "feed": []}
++    spray_stage, kill, feed = b._film_and_spray, b._kill, b._feed_exposed
++
++    def spy_spray(*args, **kw):
++        before = b.m_d.copy()
++        out = spray_stage(*args, **kw)
++        seen["spray"].append(np.array_equal(before, b.m_d))
++        return out
++
++    def spy_kill(dead):
++        before = float(b.m_d.sum())
++        kill(dead)
++        seen["kill"].append((before, float(b.m_d.sum())))
++
++    def spy_feed(exposed, h_e, h_p):
++        deep0, film0 = b.m_d.copy(), float(b.m_f.sum())
++        out = feed(exposed, h_e, h_p)
++        seen["feed"].append((np.array_equal(deep0, b.m_d), float(b.m_f.sum()) - film0, out))
++        return out
++
++    monkeypatch.setattr(b, "_film_and_spray", spy_spray)
++    monkeypatch.setattr(b, "_kill", spy_kill)
++    monkeypatch.setattr(b, "_feed_exposed", spy_feed)
++    b.melt_step(sim.t, 0.5, a)
++    assert seen["spray"] == [True] and b.sprayed_mass > 0.0             # the spray never touched the deep account
++    assert seen["kill"] and all(after == pytest.approx(before, rel=1e-12) for before, after in seen["kill"])
++    assert seen["feed"] and all(same and gain == pytest.approx(out, rel=1e-9) for same, gain, out in seen["feed"])
++    assert b.deep_runoff_mass > 0.0 and b.m_d.sum() > 0.0 and b.cascade_mass > 0.0
++
++
++def test_full_steps_with_the_molten_cascade_keep_the_books_exact(layered_mesh):
++    """Six coupled macro steps from 69.8 km with a pool 6 mm deep under the nose and the physics loads: the cascade acts
++    (deaths expose fully molten elements and the surface recedes through them within the step), the deep runoff and
++    the spray act with it, and the energy balance and the mass stay exact by the same measures as every other melting
++    test; the solver carries the film and the deep liquid, and the history's two new columns report the cascade."""
++    b = melting_body(layered_mesh)
++    sim, a = girin_state(b)
++    molten_pool(b, depth=6e-3)
++    b.energy0 = b.energy()
++    model = heating.PhysicsHeating()
++    passes = []
++    for _ in range(6):
++        sim.advance(0.5)
++        a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++        loads = model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature())
++        b.advance(sim.t, 0.5, loads, state=a)
++        passes.append(b.last_melt["cascade_passes"])
++        assert abs(b.energy_balance_residual()) < 1e-7
++        assert b.mass(0.0) + b.removed_mass == pytest.approx(b.mass0, rel=1e-12)
++        assert b.solver.film_mass.sum() == pytest.approx(b.m_f.sum() + b.m_d.sum())
++    assert b.cascade_mass > 0.0 and max(passes) >= 2 and b.cascade_capped_steps == 0
++    assert b.sprayed_mass > 0.0 and b.deep_runoff_mass > 0.0
++    stats = b.melt_stats()
++    assert stats["cascade_mass_kg"] == b.cascade_mass and stats["cascade_passes"] == passes[-1]

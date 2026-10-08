@@ -1,0 +1,71 @@
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -196,7 +196,12 @@
+     stays bounded: before the amendment it grew from sub-step to sub-step and reached 3.9e25 per second in this setting
+     (measured 2026-10-05); with it 2.7e7, set by the deepest piles' G b^3 / (3 mu) term, not by a vanishing film.
+     Measured: the same 7 983 active elements, mass 5.8e-10, sprayed mass 5.9e-9, runoff 7.5e-10, film 1.7e-8, deep
+-    account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11."""
++    account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11.
++    The rigid substrate (amendment of 2026-10-06) is off here: with the body's interior at 850 K, above AA7075_range's
++    829 K half-liquid point, the whole body is slurry, every wet windward patch takes the thick branch, and films of
++    about a micron that straddle the spray floor B_MIN are released whole by one backend and not by the other from the
++    sixth step on -- 8 to 29 patches, the runoff then differing by 1.6e-4 and the temperatures by 0.29 K (measured
++    2026-10-06). That is the model's threshold, not the backends'; the test after this one checks the two with it on."""
+     pytest.importorskip("cantera")
+     from reentry_model import body, film, heating, mesh
+     from test_reentry_model_coupled import MASS_100MM, simulator
+@@ -221,7 +226,8 @@
+     for name in ("skfem", "fenicsx"):
+         np.random.seed(12345)
+         m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
+-        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM)
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM,
++                             settings=body.MeltSettings(rigid_substrate=False))
+         sim = simulator(b, t_max=90.0)
+         sim.advance(50.0)
+         p = b.mesh.points
+@@ -243,3 +249,44 @@
+     assert f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
+     assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
+     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
++
++
++def test_the_rigid_substrate_matches_the_skfem_backend(coarse_sphere_mesh):
++    """The rigid substrate (amendment of 2026-10-06) in both backends: the 6 mm pool at 69.8 km of the test above, with
++    the rest of the body at 820 K, below AA7075_range's 829 K half-liquid point, so slurry forms only where the pool
++    and the heating raise it -- ten steps of 0.05 s. The non-rigid depth reaches into the body, both backends make the
++    same branch decision on every patch at every step, and the active set, mass, sprayed mass, runoff, film and
++    temperatures agree with both energy balances exact. Measured: mass 6.7e-10, sprayed mass 1.0e-8, runoff 1.2e-8,
++    film 6.1e-8, temperatures 1.8e-4 K."""
++    pytest.importorskip("cantera")
++    from reentry_model import body, heating, mesh
++    from test_reentry_model_coupled import MASS_100MM, simulator
++    out = {}
++    for name in ("skfem", "fenicsx"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM)
++        assert b.settings.rigid_substrate
++        sim = simulator(b, t_max=90.0)
++        sim.advance(50.0)
++        p = b.mesh.points
++        r = np.linalg.norm(p, axis=1)
++        b.solver.set_temperature(np.where((r > 0.05 - 6e-3) & (p[:, 0] > 0.5 * r), 960.0, 820.0))
++        b.energy0 = b.energy()
++        model = heating.PhysicsHeating()
++        branches = []
++        for _ in range(10):
++            sim.advance(0.05)
++            a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++            b.advance(sim.t, 0.05, model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature()),
++                      state=a)
++            branches.append(None if b.last_spray is None else b.last_spray.branch.copy())
++        out[name] = (b, branches)
++    (s, bs), (f, bf) = out["skfem"], out["fenicsx"]
++    assert s.last_nonrigid is not None and s.last_nonrigid.max() > 6e-3 and f.sprayed_mass > 0.0
++    assert all((x is None and y is None) or np.array_equal(x, y) for x, y in zip(bs, bf))
++    assert np.array_equal(s.mesh.active, f.mesh.active)
++    assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6) and f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5)
++    assert f.runoff_mass == pytest.approx(s.runoff_mass, rel=1e-5) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
++    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
++    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8

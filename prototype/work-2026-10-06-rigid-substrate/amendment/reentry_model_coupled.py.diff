@@ -1,0 +1,32 @@
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -27,7 +27,8 @@
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+-                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg"]
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
++                "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -157,7 +158,8 @@
+     local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
+     flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
+     (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
+-    nan wherever the closure is not Girin's) -- and the thickness of the deep liquid beneath the film (PyVista/VTK XML)."""
++    nan wherever the closure is not Girin's) -- the thickness of the deep liquid beneath the film, and the non-rigid
++    depth the regime test read (PyVista/VTK XML)."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -193,6 +195,9 @@
+         # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
+         poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
+         poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
++        # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
++        # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
++        poly.cell_data["nonrigid_depth"] = carry(body.last_nonrigid, np.nan)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 

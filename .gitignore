@@ -26,8 +26,24 @@ reentry_model_output/
 plot_groundtrack_62878.py
 groundtrack_norad62878.png
 
-# Step 3 prototype and the plan generator it feeds (moved in from the session scratchpad on 2026-09-26,
-# which had pruned them twice). Not version-controlled: the prototype is a throwaway copy of the
-# package by design, and `prototype/plan3/make_plan.py` can rebuild the plan from it at any time.
-# See prototype/README.md.
-prototype/
+# Step 3 prototype, the plan generator it feeds and the throwaway work copy of each amendment (moved in from
+# the session scratchpad on 2026-09-26, which had pruned them twice). Their code is version-controlled since
+# 2026-10-08; their run outputs are not -- tens to hundreds of MB per work copy, every one re-made from the
+# tracked code and the command lines in its logs and in the sub-plans. See prototype/README.md.
+# (reentry_model_output/ and __pycache__/ above already cover the cached meshes and bytecode in each copy.)
+prototype/**/runs/
+prototype/**/runs_*/
+prototype/**/recheck/
+prototype/**/vtk/
+prototype/**/*.npz
+prototype/**/*.vtu
+prototype/**/*.vtp
+prototype/**/*.pvd
+prototype/**/*.png
+prototype/**/*.mp4
+prototype/**/*.gif
+prototype/work-2026-10-07-scheil-default/debug/run00625/
+prototype/work-2026-10-08-skin/bitid/d*/
+prototype/work-2026-10-08-skin/probe_freeze/run_dt05/
+# a git repository of its own (a session's working copy): git cannot track the files inside it
+prototype/work-2026-10-08-skin/code/

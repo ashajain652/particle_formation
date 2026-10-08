@@ -1,0 +1,67 @@
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -234,7 +234,7 @@
+         self.table = table or dispersion.DispersionTable()
+ 
+     def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None,
+-                 extent=None, deceleration_n=None):
++                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None):
+         """Per-patch instability and release for the film thickness b, melt-layer thickness delta_m and film surface
+         velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's.
+ 
+@@ -243,10 +243,19 @@
+         while the release rates and the droplet cap stay on the film, which is the mass that can actually leave.
+         `extent`, if given, is the lateral extent of the contiguous molten region each patch belongs to, for the
+         wave-fits test; `deceleration_n` is the surface-normal deceleration W cos(phi) for the reported
+-        Rayleigh-Taylor flag, defaulting to the whole deceleration when it is not supplied."""
++        Rayleigh-Taylor flag, defaulting to the whole deceleration when it is not supplied.
++
++        `regime_layer`, if given, replaces `b_layer` in the regime test only: the depth of non-rigid material under the
++        wall, the film plus everything more than half liquid beneath it (`MeltingBody.nonrigid_depth`). The thin branch
++        is Girin's dominant ablation, where the rigid core stabilises the disturbances, and slurry is no rigid core, so
++        a film on slurry deeper than delta_m is deep melt and takes the thick branch. `on_slurry`, if given, flags the
++        patches whose film rests on slurry; where there is no delta_m (off Girin's closure) such a film takes no shear
++        mode at all, since the thin mode needs a rigid wall and no deep-melt mode exists there. The Rayleigh-Taylor
++        criteria, a liquid pool's, keep `b_layer` (amendment of 2026-10-06)."""
+         liq = self.liquid
+         n = b.size
+         layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
++        regime = layer if regime_layer is None else np.maximum(np.asarray(regime_layer, dtype=float), b)
+         branch = np.full(n, -1)
+         growth = np.full(n, np.nan)          # the mode's growth time per patch [s], for comparison with other modes
+         r = np.full(n, np.nan)
+@@ -258,7 +267,7 @@
+         # the layer did not form, the rigid core still stabilises the disturbances and the case is Girin's dominant
+         # ablation: regime 1, his Girin & Kopyt (1994) mode, the thin branch below. If it did form, layer > delta_m, the
+         # profile is the conjugated pair (delta_a in air, delta_m in melt) and the case is dominant fusion.
+-        deep = has_film & np.isfinite(delta_m) & (layer > delta_m)         # delta_m fits in the liquid: it formed
++        deep = has_film & np.isfinite(delta_m) & (regime > delta_m)        # delta_m fits in the liquid: it formed
+         # Stage two, only where it formed: which mechanism the conjugated profile carries, decided on the kinematic
+         # viscosities. nu_melt > nu_gas puts the thicker viscous layer in the melt, V_s << V_a and the profile close to a
+         # tangential discontinuity -- classical Kelvin-Helmholtz, regime 2. nu_gas > nu_melt makes the two thicknesses
+@@ -272,8 +281,10 @@
+         regime2 = deep & step_profile                                     # Kelvin-Helmholtz
+         thick = deep & ~step_profile                                      # regime 3: Girin 2017's gradient instability
+         free_molecular = flow.branch == BRANCH_FREE_MOLECULAR
+-        rarefied = has_film & ~deep & free_molecular                      # no edge state exists: the freestream drives the mode
+-        thin = has_film & ~deep & ~rarefied
++        # a film on slurry with no delta_m: the thin mode needs a rigid wall and there is no deep-melt mode to take it
++        held = np.zeros(n, dtype=bool) if on_slurry is None else has_film & ~np.isfinite(delta_m) & np.asarray(on_slurry, dtype=bool)
++        rarefied = has_film & ~deep & free_molecular & ~held              # no edge state exists: the freestream drives the mode
++        thin = has_film & ~deep & ~rarefied & ~held
+         # Girin's (2017) stability criterion, now on *every* branch. His phi_cr comes from We_s > We_cr with the sphere's
+         # own edge solution substituted in; evaluated locally instead of through that closed form it holds on an eroded
+         # body too, which a single critical angle does not. The shear acts over the liquid it can reach, min(delta_m,
+@@ -281,9 +292,11 @@
+         # conjugate layer is measured on its own depth. Below We_cr the surface is stable and nothing leaves. The thin
+         # branch had no stability threshold before this (Girin & Kopyt's inviscid side mode has none of its own, being
+         # unstable at every wavelength), so it stripped film at any angle however small the shear (added 2026-09-24).
++        # A patch the regime test makes deep is measured on delta_m whatever its liquid depth -- a film on slurry deeper
++        # than delta_m included (2026-10-06); everywhere else the expression is the one above, bit for bit.
+         L = None if extent is None else np.asarray(extent, dtype=float)
+         with np.errstate(invalid="ignore"):
+-            d_shear = np.where(np.isfinite(delta_m), np.minimum(delta_m, layer), layer)
++            d_shear = np.where(deep, delta_m, np.where(np.isfinite(delta_m), np.minimum(delta_m, layer), layer))
+             we_s = np.where(has_film, liq.rho * v_s ** 2 * d_shear / liq.sigma, 0.0)
+         supercritical = we_s > self.we_critical
+         # thick: Girin 2017

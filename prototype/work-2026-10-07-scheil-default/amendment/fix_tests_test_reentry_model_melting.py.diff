@@ -1,0 +1,36 @@
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -725,3 +725,33 @@
+         assert np.isin(b.last_spray.branch[wet], [spray.BRANCH_THIN, spray.BRANCH_RAREFIED]).all()
+         assert b.sprayed_mass > 0.0
+     assert out["rigid"][0].last_melt["slurry_held_mass_kg"] == 0.0
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Amendment of 2026-10-07: freeze-back never leaves a negative film
++
++
++def test_freeze_back_of_film_and_deep_liquid_leaves_neither_negative(layered_mesh):
++    """Freeze-back draws a patch's deep liquid first and its film after, capped at what the two hold. Taking the cap as
++    their sum and the film's part as that sum less the deep liquid leaves the film one rounding unit below zero whenever
++    the deep liquid dwarfs the film -- for about half of all such pairs -- and the solver's film-mass check rejects the
++    negative: it stopped the 0.00625 s run of the 2026-10-07 time-step series at its first fine step, a film of -1.3e-25
++    kg on one patch. A patch whose film and deep liquid all freeze back must be left with exactly none of either, and its
++    owner element must gain exactly their mass."""
++    b = melting_body(layered_mesh)
++    b.solver.set_temperature(800.0)                                 # below the feed ramp: every patch's liquid freezes
++    i = b.i_stag
++    owner = b.surface.owner[i]
++    b.phi[owner] = 0.5                                              # room for it in the owner element
++    b.m_f[:], b.m_d[:] = 0.0, 0.0
++    b.m_f[i], b.m_d[i] = 2.3351899704880006e-14, 1.8789852661499484e-09   # (m_f + m_d) - m_d > m_f in floating point
++    assert b.m_f[i] - ((b.m_f[i] + b.m_d[i]) - b.m_d[i]) < 0.0      # the pair the old arithmetic got wrong
++    before = b.m_f[i] + b.m_d[i]
++    solid = (1.0 - b.material.feed_fraction(b.film_temperature())) * (b.m_f + b.m_d)
++    want = np.bincount(b.surface.owner, solid, b.mesh.n_elements)
++    _, _, _, h_e, h_p = deep_stage_args(b, np.full(b.surface.n_patches, np.nan))
++    frozen = b._freeze_back(want, solid, h_e, h_p)
++    assert (b.m_f >= 0.0).all() and (b.m_d >= 0.0).all()
++    assert b.m_f[i] == 0.0 and b.m_d[i] == 0.0
++    assert frozen == pytest.approx(before, rel=1e-15)
++    assert (b.phi[owner] - 0.5) * b.element_mass[owner] == pytest.approx(before, rel=1e-9)

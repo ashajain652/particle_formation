@@ -1,0 +1,46 @@
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -26,7 +26,8 @@
+                 "kn_body", "kn_local_stag", "re_shock", "flow_branch", "p_w_stag_Pa", "phi_sonic_deg",
+                 "drag_shape_factor", "frozen_mass_kg", "film_T_max_K", "film_T_mean_K", "film_frozen_fraction",
+                 "unapplied_load_J", "film_blob_fraction", "rt_mass_fraction", "rt_wavelength_over_nose", "rt_growth_ms", "spray_growth_ms", "rt_region_mm", "rt_bounded_fraction", "rt_bounded_growth_ms", "molten_depth_max_mm", "molten_depth_mean_mm",
+-                "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements"]
++                "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
++                "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -106,6 +107,8 @@
+                 "demise_altitude_km": float(c["altitude_km"][-1]) if history.end_reason == "demise" else None,
+                 "initial_mass_kg": body.mass0, "final_mass_kg": float(c["mass_kg"][-1]), "sprayed_mass_kg": body.sprayed_mass,
+                 "runoff_mass_kg": body.runoff_mass, "removed_mass_kg": body.removed_mass, "film_mass_kg": float(body.m_f.sum()),
++                "deep_runoff_mass_kg": body.deep_runoff_mass, "deep_surfaced_mass_kg": body.deep_surfaced_mass,
++                "deep_mass_kg": float(body.m_d.sum()),
+                 "n_released": body.n_released, "time_of_peak_release_s": float(c["time_s"][i_peak]),
+                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
+                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
+@@ -149,9 +152,10 @@
+ def write_vtk_frame(output_dir, k, body, loads):
+     """field_<k>.vtu: nodal T on the active volume mesh (plus liquid fraction and element fractions when melting);
+     surface_<k>.vtp: q_conv, q_rad, T per patch, and when melting the film thickness and temperature, We_s, closure,
+-    local Knudsen number, wall pressure, shear, droplet radius and release rate -- the flow and spray fields of the
+-    step's own evaluation, carried across that step's element deaths by face id (`MeltingBody.on_current_surface`),
+-    with the defaults on faces the deaths exposed (PyVista/VTK XML)."""
++    local Knudsen number, wall pressure, shear, droplet radius, release rate and Girin's conjugate depth delta_m -- the
++    flow and spray fields of the step's own evaluation, carried across that step's element deaths by face id
++    (`MeltingBody.on_current_surface`), with the defaults on faces the deaths exposed (nan for delta_m, which is also
++    nan wherever the closure is not Girin's) -- and the thickness of the deep liquid beneath the film (PyVista/VTK XML)."""
+     import pyvista as pv
+     from .thermal import SIGMA_SB
+     os.makedirs(output_dir, exist_ok=True)
+@@ -183,6 +187,10 @@
+         poly.cell_data["tau"] = carry(flow.tau if flow is not None else None, 0.0)
+         poly.cell_data["r_droplet"] = carry(np.where(res.dm > 0.0, res.r, np.nan) if res is not None else None, np.nan)
+         poly.cell_data["release_rate"] = carry(res.dm if res is not None else None, 0.0) / surface.areas
++        # Girin's conjugate depth per patch, nan where the patch's closure is not his (no conjugate depth exists there),
++        # and the deep liquid lying below it (amendment of 2026-10-02): the skin and the runoff layer beneath it
++        poly.cell_data["delta_m"] = carry(body.last_delta_m, np.nan)
++        poly.cell_data["deep_thickness"] = body.m_d / (body.liquid.rho * surface.areas)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 

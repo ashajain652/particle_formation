@@ -1,0 +1,7 @@
+
+model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin (seed 12345): t_max at t = 65.0 s, final V 6.8528 km/s, Kn 0.0298 -> 0.00694, 3740 RHS evaluations in 527.8 s
+  thermal: peak surface T 970 K at t = 65 s, peak mean T 770 K, integrated heat 9.27e+05 J, energy balance residual -3.3e-11, 130 macro steps, 3.4 Newton iterations/step
+  melt: onset 74.2 km, spraying onset 74.0 km, demise n/a km at t = n/a s; sprayed 0.3127 kg of 1.4720, film left 0.0045 kg, 2.88e+06 droplets (median r 201.3 um), 58972 source rows, melt balance -3.3e-11
+  csv  -> /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/bitid/new/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin.csv
+  json -> /private/tmp/claude-501/-Users-ashajain-Documents-University-Documents--MIT-Graduate-Work-Research-Space-Sustainability-Particle-Wake-Evolution/930f32b6-e08a-42f0-a4ce-595da1b5cc42/scratchpad/skinplan/bitid/new/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin.json
+exit 0

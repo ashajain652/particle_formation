@@ -1,0 +1,32 @@
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -3,7 +3,7 @@
+     python -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
+         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+-        [--melt on --material AA7075_range --removal girin|instant ...] (Step 3: melting, film, spraying)
++        [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+@@ -162,7 +162,8 @@
+     th.add_argument("--accommodation", type=float, default=0.8, help="free-molecular energy accommodation A_cq (default %(default)s)")
+     th.add_argument("--catalycity", type=float, default=1.0, help="wall catalycity 0..1 in Fay-Riddell (default %(default)s)")
+     th.add_argument("--material", default=None,
+-                    help="AA7075_nomelt | AA7075 | AA7075_range | <DRAMA material JSON> (default: AA7075_nomelt, or AA7075_range with --melt on)")
++                    help="AA7075_nomelt | AA7075 | AA7075_range | AA7075_scheil | AA7075-empiricaldata | <DRAMA material JSON> "
++                         "(default: AA7075_nomelt, or AA7075_scheil with --melt on)")
+     th.add_argument("--emissivity", type=float, default=None, help="override the material's emissivity")
+     th.add_argument("--k-scale", type=float, default=1.0,
+                     help="multiplies the material's conductivity (default 1): a verification device for the near-isothermal (lumped) limit, not physical")
+@@ -244,7 +245,9 @@
+                                                     # verification numbers were measured on it (fact 12)
+     the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
+                                band=band)
+-    material_name = args.material or ("AA7075_range" if melting else "AA7075_nomelt")
++    # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
++    # selectable by name
++    material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
+     mat = material.Material.from_drama_json(material_name)
+     if args.k_scale != 1.0:
+         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical

@@ -1,0 +1,11 @@
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -237,7 +237,7 @@
+     def __init__(self, mesh, material, solver, mass_kg, flow=None, spray_model=None, settings=None, T0=300.0,
+                  emissivity=None, T_ambient=0.0, v_hat=(1.0, 0.0, 0.0)):
+         if not material.melts or material.liquid is None:
+-            raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075 or AA7075_range)")
++            raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075, AA7075_range or AA7075_scheil)")
+         super().__init__(mesh, material, solver, mass_kg, T0, emissivity, T_ambient, v_hat)
+         from . import film as film_mod, spray as spray_mod, surface_flow
+         self.settings = settings or MeltSettings()

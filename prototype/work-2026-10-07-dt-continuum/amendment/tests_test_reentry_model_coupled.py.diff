@@ -1,0 +1,59 @@
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -194,3 +194,56 @@
+     hist = coupled.CoupledRun(simulator(b), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5)).run()
+     assert hist.end_reason == "demise" and hist.results["end_reason"] == "demise" and hist.results["demise_altitude_km"] < 71.0
+     assert 0.55 * MASS_100MM < hist.columns["mass_kg"][-1] < 0.6 * MASS_100MM and hist.results["final_mass_kg"] == hist.columns["mass_kg"][-1]
++
++
++def test_the_continuum_step_reproduces_the_switched_step_harness(coarse_sphere_mesh, tmp_path):
++    """`CoupledSettings.dt_continuum` (amendment of 2026-10-07, the continuum step): the macro step shortens to
++    dt_continuum from the first step whose aero state, the one handed to the body, has a body Knudsen number below
++    `kn_switch`, and stays there. That is what the 2026-10-05 harness (`dtswitch.py`) did from outside the package, and
++    the option reproduces it bit for bit: from 48 s at 0.5 s to the switch (48.5 s for this hot body on the coarse mesh,
++    whose Knudsen number reads its shrinking size), then 0.05 s to 50.5 s, against the harness's rule applied by hand. Frames are written every `frames_every` steps until the switch and by flight time
++    after it, every `frames_every` first steps, so a fine step does not write one frame per step."""
++    pytest.importorskip("cantera")
++    runs, seen = {}, {}
++    for label in ("option", "harness"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver("skfem"), MASS_100MM, T0=880.0)
++        sim = simulator(b, t_max=50.5)
++        sim.advance(48.0)
++        if label == "option":
++            s = coupled.CoupledSettings(dt=0.5, dt_continuum=0.05, kn_switch=0.01, frames_every=1,
++                                        output_dir=str(tmp_path / "vtk"))
++            run = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), s)
++        else:
++            run = coupled.CoupledRun(sim, b, heating.PhysicsHeating(), coupled.CoupledSettings(dt=0.5))
++            advance = b.advance
++
++            def switched(t, dt, loads, state=None):          # the harness's rule: after the step, on the state it was given
++                advance(t, dt, loads, state)
++                if "t" not in seen and state is not None and np.isfinite(state.kn) and state.kn < 0.01:
++                    run.settings.dt, seen["t"] = 0.05, t
++            b.advance = switched
++        runs[label] = (run.run(), run)
++    (h, run), (g, _) = runs["option"], runs["harness"]
++    t_sw = seen["t"]
++    assert h.results["dt_switch_time_s"] == t_sw and h.results["dt_continuum_s"] == 0.05 and 48.0 < t_sw < 50.5
++    assert 0.0 < h.results["dt_switch_kn"] < 0.01 and h.results["dt_switch_altitude_km"] > 0.0
++    t = h.columns["time_s"]
++    fine, coarse = np.diff(t)[t[1:] > t_sw + 1e-9], np.diff(t)[t[1:] <= t_sw + 1e-9]
++    # the last step is whatever reaches t_max: here a sliver of ~1e-13 s, the fine steps summing to just short of it
++    assert np.allclose(coarse, 0.5) and np.allclose(fine[:-1], 0.05) and 0.0 < fine[-1] <= 0.05 + 1e-12
++    assert set(h.columns) == set(g.columns)
++    for k in h.columns:
++        np.testing.assert_array_equal(h.columns[k], g.columns[k], err_msg=k)
++    frame_times = [ft for ft, _ in run.settings.frames]
++    assert frame_times == pytest.approx([48.0, 48.5, 49.0, 49.5, 50.0, 50.5])          # by step, then by flight time
++
++
++def test_the_continuum_step_is_off_by_default_and_rejects_a_coarser_step():
++    s = coupled.CoupledSettings()
++    assert s.dt_continuum is None
++    with pytest.raises(ValueError):
++        coupled.CoupledSettings(dt=0.5, dt_continuum=1.0)
++    with pytest.raises(ValueError):
++        coupled.CoupledSettings(dt=0.5, dt_continuum=0.0)

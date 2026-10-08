@@ -1,0 +1,75 @@
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -152,7 +152,10 @@
+     generator is seeded for each backend because pyamg draws its starting vectors from it (plan fact 52). Measured on
+     2026-10-03: passes 4, 3, 16, 4, 5, 4 in both; mass 1.3e-7, sprayed 6.3e-7, cascade mass 2.4e-7, deep account 3.7e-6,
+     temperatures 0.11 K, balances 4.7e-10 and 2.4e-11 -- the stiff deep transport carries the backends' last-bit
+-    differences further (plan fact 49); with the deep runoff off they agree to 1e-10 and 4e-6 K."""
++    differences further (plan fact 49); with the deep runoff off they agree to 1e-10 and 4e-6 K. With the runoff flux
++    of 2026-10-05 the passes are the same and the backends agree to 7.6e-10 in mass, 3.6e-9 in sprayed mass, 1.0e-10 in
++    cascade mass, 6.9e-11 in the deep account and 2.5e-5 K: what carried the last-bit differences was the film's
++    runaway emptying rates on thick patches, not the deep transport (plan fact 72)."""
+     pytest.importorskip("cantera")
+     from reentry_model import body, heating, mesh
+     from test_reentry_model_coupled import MASS_100MM, simulator
+@@ -183,3 +186,60 @@
+     assert f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5) and f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
+     assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
+     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
++
++
++def test_the_thick_film_flux_matches_the_skfem_backend(coarse_sphere_mesh, monkeypatch):
++    """The runoff flux on a thick patch (amendment of 2026-10-05) in both backends: the 6 mm pool at 69.8 km of the
++    cascade test above, at ten steps of 0.05 s, where every film transport has thick patches carrying films thinner
++    than delta_m -- the case the amendment changes. Both backends give the same active set, mass, sprayed mass, runoff,
++    film, deep account and temperatures, with both energy balances exact, and the largest emptying rate of any edge
++    stays bounded: before the amendment it grew from sub-step to sub-step and reached 3.9e25 per second in this setting
++    (measured 2026-10-05); with it 2.7e7, set by the deepest piles' G b^3 / (3 mu) term, not by a vanishing film.
++    Measured: the same 7 983 active elements, mass 5.8e-10, sprayed mass 5.9e-9, runoff 7.5e-10, film 1.7e-8, deep
++    account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11."""
++    pytest.importorskip("cantera")
++    from reentry_model import body, film, heating, mesh
++    from test_reentry_model_coupled import MASS_100MM, simulator
++    seen = {"thin_on_thick": 0, "c_max": 0.0}
++    lub, coeff = film.lubrication, film.Runoff.edge_coefficients
++
++    def lubrication(tau, G, b, delta_m, mu_l, b_layer=None):
++        out = lub(tau, G, b, delta_m, mu_l, b_layer)
++        bb = np.asarray(b, dtype=float)
++        seen["thin_on_thick"] += int((out[3] & (bb > 0.0) & (bb < np.asarray(delta_m, dtype=float))).sum())
++        return out
++
++    def edge_coefficients(self, q, b, t_hat, areas):
++        c_ij, c_ji = coeff(self, q, b, t_hat, areas)
++        if len(c_ij):
++            seen["c_max"] = max(seen["c_max"], float(c_ij.max()), float(c_ji.max()))
++        return c_ij, c_ji
++
++    monkeypatch.setattr(film, "lubrication", lubrication)
++    monkeypatch.setattr(film.Runoff, "edge_coefficients", edge_coefficients)
++    out = {}
++    for name in ("skfem", "fenicsx"):
++        np.random.seed(12345)
++        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM)
++        sim = simulator(b, t_max=90.0)
++        sim.advance(50.0)
++        p = b.mesh.points
++        r = np.linalg.norm(p, axis=1)
++        b.solver.set_temperature(np.where((r > 0.05 - 6e-3) & (p[:, 0] > 0.5 * r), 960.0, 850.0))
++        b.energy0 = b.energy()
++        model = heating.PhysicsHeating()
++        for _ in range(10):
++            sim.advance(0.05)
++            a = sim.aero_state(sim.t, sim.y[:3], sim.y[3:])
++            b.advance(sim.t, 0.05, model.evaluate(a, b.theta, b.surface_temperature(), b.nose_radius(), T_mean=b.mean_temperature()),
++                      state=a)
++        out[name] = b
++    s, f = out["skfem"], out["fenicsx"]
++    assert seen["thin_on_thick"] > 0 and seen["c_max"] < 1e9 and f.runoff_mass > 0.0 and f.sprayed_mass > 0.0
++    assert np.array_equal(s.mesh.active, f.mesh.active)
++    assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6) and f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5)
++    assert f.runoff_mass == pytest.approx(s.runoff_mass, rel=1e-5) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
++    assert f.m_d.sum() == pytest.approx(s.m_d.sum(), rel=1e-4)
++    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 0.5
++    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
