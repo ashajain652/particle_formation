@@ -142,7 +142,8 @@ in the frames.
 
   The history's drag comes from the SESAM-table drag coefficient, and the frame's loads come from Step 3's surface-flow
   model; the +10 % already present on the intact sphere, before anything has melted, points to that difference rather than
-  to the core. **(measured)**
+  to the core. **(measured)** The gap is minor (decision 15): a hypersonic CFD code is to supply Spheral's loads,
+  retiring both; until then Spheral takes the frames' loads.
 
 ## 7. The fragment record and the debris log (definitions chosen where the spec leaves them open)
 

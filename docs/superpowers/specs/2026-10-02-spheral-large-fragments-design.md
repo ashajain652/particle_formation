@@ -371,8 +371,8 @@ uncertain by a factor of a few (Step 4's risk).
 than a few percent on every phase** of the 100 mm Scheil flight: +10 % before the first film, −36 % to +9 % in the
 shock layer, −11.0 % on the late free-molecular and subsonic branch. The +10 % on the intact sphere shows that the
 history's drag (the trajectory's SESAM-table drag coefficient) and Step 3's surface-flow loads disagree before any
-deformation. Reported, not fitted (M1 Review focus 6); M2's check 6 compares against the history's deceleration and
-inherits this gap.
+deformation. Reported, not fitted (M1 Review focus 6). **Minor and temporary** (Asha, 2026-10-08): a hypersonic CFD code is to supply the loads Spheral receives, replacing both the frames' surface-flow loads and the trajectory's drag table, so the gap between those two is a minor issue that the CFD loads retire. Until then Spheral takes the frames' loads, and M2's check 6 compares the deceleration
+with the frames' own integrated loads, reporting the history's as a diagnostic.
 
 ## 8. Material model
 
@@ -1090,3 +1090,6 @@ Each needs Asha's approval before use:
   `prototype/work-2026-10-08-spheral-mvp/`, with Step 3 to adopt its export additions; the lee base pressure's reference
   the every-step stagnation pressure. M1 done on 2026-10-08 (§14): the drag misses §7.3's "few percent" and is reported
   as measured.
+- 2026-10-08 (after M1): the drag gap between the frames' loads and the history is a minor issue: a hypersonic CFD code
+  is to supply the loads Spheral receives, retiring both; until then Spheral takes the frames' loads and check 6
+  compares with them.

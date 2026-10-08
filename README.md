@@ -436,7 +436,9 @@ The real flight is the one above, prepared whole on 2026-10-08.
 
 **The drag gap** is M1's answer for the thesis, reported rather than fitted (plan Review focus 6). The history's drag
 comes from the trajectory's SESAM-table drag coefficient, and the frame's loads from Step 3's surface-flow model. The
-two already differ by 10 % on the intact sphere, before anything melts.
+two already differ by 10 % on the intact sphere, before anything melts. It is a minor issue (Asha, 2026-10-08): a
+hypersonic CFD code is to supply the loads Spheral receives, retiring both models' drag; until then Spheral takes the
+frames' loads.
 
 Measured on the flight:
 - **Zones:** the bulk zone exists on 336 frames (24.5–192 s, at most 152 cm² at the 2 mm film limit).
