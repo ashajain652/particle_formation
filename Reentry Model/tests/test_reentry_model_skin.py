@@ -115,6 +115,16 @@ def test_hand_over_falls_back_and_drops_empty_skins():
     assert f.rows_of(np.array([105]))[0] == -1 and handed == 0.0 and f.n == 2
 
 
+def test_hand_over_refuses_to_lose_a_skin():
+    f = field()
+    with pytest.raises(ValueError):
+        f.hand_over(np.array([0]), np.array([[100, -1]]), np.array([[0.5, 0.0]]), lambda faces: np.full(len(faces), 1e-6))
+    with pytest.raises(ValueError):
+        f.hand_over(np.array([1]), np.array([[-1, -1]]), np.array([[0.0, 0.0]]), lambda faces: np.full(len(faces), 1e-6))
+    assert f.n == 3
+
+
+
 # -- the implicit sub-step (Task 3) ---------------------------------------------------------------------------------
 def test_thomas_matches_a_banded_solver():
     rng = np.random.default_rng(0)

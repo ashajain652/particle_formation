@@ -252,12 +252,16 @@ class SkinField:
     def hand_over(self, src, tgt_faces, weights, face_area):
         """Skins of vanished patches pass to the patches their deaths exposed, layer by layer (spec section 9).
         src (k,) rows; tgt_faces (k, j) face ids of the receiving patches (-1: none); weights (k, j), summing to 1 over
-        the valid targets; face_area(face_ids) -> areas. Every source has equal cells, so cell-wise weighted sums do too.
+        the valid targets; face_area(face_ids) -> areas. A source skin holding mass must have valid target weights summing
+        to 1, or ValueError is raised. Every source has equal cells, so cell-wise weighted sums do too.
         Returns (receiving rows, mass handed over). The caller removes `src` and any skin left without mass; the
         receiving skins' top nodes are not re-equilibrated with the liquid on them (the caller books that liquid's
         change of enthalpy, as the liquid's own hand-over does)."""
         src = np.asarray(src, dtype=np.int64)
         ok = (tgt_faces >= 0) & (weights > 0.0)
+        wsum = np.where(ok, weights, 0.0).sum(axis=1)
+        if src.size and np.any((np.abs(wsum - 1.0) > 1e-9) & (self.m[src].sum(axis=1) > 0.0)):
+            raise ValueError("a skin handed over needs valid target weights summing to 1")
         if not src.size or not ok.any():
             return np.zeros(0, dtype=np.int64), 0.0
         faces = np.unique(tgt_faces[ok])
@@ -284,10 +288,11 @@ class SkinField:
         """One implicit (backward-Euler) sub-step for every skin (spec section 5.4): the patch's convective flux q_top
         [W/m2] in at the top, radiation from the top cell, conduction through the cells (harmonic conductances), and the
         base held at T_b [K]. The liquid L [kg] on each top node shares cell 0's temperature and heat capacity. Newton
-        on the enthalpy with the enthalpy-consistent update the 3D solver uses, damped if the change grows. T_surface
-        (tests only) holds the top face at that temperature instead of the flux. `sens = (S, dEb)` carries dT/dT_b and
-        the derivative of the base energy through the sub-step (the trial pass). Returns (E_top, E_rad, E_base, sens)
-        [J per skin]; E_base is what the books leave, so they close exactly whatever the iteration error."""
+        in the temperature with a backtracking line search per skin on the residual's norm (not the 3D solver's
+        enthalpy-consistent update; see the comment below). T_surface (tests only) holds the top face at that
+        temperature instead of the flux. `sens = (S, dEb)` carries dT/dT_b and the derivative of the base energy through
+        the sub-step (the trial pass). Returns (E_top, E_rad, E_base, sens) [J per skin]; E_base is what the books leave,
+        so they close exactly whatever the iteration error."""
         mat, n, nc = self.material, self.n, self.nc
         if n == 0:
             z = np.zeros(0)
