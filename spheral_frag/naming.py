@@ -8,6 +8,8 @@ default, in a fixed key order.
   prepared   prep_<fe run>_k<K0>-<K1>[_every<N>]                       spheral_output/prepare/<prepared>/
   run        <prepared>__<mode>_k<k0>-<k1>_<form>_dx<dx>mm_seed<n>[_<label>-<value>...]
   analysis   the run's own name                                          spheral_output/analyse/<run>/
+  body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>]
+                                                                         spheral_output/body/<body>/
 
 The double underscore separates the prepared name from the run's own parts; neither a finite-element run name nor
 any part written here contains one. Frame indices are zero-padded to five digits. Names never contain spaces or `/`.
@@ -46,6 +48,8 @@ _PREPARE_RE = re.compile(r"^prep_(?P<fe_run>.+)_k(?P<k0>\d{5,})-(?P<k1>\d{5,})(?
 _FRAMES_RE = re.compile(r"^k(?P<k0>\d{5,})-(?P<k1>\d{5,})$")
 _DX_RE = re.compile(r"^dx(?P<dx>.+)mm$")
 _SEED_RE = re.compile(r"^seed(?P<seed>\d+)$")
+_BODY_RE = re.compile(r"^body_(?P<prepared>.+)_k(?P<k0>\d{5,})-(?P<k1>\d{5,})_(?P<form>rz|3d)_dx(?P<dx>[^_]+)mm"
+                      r"(?:_azimuth-(?P<azimuth>[^_]+)deg)?(?:_synthetic-(?P<synthetic>[a-z0-9]+))?$")
 
 
 def _check_part(text, what):
@@ -189,4 +193,45 @@ def parse_run_name(name) -> dict:
            "dx_mm": float(mdx["dx"]), "seed": int(ms["seed"]), "brackets": brackets, "prepare": prepare}
     if run_name(prepared, mode, out["frames"], form, out["dx_mm"], brackets, out["seed"]) != name:
         raise ValueError("not a canonical run name: {!r}".format(name))
+    return out
+
+
+def body_name(prepared: str, k0: int, k1: int, form: str, dx_mm: float, azimuth_deg: float = 0.0,
+              synthetic: str | None = None) -> str:
+    """'body_<prepared>_k00000-00047_rz_dx2.20mm' (M2 plan, Global constraints): the body stage's output directory.
+    The azimuth of an RZ body's half-plane (default 0) and a synthetic temperature sampler (Task 6) are suffixes
+    when they differ from their defaults."""
+    _check_part(prepared, "prepared-input name")
+    if form not in FORMS:
+        raise ValueError("form must be one of {}, got {!r}".format(FORMS, form))
+    name = "body_{}_{}_{}_dx{}mm".format(prepared, _frames(k0, k1), form, _format_dx(dx_mm))
+    az = _format_number(azimuth_deg, False)
+    if az != "0":
+        name += "_azimuth-{}deg".format(az)
+    if synthetic is not None:
+        if not isinstance(synthetic, str) or not re.fullmatch(r"[a-z0-9]+", synthetic):
+            raise ValueError("a synthetic sampler name is lower-case letters and digits, got {!r}".format(synthetic))
+        name += "_synthetic-{}".format(synthetic)
+    return name
+
+
+def parse_body_name(name) -> dict:
+    """Inverse of body_name: {'prepared', 'frames', 'form', 'dx_mm', 'azimuth_deg', 'synthetic', 'prepare'}."""
+    m = _BODY_RE.match(name) if isinstance(name, str) else None
+    if m is None or "__" in name:
+        raise ValueError("not a body name: {!r}".format(name))
+    try:
+        out = {"prepared": m["prepared"], "frames": (int(m["k0"]), int(m["k1"])), "form": m["form"],
+               "dx_mm": float(m["dx"]), "azimuth_deg": float(m["azimuth"]) if m["azimuth"] else 0.0,
+               "synthetic": m["synthetic"]}
+        canonical = body_name(out["prepared"], *out["frames"], out["form"], out["dx_mm"], out["azimuth_deg"],
+                              out["synthetic"])
+    except ValueError:
+        raise ValueError("not a body name: {!r}".format(name)) from None
+    if canonical != name:
+        raise ValueError("not a canonical body name: {!r}".format(name))
+    try:
+        out["prepare"] = parse_prepare_name(out["prepared"])
+    except ValueError:
+        out["prepare"] = None
     return out
