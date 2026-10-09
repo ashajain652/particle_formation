@@ -1798,6 +1798,8 @@ made on mains power under `caffeinate -i`.
        run names gain the material (its forward pointer).
      - (c) Spheral M1's thresholds stay on the reconstruction's frames (its decision 13). These frames supersede them as
        Spheral's input once Asha chooses; `prepare`'s contract checks pass on both.
+       **Decided (Asha, 2026-10-09):** for development the older (reconstruction's) frames remain Spheral's input;
+       Spheral M2 (plan `2026-10-09-spheral-m2.md`) is built and checked on them, and M1's thresholds stay as they are.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
