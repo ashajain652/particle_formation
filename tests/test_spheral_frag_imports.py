@@ -169,7 +169,7 @@ def runner_import_allowed(mod, core):
 
 def test_runner_sources_exist():
     names = {dotted_name(p) for p in runner_sources()}
-    assert {RUNNER, RUNNER + ".nodes", RUNNER + ".checkpoint"} <= names
+    assert {RUNNER, RUNNER + ".nodes", RUNNER + ".checkpoint", RUNNER + ".eos", RUNNER + ".strength"} <= names
 
 
 def test_core_never_imports_the_runner():
