@@ -140,3 +140,18 @@ enthalpy and liquid-fraction node and its neighbours ± 1e-9 K (5,543 in all). R
 (the command is also in the JSON header, with the package's SHA-256). The arrays regenerate bitwise; the npz bytes
 and the header's absolute paths do not. With `SPHERAL_FRAG_FE_PACKAGE=prototype/work-2026-10-08-spheral-mvp/code` the tests regenerate it
 and compare.
+
+## `loads/` — prepared load tables of the MVP flight (Spheral M2, Task 4)
+
+`loads_mvp.npz` holds the rows of the MVP flight's prepared `loads.npz` for frames 0, 1, 182 and 183 (windward
+tables as `spheral_frag.loads.stack` writes them, no lee extension; frame 0 carries none) and each frame's surface
+area `surface_area_m2` (sum of its patch areas: 0.0314057, 0.0314057, 0.0286293, 0.0282712 m²), so that the runner's
+package tests (`tests/test_spheral_frag_runner_packages.py`) run without the git-ignored prepared input. Regenerate
+with
+
+```bash
+"$PY" tests/fixtures/spheral_frag/make_loads_fixture.py
+```
+
+(defaults: the MVP flight's prepared directory under `spheral_output/prepare/`, frames 0,1,182,183). The arrays
+regenerate bitwise. On a 50 mm sphere, frame 182's lee-extended table integrates to a drag of 30.717 N.
