@@ -44,7 +44,8 @@ is M3's.
 
 **Equation of state and shear modulus** (spec §8.2-8.3; M2 plan Task 3): `thermal_eos` (P = K(T)(rho/(s rho_free(T))
 - 1) with its derivatives, sound speed and bulk modulus; u is the enthalpy from 300 K) and `thermal_shear_modulus`
-(G(T), zero at 50 % liquid and above): the numpy core of the runner's PyThermalEOS and PyThermalStrength.
+(G(T), zero at 50 % liquid and above) and `thermal_sound_speed` (the longitudinal sqrt(c_f^2 + 4G/(3 rho)) the
+strength provides for Spheral's time step): the numpy core of the runner's PyThermalEOS and PyThermalStrength.
 
 **Mechanical columns** (decision 2: labelled M1 placeholders; decision 3: the liquid's free density is the finite
 element's liquid density), built by `mechanical_columns`:
@@ -213,6 +214,14 @@ def thermal_shear_modulus(table, T) -> np.ndarray:
     """Pa, the shear modulus of spec §8.3 at T: the table's G(T), zero at and above 50 % liquid."""
     T = np.asarray(T, dtype=float)
     return np.where(table.liquid_fraction(T) >= FL_FLOW_ZERO, 0.0, table.shear_modulus(T))
+
+
+def thermal_sound_speed(table, T, rho, fluid_sound_speed) -> np.ndarray:
+    """m/s, the longitudinal sound speed the strength provides (as Spheral's SteinbergGuinan does):
+    sqrt(c_f^2 + 4 G(T) / (3 rho)), c_f the equation of state's sound speed and rho the density Spheral holds (scaled
+    by s, so that c scales as 1/sqrt(s) like c_f); G is `thermal_shear_modulus`, zero at 50 % liquid and above."""
+    cf = np.asarray(fluid_sound_speed, dtype=float)
+    return np.sqrt(cf*cf + (4.0/3.0)*thermal_shear_modulus(table, T)/np.asarray(rho, dtype=float))
 
 
 def interp_fuses() -> bool:

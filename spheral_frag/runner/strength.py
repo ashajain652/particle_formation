@@ -8,9 +8,12 @@ M2 plan, Task 3; the mechanism of M0's PySteinbergGuinan, spheral_frag/m0/subcla
     DBL_MAX (Spheral's PlasticStrainPolicy computes min(1, Y/sqrt(3 J2)), which is 1 either way; a finite value keeps
     inf out of the node fields and checkpoints). plasticStrainRate is the field Spheral hands the method (the
     previous update's (ps - ps0)/dt from PlasticStrainPolicy).
-  - providesSoundSpeed and providesBulkModulus are False: the EOS's are used. Spheral's time step then follows the
-    EOS's bulk sound speed sqrt(K/(s rho_free)) alone (GenericHydro reads only the soundSpeed field), not the
-    longitudinal one, as with M1's ConstantStrength test material.
+  - providesSoundSpeed is True and soundSpeed is the longitudinal speed `material.thermal_sound_speed`,
+    sqrt(c_f^2 + 4 G(T)/(3 rho)) with c_f the EOS's sqrt(K/(s rho_free)) that SoundSpeedPolicy passes in, as Spheral's
+    SteinbergGuinan provides it: GenericHydro's time step reads only the soundSpeed field, so without it the step
+    would follow the bulk speed and the effective Courant number would be sqrt((K + 4G/3)/K) = 1.23 times the
+    intended one (controller review of Task 3). Under scaling c goes as 1/sqrt(s). providesBulkModulus is False
+    (the EOS's rho dP/drho is used).
   - T comes from the EOS's table path, `eos.temperature(u)`: the same exact inverse (and cache) as the EOS's.
   - Damage is not applied (M2 has none; M3's tearing law will).
 
@@ -55,7 +58,7 @@ def strength_class(S):
             return material.flow_stress_provisional(self.law)
 
         def providesSoundSpeed(self):
-            return False
+            return True
 
         def providesBulkModulus(self):
             return False
@@ -75,6 +78,12 @@ def strength_class(S):
                           plasticStrainRate, damage):
             put_internal(yieldStrength, self.yield_strength(get_internal(specificThermalEnergy),
                                                             get_internal(plasticStrainRate)))
+
+        def soundSpeed(self, soundSpeed, density, specificThermalEnergy, pressure, fluidSoundSpeed, damage):
+            # SoundSpeedPolicy passes the same field as soundSpeed and fluidSoundSpeed: read it before writing
+            cf = np.array(get_internal(fluidSoundSpeed))
+            put_internal(soundSpeed, material.thermal_sound_speed(
+                self.table, self.eos.temperature(get_internal(specificThermalEnergy)), get_internal(density), cf))
 
     _CLASSES[S] = PyThermalStrength
     return PyThermalStrength

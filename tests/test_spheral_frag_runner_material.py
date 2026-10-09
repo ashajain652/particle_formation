@@ -20,6 +20,10 @@ Under Spheral (marker `spheral`, tests/fixtures/spheral_frag/runner_material_che
     liquid at s = 1 and s = 1e7 (and an EOS built at 1 whose scale is then set to 1e7), 3D and RZ, to round-off
     (measured 2026-10-09: every EOS method and the shear modulus bitwise; the flight law's yield 2.2e-17 of its
     largest value, numpy 1.26's and 2.5's exp/arcsinh);
+  - the strength provides the longitudinal sound speed sqrt(c_f^2 + 4G/(3 rho)) (controller review: Spheral's step
+    reads only the sound-speed field, so the bulk speed alone would raise the effective Courant number 1.23 times):
+    Spheral's step per spacing with the Python classes is the step of bench.py's Murnaghan + SteinbergGuinan (M0's
+    measured 4.54e-5 s/m in 3D, 4.43e-5 in RZ) times the ratio of the longitudinal speeds (test docstring);
   - P, G and Y at (s rho, s) equal those at (rho, 1) to round-off (measured: G and Y bitwise, P 1.1e-14 of the
     largest |P|, i.e. 2e-16 of K, from rounding s rho / (s rho_free)); c^2 equals the finite-difference dP/drho to
     1e-8 (measured 1.8e-10, the difference's own round-off);
@@ -27,12 +31,14 @@ Under Spheral (marker `spheral`, tests/fixtures/spheral_frag/runner_material_che
     SolidSPH steps at s = 1 and 1e7: |P| and |S| below 1e-6 of K (measured: 3D exactly zero, velocities and energies
     unchanged bitwise; RZ at most 1.2e-15 of K, |v| 6e-12 m/s, |u - u0| 5e-23 J/kg).
 
-Cost (measured 2026-10-09 with the fixture's `bench` mode on the body stage's 2.2 mm 3D sphere, 49,173 particles,
-bench.py's expansion at 10 1/s, 10 warm-up and 40 timed steps, outputs in spheral_output/m2/task3_bench/): the two
-Python classes against Murnaghan + ConstantStrength, medians per step, on 18 processes 110.5, 115.0, 113.4 ms
-against 107.4, 104.1, 107.3 ms (+6 %, range +3 to +10 %); on 8 processes 186.2, 196.8 ms against 174.0, 173.1 ms
-(+10 %, range +7 to +14 %); M0's Python EOS + strength + damage cost +19.7 % in 3D. The Linux VM's load rose from
-0.8 to 7.9 during the series (the runs themselves)."""
+Cost (measured 2026-10-09, before the strength provided the sound speed, with the fixture's `bench` mode on the body
+stage's 2.2 mm 3D sphere, 49,173 particles, bench.py's expansion at 10 1/s, 10 warm-up and 40 timed steps, outputs
+in spheral_output/m2/task3_bench/): the two Python classes against Murnaghan + ConstantStrength, medians per step,
+on 18 processes 110.5, 115.0, 113.4 ms against 107.4, 104.1, 107.3 ms (+6 %, range +3 to +10 %); on 8 processes
+186.2, 196.8 ms against 174.0, 173.1 ms (+10 %, range +7 to +14 %); M0's Python EOS + strength + damage cost +19.7 %
+in 3D. The Linux VM's load rose from 0.8 to 7.9 during the series (the runs themselves). With the sound speed
+provided (same body, 18 processes, two runs each): 112.8, 112.5 ms against Murnaghan + ConstantStrength 107.9, 105.8
+ms (+5 %) and bench.py's Murnaghan + SteinbergGuinan 104.2, 103.4 ms (+8.5 %)."""
 import math
 import os
 import shutil
@@ -43,6 +49,7 @@ import numpy as np
 import pytest
 
 from conftest import spheral_launcher
+from spheral_frag.m0 import bench
 from helpers import FIXTURES, REPO_ROOT
 
 from spheral_frag import material
@@ -200,6 +207,16 @@ def test_thermal_eos_core(table):
     assert np.max(np.abs(es["dPdrho"]*SCALE/e["dPdrho"] - 1.0)) < 1e-15
     G = material.thermal_shear_modulus(table, T)
     assert np.all(G[table.liquid_fraction(T) >= 0.5] == 0.0) and np.all(G[T < table.T_solidus] > 2.6e10)
+    # the longitudinal speed the strength provides: sqrt(c_f^2 + 4G/(3 rho)), = c_f where G = 0, 1/sqrt(s) scaling
+    c = material.thermal_sound_speed(table, e["T"], rho, e["cs"])
+    assert np.allclose(c**2, e["cs"]**2 + 4.0/3.0*material.thermal_shear_modulus(table, e["T"])/rho, rtol=1e-15)
+    liquid = table.liquid_fraction(e["T"]) >= 0.5
+    assert np.array_equal(c[liquid], e["cs"][liquid]) and np.all(c[~liquid] > e["cs"][~liquid])
+    cs_ = material.thermal_sound_speed(table, e["T"], SCALE*rho, es["cs"])
+    assert np.max(np.abs(cs_*math.sqrt(SCALE)/c - 1.0)) < 1e-14
+    c300 = material.thermal_sound_speed(table, 300.0, table.rho_free(300.0),
+                                        material.thermal_eos(table, table.rho_free(300.0), 0.0)["cs"])
+    assert c300 == pytest.approx(6146.9, abs=0.1)        # K 70.29 GPa, G 26.95 GPa, rho 2,811.6 kg/m^3
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -278,7 +295,10 @@ def test_every_method_against_the_core(methods, table, form):
             close(z[f"{tag}.shearModulus.{law}"], material.thermal_shear_modulus(table, Tu), f"{tag} G {law}")
             want = np.minimum(material.flow_stress(table, Tu, psr, law), np.finfo(float).max)
             close(z[f"{tag}.yieldStrength.{law}"], want, f"{tag} Y {law}")
-            assert z[f"{tag}.provides.{law}"].tolist() == [False, False]
+            assert z[f"{tag}.provides.{law}"].tolist() == [True, False]
+            c_l = material.thermal_sound_speed(table, Tu, s*rho, e["cs"])
+            close(z[f"{tag}.soundSpeed.{law}"], c_l, f"{tag} c_l {law}")
+            close(z[f"{tag}.soundSpeed_aliased.{law}"], c_l, f"{tag} c_l aliased {law}")
         # c^2 against the finite-difference dP/drho (P is linear in rho: exact up to round-off of the difference)
         fd = (z[f"{tag}.P_plus"] - z[f"{tag}.P_minus"])/(2e-6*s*rho)
         assert np.max(np.abs(fd/z[f"{tag}.setSoundSpeed"]**2 - 1.0)) < 1e-8
@@ -300,6 +320,8 @@ def test_scale_invariance(methods, form):
             assert np.max(np.abs(z[f"{tag}.{q}"] - ref)) <= ROUND*np.abs(ref).max(), (q, tag)
     for tag in ("s", "set"):
         assert np.max(np.abs(z[f"{tag}.setSoundSpeed"]*math.sqrt(SCALE)/z["s1.setSoundSpeed"] - 1.0)) < 1e-14
+        c1 = z["s1.soundSpeed.flight"]
+        assert np.max(np.abs(z[f"{tag}.soundSpeed.flight"]*math.sqrt(SCALE)/c1 - 1.0)) < 1e-14
 
 
 def lattice_sphere(form):
@@ -340,3 +362,42 @@ def test_uniform_body_at_rest_stays_stress_free(work, table, form, T, scale):
     print(f"{form} T {T:.0f} K s {scale:.0e}: max|P|/K {np.abs(z['P']).max()/K:.2e}, max|S|/K "
           f"{np.abs(z['S']).max()/K:.2e}, max|v| {np.abs(z['v']).max():.2e} m/s, max|u - u0| "
           f"{np.abs(z['u'] - float(z['u0'])).max():.2e} J/kg, t {float(z['time']):.3e} s")
+
+
+# M0's measured step (spec §2, data/spheral/m0_benchmark.csv): dt = 4.54e-5 s/m x dx in 3D, 4.43e-5 in RZ, with
+# bench.py's Murnaghan + SteinbergGuinan (K 70.3 GPa, G 27.6 GPa, rho 2,813: c_l = 6,170 m/s).
+M0_DT_PER_DX = {"3d": 4.54e-5, "rz": 4.43e-5}
+
+
+@pytest.mark.spheral
+@pytest.mark.parametrize("form", ("3d", "rz"))
+def test_time_step_follows_the_longitudinal_speed(work, table, form):
+    """Spheral's own step with the Python classes against bench.py's Murnaghan + SteinbergGuinan (M0's measured step)
+    on the 5 mm sphere at rest at 300 K, 100 steps. The ratio of the steps is the ratio of the longitudinal speeds:
+    the table's K 70.29 GPa, G 26.95 GPa at rho_free 2,811.6 kg/m^3 give c_l = 6,146.9 m/s; bench.py's 70.3 and 27.6
+    GPa at that density 6,170.9 m/s (its Murnaghan's c_f is sqrt(K/rho0)), a ratio of 1.0039. Measured 2026-10-09:
+    3D 4.5575e-5 against 4.5378e-5 s/m (1.0043; also on the 2.2 mm 3D body at 18 processes: 4.5575e-5 against
+    4.5384e-5, dt 0.1003 against 0.0998 us), RZ 4.4471e-5 against 4.4276e-5 (1.0044); with the bulk speed alone
+    (bench.py's Murnaghan + ConstantStrength, no sound speed from the strength) 5.60e-5 and 5.47e-5, 1.234 times
+    longer.
+    Thresholds: the ratio within 1e-3 of the moduli's (the 4e-4 left is SteinbergGuinan's pressure term and the
+    kernel's sampling of a non-uniform h; measured); the step within 1 % of M0's measured value scaled by the ratio."""
+    inp = os.path.join(work, f"lattice_{form}.npz")
+    if not os.path.exists(inp):
+        np.savez(inp, **lattice_sphere(form))
+    dt = {}
+    for mat in ("thermal", "sg"):
+        out = os.path.join(work, f"dt_{form}_{mat}.npz")
+        launch("rest", "--form", form, "--table", rel(TABLE), "--input", rel(inp), "--material", mat, "--T", "300",
+               "--steps", "100", "--out", rel(out), nproc=4)
+        z = np.load(out)
+        dt[mat] = float(np.median(z["dts"][20:]))/float(z["dx"])
+    T = material.T_ZERO
+    rho = float(table.rho_free(T))
+    c_ours = math.sqrt((float(table.bulk_modulus(T)) + 4.0/3.0*float(table.shear_modulus(T)))/rho)
+    c_m0 = math.sqrt(bench.MURNAGHAN["K"]/bench.RHO0 + 4.0/3.0*bench.SG["G0"]/rho)
+    ratio = c_m0/c_ours
+    assert ratio == pytest.approx(1.0039, abs=1e-4)
+    assert dt["thermal"]/dt["sg"] == pytest.approx(ratio, abs=1e-3)
+    assert dt["thermal"] == pytest.approx(M0_DT_PER_DX[form]*ratio, rel=1e-2)
+    assert dt["sg"] == pytest.approx(M0_DT_PER_DX[form], rel=1e-2)

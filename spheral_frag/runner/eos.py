@@ -34,7 +34,8 @@ Spheral is imported by the caller: `make_eos(S, table, scale)` builds the class 
 
 Measured 2026-10-09 (tests/test_spheral_frag_runner_material.py): every method equals the core bitwise on 4,000
 states in 3D and RZ; with PyThermalStrength a step of the 2.2 mm 3D sphere costs about 6 % more than Murnaghan +
-ConstantStrength on 18 processes (10 % on 8)."""
+ConstantStrength on 18 processes (10 % on 8); +8.5 % against bench.py's Murnaghan + SteinbergGuinan once the strength
+provides the longitudinal sound speed."""
 from __future__ import annotations
 
 import struct

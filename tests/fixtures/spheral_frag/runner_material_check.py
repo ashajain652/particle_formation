@@ -12,11 +12,13 @@ Modes (outputs are plain .npz written by rank 0 and read by the drama_env test):
            1 whose `scale` is then set to S; also setPressure at rho (1 +- 1e-6) for the finite-difference dP/drho.
   rest     --table TAB --input IN --scale S --T T --steps N --out OUT
            A body from IN's lattice (x_ref, V, pid) at uniform T: rho = S rho_free(T), m = rho V, u = h(T), at rest;
-           SolidSPH (S.SPH on a solid node list) + CheapSynchronousRK2 for N steps; gather P, S, v, rho by pid.
+           SolidSPH (S.SPH on a solid node list) + CheapSynchronousRK2 for N steps; gather P, S, v, rho by pid, and
+           every step's dt. --material thermal (default) | builtin | sg (bench.py's Murnaghan + ConstantStrength or
+           + SteinbergGuinan, M0's measured step); --expand starts from bench.py's expansion at 10 1/s.
   bench    --table TAB --body DIR --material {thermal,builtin} --steps N --warmup W [--max-load L] --out OUT
            bench.py's timed loop on a body stage's body (positions, masses, densities, T0), with bench.py's uniform
-           expansion (10 1/s): PyThermalEOS + PyThermalStrength (flight law), or Murnaghan (n = 1, K(300 K)) +
-           ConstantStrength (G(300 K), 20 MPa). Per-step wall times (barrier to barrier) to OUT."""
+           expansion (10 1/s): PyThermalEOS + PyThermalStrength (flight law), or bench.py's Murnaghan +
+           ConstantStrength (builtin) or + SteinbergGuinan (sg). Per-step wall times (barrier to barrier) to OUT."""
 import argparse
 import os
 import sys
@@ -96,7 +98,14 @@ def methods(S, a, table):
         for sign, lbl in ((1.0, "plus"), (-1.0, "minus")):
             r2 = scalar(nl, "rho_" + lbl, d["rho"]*scale*(1.0 + sign*1e-6))
             out[f"{tag}.P_{lbl}"] = call("setPressure", r2, u)
+        cf = scalar(nl, "cf", out[f"{tag}.setSoundSpeed"])
         for law, st in strengths.items():
+            c = S.ScalarField("c", nl)
+            st.soundSpeed(c, rho, u, P, cf, D)
+            out[f"{tag}.soundSpeed.{law}"] = get_internal(c).copy()
+            alias = scalar(nl, "alias", out[f"{tag}.setSoundSpeed"])    # as SoundSpeedPolicy calls it
+            st.soundSpeed(alias, rho, u, P, alias, D)
+            out[f"{tag}.soundSpeed_aliased.{law}"] = get_internal(alias).copy()
             G = S.ScalarField("G", nl)
             st.shearModulus(G, rho, u, P, D)
             Y = S.ScalarField("Y", nl)
@@ -106,6 +115,29 @@ def methods(S, a, table):
             out[f"{tag}.provides.{law}"] = np.array([st.providesSoundSpeed(), st.providesBulkModulus()])
     np.savez(a.out, **out)
     return 0
+
+
+def builtin_material(S, table, kind):
+    """bench.py's materials: Murnaghan (n = 1, K = 70.3 GPa, rho0 2,813) with ConstantStrength (G 27.6 GPa, 20 MPa;
+    "builtin") or with bench.py's SteinbergGuinan ("sg", the material of M0's measured step)."""
+    from spheral_frag.m0 import bench as mb
+    eos = S.MurnaghanEquationOfState(mb.RHO0, mb.ETAMIN, mb.ETAMAX, mb.MURNAGHAN["n"], mb.MURNAGHAN["K"],
+                                     mb.MURNAGHAN["atomicWeight"], S.MKS())
+    if kind == "builtin":
+        return eos, S.ConstantStrength(mb.SG["G0"], 2.0e7, eos)
+    sg = mb.SG
+    zero = S.NinthOrderPolynomialFit(*([0.0]*10))
+    melt = S.NinthOrderPolynomialFit(*([mb.EMELT_PER_VOLUME] + [0.0]*9))
+    return eos, S.SteinbergGuinanStrength(eos, sg["G0"], sg["A"], sg["B"], sg["Y0"], sg["Ymax"], sg["Yp"],
+                                          sg["beta"], sg["gamma0"], sg["nhard"], zero, melt), (zero, melt)
+
+
+def material_for(S, table, kind, scale=1.0):
+    if kind == "thermal":
+        eos = make_eos(S, table, scale)
+        return eos, make_strength(S, eos, "flight"), ()
+    r = builtin_material(S, table, kind)
+    return (r[0], r[1], ()) if kind == "builtin" else r
 
 
 def setup(S, body, dx):
@@ -131,23 +163,28 @@ def rest(S, a, table):
     T = np.full(len(d["pid"]), a.T)
     rho = a.scale*table.rho_free(T)
     arrays = dict(x_ref=d["x_ref"], pid=d["pid"], rho=rho, m=rho*d["V"], u=table.enthalpy(T))
-    eos = make_eos(S, table, a.scale)
-    strength = make_strength(S, eos, "flight")
+    eos, strength, keep = material_for(S, table, a.material, a.scale)
+    v = EDOT*d["x_ref"] if a.expand else None
+    if v is not None:
+        arrays["v"] = v
     body = rn.make_body(S, a.form, arrays, eos, strength, dx=dx)
     hydro, integrator, controller = setup(S, body, dx)
     K = float(table.bulk_modulus(a.T))
     c = np.sqrt(K/(a.scale*float(table.rho_free(a.T))))
     integrator.lastDt = 0.1*CFL*dx/c
+    dts = []
     for _ in range(a.steps):
         integrator.step(1e40)
         controller.totalSteps += 1
         controller.doPeriodicWork()
+        dts.append(integrator.lastDt)
     g = rn.gather_by_id(body.nodes, dict(pid=body.pid, P=hydro.pressure[0], S=body.nodes.deviatoricStress(),
                                          v=body.nodes.velocity(), rho=body.nodes.massDensity(),
                                          u=body.nodes.specificThermalEnergy(), x=body.nodes.positions(),
                                          cs=hydro.soundSpeed[0]), body.dim)
     if comm.rank == 0:
-        np.savez(a.out, time=controller.time(), dt=integrator.lastDt, steps=controller.totalSteps, K=K,
+        np.savez(a.out, time=controller.time(), dt=integrator.lastDt, dts=np.array(dts), dx=dx, material=a.material,
+                 steps=controller.totalSteps, K=K,
                  rho0=rho[0], u0=arrays["u"][0], processes=comm.size, **g)
     return 0
 
@@ -169,12 +206,7 @@ def bench(S, a, table):
     T300 = material.T_ZERO
     K, G = float(table.bulk_modulus(T300)), float(table.shear_modulus(T300))
     rho_ref = float(table.rho_free(T300))
-    if a.material == "thermal":
-        eos = make_eos(S, table, 1.0)
-        strength = make_strength(S, eos, "flight")
-    else:
-        eos = S.MurnaghanEquationOfState(rho_ref, 0.2, 4.0, 1.0, K, 26.98, S.MKS())
-        strength = S.ConstantStrength(G, 2.0e7, eos)
+    eos, strength, keep = material_for(S, table, a.material)
     body = rn.make_body(S, a.form, arrays, eos, strength, dx=dx)
     hydro, integrator, controller = setup(S, body, dx)
     integrator.lastDt = 0.1*CFL*dx/np.sqrt((K + 4.0/3.0*G)/rho_ref)
@@ -198,7 +230,8 @@ def bench(S, a, table):
                  load=np.array(load_avg), material=a.material)
         w = np.array(walls)
         print(f"bench {a.material}: n={n} procs={comm.size} median {np.median(w)*1e3:.1f} ms mean "
-              f"{w.mean()*1e3:.1f} ms min {w.min()*1e3:.1f} ms dt {dts[-1]:.3e} load {load_avg[0]:.2f}")
+              f"{w.mean()*1e3:.1f} ms min {w.min()*1e3:.1f} ms dt {dts[-1]:.4e} median dt/dx "
+              f"{np.median(dts)/dx:.4e} s/m load {load_avg[0]:.2f}")
     return 0
 
 
@@ -213,7 +246,8 @@ def main(argv):
     p.add_argument("--T", type=float, default=300.0)
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--warmup", type=int, default=10)
-    p.add_argument("--material", choices=("thermal", "builtin"), default="thermal")
+    p.add_argument("--material", choices=("thermal", "builtin", "sg"), default="thermal")
+    p.add_argument("--expand", action="store_true", help="rest: start with bench.py's uniform expansion")
     p.add_argument("--max-load", type=float, default=2.0)
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
