@@ -42,7 +42,8 @@ in the frames.
 - **The release on removed faces is lost.** Σ release_rate · A over a frame's surface is 12 % below the history's
   sprayed mass over the flight (1.025 of 1.169 kg; −30 % to +4 % per step): what was released from the faces that
   step's deaths removed is not carried onto the frame. A sink that reads `release_rate` (spec §10, milestone MC)
-  inherits that deficit until the export carries it. **(measured)**
+  inherits that deficit until the export carries it; nothing before MC reads it, so the fix is deferred to MC
+  (M1 decision 16, Asha 2026-10-09). **(measured)**
 
 ## 2. The prepared frame
 

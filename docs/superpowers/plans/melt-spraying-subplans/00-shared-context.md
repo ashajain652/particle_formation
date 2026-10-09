@@ -1783,6 +1783,17 @@ made on mains power under `caffeinate -i`.
        - (3) leave it, since the sink belongs to milestone MC, which is not planned yet.
 
        Recommendation: (2) now (one number per frame, write-only); (1) if MC needs the distribution.
+
+       **Deferred (Asha, 2026-10-09):** option (3), recorded as Spheral M1 decision 16. Nothing Spheral computes reads
+       `release_rate` before MC's sink (M1's `prepare` only passes it through; the replay removes particles by centre
+       crossing), so the export is left as it is and the choice is made when MC is planned. Two points for that choice:
+       - (1) matches the history's total per step but not where the spray happened: the faces that sprayed are not on
+         the frame's surface, so the release lands on other faces with other areas, chained through the cascade's
+         passes as the film's hand-over is. A further option, (4), keeps the reentry model's output exactly: a small
+         per-frame list of the removed faces (centroid, normal, area, mass released).
+       - The per-step gap is not one-signed (−40 % to +13 %); the removed faces can only make a frame short, so a second
+         effect, not yet identified (possibly a one-step offset between frames and history rows), is in the
+         comparison and is to be found before MC trusts `release_rate`.
      - (b) Sub-plan 18's Task 8 was tested on the copy before this one, so its CLI diff merges by hand, and its expected
        run names gain the material (its forward pointer).
      - (c) Spheral M1's thresholds stay on the reconstruction's frames (its decision 13). These frames supersede them as
