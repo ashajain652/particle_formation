@@ -2,8 +2,9 @@
 
 On the monitored intervals (the first, and every --monitor-every M-th after it) the replay reruns the accepted
 interval from its checkpoint at twice the crossings and estimates the error at N as
-2 max vM(sigma_N - sigma_2N) / max vM(sigma_N) (`run.crossings_error`); above --monitor-limit it takes the 2 N state
-and continues at 2 N. On the synthetic receding sphere of tests/test_spheral_frag_runner_replay.py (four intervals):
+2 max vM(sigma_N - sigma_2N) / max vM(sigma_N) (`run.crossings_error`) and its pressure part 2 max |dP| / max
+vM(sigma_N) (`run.pressure_error`); when the larger of the two (`run.limit_error`) exceeds --monitor-limit it takes the
+2 N state and continues at 2 N. On the synthetic receding sphere of tests/test_spheral_frag_runner_replay.py (four intervals):
 
   - `--monitor-every 2` monitors intervals 0, 1 and 3, and leaves every accepted state, check, removal and
     intervals.csv value bitwise identical to `--monitor-every 0` (the estimates are below the limit);
@@ -32,7 +33,8 @@ from spheral_frag import naming, record
 from spheral_frag.runner import checkpoint
 
 MON_COLUMNS = ("monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99", "crossings_err_pressure",
-               "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch")
+               "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
+               "crossings_err_limit", "crossings_err_limit_basis")
 WALL = ("wall_s", "wall_per_step_s", "monitor_wall_s")
 LIMIT = 0.5     # above every estimate on the coarse synthetic sphere (measured: test below), so no switch
 
@@ -110,6 +112,9 @@ def test_monitor_estimates_on_the_right_intervals_and_leaves_the_run_bitwise(mon
         if r["monitored"] == "1":
             est, rms, p99 = (float(r[c]) for c in ("crossings_err_est", "crossings_err_rms", "crossings_err_p99"))
             assert 0.0 < rms <= p99 <= est < LIMIT, r
+            pr, lim = float(r["crossings_err_pressure"]), float(r["crossings_err_limit"])
+            assert lim == max(est, pr) < LIMIT
+            assert r["crossings_err_limit_basis"] == ("von_mises" if est >= pr else "pressure")
             assert int(r["monitor_crossings"]) == 20 and float(r["monitor_wall_s"]) > 0.0
             assert int(r["crossings_switch"]) == 0
             with np.load(os.path.join(on, "monitor", "interval_{:05d}.npz".format(int(r["k0"])))) as z:
@@ -117,6 +122,7 @@ def test_monitor_estimates_on_the_right_intervals_and_leaves_the_run_bitwise(mon
                 assert float(z["est"]) == pytest.approx(2.0*z["vm_diff"].max()/z["vm_n"].max(), rel=1e-15)
         else:
             assert r["crossings_err_est"] == "nan" and int(r["monitor_crossings"]) == 0
+            assert r["crossings_err_limit"] == "nan" and r["crossings_err_limit_basis"] == ""
     assert all(int(r["run_crossings"]) == 10 and int(r["crossings"]) == 10 for r in rows_on)
     # the accepted states are the unmonitored run's, bitwise
     same_checkpoints(off, on, range(5))
@@ -129,6 +135,9 @@ def test_monitor_estimates_on_the_right_intervals_and_leaves_the_run_bitwise(mon
         mon = json.load(fh)["crossings_monitor"]
     assert mon["intervals_monitored"] == [[0, 1], [1, 2], [3, 4]] and mon["switches"] == []
     assert mon["max_crossings_err_est"] == max(float(r["crossings_err_est"]) for r in rows_on if r["monitored"] == "1")
+    assert mon["max_crossings_err_limit"] == max(float(r["crossings_err_limit"]) for r in rows_on
+                                                 if r["monitored"] == "1")
+    assert mon["max_crossings_err_limit_basis"] in ("von_mises", "pressure")
     assert mon["final_crossings"] == 10
 
 
@@ -173,7 +182,7 @@ def test_a_tiny_limit_switches_to_twice_the_crossings(inputs):    # noqa: F811
     assert [int(x["run_crossings"]) for x in rows] == [20, 40]
     assert [int(x["crossings_switch"]) for x in rows] == [1, 1]
     assert [int(x["monitor_crossings"]) for x in rows] == [20, 40]
-    assert all(float(x["crossings_err_est"]) > 1e-12 for x in rows)
+    assert all(float(x["crossings_err_limit"]) > 1e-12 for x in rows)
     # the switched interval's accepted state is the 2 N rerun: a plain run at 20 crossings, bitwise
     same_checkpoints(run_20, run_t, [1], skip_extra=("run_crossings",))
     ck = checkpoint.read(os.path.join(run_t, "checkpoints", checkpoint.filename(1)))
@@ -181,6 +190,7 @@ def test_a_tiny_limit_switches_to_twice_the_crossings(inputs):    # noqa: F811
     with open(os.path.join(run_t, "summary.json")) as fh:
         mon = json.load(fh)["crossings_monitor"]
     assert [(s["k0"], s["to_crossings"]) for s in mon["switches"]] == [(0, 20), (1, 40)]
+    assert all(s["limit"] > 1e-12 and s["basis"] in ("von_mises", "pressure") for s in mon["switches"])
     assert mon["final_crossings"] == 40
     # resumed across the switch
     same_checkpoints(run_t, run_tr, range(3))
@@ -197,6 +207,8 @@ def test_a_tiny_limit_switches_to_twice_the_crossings(inputs):    # noqa: F811
     with open(os.path.join(fd, "failed.json")) as fh:
         f = json.load(fh)
     assert f["reason"] == "crossings_error" and (f["k0"], f["crossings"], f["monitor_crossings"]) == (1, 20, 40)
+    assert f["crossings_err_limit"] == max(f["crossings_err_est"], f["crossings_err_pressure"])
+    assert f["crossings_err_limit_basis"] in ("von_mises", "pressure")
     assert not os.path.isfile(os.path.join(fd, "summary.json"))
 
 
@@ -264,14 +276,21 @@ def test_monitor_schedule_and_names():
                  run_crossings="10"),
             dict(k0="2", k1="3", crossings="20", monitored="1", crossings_err_est="0.07", crossings_err_rms="0.01",
                  crossings_err_p99="0.03", monitor_crossings="20", monitor_wall_s="3.0", crossings_switch="1",
-                 run_crossings="20")]
+                 run_crossings="20"),
+            dict(k0="3", k1="4", crossings="20", monitored="1", crossings_err_est="0.01", crossings_err_rms="0.001",
+                 crossings_err_p99="0.005", crossings_err_pressure="0.09", crossings_err_limit="0.09",
+                 crossings_err_limit_basis="pressure", monitor_crossings="40", monitor_wall_s="4.0",
+                 crossings_switch="1", run_crossings="40")]
 
     class A:
         monitor_every, monitor_limit, crossings = 2, 0.05, 10
     s = run.monitor_summary(rows, A)
-    assert s["intervals_monitored"] == [[0, 1], [2, 3]] and s["max_crossings_err_est"] == 0.07
-    assert s["max_at"] == [2, 3] and s["switches"] == [{"k0": 2, "k1": 3, "to_crossings": 20, "est": 0.07}]
-    assert s["final_crossings"] == 20 and s["monitor_wall_s"] == 5.0
+    assert s["intervals_monitored"] == [[0, 1], [2, 3], [3, 4]] and s["max_crossings_err_est"] == 0.07
+    assert s["max_crossings_err_limit"] == 0.09 and s["max_crossings_err_limit_basis"] == "pressure"
+    assert s["max_at"] == [3, 4]
+    assert s["switches"] == [{"k0": 2, "k1": 3, "to_crossings": 20, "est": 0.07, "limit": 0.07, "basis": "von_mises"},
+                             {"k0": 3, "k1": 4, "to_crossings": 40, "est": 0.01, "limit": 0.09, "basis": "pressure"}]
+    assert s["final_crossings"] == 40 and s["monitor_wall_s"] == 9.0
 
 
 def test_pressure_error():
@@ -279,16 +298,25 @@ def test_pressure_error():
     a = np.zeros((3, 3, 3))
     a[:, 0, 0] = [1e7, 2e7, 4e7]                          # uniaxial: vM 10, 20, 40 MPa
     b = a - 2e6*np.eye(3)[None]                           # P differs by 2 MPa everywhere, vM unchanged
-    assert run.pressure_error(_state([0, 1, 2], a), _state([0, 1, 2], b)) == pytest.approx(2*2e6/4e7, rel=1e-12)
-    assert run.crossings_error(_state([0, 1, 2], a), _state([0, 1, 2], b))[0] == pytest.approx(0.0, abs=1e-12)
+    pr = run.pressure_error(_state([0, 1, 2], a), _state([0, 1, 2], b))
+    assert pr == pytest.approx(2*2e6/4e7, rel=1e-12)
+    est = run.crossings_error(_state([0, 1, 2], a), _state([0, 1, 2], b))[0]
+    assert est == pytest.approx(0.0, abs=1e-12)
+    # the limit keys on the larger of the two: a pure pressure difference counts (controller, after Task 6b)
+    assert run.limit_error(est, pr) == (pr, "pressure")
+    assert run.limit_error(0.03, 0.01) == (0.03, "von_mises")
+    assert run.limit_error(0.02, 0.02) == (0.02, "von_mises")
+    assert run.limit_error(0.02, float("nan")) == (0.02, "von_mises")
 
 
 def test_measured_table():
     """data/spheral/m2_monitor.csv (analysis/spheral_m2_monitor.py, measured 2026-10-10): the monitor's own estimate
     on check 4's RZ 2.2 mm interval 0 -> 1 equals the estimator applied to check 4's 10- and 20-crossing runs bitwise
     (the same two states); the real flight's estimates (RZ 2.2 mm, frames 0-20, every 2nd interval) stay below the
-    5 % limit [largest 1.45 %, k 7 -> 8], so no switch."""
+    5 % limit [largest 1.45 %, k 7 -> 8], so no switch, also under the larger-of-the-two rule; check 4's RZ 2.2 mm
+    ramp interval exceeds it on its pressure part (6.1 %) and would switch."""
     import csv
+    from spheral_frag.runner import run
     with open(os.path.join(REPO_ROOT, "data", "spheral", "m2_monitor.csv"), newline="") as fh:
         rows = list(csv.DictReader(fh))
     v = [r for r in rows if r["case"] == "check4" and r["form"] == "rz" and r["dx_mm"] == "2.2" and r["k1"] == "1"]
@@ -296,3 +324,9 @@ def test_measured_table():
     fl = [r for r in rows if r["case"] == "flight" and r["monitor_crossings"] != "0"]
     assert len(fl) == 11 and all(int(r["crossings"]) == 10 for r in fl)
     assert max(float(r["est"]) for r in fl) < 0.02          # [1.446e-2]
+    # the limit keys on the larger of the von Mises and pressure estimates (controller, after Task 6b)
+    for r in rows:
+        if r["est"] != "nan":
+            assert (float(r["limit"]), r["limit_basis"]) == run.limit_error(float(r["est"]), float(r["pressure"]))
+    assert max(float(r["limit"]) for r in fl) < 0.02        # [1.446e-2, von Mises]
+    assert float(v[0]["limit"]) > 0.05 and v[0]["limit_basis"] == "pressure"    # [6.12e-2]: the ramp would switch

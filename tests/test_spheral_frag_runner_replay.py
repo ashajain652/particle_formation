@@ -282,9 +282,13 @@ def test_the_internal_ratio_drives_the_repeat(inputs, runs):
     d, prep, bodies = inputs
     full, _, _, _ = runs("rz")
     r0 = intervals(full)[0]
-    internal, whole = float(r0["ke_internal_ratio"]), float(r0["ke_ratio"])
-    assert internal < whole
-    common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep), "--frames", "0-1"]
+    # the first attempt, at 10 crossings (the default run's monitor may have switched interval 0 to 20 since the
+    # limit keys on the larger of the von Mises and pressure estimates); the runs below are unmonitored
+    n, ratios = r0["attempts_ke_ratio"].split(";")[0].split(":")
+    internal, whole = (float(x) for x in ratios.split("/"))
+    assert int(n) == 10 and internal < whole
+    common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep), "--frames", "0-1", "--monitor-every",
+              "0"]
     between = math.sqrt(internal*whole)
     ok = launch(*common, "--out", rel(os.path.join(d, "between")), "--ke-fraction", repr(between))
     run_dir = os.path.join(d, "between", os.listdir(os.path.join(d, "between"))[0])

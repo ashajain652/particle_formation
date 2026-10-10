@@ -81,7 +81,11 @@ vM the von Mises stress sqrt(3/2 dev:dev), so the pressure part of the differenc
 quasi-static lag falls as 1/N, so sigma_N - sigma_inf = 2 (sigma_N - sigma_2N). Recorded with it, for context, the same
 with the RMS over particles (`crossings_err_rms`) and with the 99th percentile (`crossings_err_p99`) in place of the
 maximum, and the hydrostatic part the von Mises stress leaves out, 2 max |P_N - P_2N| / max vM(sigma_N)
-(`crossings_err_pressure`; on check 4's ramp it is 1-5 times the von Mises estimate). Monitored intervals: the
+(`crossings_err_pressure`; on check 4's ramp it is 1-5 times the von Mises estimate). **The limit applies to the
+larger of the two** (controller, after Task 6b found the ramp's lag mostly hydrostatic; Asha's intent is the error,
+not only its deviatoric part): err_limit = max(crossings_err_est, crossings_err_pressure) (`limit_error`), recorded
+as `crossings_err_limit` with `crossings_err_limit_basis` ("von_mises" or "pressure", whichever decided; von Mises on
+a tie); "err" below means err_limit. Monitored intervals: the
 first (K0 -> K0+1: the first loading from the stress-free state, check 4's ramp case, and an early read on a long
 run) and every `--monitor-every` M-th after it (interval index j from K0 with
 j = M - 1 mod M: K0+M-1 -> K0+M, ...); M = 0 turns the monitor off. When err <= `--monitor-limit` F (5 %) the N run's
@@ -164,7 +168,7 @@ INTERVAL_COLUMNS = [
     "momentum_over_impulse", "v_com_removed_ms", "recentre_shift_dx", "recentre_applied", "attempts_ke_ratio",
     "time_scale", "spheral_t1_s", "monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99",
     "crossings_err_pressure", "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
-    "run_crossings",
+    "run_crossings", "crossings_err_limit", "crossings_err_limit_basis",
 ]
 
 
@@ -336,6 +340,15 @@ def pressure_error(st_n, st_2n):
     if top <= 0.0:
         return 0.0 if not np.any(dp) else math.inf
     return 2.0*float(dp.max())/top
+
+
+def limit_error(est, pressure):
+    """(err_limit, basis): the larger of the von Mises estimate and the pressure part, and which one it is
+    ("von_mises" on a tie, or where the pressure part is missing, NaN); the monitor's limit keys on it (module
+    docstring)."""
+    if math.isnan(pressure) or est >= pressure:
+        return float(est), "von_mises"
+    return float(pressure), "pressure"
 
 
 def von_mises(sigma):
@@ -926,7 +939,8 @@ def replay(a):
         repeats = len(tried) - 1
         mon = dict(monitored=0, crossings_err_est=math.nan, crossings_err_rms=math.nan, crossings_err_p99=math.nan,
                    crossings_err_pressure=math.nan, monitor_crossings=0, monitor_wall_s=0.0,
-                   monitor_ke_internal_ratio=math.nan, crossings_switch=0)
+                   monitor_ke_internal_ratio=math.nan, crossings_switch=0, crossings_err_limit=math.nan,
+                   crossings_err_limit_basis="")
         if monitor_due(i, a.monitor_every):
             n_acc = int(info["crossings"])
             if 2*n_acc > a.max_crossings:
@@ -942,26 +956,32 @@ def replay(a):
                 mon.update(monitored=1, crossings_err_est=est[0], crossings_err_rms=est[1],
                            crossings_err_p99=est[2], crossings_err_pressure=est[3], monitor_crossings=2*n_acc,
                            monitor_wall_s=info2["wall_s"], monitor_ke_internal_ratio=internal2)
+                err, basis = limit_error(est[0], est[3])
+                mon.update(crossings_err_limit=err, crossings_err_limit_basis=basis)
                 say(f"  monitor: k {k}->{k_next}  N_c {n_acc} against {2*n_acc}: crossings error {est[0]:.3e} "
                     f"(rms {est[1]:.3e}, p99 {est[2]:.3e}, pressure {est[3]:.3e}; limit {a.monitor_limit})  wall "
                     f"{info2['wall_s']:.2f} s")
-                if est[0] > a.monitor_limit:
+                if err > a.monitor_limit:
                     if 4*n_acc > a.max_crossings:
                         if c.rank == 0:
                             write_json(os.path.join(run_dir, "failed.json"),
                                        {"run": inp.name, "k0": k, "k1": k_next, "reason": "crossings_error",
                                         "crossings": n_acc, "monitor_crossings": 2*n_acc,
                                         "crossings_err_est": est[0], "crossings_err_rms": est[1],
-                                        "crossings_err_p99": est[2], "monitor_limit": a.monitor_limit,
+                                        "crossings_err_p99": est[2], "crossings_err_pressure": est[3],
+                                        "crossings_err_limit": err, "crossings_err_limit_basis": basis,
+                                        "monitor_limit": a.monitor_limit,
                                         "max_crossings": a.max_crossings,
-                                        "explanation": "the crossings-error estimate exceeds --monitor-limit and the "
+                                        "explanation": "the crossings-error estimate (the larger of the von Mises "
+                                        "and pressure estimates) exceeds --monitor-limit and the "
                                         "run cannot continue at twice the crossings and still be monitored (4 N > "
                                         "--max-crossings)"})
-                        raise Failure(f"interval {k}->{k_next}: crossings error {est[0]:.3e} > {a.monitor_limit} at "
+                        raise Failure(f"interval {k}->{k_next}: crossings error {err:.3e} ({basis}) > "
+                                      f"{a.monitor_limit} at "
                                       f"{n_acc} crossings, and {4*n_acc} would exceed --max-crossings "
                                       f"{a.max_crossings}", collective=True)
-                    say(f"  monitor: crossings error {est[0]:.3e} > {a.monitor_limit}: k {k}->{k_next} takes the "
-                        f"{2*n_acc}-crossing state, and the run continues at {2*n_acc} crossings")
+                    say(f"  monitor: crossings error {err:.3e} ({basis}) > {a.monitor_limit}: k {k}->{k_next} takes "
+                        f"the {2*n_acc}-crossing state, and the run continues at {2*n_acc} crossings")
                     base = 2*n_acc
                     state, info, tried2 = rp.run_interval(k, k_next, ck, base, "m", first=(st2, info2))
                     tried += tried2
@@ -1026,21 +1046,34 @@ def monitor_summary(rows, a):
         v = r.get(c, "")
         return float(v) if v not in ("", None) else math.nan
     mon = [r for r in rows if str(r.get("monitored", "0")) == "1"]
-    ests = [(num(r, "crossings_err_est"), r) for r in mon]
+    def lim(r):        # rows written before the limit took the larger of the two lack the column
+        v = num(r, "crossings_err_limit")
+        return v if not math.isnan(v) else limit_error(num(r, "crossings_err_est"), num(r, "crossings_err_pressure"))[0]
+
+    def basis(r):
+        b = r.get("crossings_err_limit_basis", "")
+        return b if b else limit_error(num(r, "crossings_err_est"), num(r, "crossings_err_pressure"))[1]
+    ests = [(lim(r), r) for r in mon]
     best = max(ests, key=lambda e: e[0]) if ests else None
     return {
         "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit,
+        "limit_basis": "max(von_mises, pressure)",
         "intervals_monitored": [[int(r["k0"]), int(r["k1"])] for r in mon],
-        "max_crossings_err_est": best[0] if best else None,
+        "max_crossings_err_limit": best[0] if best else None,
+        "max_crossings_err_limit_basis": basis(best[1]) if best else None,
         "max_at": [int(best[1]["k0"]), int(best[1]["k1"])] if best else None,
+        "max_crossings_err_est": max(num(r, "crossings_err_est") for r in mon) if mon else None,
         "max_crossings_err_rms": max(num(r, "crossings_err_rms") for r in mon) if mon else None,
         "max_crossings_err_p99": max(num(r, "crossings_err_p99") for r in mon) if mon else None,
         "max_crossings_err_pressure": max(num(r, "crossings_err_pressure") for r in mon) if mon else None,
         "estimates": [{"k0": int(r["k0"]), "k1": int(r["k1"]), "crossings": int(r["crossings"]),
                        "monitor_crossings": int(r["monitor_crossings"]), "est": num(r, "crossings_err_est"),
-                       "rms": num(r, "crossings_err_rms"), "p99": num(r, "crossings_err_p99")} for r in mon],
+                       "rms": num(r, "crossings_err_rms"), "p99": num(r, "crossings_err_p99"),
+                       "pressure": num(r, "crossings_err_pressure"), "limit": lim(r), "basis": basis(r)}
+                      for r in mon],
         "switches": [{"k0": int(r["k0"]), "k1": int(r["k1"]), "to_crossings": int(r["run_crossings"]),
-                      "est": num(r, "crossings_err_est")} for r in rows if str(r.get("crossings_switch", "0")) == "1"],
+                      "est": num(r, "crossings_err_est"), "limit": lim(r), "basis": basis(r)}
+                     for r in rows if str(r.get("crossings_switch", "0")) == "1"],
         "final_crossings": int(rows[-1]["run_crossings"]) if rows and rows[-1].get("run_crossings") not in
         ("", None) else a.crossings,
         "monitor_wall_s": math.fsum(num(r, "monitor_wall_s") for r in mon),

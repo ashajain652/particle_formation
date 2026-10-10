@@ -21,6 +21,8 @@ spacings, so at k = 1 (the end of the ramp, the monitor's first interval) per ca
               vM(sigma_N), N = 5, 10, 20: the whole error, dominated by the surface particles and SPH's particle
               scatter (0.60-0.63 everywhere; 0.16-0.18 inside R - 2 dx), so per particle the exact solution cannot
               resolve the lag; check 4's binned interior errors (below) can
+  limit, limit_basis   max(est, pressure) and which decided: what the monitor's limit keys on (controller, after
+              Task 6b), computed here from the stored estimates
   binned_lag  2 x the binned interior difference |sigma_10 - sigma_20| over sigma_0 (check 4's binned measure,
               `spheral_m2_check4.pair_diff`), and check 4's interior errors at 10 and 20 and their difference
               (the "lag" check 4 measured: 0.6 % at RZ 1.1 mm)
@@ -28,7 +30,10 @@ spacings, so at k = 1 (the end of the ramp, the monitor's first interval) per ca
 and at k = 3 (held for 1 s) the same where the runs exist. The monitor itself is run on check 4's RZ 2.2 mm case
 (`--monitor-every 1`, 10 crossings, damping 0.05, the check's other settings): its interval 0 -> 1 estimate must equal
 est_10 computed here from check 4's 10- and 20-crossing runs (the same two states, bitwise), and its later intervals
-(held) show what it reports once the ramp is over.
+(held) show what it reports once the ramp is over. The two monitor runs were made while the limit keyed on the von
+Mises estimate alone; the `limit` column applies the present rule (the larger of the two) to their stored estimates,
+which needs no rerun. Under it check 4's RZ 2.2 mm ramp interval (limit 6.1 %, pressure) would have switched to 20
+crossings, so that run's later rows describe the run at 10; the flight (largest 1.45 %, von Mises) is unaffected.
 
 **The real flight** (`flight`): the MVP flight's RZ 2.2 mm replay body, frames 0-20, `--monitor-every 2` (the default
 is 10; 2 for the measurement), every other setting at its default. Per monitored interval the estimates, the
@@ -66,7 +71,7 @@ FLIGHT_EVERY = 2
 CHECK4_EVERY = 1
 
 COLUMNS = ["case", "form", "dx_mm", "k0", "k1", "t1_s", "crossings", "monitor_crossings", "est", "rms", "p99",
-           "pressure", "est_5", "pressure_5", "ratio_5_10", "exact_5", "exact_10", "exact_20", "binned_lag", "interior_err_10",
+           "pressure", "limit", "limit_basis", "est_5", "pressure_5", "ratio_5_10", "exact_5", "exact_10", "exact_20", "binned_lag", "interior_err_10",
            "interior_err_20", "interior_diff_10_20", "monitor_run_est", "wall_s", "monitor_wall_s",
            "ke_internal_ratio", "monitor_ke_internal_ratio", "run"]
 
@@ -155,7 +160,8 @@ def validate(table):
             i20 = float(c4rows[(form, dx, 20, k)]["interior_err"])
             mr = mon_rows.get(k - 1) if (form, dx) == ("rz", 2.2) else None
             rows.append(dict(case="check4", form=form, dx_mm=dx, k0=k - 1, k1=k, t1_s=0.5*k, crossings=10,
-                             monitor_crossings=20, est=est10[0], rms=est10[1], p99=est10[2], pressure=pr10, est_5=est5[0], pressure_5=pr5,
+                             monitor_crossings=20, est=est10[0], rms=est10[1], p99=est10[2], pressure=pr10,
+                             est_5=est5[0], pressure_5=pr5,
                              ratio_5_10=est5[0]/est10[0], exact_5=exact[5], exact_10=exact[10], exact_20=exact[20],
                              binned_lag=lag, interior_err_10=i10, interior_err_20=i20,
                              interior_diff_10_20=i10 - i20,
@@ -198,6 +204,8 @@ def analyse():
     vrows, s0 = validate(table)
     frows, summ = flight()
     rows = vrows + frows
+    for r in rows:      # the limit keys on the larger of the two (controller, after Task 6b), from the stored values
+        r["limit"], r["limit_basis"] = run.limit_error(r["est"], r["pressure"])
     path = os.path.join(REPO, CSV)
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -207,37 +215,40 @@ def analyse():
                         for c in COLUMNS])
     print("wrote {} ({} rows); sigma_0 {:.4g} MPa".format(CSV, len(rows), s0/1e6))
     print("\ncheck 4 validation (N = 10 against 20; fractions)")
-    hdr = ("frm", "dx", "k", "est10", "rms", "p99", "pres10", "est5", "pres5", "5/10", "exact10", "binlag",
+    hdr = ("frm", "dx", "k", "est10", "rms", "p99", "pres10", "limit10", "est5", "pres5", "5/10", "exact10", "binlag",
            "int10", "int20", "mon.run")
     print("{:3s} {:>4s} {:>2s}".format(*hdr[:3]) + "".join(" {:>8s}".format(h) for h in hdr[3:]))
     for r in vrows:
         if r["case"] != "check4":
             continue
-        vals = [r[c] for c in ("est", "rms", "p99", "pressure", "est_5", "pressure_5", "ratio_5_10", "exact_10",
-                               "binned_lag", "interior_err_10", "interior_err_20", "monitor_run_est")]
+        vals = [r[c] for c in ("est", "rms", "p99", "pressure", "limit", "est_5", "pressure_5", "ratio_5_10",
+                               "exact_10", "binned_lag", "interior_err_10", "interior_err_20", "monitor_run_est")]
         print("{:3s} {:4.1f} {:2d}".format(r["form"], r["dx_mm"], r["k1"]) + "".join(" {:8.4f}".format(v)
                                                                                 for v in vals))
     print("\ncheck 4 RZ 2.2 mm with --monitor-every 1")
     for r in vrows:
         if r["case"] == "check4_monitor":
-            print("  k {}->{}  est {:.4f}  rms {:.4f}  p99 {:.4f}  pressure {:.4f}  wall {:.1f} s  monitor {:.1f} s"
-                  .format(r["k0"], r["k1"], r["est"], r["rms"], r["p99"], r["pressure"], r["wall_s"],
+            print("  k {}->{}  est {:.4f}  rms {:.4f}  p99 {:.4f}  pressure {:.4f}  limit {:.4f} ({})  wall {:.1f} s  "
+                  "monitor {:.1f} s".format(r["k0"], r["k1"], r["est"], r["rms"], r["p99"], r["pressure"], r["limit"],
+                                            r["limit_basis"], r["wall_s"],
                           r["monitor_wall_s"]))
     print("\nflight RZ 2.2 mm, frames {}-{}, --monitor-every {}".format(*FLIGHT_FRAMES, FLIGHT_EVERY))
     for r in frows:
         if r["monitor_crossings"]:
-            print("  k {:2d}->{:2d} t {:5.2f} s  N {}  est {:.4f}  rms {:.4f}  p99 {:.4f}  pressure {:.4f}  wall "
-                  "{:.1f} s  monitor {:.1f} s".format(r["k0"], r["k1"], r["t1_s"], r["crossings"], r["est"], r["rms"],
-                                                      r["p99"], r["pressure"], r["wall_s"], r["monitor_wall_s"]))
+            print("  k {:2d}->{:2d} t {:5.2f} s  N {}  est {:.4f}  rms {:.4f}  p99 {:.4f}  pressure {:.4f}  limit "
+                  "{:.4f} ({})  wall {:.1f} s  monitor {:.1f} s".format(
+                      r["k0"], r["k1"], r["t1_s"], r["crossings"], r["est"], r["rms"], r["p99"], r["pressure"],
+                      r["limit"], r["limit_basis"], r["wall_s"], r["monitor_wall_s"]))
     wall = math.fsum(r["wall_s"] for r in frows)
     mon = math.fsum(r["monitor_wall_s"] for r in frows)
     print("  accepted {:.1f} s, monitor {:.1f} s: overhead {:.1%} at every {} ({} monitored of {}); at the default 10 "
           "about {:.1%}".format(wall, mon, mon/wall, FLIGHT_EVERY, sum(1 for r in frows if r["monitor_crossings"]),
                                 len(frows), (mon/max(1, sum(1 for r in frows if r["monitor_crossings"])))*sum(
                                     run.monitor_due(j, 10) for j in range(len(frows)))/wall))
-    print("  summary: max est {} at {}, switches {}".format(summ["crossings_monitor"]["max_crossings_err_est"],
-                                                           summ["crossings_monitor"]["max_at"],
-                                                           summ["crossings_monitor"]["switches"]))
+    print("  max limit estimate {:.4f} ({}); the run's summary.json (von Mises rule): switches {}".format(
+        max(r["limit"] for r in frows if r["monitor_crossings"]),
+        max((r for r in frows if r["monitor_crossings"]), key=lambda r: r["limit"])["limit_basis"],
+        summ["crossings_monitor"]["switches"]))
     return rows
 
 
