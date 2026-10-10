@@ -5,6 +5,7 @@
   loads.SurfaceLoads               surface particles, normals, exposure, inclination, area shares and the
                                    aerodynamic pressure and shear from the prepared load tables (spec §7.2)
   loads.Deceleration               the frame's deceleration sum F / sum m on every particle (spec §7.1)
+  hold.Hold                        held particles at rest exactly: zero acceleration on their rows (check 5)
 
 Each is a Python subclass of Spheral's `Physics` (plan fact 5: a package adds to
 `derivs.vectorFields(HydroFieldNames.hydroAcceleration)` in `evaluateDerivatives`, and `dt()` returns a tuple),

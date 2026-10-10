@@ -3,6 +3,8 @@ every frame of the replay range (spec §6.2-6.3, §12 check 3; M2 plan, Task 2 a
 
     "$PY" -m spheral_frag body --prepared spheral_output/prepare/<prepared> --frames K0-K1 --form rz|3d --dx-mm DX
           [--azimuth-deg 0] [--out spheral_output/body] [--force] [--quiet]
+          [--synthetic radial|uniform ...] [--geometry frame|bar [--bar-length-mm 100] [--bar-width-mm 20]
+           [--bar-hold-spacings 2]]
 
 **The lattice, clipped by the finite-element body (D4).** 3D: the cubic lattice of spacing dx with a node at the
 origin of the finite-element body's coordinates (the sphere's initial centre, as M0's `bench.lattice_generator`
@@ -45,7 +47,7 @@ in a partly consumed element (phi < 1) carries that element's whole volume.
 
   body.npz         pid (int64, 0..n-1 in lattice order), x_ref ((n, 3) in 3D; (n, 2) in RZ: axial x and r),
                    x_sample (n, 3), V, m, rho, T0 (float64), remove_k (int64, -1 = never), frames_k (int64),
-                   frames_time_s, dx_m, c, azimuth_deg (scalars)
+                   frames_time_s, dx_m, c, azimuth_deg (scalars); hold (uint8, --geometry bar only)
   temperature.npy  (n, n_frames) float64, Fortran order: each frame's column is contiguous, so a memory-mapped
                    read of one frame touches one block (the runner maps it, `np.load(..., mmap_mode="r")`)
   body.json        last: provenance (the prepared input, its prepare.json and material table sha256), the settings,
@@ -63,6 +65,26 @@ after. dT (`--radial-delta-k`, default 50 K) and n_ramp (`--radial-ramp-frames`,
 sampler's name ("radial" at the defaults, else "radialdt<K>r<n>"), which the body's name carries
 (`naming.body_name(..., synthetic=...)`) and the run name's `sampler` bracket repeats. Built on the MVP flight's
 frames 0-3 (the intact sphere, no removal), it gives check 4's case: a one-interval ramp held for two.
+
+`--synthetic uniform` (Task 7, check 5) sets every particle to T = 300 K + dT min(k / n_ramp, 1), k the absolute
+frame index (`--uniform-delta-k`, default 300 K; `--uniform-ramp-frames`, default 10); its name is "uniform" at the
+defaults, else "uniformdt<K>r<n>". (Short on purpose: check 5's run name at the defaults is 245 characters, against
+the file system's 255 for one path component; the MVP flight's prepared name alone is 205.)
+
+**The bar** (`--geometry bar`; Task 7, check 5). Not a frame of the flight: a bar along the flight axis x, centred
+on the body coordinates' origin, `--bar-length-mm` L (default 100) long and `--bar-width-mm` W (default 20) wide --
+a W x W square section in 3D, a rod of radius W/2 in RZ. Particles at cell centres: n_x = round(L/dx) along x at
+(i + 1/2 - n_x/2) dx; 3D n_y = round(W/dx) on y and z alike; RZ rows at r = (j + 1/2) dx, j < round(W/(2 dx)). The
+bar's actual extent is n_x dx by n_y dx (or radius n_r dx), recorded in body.json (2.2 mm: 99 x 19.8 mm, RZ radius
+11 mm; 1.1 mm: 100.1 x 19.8 mm, RZ radius 9.9 mm). Its frames are the prepared input's (their times, k0 ... k1), but
+only for time and the material table: no frame geometry is read, nothing is clipped and nothing is removed
+(remove_k = -1). V_i = dx^3 or 2 pi r_i dx^2 (c = 1: no finite-element mass to match), m_i = rho_free(T_i) V_i.
+`hold` (body.npz, uint8) marks the particles whose centre lies within `--bar-hold-spacings` H (default 2) spacings
+of either end face, |x| > n_x dx / 2 - H dx: the two outermost layers at each end, which the runner holds at zero
+velocity (run.py, "Held particles"). The geometry's name is "bar" at the defaults, else "barl<L>w<W>h<H>" (whole
+millimetres and spacings), carried by the body name (`_geometry-<name>`) and the run name's `geometry` bracket.
+check3 holds the particle count, the mass and volume, and per frame the particles' heat content (no finite-element
+comparison). Measured use: data/spheral/m2_check5.csv.
 
 Exit codes: 0 ok; 1 a model failure (an empty body, a mass that c does not close, a frame that cannot be read);
 2 bad arguments or a missing prepared input or frame.
@@ -235,7 +257,135 @@ def make_radial_sampler(delta_K=RADIAL_DELTA_K, ramp_frames=RADIAL_RAMP_FRAMES):
     return sampler
 
 
-SAMPLERS = {"p1": p1_sampler, "radial": make_radial_sampler()}
+# Task 7's synthetic uniform heating (check 5: the bar held at both ends)
+UNIFORM_T_BASE_K = 300.0     # K, the uniform start (stress free)
+UNIFORM_DELTA_K = 300.0      # K, the rise at full strength
+UNIFORM_RAMP_FRAMES = 10     # frames over which the rise ramps in linearly from frame 0; held after
+
+
+def uniform_temperature(k, n, delta_K=UNIFORM_DELTA_K, ramp_frames=UNIFORM_RAMP_FRAMES,
+                        T_base=UNIFORM_T_BASE_K) -> np.ndarray:
+    """T = T_base + delta_K min(k / ramp_frames, 1) at n points, frame index k."""
+    f = min(max(float(k), 0.0)/float(ramp_frames), 1.0)
+    return np.full(int(n), float(T_base) + float(delta_K)*f)
+
+
+def uniform_sampler_name(delta_K=UNIFORM_DELTA_K, ramp_frames=UNIFORM_RAMP_FRAMES) -> str:
+    """"uniform" at the defaults, else "uniformdt<K>r<frames>" (whole kelvin and frames)."""
+    if float(delta_K) == UNIFORM_DELTA_K and int(ramp_frames) == UNIFORM_RAMP_FRAMES:
+        return "uniform"
+    if not (float(delta_K).is_integer() and float(delta_K) > 0.0 and int(ramp_frames) >= 1
+            and float(ramp_frames) == int(ramp_frames)):
+        raise ValueError("--uniform-delta-k must be a positive whole number of kelvin and --uniform-ramp-frames a "
+                         "positive integer, got {!r}, {!r}".format(delta_K, ramp_frames))
+    return "uniformdt{}r{}".format(int(delta_K), int(ramp_frames))
+
+
+def make_uniform_sampler(delta_K=UNIFORM_DELTA_K, ramp_frames=UNIFORM_RAMP_FRAMES):
+    """A sampler (k, frame, locator, x) -> T of `uniform_temperature`; with a locator, NaN outside its body."""
+    def sampler(k, frame, locator, x):
+        T = uniform_temperature(k, len(x), delta_K, ramp_frames)
+        if locator is not None:
+            T[locator.locate(x)[0] < 0] = np.nan
+        return T
+    sampler.params = {"delta_K": float(delta_K), "ramp_frames": int(ramp_frames), "T_base_K": UNIFORM_T_BASE_K}
+    return sampler
+
+
+SAMPLERS = {"p1": p1_sampler, "radial": make_radial_sampler(),
+            uniform_sampler_name(): make_uniform_sampler()}
+
+# ------------------------------------------------------------------------------------------------------ the bar
+BAR_LENGTH_MM = 100.0        # check 5 (plan Task 7): 100 mm long
+BAR_WIDTH_MM = 20.0          # 20 mm square (3D) or a 10 mm-radius rod (RZ)
+BAR_HOLD_SPACINGS = 2        # the particles within two spacings of each end are held
+GEOMETRIES = ("frame", "bar")
+
+
+def bar_geometry_name(length_mm=BAR_LENGTH_MM, width_mm=BAR_WIDTH_MM, hold_spacings=BAR_HOLD_SPACINGS) -> str:
+    """"bar" at the defaults, else "barl<L>w<W>h<H>" (whole millimetres, whole spacings)."""
+    if float(length_mm) == BAR_LENGTH_MM and float(width_mm) == BAR_WIDTH_MM and \
+            float(hold_spacings) == BAR_HOLD_SPACINGS:
+        return "bar"
+    if not (float(length_mm).is_integer() and float(width_mm).is_integer() and float(hold_spacings).is_integer()
+            and float(length_mm) > 0.0 and float(width_mm) > 0.0 and float(hold_spacings) >= 0.0):
+        raise ValueError("--bar-length-mm and --bar-width-mm must be positive whole millimetres and "
+                         "--bar-hold-spacings a non-negative integer, got {!r}, {!r}, {!r}".format(
+                             length_mm, width_mm, hold_spacings))
+    return "barl{}w{}h{}".format(int(length_mm), int(width_mm), int(hold_spacings))
+
+
+def bar_points(form, dx, length, width) -> tuple[np.ndarray, np.ndarray, dict]:
+    """(x_ref, x_sample, info) of the bar's particles at cell centres (module docstring); x fastest. Lengths in m."""
+    dx = float(dx)
+    nx = int(round(float(length)/dx))
+    if form == "3d":
+        ny = int(round(float(width)/dx))
+        if nx < 1 or ny < 1:
+            raise ValueError("the bar holds no particle at dx = {} m".format(dx))
+        ax = (np.arange(nx) + 0.5 - 0.5*nx)*dx
+        ay = (np.arange(ny) + 0.5 - 0.5*ny)*dx
+        z, y, x = np.meshgrid(ay, ay, ax, indexing="ij")
+        pts = np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
+        info = {"n_x": nx, "n_y": ny, "length_m": nx*dx, "width_m": ny*dx}
+        return pts, pts.copy(), info
+    if form == "rz":
+        nr = int(round(0.5*float(width)/dx))
+        if nx < 1 or nr < 1:
+            raise ValueError("the bar holds no particle at dx = {} m".format(dx))
+        ax = (np.arange(nx) + 0.5 - 0.5*nx)*dx
+        r = (np.arange(nr) + 0.5)*dx
+        rr, xx = np.meshgrid(r, ax, indexing="ij")
+        x_ref = np.stack([xx.ravel(), rr.ravel()], axis=1)
+        x_sample = np.zeros((len(x_ref), 3))
+        x_sample[:, :2] = x_ref
+        info = {"n_x": nx, "n_r": nr, "length_m": nx*dx, "radius_m": nr*dx}
+        return x_ref, x_sample, info
+    raise ValueError("form must be one of {}, got {!r}".format(FORMS, form))
+
+
+def bar_hold(x_ref, dx, length_actual, hold_spacings) -> np.ndarray:
+    """uint8: 1 where the particle's centre lies within hold_spacings spacings of either end face."""
+    edge = 0.5*float(length_actual) - float(hold_spacings)*float(dx)
+    return (np.abs(np.asarray(x_ref)[:, 0]) > edge + 1e-9*float(dx)).astype(np.uint8)
+
+
+def build_bar_body(ks, times, form, dx, table, sampler, length=BAR_LENGTH_MM*1e-3, width=BAR_WIDTH_MM*1e-3,
+                   hold_spacings=BAR_HOLD_SPACINGS, temperature=None) -> Body:
+    """The bar of check 5 (module docstring, "The bar"): its particles, masses, holds and temperatures at the
+    frames `ks` (times `times`, s). `sampler(k, None, None, x)` gives each frame's temperatures."""
+    t_all = time.perf_counter()
+    ks = [int(k) for k in ks]
+    if not ks or len(times) != len(ks):
+        raise ValueError("need one time per frame")
+    x_ref, x_sample, info = bar_points(form, dx, length, width)
+    n = len(x_ref)
+    T0 = np.asarray(sampler(ks[0], None, None, x_sample), dtype=np.float64)
+    rho = np.asarray(table.rho_free(T0), dtype=np.float64)
+    V = reference_volumes(form, x_ref, dx, 1.0)
+    m = rho*V
+    hold = bar_hold(x_ref, dx, info["length_m"], hold_spacings)
+    T = temperature(n) if callable(temperature) else np.empty((n, len(ks)), order="F")
+    per_frame = []
+    for j, k in enumerate(ks):
+        Tk = T0 if j == 0 else np.asarray(sampler(k, None, None, x_sample), dtype=np.float64)
+        if not np.all(np.isfinite(Tk)):
+            raise ValueError("frame {}: a bar temperature is not finite".format(k))
+        T[:, j] = Tk
+        per_frame.append({"k": k, "time_s": float(times[j]), "n_present": n, "n_removed": 0,
+                          "particle_mass_kg": math.fsum(m), "heat_particles_J": math.fsum(m*table.enthalpy(Tk)),
+                          "T_min_K": float(Tk.min()), "T_max_K": float(Tk.max())})
+    sum_m, sum_V = math.fsum(m), math.fsum(V)
+    exact_V = info["length_m"]*(info["width_m"]**2 if form == "3d" else math.pi*info["radius_m"]**2)
+    check = {"k0": ks[0], "n": n, "c": 1.0, "sum_m_kg": sum_m, "sum_V_m3": sum_V, "bar_volume_m3": exact_V,
+             "volume_rel_diff": _rel(sum_V, exact_V), "mass_rel_diff": 0.0, "n_held": int(hold.sum()),
+             "n_removed": 0, **info}
+    b = Body(form=form, dx=float(dx), azimuth_deg=0.0, pid=np.arange(n, dtype=np.int64), x_ref=x_ref,
+             x_sample=x_sample, V=V, m=m, rho=rho, T0=T0, remove_k=np.full(n, -1, dtype=np.int64),
+             frames_k=np.array(ks, dtype=np.int64), frames_time_s=np.asarray(times, dtype=np.float64), c=1.0,
+             temperature=T, check=check, per_frame=per_frame, timing_s={"total": time.perf_counter() - t_all})
+    b.hold = hold
+    return b
 
 
 # ------------------------------------------------------------------------------------------------------- the body
@@ -260,11 +410,16 @@ class Body:
     per_frame: list = field(default_factory=list)
     timing_s: dict = field(default_factory=dict)
 
+    hold: np.ndarray | None = None           # uint8, the bar's held particles (geometry "bar" only)
+
     def arrays(self) -> dict:
-        return {"pid": self.pid, "x_ref": self.x_ref, "x_sample": self.x_sample, "V": self.V, "m": self.m,
-                "rho": self.rho, "T0": self.T0, "remove_k": self.remove_k, "frames_k": self.frames_k,
-                "frames_time_s": self.frames_time_s, "dx_m": np.float64(self.dx), "c": np.float64(self.c),
-                "azimuth_deg": np.float64(self.azimuth_deg)}
+        out = {"pid": self.pid, "x_ref": self.x_ref, "x_sample": self.x_sample, "V": self.V, "m": self.m,
+               "rho": self.rho, "T0": self.T0, "remove_k": self.remove_k, "frames_k": self.frames_k,
+               "frames_time_s": self.frames_time_s, "dx_m": np.float64(self.dx), "c": np.float64(self.c),
+               "azimuth_deg": np.float64(self.azimuth_deg)}
+        if self.hold is not None:
+            out["hold"] = self.hold
+        return out
 
 
 def clip(locator, x_sample) -> np.ndarray:
@@ -464,8 +619,26 @@ def body(args) -> int:
             rf = getattr(args, "radial_ramp_frames", RADIAL_RAMP_FRAMES)
             sampler_name = radial_sampler_name(dk, rf)
             SAMPLERS.setdefault(sampler_name, make_radial_sampler(dk, rf))
+        elif sampler_name == "uniform":
+            dk = getattr(args, "uniform_delta_k", UNIFORM_DELTA_K)
+            rf = getattr(args, "uniform_ramp_frames", UNIFORM_RAMP_FRAMES)
+            sampler_name = uniform_sampler_name(dk, rf)
+            SAMPLERS.setdefault(sampler_name, make_uniform_sampler(dk, rf))
         if sampler_name not in SAMPLERS:
             raise ValueError("unknown sampler {!r}".format(sampler_name))
+        geometry = getattr(args, "geometry", "frame") or "frame"
+        bar = None
+        if geometry == "bar":
+            if not sampler_name.startswith("uniform"):
+                raise ValueError("--geometry bar needs --synthetic uniform (the bar is not in the frames)")
+            if azimuth != 0.0:
+                raise ValueError("--azimuth-deg does not apply to --geometry bar")
+            bar = {"length_mm": float(getattr(args, "bar_length_mm", BAR_LENGTH_MM)),
+                   "width_mm": float(getattr(args, "bar_width_mm", BAR_WIDTH_MM)),
+                   "hold_spacings": int(getattr(args, "bar_hold_spacings", BAR_HOLD_SPACINGS))}
+            geometry = bar_geometry_name(**bar)
+        elif geometry != "frame":
+            raise ValueError("unknown geometry {!r}".format(geometry))
         prep_doc, available = prepared_frames(prepared)
     except (ValueError, OSError, KeyError) as e:
         print(e, file=sys.stderr)
@@ -484,7 +657,7 @@ def body(args) -> int:
     prep_name = os.path.basename(prepared.rstrip(os.sep))
     try:
         name = naming.body_name(prep_name, k0, k1, args.form, float(args.dx_mm), azimuth,
-                                None if sampler_name == DEFAULT_SAMPLER else sampler_name)
+                                None if sampler_name == DEFAULT_SAMPLER else sampler_name, geometry)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
@@ -495,6 +668,9 @@ def body(args) -> int:
                  "prepare_json_sha256": sha256_file(os.path.join(prepared, "prepare.json")),
                  "material_table_sha256": sha256_file(table_path), "form": args.form, "dx_m": dx,
                  "azimuth_deg": azimuth, "frames": ks, "sampler": sampler_name}
+    if bar is not None:
+        signature["geometry"] = geometry
+        signature["bar"] = bar
     files = ("body.npz", "temperature.npy")
     if os.path.isfile(json_path) and not args.force:
         try:
@@ -530,8 +706,14 @@ def body(args) -> int:
 
     _say(quiet, "body {} ({} frames) -> {}".format(name, len(ks), out))
     try:
-        b = build_body(frame_loader(prepared), ks, args.form, dx, table, azimuth, SAMPLERS[sampler_name],
-                       temperature=temperature, progress=progress)
+        if bar is None:
+            b = build_body(frame_loader(prepared), ks, args.form, dx, table, azimuth, SAMPLERS[sampler_name],
+                           temperature=temperature, progress=progress)
+        else:
+            tk = {int(f["k"]): float(f["time_s"]) for f in prep_doc["frames"]}
+            b = build_bar_body(ks, [tk[k] for k in ks], args.form, dx, table, SAMPLERS[sampler_name],
+                               bar["length_mm"]*1e-3, bar["width_mm"]*1e-3, bar["hold_spacings"],
+                               temperature=temperature)
     except (ValueError, OSError, KeyError, EOFError, zipfile.BadZipFile) as e:
         print("body failed: {}".format(e), file=sys.stderr)
         if os.path.exists(ttmp):
@@ -556,6 +738,8 @@ def body(args) -> int:
                      "material_table_sha256": signature["material_table_sha256"],
                      "fe_run": prep_doc.get("fe_run", {}).get("name"), "material": table.name},
         "form": args.form, "dx_m": dx, "dx_mm": float(args.dx_mm), "azimuth_deg": azimuth, "sampler": sampler_name,
+        "geometry": geometry, "bar": None if bar is None else {**bar, **{k: b.check[k] for k in b.check if k in (
+            "n_x", "n_y", "n_r", "length_m", "width_m", "radius_m", "n_held", "bar_volume_m3")}},
         "sampler_params": getattr(SAMPLERS[sampler_name], "params", None),
         "origin_m": [0.0, 0.0, 0.0], "axis": [1.0, 0.0, 0.0],
         "frames": {"k0": k0, "k1": k1, "n": len(ks), "k": ks},
@@ -568,6 +752,11 @@ def body(args) -> int:
     }
     write_json(json_path, doc)
     c3 = b.check
+    if bar is not None:
+        _say(quiet, "  bar: {} particles ({} held), mass {:.6g} kg, volume {:+.3e} of the bar's; {:.1f} s".format(
+            b.check["n"], b.check["n_held"], b.check["sum_m_kg"], b.check["volume_rel_diff"],
+            doc["timing_s"]["command_total"]))
+        return 0
     _say(quiet, "  {} particles, c {:.6f}, mass {:+.1e}, volume {:+.3e}, heat at k0 {:+.3e} (max {:.3e}){}; "
                "{:.1f} s, {:.1f} MB".format(c3["n"], b.c, c3["mass_rel_diff"], c3["volume_rel_diff"],
                                             c3["heat_rel_diff_k0"], c3["max_abs_heat_rel_diff"],
@@ -594,9 +783,22 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--azimuth-deg", type=float, default=0.0, help="RZ: the half-plane's azimuth about the flight "
                    "axis from +y towards +z (default 0; RZ only)")
     p.add_argument("--out", default=DEFAULT_OUT, help="parent of the body directory (default spheral_output/body)")
-    p.add_argument("--synthetic", choices=("radial",), default=None,
+    p.add_argument("--synthetic", choices=("radial", "uniform"), default=None,
                    help="replace the frames' temperatures by a synthetic profile (removal still follows the frames' "
-                   "body): radial = T_base + dT min(k / ramp, 1) (|x| / R)^2, R = 50 mm, T_base 300 K (check 4)")
+                   "body): radial = T_base + dT min(k / ramp, 1) (|x| / R)^2, R = 50 mm, T_base 300 K (check 4); "
+                   "uniform = 300 K + dT min(k / ramp, 1) (check 5)")
+    p.add_argument("--uniform-delta-k", type=float, default=UNIFORM_DELTA_K,
+                   help="uniform: the rise dT, whole kelvin (default 300)")
+    p.add_argument("--uniform-ramp-frames", type=int, default=UNIFORM_RAMP_FRAMES,
+                   help="uniform: frames over which the rise ramps in from frame 0, held after (default 10)")
+    p.add_argument("--geometry", choices=GEOMETRIES, default="frame",
+                   help="frame (the finite-element body's lattice, default) or bar (check 5: a bar along x held at "
+                   "both ends, not clipped by the frames; needs --synthetic uniform)")
+    p.add_argument("--bar-length-mm", type=float, default=BAR_LENGTH_MM, help="bar: length along x (default 100)")
+    p.add_argument("--bar-width-mm", type=float, default=BAR_WIDTH_MM,
+                   help="bar: 3D square side, RZ rod diameter (default 20)")
+    p.add_argument("--bar-hold-spacings", type=int, default=BAR_HOLD_SPACINGS,
+                   help="bar: particles within this many spacings of each end are held (default 2)")
     p.add_argument("--radial-delta-k", type=float, default=RADIAL_DELTA_K,
                    help="radial: the rise dT from the centre to r = R, whole kelvin (default 50)")
     p.add_argument("--radial-ramp-frames", type=int, default=RADIAL_RAMP_FRAMES,

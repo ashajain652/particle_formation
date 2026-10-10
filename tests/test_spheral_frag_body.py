@@ -294,6 +294,46 @@ def test_synthetic_radial_profile(prepared, tmp_path):
     assert run_body(d, tmp_path, "--synthetic", "radial", "--radial-delta-k", "20.5") == 2
 
 
+@pytest.mark.parametrize("form,dx_mm,n,n_held,length,width", [
+    ("3d", 2.2, 45*9*9, 4*9*9, 99.0, 19.8), ("rz", 2.2, 45*5, 4*5, 99.0, 11.0),
+    ("3d", 10.0, 10*2*2, 4*2*2, 100.0, 20.0), ("rz", 10.0, 10*1, 4*1, 100.0, 10.0)])
+def test_bar_geometry(prepared, tmp_path, form, dx_mm, n, n_held, length, width):
+    """Check 5's bar (Task 7): cell-centred particles, the two outermost layers at each end held, uniform heating
+    30 K per frame from 300 K, m = rho_free(T0) V with V = dx^3 or 2 pi r dx^2, nothing removed; the frames give only
+    the times (the bar is clipped by no frame's body). `width`: the 3D side or the RZ radius, n dx."""
+    import json
+    d, table = prepared
+    assert run_body(d, tmp_path, "--synthetic", "uniform", "--geometry", "bar", form=form, dx=str(dx_mm)) == 0
+    name = naming.body_name(PREP_NAME, 0, 2, form, dx_mm, synthetic="uniform", geometry="bar")
+    arrays, T = body.load_body(str(tmp_path / name))
+    dx = dx_mm*1e-3
+    x = arrays["x_ref"]
+    assert len(x) == n and int(arrays["hold"].sum()) == n_held
+    assert np.array_equal(arrays["remove_k"], np.full(n, -1))
+    assert np.array_equal(T[:, 0], np.full(n, 300.0)) and np.array_equal(T[:, 1], np.full(n, 330.0))
+    assert np.array_equal(T[:, 2], np.full(n, 360.0))
+    half = 0.5*round(length/dx_mm)*dx
+    assert np.isclose(x[:, 0].max() + 0.5*dx, half, rtol=1e-12) and np.isclose(x[:, 0].min() - 0.5*dx, -half)
+    held = arrays["hold"] == 1
+    assert np.all(np.abs(x[held, 0]) > half - 2*dx) and np.all(np.abs(x[~held, 0]) < half - 2*dx)
+    if form == "3d":
+        assert np.isclose(2*(x[:, 1].max() + 0.5*dx)*1e3, width, rtol=1e-12)
+        V = np.full(n, dx**3)
+    else:
+        assert np.isclose((x[:, 1].max() + 0.5*dx)*1e3, width, rtol=1e-12)          # RZ: `width` is the radius
+        V = 2*np.pi*x[:, 1]*dx**2
+    assert np.allclose(arrays["V"], V, rtol=1e-15) and np.array_equal(arrays["m"], table.rho_free(T[:, 0])*arrays["V"])
+    doc = json.loads((tmp_path / name / "body.json").read_text())
+    assert doc["geometry"] == "bar" and doc["bar"]["n_held"] == n_held and doc["sampler"] == "uniform"
+    # a non-default bar and heating are named; the bar needs the uniform sampler
+    assert run_body(d, tmp_path, "--synthetic", "uniform", "--uniform-delta-k", "60", "--uniform-ramp-frames", "2",
+                    "--geometry", "bar", "--bar-hold-spacings", "1", form=form, dx="10") == 0
+    assert (tmp_path / naming.body_name(PREP_NAME, 0, 2, form, 10.0, synthetic="uniformdt60r2",
+                                        geometry="barl100w20h1")).is_dir()
+    assert run_body(d, tmp_path, "--geometry", "bar", form=form, dx="10") == 2
+    assert run_body(d, tmp_path, "--synthetic", "radial", "--geometry", "bar", form=form, dx="10") == 2
+
+
 def test_command_exit_codes(prepared, tmp_path):
     d, _ = prepared
     assert run_body(str(tmp_path / "nowhere"), tmp_path) == 2                       # no prepared input
@@ -320,15 +360,20 @@ def test_body_names_parse_back():
     assert name == "body_{}_k00000-00047_rz_dx2.20mm".format(PREP_NAME)
     p = naming.parse_body_name(name)
     assert p == {"prepared": PREP_NAME, "frames": (0, 47), "form": "rz", "dx_mm": 2.2, "azimuth_deg": 0.0,
-                 "synthetic": None, "prepare": naming.parse_prepare_name(PREP_NAME)}
+                 "synthetic": None, "geometry": "frame", "prepare": naming.parse_prepare_name(PREP_NAME)}
     for args in [(PREP_NAME, 3, 9, "3d", 1.5), (PREP_NAME, 0, 0, "rz", 0.55, 90.0),
-                 (PREP_NAME, 0, 4, "rz", 1.1, -22.5, "radial"), ("other", 1, 2, "3d", 3.0, 0.0, "radial")]:
+                 (PREP_NAME, 0, 4, "rz", 1.1, -22.5, "radial"), ("other", 1, 2, "3d", 3.0, 0.0, "radial"),
+                 (PREP_NAME, 0, 10, "rz", 2.2, 0.0, "uniform", "bar"),
+                 (PREP_NAME, 0, 10, "3d", 1.1, 0.0, None, "barl50w10h1")]:
         n = naming.body_name(*args)
         q = naming.parse_body_name(n)
         assert naming.body_name(q["prepared"], *q["frames"], q["form"], q["dx_mm"], q["azimuth_deg"],
-                                q["synthetic"]) == n
+                                q["synthetic"], q["geometry"]) == n
+    assert naming.body_name(PREP_NAME, 0, 47, "rz", 2.2, geometry="frame") == name          # the default adds nothing
+    assert naming.body_name(PREP_NAME, 0, 10, "rz", 2.2, 0.0, "uniform", "bar").endswith(
+        "_synthetic-uniform_geometry-bar")
     for bad in ("body_x_k0-1_rz_dx2.20mm", name + "_azimuth-0deg", name.replace("rz", "2d"), "x" + name,
-                name + "_synthetic-Radial"):
+                name + "_synthetic-Radial", name + "_geometry-frame", name + "_geometry-bar_synthetic-radial"):
         with pytest.raises(ValueError):
             naming.parse_body_name(bad)
     with pytest.raises(ValueError):

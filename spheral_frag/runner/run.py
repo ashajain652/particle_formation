@@ -67,6 +67,20 @@ masses as s). A disagreement would mean that something divides by an unscaled ma
 `time_scale` (1/sqrt(s_N) unscaled, 1 scaled) and `spheral_t1_s` are recorded per interval; the record's times stay
 the flight times. Both switches are run-name brackets (`loads`, `mass_scaling`, default on).
 
+**Held particles** (Spheral M2 plan, Task 7, check 5). A body whose body.npz carries `hold` (the body stage's
+`--geometry bar`) has those particles held at rest by the `Hold` package (packages/hold.py), built on each attempt's
+fresh node list for the local held particles (by pid) and appended after every other package: it sets their rows of
+the hydro acceleration to zero, so their velocity stays zero (the start is at rest and the checkpoints keep it so)
+through both stages of CheapSynchronousRK2 and their position never changes: exact, not approximate
+(intervals.csv's `held_max_speed_ms` and `held_max_disp_m`, the largest |v| and |x - x_ref| over the held particles
+at the interval's end, are 0.0 in every check-5 run). Spheral's `ConstantVelocityBoundary` is not used: it resets
+the velocity only at the end of a CheapSynchronousRK2 step, so a held particle drifts by a dt^2/2 per step
+(packages/hold.py has the measurement). A held body is fixed in space, so the boundary's
+frame corrections (the net-momentum removal and the re-centring, step 5) are not applied: they would move the held
+particles; `v_com_removed_ms` is 0 and `recentre_shift_dx` the measured mean axial (RZ) or norm (3D) displacement,
+`recentre_applied` 0. A body that is not the frames' (body.json `geometry` other than "frame") needs `--loads off`;
+the geometry is a run-name bracket (`geometry`, default frame).
+
 **The crossings-error monitor** (Spheral M2 plan, decision 7, Asha 2026-10-10; Task 6b). Check 4 found 10 crossings
 per interval within the plan's rule at every held state but lagging 20 crossings by 0.6 % of the peak stress right
 after a ramp, so the replay estimates its own crossings error as it runs. On a monitored interval, once the interval
@@ -101,7 +115,7 @@ per monitored interval, about 2/M of the run's time plus the first interval's.
 
 **Run directory** `<out>/<run name>/` (`naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)`;
 the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and azimuth, loads, mass_scaling,
-monitor_every and monitor_limit are suffixes when they differ from their defaults):
+monitor_every, monitor_limit and the body's geometry are suffixes when they differ from their defaults):
 
   meta.json                  record.make_meta (the analyse contract) + the run's settings and provenance
   checks/check_<n>.npz       record.Particles at K0 (n = 0) and every --every-check intervals (always at K1):
@@ -168,7 +182,8 @@ INTERVAL_COLUMNS = [
     "momentum_over_impulse", "v_com_removed_ms", "recentre_shift_dx", "recentre_applied", "attempts_ke_ratio",
     "time_scale", "spheral_t1_s", "monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99",
     "crossings_err_pressure", "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
-    "run_crossings", "crossings_err_limit", "crossings_err_limit_basis",
+    "run_crossings", "crossings_err_limit", "crossings_err_limit_basis", "n_held", "held_max_speed_ms",
+    "held_max_disp_m",
 ]
 
 
@@ -505,11 +520,17 @@ class Inputs:
                            "needs --loads off (the load tables are in flight time)")
         if a.monitor_every < 0 or not a.monitor_limit > 0.0:
             raise BadInput("need --monitor-every >= 0 (0: off) and --monitor-limit > 0")
+        self.geometry = self.body_doc.get("geometry", "frame")
+        if self.geometry != "frame" and a.loads != "off":
+            raise BadInput(f"the body's geometry {self.geometry!r} is not the frames' body: it needs --loads off")
+        self.hold = self.body.get("hold")
+        if self.hold is not None and self.hold.shape != self.body["pid"].shape:
+            raise BadInput("body.npz's hold does not match its particles")
         brackets = {"crossings": a.crossings, "damping": a.damping, "scheme": a.scheme, "strength": a.strength,
                     "rate_min": a.rate_min, "sampler": self.body_doc.get("sampler", "p1"),
                     "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0)), "loads": a.loads,
                     "mass_scaling": a.mass_scaling, "monitor_every": a.monitor_every,
-                    "monitor_limit": a.monitor_limit}
+                    "monitor_limit": a.monitor_limit, "geometry": self.geometry}
         try:
             self.brackets = naming.canonical_brackets(brackets)
             self.name = naming.run_name(self.prepared, "replay", (k0, k1), self.form, self.dx_mm, self.brackets,
@@ -565,6 +586,8 @@ class Replay:
         self.body_order = np.argsort(self.body_pid, kind="stable")
         self.body_m = b["m"]
         self.remove_k = b["remove_k"]
+        # the bar's held particles (check 5; module docstring, "Held particles"), by pid
+        self.held_pid = np.sort(b["pid"][b["hold"] != 0].astype(np.int64)) if "hold" in b else np.zeros(0, np.int64)
         self.T_table = np.load(os.path.join(inp.body_dir, "temperature.npy"), mmap_mode="r")
         self.ck_dir = os.path.join(run_dir, "checkpoints")
         self.hist_dir = os.path.join(run_dir, "history")
@@ -651,6 +674,10 @@ class Replay:
             loads = pl.make_surface_loads(S, body, tables, (t0, t1), area, lee=inp.lee)
             decel = pl.make_deceleration(S, loads, s)
             packages += [loads, decel]
+        if len(self.held_pid):
+            # last: it zeroes the held rows after every other package has added to the acceleration
+            from spheral_frag.runner.packages import hold as ph
+            packages.append(ph.make_hold(S, body, np.flatnonzero(np.isin(body.local_pids(), self.held_pid))))
 
         hydro = S.SPH(dataBase=body.db, W=body.kernel, cfl=CFL, compatibleEnergyEvolution=True,
                       densityUpdate=S.IntegrateDensity, XSPH=False, ASPH=False)
@@ -702,7 +729,11 @@ class Replay:
             F_scale = abs(float(F_mean[0])) if self.form == "rz" else float(np.linalg.norm(F_mean))
             impulse = F_scale*(t1 - t0)
             dref = state["x"] - state["x_ref"]
-            info = dict(scale=s, crossings=crossings, D_m=D, D_body_m=D_body, omega1=omega1, steps=steps,
+            hm = np.isin(state["pid"], self.held_pid)
+            held = dict(n_held=int(hm.sum()),
+                        held_max_speed_ms=float(np.abs(v[hm]).max()) if hm.any() else math.nan,
+                        held_max_disp_m=float(np.abs(dref[hm]).max()) if hm.any() else math.nan)
+            info = dict(**held,scale=s, crossings=crossings, D_m=D, D_body_m=D_body, omega1=omega1, steps=steps,
                         wall_s=wall, ke_J=ke, elastic_J=el, ke_ratio=ke_ratio(ke, el), ke_com_J=ke_com,
                         ke_internal_ratio=ke_ratio(max(ke - ke_com, 0.0), el),
                         n_particles=len(state["pid"]),
@@ -806,17 +837,25 @@ class Replay:
         row["n_removed"] = n_gone
         keep = ~gone
         new = {key: val[keep] for key, val in state.items()}
-        # back into the main body's frame: the removed particles carry momentum away (and SolidSPHRZ does not
-        # conserve axial momentum), so the rest is given zero net momentum (RZ: the axial component only)
         m = new["m"]
-        v_com = np.array([math.fsum(m*new["v"][:, j]) for j in range(new["v"].shape[1])])/math.fsum(m)
-        if self.form == "rz":
-            v_com[1] = 0.0
-        new["v"] = new["v"] - v_com
-        row["v_com_removed_ms"] = float(v_com[0]) if self.form == "rz" else float(np.linalg.norm(v_com))
-        new["x"], shift, applied = recentre(self.form, m, new["x"], new["x_ref"], self.dx)
-        row["recentre_shift_dx"] = shift
-        row["recentre_applied"] = int(applied)
+        if len(self.held_pid):
+            # a held body (check 5) is fixed in space by its holds: no frame correction (it would move the held
+            # particles); the net momentum (the holds' reaction) and the mean displacement are recorded only
+            row["v_com_removed_ms"] = 0.0
+            row["recentre_shift_dx"] = recentre(self.form, m, new["x"], new["x_ref"], self.dx, math.inf)[1] \
+                if self.form == "3d" else -float(math.fsum(m*(new["x"][:, 0] - new["x_ref"][:, 0]))/math.fsum(m))/self.dx
+            row["recentre_applied"] = 0
+        else:
+            # back into the main body's frame: the removed particles carry momentum away (and SolidSPHRZ does not
+            # conserve axial momentum), so the rest is given zero net momentum (RZ: the axial component only)
+            v_com = np.array([math.fsum(m*new["v"][:, j]) for j in range(new["v"].shape[1])])/math.fsum(m)
+            if self.form == "rz":
+                v_com[1] = 0.0
+            new["v"] = new["v"] - v_com
+            row["v_com_removed_ms"] = float(v_com[0]) if self.form == "rz" else float(np.linalg.norm(v_com))
+            new["x"], shift, applied = recentre(self.form, m, new["x"], new["x_ref"], self.dx)
+            row["recentre_shift_dx"] = shift
+            row["recentre_applied"] = int(applied)
         record.write_removed(self.removed_path, record.Removal.concat(removals))
         if due:
             self.write_check(new, info["scale"], k_next, t1, next_check)
@@ -1024,6 +1063,11 @@ def replay(a):
             "wall_s_this_invocation": time.perf_counter() - t_start,
             "max_disp_interval_dx": max(float(r["max_disp_interval_dx"]) for r in rows),
             "max_abs_momentum_over_impulse": max(abs(float(r["momentum_over_impulse"])) for r in rows),
+            "holds": {"n_held": len(rp.held_pid), "method": "Hold package (zero acceleration on the held rows; packages/hold.py)",
+                      "max_speed_ms": max((float(r["held_max_speed_ms"]) for r in rows), default=None)
+                      if len(rp.held_pid) else None,
+                      "max_disp_m": max((float(r["held_max_disp_m"]) for r in rows), default=None)
+                      if len(rp.held_pid) else None},
             "crossings_monitor": monitor_summary(rows, a),
             "settings": settings(a, rp), "brackets": inp.brackets, "pin": pin_info(pin), "git": git_commit(),
             "provisional": list(rp.strength.provisional),

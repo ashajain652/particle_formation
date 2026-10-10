@@ -8,7 +8,7 @@ default, in a fixed key order.
   prepared   prep_<fe run>_k<K0>-<K1>[_every<N>]                       spheral_output/prepare/<prepared>/
   run        <prepared>__<mode>_k<k0>-<k1>_<form>_dx<dx>mm_seed<n>[_<label>-<value>...]
   analysis   the run's own name                                          spheral_output/analyse/<run>/
-  body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>]
+  body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>][_geometry-<g>]
                                                                          spheral_output/body/<body>/
 
 Bracket values are numbers (written shortest-exact) or, for a string default (scheme, strength, sampler), lower-case
@@ -48,6 +48,9 @@ BRACKET_DEFAULTS: dict[str, object] = {
     # Spheral M2 decision 7 (Task 6b): the replay's crossings-error monitor
     "monitor_every": 10,         # every this many intervals (and the first) rerun at 2 N_c to estimate the error; 0 off
     "monitor_limit": 0.05,       # above this estimate the run continues at 2 N_c (Asha's limit over the flight)
+    # Spheral M2 Task 7 (check 5): the body's geometry, "frame" (the finite-element body's lattice) or a synthetic
+    # shape ("bar": check 5's bar held at both ends; body name's _geometry-<geometry>)
+    "geometry": "frame",
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -68,6 +71,7 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "mass_scaling": ("massscaling", ""),
     "monitor_every": ("monitorevery", ""),
     "monitor_limit": ("monitorlimit", ""),
+    "geometry": ("geometry", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 
@@ -76,7 +80,8 @@ _FRAMES_RE = re.compile(r"^k(?P<k0>\d{5,})-(?P<k1>\d{5,})$")
 _DX_RE = re.compile(r"^dx(?P<dx>.+)mm$")
 _SEED_RE = re.compile(r"^seed(?P<seed>\d+)$")
 _BODY_RE = re.compile(r"^body_(?P<prepared>.+)_k(?P<k0>\d{5,})-(?P<k1>\d{5,})_(?P<form>rz|3d)_dx(?P<dx>[^_]+)mm"
-                      r"(?:_azimuth-(?P<azimuth>[^_]+)deg)?(?:_synthetic-(?P<synthetic>[a-z0-9]+))?$")
+                      r"(?:_azimuth-(?P<azimuth>[^_]+)deg)?(?:_synthetic-(?P<synthetic>[a-z0-9]+))?"
+                      r"(?:_geometry-(?P<geometry>[a-z0-9]+))?$")
 
 
 def _check_part(text, what):
@@ -286,10 +291,11 @@ def parse_run_name(name) -> dict:
 
 
 def body_name(prepared: str, k0: int, k1: int, form: str, dx_mm: float, azimuth_deg: float = 0.0,
-              synthetic: str | None = None) -> str:
+              synthetic: str | None = None, geometry: str | None = None) -> str:
     """'body_<prepared>_k00000-00047_rz_dx2.20mm' (M2 plan, Global constraints): the body stage's output directory.
-    The azimuth of an RZ body's half-plane (default 0) and a synthetic temperature sampler (Task 6) are suffixes
-    when they differ from their defaults."""
+    The azimuth of an RZ body's half-plane (default 0), a synthetic temperature sampler (Task 6) and a synthetic
+    geometry (Task 7: "bar"; None or "frame" is the finite-element body's lattice) are suffixes when they differ from
+    their defaults."""
     _check_part(prepared, "prepared-input name")
     if form not in FORMS:
         raise ValueError("form must be one of {}, got {!r}".format(FORMS, form))
@@ -301,20 +307,25 @@ def body_name(prepared: str, k0: int, k1: int, form: str, dx_mm: float, azimuth_
         if not isinstance(synthetic, str) or not re.fullmatch(r"[a-z0-9]+", synthetic):
             raise ValueError("a synthetic sampler name is lower-case letters and digits, got {!r}".format(synthetic))
         name += "_synthetic-{}".format(synthetic)
+    if geometry is not None and geometry != "frame":
+        if not isinstance(geometry, str) or not re.fullmatch(r"[a-z0-9]+", geometry):
+            raise ValueError("a geometry name is lower-case letters and digits, got {!r}".format(geometry))
+        name += "_geometry-{}".format(geometry)
     return name
 
 
 def parse_body_name(name) -> dict:
-    """Inverse of body_name: {'prepared', 'frames', 'form', 'dx_mm', 'azimuth_deg', 'synthetic', 'prepare'}."""
+    """Inverse of body_name: {'prepared', 'frames', 'form', 'dx_mm', 'azimuth_deg', 'synthetic', 'geometry',
+    'prepare'} (geometry "frame" when the name has no suffix)."""
     m = _BODY_RE.match(name) if isinstance(name, str) else None
     if m is None or "__" in name:
         raise ValueError("not a body name: {!r}".format(name))
     try:
         out = {"prepared": m["prepared"], "frames": (int(m["k0"]), int(m["k1"])), "form": m["form"],
                "dx_mm": float(m["dx"]), "azimuth_deg": float(m["azimuth"]) if m["azimuth"] else 0.0,
-               "synthetic": m["synthetic"]}
+               "synthetic": m["synthetic"], "geometry": m["geometry"] or "frame"}
         canonical = body_name(out["prepared"], *out["frames"], out["form"], out["dx_mm"], out["azimuth_deg"],
-                              out["synthetic"])
+                              out["synthetic"], out["geometry"])
     except ValueError:
         raise ValueError("not a body name: {!r}".format(name)) from None
     if canonical != name:
