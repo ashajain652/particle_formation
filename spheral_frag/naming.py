@@ -11,6 +11,9 @@ default, in a fixed key order.
   body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>]
                                                                          spheral_output/body/<body>/
 
+Bracket values are numbers (written shortest-exact) or, for a string default (scheme, strength, sampler), lower-case
+words; the strength law "constant:<Pa>" is written "constant-<Pa>" with its number canonical (Spheral M2, Task 5).
+
 The double underscore separates the prepared name from the run's own parts; neither a finite-element run name nor
 any part written here contains one. Frame indices are zero-padded to five digits. Names never contain spaces or `/`.
 
@@ -32,6 +35,14 @@ BRACKET_DEFAULTS: dict[str, object] = {
     "lee_shear": 0.5,            # §7.2 lee extension: shear as a fraction of the last windward bin's (Question 4)
     "min_particles": 30,         # §11.1: smallest group recorded as a fragment
     "link_h": 1.5,               # §11.1: dust within link_h smoothing lengths of an intact member attaches
+    # Spheral M2 (plan Task 5): the replay's devices
+    "crossings": 10,             # §9.1: sound crossings of the body per replay interval (sets the mass scale)
+    "damping": 0.05,             # D5: the damping ratio zeta at the lowest breathing frequency
+    "scheme": "sph",             # Task 9: the hydro scheme, sph (SolidSPH) or crksph (SolidCRKSPH)
+    "strength": "flight",        # spec §8.3: the flow-stress law, flight | elastic | constant:<Pa>
+    "rate_min": 1e-6,            # D6: the strain-rate floor of the flight law, 1/s
+    "sampler": "p1",             # the body's temperature sampler (body name's _synthetic-<sampler>; Task 6)
+    "azimuth_deg": 0.0,          # an RZ body's half-plane azimuth (body name's _azimuth-<deg>deg)
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -41,6 +52,13 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "lee_shear": ("leeshear", ""),
     "min_particles": ("minparticles", ""),
     "link_h": ("linkh", ""),
+    "crossings": ("crossings", ""),
+    "damping": ("damping", ""),
+    "scheme": ("scheme", ""),
+    "strength": ("strength", ""),
+    "rate_min": ("ratemin", ""),
+    "sampler": ("sampler", ""),
+    "azimuth_deg": ("azimuth", "deg"),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 
@@ -87,6 +105,61 @@ def _format_number(value, integer):
     return str(int(v)) if v.is_integer() and abs(v) < 1e15 else repr(v)
 
 
+_TEXT_RE = re.compile(r"^[a-z0-9.+:-]+$")
+
+
+def _canonical_text(key, value):
+    """A string bracket's canonical value: lower-case letters, digits and . + - :; the strength law "constant:<Pa>"
+    with its number written as `_format_number` writes it."""
+    if not isinstance(value, str) or not _TEXT_RE.match(value):
+        raise ValueError("bracket {} must be a lower-case word, got {!r}".format(key, value))
+    if key == "strength" and value.startswith("constant:"):
+        try:
+            number = float(value[len("constant:"):])
+        except ValueError:
+            raise ValueError("bad strength law {!r}".format(value)) from None
+        if not (math.isfinite(number) and number > 0.0):
+            raise ValueError("a constant strength must be positive and finite, got {!r}".format(value))
+        return "constant:" + _format_number(number, False)
+    if ":" in value:
+        raise ValueError("bracket {} {!r} contains ':'".format(key, value))
+    return value
+
+
+def _text_to_name(text):
+    return text.replace(":", "-", 1)           # a name never holds ':' (constant:1e8 -> constant-1e8)
+
+
+def _text_from_name(text):
+    return text.replace("-", ":", 1) if text.startswith("constant-") else text
+
+
+def _bracket_text(key, value):
+    """The text of a bracket's value in a name."""
+    default = BRACKET_DEFAULTS[key]
+    if isinstance(default, str):
+        return _text_to_name(_canonical_text(key, value))
+    return _format_number(value, isinstance(default, int) and not isinstance(default, bool))
+
+
+def canonical_brackets(brackets: dict) -> dict:
+    """Every key of BRACKET_DEFAULTS, the given values in canonical form (as parse_run_name returns them)."""
+    unknown = sorted(set(brackets) - set(BRACKET_DEFAULTS))
+    if unknown:
+        raise ValueError("unknown bracket setting(s): {}".format(", ".join(unknown)))
+    out = dict(BRACKET_DEFAULTS)
+    for key, value in brackets.items():
+        default = BRACKET_DEFAULTS[key]
+        if isinstance(default, str):
+            out[key] = _canonical_text(key, value)
+        elif isinstance(default, int) and not isinstance(default, bool):
+            out[key] = int(_format_number(value, True))
+        else:
+            _format_number(value, False)
+            out[key] = float(value)
+    return out
+
+
 def _format_dx(dx_mm):
     v = float(dx_mm)
     if not (math.isfinite(v) and v > 0.0):
@@ -121,9 +194,8 @@ def bracket_suffix(brackets: dict) -> str:
     for key, default in BRACKET_DEFAULTS.items():
         if key not in brackets:
             continue
-        integer = isinstance(default, int) and not isinstance(default, bool)
-        text = _format_number(brackets[key], integer)
-        if text == _format_number(default, integer):
+        text = _bracket_text(key, brackets[key])
+        if text == _bracket_text(key, default):
             continue
         label, unit = BRACKET_LABELS[key]
         parts.append("_{}-{}{}".format(label, text, unit))
@@ -180,7 +252,15 @@ def parse_run_name(name) -> dict:
                 raise ValueError("bracket suffix {!r} lacks its unit {!r}".format(token, unit))
             text = text[:-len(unit)]
         default = BRACKET_DEFAULTS[key]
-        brackets[key] = int(text) if isinstance(default, int) and not isinstance(default, bool) else float(text)
+        try:
+            if isinstance(default, str):
+                brackets[key] = _canonical_text(key, _text_from_name(text))
+            elif isinstance(default, int) and not isinstance(default, bool):
+                brackets[key] = int(text)
+            else:
+                brackets[key] = float(text)
+        except ValueError:
+            raise ValueError("bad bracket suffix {!r} in {!r}".format(token, name)) from None
         seen.append(key)
     order = [k for k in BRACKET_DEFAULTS if k in seen]
     if seen != order:

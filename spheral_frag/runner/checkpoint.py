@@ -8,7 +8,9 @@ Format: a plain `.npz` without pickles (numpy 1.26 writes it under Spheral's Pyt
 M1 fact 10). Per-particle arrays, named as `nodes.STATE_KEYS` (+ `nodes.RZ_KEYS` in RZ):
 
   pid (n,) int64; x_ref, x, v (n, dim); H, S (n, dim, dim) (S the deviatoric stress); m, rho, u, plastic_strain,
-  plastic_strain_rate (n,); RZ only: m_rz, rho_rz (n,) (SolidSPHRZ's massRZ and massDensityRZ state)
+  plastic_strain_rate (n,); RZ only: m_rz, rho_rz (n,) (SolidSPHRZ's massRZ and massDensityRZ state) and S_zz, H_zz
+  (n,), the zz elements of the RZ tensors (the deviatoric stress's hoop component; schema version 2, Task 5: version 1
+  dropped it, so an RZ restart zeroed the hoop deviatoric stress)
 
 Metadata as 0-d arrays: schema "spheral_frag.checkpoint", schema_version, run (the run name), k (the frame), form,
 dx, nperh, scale (the mass-scaling factor s in force), processes (that wrote it). Driver quantities (time, last time
@@ -24,7 +26,7 @@ import numpy as np
 from . import nodes as _nodes
 
 SCHEMA = "spheral_frag.checkpoint"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 META_KEYS = ("schema", "schema_version", "run", "k", "form", "dx", "nperh", "scale", "processes")
 EXTRA_PREFIX = "extra."
 
@@ -42,11 +44,27 @@ def write(path, body, extra=None, *, run, k, scale=1.0):
     if comm.rank != 0:
         comm.barrier()
         return None
-    out = dict(state)
+    write_state(path, state, form=body.form, dx=body.dx, nperh=body.nperh, run=run, k=k, scale=scale,
+                processes=comm.size, extra=extra)
+    comm.barrier()
+    return path
+
+
+def write_state(path, state, *, form, dx, nperh, run, k, scale, processes, extra=None):
+    """Write a gathered state (per-particle arrays named as nodes.STATE_KEYS + RZ_KEYS, sorted by pid) as a
+    checkpoint, atomically. Not collective: the caller (rank 0) holds the state, e.g. a gather with particles
+    removed at a frame boundary (runner/run.py)."""
+    keys = _nodes.STATE_KEYS + (_nodes.RZ_KEYS if form == "rz" else ())
+    missing = [key for key in keys if key not in state]
+    if missing:
+        raise ValueError(f"state lacks {missing}")
+    if np.any(np.diff(np.asarray(state["pid"])) <= 0):
+        raise ValueError("state rows must be sorted by unique pid")
+    out = {key: np.asarray(state[key]) for key in keys}
     out.update(schema=np.array(SCHEMA), schema_version=np.array(SCHEMA_VERSION, dtype=np.int64),
-               run=np.array(str(run)), k=np.array(int(k), dtype=np.int64), form=np.array(body.form),
-               dx=np.array(float(body.dx)), nperh=np.array(float(body.nperh)), scale=np.array(float(scale)),
-               processes=np.array(comm.size, dtype=np.int64))
+               run=np.array(str(run)), k=np.array(int(k), dtype=np.int64), form=np.array(form),
+               dx=np.array(float(dx)), nperh=np.array(float(nperh)), scale=np.array(float(scale)),
+               processes=np.array(int(processes), dtype=np.int64))
     for name, val in (extra or {}).items():
         arr = np.asarray(val)
         if arr.dtype == object:
@@ -58,7 +76,6 @@ def write(path, body, extra=None, *, run, k, scale=1.0):
     with open(tmp, "wb") as f:
         np.savez(f, **out)
     os.replace(tmp, path)
-    comm.barrier()
     return path
 
 

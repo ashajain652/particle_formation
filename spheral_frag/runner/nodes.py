@@ -3,7 +3,7 @@
 A body arrives as plain arrays (the body stage's output, or a checkpoint): reference positions `x_ref` (n, dim),
 masses `m`, densities `rho`, specific thermal energies `u` and permanent IDs `pid` (unique integers), optionally the
 current state of a checkpoint (`x`, `v`, `H`, `S`, `plastic_strain`, `plastic_strain_rate`, and in RZ `m_rz`,
-`rho_rz`). `make_body` builds a solid node list from them and distributes it over the processes with Spheral's
+`rho_rz`, `S_zz`, `H_zz`: the RZ tensors' hoop element, see RZ_KEYS). `make_body` builds a solid node list from them and distributes it over the processes with Spheral's
 `distributeNodes` (Peano-Hilbert), through `ArrayGenerator`, a node generator that serves the arrays the way Spheral's
 own generators serve theirs. The pids travel through the redistribution as one of distributeNodesGeneric's "extra"
 lists; after it every local particle's values are written again from the arrays, looked up by pid, so that the node
@@ -44,7 +44,10 @@ RHO_RANGE_FACTORS = (0.2, 4.0)  # default rhoMin, rhoMax as fractions of the sma
 REQUIRED = ("x_ref", "m", "rho", "u", "pid")
 # Every per-particle array of a checkpoint (plan D3), in the order they are written; m_rz, rho_rz only in RZ.
 STATE_KEYS = ("pid", "x_ref", "x", "v", "H", "m", "rho", "u", "S", "plastic_strain", "plastic_strain_rate")
-RZ_KEYS = ("m_rz", "rho_rz")
+RZ_KEYS = ("m_rz", "rho_rz", "S_zz", "H_zz")
+# RZ tensors are Spheral's SymTensor2d, which holds a third diagonal element zz besides xx, xy, yy: SolidSPHRZ
+# evolves the deviatoric stress's hoop component in it (SolidSPHRZ.cc: DvDx.zz = v_r / r, the deviatoric
+# deformation traceless in 3D), so an RZ state carries S_zz and H_zz beside the (n, 2, 2) tensors.
 
 
 def spheral_module(form):
@@ -70,7 +73,21 @@ def _comm():
 # Spheral values <-> numpy rows
 # ---------------------------------------------------------------------------------------------------------------
 
+class ZZ:
+    """The zz element of an RZ SymTensor field, as a field of its own for `field_to_numpy` and `set_field`."""
+
+    def __init__(self, field):
+        self.field = field
+        self.name = field.name + ".zz"
+
+    @property
+    def numInternalElements(self):
+        return self.field.numInternalElements
+
+
 def _kind(field):
+    if isinstance(field, ZZ):
+        return "ZZ"
     name = type(field).__name__
     for k in ("SymTensor", "Vector", "Scalar", "Int"):
         if name.startswith(k + "Field"):
@@ -82,6 +99,8 @@ def field_to_numpy(field, dim):
     """The internal values of a Spheral field as numpy: Scalar (n,), Int (n,) int64, Vector (n, dim),
     SymTensor (n, dim, dim)."""
     kind = _kind(field)
+    if kind == "ZZ":
+        return np.array([t.zz for t in field.field.internalValues()], dtype=np.float64)
     vals = field.internalValues()
     if kind == "Scalar":
         return np.array(list(vals), dtype=np.float64)
@@ -117,6 +136,12 @@ def set_field(S, field, values):
     n = field.numInternalElements
     if len(values) != n:
         raise ValueError(f"{field.name}: {len(values)} values for {n} internal nodes")
+    if kind == "ZZ":
+        f = field.field
+        for i in range(n):
+            t = f[i]
+            f[i] = S.SymTensor(t.xx, t.xy, t.yx, t.yy, float(values[i]))
+        return
     for i in range(n):
         field[i] = to_spheral(S, kind, values[i])
 
@@ -193,7 +218,7 @@ class Body:
                  rho=n.massDensity(), u=n.specificThermalEnergy(), S=n.deviatoricStress(),
                  plastic_strain=n.plasticStrain(), plastic_strain_rate=n.plasticStrainRate())
         if self.form == "rz":
-            f.update(m_rz=n.massRZ(), rho_rz=n.massDensityRZ())
+            f.update(m_rz=n.massRZ(), rho_rz=n.massDensityRZ(), S_zz=ZZ(n.deviatoricStress()), H_zz=ZZ(n.Hfield()))
         return f
 
     def local_pids(self):
@@ -226,7 +251,7 @@ def _check_arrays(form, arrays):
     if len(np.unique(pid)) != n:
         raise ValueError("pid must be unique")
     shapes = dict(x_ref=(n, dim), x=(n, dim), v=(n, dim), H=(n, dim, dim), S=(n, dim, dim), m=(n,), rho=(n,),
-                  u=(n,), plastic_strain=(n,), plastic_strain_rate=(n,), m_rz=(n,), rho_rz=(n,))
+                  u=(n,), plastic_strain=(n,), plastic_strain_rate=(n,), m_rz=(n,), rho_rz=(n,), S_zz=(n,), H_zz=(n,))
     for k, shp in shapes.items():
         if k in arrays and np.shape(arrays[k]) != shp:
             raise ValueError(f"{k} has shape {np.shape(arrays[k])}, expected {shp}")
@@ -274,6 +299,8 @@ def make_body(S, form, arrays, eos, strength, nperh=NPERH, *, dx, kernel=None, n
     if form == "rz":
         m_rz = a.get("m_rz", m/(2.0*math.pi*x[:, 1])).astype(np.float64)
         rho_rz = a.get("rho_rz", rho).astype(np.float64)
+        S_zz = a.get("S_zz", zeros).astype(np.float64)
+        H_zz = a.get("H_zz", zeros).astype(np.float64)
     served_mass = m_rz if form == "rz" else m
 
     if kernel is None:
@@ -315,6 +342,8 @@ def make_body(S, form, arrays, eos, strength, nperh=NPERH, *, dx, kernel=None, n
     if form == "rz":
         set_field(S, nodes.massRZ(), m_rz[rows])
         set_field(S, nodes.massDensityRZ(), rho_rz[rows])
+        set_field(S, ZZ(nodes.deviatoricStress()), S_zz[rows])
+        set_field(S, ZZ(nodes.Hfield()), H_zz[rows])
     nodes.neighbor().updateNodes()
 
     db = S.DataBase()

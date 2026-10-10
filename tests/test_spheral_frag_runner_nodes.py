@@ -178,6 +178,9 @@ def test_continued_from_checkpoint_equals_uninterrupted_bitwise(runs, form, npro
     # The run exercised what the checkpoint carries: stress, plasticity, motion.
     assert np.abs(full["final.S"]).max() > 1e6 and full["final.plastic_strain"].max() > 0.0
     assert not np.array_equal(full["final.x"], full["final.x_ref"])
+    if form == "rz":
+        # the hoop deviatoric stress (SymTensor2d's zz element) is evolved and carried (checkpoint schema 2, Task 5)
+        assert np.abs(full["final.S_zz"]).max() > 1e6
 
 
 @pytest.mark.spheral

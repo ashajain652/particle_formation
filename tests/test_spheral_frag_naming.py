@@ -47,7 +47,8 @@ def test_non_default_bracket_adds_exactly_its_suffix():
 
 
 NON_DEFAULT = {"film_limit_mm": 3.0, "base_pressure_pct": 1.5, "separation_deg": 120.0, "lee_shear": 0.25,
-               "min_particles": 50, "link_h": 2.0}
+               "min_particles": 50, "link_h": 2.0, "crossings": 20, "damping": 0.2, "scheme": "crksph",
+               "strength": "constant:100000000", "rate_min": 1e-07, "sampler": "radial", "azimuth_deg": 90.0}
 
 
 def configurations():
@@ -103,6 +104,9 @@ def test_names_differ_when_any_setting_differs():
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_linkh-2_filmlimit-3mm",   # out of order
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_filmlimit-3",     # unit missing
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_colour-3",        # unknown bracket
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_strength-constant-1e8",   # strength not canonical
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_scheme-SPH",      # upper case
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_crossings-2.5",   # not an integer
 ])
 def test_parse_rejects(bad):
     with pytest.raises(ValueError):
@@ -114,6 +118,8 @@ def test_parse_rejects(bad):
 def test_bad_arguments():
     for over in [dict(mode="walk"), dict(form="2d"), dict(dx_mm=0.0), dict(dx_mm=float("nan")), dict(seed=-1),
                  dict(seed=1.0), dict(frames=(5, 4)), dict(prepared="a__b"), dict(prepared="a b"),
-                 dict(brackets={"min_particles": 2.5}), dict(brackets={"lee_shear": float("inf")})]:
+                 dict(brackets={"min_particles": 2.5}), dict(brackets={"lee_shear": float("inf")}),
+                 dict(brackets={"strength": "constant:-5"}), dict(brackets={"scheme": "a_b"}),
+                 dict(brackets={"scheme": 3})]:
         with pytest.raises(ValueError):
             naming.run_name(**base(**over))
