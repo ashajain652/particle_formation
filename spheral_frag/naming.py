@@ -43,6 +43,8 @@ BRACKET_DEFAULTS: dict[str, object] = {
     "rate_min": 1e-6,            # D6: the strain-rate floor of the flight law, 1/s
     "sampler": "p1",             # the body's temperature sampler (body name's _synthetic-<sampler>; Task 6)
     "azimuth_deg": 0.0,          # an RZ body's half-plane azimuth (body name's _azimuth-<deg>deg)
+    "loads": "on",               # Task 6: the surface loads and deceleration packages, on | off (check 4: off)
+    "mass_scaling": "on",        # Task 6: on (spec §9.1) | off (s = 1, each interval run in N_c D / c_l seconds)
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -59,6 +61,8 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "rate_min": ("ratemin", ""),
     "sampler": ("sampler", ""),
     "azimuth_deg": ("azimuth", "deg"),
+    "loads": ("loads", ""),
+    "mass_scaling": ("massscaling", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 

@@ -263,6 +263,37 @@ def test_command_writes_the_files_rebuilds_byte_identical_and_resumes(prepared, 
         files["temperature.npy"]
 
 
+def test_synthetic_radial_profile(prepared, tmp_path):
+    """--synthetic radial (Task 6, check 4): T = 300 + dT min(k/n, 1) (|x|/R)^2 at every particle and frame, exactly
+    (it is evaluated, not interpolated); removal still follows the frames' body; the name carries the sampler and
+    its non-default parameters."""
+    import json
+    d, _ = prepared
+    assert run_body(d, tmp_path, "--synthetic", "radial", form="rz", dx="5") == 0
+    name = naming.body_name(PREP_NAME, 0, 2, "rz", 5.0, synthetic="radial")
+    arrays, T = body.load_body(str(tmp_path / name))
+    xs = arrays["x_sample"]
+    r2 = np.einsum("ij,ij->i", xs, xs)/body.RADIAL_R_M**2
+    assert np.array_equal(T[:, 0], np.full(len(xs), 300.0))                  # stress free at the start
+    present = arrays["remove_k"] != 2
+    assert np.array_equal(T[present, 1], 300.0 + 50.0*r2[present])
+    assert np.array_equal(T[present, 2], T[present, 1])                      # held after the one-frame ramp
+    ref = body.build_body(body.frame_loader(d), [0, 1, 2], "rz", 5e-3, prepared[1])
+    assert np.array_equal(arrays["remove_k"], ref.remove_k)                  # the frames' body, as with P1
+    assert np.array_equal(arrays["x_ref"], ref.x_ref)
+    doc = json.loads((tmp_path / name / "body.json").read_text())
+    assert doc["sampler"] == "radial" and doc["sampler_params"]["delta_K"] == 50.0
+    assert doc["check3"]["max_azimuth_spread_K"] == 0.0                      # the profile is axisymmetric
+    assert run_body(d, tmp_path, "--synthetic", "radial", "--radial-delta-k", "20", "--radial-ramp-frames", "2",
+                    form="3d", dx="10") == 0
+    name2 = naming.body_name(PREP_NAME, 0, 2, "3d", 10.0, synthetic="radialdt20r2")
+    a2, T2 = body.load_body(str(tmp_path / name2))
+    r2 = np.einsum("ij,ij->i", a2["x_sample"], a2["x_sample"])/body.RADIAL_R_M**2
+    ok = a2["remove_k"] != 2
+    assert np.array_equal(T2[:, 1], 300.0 + 10.0*r2) and np.array_equal(T2[ok, 2], 300.0 + 20.0*r2[ok])
+    assert run_body(d, tmp_path, "--synthetic", "radial", "--radial-delta-k", "20.5") == 2
+
+
 def test_command_exit_codes(prepared, tmp_path):
     d, _ = prepared
     assert run_body(str(tmp_path / "nowhere"), tmp_path) == 2                       # no prepared input

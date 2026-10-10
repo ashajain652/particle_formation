@@ -56,8 +56,13 @@ dx, azimuth, frames, sampler) and whose files match their recorded sha256 is ski
 and temperature.npy are byte-identical when rebuilt (fixed zip timestamps; np.lib.format headers).
 
 **Samplers.** The temperature comes from a sampler `(k, frame, locator, x_sample) -> T` (`P1_SAMPLER` by default);
-removal always follows the frame's body. Task 6's `--synthetic radial` plugs in here (`SAMPLERS`), and its name
-carries the sampler (`naming.body_name(..., synthetic=...)`).
+removal always follows the frame's body. `--synthetic radial` (Task 6, check 4) replaces the frames' temperatures by
+T = 300 K + dT min(k / n_ramp, 1) (|x| / R)^2 with R = 50 mm and |x| the distance from the body coordinates' origin
+(the 100 mm sphere's centre), k the absolute frame index: zero at frame 0, ramped in linearly to frame n_ramp, held
+after. dT (`--radial-delta-k`, default 50 K) and n_ramp (`--radial-ramp-frames`, default 1) are part of the
+sampler's name ("radial" at the defaults, else "radialdt<K>r<n>"), which the body's name carries
+(`naming.body_name(..., synthetic=...)`) and the run name's `sampler` bracket repeats. Built on the MVP flight's
+frames 0-3 (the intact sphere, no removal), it gives check 4's case: a one-interval ramp held for two.
 
 Exit codes: 0 ok; 1 a model failure (an empty body, a mass that c does not close, a frame that cannot be read);
 2 bad arguments or a missing prepared input or frame.
@@ -189,7 +194,48 @@ def p1_sampler(k, frame, locator, x, located=None) -> np.ndarray:
 
 
 P1_SAMPLER = p1_sampler
-SAMPLERS = {"p1": p1_sampler}               # Task 6 adds "radial" (the --synthetic radial option)
+
+# Task 6's synthetic radial profile (check 4: the heated sphere against Timoshenko and Goodier)
+RADIAL_T_BASE_K = 300.0      # K, the uniform start (stress free)
+RADIAL_DELTA_K = 50.0        # K, the profile's rise from the centre to r = RADIAL_R_M at full strength
+RADIAL_RAMP_FRAMES = 1       # frames over which the profile ramps in linearly from frame 0; held after
+RADIAL_R_M = 0.05            # m, the 100 mm sphere's radius (the profile's r is |x| in body coordinates)
+
+
+def radial_temperature(k, x, delta_K=RADIAL_DELTA_K, ramp_frames=RADIAL_RAMP_FRAMES, R=RADIAL_R_M,
+                       T_base=RADIAL_T_BASE_K) -> np.ndarray:
+    """T = T_base + delta_K min(k / ramp_frames, 1) (|x| / R)^2 at body-coordinate points x (n, 3), frame index k:
+    zero at frame 0, full at frame ramp_frames, held after (deterministic from the frame index alone)."""
+    f = min(max(float(k), 0.0)/float(ramp_frames), 1.0)
+    x = np.asarray(x, dtype=np.float64)
+    r2 = np.einsum("ij,ij->i", x, x)/(float(R)*float(R))
+    return float(T_base) + (float(delta_K)*f)*r2
+
+
+def radial_sampler_name(delta_K=RADIAL_DELTA_K, ramp_frames=RADIAL_RAMP_FRAMES) -> str:
+    """"radial" at the defaults, else "radialdt<K>r<frames>" (integer kelvin and frames: names hold [a-z0-9])."""
+    if float(delta_K) == RADIAL_DELTA_K and int(ramp_frames) == RADIAL_RAMP_FRAMES:
+        return "radial"
+    if not (float(delta_K).is_integer() and float(delta_K) > 0.0 and int(ramp_frames) >= 1
+            and float(ramp_frames) == int(ramp_frames)):
+        raise ValueError("--radial-delta-k must be a positive whole number of kelvin and --radial-ramp-frames a "
+                         "positive integer, got {!r}, {!r}".format(delta_K, ramp_frames))
+    return "radialdt{}r{}".format(int(delta_K), int(ramp_frames))
+
+
+def make_radial_sampler(delta_K=RADIAL_DELTA_K, ramp_frames=RADIAL_RAMP_FRAMES):
+    """A sampler (k, frame, locator, x) -> T of `radial_temperature`: the frame serves only removal (module
+    docstring), so a point outside the frame's body is NaN as with P1."""
+    def sampler(k, frame, locator, x):
+        T = radial_temperature(k, x, delta_K, ramp_frames)
+        T[locator.locate(x)[0] < 0] = np.nan
+        return T
+    sampler.params = {"delta_K": float(delta_K), "ramp_frames": int(ramp_frames), "R_m": RADIAL_R_M,
+                      "T_base_K": RADIAL_T_BASE_K}
+    return sampler
+
+
+SAMPLERS = {"p1": p1_sampler, "radial": make_radial_sampler()}
 
 
 # ------------------------------------------------------------------------------------------------------- the body
@@ -413,6 +459,11 @@ def body(args) -> int:
         if args.form == "3d" and azimuth != 0.0:
             raise ValueError("--azimuth-deg applies to the RZ form only")
         sampler_name = getattr(args, "synthetic", None) or DEFAULT_SAMPLER
+        if sampler_name == "radial":
+            dk = getattr(args, "radial_delta_k", RADIAL_DELTA_K)
+            rf = getattr(args, "radial_ramp_frames", RADIAL_RAMP_FRAMES)
+            sampler_name = radial_sampler_name(dk, rf)
+            SAMPLERS.setdefault(sampler_name, make_radial_sampler(dk, rf))
         if sampler_name not in SAMPLERS:
             raise ValueError("unknown sampler {!r}".format(sampler_name))
         prep_doc, available = prepared_frames(prepared)
@@ -505,6 +556,7 @@ def body(args) -> int:
                      "material_table_sha256": signature["material_table_sha256"],
                      "fe_run": prep_doc.get("fe_run", {}).get("name"), "material": table.name},
         "form": args.form, "dx_m": dx, "dx_mm": float(args.dx_mm), "azimuth_deg": azimuth, "sampler": sampler_name,
+        "sampler_params": getattr(SAMPLERS[sampler_name], "params", None),
         "origin_m": [0.0, 0.0, 0.0], "axis": [1.0, 0.0, 0.0],
         "frames": {"k0": k0, "k1": k1, "n": len(ks), "k": ks},
         "n_particles": int(len(b.pid)), "c": b.c,
@@ -542,5 +594,12 @@ def add_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--azimuth-deg", type=float, default=0.0, help="RZ: the half-plane's azimuth about the flight "
                    "axis from +y towards +z (default 0; RZ only)")
     p.add_argument("--out", default=DEFAULT_OUT, help="parent of the body directory (default spheral_output/body)")
+    p.add_argument("--synthetic", choices=("radial",), default=None,
+                   help="replace the frames' temperatures by a synthetic profile (removal still follows the frames' "
+                   "body): radial = T_base + dT min(k / ramp, 1) (|x| / R)^2, R = 50 mm, T_base 300 K (check 4)")
+    p.add_argument("--radial-delta-k", type=float, default=RADIAL_DELTA_K,
+                   help="radial: the rise dT from the centre to r = R, whole kelvin (default 50)")
+    p.add_argument("--radial-ramp-frames", type=int, default=RADIAL_RAMP_FRAMES,
+                   help="radial: frames over which the profile ramps in from frame 0, held after (default 1)")
     p.add_argument("--force", action="store_true", help="rebuild even if built already")
     p.add_argument("--quiet", action="store_true", help="print only the summary and errors")

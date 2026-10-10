@@ -3,7 +3,7 @@
     spheral_frag/container/spheral [-n N] spheral_frag/runner/run.py replay --body DIR --prepared DIR --frames K0-K1
         [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
-        [--stop-at K]
+        [--stop-at K] [--loads on|off] [--mass-scaling on|off]
 
 **The interval loop.** For each interval k -> k+1 of the body's frames between K0 and K1 (spec §9.1):
 
@@ -52,6 +52,20 @@
    round-off (1.3e-16 dx on the synthetic 10 mm sphere); a removal leaves the remaining particles with a mean
    displacement of their own (the removed nose had expanded forward; 1.6e-4 to 1.6e-3 dx there), which is then
    removed as in RZ (measured 2026-10-10, tests/test_spheral_frag_runner_replay.py).
+
+**Check 4's switches** (Spheral M2 plan, Task 6). `--loads off` leaves out SurfaceLoads and Deceleration (a pure
+thermal-stress problem; the load and drag columns are NaN, n_surface -1, and the displacement within an interval is
+taken from the interval's start positions). `--mass-scaling off` (needs `--loads off`) keeps s = 1 and runs each
+interval in (t1 - t0) / sqrt(s_N) = N_c D / c_l seconds of Spheral time, s_N being the scale factor the scaled run
+would use (the same D from the checkpoint's positions), starting where the previous interval's Spheral time ended:
+ImposedTemperature, the damping (omega_1 at s = 1) and the step all see the frame interval mapped affinely onto that
+shorter one. The equivalence: with t = sqrt(s) t' the scaled momentum equation s rho dv/dt = div sigma becomes the
+unscaled one in t', and the damping a = -2 zeta omega_1 v with omega_1 proportional to 1/sqrt(s) maps likewise, so
+both runs solve the same dimensionless problem (N_c crossings per ramp, the same zeta) and their stresses must agree
+up to round-off and the step sequence; KE and the elastic energy are equal (the velocities scale as 1/sqrt(s), the
+masses as s). A disagreement would mean that something divides by an unscaled mass or reads an unscaled density.
+`time_scale` (1/sqrt(s_N) unscaled, 1 scaled) and `spheral_t1_s` are recorded per interval; the record's times stay
+the flight times. Both switches are run-name brackets (`loads`, `mass_scaling`, default on).
 
 **Run directory** `<out>/<run name>/` (`naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)`;
 the brackets crossings, damping, scheme, strength, rate_min and the body's sampler and azimuth are suffixes when they
@@ -118,6 +132,7 @@ INTERVAL_COLUMNS = [
     "removed_mass_kg", "removed_enthalpy_J", "decel_mean_ms2", "decel_end_ms2", "flight_decel_ms2", "drag_mean_N", "table_drag_N",
     "n_surface", "n_exposed", "max_disp_interval_dx", "max_disp_ref_dx", "momentum_axial_Ns", "momentum_norm_Ns",
     "momentum_over_impulse", "v_com_removed_ms", "recentre_shift_dx", "recentre_applied", "attempts_ke_ratio",
+    "time_scale", "spheral_t1_s",
 ]
 
 
@@ -384,9 +399,13 @@ class Inputs:
             raise BadInput("need 0 < --crossings <= --max-crossings")
         if a.damping < 0.0 or not a.rate_min > 0.0 or a.every_check < 1:
             raise BadInput("need --damping >= 0, --rate-min > 0, --every-check >= 1")
+        if a.mass_scaling == "off" and a.loads != "off":
+            raise BadInput("--mass-scaling off runs each interval in N_c D / c_l seconds, not in flight time: it "
+                           "needs --loads off (the load tables are in flight time)")
         brackets = {"crossings": a.crossings, "damping": a.damping, "scheme": a.scheme, "strength": a.strength,
                     "rate_min": a.rate_min, "sampler": self.body_doc.get("sampler", "p1"),
-                    "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0))}
+                    "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0)), "loads": a.loads,
+                    "mass_scaling": a.mass_scaling}
         try:
             self.brackets = naming.canonical_brackets(brackets)
             self.name = naming.run_name(self.prepared, "replay", (k0, k1), self.form, self.dx_mm, self.brackets,
@@ -494,6 +513,18 @@ class Replay:
         s_prev = float(ck["scale"])
         D = axial_extent_arrays(arrays["x"], self.dx)
         s = scale_factor(self.c_l, t1 - t0, crossings, D)
+        # Spheral's time: the flight time when mass-scaled; unscaled (s = 1), the interval runs in
+        # (t1 - t0) / sqrt(s) = N_c D / c_l seconds from the previous interval's Spheral end time, the same
+        # dimensionless problem (module docstring, "Without mass scaling")
+        if a.mass_scaling == "off":
+            time_scale = 1.0/math.sqrt(s)
+            s = 1.0
+            tau0 = float(ck["extra"]["spheral_time"])
+        else:
+            time_scale = 1.0
+            tau0 = t0
+        tau1 = tau0 + (t1 - t0)*time_scale if time_scale != 1.0 else t1
+        times = inp.times if time_scale == 1.0 else [tau0 + (t - t0)*time_scale for t in inp.times]
         ratio = s/s_prev
         if ratio != 1.0:
             for key in ("m", "rho") + (("m_rz", "rho_rz") if self.form == "rz" else ()):
@@ -502,18 +533,20 @@ class Replay:
         rho_range = (rn.RHO_RANGE_FACTORS[0]*s*self.rho_ref, rn.RHO_RANGE_FACTORS[1]*s*self.rho_ref)
         body = rn.make_body(S, self.form, arrays, self.eos, self.strength, dx=self.dx, kernel=self.kernel,
                             name=f"body_k{k:05d}_a{attempt_no}", rho_range=rho_range)
-        hist = pt.TemperatureHistory(self.T_table, inp.times, self.body_pid)
-        imposed = pt.make_imposed_temperature(S, body, hist, self.table, t0)
+        hist = pt.TemperatureHistory(self.T_table, times, self.body_pid)
+        imposed = pt.make_imposed_temperature(S, body, hist, self.table, tau0)
         D_body = pd.axial_extent(body)
         omega1 = pd.breathing_omega(self.table, s, D_body)
         packages = [imposed]
         if a.damping > 0.0:
             packages.append(pd.make_damping(S, body, a.damping, omega1))
-        tables = pl.read_tables(inp.prepared_dir, [k, k_next])
-        area = pl.frame_surface_area(inp.prepared_dir, k)
-        loads = pl.make_surface_loads(S, body, tables, (t0, t1), area, lee=inp.lee)
-        decel = pl.make_deceleration(S, loads, s)
-        packages += [loads, decel]
+        loads = decel = None
+        if a.loads == "on":
+            tables = pl.read_tables(inp.prepared_dir, [k, k_next])
+            area = pl.frame_surface_area(inp.prepared_dir, k)
+            loads = pl.make_surface_loads(S, body, tables, (t0, t1), area, lee=inp.lee)
+            decel = pl.make_deceleration(S, loads, s)
+            packages += [loads, decel]
 
         hydro = S.SPH(dataBase=body.db, W=body.kernel, cfl=CFL, compatibleEnergyEvolution=True,
                       densityUpdate=S.IntegrateDensity, XSPH=False, ASPH=False)
@@ -526,7 +559,7 @@ class Replay:
         steps0, cycle0 = int(ex["steps"]), int(ex["cycle"])
         ctl = SpheralController(integ, body.kernel, statsStep=10**9, printStep=10**9, redistributeStep=None,
                                 restartStep=None, vizStep=None, vizTime=None, SPH=True, iterateInitialH=False,
-                                initialTime=t0)
+                                initialTime=tau0)
         dt0 = float(ex["dt"])
         integ.lastDt = (0.1*CFL*self.dx/float(pd.longitudinal_speed(self.table, s))) if dt0 <= 0.0 \
             else dt0*math.sqrt(ratio)
@@ -537,20 +570,23 @@ class Replay:
         c = comm()
         c.Barrier()
         wall0 = time.perf_counter()
-        t_end = t1 - TIME_RTOL*max(1.0, abs(t1))
+        t_end = tau1 - TIME_RTOL*max(1.0, abs(tau1))
         while integ.currentTime < t_end:
-            integ.step(t1)
+            integ.step(tau1)
             ctl.totalSteps += 1
             ctl.doPeriodicWork()
         c.Barrier()
         wall = time.perf_counter() - wall0
         steps = ctl.totalSteps - steps0
-        disp_interval = loads.max_displacement()
+        disp_interval = loads.max_displacement() if loads is not None else None
         state = body.gather()
         info = None
         if c.rank == 0:
             ke, el, ke_com = energies(state, self.table, s)
-            h = decel.history()
+            h = decel.history() if decel is not None else np.zeros((0, 1 + 2*body.dim))
+            if disp_interval is None:                    # loads off: from the start positions, by pid
+                d0 = state["x"] - arrays["x"][np.searchsorted(arrays["pid"], state["pid"])]
+                disp_interval = float(np.sqrt(np.einsum("ij,ij->i", d0, d0)).max())/self.dx
             dim = body.dim
             F = h[:, 1:1 + dim] if len(h) else np.zeros((0, dim))
             a_fr = h[:, 1 + dim:1 + 2*dim] if len(h) else np.zeros((0, dim))
@@ -571,14 +607,16 @@ class Replay:
                         flight_decel_ms2=inp.flight_decel(0.5*(t0 + t1)),
                         drag_mean_N=float(np.mean(-F[:, 0])) if len(F) else math.nan,
                         table_drag_N=inp.table_drag_mean(k, k_next),
-                        n_surface=loads.n_surface, n_exposed=loads.n_exposed, max_disp_interval_dx=disp_interval,
+                        n_surface=loads.n_surface if loads is not None else -1,
+                        n_exposed=loads.n_exposed if loads is not None else -1, max_disp_interval_dx=disp_interval,
                         max_disp_ref_dx=float(np.sqrt(np.einsum("ij,ij->i", dref, dref)).max())/self.dx,
                         momentum_axial_Ns=p_axial, momentum_norm_Ns=p_norm,
                         momentum_over_impulse=(p_norm/impulse) if impulse > 0.0 else math.nan,
                         time=float(integ.currentTime), dt=float(integ.lastDt), steps_total=int(ctl.totalSteps),
                         cycle=int(integ.currentCycle), damping_max_fraction=float(
                             packages[1].max_fraction) if a.damping > 0.0 else 0.0,
-                        history=h, wall_per_step_s=wall/max(steps, 1), dt_mean_s=(t1 - t0)/max(steps, 1))
+                        history=h, wall_per_step_s=wall/max(steps, 1), dt_mean_s=(tau1 - tau0)/max(steps, 1),
+                        time_scale=time_scale, spheral_t1_s=float(integ.currentTime))
         del ctl, integ, hydro, packages, loads, decel, imposed, body
         info = c.bcast(info if c.rank == 0 else None, root=0)
         return state, info
@@ -811,7 +849,7 @@ def replay(a):
 def settings(a, rp):
     return {"crossings": a.crossings, "max_crossings": a.max_crossings, "damping": a.damping, "scheme": a.scheme,
             "strength": a.strength, "rate_min": a.rate_min, "every_check": a.every_check, "seed": a.seed,
-            "cfl": CFL, "ke_fraction": a.ke_fraction, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
+            "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
             "loads": {"threshold": 0.5, "exposure": "first_body", "gap": 1.5, "normal_smoothing": 2.0,
                       "lee": rp.inp.lee}}
 
@@ -833,6 +871,11 @@ def build_parser():
     r.add_argument("--scheme", default=naming.BRACKET_DEFAULTS["scheme"])
     r.add_argument("--strength", default=naming.BRACKET_DEFAULTS["strength"])
     r.add_argument("--rate-min", type=float, default=naming.BRACKET_DEFAULTS["rate_min"])
+    r.add_argument("--loads", choices=("on", "off"), default=naming.BRACKET_DEFAULTS["loads"],
+                   help="the surface loads and deceleration packages (default on; check 4 runs them off)")
+    r.add_argument("--mass-scaling", choices=("on", "off"), default=naming.BRACKET_DEFAULTS["mass_scaling"],
+                   help="off: s = 1 and each interval runs in N_c D / c_l seconds of Spheral time (check 4's "
+                   "unscaled twin; needs --loads off)")
     r.add_argument("--every-check", type=int, default=1)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", default=DEFAULT_OUT)
