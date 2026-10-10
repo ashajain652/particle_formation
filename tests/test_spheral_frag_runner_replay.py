@@ -156,7 +156,8 @@ def test_replay_runs_and_removes_exactly_the_body_stage_removals(inputs, runs, f
         b = {k: z[k] for k in z.files}
     rows = intervals(full)
     assert [(int(r["k0"]), int(r["k1"])) for r in rows] == [(0, 1), (1, 2), (2, 3), (3, 4)]
-    assert all(float(r["ke_ratio"]) < 0.05 for r in rows)
+    assert all(float(r["ke_internal_ratio"]) < 0.05 for r in rows)          # the test's key (KE_FRACTION)
+    assert all(int(r["repeats"]) == 0 for r in rows)
     removed = record.read_removed(os.path.join(full, "removed.npz"))
     gone = b["remove_k"] >= 0
     assert gone.any() and (b["remove_k"] == -1).any()
@@ -242,6 +243,63 @@ def test_run_name_parses_back(inputs, runs, form):
     assert meta["run_name"] == name
 
 
+@pytest.mark.spheral
+@pytest.mark.parametrize("form", FORMS)
+def test_body_is_recentred_at_every_boundary(inputs, runs, form):
+    """RZ: after each boundary the mass-weighted mean axial displacement from x_ref is zero to round-off (the shift
+    is recorded). 3D: momentum-conserving, its mean displacement is round-off (1.3e-16 dx measured) until particles
+    are removed, and is not touched then; a removal leaves the remaining particles with a mean displacement of their
+    own (the removed nose had expanded forward: 1.6e-4 to 1.6e-3 dx measured 2026-10-10), which exceeds
+    RECENTRE_3D_DX and is removed like RZ's."""
+    from spheral_frag.runner import run
+    full, _, _, _ = runs(form)
+    dx = DX_MM*1e-3
+    rows = intervals(full)
+    for k in range(1, 5):
+        ck = checkpoint.read(os.path.join(full, "checkpoints", checkpoint.filename(k)))
+        m = ck["m"]
+        d = (m[:, None]*(ck["x"] - ck["x_ref"])).sum(axis=0)/m.sum()
+        applied = int(rows[k - 1]["recentre_applied"]) == 1
+        if form == "rz" or applied:
+            # positions ~0.05 m carry round-off ~1e-17 m; threshold 1e-12 dx = 1e-14 m
+            assert abs(d[0]) <= 1e-12*dx and (form == "rz" or np.linalg.norm(d) <= 1e-12*dx), (k, d/dx)
+        else:
+            assert np.linalg.norm(d) <= run.RECENTRE_3D_DX*dx
+    if form == "rz":
+        assert all(int(r["recentre_applied"]) == 1 for r in rows)
+        assert any(abs(float(r["recentre_shift_dx"])) > 1e-6 for r in rows)    # SolidSPHRZ's drift was removed
+    else:
+        assert int(rows[0]["n_removed"]) == 0 and int(rows[0]["recentre_applied"]) == 0
+        assert float(rows[0]["recentre_shift_dx"]) <= run.RECENTRE_3D_DX
+
+
+@pytest.mark.spheral
+def test_the_internal_ratio_drives_the_repeat(inputs, runs):
+    """A threshold between interval 0->1's internal and whole KE ratios passes (the internal one is the key); a
+    threshold below both repeats the interval at 2 N_c and then fails (exit 1) at --max-crossings, with failed.json
+    naming the internal ratio."""
+    import json
+    d, prep, bodies = inputs
+    full, _, _, _ = runs("rz")
+    r0 = intervals(full)[0]
+    internal, whole = float(r0["ke_internal_ratio"]), float(r0["ke_ratio"])
+    assert internal < whole
+    common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep), "--frames", "0-1"]
+    between = math.sqrt(internal*whole)
+    ok = launch(*common, "--out", rel(os.path.join(d, "between")), "--ke-fraction", repr(between))
+    run_dir = os.path.join(d, "between", os.listdir(os.path.join(d, "between"))[0])
+    assert int(intervals(run_dir)[0]["repeats"]) == 0, ok.stdout[-2000:]
+    bad = launch(*common, "--out", rel(os.path.join(d, "tiny")), "--ke-fraction", "1e-12", "--max-crossings", "20",
+                 check=False)
+    assert bad.returncode == 1 and "internal KE" in bad.stderr
+    fail_dir = os.path.join(d, "tiny", os.listdir(os.path.join(d, "tiny"))[0])
+    with open(os.path.join(fail_dir, "failed.json")) as fh:
+        f = json.load(fh)
+    assert f["keyed_on"] == "ke_internal_ratio" and [x["crossings"] for x in f["attempts"]] == [10, 20]
+    assert all(1e-12 <= x["ke_internal_ratio"] < x["ke_ratio"] for x in f["attempts"])
+    assert not os.path.isfile(os.path.join(fail_dir, "summary.json"))
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Command line and numpy helpers (no long runs)
 # ---------------------------------------------------------------------------------------------------------------
@@ -292,3 +350,15 @@ def test_scale_factor_and_energies():
     V = 2.0/(rho*1.001)
     assert el == pytest.approx(float(np.sum(V*(1e12/(4*G) + P*P/(2*K)))), rel=1e-12)
     assert run.ke_ratio(1.0, 0.0) == math.inf and run.ke_ratio(0.0, 0.0) == 0.0
+    # the slowness test keys on the internal KE: a rigid drift alone passes, ringing fails
+    assert run.slowness(10.0, 9.9, 100.0) == (True, pytest.approx(1e-3), 0.1)
+    assert run.slowness(10.0, 0.0, 100.0)[0] is False
+    # re-centring: RZ shifts the axis by minus the mean axial displacement; 3D leaves round-off alone
+    m = np.array([1.0, 3.0])
+    xr = np.array([[0.0, 0.01], [0.02, 0.02]])
+    x, sh, ap = run.recentre("rz", m, xr + [0.004, 0.001], xr, 0.01)
+    assert ap and sh == pytest.approx(-0.4) and abs((m*(x[:, 0] - xr[:, 0])).sum()) < 1e-18
+    assert np.array_equal(x[:, 1], xr[:, 1] + 0.001)
+    x3 = np.zeros((2, 3))
+    assert run.recentre("3d", m, x3 + 1e-14, x3, 0.01)[2] is False
+    assert run.recentre("3d", m, x3 + 1e-6, x3, 0.01)[2] is True

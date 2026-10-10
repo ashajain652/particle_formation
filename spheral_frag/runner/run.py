@@ -24,11 +24,16 @@
    against the stored elastic energy E = sum V (s:s / (4 G) + P^2 / (2 K)) with V = m / rho (the physical volume: both
    scale with s), s the deviatoric stress (in RZ with its hoop element S_zz), P the EOS's pressure from (rho, u) at
    the run's s, G(T) and K(T) the table's. Both are energies of the scaled problem (the stresses do not depend on s).
-   KE < `KE_FRACTION` (5 %) E passes; otherwise the interval is repeated from its checkpoint with 2 N_c, up to
-   `--max-crossings`, then the run fails (exit 1, `failed.json`). Where E = 0 the ratio is 0 if KE = 0, else inf.
-   The test uses the whole KE; the KE of the centre-of-mass motion (`ke_com_J`; RZ: axial only) and the ratio
-   without it (`ke_internal_ratio`) are recorded beside it, because in RZ SolidSPHRZ's own axial drift makes up most
-   of the KE (measured on the real flight, RZ 2.2 mm, k 0-4: 87-97 %).
+   The test keys on the *internal* kinetic energy, KE - KE_com, the KE relative to the centre-of-mass motion (RZ:
+   the axial centre-of-mass velocity; 3D: the full one) (controller decision at the review of Task 5, 2026-10-10):
+   KE_int < `KE_FRACTION` (5 %) E passes; otherwise the interval is repeated from its checkpoint with 2 N_c, up to
+   `--max-crossings`, then the run fails (exit 1, `failed.json`). Where E = 0 the ratio is 0 if KE_int = 0, else
+   inf. The whole KE, KE_com and both ratios (`ke_ratio`, `ke_internal_ratio`) are recorded in intervals.csv.
+   Reason: spec §9.1's test is about ringing in the quasi-static body, and SolidSPHRZ does not conserve axial
+   momentum by itself (Task 4), so in RZ a rigid axial drift, which carries no stress, makes up most of the whole KE
+   (measured on the real flight, RZ 2.2 mm, k 0-4: 87-97 %). The drift is not a missing axis boundary:
+   SpheralController inserts AxisBoundaryRZ itself (`insertAxisBoundary`, at construction, prepended to every
+   package then appended -- all of the replay's are).
 5. At the boundary the particles whose `remove_k` is k+1 (D1: the next frame's body no longer contains their
    reference position) are removed into the film account (`record.Removal`, reason centre crossing) with their
    physical mass (body.npz's m) and enthalpy h(T) of the body stage's held temperature (the last sampled state).
@@ -38,7 +43,15 @@
    the remaining particles (RZ: its axial component) is subtracted (`v_com_removed_ms`), because the removed
    particles carry momentum away and SolidSPHRZ does not conserve axial momentum (Task 4); the interval's own net
    momentum before this correction is recorded (`momentum_axial_Ns`, `momentum_norm_Ns`, and over the interval's
-   drag impulse |mean sum F| dt, `momentum_over_impulse`).
+   drag impulse |mean sum F| dt, `momentum_over_impulse`). Then, in RZ, every particle's axial position is shifted
+   by the same amount so that the remaining body's mass-weighted mean axial displacement from x_ref is zero
+   (`recentre_shift_dx`, the shift in spacings; controller decision at the review of Task 5): SolidSPHRZ's drift
+   otherwise accumulates in position (0.014 dx per interval on the real RZ 2.2 mm body). In 3D the mean displacement
+   is measured and recorded the same way (its norm in spacings) and removed only above `RECENTRE_3D_DX` (1e-9 dx;
+   `recentre_applied` says whether it was). 3D conserves momentum, and before any removal the mean displacement is
+   round-off (1.3e-16 dx on the synthetic 10 mm sphere); a removal leaves the remaining particles with a mean
+   displacement of their own (the removed nose had expanded forward; 1.6e-4 to 1.6e-3 dx there), which is then
+   removed as in RZ (measured 2026-10-10, tests/test_spheral_frag_runner_replay.py).
 
 **Run directory** `<out>/<run name>/` (`naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)`;
 the brackets crossings, damping, scheme, strength, rate_min and the body's sampler and azimuth are suffixes when they
@@ -91,7 +104,8 @@ PIN = os.path.join(REPO_ROOT, "spheral_frag", "container", "pin.json")
 DEFAULT_OUT = os.path.join("spheral_output", "runs")
 SUMMARY_SCHEMA = "spheral_frag.run_summary"
 CFL = 0.25                     # Spheral's Courant number (M0's bench.py)
-KE_FRACTION = 0.05             # spec §9.1's slowness test: KE below 5 % of the stored elastic energy
+KE_FRACTION = 0.05             # spec §9.1's slowness test: internal KE below 5 % of the stored elastic energy
+RECENTRE_3D_DX = 1e-9          # 3D: the body's mean displacement from x_ref is removed above this (in spacings)
 MAX_CROSSINGS = 80             # plan Task 5: the most crossings per interval before the run fails
 MAX_LOAD = 2.0                 # the Linux VM's 1-min load above which a run on more than 4 processes refuses
 TIME_RTOL = 1e-12              # an interval ends when Spheral's time is within this of the frame time
@@ -103,7 +117,7 @@ INTERVAL_COLUMNS = [
     "wall_per_step_s", "dt_mean_s", "ke_J", "elastic_J", "ke_ratio", "ke_com_J", "ke_internal_ratio", "n_particles", "n_removed",
     "removed_mass_kg", "removed_enthalpy_J", "decel_mean_ms2", "decel_end_ms2", "flight_decel_ms2", "drag_mean_N", "table_drag_N",
     "n_surface", "n_exposed", "max_disp_interval_dx", "max_disp_ref_dx", "momentum_axial_Ns", "momentum_norm_Ns",
-    "momentum_over_impulse", "v_com_removed_ms", "attempts_ke_ratio",
+    "momentum_over_impulse", "v_com_removed_ms", "recentre_shift_dx", "recentre_applied", "attempts_ke_ratio",
 ]
 
 
@@ -222,6 +236,28 @@ def energies(state, table, scale):
     dev = np.where(G > 0.0, ss/(4.0*np.where(G > 0.0, G, 1.0)), 0.0)
     el = math.fsum(V*(dev + P*P/(2.0*K)))
     return ke, el, ke_com
+
+
+def slowness(ke, ke_com, el, fraction=KE_FRACTION):
+    """(passes, internal ratio, whole ratio): the test keys on the internal KE, KE - KE_com (module docstring)."""
+    internal = ke_ratio(max(ke - ke_com, 0.0), el)
+    return internal < fraction, internal, ke_ratio(ke, el)
+
+
+def recentre(form, m, x, x_ref, dx, threshold_dx=RECENTRE_3D_DX):
+    """(x shifted, shift in spacings, applied): RZ: the axial positions shifted by one amount so that the
+    mass-weighted mean axial displacement from x_ref is zero (shift signed); 3D: the mean displacement vector removed
+    only when its norm exceeds threshold_dx spacings (its norm returned either way)."""
+    M = math.fsum(m)
+    d = np.array([math.fsum(m*(x[:, j] - x_ref[:, j])) for j in range(x.shape[1])])/M
+    if form == "rz":
+        x = x.copy()
+        x[:, 0] = x[:, 0] - d[0]
+        return x, -float(d[0])/dx, True
+    norm = float(np.linalg.norm(d))/dx
+    if norm > threshold_dx:
+        return x - d, norm, True
+    return x, norm, False
 
 
 def ke_ratio(ke, el):
@@ -582,6 +618,9 @@ class Replay:
             v_com[1] = 0.0
         new["v"] = new["v"] - v_com
         row["v_com_removed_ms"] = float(v_com[0]) if self.form == "rz" else float(np.linalg.norm(v_com))
+        new["x"], shift, applied = recentre(self.form, m, new["x"], new["x_ref"], self.dx)
+        row["recentre_shift_dx"] = shift
+        row["recentre_applied"] = int(applied)
         record.write_removed(self.removed_path, record.Removal.concat(removals))
         if due:
             self.write_check(new, info["scale"], k_next, t1, next_check)
@@ -699,27 +738,31 @@ def replay(a):
         tried = []
         while True:
             state, info = rp.attempt(k, k_next, ck, crossings, len(tried))
-            tried.append((crossings, info["ke_ratio"]))
+            ok, internal, _ = slowness(info["ke_J"], info["ke_com_J"], info["elastic_J"], a.ke_fraction)
+            tried.append((crossings, internal, info["ke_ratio"]))
             say(f"  k {k:5d}->{k_next:5d}  s {info['scale']:.4e}  N_c {crossings:3d}  steps {info['steps']:6d}  "
                 f"wall {info['wall_s']:8.2f} s ({info['wall_per_step_s']*1e3:.2f} ms/step)  KE/E "
-                f"{info['ke_ratio']:.3e}  decel {info['decel_mean_ms2']:.4g} (flight {info['flight_decel_ms2']:.4g}) "
+                f"{info['ke_ratio']:.3e} (internal {internal:.3e})  decel {info['decel_mean_ms2']:.4g} (flight {info['flight_decel_ms2']:.4g}) "
                 f"m/s2  drag {info['drag_mean_N']:.4g} (tables {info['table_drag_N']:.4g}) N"
                 f"  disp {info['max_disp_interval_dx']:.3e} dx  p/impulse {info['momentum_over_impulse']:.2e}")
-            if info["ke_ratio"] < KE_FRACTION:
+            if ok:
                 break
             if 2*crossings > a.max_crossings:
                 if c.rank == 0:
                     write_json(os.path.join(run_dir, "failed.json"),
-                               {"run": inp.name, "k0": k, "k1": k_next, "attempts": tried,
-                                "ke_fraction": KE_FRACTION, "max_crossings": a.max_crossings})
-                raise Failure(f"interval {k}->{k_next}: KE/elastic energy {info['ke_ratio']:.3e} >= {KE_FRACTION} "
+                               {"run": inp.name, "k0": k, "k1": k_next,
+                                "attempts": [{"crossings": n, "ke_internal_ratio": ri, "ke_ratio": rw}
+                                             for n, ri, rw in tried],
+                                "keyed_on": "ke_internal_ratio", "ke_fraction": a.ke_fraction,
+                                "max_crossings": a.max_crossings})
+                raise Failure(f"interval {k}->{k_next}: internal KE/elastic energy {internal:.3e} >= {a.ke_fraction} "
                               f"at {crossings} crossings (the most allowed: {a.max_crossings}); attempts {tried}", collective=True)
             crossings *= 2
         row = None
         if c.rank == 0:
             row = {col: info.get(col, math.nan) for col in INTERVAL_COLUMNS}
             row.update(k0=k, k1=k_next, t0_s=inp.times[inp.column(k)], t1_s=inp.times[inp.column(k_next)],
-                       repeats=len(tried) - 1, attempts_ke_ratio=";".join(f"{n}:{r:.6e}" for n, r in tried))
+                       repeats=len(tried) - 1, attempts_ke_ratio=";".join(f"{n}:{ri:.6e}/{rw:.6e}" for n, ri, rw in tried))
             next_check, path = rp.boundary(k_next, state, info, removals, next_check, i + 1, rows, row)
         c.Barrier()
         ck = read_ck(os.path.join(ck_dir, checkpoint.filename(k_next)))
@@ -734,7 +777,7 @@ def replay(a):
         rem = record.read_removed(rp.removed_path)
         final_mass = math.fsum(rp.body_m[rp.rows(ck["pid"])])
         residual = math.fsum([final_mass, math.fsum(rem.mass), -meta["initial_mass_kg"]])
-        fl = [float(r["ke_ratio"]) for r in rows]
+        fl = [float(r["ke_internal_ratio"]) for r in rows]
         summary = {
             "schema": SUMMARY_SCHEMA, "schema_version": 1, "run": inp.name, "status": "ok",
             "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -743,7 +786,9 @@ def replay(a):
             "initial_mass_kg": meta["initial_mass_kg"], "removed_mass_kg": math.fsum(rem.mass),
             "n_removed": len(rem), "mass_residual_kg": residual,
             "mass_rel_residual": residual/meta["initial_mass_kg"],
-            "max_ke_ratio": max(fl) if fl else None, "repeats": sum(int(r["repeats"]) for r in rows),
+            "max_ke_internal_ratio": max(fl) if fl else None,
+            "max_ke_ratio": max(float(r["ke_ratio"]) for r in rows) if rows else None,
+            "max_abs_recentre_shift_dx": max(abs(float(r["recentre_shift_dx"])) for r in rows) if rows else None, "repeats": sum(int(r["repeats"]) for r in rows),
             "steps": sum(int(r["steps"]) for r in rows), "wall_s_intervals": sum(float(r["wall_s"]) for r in rows),
             "wall_s_this_invocation": time.perf_counter() - t_start,
             "max_disp_interval_dx": max(float(r["max_disp_interval_dx"]) for r in rows),
@@ -756,7 +801,7 @@ def replay(a):
         write_json(summary_path, summary)
         say(f"replay done: {len(rows)} intervals, {summary['steps']} steps, {summary['wall_s_intervals']:.1f} s; "
             f"removed {summary['n_removed']} ({summary['removed_mass_kg']:.6g} kg); mass residual "
-            f"{summary['mass_rel_residual']:.2e} m0; max KE/E {summary['max_ke_ratio']:.3e}")
+            f"{summary['mass_rel_residual']:.2e} m0; max internal KE/E {summary['max_ke_internal_ratio']:.3e}")
         if abs(summary["mass_rel_residual"]) > 1e-12:
             raise Failure(f"accounts do not close: {summary['mass_rel_residual']:.3e} m0")
     c.Barrier()
@@ -766,7 +811,7 @@ def replay(a):
 def settings(a, rp):
     return {"crossings": a.crossings, "max_crossings": a.max_crossings, "damping": a.damping, "scheme": a.scheme,
             "strength": a.strength, "rate_min": a.rate_min, "every_check": a.every_check, "seed": a.seed,
-            "cfl": CFL, "ke_fraction": KE_FRACTION, "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
+            "cfl": CFL, "ke_fraction": a.ke_fraction, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
             "loads": {"threshold": 0.5, "exposure": "first_body", "gap": 1.5, "normal_smoothing": 2.0,
                       "lee": rp.inp.lee}}
 
@@ -794,6 +839,7 @@ def build_parser():
     r.add_argument("--resume", action="store_true", help="continue an unfinished run from its last checkpoint")
     r.add_argument("--force", action="store_true", help="start even above --max-load")
     r.add_argument("--max-load", type=float, default=MAX_LOAD)
+    r.add_argument("--ke-fraction", type=float, default=KE_FRACTION, help=argparse.SUPPRESS)   # tests only
     r.add_argument("--stop-at", type=int, default=None, help="stop after the checkpoint of this frame (tests, "
                    "splitting a long run)")
     return p
