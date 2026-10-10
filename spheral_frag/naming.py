@@ -45,6 +45,9 @@ BRACKET_DEFAULTS: dict[str, object] = {
     "azimuth_deg": 0.0,          # an RZ body's half-plane azimuth (body name's _azimuth-<deg>deg)
     "loads": "on",               # Task 6: the surface loads and deceleration packages, on | off (check 4: off)
     "mass_scaling": "on",        # Task 6: on (spec §9.1) | off (s = 1, each interval run in N_c D / c_l seconds)
+    # Spheral M2 decision 7 (Task 6b): the replay's crossings-error monitor
+    "monitor_every": 10,         # every this many intervals (and the first) rerun at 2 N_c to estimate the error; 0 off
+    "monitor_limit": 0.05,       # above this estimate the run continues at 2 N_c (Asha's limit over the flight)
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -63,6 +66,8 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "azimuth_deg": ("azimuth", "deg"),
     "loads": ("loads", ""),
     "mass_scaling": ("massscaling", ""),
+    "monitor_every": ("monitorevery", ""),
+    "monitor_limit": ("monitorlimit", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 

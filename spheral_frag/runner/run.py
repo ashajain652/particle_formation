@@ -3,7 +3,7 @@
     spheral_frag/container/spheral [-n N] spheral_frag/runner/run.py replay --body DIR --prepared DIR --frames K0-K1
         [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
-        [--stop-at K] [--loads on|off] [--mass-scaling on|off]
+        [--stop-at K] [--loads on|off] [--mass-scaling on|off] [--monitor-every 10] [--monitor-limit 0.05]
 
 **The interval loop.** For each interval k -> k+1 of the body's frames between K0 and K1 (spec §9.1):
 
@@ -67,9 +67,37 @@ masses as s). A disagreement would mean that something divides by an unscaled ma
 `time_scale` (1/sqrt(s_N) unscaled, 1 scaled) and `spheral_t1_s` are recorded per interval; the record's times stay
 the flight times. Both switches are run-name brackets (`loads`, `mass_scaling`, default on).
 
+**The crossings-error monitor** (Spheral M2 plan, decision 7, Asha 2026-10-10; Task 6b). Check 4 found 10 crossings
+per interval within the plan's rule at every held state but lagging 20 crossings by 0.6 % of the peak stress right
+after a ramp, so the replay estimates its own crossings error as it runs. On a monitored interval, once the interval
+has been accepted at N crossings (after any slowness repeats), the same interval is run again from the same
+checkpoint (the one read from disk at the interval's start; the rerun writes nothing to the run's checkpoints) at 2 N,
+and the two end states are compared particle by particle (by pid) in their full stress sigma = S - P I
+(`stress_state`, physical units):
+
+    err = 2 max_i vM(sigma_N,i - sigma_2N,i) / max_i vM(sigma_N,i)      (`crossings_error`)
+
+vM the von Mises stress sqrt(3/2 dev:dev), so the pressure part of the difference does not enter. The factor 2: the
+quasi-static lag falls as 1/N, so sigma_N - sigma_inf = 2 (sigma_N - sigma_2N). Recorded with it, for context, the same
+with the RMS over particles (`crossings_err_rms`) and with the 99th percentile (`crossings_err_p99`) in place of the
+maximum, and the hydrostatic part the von Mises stress leaves out, 2 max |P_N - P_2N| / max vM(sigma_N)
+(`crossings_err_pressure`; on check 4's ramp it is 1-5 times the von Mises estimate). Monitored intervals: the
+first (K0 -> K0+1: the first loading from the stress-free state, check 4's ramp case, and an early read on a long
+run) and every `--monitor-every` M-th after it (interval index j from K0 with
+j = M - 1 mod M: K0+M-1 -> K0+M, ...); M = 0 turns the monitor off. When err <= `--monitor-limit` F (5 %) the N run's
+state stays the accepted one, so a monitored run's accepted states equal an unmonitored run's bitwise. When err > F,
+the run logs it, accepts the 2 N run's state for that interval (the better estimate; it passes the slowness test as
+any attempt does, else it is repeated at 4 N), and runs every later interval at 2 N (`crossings_switch` 1 in
+intervals.csv; the run's crossings are carried in the checkpoints' `run_crossings`, so a resumed run continues at
+them); monitoring continues against 4 N. The monitor compares at most at `--max-crossings`: an interval whose 2 N
+would exceed it is not monitored (logged), and an estimate above F whose switch would leave the run unable to be
+monitored again (4 N > --max-crossings) fails the run (exit 1, `failed.json`). The per-particle von Mises stresses of
+both runs and of their difference go to `monitor/interval_<k>.npz` (scratch, not read back). Cost: one interval at 2 N
+per monitored interval, about 2/M of the run's time plus the first interval's.
+
 **Run directory** `<out>/<run name>/` (`naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)`;
-the brackets crossings, damping, scheme, strength, rate_min and the body's sampler and azimuth are suffixes when they
-differ from their defaults):
+the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and azimuth, loads, mass_scaling,
+monitor_every and monitor_limit are suffixes when they differ from their defaults):
 
   meta.json                  record.make_meta (the analyse contract) + the run's settings and provenance
   checks/check_<n>.npz       record.Particles at K0 (n = 0) and every --every-check intervals (always at K1):
@@ -80,7 +108,9 @@ differ from their defaults):
                              force during the interval that ended there, the driver's counters in `extra`)
   history/interval_<k>.npz   per accepted step: t_mid, sum F, a_frame (Deceleration.history), and the scale
   intervals.csv              one row per accepted interval (INTERVAL_COLUMNS)
-  failed.json                only when the slowness test failed at the most crossings allowed
+  monitor/interval_<k>.npz   per monitored interval: pid, von Mises of sigma_N, sigma_2N and their difference
+  failed.json                only when the slowness test failed at the most crossings allowed, or the crossings
+                             error exceeded --monitor-limit where the run could not double its crossings again
   summary.json               last; its existence makes the run skip
 
 **Stresses per particle** are in the checkpoints: `S` (deviatoric, (n, dim, dim); RZ `S_zz` the hoop element),
@@ -132,7 +162,9 @@ INTERVAL_COLUMNS = [
     "removed_mass_kg", "removed_enthalpy_J", "decel_mean_ms2", "decel_end_ms2", "flight_decel_ms2", "drag_mean_N", "table_drag_N",
     "n_surface", "n_exposed", "max_disp_interval_dx", "max_disp_ref_dx", "momentum_axial_Ns", "momentum_norm_Ns",
     "momentum_over_impulse", "v_com_removed_ms", "recentre_shift_dx", "recentre_applied", "attempts_ke_ratio",
-    "time_scale", "spheral_t1_s",
+    "time_scale", "spheral_t1_s", "monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99",
+    "crossings_err_pressure", "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
+    "run_crossings",
 ]
 
 
@@ -275,6 +307,62 @@ def recentre(form, m, x, x_ref, dx, threshold_dx=RECENTRE_3D_DX):
     return x, norm, False
 
 
+def crossings_error(st_n, st_2n):
+    """(est, rms, p99): the crossings-error estimate of the state at N crossings against the same interval at 2 N
+    (module docstring, "The crossings-error monitor"): 2 max_i vM(sigma_N,i - sigma_2N,i) / max_i vM(sigma_N,i), and
+    the same with the RMS and the 99th percentile over particles in place of the maximum. `st_n`, `st_2n`: dicts with
+    `pid` and `sigma` (n, 3, 3) (`stress_state`'s); the particles are matched by pid and must be the same set.
+    Where sigma_N is zero everywhere the estimate is 0 if the difference is too, else inf."""
+    vm_n, vm_d = von_mises_diff(st_n, st_2n)
+    top = float(vm_n.max()) if len(vm_n) else 0.0
+    if top <= 0.0:
+        same = not np.any(vm_d)
+        return (0.0, 0.0, 0.0) if same else (math.inf, math.inf, math.inf)
+    return (2.0*float(vm_d.max())/top, 2.0*math.sqrt(float(np.mean(vm_d*vm_d)))/top,
+            2.0*float(np.percentile(vm_d, 99.0))/top)
+
+
+def pressure_error(st_n, st_2n):
+    """2 max_i |P_N,i - P_2N,i| / max_i vM(sigma_N,i), P = -tr(sigma)/3: the hydrostatic part of the difference,
+    which the von Mises estimate does not see; recorded for context (`crossings_err_pressure`)."""
+    pa, pb = np.asarray(st_n["pid"]), np.asarray(st_2n["pid"])
+    if len(pa) != len(pb) or not np.array_equal(np.sort(pa), np.sort(pb)):
+        raise ValueError("the two states hold different particles")
+    ob = np.argsort(pb, kind="stable")
+    rb = ob[np.searchsorted(pb, pa, sorter=ob)]
+    sa = np.asarray(st_n["sigma"], dtype=np.float64)
+    dp = np.abs(np.trace(sa - np.asarray(st_2n["sigma"], dtype=np.float64)[rb], axis1=1, axis2=2))/3.0
+    top = float(von_mises(sa).max()) if len(sa) else 0.0
+    if top <= 0.0:
+        return 0.0 if not np.any(dp) else math.inf
+    return 2.0*float(dp.max())/top
+
+
+def von_mises(sigma):
+    """sqrt(3/2 dev:dev) of (n, 3, 3) tensors."""
+    sigma = np.asarray(sigma, dtype=np.float64)
+    dev = sigma - (np.trace(sigma, axis1=1, axis2=2)/3.0)[:, None, None]*np.eye(3)[None]
+    return np.sqrt(1.5*np.einsum("nij,nij->n", dev, dev))
+
+
+def von_mises_diff(st_n, st_2n):
+    """(vM(sigma_N), vM(sigma_N - sigma_2N)) per particle, in st_n's pid order (the pid sets must agree)."""
+    pa, pb = np.asarray(st_n["pid"]), np.asarray(st_2n["pid"])
+    if len(pa) != len(pb) or not np.array_equal(np.sort(pa), np.sort(pb)):
+        raise ValueError("the two states hold different particles")
+    ob = np.argsort(pb, kind="stable")
+    rb = ob[np.searchsorted(pb, pa, sorter=ob)]
+    sa = np.asarray(st_n["sigma"], dtype=np.float64)
+    sb = np.asarray(st_2n["sigma"], dtype=np.float64)[rb]
+    return von_mises(sa), von_mises(sa - sb)
+
+
+def monitor_due(j, every):
+    """Whether interval j (counted from K0, 0-based) is monitored: the first, and every `every`-th after it (j = every
+    - 1 mod every); never when every is 0."""
+    return every > 0 and (j == 0 or j % every == every - 1)
+
+
 def ke_ratio(ke, el):
     if el > 0.0:
         return ke/el
@@ -312,7 +400,7 @@ def write_intervals(path, rows):
         w = csv.writer(fh)
         w.writerow(INTERVAL_COLUMNS)
         for r in rows:
-            w.writerow([_cell(r[c]) for c in INTERVAL_COLUMNS])
+            w.writerow([_cell(r.get(c, "")) for c in INTERVAL_COLUMNS])     # rows of an older run lack columns
     os.replace(tmp, path)
 
 
@@ -402,10 +490,13 @@ class Inputs:
         if a.mass_scaling == "off" and a.loads != "off":
             raise BadInput("--mass-scaling off runs each interval in N_c D / c_l seconds, not in flight time: it "
                            "needs --loads off (the load tables are in flight time)")
+        if a.monitor_every < 0 or not a.monitor_limit > 0.0:
+            raise BadInput("need --monitor-every >= 0 (0: off) and --monitor-limit > 0")
         brackets = {"crossings": a.crossings, "damping": a.damping, "scheme": a.scheme, "strength": a.strength,
                     "rate_min": a.rate_min, "sampler": self.body_doc.get("sampler", "p1"),
                     "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0)), "loads": a.loads,
-                    "mass_scaling": a.mass_scaling}
+                    "mass_scaling": a.mass_scaling, "monitor_every": a.monitor_every,
+                    "monitor_limit": a.monitor_limit}
         try:
             self.brackets = naming.canonical_brackets(brackets)
             self.name = naming.run_name(self.prepared, "replay", (k0, k1), self.form, self.dx_mm, self.brackets,
@@ -621,6 +712,60 @@ class Replay:
         info = c.bcast(info if c.rank == 0 else None, root=0)
         return state, info
 
+    # -- one interval: attempts until the slowness test passes
+    def run_interval(self, k, k_next, ck, crossings, tag, first=None):
+        """Attempts of interval k -> k_next from checkpoint `ck` at `crossings`, doubled until the slowness test
+        passes (module docstring, step 4); `first` an attempt already run at `crossings` (the monitor's). Returns
+        (state, info, tried [(crossings, internal ratio, whole ratio)]); raises Failure (failed.json) past
+        --max-crossings."""
+        a, inp, c = self.a, self.inp, comm()
+        tried = []
+        while True:
+            if first is not None:
+                state, info = first
+                first = None
+            else:
+                state, info = self.attempt(k, k_next, ck, crossings, f"{tag}{len(tried)}")
+            ok, internal, _ = slowness(info["ke_J"], info["ke_com_J"], info["elastic_J"], a.ke_fraction)
+            tried.append((crossings, internal, info["ke_ratio"]))
+            say(f"  k {k:5d}->{k_next:5d}  s {info['scale']:.4e}  N_c {crossings:3d}  steps {info['steps']:6d}  "
+                f"wall {info['wall_s']:8.2f} s ({info['wall_per_step_s']*1e3:.2f} ms/step)  KE/E "
+                f"{info['ke_ratio']:.3e} (internal {internal:.3e})  decel {info['decel_mean_ms2']:.4g} (flight "
+                f"{info['flight_decel_ms2']:.4g}) m/s2  drag {info['drag_mean_N']:.4g} (tables "
+                f"{info['table_drag_N']:.4g}) N  disp {info['max_disp_interval_dx']:.3e} dx  p/impulse "
+                f"{info['momentum_over_impulse']:.2e}")
+            if ok:
+                return state, info, tried
+            if 2*crossings > a.max_crossings:
+                if c.rank == 0:
+                    write_json(os.path.join(self.run_dir, "failed.json"),
+                               {"run": inp.name, "k0": k, "k1": k_next, "reason": "slowness",
+                                "attempts": [{"crossings": n, "ke_internal_ratio": ri, "ke_ratio": rw}
+                                             for n, ri, rw in tried],
+                                "keyed_on": "ke_internal_ratio", "ke_fraction": a.ke_fraction,
+                                "max_crossings": a.max_crossings})
+                raise Failure(f"interval {k}->{k_next}: internal KE/elastic energy {internal:.3e} >= "
+                              f"{a.ke_fraction} at {crossings} crossings (the most allowed: {a.max_crossings}); "
+                              f"attempts {tried}", collective=True)
+            crossings *= 2
+
+    def monitor_compare(self, k, state, info, st2, info2):
+        """(est, rms, p99) of the accepted state at N against the rerun at 2 N (rank 0), with the per-particle von
+        Mises stresses written to monitor/interval_<k>.npz."""
+        sa = stress_state(dict(state, scale=info["scale"]), self.table)
+        sb = stress_state(dict(st2, scale=info2["scale"]), self.table)
+        est = crossings_error(sa, sb) + (pressure_error(sa, sb),)
+        vm_n, vm_d = von_mises_diff(sa, sb)
+        vm_2n, _ = von_mises_diff(sb, sa)
+        order = np.argsort(sb["pid"], kind="stable")
+        vm_2n = vm_2n[order[np.searchsorted(sb["pid"], sa["pid"], sorter=order)]]
+        d = os.path.join(self.run_dir, "monitor")
+        os.makedirs(d, exist_ok=True)
+        np.savez(os.path.join(d, f"interval_{k:05d}.npz"), pid=sa["pid"], vm_n=vm_n, vm_2n=vm_2n, vm_diff=vm_d,
+                 crossings=int(info["crossings"]), monitor_crossings=int(info2["crossings"]),
+                 est=est[0], rms=est[1], p99=est[2], pressure=est[3])
+        return est
+
     # -- the boundary
     def boundary(self, k_next, state, info, removals, next_check, interval_index, rows, row):
         """Remove, book, write (rank 0). Returns (next_check, the new checkpoint path)."""
@@ -669,7 +814,8 @@ class Replay:
         np.savez(os.path.join(self.hist_dir, f"interval_{inp.ks[interval_index - 1]:05d}.npz"),
                  history=info["history"], scale=info["scale"], k0=inp.ks[interval_index - 1], k1=k_next)
         extra = dict(time=t1, dt=info["dt"], steps=info["steps_total"], cycle=info["cycle"],
-                     next_check=next_check, crossings=info["crossings"], spheral_time=info["time"])
+                     next_check=next_check, crossings=info["crossings"], spheral_time=info["time"],
+                     run_crossings=info["run_crossings"])
         path = os.path.join(self.ck_dir, checkpoint.filename(k_next))
         checkpoint.write_state(path, new, form=self.form, dx=self.dx, nperh=rn.NPERH, run=inp.name, k=k_next,
                                scale=info["scale"], processes=comm().size, extra=extra)
@@ -748,7 +894,8 @@ def replay(a):
             checkpoint.write_state(os.path.join(ck_dir, checkpoint.filename(inp.k0)), state0, form=inp.form,
                                    dx=inp.dx, nperh=rn.NPERH, run=inp.name, k=inp.k0, scale=1.0, processes=c.size,
                                    extra=dict(time=inp.times[inp.column(inp.k0)], dt=0.0, steps=0, cycle=0,
-                                              next_check=1, crossings=0, spheral_time=0.0))
+                                              next_check=1, crossings=0, spheral_time=0.0,
+                                              run_crossings=a.crossings))
         c.Barrier()
         k_start = inp.k0
     else:
@@ -770,37 +917,63 @@ def replay(a):
                 os.remove(p)
 
     i_start = inp.ks.index(k_start)
+    # the run's crossings per interval: --crossings, or twice it after each switch by the monitor (carried in the
+    # checkpoints, so a resumed run continues at them)
+    base = int(ck["extra"].get("run_crossings", a.crossings))
     for i in range(i_start, len(inp.ks) - 1):
         k, k_next = inp.ks[i], inp.ks[i + 1]
-        crossings = a.crossings
-        tried = []
-        while True:
-            state, info = rp.attempt(k, k_next, ck, crossings, len(tried))
-            ok, internal, _ = slowness(info["ke_J"], info["ke_com_J"], info["elastic_J"], a.ke_fraction)
-            tried.append((crossings, internal, info["ke_ratio"]))
-            say(f"  k {k:5d}->{k_next:5d}  s {info['scale']:.4e}  N_c {crossings:3d}  steps {info['steps']:6d}  "
-                f"wall {info['wall_s']:8.2f} s ({info['wall_per_step_s']*1e3:.2f} ms/step)  KE/E "
-                f"{info['ke_ratio']:.3e} (internal {internal:.3e})  decel {info['decel_mean_ms2']:.4g} (flight {info['flight_decel_ms2']:.4g}) "
-                f"m/s2  drag {info['drag_mean_N']:.4g} (tables {info['table_drag_N']:.4g}) N"
-                f"  disp {info['max_disp_interval_dx']:.3e} dx  p/impulse {info['momentum_over_impulse']:.2e}")
-            if ok:
-                break
-            if 2*crossings > a.max_crossings:
+        state, info, tried = rp.run_interval(k, k_next, ck, base, "")
+        repeats = len(tried) - 1
+        mon = dict(monitored=0, crossings_err_est=math.nan, crossings_err_rms=math.nan, crossings_err_p99=math.nan,
+                   crossings_err_pressure=math.nan, monitor_crossings=0, monitor_wall_s=0.0,
+                   monitor_ke_internal_ratio=math.nan, crossings_switch=0)
+        if monitor_due(i, a.monitor_every):
+            n_acc = int(info["crossings"])
+            if 2*n_acc > a.max_crossings:
+                say(f"  monitor: k {k}->{k_next} not monitored: 2 x {n_acc} crossings > --max-crossings "
+                    f"{a.max_crossings}")
+            else:
+                st2, info2 = rp.attempt(k, k_next, ck, 2*n_acc, "m")
+                est = None
                 if c.rank == 0:
-                    write_json(os.path.join(run_dir, "failed.json"),
-                               {"run": inp.name, "k0": k, "k1": k_next,
-                                "attempts": [{"crossings": n, "ke_internal_ratio": ri, "ke_ratio": rw}
-                                             for n, ri, rw in tried],
-                                "keyed_on": "ke_internal_ratio", "ke_fraction": a.ke_fraction,
-                                "max_crossings": a.max_crossings})
-                raise Failure(f"interval {k}->{k_next}: internal KE/elastic energy {internal:.3e} >= {a.ke_fraction} "
-                              f"at {crossings} crossings (the most allowed: {a.max_crossings}); attempts {tried}", collective=True)
-            crossings *= 2
+                    est = rp.monitor_compare(k, state, info, st2, info2)
+                est = c.bcast(est, root=0)
+                _, internal2, _ = slowness(info2["ke_J"], info2["ke_com_J"], info2["elastic_J"], a.ke_fraction)
+                mon.update(monitored=1, crossings_err_est=est[0], crossings_err_rms=est[1],
+                           crossings_err_p99=est[2], crossings_err_pressure=est[3], monitor_crossings=2*n_acc,
+                           monitor_wall_s=info2["wall_s"], monitor_ke_internal_ratio=internal2)
+                say(f"  monitor: k {k}->{k_next}  N_c {n_acc} against {2*n_acc}: crossings error {est[0]:.3e} "
+                    f"(rms {est[1]:.3e}, p99 {est[2]:.3e}, pressure {est[3]:.3e}; limit {a.monitor_limit})  wall "
+                    f"{info2['wall_s']:.2f} s")
+                if est[0] > a.monitor_limit:
+                    if 4*n_acc > a.max_crossings:
+                        if c.rank == 0:
+                            write_json(os.path.join(run_dir, "failed.json"),
+                                       {"run": inp.name, "k0": k, "k1": k_next, "reason": "crossings_error",
+                                        "crossings": n_acc, "monitor_crossings": 2*n_acc,
+                                        "crossings_err_est": est[0], "crossings_err_rms": est[1],
+                                        "crossings_err_p99": est[2], "monitor_limit": a.monitor_limit,
+                                        "max_crossings": a.max_crossings,
+                                        "explanation": "the crossings-error estimate exceeds --monitor-limit and the "
+                                        "run cannot continue at twice the crossings and still be monitored (4 N > "
+                                        "--max-crossings)"})
+                        raise Failure(f"interval {k}->{k_next}: crossings error {est[0]:.3e} > {a.monitor_limit} at "
+                                      f"{n_acc} crossings, and {4*n_acc} would exceed --max-crossings "
+                                      f"{a.max_crossings}", collective=True)
+                    say(f"  monitor: crossings error {est[0]:.3e} > {a.monitor_limit}: k {k}->{k_next} takes the "
+                        f"{2*n_acc}-crossing state, and the run continues at {2*n_acc} crossings")
+                    base = 2*n_acc
+                    state, info, tried2 = rp.run_interval(k, k_next, ck, base, "m", first=(st2, info2))
+                    tried += tried2
+                    repeats += len(tried2) - 1
+                    mon["crossings_switch"] = 1
+        info["run_crossings"] = base
         row = None
         if c.rank == 0:
             row = {col: info.get(col, math.nan) for col in INTERVAL_COLUMNS}
             row.update(k0=k, k1=k_next, t0_s=inp.times[inp.column(k)], t1_s=inp.times[inp.column(k_next)],
-                       repeats=len(tried) - 1, attempts_ke_ratio=";".join(f"{n}:{ri:.6e}/{rw:.6e}" for n, ri, rw in tried))
+                       repeats=repeats, attempts_ke_ratio=";".join(f"{n}:{ri:.6e}/{rw:.6e}" for n, ri, rw in tried),
+                       run_crossings=base, **mon)
             next_check, path = rp.boundary(k_next, state, info, removals, next_check, i + 1, rows, row)
         c.Barrier()
         ck = read_ck(os.path.join(ck_dir, checkpoint.filename(k_next)))
@@ -831,6 +1004,7 @@ def replay(a):
             "wall_s_this_invocation": time.perf_counter() - t_start,
             "max_disp_interval_dx": max(float(r["max_disp_interval_dx"]) for r in rows),
             "max_abs_momentum_over_impulse": max(abs(float(r["momentum_over_impulse"])) for r in rows),
+            "crossings_monitor": monitor_summary(rows, a),
             "settings": settings(a, rp), "brackets": inp.brackets, "pin": pin_info(pin), "git": git_commit(),
             "provisional": list(rp.strength.provisional),
             "files": {"meta": "meta.json", "checks": "checks/", "removed": "removed.npz",
@@ -846,10 +1020,38 @@ def replay(a):
     return 0
 
 
+def monitor_summary(rows, a):
+    """summary.json's account of the crossings-error monitor over the run's intervals.csv rows."""
+    def num(r, c):
+        v = r.get(c, "")
+        return float(v) if v not in ("", None) else math.nan
+    mon = [r for r in rows if str(r.get("monitored", "0")) == "1"]
+    ests = [(num(r, "crossings_err_est"), r) for r in mon]
+    best = max(ests, key=lambda e: e[0]) if ests else None
+    return {
+        "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit,
+        "intervals_monitored": [[int(r["k0"]), int(r["k1"])] for r in mon],
+        "max_crossings_err_est": best[0] if best else None,
+        "max_at": [int(best[1]["k0"]), int(best[1]["k1"])] if best else None,
+        "max_crossings_err_rms": max(num(r, "crossings_err_rms") for r in mon) if mon else None,
+        "max_crossings_err_p99": max(num(r, "crossings_err_p99") for r in mon) if mon else None,
+        "max_crossings_err_pressure": max(num(r, "crossings_err_pressure") for r in mon) if mon else None,
+        "estimates": [{"k0": int(r["k0"]), "k1": int(r["k1"]), "crossings": int(r["crossings"]),
+                       "monitor_crossings": int(r["monitor_crossings"]), "est": num(r, "crossings_err_est"),
+                       "rms": num(r, "crossings_err_rms"), "p99": num(r, "crossings_err_p99")} for r in mon],
+        "switches": [{"k0": int(r["k0"]), "k1": int(r["k1"]), "to_crossings": int(r["run_crossings"]),
+                      "est": num(r, "crossings_err_est")} for r in rows if str(r.get("crossings_switch", "0")) == "1"],
+        "final_crossings": int(rows[-1]["run_crossings"]) if rows and rows[-1].get("run_crossings") not in
+        ("", None) else a.crossings,
+        "monitor_wall_s": math.fsum(num(r, "monitor_wall_s") for r in mon),
+    }
+
+
 def settings(a, rp):
     return {"crossings": a.crossings, "max_crossings": a.max_crossings, "damping": a.damping, "scheme": a.scheme,
             "strength": a.strength, "rate_min": a.rate_min, "every_check": a.every_check, "seed": a.seed,
-            "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
+            "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling,
+            "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
             "loads": {"threshold": 0.5, "exposure": "first_body", "gap": 1.5, "normal_smoothing": 2.0,
                       "lee": rp.inp.lee}}
 
@@ -876,6 +1078,11 @@ def build_parser():
     r.add_argument("--mass-scaling", choices=("on", "off"), default=naming.BRACKET_DEFAULTS["mass_scaling"],
                    help="off: s = 1 and each interval runs in N_c D / c_l seconds of Spheral time (check 4's "
                    "unscaled twin; needs --loads off)")
+    r.add_argument("--monitor-every", type=int, default=naming.BRACKET_DEFAULTS["monitor_every"],
+                   help="estimate the crossings error on the first interval and every M-th after it by a rerun at "
+                   "twice the crossings (decision 7; 0: off)")
+    r.add_argument("--monitor-limit", type=float, default=naming.BRACKET_DEFAULTS["monitor_limit"],
+                   help="above this crossings-error estimate the run continues at twice the crossings")
     r.add_argument("--every-check", type=int, default=1)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", default=DEFAULT_OUT)

@@ -50,7 +50,7 @@ RECEDE_RUN_NAME = "synthetic_receding_sphere_d100.00mm_seed12345"
 DX_MM = 10.0
 FORMS = ("3d", "rz")
 NPROC = {"3d": 2, "rz": 1}
-WALL_COLUMNS = ("wall_s", "wall_per_step_s")
+WALL_COLUMNS = ("wall_s", "wall_per_step_s", "monitor_wall_s")
 
 
 def receding_run(directory):
