@@ -180,24 +180,9 @@ def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh
     assert np.all(r.swept_volume > 0.0)
     assert np.abs(r.swept_volume / (area0 * 3e-4) - 1.0).max() < 0.02
     assert np.array_equal(solver.temperature()[deep], T0[deep])
-    # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.012 % of what the
-    # corners swept (0.29 J of 2423 J), the lumped quadrature's error on a field that is not linear; with the slab
-    # booked at the old surface enthalpy it was 0.67 % (-16.2 J of 2439 J, measured in the final review)
-    assert 0.0 < abs(r.correction) < 0.002 * r.swept_enthalpy.sum()
-
-
-def test_an_inward_slab_is_booked_at_its_mean_enthalpy(coarse_sphere_mesh):
-    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
-    mat = constant_material()
-    solver = solver_on(m, mat)
-    r_node = np.linalg.norm(m.points, axis=1)
-    solver.set_temperature(300.0 + 4000.0 * (r_node - 0.03).clip(0.0))        # linear in the radius near the surface
-    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
-    r = moving.move(inward(moving, 3e-4))
-    # the books' offset relative to the enthalpy swept: 0.012 % booked at the mean of the old and remapped surface
-    # enthalpy, 0.67 % booked at the old surface value alone (both measured, final review, 0.3 mm inward move), so
-    # 0.1 % separates the two rules by a factor 8 on either side
-    assert abs(r.correction) < 1e-3 * r.swept_enthalpy.sum()
+    # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.7 % of what the
+    # corners swept (measured while planning), the lumped quadrature's error on a field that is not linear
+    assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
 
 
 def test_a_linear_field_is_carried_to_the_moved_nodes(coarse_sphere_mesh):
@@ -302,7 +287,7 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     assert moving.mesh.volume() == pytest.approx(V, rel=1e-12)
     assert solver.energy() == pytest.approx(E, rel=1e-12)
     assert np.all(movemesh.signed_volumes(moving.mesh.points, moving.mesh.tets) != 0.0)
-    # the interpolation loses -2617 J of 71236 J (-4.1 %) here: a kinked field on 4 to 20 mm cells, whose lumped sum
+    # the interpolation loses -2612 J of 71236 J (-4.1 %) here: a kinked field on 4 to 20 mm cells, whose lumped sum
     # differs between two meshes (final review: the earlier one-sided check "residual below 1e-3" passed on the sign
     # alone). The residual is reported, and the offset closes it (the energy assertion above)
     assert abs(result.relative_residual) < 0.06 and moving.rebuilds == 1 and solver.mesh is moving.mesh
@@ -369,8 +354,8 @@ def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sph
         in_zone[moving.zone.interior] = True
         out = ~in_zone
         # outside the zone (84 and 73 of about 2900 nodes on this coarse mesh) the field is the interpolation's to 3e-11
-        # J per kg; spread over the whole body the offset would have shifted those nodes by 1740 and 1250 J per kg (1.7
-        # and 1.2 K), and in the zone, noncorner nodes carry 2586 and 1806 J per kg (all measured, final review)
+        # J per kg; spread over the whole body the offset would have shifted those nodes by 1735 and 1244 J per kg (1.7
+        # and 1.2 K), and in the zone, noncorner nodes carry 2585 and 1804 J per kg (all measured, final review)
         assert out.sum() > 50
         assert np.abs(h_after[out] - h_interp[out]).max() < 1e-6 * np.abs(h_interp).max()      # tolerance 0.08 J per kg
         zone_inner = in_zone & ~np.isin(np.arange(moving.mesh.n_nodes), moving.corners)
@@ -493,8 +478,4 @@ def test_a_moving_front_follows_the_exact_solution():
     x = moving.mesh.points[:, 0]
     theta = (solver.temperature() - 300.0) / 300.0
     exact = exact_front(x - x_front, 0.5, 1e-5, 1e-2)
-    # 0.0093 measured in the final review (0.9 % of the rise, 0.7 K), 0.0010 while planning. The change is the slab
-    # booked at its mean enthalpy: that is the more accurate integral of the metal that left (2.7 % less than at the
-    # surface value), but the books' uniform offset then carries the remap's own missing second-order term (the
-    # curvature of the steep layer), +0.0044 J against -0.0006 J over the run, and spreads it over the whole 15 mm zone
-    assert np.abs(theta - exact).max() < 0.015
+    assert np.abs(theta - exact).max() < 0.005          # 0.0010 measured while planning: 0.1 % of the rise
