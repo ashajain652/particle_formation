@@ -7,8 +7,8 @@ Architecture: **level set**, a second model architecture built in parallel to th
 **skyscrapers** (the element model of Step 3 and its successor, the layered skins on columns of a moving mesh,
 `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md`). The two are selected by a run flag (§4.3).
 Relation to other designs: this design neither amends nor supersedes any skyscrapers design. It reuses their physics
-(Girin's spraying, the surface flow, Scheil's curve, the slurry viscosity, the skin column) through shared modules
-(§4.2), and their measured facts (§2). The skyscrapers design of 2026-10-11 records "a level-set method not adopted for
+(Girin's spraying, the surface flow, Scheil's curve, the slurry viscosity) through shared modules (§4.2), and their
+measured facts (§2). **The skins are not shared**: each architecture has its own (decided 2026-10-11). The skyscrapers design of 2026-10-11 records "a level-set method not adopted for
 the flight model" (its §16); that decision stands for that architecture, and this one is built alongside it.
 Numbers marked *measured* come from runs; *estimated* are calculations made for this design, to be measured in the
 build stage named.
@@ -106,9 +106,11 @@ The skyscrapers-specific code stays where it is (`mesh.py`, `coupled.py`, `therm
 working unchanged; the package's own modules import from `shared` directly.
 
 Step 3's physics — the gas-side surface flow, Girin's dispersion table and spray model, Scheil's material, the slurry
-viscosity (`rheology`), and the skin column (cells, conduction through the depth, split and merge, depths) — is not yet
-in the package. **Whichever architecture promotes such a module into the package first puts it in `shared/`**, in an
-architecture-independent form; the other imports it. Until then each prototype holds its own copy.
+viscosity (`rheology`) — is not yet in the package. **Whichever architecture promotes such a module into the package
+first puts it in `shared/`**, in an architecture-independent form; the other imports it. Until then each prototype
+holds its own copy. **The skins are the exception: they are separate entities in the two architectures and are never
+shared** (decided 2026-10-11). The level set's skins (§9) live only in `reentry_model/levelset/skin.py`; nothing of the
+skyscrapers skins (`skin.py`, `columns.py` of the layered-skin design) is imported or copied into it.
 
 ### 4.3 The architecture flag
 
@@ -276,7 +278,7 @@ below the true surface — less than half a cell at 1 mm (approximation, §15).
 
 At the end of each macro step, the solve is switched on if metal more than half liquid, connected to the surface, forms
 a region at least `--flow-switch-cells` (default 3) cells thick. Before that, thin soft metal under the skins is held in
-place (approximation, §15; and open item 1, §17).
+place (approximation, §15).
 
 ### 8.6 Discretisation (decided 2026-10-11: diffuse first)
 
@@ -453,8 +455,8 @@ velocity) for the later droplet step.
   with the two phases), `boxmesh.py` (copy of the gmsh parts of `mesh.py` for the box), `levelset.py` (φ, reset,
   advection, pieces, per-piece correction), `cutcell.py` (cutting, quadrature, patches, ghost-penalty faces),
   `thermal/skfem_cut.py`, `flow.py` (Navier–Stokes, frame, semi-implicit surface tension), `markers.py` (carry, snap,
-  split, merge, trapped, binning, neighbour graph), `skin.py` (two-zone skins on markers, built on the shared skin
-  column when it exists), `tunnel.py`.
+  split, merge, trapped, binning, neighbour graph), `skin.py` (two-zone skins on markers, the level set's
+  own, never shared with skyscrapers), `tunnel.py`.
 - `tests/levelset/` with its own fixtures; the normal loop runs it with the rest of the unit tier.
 
 ## 13. Verification and acceptance (decided 2026-10-11)
@@ -507,7 +509,9 @@ section, kept true as each stage lands.
 - **Forces at the zero contour**, a skin thickness below the true surface (less than half a cell at 1 mm).
 - **Thin soft metal under the skins is held in place before the switch** (the metal zone's slurry does not flow, and soft
   metal below the skin is rigid until it forms a region three cells thick). The skyscrapers design resolves this layer's
-  flow in its columns; see open item 1.
+  flow in its columns; the level set's skins are kept separate from those by decision (§19), so this approximation is
+  measured in stage 4 (the soft depth held in place, per step) and revisited in a level-set design of its own if it
+  matters.
 - **Gas loads from the angle-based law** on shapes far from a sphere (a disc, a bag): rough; the CFD hook is the remedy.
 - **Grid-scale breakup**: sheets thinner than a cell tear at the cell size, so fragment sizes from breakup depend on the
   mesh; fragments are not used as results until the later droplet step addresses it.
@@ -524,14 +528,8 @@ volume correction; pieces other than the largest removed in flight (to the later
 
 ## 17. Open items, for later decisions
 
-1. **Alignment with the layered skin.** The skyscrapers design of 2026-10-11 defines its skin differently: every corner
-   carries a skin from time zero, the skin holds the **whole flowing layer** above the rigid front (up to 3.4 mm late in
-   the flight) with a velocity in every cell, and its minimum is the larger of 400 µm of solid and δ_m plus 50 µm of
-   liquid. This design's skin (§9.3) holds a fixed 0.4 mm metal zone and a liquid zone, with the soft metal below held in
-   place until the flow solve takes it. Using the layered column as the shared skin would let the level-set skins move
-   their slurry too, and would need a rule handing a skin's flowing layer to the resolved flow when it grows past the
-   switch thickness. Recommendation: adopt the shared layered column, with that hand-down rule, before stage 4's sub-plan
-   is written. To be decided by Asha.
+1. **Resolved 2026-10-11: the skins are not shared.** The skyscrapers layered skin (whole flowing layer, a velocity in
+   every cell) was considered as a shared skin; Asha decided the skins stay separate entities in the two architectures.
 2. **The tunnel record** (§11): needed for stage 5.
 3. **Gas loads on deformed shapes**: the CFD hook (Step 4) when the angle-based law is shown inadequate.
 4. **A FEniCSx port** of the cut-cell thermal solve, if MPI scaling is needed.
@@ -574,6 +572,7 @@ volume correction; pieces other than the largest removed in flight (to the later
 - 2026-10-11: time stepping with a warning band, a closing step back to the macro grid, and semi-implicit surface tension.
 - 2026-10-11: the thermal solve on cut cells with a ghost penalty, on scikit-fem first.
 - 2026-10-11: the verification of §13 and the settings, outputs and code of §12.
+- 2026-10-11: the skins are separate entities in the two architectures and are never shared (Asha).
 - 2026-10-11: isolation (Asha's instruction): copies of changed files in `reentry_model/levelset/`, shared code in
   `reentry_model/shared/` imported by the existing code, `--architecture skyscrapers|levelset`, documents and prototypes
   in their own `levelset` folders.
