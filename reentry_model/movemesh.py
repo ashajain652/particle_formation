@@ -176,6 +176,25 @@ def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_
     return step * np.minimum(1.0, limit / np.where(size > 0.0, size, 1.0))[:, None]
 
 
+def swept_volumes(old, new, faces, faces_corner, n_corners):
+    """The volume each corner's surface swept, positive inward: every surface triangle's prism between its old and new
+    positions, split into three tetrahedra, a third of it to each of the triangle's corners. A corner sliding along a
+    flat face sweeps exactly nothing; a corner on a sharp edge books only what the faces it touches swept (Task 4
+    review, 2026-10-12, replacing dual area times normal displacement, which mis-shares at edges and, scaled to the
+    total, blew up wherever the first-order volumes nearly cancelled). `faces` are the outward triangles' node ids,
+    `faces_corner` the same triangles in corner numbering."""
+    a, b, c = (old[faces[:, i]] for i in range(3))
+    A, B, C = (new[faces[:, i]] for i in range(3))
+
+    def vol(p, q, r, s):
+        return np.einsum("ij,ij->i", q - p, np.cross(r - p, s - p)) / 6.0
+    prism = -(vol(a, b, c, A) + vol(b, c, A, B) + vol(c, A, B, C))
+    out = np.zeros(n_corners)
+    for i in range(3):
+        np.add.at(out, faces_corner[:, i], prism / 3.0)
+    return out
+
+
 # -- the deforming zone ----------------------------------------------------------------------------------------------
 class ZoneMap:
     """Which 3D nodes move with the surface, and how: surface nodes by their own displacement; every other node within
@@ -296,13 +315,16 @@ class MovingMesh:
         h_new = h + np.einsum("ij,ij->i", nodal_gradient(mesh.points, mesh.tets, h, touched), U)
         E_old = solver.energy()
         normal, area = self.frame()
-        dV = -area * np.einsum("ij,ij->i", normal, u)       # volume each corner sweeps, positive inward
+        faces = self.corners[self.faces_corner]
+        dV = swept_volumes(mesh.points, new_points, faces, self.faces_corner, len(self.corners))
         V_old = float(np.abs(signed_volumes(mesh.points, mesh.tets[touched])).sum())     # only touched elements change
         mesh.points[:] = new_points
         mesh.derived_points[:] = new_points
-        dV_total = V_old - float(np.abs(vol_new).sum())
-        if dV.sum() != 0.0:
-            dV = dV * (dV_total / dV.sum())
+        # the prisms tile what the surface swept up to how their shared side faces are split; that remainder (third
+        # order in the displacement) goes to the corners in proportion to what they swept, so the books are exact
+        remainder = (V_old - float(np.abs(vol_new).sum())) - dV.sum()
+        if np.abs(dV).sum() > 0.0:
+            dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
         swept_h = mat.rho * dV * h[self.corners]
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
