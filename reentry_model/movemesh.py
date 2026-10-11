@@ -354,6 +354,31 @@ class MovingMesh:
                                           new_mesh.n_elements, time.perf_counter() - t0, reason)
         return self.last_rebuild
 
+    def needs_rebuild(self):
+        """The reason a rebuild is due by compression (the zone pressed to half its depth), or None."""
+        if self.steps_since_rebuild >= self.min_gap and self.compression.max() > 0.5 * self.depth:
+            return "compression"
+        return None
+
+    def move_with_policy(self, u_corners):
+        """Rebuild first if compression calls for it; move; if the move is refused, rebuild and move again. A move
+        refused on a fresh mesh is a model failure (RuntimeError, exit code 1)."""
+        rebuilt = False
+        reason = self.needs_rebuild()
+        if reason:
+            self.rebuild(reason)
+            rebuilt = True
+        result = self.move(u_corners)
+        if result.refused:
+            self.rebuild("quality")
+            rebuilt = True
+            result = self.move(u_corners)
+            if result.refused:
+                raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
+                    float(np.linalg.norm(u_corners, axis=1).max())))
+        result.rebuilt = rebuilt
+        return result
+
 
 # -- rebuilding the mesh ---------------------------------------------------------------------------------------------
 @dataclass
