@@ -322,7 +322,7 @@ def test_command_line_exit_codes(inputs):
     d, prep, bodies = inputs
     common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep), "--out", rel(os.path.join(d, "bad"))]
     assert launch(*common, "--frames", "0-9", check=False).returncode == 2           # frame outside the body
-    assert launch(*common, "--frames", "0-4", "--scheme", "crksph", check=False).returncode == 2   # Task 9
+    assert launch(*common, "--frames", "0-4", "--scheme", "fsisph", check=False).returncode == 2   # sph | crksph
     assert launch(*common, "--frames", "0-4", "--strength", "rubber", check=False).returncode == 2
     assert launch("replay", "--body", rel(bodies["rz"]), check=False).returncode == 2               # missing args
     r = launch("replay", "--body", rel(os.path.join(d, "nowhere")), "--prepared", rel(prep), "--frames", "0-4",

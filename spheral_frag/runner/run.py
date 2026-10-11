@@ -1,7 +1,7 @@
 """The Spheral runner's command line: the mass-scaled replay (Spheral M2 plan, Task 5; spec §9.1, §11.3).
 
     spheral_frag/container/spheral [-n N] spheral_frag/runner/run.py replay --body DIR --prepared DIR --frames K0-K1
-        [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph] [--strength flight] [--rate-min 1e-6]
+        [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph|crksph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
         [--stop-at K] [--loads on|off] [--mass-scaling on|off] [--monitor-every 10] [--monitor-limit 0.05]
         [--loads-frame K] [--area-shares volume|patch]
@@ -103,6 +103,20 @@ a run-name bracket (`loads_frame`, default -1).
 factor) or `patch` (each of frame k's finite-element surface patches gives its area to the surface particle whose
 reference position is nearest; packages/loads.py, "Area shares", has the reason and the measurement). A run-name
 bracket (`area_shares`, default volume).
+
+**Schemes** (Spheral M2 plan, Task 9, check 7). `--scheme sph` (default): SolidSPH (`S.SPH` on the solid node
+list; SolidSPHRZ in RZ). `--scheme crksph`: SolidCRKSPH (`S.CRKSPH`; SolidCRKSPHRZ in RZ, which Spheral 116c71f has),
+linear-order reproducing kernels, with integrated density and mass-over-density volumes (spec §14.1 conditions 1
+and 2): the controller's `volumeType=VolumeType.MassOverDensity` makes its VolumeUpdate package set V = m / rho
+before RKCorrections, and SolidCRKSPH then evolves V by its continuity policy (dV/dt = -m/rho^2 drho/dt, the same
+law while m is constant). Both with XSPH off, round H, the factories' own artificial viscosity (SPH's
+MonaghanGingold, CRKSPH's LimitedMonaghanGingold) and compatible energy -- except SolidCRKSPHRZ, which cannot take a
+step with compatible energy at 116c71f (it enrols its self-accelerations as a reference_wrapper that
+StateDerivatives::Zero cannot visit; measured 2026-10-11) and runs without it; the replay imposes u every step, so
+the energy equation is unused either way (`make_hydro`). Every package, the restart at each frame boundary
+(`prime_derivatives`, no initial H iteration -- SpheralController's iterateIdealH segfaults under SolidCRKSPHRZ
+before the corrections exist), the checkpoints and the monitor are the same for both. A run-name bracket (`scheme`,
+default sph). Measured in check 7 (analysis/spheral_m2_check7.py).
 
 **The crossings-error monitor** (Spheral M2 plan, decision 7, Asha 2026-10-10; Task 6b). Check 4 found 10 crossings
 per interval within the plan's rule at every held state but lagging 20 crossings by 0.6 % of the peak stress right
@@ -550,8 +564,6 @@ class Inputs:
             raise BadInput(f"--strength: {e}") from None
         if a.scheme not in SCHEMES:
             raise BadInput(f"--scheme must be one of {SCHEMES}")
-        if a.scheme == "crksph":
-            raise BadInput("--scheme crksph is not implemented yet (Spheral M2 plan, Task 9)")
         if not (a.crossings > 0 and a.max_crossings >= a.crossings):
             raise BadInput("need 0 < --crossings <= --max-crossings")
         if a.damping < 0.0 or not a.rate_min > 0.0 or a.every_check < 1:
@@ -731,8 +743,7 @@ class Replay:
             from spheral_frag.runner.packages import hold as ph
             packages.append(ph.make_hold(S, body, np.flatnonzero(np.isin(body.local_pids(), self.held_pid))))
 
-        hydro = S.SPH(dataBase=body.db, W=body.kernel, cfl=CFL, compatibleEnergyEvolution=True,
-                      densityUpdate=S.IntegrateDensity, XSPH=False, ASPH=False)
+        hydro = make_hydro(S, a.scheme, body)
         integ = S.CheapSynchronousRK2Integrator(body.db)
         integ.appendPhysicsPackage(hydro)
         for p in packages:
@@ -742,7 +753,7 @@ class Replay:
         steps0, cycle0 = int(ex["steps"]), int(ex["cycle"])
         ctl = SpheralController(integ, body.kernel, statsStep=10**9, printStep=10**9, redistributeStep=None,
                                 restartStep=None, vizStep=None, vizTime=None, SPH=True, iterateInitialH=False,
-                                initialTime=tau0)
+                                initialTime=tau0, **controller_options(S, a.scheme))
         dt0 = float(ex["dt"])
         integ.lastDt = (0.1*CFL*self.dx/float(pd.longitudinal_speed(self.table, s))) if dt0 <= 0.0 \
             else dt0*math.sqrt(ratio)
@@ -935,6 +946,32 @@ class Replay:
                              h_smooth=smoothing_length(st["H"]), group=np.zeros(len(pid), dtype=np.int64),
                              frame=k, check=n)
         record.write_check(self.run_dir, p)
+
+
+def make_hydro(S, scheme, body):
+    """The hydro package of the scheme (module docstring, "Schemes"): SolidSPH or SolidCRKSPH (SolidSPHRZ or
+    SolidCRKSPHRZ in RZ, chosen by Spheral's factories from the coordinate registrar and the solid node list), both
+    with compatible energy, integrated density, no XSPH, round H and the factories' own artificial viscosity."""
+    if scheme == "sph":
+        return S.SPH(dataBase=body.db, W=body.kernel, cfl=CFL, compatibleEnergyEvolution=True,
+                     densityUpdate=S.IntegrateDensity, XSPH=False, ASPH=False)
+    if scheme == "crksph":
+        # SolidCRKSPHRZ with compatible energy cannot step at 116c71f: it enrolls its self-accelerations in the
+        # derivatives as a reference_wrapper of a FieldList, which StateDerivatives::Zero (called by every
+        # integrator step) cannot visit ("AnyVisitor ERROR: unable to process unknown data type", measured
+        # 2026-10-11). The replay imposes u every step (ImposedTemperature), so the energy equation is unused:
+        # RZ CRKSPH runs without compatible energy, 3D keeps it as SolidSPH does.
+        return S.CRKSPH(dataBase=body.db, W=body.kernel, cfl=CFL, compatibleEnergyEvolution=body.form != "rz",
+                        densityUpdate=S.IntegrateDensity, XSPH=False, ASPH=False)
+    raise BadInput(f"--scheme must be one of {SCHEMES}")
+
+
+def controller_options(S, scheme):
+    """SpheralController's keyword arguments that depend on the scheme: under CRKSPH the volumes are mass over
+    density (spec §14.1 condition 2), which the controller's VolumeUpdate package computes before RKCorrections."""
+    if scheme == "crksph":
+        return {"volumeType": S.VolumeType.MassOverDensity}
+    return {}
 
 
 def read_ck(path):
@@ -1186,6 +1223,9 @@ def settings(a, rp):
             "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling,
             "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit, "loads_frame": a.loads_frame,
             "area_shares": a.area_shares,
+            "hydro": {"sph": "SolidSPH, compatible energy, IntegrateDensity, no XSPH",
+                      "crksph": "SolidCRKSPH (linear), IntegrateDensity, MassOverDensity volumes, no XSPH, compatible "
+                                "energy " + ("off (SolidCRKSPHRZ)" if rp.form == "rz" else "on")}[a.scheme],
             "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
             "loads": {"threshold": 0.5, "exposure": "first_body", "gap": 1.5, "normal_smoothing": 2.0,
                       "lee": rp.inp.lee}}

@@ -1,0 +1,5 @@
+scheme,form,n_particles,constructed,stepped,steps_done,error,time_s,volumetric_strain,damage_max,share_damage_gt_0p01,share_damage_gt_0p99,wall_per_step_s,packages
+sph,rz,156,1,1,400,,1.23950370177694e-05,0.4198465289263591,1.0,0.03205128205128205,0.01282051282051282,0.0009742962499967689,LimitedMonaghanGingoldViscosity2d+SolidSPHRZ+SPHSmoothingScale2d+ProbabilisticDamageModel
+sph,3d,4169,1,1,400,,1.3791152989508968e-05,0.47341638068491676,1.0000000000000002,0.00023986567522187575,0.00023986567522187575,0.08330138430500028,LimitedMonaghanGingoldViscosity3d+SolidSPH3d+SPHSmoothingScale3d+ProbabilisticDamageModel
+crksph,rz,156,1,1,400,,1.878791770160323e-05,0.6761651556457433,0.0028179412928304704,0.0,0.0,0.0011242635425014668,LimitedMonaghanGingoldViscosity2d+VolumeUpdate2d+RKCorrections2d+SolidCRKSPHRZ+SPHSmoothingScale2d+ProbabilisticDamageModel
+crksph,3d,4169,1,1,400,,1.5309022120762614e-05,0.5331684278127593,1.0,0.0021587910769968817,0.00023986567522187575,0.056094842215002244,LimitedMonaghanGingoldViscosity3d+VolumeUpdate3d+RKCorrections3d+SolidCRKSPH3d+SPHSmoothingScale3d+ProbabilisticDamageModel
