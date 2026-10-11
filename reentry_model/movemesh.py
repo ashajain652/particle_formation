@@ -1,0 +1,176 @@
+"""The moving 3D mesh (layered-skin design, docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md §5.3).
+
+The 3D mesh's surface nodes are the corners whose columns carry the skins; they move by the metal crossing the rigid
+front, and the 3D nodes within a depth D below the surface (the deforming zone) move with them, each by a weighted
+average of the movements of the surface nodes near it, the weight falling linearly from one at the surface to zero at
+depth D. After every move the temperature field is remapped onto the moved nodes and the energy books are closed
+exactly; before any element degrades the mesh is rebuilt inside the same surface triangulation.
+
+The heat equation's moving-mesh term is applied as a remap at each move (the operator-split, "Lagrangian plus remap"
+form of the arbitrary Lagrangian-Eulerian method): the nodal enthalpy is carried to each moved node along its
+displacement by the nodal gradient, h_i' = h_i + grad(h)_i . u_i, which is exact for uniform and linear fields; then
+the total enthalpy is set to its old value less what left through the moving surface, by one uniform enthalpy offset on
+the moved nodes, so the discrete geometric conservation law holds (a uniform field stays exactly uniform) and the books
+close to round-off. The conduction step that follows runs on the new geometry with the backends' fixed-mesh scheme.
+
+The corners also move along the surface: `tangential_smoothing` nudges each toward the mean of its neighbours in its
+tangent plane (design section 5.1), which keeps the fixed surface triangulation even. Measured while planning
+(sub-plan 19, 2026-10-11) on the 100 mm sphere receding at its nose by 0.5 mm per step in proportion to how directly
+each corner faces the flow: without it the run failed at 20.5 mm of nose recession, with it at 27.0 mm. What stopped it
+then was the shape, not the triangles: the angle between neighbouring surface triangles (`max_dihedral`) grew from
+4 to 82 degrees as that motion sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are
+flattened by their own corners' motion, which no rebuild inside the same surface can undo. The fold is reported.
+
+What left through the surface is booked per corner: the volume each corner sweeps is its dual area times its normal
+displacement (positive inward), rescaled so the corners' volumes add up exactly to the change of the mesh's volume, and
+it carries the corner's own nodal enthalpy. The layered skins take exactly that mass and enthalpy (stage 2).
+
+Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
+a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
+though gmsh renumbers nodes, so the corners are matched back by their coordinates). The enthalpy is interpolated onto
+the new nodes in the old mesh and its total made exact by a uniform offset, as the 2026-09-27 remeshing design does;
+the pre-correction residual is reported with every rebuild. The validity gate stops on a non-manifold surface, more
+than one connected body, or a non-positive enclosed volume."""
+import time
+from dataclasses import dataclass
+
+import numpy as np
+
+from . import mesh as mesh_mod
+
+DEFORM_DEPTH = 15.0e-3       # m, depth D of the deforming zone: the dense band's depth (mesh.DEFAULT_BAND)
+RATIO_MIN = 0.05             # radius ratio below which a move is refused and the mesh rebuilt (2026-09-27 design §7.1)
+MIN_GAP = 20                 # macro steps between rebuilds triggered by compression (a refused move ignores it)
+ZONE_NEIGHBOURS = 12         # surface nodes averaged for each interior node of the zone
+SMOOTH_LAMBDA = 0.5          # tangential smoothing: share of the way to the neighbours' mean per move
+SMOOTH_CLAMP = 0.35          # of the mean surface edge: the most a corner is nudged per move (2026-09-27 design)
+_REF_GRADS = np.array([[-1.0, -1.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+
+class RemeshError(RuntimeError):
+    """The surface cannot be rebuilt: non-manifold, more than one body, or a non-positive enclosed volume."""
+
+
+# -- element and surface geometry ----------------------------------------------------------------------------------
+def signed_volumes(points, tets):
+    x = points[tets]
+    return np.einsum("ij,ij->i", x[:, 1] - x[:, 0], np.cross(x[:, 2] - x[:, 0], x[:, 3] - x[:, 0])) / 6.0
+
+
+def radius_ratio(points, tets):
+    """3 r_in / R_circ per tetrahedron: 1 for a regular one, 0 for a flat one."""
+    x = points[tets]
+    u, v, w = x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]
+    triple = np.einsum("ij,ij->i", u, np.cross(v, w))
+    vol = np.abs(triple) / 6.0
+    faces = (np.cross(v - u, w - u), np.cross(w, v), np.cross(u, w), np.cross(v, u))
+    area = 0.5 * sum(np.linalg.norm(f, axis=1) for f in faces)
+    r_in = 3.0 * vol / np.where(area > 0.0, area, 1.0)
+    c = ((u * u).sum(1)[:, None] * np.cross(v, w) + (v * v).sum(1)[:, None] * np.cross(w, u)
+         + (w * w).sum(1)[:, None] * np.cross(u, v))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        R = np.linalg.norm(c, axis=1) / np.abs(2.0 * triple)
+        ratio = np.where(vol > 0.0, 3.0 * r_in / R, 0.0)
+    return np.nan_to_num(ratio, nan=0.0)
+
+
+def triangle_quality(points, faces):
+    """2 r_in / R_circ per triangle: 1 for an equilateral one, 0 for a flat one."""
+    a, b, c = (points[faces[:, i]] for i in range(3))
+    la, lb, lc = np.linalg.norm(b - c, axis=1), np.linalg.norm(c - a, axis=1), np.linalg.norm(a - b, axis=1)
+    area = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    s = 0.5 * (la + lb + lc)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        q = 2.0 * (area / s) / (la * lb * lc / (4.0 * area))
+    return np.nan_to_num(q, nan=0.0)
+
+
+def max_dihedral(points, faces):
+    """The largest angle [degrees] between the normals of two surface triangles sharing an edge: how sharply the
+    surface folds at the scale of one triangle."""
+    a, b, c = (points[faces[:, i]] for i in range(3))
+    n = np.cross(b - a, c - a)
+    n /= np.linalg.norm(n, axis=1)[:, None]
+    edges = np.sort(np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    owner = np.tile(np.arange(len(faces)), 3)
+    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    e, o = edges[order], owner[order]
+    pair = np.all(e[1:] == e[:-1], axis=1)
+    cos = np.einsum("ij,ij->i", n[o[1:][pair]], n[o[:-1][pair]])
+    return float(np.degrees(np.arccos(np.clip(cos.min(), -1.0, 1.0)))) if cos.size else 0.0
+
+
+def element_gradients(points, tets):
+    """Gradients of the four P1 basis functions in every tetrahedron, (ne, 4, 3), and the volumes (ne,)."""
+    x = points[tets]
+    J = np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2)
+    vol = np.abs(np.linalg.det(J)) / 6.0
+    return np.einsum("eij,aj->eai", np.linalg.inv(J).transpose(0, 2, 1), _REF_GRADS), vol
+
+
+def nodal_gradient(points, tets, f, elements=None):
+    """Volume-weighted average over each node's elements of grad f, f a nodal P1 field: exact for a linear f. With
+    `elements`, only those elements are used: the gradient is then right at every node all of whose elements are in
+    the list (the moving nodes, when the list is the elements they touch)."""
+    if elements is not None:
+        tets = tets[elements]
+    grads, vol = element_gradients(points, tets)
+    g = np.einsum("ea,eai->ei", f[tets], grads) * vol[:, None]
+    out = np.zeros((len(points), 3))
+    for a in range(4):
+        np.add.at(out, tets[:, a], g)
+    w = np.bincount(tets.ravel(), weights=np.repeat(vol, 4), minlength=len(points))
+    return out / np.where(w > 0.0, w, 1.0)[:, None]
+
+
+def lumped_masses(points, tets, rho):
+    """rho times a quarter of each incident element's volume, per node: the backends' lumped capacity weights."""
+    vol = np.abs(signed_volumes(points, tets))
+    return rho * np.bincount(tets.ravel(), weights=np.repeat(vol / 4.0, 4), minlength=len(points))
+
+
+def orient_outward(points, faces, normals):
+    """The triangles reordered where needed so that (b - a) x (c - a) points along their outward normals."""
+    faces = np.array(faces, dtype=np.int64)
+    a, b, c = (points[faces[:, i]] for i in range(3))
+    flip = np.einsum("ij,ij->i", np.cross(b - a, c - a), normals) < 0.0
+    faces[flip] = faces[flip][:, [0, 2, 1]]
+    return faces
+
+
+def corner_frame(points, faces, corners):
+    """Area-weighted outward vertex normals and dual areas (a third of each touching triangle) at `corners`."""
+    a, b, c = (points[faces[:, i]] for i in range(3))
+    n2 = np.cross(b - a, c - a)                         # twice the area times the unit normal (outward for mesh faces)
+    normal = np.zeros((len(points), 3))
+    area = np.zeros(len(points))
+    for i in range(3):
+        np.add.at(normal, faces[:, i], n2)
+        np.add.at(area, faces[:, i], np.linalg.norm(n2, axis=1) / 6.0)
+    normal = normal[corners]
+    return normal / np.linalg.norm(normal, axis=1)[:, None], area[corners]
+
+
+def surface_edges(faces):
+    """The unique edges of a triangulation, (ne, 2), each with its smaller node id first."""
+    return np.unique(np.sort(np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1), axis=0)
+
+
+def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_CLAMP, edges=None):
+    """Displacements that even out the surface triangles without moving the surface (layered-skin design section 5.1):
+    each corner moves `lam` of the way toward the mean of its neighbours, projected onto its tangent plane, the move
+    clamped to `clamp` mean edge lengths. Tangential moves sweep no volume to first order. `edges` (from
+    `surface_edges(faces)`) saves recomputing them every move."""
+    if edges is None:
+        edges = surface_edges(faces)
+    n = len(points)
+    total = np.zeros((n, 3))
+    np.add.at(total, edges[:, 0], points[edges[:, 1]])
+    np.add.at(total, edges[:, 1], points[edges[:, 0]])
+    degree = np.bincount(edges.ravel(), minlength=n)
+    L = total / np.maximum(degree, 1)[:, None] - points
+    L -= np.einsum("ij,ij->i", L, normal)[:, None] * normal
+    step = lam * L
+    limit = clamp * np.linalg.norm(points[edges[:, 0]] - points[edges[:, 1]], axis=1).mean()
+    size = np.linalg.norm(step, axis=1)
+    return step * np.minimum(1.0, limit / np.where(size > 0.0, size, 1.0))[:, None]
