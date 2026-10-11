@@ -15,22 +15,29 @@ close to round-off. The conduction step that follows runs on the new geometry wi
 
 The corners also move along the surface: `tangential_smoothing` nudges each toward the mean of its neighbours in its
 tangent plane (design section 5.1), which keeps the fixed surface triangulation even. Measured while planning
-(sub-plan 19, 2026-10-11) on the 100 mm sphere receding at its nose by 0.5 mm per step in proportion to how directly
-each corner faces the flow: without it the run failed at 20.5 mm of nose recession, with it at 27.0 mm. What stopped it
-then was the shape, not the triangles: the angle between neighbouring surface triangles (`max_dihedral`) grew from
-4 to 82 degrees as that motion sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are
-flattened by their own corners' motion, which no rebuild inside the same surface can undo. The fold is reported.
+(sub-plan 19, Task 8, 2026-10-12, one thread) on the 100 mm sphere receding at its nose by 0.5 mm per step in
+proportion to how directly each corner faces the flow: without it the run failed at 25.0 mm of nose recession, with it
+at 29.5 mm. What stopped it was the shape, not the triangles: the angle between neighbouring surface triangles
+(`max_dihedral`) grew from 19.5 degrees at 10 mm of recession and 51.9 at 20 mm to about 95 degrees as that motion
+sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are flattened by their own corners'
+motion, which no rebuild inside the same surface can undo. The fold is reported.
 
-What left through the surface is booked per corner: the volume each corner sweeps is its dual area times its normal
-displacement (positive inward), rescaled so the corners' volumes add up exactly to the change of the mesh's volume, and
-it carries the corner's own nodal enthalpy. The layered skins take exactly that mass and enthalpy (stage 2).
+What left through the surface is booked per corner by the exact volume of the prism each surface triangle sweeps
+between its old and new positions (`swept_volumes`): a third of each prism to each of the triangle's corners, so a
+corner sliding along a flat face books nothing, and the third-order remainder by which the prisms miss the change of the
+mesh's volume spread over the corners in proportion to their own |volume|, so the corners' volumes add up exactly to
+that change. Inward motion carries the mean of the corner's enthalpy before and after the remap (the slab it leaves
+behind varies across its thickness); outward motion keeps the corner's own. The layered skins take exactly that mass
+and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
-though gmsh renumbers nodes, so the corners are matched back by their coordinates). The enthalpy is interpolated onto
-the new nodes in the old mesh and its total made exact by a uniform offset, as the 2026-09-27 remeshing design does;
-the pre-correction residual is reported with every rebuild. The validity gate stops on a non-manifold surface, more
-than one connected body, or a non-positive enclosed volume."""
+though gmsh renumbers nodes, so the corners are matched back by their coordinates, and the rebuilt boundary is checked
+against the corner triangles). The enthalpy is interpolated onto the new nodes in the old mesh and its total made exact
+by a uniform offset over the new deforming zone only, where the interpolation error arises, as the 2026-09-27
+remeshing design does for the whole body; the pre-correction residual is reported with every rebuild and summed in
+`rebuild_residual_total`. The validity gate stops on a non-manifold surface, more than one connected body, or a
+non-positive enclosed volume."""
 import time
 from dataclasses import dataclass
 
@@ -255,6 +262,7 @@ class MovingMesh:
         self._set_surface(orient_outward(mesh.points, s.faces, s.normals))
         self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
         self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
+        self.rebuild_residual_total = 0.0       # J, summed pre-correction residuals of all rebuilds
 
     def _set_surface(self, faces_nodes):
         local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
@@ -316,7 +324,16 @@ class MovingMesh:
         remainder = (V_old - float(np.abs(vol_new).sum())) - dV.sum()
         if np.abs(dV).sum() > 0.0:
             dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
-        swept_h = mat.rho * dV * h[self.corners]
+        # the metal that leaves is a slab between the old surface and the new one, and the field varies across it: the
+        # old surface value alone is a first-order, one-signed bias (measured while fixing the final review: -6.8 J
+        # against about 1600 J swept per 0.5 mm move on a heated 100 mm sphere; the mean of the old and the remapped
+        # value cut it to +0.72 J). Inward motion therefore books the mean of the surface node's enthalpy before and
+        # after the remap (before the books' offset); outward motion brings in metal whose enthalpy is stage 2's
+        # interface decision, so it keeps the node's own.
+        h_slab = h[self.corners]
+        inward_move = dV > 0.0
+        h_slab[inward_move] = 0.5 * (h_slab[inward_move] + h_new[self.corners][inward_move])
+        swept_h = mat.rho * dV * h_slab
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         correction = (E_old - swept_h.sum()) - solver.energy()
@@ -341,13 +358,20 @@ class MovingMesh:
         h_new[node_of_corner] = h_old[self.corners]          # the surface is the same: corners keep their enthalpy
         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
+        check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
         solver.setup(new_mesh, mat, solver.emissivity)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         residual = E_old - solver.energy()
-        h_new += residual / lumped_masses(points, tets, mat.rho).sum()
-        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         self.mesh, self.corners = new_mesh, node_of_corner
-        self._set_surface(node_of_corner[self.faces_corner])
+        self._set_surface(node_of_corner[self.faces_corner])             # builds the new deforming zone
+        # the interpolation error arises where the field varies, near the surface (its residuals measured one-signed,
+        # 99 to 186 J per rebuild), so the offset that makes the total exact is spread over the deforming zone only,
+        # by lumped mass, and the deep body keeps the interpolated values untouched
+        in_zone = np.concatenate([self.zone.corners, self.zone.interior])
+        m_zone = lumped_masses(points, tets, mat.rho)[in_zone]
+        h_new[in_zone] += residual / m_zone.sum()
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        self.rebuild_residual_total += float(residual)
         self.compression[:] = 0.0
         self.steps_since_rebuild = 0
         self.rebuilds += 1
@@ -428,6 +452,17 @@ def check_surface(points, faces):
     return volume
 
 
+def check_rebuilt_boundary(mesh, expected_faces):
+    """Raise RemeshError unless the boundary triangles of `mesh` are exactly `expected_faces` (node ids, any order of
+    triangles and of nodes within one): the rebuild must keep the surface it was given, with no face lost or added."""
+    def triples(faces):
+        return {tuple(f) for f in np.sort(np.asarray(faces, dtype=np.int64), axis=1)}
+    got, want = triples(mesh.surface().faces), triples(expected_faces)
+    if got != want:
+        raise RemeshError("the rebuilt mesh's boundary differs from the surface it was given: {} triangles missing, "
+                          "{} extra".format(len(want - got), len(got - want)))
+
+
 def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
     """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly. Returns the new
     points, tets and the new node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
@@ -459,9 +494,12 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
         # (checked 2026-10-11; drama_env's does not), and a rebuild takes under two seconds on one
         gmsh.option.setNumber("General.NumThreads", 1)
         gmsh.option.setNumber("Mesh.MaxNumThreads3D", 1)
-        gmsh.model.mesh.generate(3)
-        tags, coords, _ = gmsh.model.mesh.getNodes()
-        types, _, nodes = gmsh.model.mesh.getElements(3)
+        try:
+            gmsh.model.mesh.generate(3)
+            tags, coords, _ = gmsh.model.mesh.getNodes()
+            types, _, nodes = gmsh.model.mesh.getElements(3)
+        except Exception as error:
+            raise RemeshError("gmsh could not mesh the surface: {}".format(error)) from error
     finally:
         gmsh.finalize()
     if 4 not in list(types):
