@@ -7,7 +7,7 @@
 > fragmentation and necking; it does not lose mass through liquid spraying. The continuous spray sink and everything
 > built only for it — release tables by inclination, the sink package, the physical-mass field, continuum-surface-force
 > shares, slabs and the synthetic release, check 15, the sink on the flight — moved to **"Deferred: sub-grid Girin
-> spraying (later milestone)"** at the end of this plan, with their facts and decisions kept. MC now has four tasks.
+> spraying (milestone MS, after M4)"** at the end of this plan, with their facts and decisions kept. MC now has four tasks.
 
 **Goal:** the permanent particle IDs survive deletion, restarts, the switch to a window and MPI redistribution (spec
 §6.2, §14.1, the ID part of check 14), so that a fragment's particles can be traced to where they started in the sphere
@@ -83,7 +83,7 @@ Asha answered the plan's seven questions on 2026-10-11 (the questions as asked a
    - **Girin spraying comes later as a sub-grid parameterization.** The sink package, the physical-mass field, the
      csf shares, the release tables by inclination, slabs and the synthetic release, check 15 and the sink on the
      flight (old Tasks 2, 3, 4, 6, 7, 9) and decisions D2, D3, D4, D5, D6, D8, D9, D10, D12 move to "Deferred: sub-grid
-     Girin spraying", content and probe facts kept. Where that work sits is new question 2.
+     Girin spraying", content and probe facts kept. Where that work sits: milestone MS after M4 (decision 9).
    - **Kept in MC:** Task 1 (above), the window driver's core without sink, floor, physical-mass field, free energy and
      softened equation of state (Task 2, was Task 5), the ID part of check 14 with centre crossings and restarts in
      place of sink steps and floor deletions (Task 3, was Task 8), documentation (Task 4, was Task 10).
@@ -114,11 +114,17 @@ Asha answered the plan's seven questions on 2026-10-11 (the questions as asked a
      shrink compounds unless done once). Facts 1–8 are its measured basis; it is planned in M4's plan with S2 and S5 as
      its starting point. The SPH outline does not recede with the mass: the surface moves in whole-particle steps at
      the floor deletions, which M4's plan states as an assumption.
+9. **The later sub-grid Girin spraying is its own milestone, MS, after M4 (new question 2: recommended reading
+   accepted, Asha 2026-10-11).** MS is planned once M4's scoping verdict shows whether spray-driven mass loss changes
+   the fragments, and only then. It starts from the deferred section with reading (a), the finite element's verified
+   Girin release driving the sink, on top of M4's verified recession-driven mass removal (decision 8); reading (b),
+   Spheral's own Girin closure on a sub-particle film, stays M9's and reuses MS's sink. Spec §14 gains MS's row and
+   the flowchart an MS node after M4 (Task 4).
 
 **Spec amendments these imply** (written by Task 4, not now):
 
 - **§3 (scope):** the first version (M0–M4, MC) no longer includes "the spray mass sink"; permanent particle IDs stay.
-  The sink joins the "built only when triggered" list with the sub-grid Girin spraying (new question 2).
+  The sink joins the "built only when triggered" list with the sub-grid Girin spraying (milestone MS, decision 9).
 - **§4.3 (package layout):** `packages/`'s "spray sink" marked as the later milestone's.
 - **§10:** "In windows, through a mass sink …" replaced by this version's rule (windows remove no sprayed mass; per
   new question 1, the omitted recession recorded per window); the sink paragraph moves to the later milestone's
@@ -129,7 +135,7 @@ Asha answered the plan's seven questions on 2026-10-11 (the questions as asked a
 - **§14, the milestone table:** MC's row — Builds: the permanent IDs verified through the replay, the switch and a
   window; the window driver's core; the release on removed faces (export addition 07) and the film account's closure.
   Answers: as this plan's "Answers". Done when: as this plan's "Done when". M4's row: "MC's spray sink in the
-  windows" becomes recession-driven mass removal in long windows with a reduced check 15 (decision 8). A row or note for the later sub-grid spraying milestone (new question 2). "If an early milestone fails":
+  windows" becomes recession-driven mass removal in long windows with a reduced check 15 (decision 8). A row for milestone MS, sub-grid spraying, after M4 (decision 9). "If an early milestone fails":
   MC's clause ("the continuous sink misbehaves — whole-particle deletion") moves to the later milestone. The
   flowchart's MC node ("mass leaves continuously") becomes "IDs, window core, release closure".
 - **§14.1:** the decision "spray mass leaves continuously" (2026-10-02) recorded as deferred (Asha, 2026-10-11, her
@@ -456,7 +462,8 @@ Wall-time estimate: Task 1's flight rerun about an hour; Task 2's tests and rest
    from the replay. **Recommended: (a) in MC**, and the choice for long windows made in M4's plan with the measured
    omission in hand; necking itself is followed in the replay, where centre crossing thins the neck at the right rate
    (fact 13).
-2. **Where the later sub-grid Girin spraying lives, and which rate drives it.** Two readings of "later implement Girin
+2. **Where the later sub-grid Girin spraying lives, and which rate drives it** (*answered 2026-10-11: its own
+   milestone MS after M4, reading (a); decision 9*). Two readings of "later implement Girin
    spraying as a sub-grid parameterization": (a) the deferred sink driven by the finite element's own Girin release
    (the frames' release tables, S1–S6 as written); (b) Spheral's own Girin closure on a film tracked below each
    surface particle (spec §13.6, M9; §19's row "droplet spraying as a sub-grid model in Spheral" already defers that
@@ -493,12 +500,12 @@ Wall-time estimate: Task 1's flight rerun about an hour; Task 2's tests and rest
 
 ---
 
-## Deferred: sub-grid Girin spraying (later milestone)
+## Deferred: sub-grid Girin spraying (milestone MS, after M4)
 
 > **Not built in this version of Spheral** (Asha, 2026-10-11: *"this early version of spheral is not being used to lose
 > mass through liquid spraying. We want to capture large fragmentation and necking processes. We will later implement
 > Girin spraying as a sub-grid parameterization."*). Kept as measured and designed on 2026-10-11 so that the later
-> milestone (new question 2) starts from it. Q3, Q4, Q6 and Q7 were accepted and apply when it is taken up; D5 (Q2)
+> milestone MS (decision 9) starts from it. Q3, Q4, Q6 and Q7 were accepted and apply when it is taken up; D5 (Q2)
 > is open again then. Facts 1–8 and 14–16 are its measured basis. Task references below use the deferred numbering
 > S1–S6; "Task 1" and "Task 2" are MC's (the release side file and the window driver, which the sink extends with its
 > brackets, its removal reasons and its floor deletions at the sub-boundary hook). Before it is executed it is
