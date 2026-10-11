@@ -325,3 +325,42 @@ def test_the_validity_gate_stops_on_a_surface_it_cannot_rebuild(case):
         points, f = tet, faces[:, [0, 2, 1]]
     with pytest.raises(movemesh.RemeshError):
         movemesh.check_surface(points, f)
+
+
+# -- the rebuild policy (Task 6) -----------------------------------------------------------------------------------
+def test_compression_triggers_a_rebuild_only_after_the_minimum_gap(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=3,
+                                 sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    rebuilt_at = []
+    for step in range(8):
+        r = moving.move_with_policy(inward(moving, 0.8e-3))
+        if r.rebuilt:
+            rebuilt_at.append(step)
+    # compression passes half the 4 mm zone (2 mm) after the third move; the gap of 3 is met then too
+    assert rebuilt_at and rebuilt_at[0] == 3 and moving.rebuilds >= 1
+
+
+def test_a_refused_move_rebuilds_and_then_moves(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=8e-3, ratio_min=0.1, min_gap=1000,
+                                 sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    for _ in range(40):                                  # press the zone until a move is refused (no compression rebuild)
+        u = inward(moving, 0.4e-3)
+        if moving.move(u).refused:
+            break
+    else:
+        pytest.fail("the zone never degraded")
+    r = moving.move_with_policy(u)
+    assert r.rebuilt and not r.refused and moving.last_rebuild.reason == "quality"
+
+
+def test_a_move_refused_on_a_fresh_mesh_is_a_model_failure(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3,
+                                 sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    with pytest.raises(RuntimeError, match="even after a rebuild"):
+        moving.move_with_policy(inward(moving, 3.5e-3))   # most of the 4 mm zone in one step
