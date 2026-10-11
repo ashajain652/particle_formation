@@ -366,3 +366,38 @@ def test_a_move_refused_on_a_fresh_mesh_is_a_model_failure(coarse_sphere_mesh):
                                  sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     with pytest.raises(RuntimeError, match="even after a rebuild"):
         moving.move_with_policy(inward(moving, 3.5e-3))   # most of the 4 mm zone in one step
+
+
+# -- a moving front against an exact solution (Task 7) -------------------------------------------------------------
+def exact_front(xi, t, alpha, v):
+    """theta = (T - T0) / (Ts - T0) ahead of a front at fixed Ts moving at v into a solid at T0 (Carslaw & Jaeger)."""
+    s = 2.0 * np.sqrt(alpha * t)
+    return 0.5 * (erfc((xi - v * t) / s) * np.exp(-v * xi / alpha) + erfc((xi + v * t) / s))
+
+
+def run_moving_front(name):
+    """A 20 mm bar of 0.1 mm cells whose x = 0 face is held at 600 K and moves into the bar at 10 mm/s for 0.5 s."""
+    mat = constant_material()
+    m = mesh_mod.box_mesh(20e-3, 0.2e-3, 0.2e-3, 0.1e-3)
+    solver = solver_on(m, mat, 300.0, name)
+    D, v, dt = 15e-3, 1e-2, 5e-3
+    moving = movemesh.MovingMesh(m, solver, mat, depth=D)
+    x_front = 0.0
+    for _ in range(100):
+        cx = moving.mesh.points[moving.corners, 0]
+        u = np.zeros((len(moving.corners), 3))
+        u[:, 0] = v * dt * np.clip(1.0 - (cx - x_front) / D, 0.0, 1.0)              # sides slide with the zone
+        r = moving.move(u)
+        assert not r.refused
+        x_front += v * dt
+        front = np.flatnonzero(np.abs(moving.mesh.points[:, 0] - x_front) < 1e-9)
+        solver.step(dt, np.zeros(len(solver.faces)), 300.0, dirichlet=(front, np.full(len(front), 600.0)))
+    return moving, solver, x_front
+
+
+def test_a_moving_front_follows_the_exact_solution():
+    moving, solver, x_front = run_moving_front("skfem")
+    x = moving.mesh.points[:, 0]
+    theta = (solver.temperature() - 300.0) / 300.0
+    exact = exact_front(x - x_front, 0.5, 1e-5, 1e-2)
+    assert np.abs(theta - exact).max() < 0.005          # 0.0010 measured while planning: 0.1 % of the rise
