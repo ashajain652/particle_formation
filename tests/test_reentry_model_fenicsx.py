@@ -367,3 +367,13 @@ def test_a_rebuild_keeps_the_energy_on_fenicsx(coarse_sphere_mesh):
     moving.rebuild()
     assert s1.energy() == pytest.approx(E, rel=1e-12) and s1.mesh is moving.mesh
     s1.step(0.5, np.full(len(s1.faces), 1e5), 300.0)
+
+
+def test_a_moving_front_matches_the_skfem_backend():
+    """Moving mesh (sub-plan 19): the moving-front case of test_reentry_model_movemesh on both backends."""
+    import sys, os
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_reentry_model_movemesh import run_moving_front
+    _, s_fx, _ = run_moving_front("fenicsx")
+    _, s_sk, _ = run_moving_front("skfem")
+    assert np.abs(s_fx.temperature() - s_sk.temperature()).max() < 1e-6
