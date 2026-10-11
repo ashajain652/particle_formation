@@ -169,9 +169,17 @@ def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh
     solver.set_temperature(300.0 + 4000.0 * (r_node - 0.03).clip(0.0))           # warm near the surface
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
     E0, V0 = solver.energy(), m.volume()
+    _, area0 = moving.frame()
+    deep = np.linalg.norm(m.points, axis=1) < 0.05 - 15.5e-3          # below the zone: must not change at all
+    T0 = solver.temperature()
     r = moving.move(inward(moving, 3e-4))
     assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    # each corner books what its own faces swept: its dual area times 0.3 mm to within the curvature (1.0 % measured
+    # while planning), never negative
+    assert np.all(r.swept_volume > 0.0)
+    assert np.abs(r.swept_volume / (area0 * 3e-4) - 1.0).max() < 0.02
+    assert np.array_equal(solver.temperature()[deep], T0[deep])
     # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.7 % of what the
     # corners swept (measured while planning), the lumped quadrature's error on a field that is not linear
     assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
@@ -223,12 +231,30 @@ def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh
     solver = solver_on(m, mat)
     solver.set_temperature(300.0 + 2000.0 * m.points[:, 2])
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
-    normal, _ = moving.frame()
+    normal, area = moving.frame()
     tangent = np.cross(normal, [0.0, 0.0, 1.0])               # along the surface, around the z axis
     E0 = solver.energy()
     r = moving.move(1e-4 * tangent)
-    assert abs(r.swept_volume.sum()) < 1e-3 * 1e-4 * moving.frame()[1].sum()
+    # what a corner books is the curved surface's second-order change, at most 0.6 % of its dual area times its
+    # displacement (measured while planning); scaling first-order volumes to the total made it noise here
+    assert np.all(np.abs(r.swept_volume) < 0.02 * area * 1e-4 * np.linalg.norm(tangent, axis=1))
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+
+
+def test_swept_volumes_are_exact_prisms_and_nothing_where_a_face_slides():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = movemesh.orient_outward(m.points, s.faces, s.normals)
+    new = m.points.copy()
+    front = new[:, 0] == 0.0
+    new[front, 0] += 0.3e-3                                     # the x = 0 face moves into the box
+    dV = movemesh.swept_volumes(m.points, new, faces, local[faces], len(corners))
+    assert dV.sum() == pytest.approx(0.3e-3 * 2e-3 * 2e-3, rel=1e-12)
+    assert np.all(dV[front[corners]] > 0.0)
+    assert np.all(dV[~front[corners]] == 0.0)                  # the sides only stretched in their own planes
 
 
 def test_the_moving_mesh_reports_its_surface_quality_and_fold(coarse_sphere_mesh):
