@@ -45,5 +45,6 @@ prototype/**/*.gif
 prototype/work-2026-10-07-scheil-default/debug/run00625/
 prototype/work-2026-10-08-skin/bitid/d*/
 prototype/work-2026-10-08-skin/probe_freeze/run_dt05/
+prototype/work-2026-10-08-skin/probe_freeze/run_energy_dt05/
 # a git repository of its own (a session's working copy): git cannot track the files inside it
 prototype/work-2026-10-08-skin/code/
