@@ -146,3 +146,96 @@ def test_uniform_recession_compresses_the_zone_uniformly(coarse_sphere_mesh):
     near = (r0 > 0.05 - 8e-3) & (r0 < 0.05 - 1e-3)      # well inside the zone, away from the surface
     # each node's depth below the surface shrinks by about the zone's factor (D - r) / D = 0.9
     assert np.median(((0.05 - 2e-3) - r1[near]) / (0.05 - r0[near])) == pytest.approx(0.9, abs=0.03)
+
+
+# -- moving the mesh: the remap and its books (Task 4) -------------------------------------------------------------
+def test_a_uniform_field_stays_exactly_uniform_while_the_mesh_moves(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 700.0)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    rng = np.random.default_rng(3)
+    for _ in range(5):
+        r = moving.move(inward(moving, 2e-4) * rng.uniform(0.0, 1.0, (len(moving.corners), 1)))
+        assert not r.refused
+    assert np.abs(solver.temperature() - 700.0).max() < 1e-9
+
+
+def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    r_node = np.linalg.norm(m.points, axis=1)
+    solver.set_temperature(300.0 + 4000.0 * (r_node - 0.03).clip(0.0))           # warm near the surface
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    E0, V0 = solver.energy(), m.volume()
+    r = moving.move(inward(moving, 3e-4))
+    assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.7 % of what the
+    # corners swept (measured while planning), the lumped quadrature's error on a field that is not linear
+    assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
+
+
+def test_a_linear_field_is_carried_to_the_moved_nodes(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    T_of = lambda p: 500.0 + 2000.0 * p[:, 0]
+    solver.set_temperature(T_of(m.points))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    r = moving.move(inward(moving, 2e-4))
+    # the remap is exact for a linear field; only the books' uniform offset moves it: 3.3e-6 K here, from a 0.0035 J
+    # offset against 3877 J swept (measured while planning)
+    assert np.abs(solver.temperature() - T_of(moving.mesh.points)).max() < 1e-4
+    assert abs(r.correction) < 1e-5 * r.swept_enthalpy.sum()
+
+
+def test_a_move_that_would_invert_an_element_is_refused_and_changes_nothing(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 400.0)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    before, T_before = m.points.copy(), solver.temperature()
+    u = np.zeros((len(moving.corners), 3))
+    u[0] = -8e-3 * moving.frame()[0][0]                                           # one corner 8 mm in: past its elements
+    r = moving.move(u)
+    assert r.refused
+    assert np.array_equal(moving.mesh.points, before) and np.array_equal(solver.temperature(), T_before)
+
+
+def test_an_outward_move_books_metal_coming_in(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 500.0)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    E0, V0 = solver.energy(), m.volume()
+    r = moving.move(inward(moving, -2e-4))                    # outward: rigid metal joining the 3D model (stage 2)
+    assert not r.refused and r.swept_volume.sum() < 0.0
+    assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    assert np.abs(solver.temperature() - 500.0).max() < 1e-9
+
+
+def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    solver.set_temperature(300.0 + 2000.0 * m.points[:, 2])
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    normal, _ = moving.frame()
+    tangent = np.cross(normal, [0.0, 0.0, 1.0])               # along the surface, around the z axis
+    E0 = solver.energy()
+    r = moving.move(1e-4 * tangent)
+    assert abs(r.swept_volume.sum()) < 1e-3 * 1e-4 * moving.frame()[1].sum()
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+
+
+def test_the_moving_mesh_reports_its_surface_quality_and_fold(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat)
+    # the coarse 4 mm sphere as gmsh made it: worst triangle 0.14, largest fold 14.4 degrees (measured while planning)
+    assert 0.1 < moving.surface_quality() <= 1.0
+    assert 5.0 < moving.surface_fold() < 20.0
+    assert np.linalg.norm(moving.smoothing(), axis=1).max() > 0.0
