@@ -174,3 +174,36 @@ def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_
     limit = clamp * np.linalg.norm(points[edges[:, 0]] - points[edges[:, 1]], axis=1).mean()
     size = np.linalg.norm(step, axis=1)
     return step * np.minimum(1.0, limit / np.where(size > 0.0, size, 1.0))[:, None]
+
+
+# -- the deforming zone ----------------------------------------------------------------------------------------------
+class ZoneMap:
+    """Which 3D nodes move with the surface, and how: surface nodes by their own displacement; every other node within
+    `depth` of the surface by w_i times an inverse-square-distance average of its ZONE_NEIGHBOURS nearest surface
+    nodes' displacements, w_i = 1 - d_i / depth (d_i its distance to the nearest surface node). Built once per mesh."""
+
+    def __init__(self, points, corners, depth=DEFORM_DEPTH, neighbours=ZONE_NEIGHBOURS):
+        from scipy.spatial import cKDTree
+        if depth <= 0.0:
+            raise ValueError("the deforming zone needs a positive depth")
+        self.n_points, self.corners, self.depth = len(points), np.asarray(corners, dtype=np.int64), float(depth)
+        tree = cKDTree(points[self.corners])
+        d = tree.query(points)[0]
+        w = np.clip(1.0 - d / self.depth, 0.0, 1.0)
+        is_corner = np.zeros(len(points), dtype=bool)
+        is_corner[self.corners] = True
+        self.interior = np.flatnonzero((w > 0.0) & ~is_corner)
+        k = min(neighbours, len(self.corners))
+        dist, idx = tree.query(points[self.interior], k=k)
+        dist, idx = dist.reshape(len(self.interior), k), idx.reshape(len(self.interior), k)
+        K = 1.0 / (dist + 1e-3 * self.depth) ** 2
+        self.idx, self.K = idx, K / K.sum(axis=1)[:, None]
+        self.w = w[self.interior]
+
+    def displacement(self, u_corners):
+        """(n_corners, 3) corner displacements -> (n_points, 3) node displacements."""
+        u = np.asarray(u_corners, dtype=float)
+        U = np.zeros((self.n_points, 3))
+        U[self.corners] = u
+        U[self.interior] = self.w[:, None] * np.einsum("ik,ikj->ij", self.K, u[self.idx])
+        return U

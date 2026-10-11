@@ -119,3 +119,30 @@ def test_a_solver_set_up_on_a_new_mesh_drops_its_old_amg_hierarchy(coarse_sphere
     solver.setup(uniform_test_mesh, mat, 0.0)                 # what a rebuild does
     solver.set_temperature(300.0)
     solver.step(0.5, np.full(len(solver.faces), 1e5), 300.0)  # raised "different shapes" before the fix
+
+
+# -- the deforming zone (Task 3) -----------------------------------------------------------------------------------
+def test_zone_moves_corners_exactly_and_leaves_deep_nodes_still(coarse_sphere_mesh):
+    m = coarse_sphere_mesh
+    corners = np.unique(m.surface().faces)
+    zone = movemesh.ZoneMap(m.points, corners, depth=10e-3)
+    u = np.tile([1e-4, 0.0, 0.0], (len(corners), 1))
+    U = zone.displacement(u)
+    assert np.array_equal(U[corners], u)
+    deep = np.linalg.norm(m.points, axis=1) < 0.05 - 10.5e-3
+    assert np.all(U[deep] == 0.0)
+    shallow = np.setdiff1d(zone.interior, corners)
+    assert np.all(U[shallow, 0] > 0.0) and np.all(U[shallow, 0] <= 1e-4 + 1e-15)
+
+
+def test_uniform_recession_compresses_the_zone_uniformly(coarse_sphere_mesh):
+    m = coarse_sphere_mesh
+    s = m.surface()
+    corners = np.unique(s.faces)
+    normal, _ = movemesh.corner_frame(m.points, movemesh.orient_outward(m.points, s.faces, s.normals), corners)
+    zone = movemesh.ZoneMap(m.points, corners, depth=20e-3)
+    moved = m.points + zone.displacement(-2e-3 * normal)
+    r0, r1 = np.linalg.norm(m.points, axis=1), np.linalg.norm(moved, axis=1)
+    near = (r0 > 0.05 - 8e-3) & (r0 < 0.05 - 1e-3)      # well inside the zone, away from the surface
+    # each node's depth below the surface shrinks by about the zone's factor (D - r) / D = 0.9
+    assert np.median(((0.05 - 2e-3) - r1[near]) / (0.05 - r0[near])) == pytest.approx(0.9, abs=0.03)
