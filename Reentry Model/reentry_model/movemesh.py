@@ -228,6 +228,7 @@ class ZoneMap:
         return U
 
 
+
 # -- moving the mesh -------------------------------------------------------------------------------------------------
 @dataclass
 class MoveResult:
@@ -380,6 +381,7 @@ class MovingMesh:
         return result
 
 
+
 # -- rebuilding the mesh ---------------------------------------------------------------------------------------------
 @dataclass
 class RebuildResult:
@@ -494,3 +496,4 @@ def locate(points, tets, query, candidates=16):
     best = np.argmax(bary.min(axis=2), axis=1)
     rows = np.arange(len(query))
     return cand[rows, best], bary[rows, best]
+
