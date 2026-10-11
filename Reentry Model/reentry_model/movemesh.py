@@ -26,9 +26,9 @@ What left through the surface is booked per corner by the exact volume of the pr
 between its old and new positions (`swept_volumes`): a third of each prism to each of the triangle's corners, so a
 corner sliding along a flat face books nothing, and the third-order remainder by which the prisms miss the change of the
 mesh's volume spread over the corners in proportion to their own |volume|, so the corners' volumes add up exactly to
-that change. Inward motion carries the mean of the corner's enthalpy before and after the remap (the slab it leaves
-behind varies across its thickness); outward motion keeps the corner's own. The layered skins take exactly that mass
-and enthalpy (stage 2).
+that change. Each corner's volume carries the corner's own nodal enthalpy before the move (the surface value, which the
+exact moving-front solution favours over the mean of the old and remapped values). The layered skins take exactly
+that mass and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
@@ -324,16 +324,10 @@ class MovingMesh:
         remainder = (V_old - float(np.abs(vol_new).sum())) - dV.sum()
         if np.abs(dV).sum() > 0.0:
             dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
-        # the metal that leaves is a slab between the old surface and the new one, and the field varies across it: the
-        # old surface value alone is a first-order, one-signed bias (measured while fixing the final review: -6.8 J
-        # against about 1600 J swept per 0.5 mm move on a heated 100 mm sphere; the mean of the old and the remapped
-        # value cut it to +0.72 J). Inward motion therefore books the mean of the surface node's enthalpy before and
-        # after the remap (before the books' offset); outward motion brings in metal whose enthalpy is stage 2's
-        # interface decision, so it keeps the node's own.
-        h_slab = h[self.corners]
-        inward_move = dV > 0.0
-        h_slab[inward_move] = 0.5 * (h_slab[inward_move] + h_new[self.corners][inward_move])
-        swept_h = mat.rho * dV * h_slab
+        # the slab is booked at the corners' old enthalpy, not the mean of the old and remapped values: the exact-solution
+        # moving-front test is 0.0010 of the rise with the surface value against 0.0093 with the mean, and in stage 2
+        # the metal crossing the rigid front is booked at the base node's temperature
+        swept_h = mat.rho * dV * h[self.corners]
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         correction = (E_old - swept_h.sum()) - solver.energy()
