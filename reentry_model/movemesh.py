@@ -239,16 +239,6 @@ class MoveResult:
     rebuilt: bool = False               # move_with_policy rebuilt the mesh before (or to make) this move
 
 
-def default_sizes(mesh):
-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
-    p = mesh.params
-    if "h_surface_m" in p:
-        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
-    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
-
-
 class MovingMesh:
     """A VolumeMesh, its thermal solver and material, moved by its corners (the surface nodes, in a fixed order that
     survives rebuilds) and rebuilt when needed. `mesh` and the solver's mesh are replaced at every rebuild; callers
@@ -335,3 +325,147 @@ class MovingMesh:
         self.compression += np.maximum(-np.einsum("ij,ij->i", normal, u), 0.0)
         self.steps_since_rebuild += 1
         return MoveResult(False, dV, swept_h, float(correction), worst)
+
+    def rebuild(self, reason="requested"):
+        """Regenerate the volume mesh inside the current surface triangulation and carry the enthalpy over."""
+        t0 = time.perf_counter()
+        mesh, solver, mat = self.mesh, self.solver, self.material
+        faces = self.corners[self.faces_corner]
+        check_surface(mesh.points, faces)
+        points, tets, node_of_corner = rebuild_volume(mesh.points[self.corners], self.faces_corner, **self.sizes)
+        h_old = mat.enthalpy(solver.temperature())
+        E_old = solver.energy()
+        elem, bary = locate(mesh.points, mesh.tets, points)
+        h_new = np.einsum("ij,ij->i", bary, h_old[mesh.tets[elem]])
+        h_new[node_of_corner] = h_old[self.corners]          # the surface is the same: corners keep their enthalpy
+        params = dict(mesh.params, rebuilds=self.rebuilds + 1)
+        new_mesh = mesh_mod.VolumeMesh(points, tets, params)
+        solver.setup(new_mesh, mat, solver.emissivity)
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        residual = E_old - solver.energy()
+        h_new += residual / lumped_masses(points, tets, mat.rho).sum()
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        self.mesh, self.corners = new_mesh, node_of_corner
+        self._set_surface(node_of_corner[self.faces_corner])
+        self.compression[:] = 0.0
+        self.steps_since_rebuild = 0
+        self.rebuilds += 1
+        self.last_rebuild = RebuildResult(float(residual), float(residual / E_old) if E_old else 0.0, new_mesh.n_nodes,
+                                          new_mesh.n_elements, time.perf_counter() - t0, reason)
+        return self.last_rebuild
+
+
+# -- rebuilding the mesh ---------------------------------------------------------------------------------------------
+@dataclass
+class RebuildResult:
+    residual: float                     # J, total enthalpy the interpolation lost or gained before the offset
+    relative_residual: float            # that over the total enthalpy
+    n_nodes: int
+    n_elements: int
+    seconds: float
+    reason: str
+
+
+def default_sizes(mesh):
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    p = mesh.params
+    if "h_surface_m" in p:
+        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+
+
+def check_surface(points, faces):
+    """The validity gate: every edge used by exactly two triangles, one connected surface, positive enclosed volume."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    faces = np.asarray(faces, dtype=np.int64)
+    edges = np.sort(np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    if np.any(counts != 2):
+        raise RemeshError("the surface is not manifold: {} edges are not shared by exactly two triangles".format(
+            int(np.sum(counts != 2))))
+    nodes = np.unique(faces)
+    local = np.full(points.shape[0], -1, dtype=np.int64)
+    local[nodes] = np.arange(len(nodes))
+    e = local[edges]
+    graph = coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(len(nodes), len(nodes)))
+    n_parts = connected_components(graph, directed=False)[0]
+    if n_parts != 1:
+        raise RemeshError("the body has come apart into {} pieces; fragmentation is out of scope".format(n_parts))
+    a, b, c = (points[faces[:, i]] for i in range(3))
+    volume = float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0)
+    if volume <= 0.0:
+        raise RemeshError("the surface encloses a non-positive volume ({:.3g} m3)".format(volume))
+    return volume
+
+
+def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
+    """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly. Returns the new
+    points, tets and the new node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
+    import gmsh
+    from scipy.spatial import cKDTree
+    gmsh.initialize()
+    try:
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("rebuild")
+        surface = gmsh.model.addDiscreteEntity(2)
+        gmsh.model.mesh.addNodes(2, surface, list(range(1, len(corner_points) + 1)), corner_points.ravel().tolist())
+        gmsh.model.mesh.addElementsByType(surface, 2, [], (np.asarray(faces_corner) + 1).ravel().tolist())
+        loop = gmsh.model.geo.addSurfaceLoop([surface])
+        gmsh.model.geo.addVolume([loop])
+        gmsh.model.geo.synchronize()
+        dist = gmsh.model.mesh.field.add("Distance")
+        gmsh.model.mesh.field.setNumbers(dist, "SurfacesList", [surface])
+        thr = gmsh.model.mesh.field.add("Threshold")
+        d_min = band
+        d_max = band + ramp if band > 0.0 else max(ramp, 1e-9)
+        for key, value in (("InField", dist), ("SizeMin", h_surface), ("SizeMax", h_core), ("DistMin", d_min),
+                           ("DistMax", d_max)):
+            gmsh.model.mesh.field.setNumber(thr, key, value)
+        gmsh.model.mesh.field.setAsBackgroundMesh(thr)
+        for option in ("Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeFromCurvature"):
+            gmsh.option.setNumber(option, 0)
+        gmsh.option.setNumber("Mesh.Algorithm3D", 10)          # HXT, as mesh.generate_sphere_mesh
+        # one thread: fenicsx_env's gmsh 4.15.2 segfaults meshing a discrete surface's volume with HXT on four threads
+        # (checked 2026-10-11; drama_env's does not), and a rebuild takes under two seconds on one
+        gmsh.option.setNumber("General.NumThreads", 1)
+        gmsh.option.setNumber("Mesh.MaxNumThreads3D", 1)
+        gmsh.model.mesh.generate(3)
+        tags, coords, _ = gmsh.model.mesh.getNodes()
+        types, _, nodes = gmsh.model.mesh.getElements(3)
+    finally:
+        gmsh.finalize()
+    if 4 not in list(types):
+        raise RemeshError("gmsh produced no tetrahedra inside the surface")
+    coords = np.asarray(coords).reshape(-1, 3)
+    tags = np.asarray(tags, dtype=np.int64)
+    index = np.full(tags.max() + 1, -1, dtype=np.int64)
+    index[tags] = np.arange(len(tags))
+    tets = index[np.asarray(nodes[list(types).index(4)], dtype=np.int64).reshape(-1, 4)]
+    used = np.unique(tets)                                   # drop nodes no tetrahedron uses (none expected)
+    renumber = np.full(len(coords), -1, dtype=np.int64)
+    renumber[used] = np.arange(len(used))
+    coords, tets = coords[used], renumber[tets]
+    d, node_of_corner = cKDTree(coords).query(corner_points)
+    if d.max() > 0.0:
+        raise RemeshError("gmsh moved a surface node by {:.3g} m".format(float(d.max())))
+    return coords, tets, node_of_corner.astype(np.int64)
+
+
+def locate(points, tets, query, candidates=16):
+    """For each query point, an element of (points, tets) holding it and its barycentric coordinates there; a point
+    just outside every candidate gets the candidate it is least outside of (linear extrapolation)."""
+    from scipy.spatial import cKDTree
+    centroids = points[tets].mean(axis=1)
+    k = min(candidates, len(tets))
+    _, cand = cKDTree(centroids).query(query, k=k)
+    cand = cand.reshape(len(query), k)
+    x = points[tets[cand]]                                   # (nq, k, 4, 3)
+    J = np.stack([x[:, :, 1] - x[:, :, 0], x[:, :, 2] - x[:, :, 0], x[:, :, 3] - x[:, :, 0]], axis=3)
+    lam = np.linalg.solve(J, (query[:, None, :] - x[:, :, 0])[..., None])[..., 0]
+    bary = np.concatenate([1.0 - lam.sum(axis=2, keepdims=True), lam], axis=2)    # (nq, k, 4)
+    best = np.argmax(bary.min(axis=2), axis=1)
+    rows = np.arange(len(query))
+    return cand[rows, best], bary[rows, best]
