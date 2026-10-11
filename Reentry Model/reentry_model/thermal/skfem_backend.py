@@ -92,9 +92,21 @@ class SkfemThermalSolver:
         n = len(self.points)
         self.pattern = _Pattern(np.repeat(self.tets, 4, axis=1).ravel(), np.tile(self.tets, (1, 4)).ravel(), n)
         self.T, self._T_prev = np.full(n, 300.0), None
+        self._ml = None                           # an AMG hierarchy belongs to one mesh: a rebuilt mesh needs a new one
         self.phi = np.where(mesh.active, 1.0, 0.0)
         self.film_mass = np.zeros(n)              # kg per node: the melt film riding on the boundary (Step 3)
         self.pinned = np.zeros(n, dtype=bool)
+        self._refresh_surface()
+
+    def update_geometry(self, elements=None):
+        """The mesh's node coordinates have moved (the moving 3D mesh, layered-skin design section 5.3): recompute the
+        element matrices of `elements` (all if None) and the surface. `self.points` is the mesh's own array, so the
+        coordinates are already here."""
+        if elements is None:
+            self.vol, self.Ke, self.Mk = element_matrices(self.points, self.tets)
+        else:
+            elements = np.asarray(elements, dtype=np.int64)
+            self.vol[elements], self.Ke[elements], self.Mk[elements] = element_matrices(self.points, self.tets[elements])
         self._refresh_surface()
 
     def _refresh_surface(self):

@@ -89,3 +89,31 @@ def test_tangential_smoothing_moves_along_the_surface_and_evens_it_out(coarse_sp
         pts *= 0.05 / np.linalg.norm(pts, axis=1, keepdims=True)
         normal = pts / 0.05
     assert movemesh.triangle_quality(pts, faces).min() > q0
+
+
+# -- the backends on moved geometry (Task 2) -----------------------------------------------------------------------
+def test_moved_geometry_gives_the_operators_of_a_fresh_solver(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 450.0)
+    r = np.linalg.norm(m.points, axis=1)
+    m.points *= (1.0 - 0.04 * (r / 0.05) ** 4)[:, None]       # an uneven squeeze toward the centre, in place
+    outer = np.flatnonzero((r[m.tets] > 0.02).any(axis=1))    # the elements whose nodes moved noticeably...
+    solver.update_geometry(np.arange(m.n_elements))           # ...but every node moved, so recompute all
+    fresh = solver_on(mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, 450.0)
+    T = solver.temperature()
+    K1, M1 = solver.operators(T)
+    K2, M2 = fresh.operators(T)
+    assert outer.size and abs(K1 - K2).max() == 0.0 and abs(M1 - M2).max() == 0.0
+    assert np.array_equal(solver.areas, fresh.areas)
+
+
+def test_a_solver_set_up_on_a_new_mesh_drops_its_old_amg_hierarchy(coarse_sphere_mesh, uniform_test_mesh):
+    mat = constant_material()
+    solver = thermal_solver("skfem")                          # AMG, the default
+    solver.setup(coarse_sphere_mesh, mat, 0.0)
+    solver.set_temperature(300.0)
+    solver.step(0.5, np.full(len(solver.faces), 1e5), 300.0)
+    solver.setup(uniform_test_mesh, mat, 0.0)                 # what a rebuild does
+    solver.set_temperature(300.0)
+    solver.step(0.5, np.full(len(solver.faces), 1e5), 300.0)  # raised "different shapes" before the fix

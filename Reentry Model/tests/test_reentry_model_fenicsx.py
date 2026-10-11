@@ -334,3 +334,20 @@ def test_skins_match_the_skfem_backend(coarse_sphere_mesh):
     assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 1e-3
     assert np.abs(f.skins.T - s.skins.T).max() < 1e-3
     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
+
+
+def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
+    """Moving mesh (sub-plan 19): after update_geometry, a step equals a fresh solver's on the moved mesh."""
+    from reentry_model import mesh as mesh_mod
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    s1 = solver("fenicsx", m, mat, linear_solver="direct")
+    s1.set_temperature(500.0 + 1000.0 * m.points[:, 0])
+    r = np.linalg.norm(m.points, axis=1)
+    m.points *= (1.0 - 0.04 * (r / R) ** 4)[:, None]
+    s1.update_geometry()
+    s2 = solver("fenicsx", mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, linear_solver="direct")
+    s2.set_temperature(s1.temperature())
+    q = np.full(len(s1.faces), 2e5)
+    r1, r2 = s1.step(0.5, q, 300.0), s2.step(0.5, q, 300.0)
+    assert np.abs(r1.T - r2.T).max() < 1e-9
