@@ -347,6 +347,7 @@ def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
     m.points *= (1.0 - 0.04 * (r / R) ** 4)[:, None]
     s1.update_geometry()
     s2 = solver("fenicsx", mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, linear_solver="direct")
+    assert np.allclose(s1.cell_volumes, s2.cell_volumes, rtol=1e-12, atol=0.0)   # the moved cells have the fresh cell volumes
     s2.set_temperature(s1.temperature())
     q = np.full(len(s1.faces), 2e5)
     r1, r2 = s1.step(0.5, q, 300.0), s2.step(0.5, q, 300.0)

@@ -97,9 +97,11 @@ def test_moved_geometry_gives_the_operators_of_a_fresh_solver(coarse_sphere_mesh
     mat = constant_material()
     solver = solver_on(m, mat, 450.0)
     r = np.linalg.norm(m.points, axis=1)
-    m.points *= (1.0 - 0.04 * (r / 0.05) ** 4)[:, None]       # an uneven squeeze toward the centre, in place
-    outer = np.flatnonzero((r[m.tets] > 0.02).any(axis=1))    # the elements whose nodes moved noticeably...
-    solver.update_geometry(np.arange(m.n_elements))           # ...but every node moved, so recompute all
+    moved = r > 0.04                                          # only the outer shell (r above 4 cm) moves; the core stays put
+    m.points[moved] *= (1.0 - 0.04 * (r[moved] / 0.05) ** 4)[:, None]    # an uneven squeeze toward the centre, in place
+    outer = np.flatnonzero(moved[m.tets].any(axis=1))         # the elements with a moved node: the only ones that change
+    assert outer.size < m.n_elements                          # a real subset: the core elements keep their matrices
+    solver.update_geometry(outer)                             # recompute just those elements, and the surface
     fresh = solver_on(mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, 450.0)
     T = solver.temperature()
     K1, M1 = solver.operators(T)
