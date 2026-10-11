@@ -97,6 +97,23 @@ Asha answered the plan's seven questions on 2026-10-11 (the questions as asked a
 6. **Check 15's extensions (Q6): accepted.** Apply to check 15 when it is run (S5).
 7. **Floor removals at sub-boundaries (Q7, D8): accepted.** Apply when the sink is built (S2); Task 2's sub-boundary
    hook is where they will act.
+8. **Recession in windows (new question 1): (a) in MC; recession-driven mass removal in M4.** Asha asked whether the
+   windows could lower the particle masses to remove the mass that sprayed, as determined by the surface recession,
+   and chose (2026-10-11, *"put it in M4 as you recommend"*):
+   - **MC:** windows remove no mass; Task 2 records the omitted recession per sub-interval and flags a window where it
+     exceeds half a spacing. A stiff window (≤ 50 ms) omits at most 0.12 mm, 0.05 of a 2.2 mm spacing.
+   - **M4 (the long slurry and detachment windows, about one spacing in 1 s):** the window lowers surface particles'
+     masses by the volume the finite-element surface sweeps through each particle over the window, at frame k's
+     recession rate (spray is the recession on this flight, fact 13), with S2's mechanics — masses lowered in a
+     package's `finalize`, m and massRZ by one factor in RZ (fact 4), integrated density (fact 6), a floor with
+     deletion at the sub-boundary hook (Q7). The rate is the finite element's, not a Girin closure in Spheral, so this
+     stays within the scope of decision 2.
+   - **Before M4 relies on it, a reduced check 15:** a loaded, stressed slab losing mass at two spacings, measuring
+     false motion and pressure, the area loads on lighter surface particles (the load per area is unchanged while the
+     mass falls, so their acceleration rises) and the smoothing-length rule (fact 7: H ignores the mass; fact 8: a
+     shrink compounds unless done once). Facts 1–8 are its measured basis; it is planned in M4's plan with S2 and S5 as
+     its starting point. The SPH outline does not recede with the mass: the surface moves in whole-particle steps at
+     the floor deletions, which M4's plan states as an assumption.
 
 **Spec amendments these imply** (written by Task 4, not now):
 
@@ -111,8 +128,8 @@ Asha answered the plan's seven questions on 2026-10-11 (the questions as asked a
   or floor); check 15 marked for the later milestone, with Q6's extensions.
 - **§14, the milestone table:** MC's row — Builds: the permanent IDs verified through the replay, the switch and a
   window; the window driver's core; the release on removed faces (export addition 07) and the film account's closure.
-  Answers: as this plan's "Answers". Done when: as this plan's "Done when". M4's row loses "MC's spray sink in the
-  windows". A row or note for the later sub-grid spraying milestone (new question 2). "If an early milestone fails":
+  Answers: as this plan's "Answers". Done when: as this plan's "Done when". M4's row: "MC's spray sink in the
+  windows" becomes recession-driven mass removal in long windows with a reduced check 15 (decision 8). A row or note for the later sub-grid spraying milestone (new question 2). "If an early milestone fails":
   MC's clause ("the continuous sink misbehaves — whole-particle deletion") moves to the later milestone. The
   flowchart's MC node ("mass leaves continuously") becomes "IDs, window core, release closure".
 - **§14.1:** the decision "spray mass leaves continuously" (2026-10-02) recorded as deferred (Asha, 2026-10-11, her
@@ -428,7 +445,8 @@ Wall-time estimate: Task 1's flight rerun about an hour; Task 2's tests and rest
 
 ### New questions (2026-10-11, after the rescoping)
 
-1. **Recession in windows.** With the sink deferred, a window removes no mass, while the finite element keeps
+1. **Recession in windows** (*answered 2026-10-11: (a) in MC, recession-driven mass removal in M4; decision 8*).
+   With the sink deferred, a window removes no mass, while the finite element keeps
    receding. In a stiff window (≤ 50 ms) the omitted recession is at most 0.12 mm (fact 14's largest area-mean rate,
    0.05 of a 2.2 mm spacing); in a soft slurry window up to 1 s it reaches about 2.4 mm, about one spacing, and in a
    detachment window it is the neck's own thinning. Options: (a) remove nothing in windows, record the omitted
@@ -484,7 +502,9 @@ Wall-time estimate: Task 1's flight rerun about an hour; Task 2's tests and rest
 > is open again then. Facts 1–8 and 14–16 are its measured basis. Task references below use the deferred numbering
 > S1–S6; "Task 1" and "Task 2" are MC's (the release side file and the window driver, which the sink extends with its
 > brackets, its removal reasons and its floor deletions at the sub-boundary hook). Before it is executed it is
-> re-planned against the code as it then stands (the window driver, M3's and M4's packages).
+> re-planned against the code as it then stands (the window driver, M3's and M4's packages). **M4 takes S2's mechanics
+> and a reduced S5 first** (decision 8), driven by the finite element's recession rather than its Girin release; the
+> later milestone then builds on what M4 has verified.
 
 **Its goal, as written for MC:** mass that the finite-element model sprays leaves Spheral's particles continuously, step
 by step, through a spray-sink package, without false pressure, motion or interpolation error; every sink step, floor
