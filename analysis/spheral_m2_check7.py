@@ -12,7 +12,7 @@ settings, at the spacings the SPH studies already ran:
 - check 5 (the bar held at both ends, `spheral_m2_check5.py`): frames 0-10 at RZ 2.2 mm (SolidSPHRZ's collapsed
   rod: does CRKSPH hold it?), RZ 1.1 mm and 3D 2.2 mm;
 - check 6 (frame 182's loads, `spheral_m2_check6.py`): `--area-shares patch` (Task 8: the volume shares misplace
-  10-13 % of the load on a lattice; the default is Asha's to decide, so passed explicitly, as the SPH patch rows),
+  10-13 % of the load on a lattice; passed explicitly, as the SPH patch rows; the default since decision 9),
   RZ 2.2 and 1.1 mm and 3D 2.2 mm, over frames 0-3 instead of 0-6: the SPH runs had settled by k 2 (the stress change
   between frames 2e-4 of the peak), and the CRKSPH 3D step costs about five times SolidSPH's.
 

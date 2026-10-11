@@ -4,7 +4,7 @@
         [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph|crksph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
         [--stop-at K] [--loads on|off] [--mass-scaling on|off] [--monitor-every 10] [--monitor-limit 0.05]
-        [--loads-frame K] [--area-shares volume|patch]
+        [--loads-frame K] [--area-shares patch|volume]
 
 **The interval loop.** For each interval k -> k+1 of the body's frames between K0 and K1 (spec §9.1):
 
@@ -99,10 +99,12 @@ which is not the run's body when K is later than the body's frames: check 6 comp
 the exact sphere instead) and `flight_decel_ms2` the history's at frame K's time (a diagnostic). Needs `--loads on`;
 a run-name bracket (`loads_frame`, default -1).
 
-**Area shares** (Task 8, check 6). `--area-shares volume` (default, Task 4's V^(2/3) shares with one calibration
-factor) or `patch` (each of frame k's finite-element surface patches gives its area to the surface particle whose
-reference position is nearest; packages/loads.py, "Area shares", has the reason and the measurement). A run-name
-bracket (`area_shares`, default volume).
+**Area shares** (Task 8, check 6). `--area-shares patch` (default since decision 9, 2026-10-11: each of frame k's
+finite-element surface patches gives its area to the surface particle whose reference position is nearest) or
+`volume` (Task 4's V^(2/3) shares with one calibration factor, which on a lattice misplace 10-13 % of the load by
+inclination; packages/loads.py, "Area shares", has the reason and the measurement). A run-name bracket
+(`area_shares`, default patch; the runs made with loads on before decision 9 carry `_areashares-volume`). Needs
+`--loads on` when not the default.
 
 **Schemes** (Spheral M2 plan, Task 9, check 7). `--scheme sph` (default): SolidSPH (`S.SPH` on the solid node
 list; SolidSPHRZ in RZ). `--scheme crksph`: SolidCRKSPH (`S.CRKSPH`; SolidCRKSPHRZ in RZ, which Spheral 116c71f has),
@@ -1262,9 +1264,9 @@ def build_parser():
     r.add_argument("--loads-frame", type=int, default=naming.BRACKET_DEFAULTS["loads_frame"],
                    help="hold this frame's load table at every interval (check 6; default -1: each interval's own "
                    "frames)")
-    r.add_argument("--area-shares", choices=("volume", "patch"), default=naming.BRACKET_DEFAULTS["area_shares"],
-                   help="the surface particles' area shares: volume (V^(2/3), calibrated) or patch (the frame's "
-                   "patch areas to the nearest surface particle)")
+    r.add_argument("--area-shares", choices=("patch", "volume"), default=naming.BRACKET_DEFAULTS["area_shares"],
+                   help="the surface particles' area shares: patch (default: the frame's patch areas to the nearest "
+                   "surface particle) or volume (V^(2/3), calibrated)")
     r.add_argument("--every-check", type=int, default=1)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", default=DEFAULT_OUT)

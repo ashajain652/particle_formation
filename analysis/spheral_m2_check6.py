@@ -64,9 +64,10 @@ stress rows/columns (axial, radial, hoop) the Cartesian (xx, yy, zz) there.
   surface forces less its inertia); `section_ratio` is their ratio, 1 in the continuum;
 - the crossings monitor's estimates on interval 0 -> 1; KE ratios; cost.
 
-**The area shares** (`SHARES`). Every run is made twice: with the default shares ("volume", Task 4's V^(2/3) with
-one calibration factor) and with the frame's patch areas ("patch": each finite-element surface patch's area to the
-nearest surface particle by reference position; packages/loads.py, "Area shares"). The first RZ runs showed why:
+**The area shares** (`SHARES`). Every run is made twice: with Task 4's shares ("volume", V^(2/3) with one
+calibration factor; the default then) and with the frame's patch areas ("patch", the default since decision 9:
+each finite-element surface patch's area to the nearest surface particle by reference position; packages/loads.py,
+"Area shares"). The first RZ runs showed why:
 on a lattice the volume shares give every surface particle the same area, but the staircase carries fewer surface
 particles per unit area at 45 degrees than near the axis and the equator, so against the true (spherical Voronoi)
 area each particle stands for, the shares are 10-11 % too large near 0, 90 and 180 degrees and 11-13 % too small
@@ -115,7 +116,7 @@ errors over VM0 = 3,510.5 Pa, at k 6 unless stated.
 
 **The answer** (plan Task 8: do inclination tables work on particles?). The inclination does: the colour-gradient
 normals are within 1-6 degrees, and with correct areas the particles' drag and deceleration match the table's
-integral to 0.1-0.5 %. The area shares are what decide it: the default volume shares misplace up to 13 % of the
+integral to 0.1-0.5 %. The area shares are what decide it: Task 4's volume shares misplace up to 13 % of the
 load locally on a lattice (RZ drag -3 %, every core error 1.5-3.6 times larger than with the patch shares); the patch
 shares give the load and the body's stresses to 4-8 % of the peak in the core and 4-6 % RMS over the interior. The
 outer one or two spacings are not resolved by either (errors up to 1.4-3 times the peak there), and RZ adds its
@@ -168,7 +169,7 @@ CORE = 0.025                                # m: |x_ref| <= this is the core (ha
 VM0 = 3510.5                                # Pa: the reference's largest sampled von Mises (Step 1)
 
 FORMS = [("rz", 2.2, 1), ("rz", 1.1, 4), ("3d", 3.0, 18), ("3d", 2.2, 18)]     # form, dx mm, processes
-SHARES = ("volume", "patch")                # the area shares: Task 4's default, and the frame's patches
+SHARES = ("volume", "patch")                # the area shares: Task 4's, and the frame's patches (decision 9's default)
 
 COLUMNS = ["form", "dx_mm", "area_shares", "k", "n_particles", "n_interior", "n_shell", "processes", "scale",
            "int_vm_max", "int_vm_rms", "int_p_max", "int_p_rms", "int_p_mean", "core_vm_max", "core_vm_rms",

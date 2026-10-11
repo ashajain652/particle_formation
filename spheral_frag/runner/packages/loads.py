@@ -37,10 +37,12 @@ steps", and positions move far less than a spacing within an interval, which the
    surface particles behind the gap (in a pit's shadow, in the wake of the body or of a separated piece) receive the
    base pressure only, no shear. `exposure="most_upstream"` (the plan's literal rule): only the most upstream
    surface particle per line is exposed, every other surface particle gets the base pressure. See "Deviation".
-3. *Area shares.* `area_shares="volume"` (default, as built in Task 4): a_i = V_i^(2/3) in 3D; in RZ the ring area
+3. *Area shares.* `area_shares="volume"` (as built in Task 4; this package's keyword default, since the patch
+   shares need the frame's patches, but no longer the runner's): a_i = V_i^(2/3) in 3D; in RZ the ring area
    2 pi r_i ds_i with ds_i = (planar area)^(1/2); scaled by one factor so that they sum, over every surface
    particle, to `surface_area`: the prepared frame's surface area (sum of its patch areas, `frame_surface_area`) at
-   the interval's start frame k. `area_shares="patch"` (Task 8, check 6): every patch of frame k's finite-element
+   the interval's start frame k. `area_shares="patch"` (Task 8, check 6; the runner's default since decision 9,
+   2026-10-11, `run.py --area-shares`): every patch of frame k's finite-element
    surface (`frame_patches`: centroid and area) gives its area to the surface particle whose *reference* position is
    nearest its centroid (the frame and the reference positions share the body coordinates, plan decision D1; in RZ
    the centroid's (x, sqrt(y^2 + z^2)) against the ring's (x, r), so a ring collects every patch around the axis

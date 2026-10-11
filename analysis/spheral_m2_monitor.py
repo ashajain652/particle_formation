@@ -36,7 +36,8 @@ which needs no rerun. Under it check 4's RZ 2.2 mm ramp interval (limit 6.1 %, p
 crossings, so that run's later rows describe the run at 10; the flight (largest 1.45 %, von Mises) is unaffected.
 
 **The real flight** (`flight`): the MVP flight's RZ 2.2 mm replay body, frames 0-20, `--monitor-every 2` (the default
-is 10; 2 for the measurement), every other setting at its default. Per monitored interval the estimates, the
+is 10; 2 for the measurement), every other setting at its default then, so the volume area shares (`--area-shares
+volume`, explicit since decision 9 made patch the default). Per monitored interval the estimates, the
 interval's and the rerun's wall time; the overhead = monitor wall / accepted wall over the run.
 
 Outputs: `data/spheral/m2_monitor.csv` (committed; one row per validation case and per monitored flight interval),
@@ -84,7 +85,7 @@ def check4_monitor_name():
 
 
 def flight_name():
-    b = naming.canonical_brackets({"monitor_every": FLIGHT_EVERY})
+    b = naming.canonical_brackets({"monitor_every": FLIGHT_EVERY, "area_shares": "volume"})
     return naming.run_name(os.path.basename(c4.PREPARED), "replay", FLIGHT_FRAMES, "rz", 2.2, b, 1)
 
 
@@ -109,7 +110,7 @@ def run_all():
             "--strength", "elastic", "--loads", "off", "--ke-fraction", "1e300",
             "--monitor-every", str(CHECK4_EVERY)], check4_monitor_name())
     launch(["--body", FLIGHT_BODY, "--prepared", c4.PREPARED, "--frames", "{}-{}".format(*FLIGHT_FRAMES),
-            "--monitor-every", str(FLIGHT_EVERY)], flight_name())
+            "--monitor-every", str(FLIGHT_EVERY), "--area-shares", "volume"], flight_name())
 
 
 # ------------------------------------------------------------------------------------------------------ measuring

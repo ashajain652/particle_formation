@@ -63,9 +63,11 @@ BRACKET_DEFAULTS: dict[str, object] = {
     "geometry": "frame",
     # Spheral M2 Task 8 (check 6): hold one frame's load tables at every interval (-1: each interval's own frames)
     "loads_frame": -1,
-    # Spheral M2 Task 8 (check 6): the surface particles' area shares, "volume" (V^(2/3), one calibration factor) or
-    # "patch" (each finite-element surface patch's area to the nearest surface particle; packages/loads.py)
-    "area_shares": "volume",
+    # Spheral M2 Task 8 (check 6): the surface particles' area shares, "patch" (each finite-element surface patch's
+    # area to the nearest surface particle; packages/loads.py) or "volume" (V^(2/3), one calibration factor). The
+    # default is patch since decision 9 (2026-10-11); the runs made before with loads on and volume shares carry
+    # "_areashares-volume" explicitly. Only emitted with loads on (the runner refuses another value with loads off).
+    "area_shares": "patch",
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {

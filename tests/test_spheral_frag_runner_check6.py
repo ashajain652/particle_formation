@@ -231,13 +231,13 @@ def test_patch_shares_assign_each_patch_to_the_nearest_surface_particle():
 def test_run_names_carry_the_held_frame_and_the_shares():
     from spheral_frag import naming
     import spheral_m2_check6 as c6
-    name = c6.run_name("3d", 2.2, "patch")
-    assert name.endswith("_strength-elastic_sampler-uniformdt0_loadsframe-182_areashares-patch")
-    assert c6.run_name("rz", 1.1, "volume").endswith("_sampler-uniformdt0_loadsframe-182")
+    name = c6.run_name("3d", 2.2, "volume")
+    assert name.endswith("_strength-elastic_sampler-uniformdt0_loadsframe-182_areashares-volume")
+    assert c6.run_name("rz", 1.1, "patch").endswith("_sampler-uniformdt0_loadsframe-182")     # decision 9's default
     b = naming.parse_run_name(name)["brackets"]
-    assert b["loads_frame"] == 182 and b["area_shares"] == "patch"
-    assert naming.BRACKET_DEFAULTS["loads_frame"] == -1 and naming.BRACKET_DEFAULTS["area_shares"] == "volume"
-    d = c6.run_dir("3d", 2.2, "patch")
+    assert b["loads_frame"] == 182 and b["area_shares"] == "volume"
+    assert naming.BRACKET_DEFAULTS["loads_frame"] == -1 and naming.BRACKET_DEFAULTS["area_shares"] == "patch"
+    d = c6.run_dir("3d", 2.2, "volume")
     assert all(len(p) <= naming.NAME_MAX for p in d.split(os.sep))
     assert naming.run_name_from_dir(d) == name
 
@@ -261,7 +261,7 @@ def test_rz_22_rows_reproduce():
         r = subprocess.run([spheral_launcher()] + c6.run_command("rz", 2.2, sh, rel, frames=(0, 2)),
                            cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    for bad in (["--loads", "off", "--loads-frame", "182"], ["--loads", "off", "--area-shares", "patch"]):
+    for bad in (["--loads", "off", "--loads-frame", "182"], ["--loads", "off", "--area-shares", "volume"]):
         b = subprocess.run([spheral_launcher(), "spheral_frag/runner/run.py", "replay", "--body", c6.body_dir("rz", 2.2),
                             "--prepared", c6.PREPARED, "--frames", "0-2", "--strength", "elastic",
                             "--out", "spheral_output/tests/x"] + bad,

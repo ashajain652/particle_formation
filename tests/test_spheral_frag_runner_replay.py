@@ -24,7 +24,8 @@ the impulse in RZ (SolidSPHRZ, Task 4). Real flight (MVP frames, k 0-4, defaults
 1,649-1,651 steps and 6.5-6.6 s per interval (4.0 ms/step, 1 process), KE/E 6.0e-3-8.2e-3 of which 87-97 % is
 the centre-of-mass drift (internal KE/E 1.9e-4-9.9e-4), drag -2.5 % against the prepared tables' integral, max
 displacement within an interval 0.018 dx; 3D 2.2 mm (49,173 particles, k 0-1, 18 processes) 1,609 steps in 178 s
-(111 ms/step), KE/E 9.2e-4, drag -0.11 %, momentum 3e-15 of the impulse."""
+(111 ms/step), KE/E 9.2e-4, drag -0.11 %, momentum 3e-15 of the impulse. All of these with the volume area shares,
+the default then; the test runs at today's defaults (patch shares since decision 9, 2026-10-11)."""
 import csv
 import math
 import os
