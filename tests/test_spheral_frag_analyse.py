@@ -46,8 +46,9 @@ def analysed(prepared, tmp_path_factory):
     run_dir, answers = syn.fake_run(prepared, 0, 2, DX, SEED, str(runs))
     out = tmp_path_factory.mktemp("analyse")
     assert main(["analyse", "--run", run_dir, "--outdir", str(out), "--quiet"]) == 0
-    name = os.path.basename(run_dir)
-    return run_dir, answers, os.path.join(str(out), name)
+    name = naming.run_name_from_dir(run_dir)
+    assert run_dir == naming.run_dir(str(runs), name)
+    return run_dir, answers, naming.analyse_dir(str(out), name)
 
 
 def read_csv(path):
@@ -80,7 +81,7 @@ def test_analyse_finds_the_ring_and_the_debris(analysed):
     assert (ring["route"], ring["mechanism"]) == ("synthetic", "ring_release")
     # a full ring around the flight axis: its centroid lies behind the centre, on the axis to within one spacing
     assert float(ring["x_m"]) < 0.0 and np.hypot(float(ring["y_m"]), float(ring["z_m"])) < DX
-    assert ring["run"] == os.path.basename(run_dir) and ring["window"] == "k00000-00002"
+    assert ring["run"] == naming.run_name_from_dir(run_dir) and ring["window"] == "k00000-00002"
     debris = read_csv(os.path.join(out, "debris.csv"))
     assert list(debris[0]) == record.DEBRIS_COLUMNS and len(debris) == syn.FAKE_N_DEBRIS
     assert {d["kind"] for d in debris} == {"dust"} and {d["t_s"] for d in debris} == {"0.5"}
@@ -89,7 +90,8 @@ def test_analyse_finds_the_ring_and_the_debris(analysed):
     doc = json.load(open(os.path.join(out, "analyse.json")))
     assert doc["counts"]["n_fragments"] == 1 and doc["counts"]["n_debris_rows"] == syn.FAKE_N_DEBRIS
     assert doc["released"] == [{"fragment": 0, "release_check": 1, "clear_check": 2}] and doc["unreleased"] == []
-    assert doc["prepared"]["name"] == PREP_NAME and doc["run"]["meta"]["run_name"] == os.path.basename(run_dir)
+    assert doc["prepared"]["name"] == PREP_NAME
+    assert doc["run"]["meta"]["run_name"] == naming.run_name_from_dir(run_dir)
 
 
 def test_accounts_close_at_every_check(analysed):
@@ -108,7 +110,7 @@ def test_accounts_close_at_every_check(analysed):
 
 def test_skip_force_and_a_renaming_floor(analysed, tmp_path, capsys):
     run_dir, answers, out = analysed
-    outdir = os.path.dirname(out)
+    outdir = os.path.dirname(os.path.dirname(out))
     capsys.readouterr()
     assert main(["analyse", "--run", run_dir, "--outdir", outdir]) == 0
     assert "analysed already" in capsys.readouterr().out
@@ -119,11 +121,12 @@ def test_skip_force_and_a_renaming_floor(analysed, tmp_path, capsys):
     floor = answers["n_ring"] + 1
     assert main(["analyse", "--run", run_dir, "--outdir", str(tmp_path), "--min-particles", str(floor),
                  "--quiet"]) == 0
-    name = os.path.basename(run_dir) + "_minparticles-{}".format(floor)
+    name = naming.run_name_from_dir(run_dir) + "_minparticles-{}".format(floor)
     assert naming.parse_run_name(name)["brackets"]["min_particles"] == floor
-    doc = json.load(open(tmp_path / name / "analyse.json"))
+    adir = naming.analyse_dir(str(tmp_path), name)
+    doc = json.load(open(os.path.join(adir, "analyse.json")))
     assert doc["counts"]["n_fragments"] == 0 and doc["passed"] is True
-    kinds = [d["kind"] for d in read_csv(tmp_path / name / "debris.csv")]
+    kinds = [d["kind"] for d in read_csv(os.path.join(adir, "debris.csv"))]
     assert kinds.count("small_group") == 1 and kinds.count("dust") == syn.FAKE_N_DEBRIS
 
 
@@ -132,7 +135,8 @@ def test_a_dropped_removal_exits_1(prepared, tmp_path, capsys):
     capsys.readouterr()
     assert main(["analyse", "--run", run_dir, "--outdir", str(tmp_path / "out"), "--quiet"]) == 1
     assert "accounts do not close" in capsys.readouterr().err
-    doc = json.load(open(tmp_path / "out" / os.path.basename(run_dir) / "analyse.json"))
+    doc = json.load(open(os.path.join(naming.analyse_dir(str(tmp_path / "out"), naming.run_name_from_dir(run_dir)),
+                                      "analyse.json")))
     m = record.read_check(record.check_path(run_dir, 0)).mass[0]
     assert doc["passed"] is False and doc["max_abs_residual_kg"] == pytest.approx(m, rel=1e-12)
 

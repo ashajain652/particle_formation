@@ -48,7 +48,7 @@ def build(prepared, out, k0, k1, form, dx_mm, force=False):
     if rc != 0:
         raise SystemExit("body {} {} {} exited {}".format(form, dx_mm, (k0, k1), rc))
     name = naming.body_name(os.path.basename(prepared.rstrip(os.sep)), k0, k1, form, dx_mm)
-    with open(os.path.join(out, name, "body.json"), encoding="utf-8") as fh:
+    with open(os.path.join(naming.body_dir(out, name), "body.json"), encoding="utf-8") as fh:
         return json.load(fh)
 
 

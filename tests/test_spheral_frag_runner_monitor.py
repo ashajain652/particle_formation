@@ -40,9 +40,14 @@ LIMIT = 0.5     # above every estimate on the coarse synthetic sphere (measured:
 
 
 def run_dir_of(out):
+    """The one run under `out`, at <out>/<prepared>/<run suffix> (naming.run_dir)."""
     names = os.listdir(out)
     assert len(names) == 1, names
-    return os.path.join(out, names[0])
+    suffixes = os.listdir(os.path.join(out, names[0]))
+    assert len(suffixes) == 1, suffixes
+    d = os.path.join(out, names[0], suffixes[0])
+    assert naming.run_dir(out, naming.run_name_from_dir(d)) == d
+    return d
 
 
 def same_checkpoints(a, b, ks, skip_extra=()):
@@ -174,7 +179,7 @@ def test_a_tiny_limit_switches_to_twice_the_crossings(inputs):    # noqa: F811
     launch(*common, "--frames", "0-2", *tiny, "--out", rel(o_tr), "--resume")
     launch(*common, "--frames", "0-1", "--crossings", "20", "--monitor-every", "0", "--out", rel(o_20))
     run_t, run_tr, run_20 = run_dir_of(o_t), run_dir_of(o_tr), run_dir_of(o_20)
-    name = os.path.basename(run_t)
+    name = naming.run_name_from_dir(run_t)
     assert name.endswith("_monitorevery-2_monitorlimit-1e-12")
     assert naming.parse_run_name(name)["brackets"]["monitor_limit"] == 1e-12
     rows = intervals(run_t)

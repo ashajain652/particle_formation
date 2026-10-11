@@ -111,7 +111,8 @@ def inputs():
     for form in FORMS:
         assert main(["body", "--prepared", prep, "--frames", "0-4", "--form", form, "--dx-mm", str(DX_MM),
                      "--out", os.path.join(d, "body"), "--quiet"]) == 0
-        bodies[form] = os.path.join(d, "body", naming.body_name(os.path.basename(prep), 0, 4, form, DX_MM))
+        bodies[form] = naming.body_dir(os.path.join(d, "body"), naming.body_name(os.path.basename(prep), 0, 4, form,
+                                                                                 DX_MM))
     yield d, prep, bodies
     shutil.rmtree(d, ignore_errors=True)
 
@@ -131,10 +132,17 @@ def runs(inputs):
             resumed = launch(*common, "--out", rel(os.path.join(d, "resumed")), "--resume", nproc=NPROC[form])
             assert "resuming from" in resumed.stdout
             run_name = [ln for ln in full.stdout.splitlines() if ln.startswith("replay ")][0].split()[1]
-            cache[form] = (os.path.join(d, "full", run_name), os.path.join(d, "resumed", run_name), full.stdout,
-                           stop.stdout)
+            cache[form] = (naming.run_dir(os.path.join(d, "full"), run_name),
+                           naming.run_dir(os.path.join(d, "resumed"), run_name), full.stdout, stop.stdout)
         return cache[form]
     return get
+
+
+def only_run(out):
+    """The one run directory under the runs directory `out` (<out>/<prepared>/<run suffix>, naming.run_dir)."""
+    (prepared,) = os.listdir(out)
+    (suffix,) = os.listdir(os.path.join(out, prepared))
+    return os.path.join(out, prepared, suffix)
 
 
 def intervals(run_dir):
@@ -182,8 +190,8 @@ def test_analyse_closes_the_accounts(inputs, runs, form, tmp_path):
     d, prep, _ = inputs
     full, _, _, _ = runs(form)
     assert main(["analyse", "--run", full, "--prepared", prep, "--outdir", str(tmp_path), "--quiet"]) == 0
-    name = os.path.basename(full)
-    with open(os.path.join(str(tmp_path), name, "analyse.json")) as fh:
+    name = naming.run_name_from_dir(full)
+    with open(os.path.join(naming.analyse_dir(str(tmp_path), name), "analyse.json")) as fh:
         doc = json.load(fh)
     assert doc["passed"] and doc["max_abs_rel_residual"] <= 1e-12        # analyse.ACCOUNTS_RTOL
     assert doc["counts"]["n_checks"] == 5 and doc["counts"]["n_fragments"] == 0
@@ -233,7 +241,8 @@ def test_stopped_and_resumed_equals_uninterrupted_bitwise(runs, form):
 @pytest.mark.parametrize("form", FORMS)
 def test_run_name_parses_back(inputs, runs, form):
     full, _, _, _ = runs(form)
-    name = os.path.basename(full)
+    name = naming.run_name_from_dir(full)
+    assert full == naming.run_dir(os.path.dirname(os.path.dirname(full)), name)    # <out>/<prepared>/<suffix>
     p = naming.parse_run_name(name)
     _, prep, _ = inputs
     assert p["prepared"] == os.path.basename(prep) and p["mode"] == "replay" and p["frames"] == (0, 4)
@@ -291,12 +300,12 @@ def test_the_internal_ratio_drives_the_repeat(inputs, runs):
               "0"]
     between = math.sqrt(internal*whole)
     ok = launch(*common, "--out", rel(os.path.join(d, "between")), "--ke-fraction", repr(between))
-    run_dir = os.path.join(d, "between", os.listdir(os.path.join(d, "between"))[0])
+    run_dir = only_run(os.path.join(d, "between"))
     assert int(intervals(run_dir)[0]["repeats"]) == 0, ok.stdout[-2000:]
     bad = launch(*common, "--out", rel(os.path.join(d, "tiny")), "--ke-fraction", "1e-12", "--max-crossings", "20",
                  check=False)
     assert bad.returncode == 1 and "internal KE" in bad.stderr
-    fail_dir = os.path.join(d, "tiny", os.listdir(os.path.join(d, "tiny"))[0])
+    fail_dir = only_run(os.path.join(d, "tiny"))
     with open(os.path.join(fail_dir, "failed.json")) as fh:
         f = json.load(fh)
     assert f["keyed_on"] == "ke_internal_ratio" and [x["crossings"] for x in f["attempts"]] == [10, 20]

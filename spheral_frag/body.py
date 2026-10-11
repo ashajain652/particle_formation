@@ -43,7 +43,10 @@ is about 1 % at worst (k = 182) at every spacing, because it comes from the mass
 m_i = rho_free(T_i) V_i makes hot particles lighter than the finite element's constant-density mass, and a particle
 in a partly consumed element (phi < 1) carries that element's whole volume.
 
-**Outputs** in `<out>/<body name>/` (`naming.body_name`):
+**Outputs** in `<out>/<prepared>/<body suffix>/` (`naming.body_dir`: the body name `naming.body_name`, nested under its
+prepared input's name so that no path component exceeds 255 characters; the suffix is the body name after
+`body_<prepared>_`, e.g. `spheral_output/body/prep_..._k00000-01254/k00000-00047_rz_dx2.20mm/`; body.json's `name`
+is the full name, `naming.body_name_from_dir` rebuilds it from the directory):
 
   body.npz         pid (int64, 0..n-1 in lattice order), x_ref ((n, 3) in 3D; (n, 2) in RZ: axial x and r),
                    x_sample (n, 3), V, m, rho, T0 (float64), remove_k (int64, -1 = never), frames_k (int64),
@@ -658,10 +661,10 @@ def body(args) -> int:
     try:
         name = naming.body_name(prep_name, k0, k1, args.form, float(args.dx_mm), azimuth,
                                 None if sampler_name == DEFAULT_SAMPLER else sampler_name, geometry)
+        out = naming.body_dir(os.path.abspath(args.out), name)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    out = os.path.join(os.path.abspath(args.out), name)
     json_path = os.path.join(out, "body.json")
     table_path = os.path.join(prepared, "material_table.npz")
     signature = {"schema_version": BODY_SCHEMA_VERSION,

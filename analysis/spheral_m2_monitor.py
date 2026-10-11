@@ -65,7 +65,8 @@ OUT = os.path.join("spheral_output", "m2", "monitor")
 RUNS_OUT = os.path.join(OUT, "runs")
 CSV = os.path.join("data", "spheral", "m2_monitor.csv")
 LAUNCHER = os.path.join("spheral_frag", "container", "spheral")
-FLIGHT_BODY = os.path.join("spheral_output", "body", naming.body_name(os.path.basename(c4.PREPARED), 0, 47, "rz", 2.2))
+FLIGHT_BODY = naming.body_dir(os.path.join("spheral_output", "body"),
+                              naming.body_name(os.path.basename(c4.PREPARED), 0, 47, "rz", 2.2))
 FLIGHT_FRAMES = (0, 20)
 FLIGHT_EVERY = 2
 CHECK4_EVERY = 1
@@ -88,7 +89,7 @@ def flight_name():
 
 
 def launch(args, name):
-    d = os.path.join(REPO, RUNS_OUT, name)
+    d = naming.run_dir(os.path.join(REPO, RUNS_OUT), name)
     if os.path.isfile(os.path.join(d, "summary.json")):
         return
     cmd = [LAUNCHER, "spheral_frag/runner/run.py", "replay", *args, "--out", RUNS_OUT]
@@ -138,7 +139,7 @@ def validate(table):
         for r in csv.DictReader(fh):
             if r["scaled"] == "1" and r["damping"] == "0.05":
                 c4rows[(r["form"], float(r["dx_mm"]), int(r["crossings"]), int(r["k"]))] = r
-    mon_dir = os.path.join(REPO, RUNS_OUT, check4_monitor_name())
+    mon_dir = naming.run_dir(os.path.join(REPO, RUNS_OUT), check4_monitor_name())
     mon_rows = {int(r["k0"]): r for r in run.read_intervals(os.path.join(mon_dir, "intervals.csv"))}
     rows = []
     for form, dx, _ in c4.FORMS:
@@ -170,7 +171,7 @@ def validate(table):
                              monitor_wall_s=float(mr["monitor_wall_s"]) if mr else math.nan,
                              ke_internal_ratio=float(c4rows[(form, dx, 10, k)]["ke_internal_ratio"]),
                              monitor_ke_internal_ratio=float(c4rows[(form, dx, 20, k)]["ke_internal_ratio"]),
-                             run=os.path.basename(c4.run_dir(form, dx, 10, 0.05, True))))
+                             run=naming.run_name_from_dir(c4.run_dir(form, dx, 10, 0.05, True))))
     # the monitor run on check 4's RZ 2.2 mm case: every interval as the monitor reported it
     for k0, r in sorted(mon_rows.items()):
         rows.append(dict(case="check4_monitor", form="rz", dx_mm=2.2, k0=k0, k1=int(r["k1"]), t1_s=float(r["t1_s"]),
@@ -184,7 +185,7 @@ def validate(table):
 
 
 def flight():
-    d = os.path.join(REPO, RUNS_OUT, flight_name())
+    d = naming.run_dir(os.path.join(REPO, RUNS_OUT), flight_name())
     rows = []
     with open(os.path.join(d, "summary.json")) as fh:
         summ = json.load(fh)

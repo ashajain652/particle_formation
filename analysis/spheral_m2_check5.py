@@ -126,8 +126,8 @@ COLUMNS = ["form", "dx_mm", "k", "dT_K", "collapsed", "n_particles", "n_mid", "n
 
 def body_dir(form, dx):
     prep = os.path.basename(PREPARED)
-    return os.path.join("spheral_output", "body", naming.body_name(prep, *FRAMES, form, dx, synthetic="uniform",
-                                                                   geometry="bar"))
+    return naming.body_dir(os.path.join("spheral_output", "body"),
+                           naming.body_name(prep, *FRAMES, form, dx, synthetic="uniform", geometry="bar"))
 
 
 def run_name(form, dx):
@@ -136,7 +136,7 @@ def run_name(form, dx):
 
 
 def run_dir(form, dx):
-    return os.path.join(REPO, RUNS_OUT, run_name(form, dx))
+    return naming.run_dir(os.path.join(REPO, RUNS_OUT), run_name(form, dx))
 
 
 # ------------------------------------------------------------------------------------------------------- material
@@ -353,7 +353,7 @@ def analyse():
     for form, dx_mm, procs in FORMS:
         d = run_dir(form, dx_mm)
         if not os.path.isfile(os.path.join(d, "summary.json")):
-            print("  missing: {}".format(os.path.basename(d)))
+            print("  missing: {}".format(naming.run_name_from_dir(d)))
             continue
         with open(os.path.join(d, "summary.json")) as fh:
             summ = json.load(fh)
@@ -387,7 +387,7 @@ def analyse():
                              crossings_err_limit=num("crossings_err_limit"), run_crossings=int(num("run_crossings")),
                              held_max_speed_ms=num("held_max_speed_ms"), held_max_disp_m=num("held_max_disp_m"),
                              steps=int(num("steps")), wall_s=num("wall_s"),
-                             wall_per_step_ms=1e3*num("wall_per_step_s"), run=os.path.basename(d)))
+                             wall_per_step_ms=1e3*num("wall_per_step_s"), run=naming.run_name_from_dir(d)))
             prev = m["ps_mean"]
     path = os.path.join(REPO, CSV)
     with open(path, "w", newline="") as fh:

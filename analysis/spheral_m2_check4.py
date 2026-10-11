@@ -120,7 +120,8 @@ def design():
 
 def body_dir(form, dx):
     prep = os.path.basename(PREPARED)
-    return os.path.join("spheral_output", "body", naming.body_name(prep, *FRAMES, form, dx, synthetic="radial"))
+    return naming.body_dir(os.path.join("spheral_output", "body"), naming.body_name(prep, *FRAMES, form, dx,
+                                                                                     synthetic="radial"))
 
 
 def run_name(form, dx, n, z, scaled):
@@ -130,7 +131,7 @@ def run_name(form, dx, n, z, scaled):
 
 
 def run_dir(form, dx, n, z, scaled):
-    return os.path.join(REPO, RUNS_OUT, run_name(form, dx, n, z, scaled))
+    return naming.run_dir(os.path.join(REPO, RUNS_OUT), run_name(form, dx, n, z, scaled))
 
 
 # ------------------------------------------------------------------------------------------------------- running
@@ -182,7 +183,7 @@ def launch(form, dx, procs, n, z, scaled, max_load, force):
     t = time.perf_counter()
     r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
     os.makedirs(os.path.join(REPO, OUT, "logs"), exist_ok=True)
-    with open(os.path.join(REPO, OUT, "logs", os.path.basename(d) + ".log"), "w") as fh:
+    with open(os.path.join(REPO, OUT, "logs", naming.run_name_from_dir(d) + ".log"), "w") as fh:
         fh.write(" ".join(cmd) + "\n" + r.stdout + "\n--- stderr\n" + r.stderr)
     if r.returncode != 0:
         print("  FAILED ({}): {}".format(r.returncode, r.stderr.strip().splitlines()[-1:] if r.stderr else ""),
@@ -269,7 +270,7 @@ def analyse():
     for form, dx_mm, procs, n, z, scaled in design():
         d = run_dir(form, dx_mm, n, z, scaled)
         if not os.path.isfile(os.path.join(d, "summary.json")):
-            print("  missing: {}".format(os.path.basename(d)))
+            print("  missing: {}".format(naming.run_name_from_dir(d)))
             continue
         with open(os.path.join(d, "summary.json")) as fh:
             summ = json.load(fh)
@@ -289,7 +290,7 @@ def analyse():
                              wall_run_s=summ["wall_s_intervals"],
                              wall_per_step_ms=1e3*summ["wall_s_intervals"]/summ["steps"],
                              unscaled_diff_interior=math.nan, unscaled_diff_particle_max=math.nan,
-                             damping_diff_interior=math.nan, run=os.path.basename(d)))
+                             damping_diff_interior=math.nan, run=naming.run_name_from_dir(d)))
     for row in rows:
         key = (row["form"], row["dx_mm"], row["crossings"], row["damping"])
         twin = measured.get(key + (not bool(row["scaled"]), row["k"]))

@@ -7,9 +7,18 @@ default, in a fixed key order.
 
   prepared   prep_<fe run>_k<K0>-<K1>[_every<N>]                       spheral_output/prepare/<prepared>/
   run        <prepared>__<mode>_k<k0>-<k1>_<form>_dx<dx>mm_seed<n>[_<label>-<value>...]
-  analysis   the run's own name                                          spheral_output/analyse/<run>/
+                                                    spheral_output/runs/<prepared>/<mode>_k<k0>-<k1>_..._seed<n>[...]/
+  analysis   the run's own name                     spheral_output/analyse/<prepared>/<run suffix>/
   body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>][_geometry-<g>]
-                                                                         spheral_output/body/<body>/
+                                                    spheral_output/body/<prepared>/k<k0>-<k1>_<form>_dx<dx>mm[...]/
+
+**Directories are nested** (Spheral M2 Task 7b): a run, analysis or body directory is `<out>/<prepared>/<suffix>/`,
+the suffix being the name after `<prepared>__` (runs, analyses) or after `body_<prepared>_` (bodies), because a whole
+name can exceed the 255 characters one path component allows (check 5's run names reached 246 with the MVP flight's
+140-character prepared name); a suffix that is itself longer than 255 characters continues in further levels, cut at
+a '_' (the layout notes at the end of this module). The full name is still the identity -- written in meta.json and
+body.json, parsed by `parse_run_name` -- and `run_dir`/`body_dir`/`analyse_dir` and their inverses
+`run_name_from_dir`/`body_name_from_dir` (end of this module) are the one place the layout is defined.
 
 Bracket values are numbers (written shortest-exact) or, for a string default (scheme, strength, sampler), lower-case
 words; the strength law "constant:<Pa>" is written "constant-<Pa>" with its number canonical (Spheral M2, Task 5).
@@ -21,6 +30,7 @@ Numpy-free: the standard library only."""
 from __future__ import annotations
 
 import math
+import os
 import re
 
 MODES = ("replay", "separation", "slurry", "detachment", "synthetic")
@@ -335,3 +345,100 @@ def parse_body_name(name) -> dict:
     except ValueError:
         out["prepare"] = None
     return out
+
+
+# ------------------------------------------------------------------------------------------- directory layout
+# Spheral M2 Task 7b. A directory name is one path component, at most NAME_MAX characters (macOS APFS, Linux ext4 and
+# the container's overlay); the MVP flight's prepared name is 140-156 characters and a run's own part grows with every
+# bracket, so whole run names stopped fitting (check 5's was 246; one more bracket raised OSError 36). Every run,
+# analysis and body directory is therefore nested under its prepared input's name:
+#
+#   run        <out>/<prepared>/<run suffix>/       run suffix = the run name after '<prepared>__'
+#   analysis   <out>/<prepared>/<run suffix>/       the analysis name (the run's own name) split the same way
+#   body       <out>/<prepared>/<body suffix>/      body suffix = the body name after 'body_<prepared>_'
+#
+# A suffix longer than NAME_MAX (a run with most brackets set: every one non-default makes 324 characters) continues
+# in a further level: it is cut at the '_' before the first token that would not fit, as often as needed, so
+# '<out>/<prepared>/<first part>/<rest>/' joined with '_' is the suffix again. Below NAME_MAX nothing is cut, so the
+# layout of every run so far is the plain two-level one.
+#
+# The full names stay the identities (meta.json's run_name, body.json's name, the CSVs' run columns):
+# `run_name_from_dir` and `body_name_from_dir` rebuild them from the directory. Use these helpers wherever such a
+# directory is formed or found, never os.path.join(out, name).
+NAME_MAX = 255
+
+
+def _components(suffix: str) -> list[str]:
+    """The suffix cut at '_' into components of at most NAME_MAX characters, each as long as it can be."""
+    parts, current = [], None
+    for token in suffix.split("_"):
+        if len(token) > NAME_MAX:
+            raise ValueError("a name part of {} characters exceeds {}: {!r}".format(len(token), NAME_MAX, token))
+        if current is not None and len(current) + 1 + len(token) <= NAME_MAX:
+            current += "_" + token
+        else:
+            if current is not None:
+                parts.append(current)
+            current = token
+    parts.append(current)
+    return parts
+
+
+def _nested(out, prepared, suffix, what):
+    if len(prepared) > NAME_MAX:
+        raise ValueError("the prepared name of {} {!r} has {} characters, more than one directory holds ({})".format(
+            what, prepared, len(prepared), NAME_MAX))
+    return os.path.join(os.fspath(out), prepared, *_components(suffix))
+
+
+def _from_dir(path, join, split):
+    """The name whose nested directory `path` is: the shallowest split of its trailing components that is one."""
+    parts = os.path.normpath(os.fspath(path)).split(os.sep)
+    for depth in range(1, len(parts) - 1):
+        prepared, rest = parts[-depth - 1], parts[-depth:]
+        name = join(prepared, "_".join(rest))
+        try:
+            if split(name) == (prepared, "_".join(rest)) and _components("_".join(rest)) == rest:
+                return name
+        except ValueError:
+            pass
+    raise ValueError("not a nested name directory: {!r}".format(os.fspath(path)))
+
+
+def split_run_name(run: str) -> tuple[str, str]:
+    """(prepared, run suffix) of a run (or analysis) name, checked to be one."""
+    parse_run_name(run)
+    prepared, suffix = run.split("__")
+    return prepared, suffix
+
+
+def run_dir(out, run: str) -> str:
+    """The directory of run `run` under the runs directory `out`: <out>/<prepared>/<run suffix>, the suffix cut into
+    further levels only where it exceeds NAME_MAX (module layout notes above)."""
+    return _nested(out, *split_run_name(run), "run")
+
+
+def run_name_from_dir(path) -> str:
+    """Inverse of run_dir: the full run name of a run (or analysis) directory; ValueError if it is not one."""
+    return _from_dir(path, lambda prepared, suffix: "{}__{}".format(prepared, suffix), split_run_name)
+
+
+def analyse_dir(out, run: str) -> str:
+    """The analysis directory of run `run` under `out` (spheral_output/analyse): laid out as run_dir."""
+    return run_dir(out, analyse_name(run))
+
+
+def split_body_name(body: str) -> tuple[str, str]:
+    """(prepared, body suffix) of a body name, checked to be one; the suffix starts with 'k<k0>-<k1>_'."""
+    prepared = parse_body_name(body)["prepared"]
+    return prepared, body[len("body_{}_".format(prepared)):]
+
+
+def body_dir(out, body: str) -> str:
+    """The directory of body `body` under the bodies directory `out`: <out>/<prepared>/<body suffix>, cut as a run's."""
+    return _nested(out, *split_body_name(body), "body")
+
+
+def body_name_from_dir(path) -> str:
+    """Inverse of body_dir: the full body name of a body directory; ValueError if it is not one."""
+    return _from_dir(path, lambda prepared, suffix: "body_{}_{}".format(prepared, suffix), split_body_name)

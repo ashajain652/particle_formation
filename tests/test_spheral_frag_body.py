@@ -13,6 +13,7 @@ committed rows back."""
 import csv
 import math
 import os
+import pathlib
 from dataclasses import replace
 
 import numpy as np
@@ -225,6 +226,11 @@ def test_a_removed_particle_stays_removed_and_reads_nan_after(loaded):
 
 
 # ------------------------------------------------------------------------------------------------ the command
+def bdir(out, name):
+    """A body's directory under `out` (naming.body_dir: nested under the prepared input's name)."""
+    return pathlib.Path(naming.body_dir(str(out), name))
+
+
 def run_body(prep_dir, out, *extra, frames_="0-2", form="3d", dx="5"):
     return main(["body", "--prepared", prep_dir, "--frames", frames_, "--form", form, "--dx-mm", dx,
                  "--out", str(out), "--quiet", *extra])
@@ -234,7 +240,7 @@ def test_command_writes_the_files_rebuilds_byte_identical_and_resumes(prepared, 
     d, table = prepared
     assert run_body(d, tmp_path, form="rz", dx="2.5") == 0
     name = naming.body_name(PREP_NAME, 0, 2, "rz", 2.5)
-    bd = tmp_path / name
+    bd = bdir(tmp_path, name)
     files = {f: (bd / f).read_bytes() for f in ("body.npz", "temperature.npy")}
     import json
     doc = json.loads((bd / "body.json").read_text())
@@ -271,7 +277,7 @@ def test_synthetic_radial_profile(prepared, tmp_path):
     d, _ = prepared
     assert run_body(d, tmp_path, "--synthetic", "radial", form="rz", dx="5") == 0
     name = naming.body_name(PREP_NAME, 0, 2, "rz", 5.0, synthetic="radial")
-    arrays, T = body.load_body(str(tmp_path / name))
+    arrays, T = body.load_body(str(bdir(tmp_path, name)))
     xs = arrays["x_sample"]
     r2 = np.einsum("ij,ij->i", xs, xs)/body.RADIAL_R_M**2
     assert np.array_equal(T[:, 0], np.full(len(xs), 300.0))                  # stress free at the start
@@ -281,13 +287,13 @@ def test_synthetic_radial_profile(prepared, tmp_path):
     ref = body.build_body(body.frame_loader(d), [0, 1, 2], "rz", 5e-3, prepared[1])
     assert np.array_equal(arrays["remove_k"], ref.remove_k)                  # the frames' body, as with P1
     assert np.array_equal(arrays["x_ref"], ref.x_ref)
-    doc = json.loads((tmp_path / name / "body.json").read_text())
+    doc = json.loads((bdir(tmp_path, name) / "body.json").read_text())
     assert doc["sampler"] == "radial" and doc["sampler_params"]["delta_K"] == 50.0
     assert doc["check3"]["max_azimuth_spread_K"] == 0.0                      # the profile is axisymmetric
     assert run_body(d, tmp_path, "--synthetic", "radial", "--radial-delta-k", "20", "--radial-ramp-frames", "2",
                     form="3d", dx="10") == 0
     name2 = naming.body_name(PREP_NAME, 0, 2, "3d", 10.0, synthetic="radialdt20r2")
-    a2, T2 = body.load_body(str(tmp_path / name2))
+    a2, T2 = body.load_body(str(bdir(tmp_path, name2)))
     r2 = np.einsum("ij,ij->i", a2["x_sample"], a2["x_sample"])/body.RADIAL_R_M**2
     ok = a2["remove_k"] != 2
     assert np.array_equal(T2[:, 1], 300.0 + 10.0*r2) and np.array_equal(T2[ok, 2], 300.0 + 20.0*r2[ok])
@@ -305,7 +311,7 @@ def test_bar_geometry(prepared, tmp_path, form, dx_mm, n, n_held, length, width)
     d, table = prepared
     assert run_body(d, tmp_path, "--synthetic", "uniform", "--geometry", "bar", form=form, dx=str(dx_mm)) == 0
     name = naming.body_name(PREP_NAME, 0, 2, form, dx_mm, synthetic="uniform", geometry="bar")
-    arrays, T = body.load_body(str(tmp_path / name))
+    arrays, T = body.load_body(str(bdir(tmp_path, name)))
     dx = dx_mm*1e-3
     x = arrays["x_ref"]
     assert len(x) == n and int(arrays["hold"].sum()) == n_held
@@ -323,13 +329,13 @@ def test_bar_geometry(prepared, tmp_path, form, dx_mm, n, n_held, length, width)
         assert np.isclose((x[:, 1].max() + 0.5*dx)*1e3, width, rtol=1e-12)          # RZ: `width` is the radius
         V = 2*np.pi*x[:, 1]*dx**2
     assert np.allclose(arrays["V"], V, rtol=1e-15) and np.array_equal(arrays["m"], table.rho_free(T[:, 0])*arrays["V"])
-    doc = json.loads((tmp_path / name / "body.json").read_text())
+    doc = json.loads((bdir(tmp_path, name) / "body.json").read_text())
     assert doc["geometry"] == "bar" and doc["bar"]["n_held"] == n_held and doc["sampler"] == "uniform"
     # a non-default bar and heating are named; the bar needs the uniform sampler
     assert run_body(d, tmp_path, "--synthetic", "uniform", "--uniform-delta-k", "60", "--uniform-ramp-frames", "2",
                     "--geometry", "bar", "--bar-hold-spacings", "1", form=form, dx="10") == 0
-    assert (tmp_path / naming.body_name(PREP_NAME, 0, 2, form, 10.0, synthetic="uniformdt60r2",
-                                        geometry="barl100w20h1")).is_dir()
+    assert bdir(tmp_path, naming.body_name(PREP_NAME, 0, 2, form, 10.0, synthetic="uniformdt60r2",
+                                           geometry="barl100w20h1")).is_dir()
     assert run_body(d, tmp_path, "--geometry", "bar", form=form, dx="10") == 2
     assert run_body(d, tmp_path, "--synthetic", "radial", "--geometry", "bar", form=form, dx="10") == 2
 
@@ -351,7 +357,7 @@ def test_command_exit_codes(prepared, tmp_path):
     assert not any(p.name == "body.json" for p in (tmp_path / "out").rglob("*"))
     assert run_body(d, tmp_path, form="rz", dx="5", frames_="1") == 0
     assert run_body(d, tmp_path, "--azimuth-deg", "45", form="rz", dx="5", frames_="1") == 0
-    assert (tmp_path / naming.body_name(PREP_NAME, 1, 1, "rz", 5.0, 45.0)).is_dir()
+    assert bdir(tmp_path, naming.body_name(PREP_NAME, 1, 1, "rz", 5.0, 45.0)).is_dir()
 
 
 # ------------------------------------------------------------------------------------------------------ names
@@ -416,7 +422,7 @@ def test_flight_check3_rows_rebuild(tmp_path):
     for k, form, dx in ((182, "rz", 2.2), (182, "3d", 3.0), (48, "rz", 1.1)):
         assert run_body(prep, tmp_path, frames_="{0}-{0}".format(k), form=form, dx=str(dx)) == 0
         name = naming.body_name(os.path.basename(prep.rstrip(os.sep)), k, k, form, dx)
-        doc = json.loads((tmp_path / name / "body.json").read_text())
+        doc = json.loads((bdir(tmp_path, name) / "body.json").read_text())
         want = rows[(k, form, dx)]
         f0 = doc["per_frame"][0]
         assert doc["n_particles"] == int(want["n_particles"])

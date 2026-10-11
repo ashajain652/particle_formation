@@ -1,8 +1,8 @@
 """`python -m spheral_frag analyse`: a Spheral run's outputs -> the fragment record, the debris log and the mass
 accounts (spec §4.2, §11; M1 plan, Task 9 -- the skeleton M3 fills).
 
-    "$PY" -m spheral_frag analyse --run spheral_output/runs/<run name> [--prepared <dir>] [--min-particles N]
-          [--outdir spheral_output/analyse] [--force] [--quiet]
+    "$PY" -m spheral_frag analyse --run spheral_output/runs/<prepared>/<run suffix> [--prepared <dir>]
+          [--min-particles N] [--outdir spheral_output/analyse] [--force] [--quiet]
 
 Reads the run directory through Task 8's runner -> analyse contract (`record`): `meta.json`, every
 `checks/check_<n>.npz` and `removed.npz`; and from the prepared inputs the run was built from (`--prepared`,
@@ -16,9 +16,11 @@ default `spheral_output/prepare/<meta.prepared>`) the material table and the fli
   which the group was separate, decided once it is clear);
 - logs each sub-floor group and each isolated dust particle once, at the first check it appears as debris.
 
-Writes `<outdir>/<analysis name>/`: `fragments.csv` (record.FRAGMENT_COLUMNS), `debris.csv` (record.DEBRIS_COLUMNS)
-and last `analyse.json` (accounts at every check, the largest residual, counts, fragments followed but never
-clear, the provenance of the run and of the prepared inputs). The analysis name is the run's name
+Writes `<outdir>/<prepared>/<run suffix>/` (`naming.analyse_dir`: the analysis name split at its `__` like a run
+directory, Spheral M2 Task 7b, so that no path component exceeds 255 characters): `fragments.csv`
+(record.FRAGMENT_COLUMNS), `debris.csv` (record.DEBRIS_COLUMNS) and last `analyse.json` (accounts at every check,
+the largest residual, counts, fragments followed but never clear, the provenance of the run and of the prepared
+inputs). The analysis name is the run's name
 (`naming.analyse_name`); `--min-particles` other than the run's bracket renames it with that bracket's suffix, since
 it changes the result.
 
@@ -170,7 +172,11 @@ def analyse(args) -> int:
     if not checks:
         print("run {} has no checks/check_<n>.npz".format(run_dir), file=sys.stderr)
         return 1
-    out = os.path.join(os.path.abspath(args.outdir), name)
+    try:
+        out = naming.analyse_dir(os.path.abspath(args.outdir), name)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
     json_path = os.path.join(out, "analyse.json")
     source = _source_signature(run_dir, checks)
     if os.path.isfile(json_path) and not args.force:
@@ -273,7 +279,7 @@ def analyse(args) -> int:
 
 
 def add_arguments(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--run", required=True, help="Spheral run directory (spheral_output/runs/<run name>)")
+    p.add_argument("--run", required=True, help="Spheral run directory (spheral_output/runs/<prepared>/<run suffix>)")
     p.add_argument("--prepared", default=None, help="prepared inputs (default: spheral_output/prepare/<prepared>)")
     p.add_argument("--min-particles", type=int, default=None, help="resolution floor (default: the run's bracket, "
                    "{})".format(naming.BRACKET_DEFAULTS["min_particles"]))

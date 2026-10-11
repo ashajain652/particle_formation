@@ -113,9 +113,13 @@ monitored again (4 N > --max-crossings) fails the run (exit 1, `failed.json`). T
 both runs and of their difference go to `monitor/interval_<k>.npz` (scratch, not read back). Cost: one interval at 2 N
 per monitored interval, about 2/M of the run's time plus the first interval's.
 
-**Run directory** `<out>/<run name>/` (`naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)`;
-the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and azimuth, loads, mass_scaling,
-monitor_every, monitor_limit and the body's geometry are suffixes when they differ from their defaults):
+**Run directory** `<out>/<prepared>/<run suffix>/` (`naming.run_dir(out, run name)`, Spheral M2 Task 7b): the run
+name `naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)` split at its `__`, the prepared
+input's name one level, the rest (`replay_k00000-00010_rz_dx2.20mm_seed1[_<bracket>...]`) the next, so that no path
+component exceeds 255 characters; the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and
+azimuth, loads, mass_scaling, monitor_every, monitor_limit and the body's geometry are suffixes when they differ from
+their defaults. The full name is the run's identity (meta.json's and summary.json's `run_name`;
+`naming.run_name_from_dir` rebuilds it from the directory):
 
   meta.json                  record.make_meta (the analyse contract) + the run's settings and provenance
   checks/check_<n>.npz       record.Particles at K0 (n = 0) and every --every-check intervals (always at K1):
@@ -902,7 +906,10 @@ def latest_checkpoint(ck_dir, ks):
 def replay(a):
     c = comm()
     inp = Inputs(a)
-    run_dir = os.path.join(os.path.abspath(a.out), inp.name)
+    try:
+        run_dir = naming.run_dir(os.path.abspath(a.out), inp.name)
+    except ValueError as e:
+        raise BadInput(str(e)) from None
     summary_path = os.path.join(run_dir, "summary.json")
     if os.path.isfile(summary_path):
         say(f"replay: done already: {run_dir}")
@@ -1141,7 +1148,8 @@ def build_parser():
     p = argparse.ArgumentParser(prog="run.py", description="Spheral runner (spheral_frag M2)")
     sub = p.add_subparsers(dest="mode", required=True)
     r = sub.add_parser("replay", help="the mass-scaled replay (spec §9.1)")
-    r.add_argument("--body", required=True, help="the body stage's directory (spheral_output/body/<body>)")
+    r.add_argument("--body", required=True,
+                   help="the body stage's directory (spheral_output/body/<prepared>/<body suffix>)")
     r.add_argument("--prepared", required=True, help="the prepared input (spheral_output/prepare/<prepared>)")
     r.add_argument("--frames", required=True, help="K0-K1: the replay's first and last frame")
     r.add_argument("--crossings", type=int, default=naming.BRACKET_DEFAULTS["crossings"])

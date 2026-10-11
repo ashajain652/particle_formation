@@ -174,7 +174,8 @@ def test_rz_row_reproduces(tmp_path):
     assert bad.returncode == 2 and "--loads off" in bad.stderr
     table = material.MaterialTable.load(prep)
     E, nu, alpha = c4.constants(table)
-    d = os.path.join(out, c4.run_name("rz", 2.2, 10, 0.05, True))
+    from spheral_frag import naming
+    d = naming.run_dir(out, c4.run_name("rz", 2.2, 10, 0.05, True))
     for k in (1, 3):
         m = c4.measure(d, k, table, E, nu, alpha, 2.2e-3)
         row, = pick(rows(), form="rz", dx_mm=2.2, crossings=10, damping=0.05, scaled=1, k=k)

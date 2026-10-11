@@ -159,7 +159,9 @@ def test_bar_runs_name_the_geometry():
     assert name.endswith("_strength-constant-100000000_sampler-uniform_loads-off_geometry-bar")
     assert naming.parse_run_name(name)["brackets"] == b
     assert naming.BRACKET_DEFAULTS["geometry"] == "frame"
-    assert len(c5.run_name("3d", 1.1)) <= 255                  # one path component (the prepared name is 205)
+    d = naming.run_dir("runs", c5.run_name("3d", 1.1))         # nested under the prepared name (Task 7b)
+    assert all(len(p) <= naming.NAME_MAX for p in d.split(os.sep))
+    assert naming.run_name_from_dir(d) == c5.run_name("3d", 1.1)
 
 
 @pytest.mark.spheral
@@ -189,7 +191,7 @@ def test_rz_11_rows_reproduce():
     table = material.MaterialTable.load(prep)
     E_, nu, alpha = c5.constants(table)
     b = naming.canonical_brackets({"strength": c5.STRENGTH, "sampler": "uniform", "loads": "off", "geometry": "bar"})
-    d = os.path.join(out, naming.run_name(os.path.basename(c5.PREPARED), "replay", (0, 3), "rz", 1.1, b, 1))
+    d = naming.run_dir(out, naming.run_name(os.path.basename(c5.PREPARED), "replay", (0, 3), "rz", 1.1, b, 1))
     iv = {int(x["k1"]): x for x in run.read_intervals(os.path.join(d, "intervals.csv"))}
     for k in (1, 2, 3):
         m = c5.measure(d, k, table, E_, alpha, 1.1e-3, "rz")

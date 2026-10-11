@@ -748,7 +748,7 @@ def fake_run(prepared_dir, k0, k1, dx, seed, runs_dir, separate_at=1, n_debris=F
     radial = x0 / r[:, None]
 
     name = naming.run_name(prep["name"], "synthetic", (k0, k1), form, float("{:.6g}".format(dx * 1e3)), {}, seed)
-    run_dir = os.path.join(runs_dir, name)
+    run_dir = naming.run_dir(runs_dir, name)
     shutil.rmtree(run_dir, ignore_errors=True)
     alive = np.ones(n, bool)
     removals = []
