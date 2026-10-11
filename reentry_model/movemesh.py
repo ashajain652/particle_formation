@@ -207,3 +207,109 @@ class ZoneMap:
         U[self.corners] = u
         U[self.interior] = self.w[:, None] * np.einsum("ik,ikj->ij", self.K, u[self.idx])
         return U
+
+
+# -- moving the mesh -------------------------------------------------------------------------------------------------
+@dataclass
+class MoveResult:
+    refused: bool                       # the move would invert or degrade an element: nothing was changed
+    swept_volume: np.ndarray            # (n_corners,) m3 each corner's motion took out of the 3D model (negative: added)
+    swept_enthalpy: np.ndarray          # (n_corners,) J that volume carried
+    correction: float                   # J, the uniform offset that closed the books (pre-correction residual)
+    worst_ratio: float                  # smallest radius ratio among the elements the move touched
+    rebuilt: bool = False               # move_with_policy rebuilt the mesh before (or to make) this move
+
+
+def default_sizes(mesh):
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    p = mesh.params
+    if "h_surface_m" in p:
+        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+
+
+class MovingMesh:
+    """A VolumeMesh, its thermal solver and material, moved by its corners (the surface nodes, in a fixed order that
+    survives rebuilds) and rebuilt when needed. `mesh` and the solver's mesh are replaced at every rebuild; callers
+    read `self.mesh` afresh. `corners` holds the current node id of each corner."""
+
+    def __init__(self, mesh, solver, material, depth=DEFORM_DEPTH, ratio_min=RATIO_MIN, min_gap=MIN_GAP,
+                 sizes=None):
+        self.mesh, self.solver, self.material = mesh, solver, material
+        self.depth, self.ratio_min, self.min_gap = float(depth), float(ratio_min), int(min_gap)
+        self.sizes = sizes if sizes is not None else default_sizes(mesh)
+        s = mesh.surface()
+        self.corners = np.unique(s.faces)
+        self._set_surface(orient_outward(mesh.points, s.faces, s.normals))
+        self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
+        self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
+
+    def _set_surface(self, faces_nodes):
+        local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
+        local[self.corners] = np.arange(len(self.corners))
+        self.faces_corner = local[faces_nodes]              # surface triangles in corner numbering (rebuild-proof)
+        self.edges_corner = surface_edges(self.faces_corner)
+        self.zone = ZoneMap(self.mesh.points, self.corners, self.depth)
+
+    def frame(self):
+        """Outward normals and dual areas at the corners, on the current geometry."""
+        return corner_frame(self.mesh.points, self.corners[self.faces_corner], self.corners)
+
+    def smoothing(self, normal=None, lam=None, clamp=None):
+        """Tangential displacements of the corners that even out the surface triangles (add them to a move)."""
+        if normal is None:
+            normal = self.frame()[0]
+        return tangential_smoothing(self.mesh.points[self.corners], self.faces_corner, normal,
+                                    SMOOTH_LAMBDA if lam is None else lam, SMOOTH_CLAMP if clamp is None else clamp,
+                                    self.edges_corner)
+
+    def surface_quality(self):
+        """The worst surface triangle's quality, 2 r_in / R_circ."""
+        return float(triangle_quality(self.mesh.points[self.corners], self.faces_corner).min())
+
+    def surface_fold(self):
+        """The largest angle between neighbouring surface triangles' normals [degrees]."""
+        return max_dihedral(self.mesh.points[self.corners], self.faces_corner)
+
+    def move(self, u_corners):
+        """Move the corners by `u_corners` (n_corners, 3), the zone with them; remap the enthalpy; close the books.
+        Refuses, changing nothing, if any element the move touches would invert or fall below the radius-ratio floor."""
+        mesh, solver, mat = self.mesh, self.solver, self.material
+        u = np.asarray(u_corners, dtype=float)
+        U = self.zone.displacement(u)
+        is_moving = np.any(U != 0.0, axis=1)
+        moving = np.flatnonzero(is_moving)
+        empty = np.zeros(len(self.corners))
+        if moving.size == 0:
+            return MoveResult(False, empty, empty.copy(), 0.0, 1.0)
+        touched = np.flatnonzero(is_moving[mesh.tets].any(axis=1))
+        new_points = mesh.points + U
+        vol_new = signed_volumes(new_points, mesh.tets[touched])
+        sign = np.sign(signed_volumes(mesh.points, mesh.tets[touched]))
+        ratio = radius_ratio(new_points, mesh.tets[touched])
+        worst = float(ratio.min())
+        if np.any(vol_new * sign <= 0.0) or worst < self.ratio_min:
+            return MoveResult(True, empty, empty.copy(), 0.0, worst)
+        h = mat.enthalpy(solver.temperature())
+        h_new = h + np.einsum("ij,ij->i", nodal_gradient(mesh.points, mesh.tets, h, touched), U)
+        E_old = solver.energy()
+        normal, area = self.frame()
+        dV = -area * np.einsum("ij,ij->i", normal, u)       # volume each corner sweeps, positive inward
+        V_old = float(np.abs(signed_volumes(mesh.points, mesh.tets[touched])).sum())     # only touched elements change
+        mesh.points[:] = new_points
+        mesh.derived_points[:] = new_points
+        dV_total = V_old - float(np.abs(vol_new).sum())
+        if dV.sum() != 0.0:
+            dV = dV * (dV_total / dV.sum())
+        swept_h = mat.rho * dV * h[self.corners]
+        solver.update_geometry(touched)
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        correction = (E_old - swept_h.sum()) - solver.energy()
+        m = lumped_masses(mesh.points, mesh.tets[touched], mat.rho)      # complete at the moving nodes
+        h_new[moving] += correction / m[moving].sum()
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        self.compression += np.maximum(-np.einsum("ij,ij->i", normal, u), 0.0)
+        self.steps_since_rebuild += 1
+        return MoveResult(False, dV, swept_h, float(correction), worst)
