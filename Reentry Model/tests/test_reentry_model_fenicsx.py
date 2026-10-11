@@ -352,3 +352,18 @@ def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
     q = np.full(len(s1.faces), 2e5)
     r1, r2 = s1.step(0.5, q, 300.0), s2.step(0.5, q, 300.0)
     assert np.abs(r1.T - r2.T).max() < 1e-9
+
+
+def test_a_rebuild_keeps_the_energy_on_fenicsx(coarse_sphere_mesh):
+    """Moving mesh (sub-plan 19): a rebuild re-runs setup on the new mesh; the books stay exact and a step follows."""
+    from reentry_model import mesh as mesh_mod
+    from reentry_model import movemesh
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    s1 = solver("fenicsx", m, mat)
+    s1.set_temperature(400.0 + 2000.0 * m.points[:, 0])
+    moving = movemesh.MovingMesh(m, s1, mat, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    E = s1.energy()
+    moving.rebuild()
+    assert s1.energy() == pytest.approx(E, rel=1e-12) and s1.mesh is moving.mesh
+    s1.step(0.5, np.full(len(s1.faces), 1e5), 300.0)

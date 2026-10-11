@@ -265,3 +265,63 @@ def test_the_moving_mesh_reports_its_surface_quality_and_fold(coarse_sphere_mesh
     assert 0.1 < moving.surface_quality() <= 1.0
     assert 5.0 < moving.surface_fold() < 20.0
     assert np.linalg.norm(moving.smoothing(), axis=1).max() > 0.0
+
+
+# -- the rebuild (Task 5) ------------------------------------------------------------------------------------------
+def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    solver.set_temperature(300.0 + 4000.0 * (np.linalg.norm(m.points, axis=1) - 0.03).clip(0.0))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    moving.move(inward(moving, 1e-3))
+    corner_points = moving.mesh.points[moving.corners].copy()
+    faces_before = moving.faces_corner.copy()
+    V, E = moving.mesh.volume(), solver.energy()
+    result = moving.rebuild()
+    assert np.array_equal(moving.mesh.points[moving.corners], corner_points)
+    assert np.array_equal(moving.faces_corner, faces_before)
+    new_faces = np.sort(moving.mesh.surface().faces, axis=1)
+    expected = np.sort(moving.corners[moving.faces_corner], axis=1)
+    assert {tuple(f) for f in new_faces} == {tuple(f) for f in expected}
+    assert moving.mesh.volume() == pytest.approx(V, rel=1e-12)
+    assert solver.energy() == pytest.approx(E, rel=1e-12)
+    assert np.all(movemesh.signed_volumes(moving.mesh.points, moving.mesh.tets) != 0.0)
+    assert result.relative_residual < 1e-3 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+
+
+def test_a_rebuild_keeps_a_uniform_field_uniform(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 650.0)
+    moving = movemesh.MovingMesh(m, solver, mat, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    moving.rebuild()
+    assert np.abs(solver.temperature() - 650.0).max() < 1e-9
+
+
+def test_corners_keep_their_order_through_repeated_rebuilds(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    first = moving.mesh.points[moving.corners].copy()
+    for _ in range(2):
+        moving.move(inward(moving, 3e-4))
+        expected = moving.mesh.points[moving.corners].copy()
+        moving.rebuild()
+        assert np.array_equal(moving.mesh.points[moving.corners], expected)
+    assert np.linalg.norm(moving.mesh.points[moving.corners], axis=1).max() < np.linalg.norm(first, axis=1).max()
+    assert moving.rebuilds == 2
+
+
+@pytest.mark.parametrize("case", ["two bodies", "non-manifold", "inside out"])
+def test_the_validity_gate_stops_on_a_surface_it_cannot_rebuild(case):
+    tet = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+    faces = np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])            # outward
+    if case == "two bodies":
+        points, f = np.vstack([tet, tet + 5.0]), np.vstack([faces, faces + 4])
+    elif case == "non-manifold":
+        points, f = np.vstack([tet, tet[[0, 1]], [[0, -1, 0], [0, 0, -1]]]), np.vstack([faces, [[0, 1, 4], [0, 4, 5], [1, 5, 4], [0, 5, 1]]])
+    else:
+        points, f = tet, faces[:, [0, 2, 1]]
+    with pytest.raises(movemesh.RemeshError):
+        movemesh.check_surface(points, f)
