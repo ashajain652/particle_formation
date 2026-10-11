@@ -331,15 +331,17 @@ def test_the_validity_gate_stops_on_a_surface_it_cannot_rebuild(case):
 def test_compression_triggers_a_rebuild_only_after_the_minimum_gap(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()
-    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=3,
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=9, ratio_min=1e-6,
                                  sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     rebuilt_at = []
-    for step in range(8):
-        r = moving.move_with_policy(inward(moving, 0.8e-3))
+    for step in range(11):
+        r = moving.move_with_policy(inward(moving, 0.3e-3))
         if r.rebuilt:
-            rebuilt_at.append(step)
-    # compression passes half the 4 mm zone (2 mm) after the third move; the gap of 3 is met then too
-    assert rebuilt_at and rebuilt_at[0] == 3 and moving.rebuilds >= 1
+            rebuilt_at.append((step, moving.last_rebuild.reason))
+    # compression passes half the 4 mm zone (2 mm) after the seventh move, but the gap of 9 holds the rebuild back to
+    # call index 9; without the gap it comes at index 7 (both measured, Task 6 review). The radius-ratio floor is
+    # lowered so that no quality rebuild intervenes.
+    assert rebuilt_at and rebuilt_at[0] == (9, "compression")
 
 
 def test_a_refused_move_rebuilds_and_then_moves(coarse_sphere_mesh):
