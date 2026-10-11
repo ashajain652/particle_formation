@@ -91,6 +91,22 @@ def test_tangential_smoothing_moves_along_the_surface_and_evens_it_out(coarse_sp
     assert movemesh.triangle_quality(pts, faces).min() > q0
 
 
+def test_swept_volumes_are_exact_prisms_and_nothing_where_a_face_slides():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = movemesh.orient_outward(m.points, s.faces, s.normals)
+    new = m.points.copy()
+    front = new[:, 0] == 0.0
+    new[front, 0] += 0.3e-3                                     # the x = 0 face moves into the box
+    dV = movemesh.swept_volumes(m.points, new, faces, local[faces], len(corners))
+    assert dV.sum() == pytest.approx(0.3e-3 * 2e-3 * 2e-3, rel=1e-12)
+    assert np.all(dV[front[corners]] > 0.0)
+    assert np.all(dV[~front[corners]] == 0.0)                  # the sides only stretched in their own planes
+
+
 # -- the backends on moved geometry (Task 2) -----------------------------------------------------------------------
 def test_moved_geometry_gives_the_operators_of_a_fresh_solver(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
@@ -239,22 +255,6 @@ def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh
     # displacement (measured while planning); scaling first-order volumes to the total made it noise here
     assert np.all(np.abs(r.swept_volume) < 0.02 * area * 1e-4 * np.linalg.norm(tangent, axis=1))
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
-
-
-def test_swept_volumes_are_exact_prisms_and_nothing_where_a_face_slides():
-    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
-    s = m.surface()
-    corners = np.unique(s.faces)
-    local = np.full(m.n_nodes, -1)
-    local[corners] = np.arange(len(corners))
-    faces = movemesh.orient_outward(m.points, s.faces, s.normals)
-    new = m.points.copy()
-    front = new[:, 0] == 0.0
-    new[front, 0] += 0.3e-3                                     # the x = 0 face moves into the box
-    dV = movemesh.swept_volumes(m.points, new, faces, local[faces], len(corners))
-    assert dV.sum() == pytest.approx(0.3e-3 * 2e-3 * 2e-3, rel=1e-12)
-    assert np.all(dV[front[corners]] > 0.0)
-    assert np.all(dV[~front[corners]] == 0.0)                  # the sides only stretched in their own planes
 
 
 def test_the_moving_mesh_reports_its_surface_quality_and_fold(coarse_sphere_mesh):

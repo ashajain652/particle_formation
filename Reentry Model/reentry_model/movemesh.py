@@ -237,6 +237,16 @@ class ZoneMap:
 
 
 # -- moving the mesh -------------------------------------------------------------------------------------------------
+def default_sizes(mesh):
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    p = mesh.params
+    if "h_surface_m" in p:
+        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+
+
 @dataclass
 class MoveResult:
     refused: bool                       # the move would invert or degrade an element: nothing was changed
@@ -409,16 +419,6 @@ class RebuildResult:
     n_elements: int
     seconds: float
     reason: str
-
-
-def default_sizes(mesh):
-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
-    p = mesh.params
-    if "h_surface_m" in p:
-        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
-    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
 
 
 def check_surface(points, faces):
