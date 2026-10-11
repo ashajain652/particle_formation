@@ -66,6 +66,8 @@ class FenicsxThermalSolver:
         self.cell_nodes = self.node_of_dof[self.cell_dofs]                   # mesh node ids of each dolfinx cell
         centroids = mesh.points[mesh.tets].mean(axis=1)
         self.element_of_cell = cKDTree(centroids).query(mesh.points[self.cell_nodes].mean(axis=1))[1]
+        # the VolumeMesh node behind each dolfinx geometry node, so that moved coordinates can be copied in
+        self._geometry_nodes = np.asarray(self.msh.geometry.input_global_indices, dtype=np.int64)
         self.coef = fem.Function(self.V0)                                   # phi_e k(T_e) per cell
         u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
         self.a = fem.form(self.coef * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx)
@@ -88,6 +90,13 @@ class FenicsxThermalSolver:
         self._refresh_surface()
 
     # -- geometry / fractions -----------------------------------------------------------------------------------
+    def update_geometry(self, elements=None):
+        """The mesh's node coordinates have moved (the moving 3D mesh, layered-skin design section 5.3): copy them into
+        dolfinx's geometry, which every assembly reads, and refresh the surface. The nodal pieces read the VolumeMesh.
+        `elements` is accepted for the protocol's sake: dolfinx recomputes every Jacobian at assembly anyway."""
+        self.msh.geometry.x[:, :3] = self.mesh.points[self._geometry_nodes]
+        self._refresh_surface()
+
     def _refresh_surface(self):
         surface = self.mesh.surface()
         self.faces, self.areas = surface.faces, surface.areas
