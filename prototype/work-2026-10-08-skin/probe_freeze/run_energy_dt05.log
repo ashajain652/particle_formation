@@ -1,0 +1,25 @@
+power: Now drawing from 'Battery Power' Thu Oct  8 13:23:17 EDT 2026 head 0f5ff2a
+
+model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev (seed 12345): t_max at t = 75.0 s, final V 6.4953 km/s, Kn 0.0298 -> 0.00548, 4308 RHS evaluations in 1854.7 s
+  thermal: peak surface T 979 K at t = 74 s, peak mean T 808 K, integrated heat 1.07e+06 J, energy balance residual 1.7e-10, 150 macro steps, 3.6 Newton iterations/step
+  melt: onset 74.2 km, spraying onset 74.0 km, demise n/a km at t = n/a s; sprayed 0.4764 kg of 1.4720, film left 0.0009 kg, 5.31e+06 droplets (median r 187.5 um), 89199 source rows, melt balance 1.7e-10
+  csv  -> /Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/probe_freeze/run_energy_dt05/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev.csv
+  json -> /Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/probe_freeze/run_energy_dt05/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev.json
+exit 0  Thu Oct  8 13:54:15 EDT 2026
+t_end_s                                                 75              75
+frozen_g (cumulative re-solidified)                45.0852         39.9969
+skin_frozen_g                                          nan         39.9969
+skin_returned_g                                        nan         7.58856
+skin_full_events                                       nan            2666
+skins above 2s (max over steps)                         39              94
+skins above 2s (mean over steps)                   10.7351          22.404
+max skin thickness mm (max over steps)             2.73817         2.71807
+sprayed_g                                          476.625         476.363
+mass_end_g                                         995.393         995.655
+film_left_g                                        1.04321        0.929605
+skin_drawn_g                                       429.924         436.114
+skin_shortfall_g (max over steps)                  8.71366         9.23519
+interface_repeats                                      123             123
+energy residual                               -6.40191e-11     1.69808e-10
+droplets (million)                                 5.18355         5.30779
+runtime_min                                        41.7846         30.9122

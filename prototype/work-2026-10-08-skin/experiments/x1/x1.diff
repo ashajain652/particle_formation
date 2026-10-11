@@ -1,0 +1,221 @@
+diff -ruN -x __pycache__ -x .git -x .pytest_cache -x reentry_model_output code/reentry_model/body.py experiments/x1/code/reentry_model/body.py
+--- code/reentry_model/body.py	2026-10-08 14:20:00
++++ experiments/x1/code/reentry_model/body.py	2026-10-09 14:17:56
+@@ -173,6 +173,11 @@
+     surface_model: str = "elements"   # skin: a one-dimensional skin of fine cells under every melting patch resolves the
+                                       # melt layer and feeds the film continuously (sub-plan 18); elements: as before
+     skin: object = None               # skin.SkinSettings for surface_model "skin"; None: its defaults
++    # Experiment X1 (2026-10-09), two candidate fixes for the skins' stall in the box, off by default:
++    draw_through: bool = False        # a skin whose owner element is exhausted within a step goes on drawing from the
++                                      # element behind it (`_next_element`), shared by area among every claim on it
++    cover_exposed: bool = False       # faces a death exposes get no skin by the solidus test (only by the hand-over, or
++                                      # when liquid arrives on them)
+ 
+     def __post_init__(self):
+         if self.surface_model not in SURFACE_MODEL_NAMES:
+@@ -294,6 +299,9 @@
+         self.last_thick_feeding = (0, float("nan"))                # the step's (count, start-of-step thickness max [m])
+         self.skin_wall = 0.0                                       # s of wall time in the skins' passes (trial and real)
+         self.last_skin_shortfall = 0.0                             # kg of metal the skins lack below their target
++        self.skin_drawn_through_mass = 0.0                         # kg the skins drew from the element behind their owner (X1)
++        self.exposed_faces = set()                                 # face ids the deaths exposed (X1, cover_exposed); recorded
++                                                                   # whatever the switch, which only reads it
+         self._step_flow = None
+         self._refresh_skin_index()
+ 
+@@ -442,7 +450,12 @@
+         self._step_flow = (flow, delta_m)
+         dm_p = delta_m[p] if delta_m is not None else np.full(sk.n, np.nan)
+         room = np.where(np.isfinite(dm_p), mat.rho * sk.area * np.nan_to_num(dm_p), np.inf)
+-        avail = self._skin_available(p)
++        through = None
++        if self.settings.draw_through:            # X1: the owner's share, then the share of the element behind it
++            through = self._skin_available_through(p)
++            avail = through[0] + through[1]
++        else:
++            avail = self._skin_available(p)
+         L = (self.m_f + self.m_d)[p]
+         q_top = loads.q_conv[p]
+         eps = np.full(sk.n, self.emissivity)
+@@ -503,8 +516,25 @@
+         self.skin_frozen_mass += frozen
+         self.frozen_mass += frozen                                 # the model's one re-solidified counter, as with elements
+         e = self.surface.owner[p]
+-        np.add.at(self._draw_m, e, book.drawn)
+-        np.add.at(self._draw_H, e, book.drawn_H)
++        if through is None:
++            np.add.at(self._draw_m, e, book.drawn)
++            np.add.at(self._draw_H, e, book.drawn_H)
++        else:
++            # X1 draw_through: debited from the owner first, then from the element behind it; the enthalpy the metal
++            # brought is split in the same proportion, so each element keeps what its own drawn metal left (melt_step).
++            # A skin with no element behind it draws from its owner alone, exactly as without the switch.
++            own, _, nxt = through
++            has = nxt >= 0
++            d_own = np.where(has, np.minimum(book.drawn, own), book.drawn)
++            d_next = book.drawn - d_own                                     # zero wherever there is no next element
++            with np.errstate(divide="ignore", invalid="ignore"):
++                H_own = np.where(d_next > 0.0, book.drawn_H * (d_own / np.where(book.drawn > 0.0, book.drawn, 1.0)), book.drawn_H)
++            H_next = book.drawn_H - H_own
++            np.add.at(self._draw_m, e, d_own)
++            np.add.at(self._draw_H, e, H_own)
++            np.add.at(self._draw_m, nxt[has], d_next[has])
++            np.add.at(self._draw_H, nxt[has], H_next[has])
++            self.skin_drawn_through_mass += float(d_next[has].sum())
+         self.skin_drawn_mass += float(book.drawn.sum())
+         # skin-steps below s/2: a skin thin for ten steps counts ten times
+         self.skin_short_events += int((sk.thickness() < 0.5 * sk.settings.thickness).sum())
+@@ -1044,6 +1074,7 @@
+     def _kill(self, dead):
+         old_surface, old_m_f, old_m_d = self.surface, self.m_f, self.m_d
+         gone, new = self.mesh.deactivate(dead)
++        self.exposed_faces.update(new.tolist())                  # X1: the faces this death exposed
+         if self.mesh.n_active == 0:                              # nothing left: the run ends (demise) without a surface
+             self.consumed = True                                 # the liquid still on it leaves with the body
+             self.removed_mass += float(self.m_f.sum() + self.m_d.sum())
+@@ -1122,6 +1153,43 @@
+         share = self.surface.areas[patches] / self.owner_area[e]
+         return np.maximum(self.phi[e] - PHI_DEATH, 0.0) * self.element_mass[e] * share
+ 
++    def _next_element(self, patches):
++        """X1 draw_through: per patch, the active face-neighbour of its owner element that lies furthest along the
++        patch's inward normal (centroid to centroid, the step `_molten_chain` takes inward); -1 where no active
++        neighbour lies inward of the owner."""
++        mesh, s = self.mesh, self.surface
++        patches = np.asarray(patches, dtype=np.int64)
++        cur = s.owner[patches]
++        pair = mesh._face_elements[mesh.element_faces(cur)]                                   # (n, 4, 2)
++        nb = np.where(pair[:, :, 0] == cur[:, None], pair[:, :, 1], pair[:, :, 0])
++        ok = (nb >= 0) & mesh.active[np.maximum(nb, 0)]
++        c_cur = mesh.points[mesh.tets[cur]].mean(axis=1)
++        c_nb = mesh.points[mesh.tets[np.maximum(nb, 0)]].mean(axis=2)                        # (n, 4, 3)
++        step = np.where(ok, np.einsum("nkj,nj->nk", c_nb - c_cur[:, None, :], -s.normals[patches]), -np.inf)
++        rows = np.arange(cur.size)
++        pick = step.argmax(axis=1)
++        good = ok[rows, pick] & (step[rows, pick] > 0.0)
++        return np.where(good, nb[rows, pick], -1)
++
++    def _skin_available_through(self, patches):
++        """X1 draw_through: (from the owner [kg], from the next element [kg], the next element or -1) per skin patch.
++        Each element's metal above PHI_DEATH is shared by area among every claim on it: its own patches (as
++        `_skin_available` shares it) and the skins on other elements' patches whose next element it is. An element no
++        skin chains into gives its patches exactly `_skin_available`'s shares; one that is also a next element gives
++        its own patches less, so that no element is ever drawn below PHI_DEATH."""
++        s = self.surface
++        patches = np.asarray(patches, dtype=np.int64)
++        e = s.owner[patches]
++        nxt = self._next_element(patches)
++        has = nxt >= 0
++        A = s.areas[patches]
++        claim = self.owner_area + np.bincount(nxt[has], A[has], self.mesh.n_elements)
++        pool = np.maximum(self.phi - PHI_DEATH, 0.0) * self.element_mass
++        own = np.maximum(self.phi[e] - PHI_DEATH, 0.0) * self.element_mass[e] * (A / claim[e])
++        nx = np.zeros(patches.size)
++        nx[has] = pool[nxt[has]] * (A[has] / claim[nxt[has]])
++        return own, nx, nxt
++
+     def _create_skins(self, T):
+         """Patches whose surface has reached the solidus, or that hold liquid, get a skin (spec 5.2): a slab of the
+         target thickness -- less where the element cannot give that above PHI_DEATH -- taken from the patch's element,
+@@ -1132,7 +1200,10 @@
+         if sk is None or not s.n_patches:
+             return 0
+         Tf = s.facet_mean(T)
+-        idx = np.flatnonzero((self.skin_of_patch < 0) & ((Tf >= mat.T_solidus) | (self.m_f + self.m_d > 0.0)))
++        hot = Tf >= mat.T_solidus
++        if self.settings.cover_exposed and self.exposed_faces:  # X1: a face a death exposed is left out of the solidus test
++            hot = hot & ~np.isin(s.face_ids, np.fromiter(self.exposed_faces, dtype=np.int64, count=len(self.exposed_faces)))
++        idx = np.flatnonzero((self.skin_of_patch < 0) & (hot | (self.m_f + self.m_d > 0.0)))
+         if not idx.size:
+             return 0
+         thick = np.minimum(sk.settings.thickness, self._skin_available(idx) / (mat.rho * s.areas[idx]))
+diff -ruN -x __pycache__ -x .git -x .pytest_cache -x reentry_model_output code/tests/test_reentry_model_melting_skin.py experiments/x1/code/tests/test_reentry_model_melting_skin.py
+--- code/tests/test_reentry_model_melting_skin.py	2026-10-08 14:19:49
++++ experiments/x1/code/tests/test_reentry_model_melting_skin.py	2026-10-09 14:18:58
+@@ -295,3 +295,86 @@
+         b.phi[e] = 1.0 if full else 0.5
+         b._return_from_skins(h_e)
+         assert b.skin_full_events == 0 and b.skin_returned_mass == 0.0
++
++
++# -- experiment X1 (2026-10-09): two candidate fixes for the skins' stall in the box, as switches, off by default ---------
++
++def test_x1_draw_through_takes_from_the_element_behind_an_exhausted_owner(coarse_sphere_mesh):
++    """draw_through: a skin whose owner has nothing above PHI_DEATH draws from the element behind it -- the owner's
++    active face-neighbour furthest along the patch's inward normal -- debited there; without the switch the same skin
++    draws nothing. The books close either way."""
++    drawn = {}
++    for on in (False, True):
++        b = make_body(coarse_sphere_mesh, solver_options=EXACT, draw_through=on)
++        nxt = b._next_element(np.arange(b.surface.n_patches))
++        # a patch whose next element is buried (owns no patch), so that nothing but the draw moves its fraction
++        cand = np.flatnonzero((nxt >= 0) & (b.owner_area[np.maximum(nxt, 0)] == 0.0))
++        assert cand.size
++        p = int(cand[0])
++        e, n = int(b.surface.owner[p]), int(nxt[p])
++        assert b.mesh.active[n] and n != e
++        b.phi[e] = body.PHI_DEATH + 0.01                       # its element can give the new skin only a sliver
++        b.solver.set_fractions(b.phi)
++        b.m_f[p] = 1e-9                                        # liquid on the patch: it alone gets a skin at 300 K
++        b.solver.set_film_mass(b._film_nodal())
++        b.mass0, b.energy0 = b.mass(0.0), b.energy()
++        b._create_skins(b.solver.temperature())
++        assert b.skins.n == 1 and b.skins.thickness()[0] < 0.5 * DEV.thickness
++        own, through, n_of = b._skin_available_through(b.patch_of_skin)
++        assert n_of[0] == n and own[0] < 1e-12 * b.element_mass[e] and through[0] > b.material.rho * b.skins.area[0] * DEV.thickness
++        phi_n0 = b.phi[n]
++        b.advance(0.5, 0.5, uniform(b, 1e5))
++        drawn[on] = b.skin_drawn_mass
++        if on:
++            assert b.skin_drawn_through_mass > 0.0
++            assert b.skin_drawn_through_mass == pytest.approx(b.skin_drawn_mass, rel=1e-9)     # its owner gave nothing
++            assert b.phi[n] == pytest.approx(phi_n0 - b.skin_drawn_through_mass / b.element_mass[n], rel=1e-12)
++            assert b.phi[n] > body.PHI_DEATH
++        else:
++            assert b.skin_drawn_through_mass == 0.0 and b.phi[n] == phi_n0
++        assert not b.mesh.active[e]                             # the drained owner died either way
++        assert_books(b)
++    assert drawn[False] < 1e-12 * drawn[True] and drawn[True] > 0.0
++
++
++def test_x1_cover_exposed_gives_no_created_skin_to_a_face_a_death_exposed(coarse_sphere_mesh):
++    """cover_exposed: the faces a death exposes are recorded (whatever the switch), and with the switch the solidus test
++    leaves them out -- above the solidus they get no created skin -- while liquid arriving on one still gives it a skin
++    to sit on; without the switch they get skins at the solidus like every other face. The books close."""
++    for on in (False, True):
++        b = make_body(coarse_sphere_mesh, solver_options=EXACT, cover_exposed=on)
++        e = int(b.surface.owner[0])
++        b.phi[e] = body.PHI_DEATH
++        b.solver.set_fractions(b.phi)
++        b.mass0, b.energy0 = b.mass(0.0), b.energy()
++        b.advance(0.5, 0.5, uniform(b, 1e5))                   # cold, no skins: the element dies, its rest becomes film
++        assert not b.mesh.active[e] and b.skins.n == 0
++        new = np.isin(b.surface.face_ids, np.fromiter(b.exposed_faces, dtype=np.int64))
++        assert new.sum() >= 1 and set(b.surface.face_ids[new].tolist()) == b.exposed_faces
++        assert set(b.exposed_faces) <= set(b.mesh.element_faces([e])[0].tolist())
++        L = b.m_f + b.m_d                                      # the liquid leaves, booked at its enthalpy (the box's rule)
++        b.removed_mass += float(L.sum())
++        b.removed_enthalpy += float((L * b.film_enthalpy()).sum())
++        b.m_f[:], b.m_d[:] = 0.0, 0.0
++        b.solver.set_film_mass(b._film_nodal())
++        E = b.energy()                                         # the whole body above the solidus, the books shifted with it
++        b.solver.set_temperature(860.0)
++        b.energy0 += b.energy() - E
++        b._create_skins(b.solver.temperature())
++        if on:
++            assert (b.skin_of_patch[new] < 0).all() and (b.skin_of_patch[~new] >= 0).all()
++            q = int(np.flatnonzero(new)[0])                    # liquid arrives on one of them: it gets a skin
++            E, M = b.energy(), b.mass(0.0)
++            b.m_f[q] = 1e-9
++            b.solver.set_film_mass(b._film_nodal())
++            b.energy0 += b.energy() - E
++            b.mass0 += b.mass(0.0) - M
++            assert b._create_skins(b.solver.temperature()) == 1 and b.skin_of_patch[q] >= 0
++            dry = new.copy()
++            dry[q] = False
++        else:
++            assert (b.skin_of_patch >= 0).all()
++        b.advance(1.0, 0.5, uniform(b, 1e5))
++        if on:
++            assert (b.skin_of_patch[dry] < 0).all()
++        assert_books(b)
