@@ -37,9 +37,25 @@ steps", and positions move far less than a spacing within an interval, which the
    surface particles behind the gap (in a pit's shadow, in the wake of the body or of a separated piece) receive the
    base pressure only, no shear. `exposure="most_upstream"` (the plan's literal rule): only the most upstream
    surface particle per line is exposed, every other surface particle gets the base pressure. See "Deviation".
-3. *Area shares.* a_i = V_i^(2/3) in 3D; in RZ the ring area 2 pi r_i ds_i with ds_i = (planar area)^(1/2); scaled
-   by one factor so that they sum, over every surface particle, to `surface_area`: the prepared frame's surface
-   area (sum of its patch areas, `frame_surface_area`) at the interval's start frame k.
+3. *Area shares.* `area_shares="volume"` (default, as built in Task 4): a_i = V_i^(2/3) in 3D; in RZ the ring area
+   2 pi r_i ds_i with ds_i = (planar area)^(1/2); scaled by one factor so that they sum, over every surface
+   particle, to `surface_area`: the prepared frame's surface area (sum of its patch areas, `frame_surface_area`) at
+   the interval's start frame k. `area_shares="patch"` (Task 8, check 6): every patch of frame k's finite-element
+   surface (`frame_patches`: centroid and area) gives its area to the surface particle whose *reference* position is
+   nearest its centroid (the frame and the reference positions share the body coordinates, plan decision D1; in RZ
+   the centroid's (x, sqrt(y^2 + z^2)) against the ring's (x, r), so a ring collects every patch around the axis
+   nearest it), so the shares sum to the frame's area without a factor (`share_factor` 1) and follow the real
+   surface's distribution; a surface particle no patch is nearest to (3D: the staircase's inner corners, a little
+   deeper than their neighbours) gets no area and no load (`n_zero_area`). *Why* (check 6, 2026-10-10): the volume
+   shares are equal per surface particle, but a lattice's staircase surface carries a number of surface particles
+   per unit area that depends on the inclination (in RZ about max(|n_x|, |n_r|) / dx per unit length: the 45-degree
+   steps have fewer), so after the one calibration factor the volume shares overweight the surface near the axis
+   and the equator by 10-11 % and underweight it near 45 and 135 degrees by 11-13 %, at every spacing (it is a
+   property of the lattice, not a resolution error): RZ drag -3 % against the table's integral (3D -0.2 to -0.6 %),
+   and the particles' stresses in the core (|x| <= R/2) off the finite-element reference's by up to 21 % (RZ) and
+   7-13 % (3D) of its peak, against 6-7 % and 4-8 % with the patch shares, whose drag is within 0.6 % (check 6,
+   analysis/spheral_m2_check6.py, 2026-10-11). The patch shares leave a small net moment in 3D (4-6e-5 of
+   drag x R: the unstructured patches against the lattice), which turns the body slowly against the damping.
 
 **Loads, each step.** The tables of frames k and k + 1 (the prepared windward tables with the lee extension of
 `spheral_frag.loads.with_lee` at the run's brackets) are evaluated at each exposed particle's theta once, at
@@ -80,6 +96,7 @@ THRESHOLD = 0.5          # surface where |h grad c| exceeds this (calibrated on 
 NORMAL_SMOOTHING = 2.0   # the normals' smoothing length in units of h (calibrated likewise)
 GAP = 1.5                # spacings: a wider gap along a flight line ends the first body
 EXPOSURES = ("first_body", "most_upstream")
+AREA_SHARES = ("volume", "patch")
 SUPPORT = 2.0            # the kernel's support in units of h (Spheral's WendlandC4 kernel extent)
 TIME_TOL = 1e-9          # s
 
@@ -242,6 +259,21 @@ def raw_shares(form, x, V):
     return 2.0*math.pi*r*np.sqrt(V/(2.0*math.pi*r))
 
 
+def patch_shares(form, x_ref_surface, centroids, areas):
+    """Area per surface particle (`area_shares="patch"`, module docstring): each patch's area to the surface particle
+    whose reference position is nearest its centroid (RZ: the centroid's (x, sqrt(y^2 + z^2))). Ties go to the
+    lower index (cKDTree). Arrays identical on every rank give identical shares."""
+    from scipy.spatial import cKDTree
+    xs = np.asarray(x_ref_surface, dtype=float)
+    c = np.asarray(centroids, dtype=float)
+    if form == "rz":
+        c = np.stack([c[:, 0], np.hypot(c[:, 1], c[:, 2])], axis=1)
+    if len(xs) == 0:
+        raise ValueError("no surface particle to give the patches to")
+    j = cKDTree(xs).query(c)[1]
+    return np.bincount(j, weights=np.asarray(areas, dtype=float), minlength=len(xs))
+
+
 def lee_table(table, lee):
     """The table with the lee extension at the run's brackets (`lee`: base_fraction, separation_deg,
     shear_factor; None for spheral_frag.loads' defaults)."""
@@ -288,6 +320,13 @@ def read_tables(prepared_dir, ks):
     return core_loads.unstack(sub)
 
 
+def frame_patches(prepared_dir, k):
+    """(centroids (m, 3), areas (m,)) of the prepared frame k's surface patches (body coordinates, m and m^2)."""
+    from spheral_frag import frames
+    fr = frames.load_prepared_frame(os.path.join(prepared_dir, "frames", frames.prepared_frame_name(k)))
+    return np.asarray(fr.patch["centroid"], dtype=float), np.asarray(fr.patch["area"], dtype=float)
+
+
 def frame_surface_area(prepared_dir, k):
     """The prepared frame k's surface area (m^2): the sum of its patch areas (the faceted finite-element surface)."""
     from spheral_frag import frames
@@ -312,18 +351,26 @@ def loads_classes(S):
         """The aerodynamic loads on the surface particles (module docstring).
 
         SurfaceLoads(body, tables, times, surface_area, lee=None, threshold=THRESHOLD, exposure="first_body",
-        gap=GAP, normal_smoothing=NORMAL_SMOOTHING): `tables` the prepared windward tables of frames k and k + 1 (or one table, held), `times` their
-        times (s), `surface_area` the frame's surface area (m^2), `lee` the lee extension's brackets.
+        gap=GAP, normal_smoothing=NORMAL_SMOOTHING, area_shares="volume", patches=None): `tables` the prepared
+        windward tables of frames k and k + 1 (or one table, held), `times` their times (s), `surface_area` the
+        frame's surface area (m^2), `lee` the lee extension's brackets, `area_shares` "volume" or "patch" (then
+        `patches` = frame k's (centroids, areas), `frame_patches`).
 
         After construction: `n_surface`, `n_exposed` (global counts), `share_factor` (the area calibration),
         `force_k` (sum F at each frame, (2, dim)), `mass` (sum m), and per local particle `local_surface`,
         `local_normal`, `local_theta`, `local_area`, `local_exposed`; `surface_table()` gathers them by pid."""
 
         def __init__(self, body, tables, times, surface_area, lee=None, threshold=THRESHOLD,
-                     exposure="first_body", gap=GAP, normal_smoothing=NORMAL_SMOOTHING):
+                     exposure="first_body", gap=GAP, normal_smoothing=NORMAL_SMOOTHING, area_shares="volume",
+                     patches=None):
             S.Physics.__init__(self)
             if exposure not in EXPOSURES:
                 raise ValueError(f"exposure must be one of {EXPOSURES}, got {exposure!r}")
+            if area_shares not in AREA_SHARES:
+                raise ValueError(f"area_shares must be one of {AREA_SHARES}, got {area_shares!r}")
+            if area_shares == "patch" and patches is None:
+                raise ValueError("area_shares 'patch' needs the frame's patches")
+            self.area_shares = area_shares
             tables = list(tables)
             times = [float(t) for t in times]
             if len(tables) == 1:
@@ -353,17 +400,26 @@ def loads_classes(S):
             pid = body.local_pids()
             self.x0 = x
             self.local_mass = m
-            x_all, V_all, pid_all = _allgather_rows(x, V, pid)
+            x_ref = get_vector(body.x_ref, self.dim)
+            x_all, V_all, pid_all, x_ref_all = _allgather_rows(x, V, pid, x_ref)
             h = body.nperh*body.dx
             g, surf, normal = detect_surface(self.form, x_all, V_all, x, h, self.threshold, self.normal_smoothing)
             surf_all, normal_all = _allgather_rows(surf, normal)
             # every rank holds the same global arrays in the same (rank, local) order: global decisions agree
             exposed_all = exposure_fn(self.form, x_all, surf_all, self.dx, self.exposure_mode, self.gap)
-            raw_all = raw_shares(self.form, x_all, V_all)
-            total_raw = float(np.sum(raw_all[surf_all]))
-            if not total_raw > 0.0:
-                raise RuntimeError("SurfaceLoads: no surface particle found")
-            self.share_factor = self.surface_area/total_raw
+            if area_shares == "patch":
+                raw_all = np.zeros(len(x_all))
+                if not surf_all.any():
+                    raise RuntimeError("SurfaceLoads: no surface particle found")
+                raw_all[surf_all] = patch_shares(self.form, x_ref_all[surf_all], patches[0], patches[1])
+                self.share_factor = 1.0
+            else:
+                raw_all = raw_shares(self.form, x_all, V_all)
+                total_raw = float(np.sum(raw_all[surf_all]))
+                if not total_raw > 0.0:
+                    raise RuntimeError("SurfaceLoads: no surface particle found")
+                self.share_factor = self.surface_area/total_raw
+            self.n_zero_area = int(np.count_nonzero(surf_all & (raw_all == 0.0)))
             lo = int(np.sum(comm().allgather(len(x))[:comm().rank]))
             sl = slice(lo, lo + len(x))
             if not np.array_equal(pid_all[sl], pid):
@@ -393,6 +449,18 @@ def loads_classes(S):
                 self.force_k[:, 1] = 0.0           # rings: no net radial force
             self.mass = allsum(m.sum())
             self.area_sum = allsum(self.local_area.sum())
+            self.ramped = False
+
+        def ramp_from_zero(self):
+            """Make the first frame's loads zero, so that the loads rise linearly in time from zero at times[0] to
+            the second frame's at times[1] (the replay's --loads-frame applies a held table this way over its first
+            interval; run.py, "One frame's loads held"). total_force stays exactly the sum of what is added."""
+            self.local_p[0] = np.zeros_like(self.local_p[0])
+            self.local_tau[0] = np.zeros_like(self.local_tau[0])
+            self.local_force[0] = np.zeros_like(self.local_force[0])
+            self.acc[0] = np.zeros_like(self.acc[0])
+            self.force_k[0] = 0.0
+            self.ramped = True
 
         # -- time
         def weight(self, t):
@@ -520,9 +588,10 @@ exposure_fn = exposure
 
 
 def make_surface_loads(S, body, tables, times, surface_area, lee=None, threshold=THRESHOLD, exposure="first_body",
-                       gap=GAP, normal_smoothing=NORMAL_SMOOTHING):
+                       gap=GAP, normal_smoothing=NORMAL_SMOOTHING, area_shares="volume", patches=None):
     """A SurfaceLoads package for the Spheral module S (collective: every rank builds it)."""
-    return loads_classes(S)[0](body, tables, times, surface_area, lee, threshold, exposure, gap, normal_smoothing)
+    return loads_classes(S)[0](body, tables, times, surface_area, lee, threshold, exposure, gap, normal_smoothing,
+                               area_shares, patches)
 
 
 def make_deceleration(S, loads, scale=1.0):

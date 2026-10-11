@@ -61,6 +61,11 @@ BRACKET_DEFAULTS: dict[str, object] = {
     # Spheral M2 Task 7 (check 5): the body's geometry, "frame" (the finite-element body's lattice) or a synthetic
     # shape ("bar": check 5's bar held at both ends; body name's _geometry-<geometry>)
     "geometry": "frame",
+    # Spheral M2 Task 8 (check 6): hold one frame's load tables at every interval (-1: each interval's own frames)
+    "loads_frame": -1,
+    # Spheral M2 Task 8 (check 6): the surface particles' area shares, "volume" (V^(2/3), one calibration factor) or
+    # "patch" (each finite-element surface patch's area to the nearest surface particle; packages/loads.py)
+    "area_shares": "volume",
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -82,6 +87,8 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "monitor_every": ("monitorevery", ""),
     "monitor_limit": ("monitorlimit", ""),
     "geometry": ("geometry", ""),
+    "loads_frame": ("loadsframe", ""),
+    "area_shares": ("areashares", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 
@@ -357,7 +364,7 @@ def parse_body_name(name) -> dict:
 #   analysis   <out>/<prepared>/<run suffix>/       the analysis name (the run's own name) split the same way
 #   body       <out>/<prepared>/<body suffix>/      body suffix = the body name after 'body_<prepared>_'
 #
-# A suffix longer than NAME_MAX (a run with most brackets set: every one non-default makes 324 characters) continues
+# A suffix longer than NAME_MAX (a run with most brackets set: every one non-default makes 356 characters) continues
 # in a further level: it is cut at the '_' before the first token that would not fit, as often as needed, so
 # '<out>/<prepared>/<first part>/<rest>/' joined with '_' is the suffix again. Below NAME_MAX nothing is cut, so the
 # layout of every run so far is the plain two-level one.

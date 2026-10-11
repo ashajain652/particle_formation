@@ -4,6 +4,7 @@
         [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
         [--stop-at K] [--loads on|off] [--mass-scaling on|off] [--monitor-every 10] [--monitor-limit 0.05]
+        [--loads-frame K] [--area-shares volume|patch]
 
 **The interval loop.** For each interval k -> k+1 of the body's frames between K0 and K1 (spec §9.1):
 
@@ -81,6 +82,28 @@ particles; `v_com_removed_ms` is 0 and `recentre_shift_dx` the measured mean axi
 `recentre_applied` 0. A body that is not the frames' (body.json `geometry` other than "frame") needs `--loads off`;
 the geometry is a run-name bracket (`geometry`, default frame).
 
+**One frame's loads held** (Spheral M2 plan, Task 8, check 6). `--loads-frame K` (default -1: off) gives
+SurfaceLoads frame K's prepared load table (with the lee extension at the run's brackets) at every interval, held
+constant in time (`make_surface_loads` with one table), instead of the tables of the interval's own frames k and
+k + 1. Everything else stays the interval's: the body, its frames' times and temperatures, the surface detection and
+exposure on the current positions, and the area calibration (the shares sum to frame k's surface area -- the body's
+own frame, since the body is k's, not K's). Over the first interval K0 -> K0 + 1 the table ramps in linearly
+from zero (`SurfaceLoads.ramp_from_zero`), and is held from K0 + 1 on. Reason (measured on check 6, RZ 2.2 mm,
+2026-10-10): applied at full strength from the stress-free state at rest, the loads set the body ringing (a dynamic
+overshoot towards twice the static stress), which the damping (zeta 0.05: amplitude e^(-zeta pi N_c) = 0.21 per
+interval at 10 crossings) has not settled by the end of the first interval, so the crossings monitor compared two
+different ringing phases, estimated 32 % and switched the run to 20 crossings; the static state does not depend on
+the path (linear elasticity), and on the flight the loads also change gradually from frame to frame. The interval's
+`table_drag_N` is frame K's own integrated drag (prepare.json's `table_lee_N`, over frame K's finite-element body,
+which is not the run's body when K is later than the body's frames: check 6 compares with the table's integral over
+the exact sphere instead) and `flight_decel_ms2` the history's at frame K's time (a diagnostic). Needs `--loads on`;
+a run-name bracket (`loads_frame`, default -1).
+
+**Area shares** (Task 8, check 6). `--area-shares volume` (default, Task 4's V^(2/3) shares with one calibration
+factor) or `patch` (each of frame k's finite-element surface patches gives its area to the surface particle whose
+reference position is nearest; packages/loads.py, "Area shares", has the reason and the measurement). A run-name
+bracket (`area_shares`, default volume).
+
 **The crossings-error monitor** (Spheral M2 plan, decision 7, Asha 2026-10-10; Task 6b). Check 4 found 10 crossings
 per interval within the plan's rule at every held state but lagging 20 crossings by 0.6 % of the peak stress right
 after a ramp, so the replay estimates its own crossings error as it runs. On a monitored interval, once the interval
@@ -117,7 +140,7 @@ per monitored interval, about 2/M of the run's time plus the first interval's.
 name `naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)` split at its `__`, the prepared
 input's name one level, the rest (`replay_k00000-00010_rz_dx2.20mm_seed1[_<bracket>...]`) the next, so that no path
 component exceeds 255 characters; the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and
-azimuth, loads, mass_scaling, monitor_every, monitor_limit and the body's geometry are suffixes when they differ from
+azimuth, loads, mass_scaling, monitor_every, monitor_limit, the body's geometry, loads_frame and area_shares are suffixes when they differ from
 their defaults. The full name is the run's identity (meta.json's and summary.json's `run_name`;
 `naming.run_name_from_dir` rebuilds it from the directory):
 
@@ -187,7 +210,7 @@ INTERVAL_COLUMNS = [
     "time_scale", "spheral_t1_s", "monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99",
     "crossings_err_pressure", "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
     "run_crossings", "crossings_err_limit", "crossings_err_limit_basis", "n_held", "held_max_speed_ms",
-    "held_max_disp_m",
+    "held_max_disp_m", "n_zero_area",
 ]
 
 
@@ -500,6 +523,17 @@ class Inputs:
         lack = [k for k in self.ks if k not in have]
         if lack:
             raise BadInput(f"the prepared loads lack frames {lack[:5]}")
+        # --loads-frame K: frame K's table held at every interval (module docstring, "One frame's loads held")
+        self.loads_frame = int(a.loads_frame)
+        if a.area_shares != naming.BRACKET_DEFAULTS["area_shares"] and a.loads != "on":
+            raise BadInput("--area-shares needs --loads on")
+        if self.loads_frame >= 0:
+            if a.loads != "on":
+                raise BadInput("--loads-frame needs --loads on")
+            if self.loads_frame not in have:
+                raise BadInput(f"--loads-frame {self.loads_frame}: the prepared loads have no such frame")
+        elif self.loads_frame != -1:
+            raise BadInput("--loads-frame must be a frame index, or -1 (off)")
         with np.load(os.path.join(self.prepared_dir, "flight.npz"), allow_pickle=False) as z:
             self.flight = {k: z[k] for k in z.files}
         with open(os.path.join(self.prepared_dir, "prepare.json"), encoding="utf-8") as fh:
@@ -507,6 +541,9 @@ class Inputs:
         # the frames' own integrated drag, the load tables' (with the lee extension; prepare's table_lee_N): the
         # reference of the particles' drag (M1 decision 15), the history's drag a diagnostic
         self.table_drag = {int(f["k"]): (f.get("drag") or {}).get("table_lee_N") for f in prep_frames}
+        self.prep_times = {int(f["k"]): float(f["time_s"]) for f in prep_frames if "time_s" in f}
+        if self.loads_frame >= 0 and self.table_drag.get(self.loads_frame) is None:
+            raise BadInput(f"--loads-frame {self.loads_frame}: that frame's table carries no loads")
         try:
             material.parse_flow_law(a.strength)
         except ValueError as e:
@@ -534,7 +571,8 @@ class Inputs:
                     "rate_min": a.rate_min, "sampler": self.body_doc.get("sampler", "p1"),
                     "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0)), "loads": a.loads,
                     "mass_scaling": a.mass_scaling, "monitor_every": a.monitor_every,
-                    "monitor_limit": a.monitor_limit, "geometry": self.geometry}
+                    "monitor_limit": a.monitor_limit, "geometry": self.geometry, "loads_frame": self.loads_frame,
+                    "area_shares": a.area_shares}
         try:
             self.brackets = naming.canonical_brackets(brackets)
             self.name = naming.run_name(self.prepared, "replay", (k0, k1), self.form, self.dx_mm, self.brackets,
@@ -549,13 +587,19 @@ class Inputs:
         return self.frames_k.index(k)
 
     def table_drag_mean(self, k, k_next):
-        """Mean of frames k and k+1's table drag (N); a frame without loads takes the other's, as SurfaceLoads."""
+        """Mean of frames k and k+1's table drag (N); a frame without loads takes the other's, as SurfaceLoads.
+        With --loads-frame K, frame K's."""
+        if self.loads_frame >= 0:
+            k = k_next = self.loads_frame
         a, b = self.table_drag.get(k), self.table_drag.get(k_next)
         a = b if a is None else a
         b = a if b is None else b
         return math.nan if a is None else 0.5*(float(a) + float(b))
 
     def flight_decel(self, t):
+        """The history's deceleration at flight time t (with --loads-frame K: at frame K's time)."""
+        if self.loads_frame >= 0:
+            t = self.prep_times[self.loads_frame]
         return float(np.interp(t, self.flight["time_s"], self.flight["deceleration_ms2"]))
 
 
@@ -673,9 +717,13 @@ class Replay:
             packages.append(pd.make_damping(S, body, a.damping, omega1))
         loads = decel = None
         if a.loads == "on":
-            tables = pl.read_tables(inp.prepared_dir, [k, k_next])
+            tables = pl.read_tables(inp.prepared_dir, [inp.loads_frame] if inp.loads_frame >= 0 else [k, k_next])
             area = pl.frame_surface_area(inp.prepared_dir, k)
-            loads = pl.make_surface_loads(S, body, tables, (t0, t1), area, lee=inp.lee)
+            patches = pl.frame_patches(inp.prepared_dir, k) if a.area_shares == "patch" else None
+            loads = pl.make_surface_loads(S, body, tables, (t0, t1), area, lee=inp.lee, area_shares=a.area_shares,
+                                          patches=patches)
+            if inp.loads_frame >= 0 and k == inp.k0:
+                loads.ramp_from_zero()          # the held table ramps in over the first interval (module docstring)
             decel = pl.make_deceleration(S, loads, s)
             packages += [loads, decel]
         if len(self.held_pid):
@@ -747,7 +795,8 @@ class Replay:
                         drag_mean_N=float(np.mean(-F[:, 0])) if len(F) else math.nan,
                         table_drag_N=inp.table_drag_mean(k, k_next),
                         n_surface=loads.n_surface if loads is not None else -1,
-                        n_exposed=loads.n_exposed if loads is not None else -1, max_disp_interval_dx=disp_interval,
+                        n_exposed=loads.n_exposed if loads is not None else -1,
+                        n_zero_area=loads.n_zero_area if loads is not None else -1, max_disp_interval_dx=disp_interval,
                         max_disp_ref_dx=float(np.sqrt(np.einsum("ij,ij->i", dref, dref)).max())/self.dx,
                         momentum_axial_Ns=p_axial, momentum_norm_Ns=p_norm,
                         momentum_over_impulse=(p_norm/impulse) if impulse > 0.0 else math.nan,
@@ -1135,7 +1184,9 @@ def settings(a, rp):
     return {"crossings": a.crossings, "max_crossings": a.max_crossings, "damping": a.damping, "scheme": a.scheme,
             "strength": a.strength, "rate_min": a.rate_min, "every_check": a.every_check, "seed": a.seed,
             "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling,
-            "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit, "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
+            "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit, "loads_frame": a.loads_frame,
+            "area_shares": a.area_shares,
+            "ke_test": "internal (KE - KE_com)", "c_l_cold_ms": rp.c_l, "nperh": rn.NPERH,
             "loads": {"threshold": 0.5, "exposure": "first_body", "gap": 1.5, "normal_smoothing": 2.0,
                       "lee": rp.inp.lee}}
 
@@ -1168,6 +1219,12 @@ def build_parser():
                    "twice the crossings (decision 7; 0: off)")
     r.add_argument("--monitor-limit", type=float, default=naming.BRACKET_DEFAULTS["monitor_limit"],
                    help="above this crossings-error estimate the run continues at twice the crossings")
+    r.add_argument("--loads-frame", type=int, default=naming.BRACKET_DEFAULTS["loads_frame"],
+                   help="hold this frame's load table at every interval (check 6; default -1: each interval's own "
+                   "frames)")
+    r.add_argument("--area-shares", choices=("volume", "patch"), default=naming.BRACKET_DEFAULTS["area_shares"],
+                   help="the surface particles' area shares: volume (V^(2/3), calibrated) or patch (the frame's "
+                   "patch areas to the nearest surface particle)")
     r.add_argument("--every-check", type=int, default=1)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", default=DEFAULT_OUT)

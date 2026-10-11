@@ -340,6 +340,18 @@ def test_bar_geometry(prepared, tmp_path, form, dx_mm, n, n_held, length, width)
     assert run_body(d, tmp_path, "--synthetic", "radial", "--geometry", "bar", form=form, dx="10") == 2
 
 
+def test_uniform_sampler_names():
+    """"uniform" at the defaults; dT = 0 (check 6: held at 300 K) is "uniformdt0" whatever the ramp; negative or
+    fractional values are refused."""
+    assert body.uniform_sampler_name() == "uniform"
+    assert body.uniform_sampler_name(60, 2) == "uniformdt60r2"
+    assert body.uniform_sampler_name(0, 1) == body.uniform_sampler_name(0, 10) == "uniformdt0"
+    assert np.array_equal(body.make_uniform_sampler(0, 1)(5, None, None, np.zeros((3, 3))), np.full(3, 300.0))
+    for bad in ((-30, 1), (20.5, 1), (30, 0)):
+        with pytest.raises(ValueError):
+            body.uniform_sampler_name(*bad)
+
+
 def test_command_exit_codes(prepared, tmp_path):
     d, _ = prepared
     assert run_body(str(tmp_path / "nowhere"), tmp_path) == 2                       # no prepared input

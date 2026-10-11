@@ -130,7 +130,8 @@ LONG_PREP = naming.prepare_name("model_" + "x" * 181, 0, 1254)          # 205 ch
 EVERY_BRACKET = dict(film_limit_mm=3.0, base_pressure_pct=4.0, separation_deg=170.0, lee_shear=0.25, min_particles=50,
                      link_h=2.0, crossings=20, damping=0.2, scheme="crksph", strength="constant:1.5e8", rate_min=1e-5,
                      sampler="radialdt20r2", azimuth_deg=22.5, loads="off", mass_scaling="off", monitor_every=5,
-                     monitor_limit=0.025, geometry="barl50w10h1")
+                     monitor_limit=0.025, geometry="barl50w10h1", loads_frame=182,
+                     area_shares="patch")
 
 
 def test_long_run_name_nests_and_parses_back(tmp_path):
@@ -140,7 +141,7 @@ def test_long_run_name_nests_and_parses_back(tmp_path):
     assert len(name) > 2 * naming.NAME_MAX                     # whole: far beyond one component
     d = naming.run_dir(str(tmp_path / "runs"), name)
     rel = os.path.relpath(d, str(tmp_path / "runs")).split(os.sep)
-    assert rel[0] == LONG_PREP and len(rel) == 3                # the 324-character suffix cut once
+    assert rel[0] == LONG_PREP and len(rel) == 3                # the 356-character suffix cut once
     assert all(len(p) <= naming.NAME_MAX for p in rel) and "_".join(rel[1:]) == name.split("__")[1]
     os.makedirs(d)
     assert naming.run_name_from_dir(d) == name

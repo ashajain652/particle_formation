@@ -71,7 +71,8 @@ frames 0-3 (the intact sphere, no removal), it gives check 4's case: a one-inter
 
 `--synthetic uniform` (Task 7, check 5) sets every particle to T = 300 K + dT min(k / n_ramp, 1), k the absolute
 frame index (`--uniform-delta-k`, default 300 K; `--uniform-ramp-frames`, default 10); its name is "uniform" at the
-defaults, else "uniformdt<K>r<n>". (Short on purpose: check 5's run name at the defaults is 245 characters, against
+defaults, else "uniformdt<K>r<n>"; `--uniform-delta-k 0` (Task 8, check 6: the frame's intact body held at 300 K, no
+thermal stress) is "uniformdt0". (Short on purpose: check 5's run name at the defaults is 245 characters, against
 the file system's 255 for one path component; the MVP flight's prepared name alone is 205.)
 
 **The bar** (`--geometry bar`; Task 7, check 5). Not a frame of the flight: a bar along the flight axis x, centred
@@ -274,13 +275,16 @@ def uniform_temperature(k, n, delta_K=UNIFORM_DELTA_K, ramp_frames=UNIFORM_RAMP_
 
 
 def uniform_sampler_name(delta_K=UNIFORM_DELTA_K, ramp_frames=UNIFORM_RAMP_FRAMES) -> str:
-    """"uniform" at the defaults, else "uniformdt<K>r<frames>" (whole kelvin and frames)."""
+    """"uniform" at the defaults, else "uniformdt<K>r<frames>" (whole kelvin and frames); dT = 0, a body held at
+    300 K at every frame (check 6), is "uniformdt0" whatever the ramp (which then does nothing)."""
     if float(delta_K) == UNIFORM_DELTA_K and int(ramp_frames) == UNIFORM_RAMP_FRAMES:
         return "uniform"
-    if not (float(delta_K).is_integer() and float(delta_K) > 0.0 and int(ramp_frames) >= 1
+    if not (float(delta_K).is_integer() and float(delta_K) >= 0.0 and int(ramp_frames) >= 1
             and float(ramp_frames) == int(ramp_frames)):
-        raise ValueError("--uniform-delta-k must be a positive whole number of kelvin and --uniform-ramp-frames a "
-                         "positive integer, got {!r}, {!r}".format(delta_K, ramp_frames))
+        raise ValueError("--uniform-delta-k must be a non-negative whole number of kelvin and --uniform-ramp-frames "
+                         "a positive integer, got {!r}, {!r}".format(delta_K, ramp_frames))
+    if float(delta_K) == 0.0:
+        return "uniformdt0"
     return "uniformdt{}r{}".format(int(delta_K), int(ramp_frames))
 
 
