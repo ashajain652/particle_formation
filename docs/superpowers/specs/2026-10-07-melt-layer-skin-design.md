@@ -1,7 +1,8 @@
 # Resolving the melt layer: a one-dimensional skin under every melting patch (Step 3 amendment) — Design
 
 Date: 2026-10-07
-Status: approved 2026-10-07; revised the same day after facts 88–96 (§1, §2, §12, §14, §17) and while planning and
+Status: SUPERSEDED on 2026-10-11 by `2026-10-11-layered-skin-moving-mesh-design.md` (stage 1 was built and failed
+its box test; the redesign moves the flowing layer into layered skins on a moving 3D mesh). Previously: approved 2026-10-07; revised the same day after facts 88–96 (§1, §2, §12, §14, §17) and while planning and
 checking the plan's code (§5.4, §6.2), and on 2026-10-08 after the freeze-back probe (§5.4, §7.1, §10, §11.2, §12.1,
 §13, §17); implementation plan in sub-plan 18 and the amendments it lists
 Amends: `2026-09-20-melt-spraying-design.md` §8 (melting), §9 (film and spraying) and §10 (geometry and accounting),

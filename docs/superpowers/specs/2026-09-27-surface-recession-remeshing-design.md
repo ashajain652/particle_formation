@@ -1,7 +1,9 @@
 # Resolving the receding surface: derived-geometry node motion and periodic remeshing (Step 3 amendment) — Design
 
 Date: 2026-09-27
-Status: design for review, awaiting implementation plan
+Status: design for review, awaiting implementation plan. Partly superseded on 2026-10-11 by
+`2026-10-11-layered-skin-moving-mesh-design.md`: its derived surface (§5, §8) is replaced by a moving 3D mesh; its dense
+band (§6), mesh generation and validity gate (§7.3–7.4) and measured costs (§2) are reused there.
 Amends: `2026-09-20-melt-spraying-design.md` §5 (mesh) and §10 (geometry and accounting), and therefore sub-plans
 `01-mesh-active-set.md`, `09-melting-body.md`, `10-coupled-loop.md`, `13-cli-wiring.md`, `14-verification-runs.md`
 and `15-documentation.md`. Nothing in Step 1 or Step 2 changes. Every number below was measured in the design
