@@ -233,6 +233,9 @@ class FenicsxThermalSolver:
         if nodal_law is not None:
             law_nodes = np.asarray(nodal_law[0], dtype=np.int64)
             a_law, b_law = np.asarray(nodal_law[1], dtype=float), np.asarray(nodal_law[2], dtype=float)
+            keep = ~self.pinned[law_nodes]                      # a pinned node takes no law: dropped and reported
+            Q_dropped += float((a_law + b_law * T_old[law_nodes])[~keep].sum())
+            law_nodes, a_law, b_law = law_nodes[keep], a_law[keep], b_law[keep]
             B_law = sp.csr_matrix((-b_law, (law_nodes, law_nodes)), shape=(n, n))
         converged, last_relative_change, previous_change, damping, decreases = False, None, None, 1.0, 0
         T_new, iteration = T_k, 0
