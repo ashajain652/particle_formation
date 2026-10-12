@@ -2,7 +2,8 @@
 
 Date: 2026-10-11
 Status: draft for Asha's review. Designed with Asha in the brainstorming session of 2026-10-10 to 2026-10-11; every
-decision is listed with its date in §19.
+decision is listed with its date in §19. Revised 2026-10-12: the shared-package refactor waits for the skyscrapers
+port of the prototyped Step 3 code to land on `main` (§4.2, §4.4, §13, §14).
 Architecture: **level set**, a second model architecture built in parallel to the existing one, which Asha calls
 **skyscrapers** (the element model of Step 3 and its successor, the layered skins on columns of a moving mesh,
 `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md`). The two are selected by a run flag (§4.3).
@@ -76,10 +77,10 @@ clashing.
   and commit it was copied from.
 - **Shared code is factored out once.** Code that both architectures use unchanged moves into a new package,
   `reentry_model/shared/`, which depends on neither architecture; the existing code is changed to import it (§4.2).
-  This refactor is the only edit to existing files, and it changes no behaviour (§14, stage 0).
+  This refactor is the only edit to existing files, and it changes no behaviour (§14, stage 0 + S).
 - **One flag selects the architecture** (§4.3).
 - **Documents and prototypes live apart**: this design in `docs/superpowers/specs/levelset/`, its sub-plans in
-  `docs/superpowers/plans/levelset/`, the sub-plans of the shared physics (§14, stage S) in the neutral folder
+  `docs/superpowers/plans/levelset/`, the index of the shared physics (superseded as separate sub-plans on 2026-10-12, §14) in the neutral folder
   `docs/superpowers/plans/shared/`, its prototype code in `prototype/levelset/`, its tests in `tests/levelset/`.
   Nothing in `docs/superpowers/plans/melt-spraying-subplans/` or the skyscrapers prototype work copies is edited; where
   the level-set prototype needs skyscrapers code that is not yet in the package (Step 3's physics lives in prototype
@@ -107,11 +108,14 @@ The skyscrapers-specific code stays where it is (`mesh.py`, `coupled.py`, `therm
 working unchanged; the package's own modules import from `shared` directly.
 
 Step 3's physics — the gas-side surface flow, Girin's dispersion table and spray model, Scheil's material, the slurry
-viscosity — is not yet in the package; it lives in prototype work copies. **It is promoted into `reentry_model/shared/`
-by the six sub-plans of stage S (§14), written in the neutral folder `docs/superpowers/plans/shared/`** and built after
-stage 0, before either architecture's melting code lands in the package (decided 2026-10-11):
+viscosity — is not yet in the package; it lives in prototype work copies. **It is ported into the package by the
+skyscrapers work first, at the module paths the prototype uses, and then moved into `reentry_model/shared/` together
+with the Steps 1–2 modules by one combined refactor (stage 0 + S, §14)** (decided 2026-10-12, superseding the
+2026-10-11 order, in which a separate stage S promoted the physics from the prototype before either architecture's
+melting code landed). Once ported, the physics exists in one tested place on `main`, so the refactor is mostly a move.
+The modules it will move, grouped as the 2026-10-11 decision grouped them:
 
-| Stage S sub-plan | Shared module(s) | From (skyscrapers sub-plan, prototype module) |
+| Group | Shared module(s) | From (skyscrapers sub-plan, prototype module) |
 |---|---|---|
 | S1 material and rheology | `shared/material.py`, `shared/rheology.py` | 02; the Step 4 plan's slurry law |
 | S2 dispersion table | `shared/dispersion.py` (table data in `reentry_model/data/`) | 04 |
@@ -123,7 +127,8 @@ stage 0, before either architecture's melting code lands in the package (decided
 `SprayModel.evaluate` already takes the film depth and mass per patch as arrays, so the shared module holds the physics
 and each architecture keeps the bookkeeping that decides those depths and masses (skyscrapers: its columns' top cells;
 the level set: its markers' liquid zones). The skyscrapers sub-plans 00, 02, 03, 04, 05, 07, 08, 10, 12, 13, 14, 15,
-19, 20 and 22 carry an amendment of 2026-10-11 pointing their files at `shared/` (Asha's instruction of 2026-10-11).
+19, 20, 21 and 22 carry an amendment of 2026-10-11 naming what will be shared, and one of 2026-10-12 telling the port
+to use the prototype's paths until the combined refactor moves them.
 **The skins are the exception: they are separate entities in the two architectures and are never shared** (decided
 2026-10-11). The level set's skins (§9) live only in `reentry_model/levelset/skin.py`; nothing of the skyscrapers skins
 (`skin.py`, `columns.py` of the layered-skin design) is imported or copied into it.
@@ -133,19 +138,23 @@ the level set: its markers' liquid zones). The skyscrapers sub-plans 00, 02, 03,
 `reentry_model run` gains `--architecture skyscrapers|levelset` (default `skyscrapers`). With `skyscrapers`, the run is
 exactly today's: the same arguments, the same run names, bit-identical results. With `levelset`, the command builds the
 run through `reentry_model.levelset.cli`, which takes the common flight arguments from `shared/cli_common.py` and the
-level-set settings of §12.1. Until the level-set run driver exists (stage 0 ships the flag before stage 1), choosing
+level-set settings of §12.1. Until the level-set run driver exists (stage 0 + S ships the flag before stage 1), choosing
 `levelset` exits with code 2 and a message, as a missing optional library does. Level-set run names carry the suffix
 `_arch-levelset`, so the two architectures share an output directory without overwriting each other and resumable
 sweeps stay correct (the repository's run-name rule).
 
-### 4.4 Coordination
+### 4.4 Coordination (revised 2026-10-12)
 
-- Stage 0 (§14) is one behaviour-preserving change: the shared package, the re-exports, the imports and the flag. It
-  is accepted only if the unit tier and the reference tier pass with bit-identical histories. It touches `cli.py` and
-  the imports of existing modules, which skyscrapers sub-plans also touch; it is therefore done on its own branch from
-  `main`, reviewed and merged before any level-set code, and announced in the skyscrapers shared context so their next
-  sub-plan rebases on it.
-- Level-set work proceeds on its own branch, `levelset`, from `main` after stage 0.
+- The skyscrapers port of the prototyped Step 3 code lands on `main` first, at the prototype's module paths.
+- Stage 0 + S (§14) then runs on its own branch from that `main`: the shared package, the moves, the aliases, the
+  spray split, the imports and the flag, as one behaviour-preserving change. It is accepted only if the histories of a
+  Step 1, a Step 2 and a melting flight are identical before and after, and the unit and reference tiers pass. It is
+  merged before any level-set code, and the skyscrapers branch merges `main` before its next code task.
+- Branch `levelset-stage0` (head da4c549), built and verified on 2026-10-11/12 from the earlier `main`, is not merged:
+  the port edits several of the files it moved (`material.py`, `gas.py`, `cli.py`, `body.py`, `coupled.py`), and
+  repeating the mechanical move on the new `main` is safer than resolving those conflicts. Its alias mechanism, guard
+  tests, bit-identity script and `--architecture` flag are reused.
+- Level-set work proceeds on its own branch, `levelset`, from `main` after stage 0 + S.
 - Shared modules change only through a change that keeps both architectures' tests passing.
 
 ## 5. Architecture
@@ -480,9 +489,10 @@ velocity) for the later droplet step.
 Each stage is verified before the next is built; exact or published answers first, then agreement with skyscrapers
 where their scopes overlap. The numbers follow the build stages of §14.
 
-S. **Shared physics**: each promoted module reproduces its prototype's outputs bit for bit on the prototype's tests;
-   Girin's published cases are reproduced as in sub-plan 08; the whole unit and reference tiers pass through the
-   re-exports.
+0+S. **The combined refactor**: the histories of a Step 1, a Step 2 and a melting flight of the ported model are
+   identical before and after; the unit and reference tiers pass; Girin's published cases are reproduced as in
+   sub-plan 08; the shared package imports neither architecture (by running it and by reading its source); every old
+   import path is the same module object as its shared one.
 1. **Level set geometry**: a level set on the sphere reproduces its volume and area; a prescribed recession field gives
    its analytic shape; the per-piece correction is exact to round-off; a dumbbell with a shrinking neck pinches into two
    pieces with exact volumes.
@@ -508,25 +518,27 @@ S. **Shared physics**: each promoted module reproduces its prototype's outputs b
    with the flow on, stage 4's results unchanged before the first switch.
 6. **Tunnel**: the comparison of §11 against the pre-registered metrics.
 
-## 14. Build stages and documents (reordered 2026-10-11)
+## 14. Build stages and documents (reordered 2026-10-11; revised 2026-10-12)
 
-0. **Isolation**: the shared package, the re-exports, the imports, the `--architecture` flag (levelset exits 2 until
-   stage 1's driver exists). Accepted on bit-identical unit and reference tiers. Own branch, merged first (§4.4).
-S. **Shared physics**: the six sub-plans S1–S6 of §4.2, in `docs/superpowers/plans/shared/`, promoting Step 3's physics
-   into `reentry_model/shared/`. Independent of both architectures; S1–S4 and S6 can be built in any order after stage 0
-   (S4 needs S1–S3; S5 needs S2–S4).
+0+S. **The combined refactor**, after the skyscrapers port of the prototyped Step 3 code has landed on `main`
+   (decided 2026-10-12): the Steps 1–2 modules and Step 3's architecture-independent physics move into
+   `reentry_model/shared/` with aliases at the old paths; the spray physics is split from the skyscrapers bookkeeping;
+   `run --architecture skyscrapers|levelset` is added. On its own branch from that `main`, merged before any level-set
+   code (§4.4). Its plan is written once the port has landed, in `docs/superpowers/plans/levelset/`, reusing the tested
+   pieces of `00-stage0-isolation-and-shared-package.md`; that plan, the six separate stage S sub-plans indexed in
+   `docs/superpowers/plans/shared/README.md`, and branch `levelset-stage0` are superseded.
 1. **Level set geometry** (§6) with a prescribed surface motion; the box mesh's cost and memory measured.
 2. **Thermal solve** (§7) on the moving body, with prescribed motion and prescribed flow.
 3. **Marker skins with Girin's spraying** (§9) on a rigid, receding body (flow solve off).
 4. **The spraying flight** (§13, item 4): the convergence campaign. Girin's spraying is complete here.
+   (Stage numbers 1–6 are unchanged by the 2026-10-12 revision.)
 5. **Flow solve** (§8) and the fast phase (§10.3–10.4): the deformation.
 6. **Tunnel configuration** (§11) and the video comparison.
 
 Each level-set stage gets its own sub-plan in `docs/superpowers/plans/levelset/` (`01-…`, `02-…`), written after the
 previous stage is verified; each is prototyped in `prototype/levelset/` with its code blocks tested before they are
-written into the plan, the repository's prototype-then-plan practice. The stage S sub-plans are prototyped by moving
-the prototype modules into a scratch copy of the package with `shared/` and running both the prototype's tests and the
-package's. `README.md` and `docs/model_assumptions.md` gain a section on the two architectures and the shared physics,
+written into the plan, the repository's prototype-then-plan practice. The combined refactor is prototyped in a scratch
+worktree of the post-port `main`, as stage 0 was (`prototype/levelset/stage0/`). `README.md` and `docs/model_assumptions.md` gain a section on the two architectures and the shared physics,
 and a level-set section kept true as each stage lands.
 
 ## 15. Risks and approximations
@@ -604,6 +616,10 @@ volume correction; pieces other than the largest removed in flight (to the later
 - 2026-10-11: the skins are separate entities in the two architectures and are never shared (Asha).
 - 2026-10-11: the shared physics promoted by six sub-plans in `docs/superpowers/plans/shared/` (stage S), and the
   skyscrapers sub-plans amended to point at `reentry_model/shared/` (Asha).
+- 2026-10-12: the shared-package refactor waits for the skyscrapers port of the prototyped Step 3 code to land on
+  `main`, then moves the Steps 1–2 modules and the ported shared physics in one combined refactor (stage 0 + S); the
+  separate stage S sub-plans, the stage 0 plan and branch `levelset-stage0` are superseded, the branch kept as a
+  tested reference; the skyscrapers sub-plans amended to port at the prototype's paths (Asha).
 - 2026-10-11: build order changed so that marker skins and Girin's spraying (stages 3–4) come before the flow solve
   (stage 5); the spraying flight made its own stage (Asha).
 - 2026-10-11: isolation (Asha's instruction): copies of changed files in `reentry_model/levelset/`, shared code in

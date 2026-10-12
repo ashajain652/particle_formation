@@ -1876,3 +1876,24 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
 6. **Amended sub-plans** (each carries a block "Amendment of 2026-10-11 — the shared physics package"): 02, 03, 04, 05,
    07, 08, 10, 12, 13, 14, 15, 19, 20, 21, 22. Sub-plans 01 and 11 touch no shared file and are unchanged.
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. Supersedes the timing and paths of items 2, 3
+> and 6 of the amendment of 2026-10-11 above; its items 1, 4 and 5 stand.
+
+1. **Port first.** The prototyped Step 3 code is ported into the package at the module paths the prototype uses
+   (`reentry_model/<module>.py`). No sub-plan creates `reentry_model/shared/` or anything inside it. Each amended
+   sub-plan carries a block "Amendment of 2026-10-12 — port first, move into `shared/` afterwards" saying so.
+2. **Refactor afterwards.** Once the skyscrapers port has landed on `main`, one combined refactor (the level-set
+   design's stage 0 + S) moves the Steps 1–2 modules and Step 3's architecture-independent physics into
+   `reentry_model/shared/`. It keeps every old path as an alias of the same module object, splits the spray physics
+   from the skyscrapers bookkeeping, adds `run --architecture skyscrapers|levelset`, and requires every flight's
+   history (Step 1, Step 2 and a melting flight) to be identical before and after. Its plan is written once the port
+   has landed. The 2026-10-11 amendments remain the record of which modules it will move.
+3. **The earlier branch is a reference, not a merge.** Branch `levelset-stage0` (head da4c549, built and verified on
+   2026-10-11/12 from the old `main`) will not be merged. Its alias mechanism, guard tests, bit-identity script and
+   flag are reused by the combined refactor.
+4. **Helpful, not required:** where it costs nothing, keep the shared physics (`material`, `dispersion`,
+   `surface_flow`, the physics in `spray`, `girin_case`, the droplet outputs) free of imports from the skyscrapers-only
+   modules (`skin`, `columns`, `film`, `movemesh`, `mesh`, `coupled`), so that the move stays mechanical.
+

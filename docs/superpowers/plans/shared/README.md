@@ -1,5 +1,10 @@
 # Shared physics sub-plans (stage S)
 
+> **Superseded on 2026-10-12 (Asha's decision).** These six sub-plans will not be written separately. The skyscrapers
+> work ports the prototyped Step 3 code into the package first, at the prototype's module paths; once it has landed on
+> `main`, one combined refactor (the level-set design's stage 0 + S, spec §14) moves these modules into
+> `reentry_model/shared/`. The table below remains the record of which modules are shared and where they come from.
+
 These sub-plans promote Step 3's architecture-independent physics from the prototype work copies into
 `reentry_model/shared/`, so that both model architectures — **skyscrapers** and **level set** — import one copy.
 Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2 and §14.

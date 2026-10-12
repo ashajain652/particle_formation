@@ -1,5 +1,12 @@
 # Level-set stage 0 — the shared package and the architecture flag Implementation Plan
 
+> **Superseded on 2026-10-12 (Asha's decision).** The shared-package refactor now waits for the skyscrapers port of the
+> prototyped Step 3 code to land on `main`, and is then done as one combined refactor (stage 0 + S) with its own plan,
+> written at that time (spec §4.4, §14). This plan was executed on branch `levelset-stage0` (head da4c549; unit 377
+> passed, FEniCSx 7, reference 13, bit-identity 3/3), which is **not** merged. Its code — the alias mechanism, the guard
+> tests, `prototype/levelset/stage0/bitid.sh` and the `--architecture` flag — is the tested reference the combined plan
+> reuses.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
