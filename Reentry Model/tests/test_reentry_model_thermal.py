@@ -386,3 +386,28 @@ def test_a_nodal_law_enters_implicitly_and_keeps_the_balance(coarse_sphere_mesh)
     T = s.temperature()
     assert r.Q_interface == pytest.approx(float((-950.0 * b + b * T[corners]).sum()), rel=1e-12)
     assert s.energy() - E0 == pytest.approx(r.Q_interface * 0.5, rel=1e-6) and r.Q_rad == 0.0
+
+
+def test_a_nodal_law_on_a_pinned_node_is_dropped_and_reported():
+    """Sub-plan 20 Task 6, fix round: a pinned (material-free) node listed in a nodal law keeps its temperature exactly,
+    the law is not booked into Q_interface there, and its power at the old temperature is reported in Q_dropped, as a
+    nodal load on a pinned node is; the energy change is what Q_interface delivered."""
+    from reentry_model import mesh as mesh_mod
+    pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]], dtype=float) * 1e-2
+    m = mesh_mod.VolumeMesh(pts, np.array([[0, 1, 2, 3], [1, 2, 3, 4]]))
+    s = thermal.thermal_solver("skfem", linear_solver="direct")
+    s.setup(m, constant_material(), 0.0)
+    T0 = np.array([300.0, 310.0, 320.0, 330.0, 900.0])
+    s.set_temperature(T0)
+    m.deactivate([1])
+    s.set_fractions(np.array([1.0, 0.0]))
+    assert s.pinned.tolist() == [False, False, False, False, True]
+    nodes = np.array([0, 2, 4])                                      # two free nodes and the pinned one
+    a, b = np.array([0.4, 0.6, 0.8]), np.array([-2e-3, -3e-3, -5e-3])
+    E0 = s.energy()
+    r = s.step(0.1, np.zeros(m.surface().n_patches), 0.0, nodal_law=(nodes, a, b))
+    T = s.temperature()
+    assert T[4] == 900.0                                             # the pinned node keeps its temperature exactly
+    assert r.Q_interface == pytest.approx(float((a[:2] + b[:2] * T[nodes[:2]]).sum()), rel=1e-12)
+    assert r.Q_dropped == pytest.approx(0.8 - 5e-3 * 900.0, rel=1e-12)
+    assert s.energy() - E0 == pytest.approx((r.Q_interface + r.Q_extra) * 0.1, rel=1e-9)
