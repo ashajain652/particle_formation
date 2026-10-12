@@ -125,3 +125,94 @@ def test_the_minimum_is_400_um_of_solid_unless_girins_layer_needs_more():
     assert np.all(skin.minimum_mass(mat, area, s) == solid)
 
 
+# -- heat through the depth (Task 4) -----------------------------------------------------------------------------------
+def test_a_skin_at_its_minimum_above_it_and_drained_returns_to_it_by_drawing():
+    mat = scheil()
+    s = skin.SkinSettings(substep=0.01)
+    sk = filled(mat, n=3, settings=s)
+    m_min = skin.minimum_mass(mat, sk.area, s)
+    sk.add_bottom(np.array([0.0, 0.5, 0.0]) * m_min, float(mat.enthalpy(700.0)))   # one above its minimum
+    sk.take_bottom(np.array([0.0, 0.0, 0.6]) * m_min)                              # one drained below it
+    sk.regrid()
+    book = skin.advance(sk, 0.05, np.zeros(3), sk.area, 0.0, 0.0, np.full(3, 700.0), m_min, T_b1=np.full(3, 700.0))
+    assert book.drawn == pytest.approx(np.array([0.0, 0.0, 0.6]) * m_min, rel=1e-12)
+    assert sk.column_mass() == pytest.approx(np.array([1.0, 1.5, 1.0]) * m_min, rel=1e-12)
+    assert np.allclose(sk.T[sk.valid], 700.0)
+
+
+def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponential_profile():
+    """Liquid removed as it forms under a constant flux: in steady state the top recedes at v = q / (rho (h(T_feed) -
+    h(T0))) and the temperature beneath it is T0 + (T_feed - T0) exp(-v z / alpha)."""
+    mat = sharp()
+    q, T0 = 1.0e8, 300.0
+    s = skin.SkinSettings(min_thickness=5e-3, cell=20e-6, substep=5e-4)     # 5 decay lengths, base held at T0
+    sk = skin.Skins(mat, np.array([1e-6]), s)
+    m_min = skin.minimum_mass(mat, sk.area, s)
+    sk.fill(m_min, T0)
+    v = q / (mat.rho * float(mat.enthalpy(mat.T_feed) - mat.enthalpy(T0)))       # 35.6 mm/s
+    alpha = 100.0 / (2800.0 * 1000.0)
+    removed = []
+    for _ in range(30):
+        book = skin.advance(sk, 0.01, np.array([q]), sk.area, 0.0, 0.0, np.array([T0]), m_min, T_b1=np.array([T0]))
+        removed.append(book.removed[0])
+    speed = np.sum(removed[10:]) / (mat.rho * 1e-6) / 0.2                         # after 0.1 s, 3.5 rise times
+    # 2.1 % low with 20 um cells and 0.5 ms sub-steps, 1.1 % with 10 um and 0.25 ms (measured while planning): the
+    # first-order error of removing whole cells once they are liquid
+    assert speed == pytest.approx(v, rel=0.03)
+    n = sk.count[0]
+    dz = sk.dz()[0, :n]
+    z = np.cumsum(dz) - 0.5 * dz
+    exact = T0 + (mat.T_feed - T0) * np.exp(-v * z / alpha)
+    near = z < 3e-3
+    assert np.abs(sk.T[0, :n][near] - exact[near]).max() < 0.02 * (mat.T_feed - T0)    # 9.2 K measured
+
+
+def test_the_books_of_a_pass_close_exactly():
+    mat = scheil()
+    s = skin.SkinSettings(substep=0.01)
+    sk = filled(mat, n=3, settings=s, T=880.0)
+    m_min = skin.minimum_mass(mat, sk.area, s)
+    E0, M0 = sk.energy(), sk.mass()
+    q = np.array([5e6, 2e7, 5e7])           # 0.4 mm of skin passes 10 MW/m2 to the base with a 31 K rise: more melts
+    book = skin.advance(sk, 0.2, q, sk.area * 1.02, 300.0, 0.3, np.full(3, 870.0), m_min, T_b1=np.full(3, 875.0))
+    assert book.removed.sum() > 0.0 and book.drawn.sum() > 0.0
+    assert sk.mass() == pytest.approx(M0 - book.removed.sum() + book.drawn.sum(), rel=1e-13)
+    gained = book.E_top - book.E_rad - book.E_base + book.E_side - book.removed_H + book.drawn_H
+    assert sk.energy() == pytest.approx(E0 + gained.sum(), rel=1e-12)
+    assert np.allclose(book.E_top, q * sk.area * 1.02 * 0.2)
+
+
+def test_the_trial_pass_leaves_the_skins_and_gives_the_real_pass_its_base_energy():
+    mat = scheil()
+    s = skin.SkinSettings(substep=0.01)
+    sk = filled(mat, n=2, settings=s, T=850.0)
+    m_min = skin.minimum_mass(mat, sk.area, s)
+    before = sk.state()
+    q = np.array([1e6, 4e6])
+    a, b = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, np.full(2, 840.0), m_min)
+    assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
+    assert np.all(b <= 0.0)
+    for dT, tol in ((0.0, 1e-9), (2.0, 2e-3)):
+        sk.set_state(before)
+        book = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, np.full(2, 840.0), m_min, T_b1=np.full(2, 840.0 + dT))
+        law = (a + b * (840.0 + dT)) * 0.1
+        # exact at the linearisation temperature; 2 K away the law misses by a few parts in a thousand of the energy
+        # through the top (the mismatch the body books)
+        assert np.abs(book.E_base - law).max() <= tol * np.abs(book.E_top).max()
+
+
+def test_a_draw_from_a_base_above_t_rigid_takes_rigid_metal():
+    """The skin draws rigid metal (spec 6.6): from a 3D base above T_rigid (895 K) it takes metal at T_rigid's enthalpy,
+    never the base's -- a base overshooting T_feed would otherwise feed liquid that the next sub-step removes, without
+    limit. (At a 930 K base the whole 0.4 mm skin passes T_feed within one 10 ms sub-step, is removed and redrawn: the
+    runaway the interface's repeat stops, Task 10.)"""
+    mat = scheil()
+    s = skin.SkinSettings(substep=0.01)
+    sk = filled(mat, n=1, settings=s, T=880.0)
+    m_min = skin.minimum_mass(mat, sk.area, s)
+    sk.take_bottom(0.5 * m_min)
+    book = skin.advance(sk, 0.01, np.zeros(1), sk.area, 0.0, 0.0, np.array([900.0]), m_min, T_b1=np.array([900.0]))
+    assert book.drawn[0] == pytest.approx(0.5 * m_min[0], rel=1e-12)
+    assert book.drawn_H[0] == pytest.approx(book.drawn[0] * float(mat.enthalpy(mat.T_rigid)), rel=1e-12)
+
+

@@ -411,3 +411,153 @@ def minimum_mass(material, area, settings, delta_m=None):
     return np.maximum(solid, liquid)
 
 
+# -- heat through the depth (Task 4) -----------------------------------------------------------------------------------
+@dataclass
+class SkinBook:
+    """What a pass did, per column: energies [J] and masses [kg]."""
+    E_top: np.ndarray        # convective heat taken in at the top
+    E_rad: np.ndarray        # radiated from the top
+    E_base: np.ndarray       # conducted down into the 3D model through the base
+    E_side: np.ndarray       # gained from the neighbouring columns by sideways conduction
+    removed: np.ndarray      # liquid removed as it formed (stage 2)
+    removed_H: np.ndarray    # the enthalpy it took
+    drawn: np.ndarray        # rigid metal drawn from the 3D model in the sub-steps
+    drawn_H: np.ndarray      # the enthalpy it brought
+
+
+def _conduct(sk, dt, q_top, A_top, T_amb, eps, T_b, Q_side=None):
+    """One implicit (backward-Euler) sub-step for every column: the convective flux q_top [W/m2] over the top area
+    A_top in at the top cell, radiation from it over the same area, conduction through the cells (harmonic
+    conductances), the explicit sideways heat Q_side [W per cell], and the base held at T_b [K] through the bottom
+    half-cell (T_b None: an adiabatic base, for the tests). Newton in the temperature with a backtracking line search
+    per column (stage 1's solver, sub-plan 18). Returns (E_top, E_rad, E_base, E_side) [J per column] and, when the
+    skins track S, updates it to dT/dT_b and returns the base energy's derivative with respect to T_b as a fifth item.
+    E_base is what the books leave, so they close exactly whatever the iteration error."""
+    mat = sk.props
+    n, K = sk.m.shape
+    valid = sk.valid
+    rows = np.arange(n)
+    last = np.maximum(sk.count - 1, 0)
+    A = sk.area
+    dz = np.where(valid, np.maximum(sk.dz(), DZ_FLOOR), 1.0)
+    m = sk.m
+    link = valid[:, 1:]
+    T_old = sk.T.copy()
+    E_old = sk.H.copy()                              # the stored enthalpy: the books close whatever h(T) is tabulated
+    eps_s = np.asarray(eps, dtype=float) * SIGMA_SB * np.asarray(A_top, dtype=float)
+    q = np.asarray(q_top, dtype=float) * np.asarray(A_top, dtype=float)
+    base = T_b is not None
+    T_b = np.asarray(T_b if base else 0.0, dtype=float) * np.ones(n)
+    Qs = np.zeros((n, K)) if Q_side is None else np.where(valid, Q_side, 0.0)
+
+    def system(T):
+        h, cp, k = mat.conduction(T)
+        G = np.where(link, A[:, None] / (0.5 * dz[:, :-1] / k[:, :-1] + 0.5 * dz[:, 1:] / k[:, 1:]), 0.0)
+        Gb = A * k[rows, last] / (0.5 * dz[rows, last]) if base else np.zeros(n)
+        flux = G * (T[:, :-1] - T[:, 1:])
+        net = Qs.copy()
+        net[:, :-1] -= flux
+        net[:, 1:] += flux
+        net[:, 0] += q - eps_s * (T[:, 0] ** 4 - T_amb ** 4)
+        net[rows, last] -= Gb * (T[rows, last] - T_b)
+        diag = m * cp / dt
+        diag[:, 0] += 4.0 * eps_s * T[:, 0] ** 3
+        diag[:, :-1] += G
+        diag[:, 1:] += G
+        diag[rows, last] += Gb
+        R = np.where(valid, (m * h - E_old) / dt - net, 0.0)
+        return R, G, Gb, np.where(valid, diag, 1.0)
+
+    # Newton in the temperature with a backtracking line search per column on the residual's norm: in 10-micrometre
+    # cells conduction outweighs the heat capacity some five hundred times over a 10 ms sub-step, so a cell must move
+    # with its neighbours, and the 3D solver's per-node enthalpy-consistent update stalled here (sub-plan 18)
+    T = T_old.copy()
+    R, G, Gb, diag = system(T)
+    moved = np.zeros(n)
+    for _ in range(NEWTON_MAX):
+        dT = thomas(-G, diag, -G, -R)
+        r0 = np.sqrt((R * R).sum(axis=1))
+        lam = np.ones(n)
+        for _ in range(LINE_SEARCH_MAX):
+            T_try = T + lam[:, None] * dT
+            R_try, G_try, Gb_try, diag_try = system(T_try)
+            moved = np.abs(T_try - T).max(axis=1)
+            worse = (np.sqrt((R_try * R_try).sum(axis=1)) > (1.0 - 1e-4 * lam) * r0) & (moved > NEWTON_TOL)
+            if not worse.any():
+                break
+            lam = np.where(worse, 0.5 * lam, lam)
+        T, R, G, Gb, diag = T_try, R_try, G_try, Gb_try, diag_try
+        if moved.max() <= NEWTON_TOL:
+            break
+    else:
+        raise RuntimeError("a skin sub-step did not converge in {} iterations (last change {:.2e} K)".format(
+            NEWTON_MAX, moved.max()))
+    T = np.where(valid, T, T_old)
+    E_new = m * mat.enthalpy(T)
+    E_top = q * dt
+    E_rad = eps_s * (T[:, 0] ** 4 - T_amb ** 4) * dt
+    E_side = Qs.sum(axis=1) * dt
+    E_base = E_top - E_rad + E_side - (E_new.sum(axis=1) - E_old.sum(axis=1))
+    out = [E_top, E_rad, E_base, E_side]
+    if sk.S is not None:
+        rhs = m * mat.cp_eff(T_old) / dt * sk.S
+        rhs[rows, last] += Gb
+        S = thomas(-G, diag, -G, np.where(valid, rhs, 0.0))
+        out.append(dt * Gb * (S[rows, last] - 1.0))
+        sk.S = np.where(valid, S, 0.0)
+    sk.T, sk.H = T, np.where(valid, E_new, 0.0)
+    return tuple(out)
+
+
+def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True):
+    """The macro step's sub-steps for every column (spec 7.2). Each sub-step: the sideways heat `side(sk, h)` [W per
+    cell] if given (Task 5), the implicit conduction, then -- with `remove` and a melting material -- the contiguous top
+    cells at or above T_feed leave, a column below its minimum mass m_min [kg] draws back to it, and the cells are split
+    and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but never above T_rigid -- a 3D base
+    node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it reached 930 K in one 0.5 s step, found
+    while planning), and drawing at its temperature would draw liquid that the next sub-step removes, without limit;
+    what the 3D model actually loses is reconciled by the body after the base moves.
+
+    T_b1 None: the trial pass, on a copy (the skins are left as they were), base held at T_b0; returns the base law
+    (a, b) per column, E_base / dt = a + b T_b [W into the 3D model], from the pass's base energy and its derivative with
+    respect to the base temperature, the slope clipped at zero (stage 1's choice: a law rising with T_b would cost the 3D
+    matrix its diagonal dominance; what the clip misses is the interface mismatch's to book). Otherwise the real pass,
+    base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook."""
+    mat = sk.material
+    N = max(1, int(math.ceil(dt / sk.settings.substep - 1e-9)))
+    h = dt / N
+    trial = T_b1 is None
+    saved = sk.state() if trial else None
+    T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(sk.n)
+    book = SkinBook(*(np.zeros(sk.n) for _ in range(8)))
+    dEb = np.zeros(sk.n)
+    if trial:
+        sk.S = np.zeros_like(sk.m)
+    h_b = mat.enthalpy(np.minimum(T_b, mat.T_rigid))
+    melting = remove and mat.melts
+    for _ in range(N):
+        Q_side = side(sk, h) if side is not None else None
+        res = _conduct(sk, h, q_top, A_top, T_amb, eps, T_b, Q_side)
+        book.E_top += res[0]
+        book.E_rad += res[1]
+        book.E_base += res[2]
+        book.E_side += res[3]
+        if trial:
+            dEb += res[4]
+        if melting:
+            k = np.cumprod(sk.valid & (sk.T >= mat.T_feed), axis=1).sum(axis=1)
+            gone, gone_H = sk.take_top(k)
+            book.removed += gone
+            book.removed_H += gone_H
+        short = np.maximum(m_min - sk.column_mass(), 0.0)
+        book.drawn += short
+        book.drawn_H += sk.add_bottom(short, h_b)
+        sk.regrid()
+    if trial:
+        sk.set_state(saved)
+        b = np.minimum(dEb / dt, 0.0)
+        return book.E_base / dt - b * T_b, b
+    sk.S = None
+    return book
+
+
