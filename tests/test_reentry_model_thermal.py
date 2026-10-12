@@ -355,3 +355,34 @@ def test_state_round_trip_repeats_a_step(coarse_sphere_mesh):
     s.set_state(snap)
     r2 = s.step(0.5, q, 0.0)
     assert np.allclose(r1.T, r2.T, rtol=0.0, atol=1e-6)
+
+
+def test_a_nodal_law_enters_implicitly_and_keeps_the_balance(coarse_sphere_mesh):
+    """The corner columns' base law (sub-plan 20 Task 6): heat a + b T_i [W] into listed nodes, implicit; with b = 0 it
+    is a nodal load exactly; with b < 0 the step's energy change is what the law delivered at the end-of-step
+    temperatures. No radiation (emissivity 0: the boundary lies under the skins)."""
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    corners = np.unique(coarse_sphere_mesh.surface().faces)
+    a = np.full(len(corners), 0.5)
+    out = []
+    for kind in ("load", "law0"):
+        s = thermal.thermal_solver("skfem", linear_solver="direct")
+        s.setup(coarse_sphere_mesh, mat, 0.0)
+        s.set_temperature(700.0)
+        nf = len(s.areas)
+        if kind == "load":
+            load = np.zeros(coarse_sphere_mesh.n_nodes)
+            load[corners] = a
+            out.append(s.step(0.5, np.zeros(nf), 0.0, nodal_load=load))
+        else:
+            out.append(s.step(0.5, np.zeros(nf), 0.0, nodal_law=(corners, a, np.zeros(len(corners)))))
+    assert np.allclose(out[0].T, out[1].T, rtol=0.0, atol=1e-9) and out[1].Q_interface == pytest.approx(a.sum(), rel=1e-12)
+    s = thermal.thermal_solver("skfem", linear_solver="direct")
+    s.setup(coarse_sphere_mesh, mat, 0.0)
+    s.set_temperature(700.0)
+    b = np.full(len(corners), -2e-3)                                 # 2 mW/K per node: the base cools toward 950 K
+    E0 = s.energy()
+    r = s.step(0.5, np.zeros(len(s.areas)), 0.0, nodal_law=(corners, -950.0 * b, b))
+    T = s.temperature()
+    assert r.Q_interface == pytest.approx(float((-950.0 * b + b * T[corners]).sum()), rel=1e-12)
+    assert s.energy() - E0 == pytest.approx(r.Q_interface * 0.5, rel=1e-6) and r.Q_rad == 0.0
