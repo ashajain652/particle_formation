@@ -14,9 +14,10 @@ zone, which is the minimum thickness below the top, and grows by (growth - 1) pe
 form of each cell being `growth` times thicker than the one above.
 
 Stage 2 has no flow and no spraying: after each sub-step the contiguous cells at the top that are at or above T_feed
-leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model at
-the base temperature (`drawn`). The body (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the
-corners' displacements and reconciles each column with what the moving mesh actually swept."""
+leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model
+(`drawn`) at the base temperature, capped at T_rigid: the drawn metal's enthalpy is h(min(T_b, T_rigid)). The body
+(`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the corners' displacements and reconciles
+each column with what the moving mesh actually swept."""
 import math
 from dataclasses import dataclass
 
@@ -322,10 +323,13 @@ class Skins:
             self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T))
         return mass, H
 
-    def add_bottom(self, dm, h):
+    def add_bottom(self, dm, h, s=1.0):
         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
-        a new cell); returns the enthalpy added. With S tracked, the metal carries S = 1 (it is at the base temperature)."""
+        a new cell); returns the enthalpy added. With S tracked, the metal carries the sensitivity s per column
+        (default 1: it is at the base temperature and follows it; 0 for metal whose enthalpy does not depend on the
+        base temperature, such as rigid metal drawn at T_rigid's enthalpy from a base above T_rigid)."""
         dm, h = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,)), np.broadcast_to(np.asarray(h, dtype=float), (self.n,))
+        s = np.broadcast_to(np.asarray(s, dtype=float), (self.n,))
         some = dm > 0.0
         if not some.any():
             return np.zeros(self.n)
@@ -336,7 +340,7 @@ class Skins:
         self.m[rows, b] += dm[rows]
         self.H[rows, b] += dm[rows] * h[rows]
         if self.S is not None:
-            self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows]) / self.m[rows, b]
+            self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows] * s[rows]) / self.m[rows, b]
         self.count[rows] = np.maximum(self.count[rows], 1)
         self.T[rows, b] = self.material.temperature_from_enthalpy(self.H[rows, b] / self.m[rows, b])
         return np.where(some, dm * h, 0.0)
@@ -534,6 +538,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     if trial:
         sk.S = np.zeros_like(sk.m)
     h_b = mat.enthalpy(np.minimum(T_b, mat.T_rigid))
+    s_b = (T_b < mat.T_rigid).astype(float)           # drawn metal follows the base only where the draw is not capped
     melting = remove and mat.melts
     for _ in range(N):
         Q_side = side(sk, h) if side is not None else None
@@ -551,7 +556,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
             book.removed_H += gone_H
         short = np.maximum(m_min - sk.column_mass(), 0.0)
         book.drawn += short
-        book.drawn_H += sk.add_bottom(short, h_b)
+        book.drawn_H += sk.add_bottom(short, h_b, s_b)
         sk.regrid()
     if trial:
         sk.set_state(saved)
@@ -592,7 +597,7 @@ def _sideways_once(sk, columns, T, dz):
     edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
     cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
     exact for a field linear along the surface where neighbouring columns have the same cells."""
-    n, K = T.shape
+    n = T.shape[0]
     zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
     H = zb[:, -1]
     zg = depth_grid(sk.settings, float(H.max()))

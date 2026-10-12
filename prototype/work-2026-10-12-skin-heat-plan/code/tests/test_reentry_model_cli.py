@@ -385,9 +385,24 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
     MELT + ["--surface-model", "skin"],                                     # Girin's removal needs flow and spraying
     MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
     ["run", "--surface-model", "skin"],                                     # no thermal model
 ])
 def test_bad_skin_arguments_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv + ["--outdir", str(tmp_path)])
     assert exc.value.code == 2
+
+
+def test_a_skin_run_refuses_prism_layers_and_says_why(tmp_path, capsys):
+    """The moving mesh is rebuilt as plain tetrahedra, so prism layers asked for on the command line would silently vanish
+    at the first rebuild: the run is refused with exit code 2 and a message that names the cause. Only an explicit value
+    above zero is refused; the default (none given, which a skin run resolves to 0 layers) and an explicit 0 are not."""
+    argv = ["--removal", "instant", "--surface-model", "skin", "--outdir", str(tmp_path)]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(MELT + argv + ["--prism-layers", "4"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--prism-layers" in err and "rebuild cannot reproduce prism layers" in err
+    given = cli.build_parser().parse_args(FEM + ["--melt", "on", "--removal", "instant", "--surface-model", "skin"])
+    assert given.prism_layers is None                                           # not given: nothing to refuse

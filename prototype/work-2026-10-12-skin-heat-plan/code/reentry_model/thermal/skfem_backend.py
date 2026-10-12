@@ -259,7 +259,8 @@ class SkfemThermalSolver:
         `interface = (mask, a, b)` per facet: the skins' base law, heat a + b T_f [W/m2] into the body through the
         masked facets, which neither take q_conv's place nor radiate (Step 3 sub-plan 18). `nodal_law = (nodes, a, b)`:
         the corner columns' base law (layered-skin design section 7.2, sub-plan 20), heat a + b T_i [W] into each listed
-        node, implicit like the radiation."""
+        node, implicit like the radiation; a law on a pinned node is dropped and added to Q_dropped, as a nodal load is.
+        b is expected to be at most zero: the skin's base heat falls as the node warms, so -b only adds to the diagonal."""
         T_old = self.T
         # predictor: extrapolate the previous step (saves ~1 Newton iteration per step); plain T_old on the first step
         T_k = T_old + (T_old - self._T_prev) if self._T_prev is not None and dirichlet is None else T_old.copy()
@@ -283,6 +284,9 @@ class SkfemThermalSolver:
         if nodal_law is not None:
             law_nodes = np.asarray(nodal_law[0], dtype=np.int64)
             a_law, b_law = np.asarray(nodal_law[1], dtype=float), np.asarray(nodal_law[2], dtype=float)
+            keep = ~self.pinned[law_nodes]                      # a pinned node takes no law: dropped and reported
+            Q_dropped += float((a_law + b_law * T_old[law_nodes])[~keep].sum())
+            law_nodes, a_law, b_law = law_nodes[keep], a_law[keep], b_law[keep]
             B_law = sp.csr_matrix((-b_law, (law_nodes, law_nodes)), shape=(len(self.points), len(self.points)))
         for iteration in range(1, self.max_iterations + 1):
             K, M, E = self.operators(T_k, T_old)

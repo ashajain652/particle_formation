@@ -526,3 +526,20 @@ def test_a_corner_that_does_not_move_is_credited_with_nothing_its_neighbours_swe
     dV = movemesh.swept_volumes(points, points + u, faces, faces, n)
     assert dV[7] == pytest.approx(area[7] * 2e-4, rel=0.02)
     assert np.abs(np.delete(dV, 7)).max() == 0.0
+
+
+def test_locate_finds_the_containing_element_for_every_quadrature_point_of_a_rebuild(coarse_sphere_mesh):
+    """The projection locates every new element's four quadrature points in the old mesh; the 16 nearest centroids missed
+    the containing element for 160 of 39 164 of them here (0.41 %, down to -0.149 in a barycentric coordinate, all in the
+    graded interior), so the points were extrapolated from the wrong element (measured 2026-10-12). No point is excluded
+    for lying near the surface: none of the misses was within 1e-6 m of it."""
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert not moving.move(inward(moving, 1e-3)).refused
+    old_points, old_tets = moving.mesh.points.copy(), moving.mesh.tets.copy()
+    moving.rebuild()
+    qp = np.einsum("qa,eai->eqi", movemesh.QUADRATURE, moving.mesh.points[moving.mesh.tets]).reshape(-1, 3)
+    elem, bary = movemesh.locate(old_points, old_tets, qp)
+    assert len(qp) > 30000
+    assert bary.min(axis=1).min() > -1e-9
