@@ -14,9 +14,10 @@ zone, which is the minimum thickness below the top, and grows by (growth - 1) pe
 form of each cell being `growth` times thicker than the one above.
 
 Stage 2 has no flow and no spraying: after each sub-step the contiguous cells at the top that are at or above T_feed
-leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model at
-the base temperature (`drawn`). The body (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the
-corners' displacements and reconciles each column with what the moving mesh actually swept."""
+leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model
+(`drawn`) at the base temperature, capped at T_rigid: the drawn metal's enthalpy is h(min(T_b, T_rigid)). The body
+(`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the corners' displacements and reconciles
+each column with what the moving mesh actually swept."""
 import math
 from dataclasses import dataclass
 
@@ -596,7 +597,7 @@ def _sideways_once(sk, columns, T, dz):
     edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
     cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
     exact for a field linear along the surface where neighbouring columns have the same cells."""
-    n, K = T.shape
+    n = T.shape[0]
     zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
     H = zb[:, -1]
     zg = depth_grid(sk.settings, float(H.max()))
@@ -635,8 +636,6 @@ def sideways_heat(sk, columns, dt):
             H = H + Q * dt / cycles
             T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
     return total
-
-
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------

@@ -230,6 +230,7 @@ class FenicsxThermalSolver:
         eps_f = self.emissivity if mask is None else np.where(mask, 0.0, self.emissivity)
         self._radiating = None if mask is None else ~mask
         # the corner columns' base law (sub-plan 20): heat a + b T_i [W] into each listed node, implicit
+        # b is expected to be at most zero: the skin's base heat falls as the node warms, so -b only adds to the diagonal
         if nodal_law is not None:
             law_nodes = np.asarray(nodal_law[0], dtype=np.int64)
             a_law, b_law = np.asarray(nodal_law[1], dtype=float), np.asarray(nodal_law[2], dtype=float)
