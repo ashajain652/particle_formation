@@ -321,7 +321,7 @@ def test_skins_match_the_skfem_backend(coarse_sphere_mesh):
         np.random.seed(12345)
         m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
         b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver(name), MASS_100MM,
-                             settings=body.MeltSettings(surface_model="skin",
+                             settings=body.MeltSettings(surface_model="skin1d",
                                                         skin=skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], substep=0.05)))
         b.solver.set_temperature(800.0)
         b.energy0 = b.energy()

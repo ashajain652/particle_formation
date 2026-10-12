@@ -37,6 +37,14 @@ SKIN_COLUMNS = ["skin_count", "skin_mass_kg", "skin_thickness_min_mm", "skin_thi
                 "skin_frozen_mass_kg", "skin_returned_mass_kg", "skin_full_events", "skin_thick_feeding_count",
                 "skin_thick_feeding_max_mm", "skin_thick_feed_events"]   # sub-plan 18
 MELT_COLUMNS = MELT_COLUMNS + SKIN_COLUMNS
+# the layered skins on the corner columns (sub-plan 20): skinbody.SkinBody.skin_stats(), every macro step
+SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
+                    "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
+                    "rebuilds", "rebuild_residual_J", "rebuild_residual_last_J", "drawn_mass_kg", "absorbed_mass_kg",
+                    "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
+                    "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
+                    "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
+                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -79,11 +87,17 @@ class CoupledRun:
         r.update(body.surface_stats())
         if self.melting:
             r.update(body.melt_stats())
+        if self.skins:
+            r.update(body.skin_stats())
         return r
 
     @property
     def melting(self):
         return hasattr(self.body, "melt_stats")
+
+    @property
+    def skins(self):
+        return hasattr(self.body, "skin_stats")
 
     def run(self):
         started = time.perf_counter()
@@ -104,7 +118,7 @@ class CoupledRun:
             rows.append(self.row(sim.t, sim.y, a, loads))
             states.append(sim.y.copy())
             self._frame(step, sim.t, loads)
-            if self.melting and body.demised():
+            if (self.melting or self.skins) and body.demised():
                 sim.end_reason = "demise"
         self._collection()
         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
@@ -113,6 +127,8 @@ class CoupledRun:
         history.results.update(self.thermal_results(history))
         if self.melting:
             history.results.update(self.melt_results(history))
+        if self.skins:
+            history.results.update(self.skin_results(history))
         if s.dt_continuum is not None:
             t_sw, kn_sw, h_sw = self.switched_at or (None, None, None)
             history.results.update({"dt_continuum_s": s.dt_continuum, "dt_switch_time_s": t_sw, "dt_switch_kn": kn_sw,
@@ -155,6 +171,20 @@ class CoupledRun:
                 "skin_wall_s": body.skin_wall, "skin_frozen_mass_kg": body.skin_frozen_mass,
                 "skin_returned_mass_kg": body.skin_returned_mass, "skin_thick_feed_events": body.skin_thick_feed_events,
                 "melt_energy_balance_residual": body.energy_balance_residual()}
+
+    def skin_results(self, history):
+        """The layered skins' totals (sub-plan 20)."""
+        body, last = self.body, history.columns
+        out = {"skin_columns": body.columns.n, "initial_mass_kg": body.mass0, "final_mass_kg": float(last["mass_kg"][-1]),
+               "demise_time_s": float(last["time_s"][-1]) if history.end_reason == "demise" else None,
+               "surface_fold_max_deg": float(np.max(last["surface_fold_deg"])),
+               "surface_quality_min": float(np.min(last["surface_quality_min"])),
+               "zone_ratio_min": float(np.min(last["zone_ratio_min"]))}
+        out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
+                                                  "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
+                                                  "wall_move_s", "wall_rebuild_s")})
+        out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
+        return out
 
     def thermal_results(self, history):
         c, body = history.columns, self.body
@@ -210,6 +240,8 @@ def write_vtk_frame(output_dir, k, body, loads):
     import pyvista as pv
     from .thermal import SIGMA_SB
     os.makedirs(output_dir, exist_ok=True)
+    if hasattr(body, "skin_stats"):
+        return write_skin_frame(output_dir, k, body, loads)
     mesh, surface, T = body.mesh, body.surface, body.field()
     melting = hasattr(body, "melt_stats")
     tets = mesh.tets[mesh.active]
@@ -258,6 +290,28 @@ def write_vtk_frame(output_dir, k, body, loads):
                 if sk.n:
                     out[on] = v[r]
                 poly.cell_data[key] = out
+    poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+
+
+def write_skin_frame(output_dir, k, body, loads):
+    """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
+    (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
+    liquid and flowing depths, skin thickness and cells, and the base's position (the corner on the 3D mesh)."""
+    import pyvista as pv
+    mesh, sk, mat = body.mesh, body.skins, body.material
+    cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
+    grid = pv.UnstructuredGrid(cells, np.full(mesh.n_elements, pv.CellType.TETRA), mesh.points)
+    grid.point_data["T"] = body.field()
+    grid.save(os.path.join(output_dir, "field_{}.vtu".format(k)))
+    surface = body.surface
+    poly = pv.PolyData(surface.points, np.hstack([np.full((len(surface.faces), 1), 3), surface.faces]).ravel())
+    poly.point_data["T_top"] = sk.T[:, 0]
+    poly.point_data["q_conv"] = loads.q_conv
+    poly.point_data["skin_thickness"] = sk.thickness()
+    poly.point_data["skin_cells"] = sk.count.astype(float)
+    poly.point_data["liquid_depth"] = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
+    poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
+    poly.point_data["base_position"] = body.columns.points
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
 
 
