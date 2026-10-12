@@ -3854,8 +3854,9 @@ inside the criterion, in a single run.
   Percentages against the one-dimensional reference; against the fine box the development run is +2.2, −1.9 and
   −1.9 %, the production run +1.5, −1.2 and −1.4 %; the two cell sizes agree to 0.8 %. The surface's largest fold stays
   at 93 degrees, the plate's own unheated edges; 2 rebuilds; no base faults. Planning measured +1.9, −0.1 and −0.7 %
-  (dev) on code whose capped draws still carried a sensitivity of 1 (ruling 4); the build's fix moved the onset at 1.0 s
-  2.3 points earlier and the later times about 1.3 points later. The same development case run again on the same code
+  (dev) on code whose capped draws still carried a sensitivity of 1 (ruling 4) and whose rebuild transfer had no retry
+  (Task 0); together the build's corrections moved the onset at 1.0 s 2.3 points earlier and the later times about
+  1.3 points later — which of the two did it was not separated. The same development case run again on the same code
   agreed to every printed digit to 1.5 s and gave −2.04 % at 2.0 s against −2.13 %: the run is not bit-reproducible
   after its second rebuild.
   How the plate was reached, for the record: with full flux only to 12 mm the centre lost heat sideways and lagged 9 %

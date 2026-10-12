@@ -1849,8 +1849,9 @@ triggers the interface repeat; under the spec's own fallback clause the rebuild 
 
 Measured on the built code (`prototype/work-2026-10-12-skin-heat/code/`, branch `skin-heat`, 70ecbdd..f5d6633), each
 once unless stated, on the case named; the raw outputs are in `prototype/work-2026-10-12-skin-heat/measure/` (git-ignored).
-The build differs from the planning copy in that metal drawn at the T_rigid cap carries no sensitivity to the base, so
-the base law keeps its slope (sub-plan 20, ruling 4); that moved the plate's numbers by one to two points.
+The build differs from the planning copy chiefly in that metal drawn at the T_rigid cap carries no sensitivity to the
+base, so the base law keeps its slope (sub-plan 20, ruling 4), and in the rebuild transfer's retry (fact 115); together
+they moved the plate's numbers by one to two points, and which of the two did it was not separated.
 
 115. **A rebuild's transfer had misplaced points, and the recession harness is unchanged.** `locate` put 0.41 % of a
      rebuild's quadrature points on the coarse test sphere and 0.28 % on the 100 mm sphere in a wrong element, all
