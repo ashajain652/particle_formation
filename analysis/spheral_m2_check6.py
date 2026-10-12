@@ -155,6 +155,8 @@ LOADS_FRAME = 182
 FRAMES = (0, 6)
 COMPARE_K = FRAMES[1]
 SAMPLER = "uniformdt0"
+# the hourglass stiffness (Task 10b): these runs were made before it, without it (_hourglass-0 in their names)
+HOURGLASS = 0.0
 STRENGTH = "elastic"
 OUT = os.path.join("spheral_output", "m2", "check6")
 RUNS_OUT = os.path.join(OUT, "runs")
@@ -192,7 +194,7 @@ def body_dir(form, dx):
 
 def brackets(shares="volume"):
     return naming.canonical_brackets({"strength": STRENGTH, "sampler": SAMPLER, "loads_frame": LOADS_FRAME,
-                                      "area_shares": shares})
+                                      "area_shares": shares, "hourglass": HOURGLASS})
 
 
 def run_name(form, dx, shares="volume", frames=FRAMES):
@@ -217,7 +219,8 @@ def build_bodies():
 def run_command(form, dx, shares, out, frames=FRAMES, max_load=2.0):
     return ["spheral_frag/runner/run.py", "replay", "--body", body_dir(form, dx), "--prepared", PREPARED,
             "--frames", "{}-{}".format(*frames), "--strength", STRENGTH, "--loads-frame", str(LOADS_FRAME),
-            "--area-shares", shares, "--ke-fraction", "1e300", "--out", out, "--max-load", repr(max_load)]
+            "--area-shares", shares, "--ke-fraction", "1e300", "--hourglass", repr(HOURGLASS), "--out", out,
+            "--max-load", repr(max_load)]
 
 
 def launch(form, dx, shares, procs, max_load, force):

@@ -40,7 +40,8 @@ def main(argv):
         meta = json.load(fh)
     a = run.build_parser().parse_args(["replay", "--body", meta["body_dir"], "--prepared", meta["prepared_dir"],
                                        "--frames", "{}-{}".format(*meta["frames"]), "--out", out,
-                                       "--max-crossings", str(max(Ns))])
+                                       "--max-crossings", str(max(Ns)),
+                                       "--hourglass", repr(float(meta["brackets"].get("hourglass", 0.0)))])
     inp = run.Inputs(a)
     if inp.name != meta["run_name"]:
         raise SystemExit("the probe's settings give {}, not the run's {}".format(inp.name, meta["run_name"]))

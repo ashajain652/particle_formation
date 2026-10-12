@@ -107,6 +107,8 @@ RUNS_OUT = os.path.join(OUT, "runs")
 FE_JSON = os.path.join(OUT, "fe.json")
 CSV = os.path.join("data", "spheral", "m2_check5.csv")
 LAUNCHER = os.path.join("spheral_frag", "container", "spheral")
+# the hourglass stiffness (Task 10b): these runs were made before it, without it (_hourglass-0 in their names)
+HOURGLASS = 0.0
 STRENGTH = "constant:100e6"
 Y = 100e6                                   # Pa, the constant law's yield
 DT_PER_FRAME = body_stage.UNIFORM_DELTA_K/body_stage.UNIFORM_RAMP_FRAMES     # 30 K per frame
@@ -131,7 +133,8 @@ def body_dir(form, dx):
 
 
 def run_name(form, dx):
-    b = naming.canonical_brackets({"strength": STRENGTH, "sampler": "uniform", "loads": "off", "geometry": "bar"})
+    b = naming.canonical_brackets({"strength": STRENGTH, "sampler": "uniform", "loads": "off", "geometry": "bar",
+                                   "hourglass": HOURGLASS})
     return naming.run_name(os.path.basename(PREPARED), "replay", FRAMES, form, dx, b, 1)
 
 
@@ -290,7 +293,7 @@ def launch(form, dx, procs, max_load, force):
     cmd = [LAUNCHER] + (["-n", str(procs)] if procs > 1 else []) + [
         "spheral_frag/runner/run.py", "replay", "--body", body_dir(form, dx), "--prepared", PREPARED,
         "--frames", "{}-{}".format(*FRAMES), "--strength", STRENGTH, "--loads", "off", "--ke-fraction", "1e300",
-        "--out", RUNS_OUT, "--max-load", repr(max_load)]
+        "--out", RUNS_OUT, "--max-load", repr(max_load), "--hourglass", repr(HOURGLASS)]
     if os.path.isdir(d):
         cmd.append("--resume")
     if force:

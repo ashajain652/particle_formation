@@ -163,14 +163,19 @@ def test_crksph_rz_rows_reproduce_through_a_restart():
     out = os.path.join(REPO_ROOT, "spheral_output", "tests", "check7_rz")
     shutil.rmtree(out, ignore_errors=True)
     rel = os.path.relpath(out, REPO_ROOT)
-    cmd = [spheral_launcher()] + c7.command("c6", "rz", 2.2, out=rel, fr=(0, 2))
+    # the committed rows were made under decision 7's first rule: interval 0 switched once to 20 crossings (11.5 %)
+    # and interval 1 ran at 20 unmonitored. Task 10b's rule keeps doubling there (16.1 % at 20), so the rows are
+    # reproduced at 20 crossings without the monitor (a switched interval's state is a plain 2 N run's, bitwise)
+    cmd = [spheral_launcher()] + c7.command("c6", "rz", 2.2, out=rel, fr=(0, 2)) + ["--crossings", "20",
+                                                                                     "--monitor-every", "0"]
     r = subprocess.run(cmd + ["--stop-at", "1"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     r = subprocess.run(cmd + ["--resume"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     from spheral_frag import naming
     d = naming.run_dir(out, naming.run_name(os.path.basename(c7.PREPARED), "replay", (0, 2), "rz", 2.2,
-                                            c7.brackets("c6", "crksph"), 1))
+                                            naming.canonical_brackets(dict(c7.brackets("c6", "crksph"), crossings=20,
+                                                                           monitor_every=0)), 1))
     ctx = c7.Context()
     orig = c7.run_dir, c7.frames
     try:

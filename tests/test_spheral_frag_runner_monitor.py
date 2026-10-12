@@ -8,10 +8,11 @@ vM(sigma_N) (`run.pressure_error`); when the larger of the two (`run.limit_error
 
   - `--monitor-every 2` monitors intervals 0, 1 and 3, and leaves every accepted state, check, removal and
     intervals.csv value bitwise identical to `--monitor-every 0` (the estimates are below the limit);
-  - `--monitor-limit 1e-12` forces the switch: the switched interval's accepted state equals a plain run at 2 N
-    bitwise, the following interval runs at 2 N and is monitored against 4 N, the run name carries the suffixes,
-    and summary.json lists the switches; with --max-crossings too low to double again the run fails (exit 1,
-    failed.json);
+  - Task 10b's rule (every interval once an estimate exceeds half the limit, the interval after a switch, doubling
+    within an interval until the estimate is at or below the limit, never back down, the cap fails loudly): its
+    logic on scripted estimates (`run.monitor_interval`, `run.MonitorRule`), and on the sphere a limit calibrated
+    between the run's own estimates at 10 and 20 crossings switches once, and a tiny one reaches the cap (exit 1,
+    failed.json with the chain); the switched interval's accepted state equals a plain run at 2 N bitwise;
   - a monitored run stopped and resumed equals the uninterrupted one bitwise, also across a switch (the run's
     crossings are carried in the checkpoints).
 
@@ -21,6 +22,7 @@ five particles per radius, the coarse body exceeds the default 5 % in 3D, so the
 --monitor-limit 0.5. Each rerun costs twice its interval (3D 3.5-4.3 s against 1.7-2.2 s; RZ 0.66-0.74 s against
 0.33-0.38 s)."""
 import json
+import math
 import os
 
 import numpy as np
@@ -34,7 +36,7 @@ from spheral_frag.runner import checkpoint
 
 MON_COLUMNS = ("monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99", "crossings_err_pressure",
                "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
-               "crossings_err_limit", "crossings_err_limit_basis")
+               "crossings_err_limit", "crossings_err_limit_basis", "monitor_chain", "monitor_watch")
 WALL = ("wall_s", "wall_per_step_s", "monitor_wall_s")
 LIMIT = 0.5     # above every estimate on the coarse synthetic sphere (measured: test below), so no switch
 
@@ -164,57 +166,63 @@ def test_monitored_run_stopped_and_resumed_is_bitwise(monitored, form):
 
 
 @pytest.mark.spheral
-def test_a_tiny_limit_switches_to_twice_the_crossings(inputs):    # noqa: F811
-    """--monitor-limit 1e-12 on frames 0-2, --monitor-every 2 (intervals 0 and 1 monitored): interval 0 is accepted
-    at 20 crossings (the monitor's rerun), interval 1 runs at 20 and is switched to 40. The switched interval 0's
-    checkpoint equals a plain 20-crossing run's bitwise; a run stopped after interval 0 and resumed continues at 20
-    and equals the uninterrupted one; with --max-crossings 40 the second switch is impossible and the run fails."""
+def test_the_rule_doubles_within_an_interval_until_below_the_limit(inputs):    # noqa: F811
+    """Task 10b's rule on the RZ synthetic sphere, frames 0-2 (the limit calibrated from the run's own estimates):
+
+    - `--monitor-limit 1e-12` (default --max-crossings 80): interval 0 doubles 10 -> 20 -> 40 and then needs 80
+      against 160: the cap is reached, exit 1, failed.json with the chain of estimates at 10, 20 and 40;
+    - a limit L between the estimates at 10 and at 20: interval 0 switches once and is accepted at 20 with its own
+      estimate at or below L; the watch is on (10's estimate > L/2), so interval 1 is monitored and accepted at or
+      below L too; the crossings never step down; the switched interval's state equals a plain 20-crossing run's
+      bitwise; a run stopped after interval 0 and resumed equals the uninterrupted one."""
     d, prep, bodies = inputs
-    common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep)]
-    tiny = ["--monitor-every", "2", "--monitor-limit", "1e-12"]
-    o_t, o_tr, o_20, o_f = (os.path.join(d, f"tiny_{t}") for t in ("full", "resumed", "plain20", "fail"))
-    r = launch(*common, "--frames", "0-2", *tiny, "--out", rel(o_t))
-    assert "takes the 20-crossing state" in r.stdout and "continues at 40 crossings" in r.stdout
-    launch(*common, "--frames", "0-2", *tiny, "--out", rel(o_tr), "--stop-at", "1")
-    launch(*common, "--frames", "0-2", *tiny, "--out", rel(o_tr), "--resume")
-    launch(*common, "--frames", "0-1", "--crossings", "20", "--monitor-every", "0", "--out", rel(o_20))
+    common = ["replay", "--body", rel(bodies["rz"]), "--prepared", rel(prep), "--frames", "0-2"]
+    o_f, o_t, o_tr, o_20 = (os.path.join(d, f"rule_{t}") for t in ("cap", "full", "resumed", "plain20"))
+    bad = launch(*common, "--monitor-every", "2", "--monitor-limit", "1e-12", "--out", rel(o_f), check=False)
+    assert bad.returncode == 1 and "cap --max-crossings 80 reached" in bad.stderr, bad.stderr[-2000:]
+    fd = run_dir_of(o_f)
+    with open(os.path.join(fd, "failed.json")) as fh:
+        f = json.load(fh)
+    assert f["reason"] == "crossings_error" and (f["k0"], f["crossings"], f["monitor_crossings"]) == (0, 40, 80)
+    assert [c["crossings"] for c in f["chain"]] == [10, 20, 40]
+    assert f["crossings_err_limit"] == max(f["crossings_err_est"], f["crossings_err_pressure"])
+    assert not os.path.isfile(os.path.join(fd, "summary.json"))
+    e10, e20 = f["chain"][0]["limit"], f["chain"][1]["limit"]
+    print("estimates at 10, 20, 40:", [c["limit"] for c in f["chain"]])
+    assert e10 > 1.3*e20                                   # the lag falls with the crossings (as 1/N)
+    L = float("{:.3g}".format(math.sqrt(e10*e20)))
+    assert e20 < L < e10
+    tl = ["--monitor-every", "10", "--monitor-limit", repr(L)]
+    r = launch(*common, *tl, "--out", rel(o_t))
+    assert "takes the 20-crossing state" in r.stdout
+    launch(*common, *tl, "--out", rel(o_tr), "--stop-at", "1")
+    launch(*common, *tl, "--out", rel(o_tr), "--resume")
+    launch(*common[:-2], "--frames", "0-1", "--crossings", "20", "--monitor-every", "0", "--out", rel(o_20))
     run_t, run_tr, run_20 = run_dir_of(o_t), run_dir_of(o_tr), run_dir_of(o_20)
-    name = naming.run_name_from_dir(run_t)
-    assert name.endswith("_monitorevery-2_monitorlimit-1e-12")
-    assert naming.parse_run_name(name)["brackets"]["monitor_limit"] == 1e-12
     rows = intervals(run_t)
-    assert [int(x["crossings"]) for x in rows] == [20, 40]
-    assert [int(x["run_crossings"]) for x in rows] == [20, 40]
-    assert [int(x["crossings_switch"]) for x in rows] == [1, 1]
-    assert [int(x["monitor_crossings"]) for x in rows] == [20, 40]
-    assert all(float(x["crossings_err_limit"]) > 1e-12 for x in rows)
+    assert [int(x["monitored"]) for x in rows] == [1, 1]
+    assert int(rows[0]["crossings_switch"]) == 1 and int(rows[0]["run_crossings"]) == 20
+    assert [c.split(":")[0] for c in rows[0]["monitor_chain"].split(";")] == ["10", "20"]
+    assert float(rows[0]["monitor_chain"].split(";")[0].split(":")[1]) == pytest.approx(e10, rel=1e-6)
+    assert all(float(x["crossings_err_limit"]) <= L for x in rows)
+    assert [int(x["monitor_watch"]) for x in rows] == [1, 1]
+    assert int(rows[1]["run_crossings"]) >= 20 and int(rows[1]["crossings"]) >= 20
     # the switched interval's accepted state is the 2 N rerun: a plain run at 20 crossings, bitwise
-    same_checkpoints(run_20, run_t, [1], skip_extra=("run_crossings",))
+    same_checkpoints(run_20, run_t, [1], skip_extra=("run_crossings", "monitor_watch", "monitor_force"))
     ck = checkpoint.read(os.path.join(run_t, "checkpoints", checkpoint.filename(1)))
-    assert ck["extra"]["run_crossings"] == 20 and ck["extra"]["crossings"] == 20
+    assert ck["extra"]["run_crossings"] == 20 and ck["extra"]["monitor_watch"] == 1 and ck["extra"]["monitor_force"] == 1
     with open(os.path.join(run_t, "summary.json")) as fh:
         mon = json.load(fh)["crossings_monitor"]
-    assert [(s["k0"], s["to_crossings"]) for s in mon["switches"]] == [(0, 20), (1, 40)]
-    assert all(s["limit"] > 1e-12 and s["basis"] in ("von_mises", "pressure") for s in mon["switches"])
-    assert mon["final_crossings"] == 40
-    # resumed across the switch
+    assert [(s["k0"], s["to_crossings"], s["doublings"]) for s in mon["switches"]][0] == (0, 20, 1)
+    assert mon["watch_from"] == [0, 1] and mon["intervals_unmonitored"] == 0
+    assert mon["max_crossings_err_limit"] <= L
+    # resumed across the switch and the watch
     same_checkpoints(run_t, run_tr, range(3))
     same_records(run_t, run_tr)
     for x, y in zip(rows, intervals(run_tr)):
         for c in x:
             if c not in WALL:
                 assert x[c] == y[c], c
-    # no room to double again: exit 1 with failed.json
-    bad = launch(*common, "--frames", "0-4", "--monitor-every", "1", "--monitor-limit", "1e-12", "--max-crossings",
-                 "40", "--out", rel(o_f), check=False)
-    assert bad.returncode == 1 and "crossings error" in bad.stderr
-    fd = run_dir_of(o_f)
-    with open(os.path.join(fd, "failed.json")) as fh:
-        f = json.load(fh)
-    assert f["reason"] == "crossings_error" and (f["k0"], f["crossings"], f["monitor_crossings"]) == (1, 20, 40)
-    assert f["crossings_err_limit"] == max(f["crossings_err_est"], f["crossings_err_pressure"])
-    assert f["crossings_err_limit_basis"] in ("von_mises", "pressure")
-    assert not os.path.isfile(os.path.join(fd, "summary.json"))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -293,8 +301,10 @@ def test_monitor_schedule_and_names():
     assert s["intervals_monitored"] == [[0, 1], [2, 3], [3, 4]] and s["max_crossings_err_est"] == 0.07
     assert s["max_crossings_err_limit"] == 0.09 and s["max_crossings_err_limit_basis"] == "pressure"
     assert s["max_at"] == [3, 4]
-    assert s["switches"] == [{"k0": 2, "k1": 3, "to_crossings": 20, "est": 0.07, "limit": 0.07, "basis": "von_mises"},
-                             {"k0": 3, "k1": 4, "to_crossings": 40, "est": 0.01, "limit": 0.09, "basis": "pressure"}]
+    assert s["switches"] == [{"k0": 2, "k1": 3, "to_crossings": 20, "est": 0.07, "limit": 0.07, "basis": "von_mises",
+                              "doublings": 1, "chain": ""},
+                             {"k0": 3, "k1": 4, "to_crossings": 40, "est": 0.01, "limit": 0.09, "basis": "pressure",
+                              "doublings": 1, "chain": ""}]
     assert s["final_crossings"] == 40 and s["monitor_wall_s"] == 9.0
 
 
@@ -335,3 +345,102 @@ def test_measured_table():
             assert (float(r["limit"]), r["limit_basis"]) == run.limit_error(float(r["est"]), float(r["pressure"]))
     assert max(float(r["limit"]) for r in fl) < 0.02        # [1.446e-2, von Mises]
     assert float(v[0]["limit"]) > 0.05 and v[0]["limit_basis"] == "pressure"    # [6.12e-2]: the ramp would switch
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The rule (Task 10b): every interval once an estimate exceeds half the limit, the interval after a switch, doubling
+# within an interval until the estimate is at or below the limit, never back down, the cap fails loudly
+# ---------------------------------------------------------------------------------------------------------------
+
+def _drive(errors, n0=10, every=10, limit=0.05, max_crossings=80, n_intervals=None, slow=None):
+    """Run the rule over intervals whose estimate at n crossings is errors[j](n) (a callable or a dict), as the
+    replay's loop does: returns per interval (monitored, chain, accepted n, run crossings after it)."""
+    from spheral_frag.runner import run
+    rule = run.MonitorRule(every, limit)
+    base, out = n0, []
+    n_intervals = len(errors) if n_intervals is None else n_intervals
+    for j in range(n_intervals):
+        n = base
+        if not rule.due(j):
+            out.append((False, [], n, base))
+            continue
+        e = errors[j]
+        f = e if callable(e) else (lambda m, e=e: e[m])
+
+        def estimate(m):
+            return None, f(m), "von_mises"
+
+        def switch(m, err, basis):
+            return 2*m if slow is None else slow(2*m)
+        chain, n, _ = run.monitor_interval(rule, n, max_crossings, estimate, switch)
+        base = max(base, n)
+        out.append((True, chain, n, base))
+    return out
+
+
+def test_rule_schedule_below_half_the_limit_is_the_old_one():
+    """Estimates at or below half the limit leave the schedule at the first and every M-th interval."""
+    out = _drive([lambda n: 0.02]*25)
+    assert [j for j, o in enumerate(out) if o[0]] == [0, 9, 19]
+    assert all(o[3] == 10 for o in out)
+
+
+def test_rule_watches_every_interval_once_an_estimate_exceeds_half_the_limit():
+    """An estimate of 3 % (above 2.5 %, below 5 %) at interval 9 accepts at 10 and monitors every interval after it,
+    even when the later estimates fall again (the watch is kept)."""
+    errs = [lambda n: 0.01]*9 + [lambda n: 0.03] + [lambda n: 0.001]*6
+    out = _drive(errs)
+    assert [j for j, o in enumerate(out) if o[0]] == [0] + list(range(9, 16))
+    assert all(o[3] == 10 for o in out)
+    assert out[9][1] == [(10, 0.03, "von_mises")]
+
+
+def test_rule_doubles_within_the_interval_until_below_the_limit_and_never_backs_down():
+    """Error ~ 1/n: 16 % at 10 -> 8 % at 20 -> 4 % at 40: the interval doubles twice and is accepted at 40, the run
+    continues at 40; the next interval is monitored (after a switch, and the watch), and later lower estimates never
+    step the crossings back down."""
+    lag = lambda n: 1.6/n                                                     # noqa: E731
+    errs = [lambda n: 0.001, lag, lambda n: 0.0001, lambda n: 0.0001]
+    out = _drive(errs, every=2)                                              # intervals 0, 1, 3 scheduled
+    assert out[1][0] and [m for m, _, _ in out[1][1]] == [10, 20, 40] and out[1][2] == 40
+    assert out[1][1][-1][1] <= 0.05 < out[1][1][-2][1]
+    assert out[2][0] and out[2][2] == 40 and out[3][2] == 40 and out[3][3] == 40
+    # every accepted interval's last estimate is at or below the limit
+    assert all(o[1][-1][1] <= 0.05 for o in out if o[0])
+
+
+def test_rule_switch_forces_the_next_interval_even_without_the_watch():
+    """A switch sets the force (the next interval is monitored) beside the watch (its estimate is above the limit,
+    hence above half of it); with the watch cleared by hand the force alone makes the next interval due, and an
+    interval accepted without a switch clears it."""
+    from spheral_frag.runner import run
+    rule = run.MonitorRule(10, 0.05)
+    chain, n, sw = run.monitor_interval(rule, 10, 80, lambda m: (None, {10: 0.06, 20: 0.03}[m], "pressure"),
+                                        lambda m, e, b: 2*m)
+    assert (n, sw) == (20, 1) and rule.force and rule.watch
+    rule.watch = False
+    assert rule.due(4) and rule.required()
+    chain, n, sw = run.monitor_interval(rule, 20, 80, lambda m: (None, 0.001, "von_mises"), lambda m, e, b: 2*m)
+    assert sw == 0 and not rule.force and not rule.due(5)
+
+
+def test_rule_slowness_repeats_inside_a_switch_are_followed():
+    """A switch whose 2 n attempt fails the slowness test and is accepted at 4 n continues from 4 n."""
+    out = _drive([lambda n: 0.6/n], slow=lambda m: 2*m)          # 6 % at 10 -> switch accepted at 40: 1.5 %
+    assert [m for m, _, _ in out[0][1]] == [10, 40] and out[0][2] == 40
+
+
+def test_rule_fails_loudly_at_the_cap():
+    """An error that needs 160 crossings with --max-crossings 80 raises MonitorCapReached (the replay writes
+    failed.json and exits 1) with the chain; so does a required monitor that cannot double at all."""
+    from spheral_frag.runner import run
+    with pytest.raises(run.MonitorCapReached) as e:
+        _drive([lambda n: 8.0/n], max_crossings=80)                  # 80 % at 10, 40 % at 20, 20 % at 40
+    # 40 % at 20 switches to 40; 20 % at 40 would need 80 against 160
+    assert [m for m, _, _ in e.value.chain] == [10, 20, 40] and e.value.n == 40 and e.value.last[1] == 0.2
+    rule = run.MonitorRule(10, 0.05, watch=True)
+    with pytest.raises(run.MonitorCapReached) as e:
+        run.monitor_interval(rule, 80, 80, lambda m: (None, 0.0, "von_mises"), lambda m, e, b: 2*m)
+    assert e.value.last is None and e.value.chain == []
+    # the monitor off (every 0): never due, whatever the watch
+    assert not run.MonitorRule(0, 0.05, watch=True, force=True).due(3)

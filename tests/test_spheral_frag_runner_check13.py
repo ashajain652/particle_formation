@@ -92,7 +92,8 @@ def test_tables_are_complete():
     for form, dx in RUNS:
         rr = run_rows(form, dx)
         assert [int(x["k1"]) for x in rr] == list(range(1, 48))
-        assert all(x["run"].endswith("__replay_k00000-00047_{}_dx{:.2f}mm_seed1".format(form, dx)) for x in rr)
+        assert all(x["run"].endswith("__replay_k00000-00047_{}_dx{:.2f}mm_seed1_hourglass-0".format(form, dx))
+                   for x in rr)
     assert len(rows(PROBE_CSV)) > 0
 
 
@@ -213,7 +214,8 @@ def test_names_and_paths():
     from spheral_frag import naming
     for form, dx, _ in c13.FORMS:
         name = c13.run_name(form, dx)
-        assert naming.parse_run_name(name)["brackets"] == naming.canonical_brackets({})
+        assert naming.parse_run_name(name)["brackets"] == naming.canonical_brackets({"hourglass": c13.HOURGLASS})
+        assert name.endswith("_hourglass-0")              # Task 10's runs predate Task 10b's hourglass default
         d = c13.run_dir(form, dx)
         assert all(len(p) <= naming.NAME_MAX for p in d.split(os.sep))
         assert naming.run_name_from_dir(d) == name
@@ -251,12 +253,13 @@ def test_rz_22_reproduces():
     out = os.path.join(REPO_ROOT, "spheral_output", "tests", "check13_rz")
     shutil.rmtree(out, ignore_errors=True)
     r = subprocess.run([spheral_launcher(), "spheral_frag/runner/run.py", "replay", "--body", c13.body_dir("rz", 2.2),
-                        "--prepared", c13.PREPARED, "--frames", "0-2", "--out", os.path.relpath(out, REPO_ROOT)],
+                        "--prepared", c13.PREPARED, "--frames", "0-2", "--hourglass", "0", "--out",
+                        os.path.relpath(out, REPO_ROOT)],
                        cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     from spheral_frag import naming
     d = naming.run_dir(out, naming.run_name(os.path.basename(c13.PREPARED), "replay", (0, 2), "rz", 2.2,
-                                            naming.canonical_brackets({}), 1))
+                                            naming.canonical_brackets({"hourglass": 0.0}), 1))
     for k in (1, 2):
         a = checkpoint.read(os.path.join(d, "checkpoints", checkpoint.filename(k)))
         b = checkpoint.read(os.path.join(study, "checkpoints", checkpoint.filename(k)))

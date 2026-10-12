@@ -68,6 +68,10 @@ BRACKET_DEFAULTS: dict[str, object] = {
     # default is patch since decision 9 (2026-10-11); the runs made before with loads on and volume shares carry
     # "_areashares-volume" explicitly. Only emitted with loads on (the runner refuses another value with loads off).
     "area_shares": "patch",
+    # Spheral M2 Task 10b: the hourglass stiffness kappa against SolidSPH's tensile pairing (packages/hourglass.py),
+    # default 0.01 since Task 10b (2026-10-12); every replay run made before carries "_hourglass-0" explicitly. A
+    # replay device: other modes' names carry the default.
+    "hourglass": 0.01,
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -91,6 +95,7 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "geometry": ("geometry", ""),
     "loads_frame": ("loadsframe", ""),
     "area_shares": ("areashares", ""),
+    "hourglass": ("hourglass", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 

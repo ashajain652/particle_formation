@@ -94,6 +94,8 @@ LAUNCHER = os.path.join("spheral_frag", "container", "spheral")
 R = body_stage.RADIAL_R_M
 DELTA_K = body_stage.RADIAL_DELTA_K
 T_BASE = body_stage.RADIAL_T_BASE_K
+# the hourglass stiffness (Task 10b): these runs were made before it, without it (_hourglass-0 in their names)
+HOURGLASS = 0.0
 SHELL_DX = 2.0                      # the surface shell: r > R - 2 dx (plan Task 6 Step 3)
 
 FORMS = [("rz", 2.2, 1), ("rz", 1.1, 4), ("3d", 3.0, 18), ("3d", 2.2, 18)]     # form, dx mm, processes
@@ -126,7 +128,8 @@ def body_dir(form, dx):
 
 def run_name(form, dx, n, z, scaled):
     b = naming.canonical_brackets({"crossings": n, "damping": z, "strength": "elastic", "sampler": "radial",
-                                   "loads": "off", "mass_scaling": "on" if scaled else "off"})
+                                   "loads": "off", "mass_scaling": "on" if scaled else "off",
+                                   "hourglass": HOURGLASS})
     return naming.run_name(os.path.basename(PREPARED), "replay", FRAMES, form, dx, b, 1)
 
 
@@ -175,7 +178,7 @@ def launch(form, dx, procs, n, z, scaled, max_load, force):
         "spheral_frag/runner/run.py", "replay", "--body", body_dir(form, dx), "--prepared", PREPARED,
         "--frames", "{}-{}".format(*FRAMES), "--crossings", str(n), "--max-crossings", str(n), "--damping", repr(z),
         "--strength", "elastic", "--loads", "off", "--mass-scaling", "on" if scaled else "off",
-        "--ke-fraction", "1e300", "--out", RUNS_OUT, "--max-load", repr(max_load)]
+        "--ke-fraction", "1e300", "--out", RUNS_OUT, "--max-load", repr(max_load), "--hourglass", repr(HOURGLASS)]
     if os.path.isdir(d):
         cmd.append("--resume")
     if force:

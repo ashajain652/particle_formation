@@ -80,12 +80,12 @@ COLUMNS = ["case", "form", "dx_mm", "k0", "k1", "t1_s", "crossings", "monitor_cr
 
 def check4_monitor_name():
     b = naming.canonical_brackets({"strength": "elastic", "sampler": "radial", "loads": "off",
-                                   "monitor_every": CHECK4_EVERY})
+                                   "monitor_every": CHECK4_EVERY, "hourglass": c4.HOURGLASS})
     return naming.run_name(os.path.basename(c4.PREPARED), "replay", c4.FRAMES, "rz", 2.2, b, 1)
 
 
 def flight_name():
-    b = naming.canonical_brackets({"monitor_every": FLIGHT_EVERY, "area_shares": "volume"})
+    b = naming.canonical_brackets({"monitor_every": FLIGHT_EVERY, "area_shares": "volume", "hourglass": c4.HOURGLASS})
     return naming.run_name(os.path.basename(c4.PREPARED), "replay", FLIGHT_FRAMES, "rz", 2.2, b, 1)
 
 
@@ -93,7 +93,7 @@ def launch(args, name):
     d = naming.run_dir(os.path.join(REPO, RUNS_OUT), name)
     if os.path.isfile(os.path.join(d, "summary.json")):
         return
-    cmd = [LAUNCHER, "spheral_frag/runner/run.py", "replay", *args, "--out", RUNS_OUT]
+    cmd = [LAUNCHER, "spheral_frag/runner/run.py", "replay", *args, "--hourglass", repr(c4.HOURGLASS), "--out", RUNS_OUT]
     if os.path.isdir(d):
         cmd.append("--resume")
     print(" ".join(cmd), flush=True)

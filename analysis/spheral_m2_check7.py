@@ -142,6 +142,7 @@ def brackets(check, scheme):
     else:
         b = {"strength": c6.STRENGTH, "sampler": c6.SAMPLER, "loads_frame": c6.LOADS_FRAME, "area_shares": "patch"}
     b["scheme"] = scheme
+    b["hourglass"] = c4.HOURGLASS          # made before Task 10b's hourglass default, without it
     return naming.canonical_brackets(b)
 
 
@@ -186,7 +187,7 @@ def command(check, form, dx, out=RUNS_OUT, fr=None, max_load=2.0, scheme="crksph
     fr = fr or frames(check)
     base = ["spheral_frag/runner/run.py", "replay", "--body", body_dir(check, form, dx), "--prepared", PREPARED,
             "--frames", "{}-{}".format(*fr), "--ke-fraction", "1e300", "--out", out, "--max-load", repr(max_load),
-            "--scheme", scheme]
+            "--scheme", scheme, "--hourglass", repr(c4.HOURGLASS)]
     if check == "fx":
         return base + ["--strength", "elastic", "--loads", "off"]
     if check == "c4":

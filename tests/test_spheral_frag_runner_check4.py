@@ -166,7 +166,7 @@ def test_rz_row_reproduces(tmp_path):
     cmd = [spheral_launcher(), "spheral_frag/runner/run.py", "replay", "--body", c4.body_dir("rz", 2.2),
            "--prepared", c4.PREPARED, "--frames", "0-3", "--crossings", "10", "--max-crossings", "10",
            "--damping", "0.05", "--strength", "elastic", "--loads", "off", "--ke-fraction", "1e300",
-           "--out", os.path.relpath(out, REPO_ROOT)]
+           "--hourglass", repr(c4.HOURGLASS), "--out", os.path.relpath(out, REPO_ROOT)]
     r = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     bad = subprocess.run(cmd[:-2] + ["--mass-scaling", "off", "--loads", "on", "--out", "spheral_output/tests/x"],

@@ -232,8 +232,8 @@ def test_run_names_carry_the_held_frame_and_the_shares():
     from spheral_frag import naming
     import spheral_m2_check6 as c6
     name = c6.run_name("3d", 2.2, "volume")
-    assert name.endswith("_strength-elastic_sampler-uniformdt0_loadsframe-182_areashares-volume")
-    assert c6.run_name("rz", 1.1, "patch").endswith("_sampler-uniformdt0_loadsframe-182")     # decision 9's default
+    assert name.endswith("_strength-elastic_sampler-uniformdt0_loadsframe-182_areashares-volume_hourglass-0")
+    assert c6.run_name("rz", 1.1, "patch").endswith("_sampler-uniformdt0_loadsframe-182_hourglass-0")   # decision 9
     b = naming.parse_run_name(name)["brackets"]
     assert b["loads_frame"] == 182 and b["area_shares"] == "volume"
     assert naming.BRACKET_DEFAULTS["loads_frame"] == -1 and naming.BRACKET_DEFAULTS["area_shares"] == "patch"

@@ -180,7 +180,8 @@ def test_rz_11_rows_reproduce():
     out = os.path.join(REPO_ROOT, "spheral_output", "tests", "check5_rz")
     shutil.rmtree(out, ignore_errors=True)
     args = ["spheral_frag/runner/run.py", "replay", "--body", c5.body_dir("rz", 1.1), "--prepared", c5.PREPARED,
-            "--frames", "0-3", "--strength", c5.STRENGTH, "--ke-fraction", "1e300"]
+            "--frames", "0-3", "--strength", c5.STRENGTH, "--ke-fraction", "1e300", "--hourglass",
+            repr(c5.HOURGLASS)]
     r = subprocess.run([spheral_launcher(), "-n", "4"] + args + ["--loads", "off", "--out",
                                                                  os.path.relpath(out, REPO_ROOT)],
                        cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800)
@@ -190,7 +191,8 @@ def test_rz_11_rows_reproduce():
     assert bad.returncode == 2 and "--loads off" in bad.stderr
     table = material.MaterialTable.load(prep)
     E_, nu, alpha = c5.constants(table)
-    b = naming.canonical_brackets({"strength": c5.STRENGTH, "sampler": "uniform", "loads": "off", "geometry": "bar"})
+    b = naming.canonical_brackets({"strength": c5.STRENGTH, "sampler": "uniform", "loads": "off", "geometry": "bar",
+                                   "hourglass": c5.HOURGLASS})
     d = naming.run_dir(out, naming.run_name(os.path.basename(c5.PREPARED), "replay", (0, 3), "rz", 1.1, b, 1))
     iv = {int(x["k1"]): x for x in run.read_intervals(os.path.join(d, "intervals.csv"))}
     for k in (1, 2, 3):

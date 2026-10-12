@@ -140,6 +140,9 @@ from spheral_frag.runner import checkpoint, run  # noqa: E402
 
 PREPARED = os.path.join("spheral_output", "prepare", "prep_model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_"
                         "none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off_k00000-01254")
+# the hourglass stiffness (Task 10b): Task 10's runs were made before it, without it (_hourglass-0 in their names);
+# Task 10b's reruns, after the controller's review, set it to the default
+HOURGLASS = 0.0
 FRAMES = (0, 47)                            # before the first film (k 48; plan fact 8)
 COMPARE_K = (12, 24, 36, 47)
 OUT = os.path.join("spheral_output", "m2", "check13")
@@ -157,8 +160,9 @@ def body_dir(form, dx):
 
 
 def run_name(form, dx):
-    """Every setting at its default (decisions 1, 7, 8, 9): no bracket suffix."""
-    return naming.run_name(os.path.basename(PREPARED), "replay", FRAMES, form, dx, naming.canonical_brackets({}), 1)
+    """Every setting at its default (decisions 1, 7, 8, 9) but the hourglass (`HOURGLASS`)."""
+    return naming.run_name(os.path.basename(PREPARED), "replay", FRAMES, form, dx,
+                           naming.canonical_brackets({"hourglass": HOURGLASS}), 1)
 
 
 def run_dir(form, dx, out=None):
@@ -619,7 +623,8 @@ def launch(form, dx, procs, max_load, force):
         c4.wait_for_load(0.5*max_load)
     cmd = [LAUNCHER] + (["-n", str(procs)] if procs > 1 else []) + [
         "spheral_frag/runner/run.py", "replay", "--body", body_dir(form, dx), "--prepared", PREPARED,
-        "--frames", "{}-{}".format(*FRAMES), "--out", RUNS_OUT, "--max-load", repr(max_load)]
+        "--frames", "{}-{}".format(*FRAMES), "--hourglass", repr(HOURGLASS), "--out", RUNS_OUT,
+        "--max-load", repr(max_load)]
     if os.path.isdir(d):
         cmd.append("--resume")
     if force:

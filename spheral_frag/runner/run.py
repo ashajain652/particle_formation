@@ -4,7 +4,7 @@
         [--crossings 10] [--max-crossings 80] [--damping 0.05] [--scheme sph|crksph] [--strength flight] [--rate-min 1e-6]
         [--every-check 1] [--seed 1] [--out spheral_output/runs] [--resume] [--force] [--max-load 2.0]
         [--stop-at K] [--loads on|off] [--mass-scaling on|off] [--monitor-every 10] [--monitor-limit 0.05]
-        [--loads-frame K] [--area-shares patch|volume]
+        [--loads-frame K] [--area-shares patch|volume] [--hourglass 0.01]
 
 **The interval loop.** For each interval k -> k+1 of the body's frames between K0 and K1 (spec §9.1):
 
@@ -138,25 +138,45 @@ maximum, and the hydrostatic part the von Mises stress leaves out, 2 max |P_N - 
 larger of the two** (controller, after Task 6b found the ramp's lag mostly hydrostatic; Asha's intent is the error,
 not only its deviatoric part): err_limit = max(crossings_err_est, crossings_err_pressure) (`limit_error`), recorded
 as `crossings_err_limit` with `crossings_err_limit_basis` ("von_mises" or "pressure", whichever decided; von Mises on
-a tie); "err" below means err_limit. Monitored intervals: the
-first (K0 -> K0+1: the first loading from the stress-free state, check 4's ramp case, and an early read on a long
-run) and every `--monitor-every` M-th after it (interval index j from K0 with
-j = M - 1 mod M: K0+M-1 -> K0+M, ...); M = 0 turns the monitor off. When err <= `--monitor-limit` F (5 %) the N run's
-state stays the accepted one, so a monitored run's accepted states equal an unmonitored run's bitwise. When err > F,
-the run logs it, accepts the 2 N run's state for that interval (the better estimate; it passes the slowness test as
-any attempt does, else it is repeated at 4 N), and runs every later interval at 2 N (`crossings_switch` 1 in
-intervals.csv; the run's crossings are carried in the checkpoints' `run_crossings`, so a resumed run continues at
-them); monitoring continues against 4 N. The monitor compares at most at `--max-crossings`: an interval whose 2 N
-would exceed it is not monitored (logged), and an estimate above F whose switch would leave the run unable to be
-monitored again (4 N > --max-crossings) fails the run (exit 1, `failed.json`). The per-particle von Mises stresses of
-both runs and of their difference go to `monitor/interval_<k>.npz` (scratch, not read back). Cost: one interval at 2 N
-per monitored interval, about 2/M of the run's time plus the first interval's.
+a tie); "err" below means err_limit.
+
+*When it runs* (Task 10b, `MonitorRule`, `monitor_interval`; Asha's requirement: the crossings error below 5 % over
+the flight). Check 13 found the first rule (the first interval and every M-th, one doubling on a switch) leaving
+errors above the limit between monitored intervals (3D 30 -> 39 at 10 crossings: 17-26 % at k 39) and after a switch
+(3D's last eight intervals at 20 crossings: 11-15 %). Now: (1) the first interval (K0 -> K0+1) and every
+`--monitor-every` M-th after it (interval index j from K0 with j = M - 1 mod M) are monitored, M = 0 turning the
+monitor off altogether; (2) once any estimate exceeds half the limit (F/2, 2.5 %) every later interval is monitored
+(`monitor_watch` in intervals.csv and the checkpoints: kept for the rest of the run, also across a resume); (3) within
+a monitored interval, while err > F the run takes the 2 N state (it passes the slowness test as any attempt does, else
+it is repeated at 4 N), continues at 2 N, and estimates the same interval again against 4 N, doubling until the
+estimate is at or below F, so every accepted monitored interval has its own estimate below the limit
+(`monitor_chain`: "N:err:basis" per estimate, `crossings_switch` the number of doublings); (4) the interval after a
+switch is monitored too (`monitor_force` in the checkpoints); (5) the crossings never step back down. When err <= F
+at the first estimate the N run's state stays the accepted one, so a monitored run's accepted states equal an
+unmonitored run's bitwise until a switch. The cap: an estimate that would need more than `--max-crossings` (2 N above
+it on an interval the rule requires, or err > F where 4 N exceeds it) fails the run loudly (exit 1, `failed.json`
+with the chain and reason "crossings_error"); an interval due only by the schedule whose 2 N exceeds the cap is
+logged and not monitored. The per-particle von Mises stresses of the last comparison go to
+`monitor/interval_<k>.npz` (scratch, not read back). Cost: one interval at 2 N per estimate -- about 2/M of the run's
+time while the estimates stay below F/2, three times the run's time (N + 2 N) once the watch is on, more on the
+intervals that double.
+
+**The hourglass stiffness** (Task 10b, `--hourglass KAPPA`, packages/hourglass.py). SolidSPH's tensile pairing under
+the replay's core tension (check 13: RZ 1.1 mm's lattice planes shifting alternately along the axis, x3.2 per
+interval at 10 crossings, the core's axial stress lost) is removed by a stiffness kappa G V / dx^2 against the
+non-affine part of each particle's displacement from its reference position (the affine least-squares fit of its
+neighbours' displacements), with a viscous part on the same mode; both vanish on every affine field and conserve
+momentum. kappa 0.01 (the default since Task 10b; 0 turns it off): on check 13's RZ 1.1 mm interval 4 -> 5 the
+pairing falls x0.18, 0.08, 0.08 over the interval at 10, 20, 40 crossings (x3.2, 7.9, 17 without) and the core's
+axial stress follows RZ 2.2 mm's to 0.3 %; checks 4-6 are unchanged or slightly closer to their references; the cost
+is 1-9 % per step (analysis/spheral_m2_task10b.py, data/spheral/m2_task10b_*.csv). A run-name bracket (`hourglass`,
+default 0.01; every run made before carries `_hourglass-0`).
 
 **Run directory** `<out>/<prepared>/<run suffix>/` (`naming.run_dir(out, run name)`, Spheral M2 Task 7b): the run
 name `naming.run_name(prepared, "replay", (K0, K1), form, dx_mm, brackets, seed)` split at its `__`, the prepared
 input's name one level, the rest (`replay_k00000-00010_rz_dx2.20mm_seed1[_<bracket>...]`) the next, so that no path
 component exceeds 255 characters; the brackets crossings, damping, scheme, strength, rate_min, the body's sampler and
-azimuth, loads, mass_scaling, monitor_every, monitor_limit, the body's geometry, loads_frame and area_shares are suffixes when they differ from
+azimuth, loads, mass_scaling, monitor_every, monitor_limit, the body's geometry, loads_frame, area_shares and hourglass are suffixes when they differ from
 their defaults. The full name is the run's identity (meta.json's and summary.json's `run_name`;
 `naming.run_name_from_dir` rebuilds it from the directory):
 
@@ -226,7 +246,7 @@ INTERVAL_COLUMNS = [
     "time_scale", "spheral_t1_s", "monitored", "crossings_err_est", "crossings_err_rms", "crossings_err_p99",
     "crossings_err_pressure", "monitor_crossings", "monitor_wall_s", "monitor_ke_internal_ratio", "crossings_switch",
     "run_crossings", "crossings_err_limit", "crossings_err_limit_basis", "n_held", "held_max_speed_ms",
-    "held_max_disp_m", "n_zero_area",
+    "held_max_disp_m", "n_zero_area", "hourglass_energy_ratio", "monitor_chain", "monitor_watch",
 ]
 
 
@@ -434,6 +454,82 @@ def monitor_due(j, every):
     return every > 0 and (j == 0 or j % every == every - 1)
 
 
+class MonitorRule:
+    """When the crossings-error monitor runs (module docstring, "The crossings-error monitor"; Task 10b, Asha's
+    5 % over the flight): the first interval and every `every`-th after it (`monitor_due`); every interval once any
+    estimate has exceeded half the limit (`watch`, kept for the rest of the run); and the interval after any switch
+    (`force`). Within a monitored interval the driver doubles the crossings until the estimate is at or below the
+    limit (never stepping back down). `every` 0 turns the monitor off altogether."""
+
+    def __init__(self, every, limit, watch=False, force=False):
+        self.every, self.limit = int(every), float(limit)
+        self.watch, self.force = bool(watch), bool(force)
+
+    def due(self, j):
+        return self.every > 0 and (monitor_due(j, self.every) or self.watch or self.force)
+
+    def required(self):
+        """Whether the monitoring is required by an earlier estimate (not only by the schedule)."""
+        return self.every > 0 and (self.watch or self.force)
+
+    def observe(self, err):
+        if err > 0.5*self.limit:
+            self.watch = True
+
+
+class MonitorCapReached(Exception):
+    """The monitor's rule needs more crossings than --max-crossings allows (`monitor_interval`)."""
+
+    def __init__(self, message, n, last, chain):
+        super().__init__(message)
+        self.n, self.last, self.chain = n, last, chain
+
+
+def monitor_interval(rule, n, max_crossings, estimate, switch):
+    """One monitored interval accepted at n crossings (Task 10b's rule; `MonitorRule`): estimate(n) compares the
+    accepted state with a rerun at 2 n and returns (est, err, basis); while err > rule.limit, switch(n, err, basis)
+    accepts the 2 n state (returning the crossings it was accepted at: 2 n, or more after slowness repeats) and the
+    interval is estimated again against twice that. Every estimate feeds rule.observe (the every-interval watch above
+    half the limit); a switch sets rule.force (the next interval is monitored too). Raises MonitorCapReached when an
+    estimate would need more than max_crossings. Returns (chain [(n, err, basis)], accepted n, number of switches)."""
+    chain, switches = [], 0
+    rule.force = False
+    while True:
+        if 2*n > max_crossings:
+            raise MonitorCapReached(f"the rule needs this interval monitored at {n} against {2*n} crossings, above "
+                                    f"--max-crossings {max_crossings}", n, None, chain)
+        est, err, basis = estimate(n)
+        chain.append((n, err, basis))
+        rule.observe(err)
+        if err <= rule.limit:
+            return chain, n, switches
+        if 4*n > max_crossings:
+            raise MonitorCapReached("the crossings-error estimate (the larger of the von Mises and pressure "
+                                    "estimates) exceeds --monitor-limit and the run cannot continue at twice the "
+                                    "crossings and still be monitored (4 N > --max-crossings)", n,
+                                    (est, err, basis), chain)
+        n = switch(n, err, basis)
+        switches += 1
+        rule.force = True
+
+
+def fail_monitor(run_dir, inp, k, k_next, n, last, chain, a, explanation):
+    """failed.json and a collective Failure: the monitor's rule needs more crossings than --max-crossings allows."""
+    c = comm()
+    doc = {"run": inp.name, "k0": k, "k1": k_next, "reason": "crossings_error", "crossings": n,
+           "monitor_crossings": 2*n, "monitor_limit": a.monitor_limit, "max_crossings": a.max_crossings,
+           "chain": [{"crossings": m, "limit": e, "basis": b} for m, e, b in chain], "explanation": explanation}
+    if last is not None:
+        est, err, basis = last
+        doc.update(crossings_err_est=est[0], crossings_err_rms=est[1], crossings_err_p99=est[2],
+                   crossings_err_pressure=est[3], crossings_err_limit=err, crossings_err_limit_basis=basis)
+    if c.rank == 0:
+        write_json(os.path.join(run_dir, "failed.json"), doc)
+    lim = f"crossings error {last[1]:.3e} ({last[2]}) > {a.monitor_limit} at {n} crossings, and " if last else ""
+    raise Failure(f"interval {k}->{k_next}: {lim}{explanation} (cap --max-crossings {a.max_crossings} reached)",
+                  collective=True)
+
+
 def ke_ratio(ke, el):
     if el > 0.0:
         return ke/el
@@ -573,6 +669,8 @@ class Inputs:
         if a.mass_scaling == "off" and a.loads != "off":
             raise BadInput("--mass-scaling off runs each interval in N_c D / c_l seconds, not in flight time: it "
                            "needs --loads off (the load tables are in flight time)")
+        if not a.hourglass >= 0.0:
+            raise BadInput("need --hourglass >= 0")
         if a.monitor_every < 0 or not a.monitor_limit > 0.0:
             raise BadInput("need --monitor-every >= 0 (0: off) and --monitor-limit > 0")
         self.geometry = self.body_doc.get("geometry", "frame")
@@ -586,7 +684,7 @@ class Inputs:
                     "azimuth_deg": float(self.body_doc.get("azimuth_deg", 0.0)), "loads": a.loads,
                     "mass_scaling": a.mass_scaling, "monitor_every": a.monitor_every,
                     "monitor_limit": a.monitor_limit, "geometry": self.geometry, "loads_frame": self.loads_frame,
-                    "area_shares": a.area_shares}
+                    "area_shares": a.area_shares, "hourglass": a.hourglass}
         try:
             self.brackets = naming.canonical_brackets(brackets)
             self.name = naming.run_name(self.prepared, "replay", (k0, k1), self.form, self.dx_mm, self.brackets,
@@ -740,6 +838,11 @@ class Replay:
                 loads.ramp_from_zero()          # the held table ramps in over the first interval (module docstring)
             decel = pl.make_deceleration(S, loads, s)
             packages += [loads, decel]
+        hg = None
+        if a.hourglass > 0.0:
+            from spheral_frag.runner.packages import hourglass as phg
+            hg = phg.make_hourglass(S, body, a.hourglass, self.table)
+            packages.append(hg)
         if len(self.held_pid):
             # last: it zeroes the held rows after every other package has added to the acceleration
             from spheral_frag.runner.packages import hold as ph
@@ -817,8 +920,9 @@ class Replay:
                         cycle=int(integ.currentCycle), damping_max_fraction=float(
                             packages[1].max_fraction) if a.damping > 0.0 else 0.0,
                         history=h, wall_per_step_s=wall/max(steps, 1), dt_mean_s=(tau1 - tau0)/max(steps, 1),
-                        time_scale=time_scale, spheral_t1_s=float(integ.currentTime))
-        del ctl, integ, hydro, packages, loads, decel, imposed, body
+                        time_scale=time_scale, spheral_t1_s=float(integ.currentTime),
+                        hourglass_energy_ratio=ke_ratio(hg.last_energy, el) if hg is not None else 0.0)
+        del ctl, integ, hydro, packages, loads, decel, imposed, body, hg
         info = c.bcast(info if c.rank == 0 else None, root=0)
         return state, info
 
@@ -933,7 +1037,8 @@ class Replay:
                  history=info["history"], scale=info["scale"], k0=inp.ks[interval_index - 1], k1=k_next)
         extra = dict(time=t1, dt=info["dt"], steps=info["steps_total"], cycle=info["cycle"],
                      next_check=next_check, crossings=info["crossings"], spheral_time=info["time"],
-                     run_crossings=info["run_crossings"])
+                     run_crossings=info["run_crossings"], monitor_watch=info.get("monitor_watch", 0),
+                     monitor_force=info.get("monitor_force", 0))
         path = os.path.join(self.ck_dir, checkpoint.filename(k_next))
         checkpoint.write_state(path, new, form=self.form, dx=self.dx, nperh=rn.NPERH, run=inp.name, k=k_next,
                                scale=info["scale"], processes=comm().size, extra=extra)
@@ -1042,7 +1147,7 @@ def replay(a):
                                    dx=inp.dx, nperh=rn.NPERH, run=inp.name, k=inp.k0, scale=1.0, processes=c.size,
                                    extra=dict(time=inp.times[inp.column(inp.k0)], dt=0.0, steps=0, cycle=0,
                                               next_check=1, crossings=0, spheral_time=0.0,
-                                              run_crossings=a.crossings))
+                                              run_crossings=a.crossings, monitor_watch=0, monitor_force=0))
         c.Barrier()
         k_start = inp.k0
     else:
@@ -1067,6 +1172,8 @@ def replay(a):
     # the run's crossings per interval: --crossings, or twice it after each switch by the monitor (carried in the
     # checkpoints, so a resumed run continues at them)
     base = int(ck["extra"].get("run_crossings", a.crossings))
+    rule = MonitorRule(a.monitor_every, a.monitor_limit, watch=bool(int(ck["extra"].get("monitor_watch", 0))),
+                       force=bool(int(ck["extra"].get("monitor_force", 0))))
     for i in range(i_start, len(inp.ks) - 1):
         k, k_next = inp.ks[i], inp.ks[i + 1]
         state, info, tried = rp.run_interval(k, k_next, ck, base, "")
@@ -1074,54 +1181,57 @@ def replay(a):
         mon = dict(monitored=0, crossings_err_est=math.nan, crossings_err_rms=math.nan, crossings_err_p99=math.nan,
                    crossings_err_pressure=math.nan, monitor_crossings=0, monitor_wall_s=0.0,
                    monitor_ke_internal_ratio=math.nan, crossings_switch=0, crossings_err_limit=math.nan,
-                   crossings_err_limit_basis="")
-        if monitor_due(i, a.monitor_every):
+                   crossings_err_limit_basis="", monitor_chain="", monitor_watch=int(rule.watch))
+        if rule.due(i):
             n_acc = int(info["crossings"])
-            if 2*n_acc > a.max_crossings:
+            if 2*n_acc > a.max_crossings and not rule.required():
                 say(f"  monitor: k {k}->{k_next} not monitored: 2 x {n_acc} crossings > --max-crossings "
                     f"{a.max_crossings}")
             else:
-                st2, info2 = rp.attempt(k, k_next, ck, 2*n_acc, "m")
-                est = None
-                if c.rank == 0:
-                    est = rp.monitor_compare(k, state, info, st2, info2)
-                est = c.bcast(est, root=0)
-                _, internal2, _ = slowness(info2["ke_J"], info2["ke_com_J"], info2["elastic_J"], a.ke_fraction)
-                mon.update(monitored=1, crossings_err_est=est[0], crossings_err_rms=est[1],
-                           crossings_err_p99=est[2], crossings_err_pressure=est[3], monitor_crossings=2*n_acc,
-                           monitor_wall_s=info2["wall_s"], monitor_ke_internal_ratio=internal2)
-                err, basis = limit_error(est[0], est[3])
-                mon.update(crossings_err_limit=err, crossings_err_limit_basis=basis)
-                say(f"  monitor: k {k}->{k_next}  N_c {n_acc} against {2*n_acc}: crossings error {est[0]:.3e} "
-                    f"(rms {est[1]:.3e}, p99 {est[2]:.3e}, pressure {est[3]:.3e}; limit {a.monitor_limit})  wall "
-                    f"{info2['wall_s']:.2f} s")
-                if err > a.monitor_limit:
-                    if 4*n_acc > a.max_crossings:
-                        if c.rank == 0:
-                            write_json(os.path.join(run_dir, "failed.json"),
-                                       {"run": inp.name, "k0": k, "k1": k_next, "reason": "crossings_error",
-                                        "crossings": n_acc, "monitor_crossings": 2*n_acc,
-                                        "crossings_err_est": est[0], "crossings_err_rms": est[1],
-                                        "crossings_err_p99": est[2], "crossings_err_pressure": est[3],
-                                        "crossings_err_limit": err, "crossings_err_limit_basis": basis,
-                                        "monitor_limit": a.monitor_limit,
-                                        "max_crossings": a.max_crossings,
-                                        "explanation": "the crossings-error estimate (the larger of the von Mises "
-                                        "and pressure estimates) exceeds --monitor-limit and the "
-                                        "run cannot continue at twice the crossings and still be monitored (4 N > "
-                                        "--max-crossings)"})
-                        raise Failure(f"interval {k}->{k_next}: crossings error {err:.3e} ({basis}) > "
-                                      f"{a.monitor_limit} at "
-                                      f"{n_acc} crossings, and {4*n_acc} would exceed --max-crossings "
-                                      f"{a.max_crossings}", collective=True)
+                box = dict(wall=0.0, state=state, info=info)
+
+                def estimate(n):
+                    st2, info2 = rp.attempt(k, k_next, ck, 2*n, f"m{2*n}")     # unique per estimate
+                    est = None
+                    if c.rank == 0:
+                        est = rp.monitor_compare(k, box["state"], box["info"], st2, info2)
+                    est = c.bcast(est, root=0)
+                    _, internal2, _ = slowness(info2["ke_J"], info2["ke_com_J"], info2["elastic_J"], a.ke_fraction)
+                    err, basis = limit_error(est[0], est[3])
+                    box["wall"] += info2["wall_s"]
+                    box["pending"] = (st2, info2)
+                    mon.update(monitored=1, crossings_err_est=est[0], crossings_err_rms=est[1],
+                               crossings_err_p99=est[2], crossings_err_pressure=est[3], monitor_crossings=2*n,
+                               monitor_wall_s=box["wall"], monitor_ke_internal_ratio=internal2,
+                               crossings_err_limit=err, crossings_err_limit_basis=basis)
+                    say(f"  monitor: k {k}->{k_next}  N_c {n} against {2*n}: crossings error {est[0]:.3e} "
+                        f"(rms {est[1]:.3e}, p99 {est[2]:.3e}, pressure {est[3]:.3e}; limit {a.monitor_limit})  "
+                        f"wall {info2['wall_s']:.2f} s")
+                    return est, err, basis
+
+                def switch(n, err, basis):
                     say(f"  monitor: crossings error {err:.3e} ({basis}) > {a.monitor_limit}: k {k}->{k_next} takes "
-                        f"the {2*n_acc}-crossing state, and the run continues at {2*n_acc} crossings")
-                    base = 2*n_acc
-                    state, info, tried2 = rp.run_interval(k, k_next, ck, base, "m", first=(st2, info2))
-                    tried += tried2
-                    repeats += len(tried2) - 1
-                    mon["crossings_switch"] = 1
+                        f"the {2*n}-crossing state, the run continues at {2*n} crossings, and the interval is "
+                        f"monitored again against {4*n}")
+                    st, inf, tried2 = rp.run_interval(k, k_next, ck, 2*n, f"s{2*n}_", first=box["pending"])
+                    box.update(state=st, info=inf, tried2=box.get("tried2", []) + [tried2])
+                    return int(inf["crossings"])
+
+                try:
+                    chain, n_acc, n_switch = monitor_interval(rule, n_acc, a.max_crossings, estimate, switch)
+                except MonitorCapReached as e:
+                    fail_monitor(run_dir, inp, k, k_next, e.n, e.last, e.chain, a, str(e))
+                state, info = box["state"], box["info"]
+                for t2 in box.get("tried2", []):
+                    tried += t2
+                    repeats += len(t2) - 1
+                base = max(base, n_acc)                     # never back down
+                mon["crossings_switch"] = n_switch
+                mon["monitor_chain"] = ";".join(f"{n}:{e:.6e}:{b}" for n, e, b in chain)
+                mon["monitor_watch"] = int(rule.watch)
         info["run_crossings"] = base
+        info["monitor_watch"] = int(rule.watch)
+        info["monitor_force"] = int(rule.force)
         row = None
         if c.rank == 0:
             row = {col: info.get(col, math.nan) for col in INTERVAL_COLUMNS}
@@ -1211,8 +1321,15 @@ def monitor_summary(rows, a):
                        "pressure": num(r, "crossings_err_pressure"), "limit": lim(r), "basis": basis(r)}
                       for r in mon],
         "switches": [{"k0": int(r["k0"]), "k1": int(r["k1"]), "to_crossings": int(r["run_crossings"]),
-                      "est": num(r, "crossings_err_est"), "limit": lim(r), "basis": basis(r)}
-                     for r in rows if str(r.get("crossings_switch", "0")) == "1"],
+                      "est": num(r, "crossings_err_est"), "limit": lim(r), "basis": basis(r),
+                      "doublings": int(r.get("crossings_switch", "0") or 0), "chain": r.get("monitor_chain", "")}
+                     for r in rows if int(r.get("crossings_switch", "0") or 0) > 0],
+        "rule": "first interval and every monitor_every-th; every interval once an estimate exceeds half the limit; "
+                "the interval after a switch; within a monitored interval the crossings double until the estimate "
+                "is at or below the limit (Task 10b)",
+        "watch_from": next(([int(r["k0"]), int(r["k1"])] for r in rows if str(r.get("monitor_watch", "0")) == "1"),
+                           None),
+        "intervals_unmonitored": sum(1 for r in rows if str(r.get("monitored", "0")) != "1"),
         "final_crossings": int(rows[-1]["run_crossings"]) if rows and rows[-1].get("run_crossings") not in
         ("", None) else a.crossings,
         "monitor_wall_s": math.fsum(num(r, "monitor_wall_s") for r in mon),
@@ -1224,7 +1341,7 @@ def settings(a, rp):
             "strength": a.strength, "rate_min": a.rate_min, "every_check": a.every_check, "seed": a.seed,
             "cfl": CFL, "ke_fraction": a.ke_fraction, "surface_loads": a.loads, "mass_scaling": a.mass_scaling,
             "monitor_every": a.monitor_every, "monitor_limit": a.monitor_limit, "loads_frame": a.loads_frame,
-            "area_shares": a.area_shares,
+            "area_shares": a.area_shares, "hourglass": a.hourglass,
             "hydro": {"sph": "SolidSPH, compatible energy, IntegrateDensity, no XSPH",
                       "crksph": "SolidCRKSPH (linear), IntegrateDensity, MassOverDensity volumes, no XSPH, compatible "
                                 "energy " + ("off (SolidCRKSPHRZ)" if rp.form == "rz" else "on")}[a.scheme],
@@ -1267,6 +1384,9 @@ def build_parser():
     r.add_argument("--area-shares", choices=("patch", "volume"), default=naming.BRACKET_DEFAULTS["area_shares"],
                    help="the surface particles' area shares: patch (default: the frame's patch areas to the nearest "
                    "surface particle) or volume (V^(2/3), calibrated)")
+    r.add_argument("--hourglass", type=float, default=naming.BRACKET_DEFAULTS["hourglass"],
+                   help="the hourglass stiffness kappa against SolidSPH's tensile pairing (packages/hourglass.py; "
+                   "default 0.01; 0: off)")
     r.add_argument("--every-check", type=int, default=1)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", default=DEFAULT_OUT)
