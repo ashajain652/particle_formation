@@ -313,7 +313,8 @@ def test_skins_match_the_skfem_backend(coarse_sphere_mesh):
     of 0.5 s, every patch skinned at the first step. Skins, mass, film and temperatures agree and both energy balances
     are exact."""
     pytest.importorskip("cantera")
-    from reentry_model import body, heating, mesh, skin
+    from reentry_model import body, heating, mesh
+    from reentry_model import skin1d as skin
     from test_reentry_model_coupled import MASS_100MM
     out = {}
     for name in ("skfem", "fenicsx"):

@@ -1,60 +1,62 @@
-"""One-dimensional skins under the melting surface patches (Step 3 sub-plan 18; design:
-docs/superpowers/specs/2026-10-07-melt-layer-skin-design.md, sections 5-7).
+"""The layered skins on the corner columns (layered-skin design, docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-
+design.md sections 6 and 7; stage 2, sub-plan 20: heat only, liquid removed as it forms).
 
-A skin belongs to one surface patch and has its area: a slab of `n_cells` equal cells along the patch's inward normal
-that owns the outermost metal of that patch. Its state is each cell's metal mass `m` [kg] and metal enthalpy `H`
-[J above material.T_REF], with the temperature `T` that follows from them. The liquid riding on the patch -- the film
-and the deep account, which MeltingBody keeps as `m_f` and `m_d` -- shares the top cell's temperature: cell 0 and that
-liquid are one node, of energy m_0 h(T_0) + L h_l(T_0). Every operation conserves mass and enthalpy exactly. Every
-array is per skin, and all skins are solved together."""
+Every corner column carries a skin from time zero: a stack of cells along the column's direction holding all metal
+outward of the rigid front, at least the column's minimum mass. A cell holds its mass [kg] and enthalpy [J above
+material.T_REF]; its temperature, liquid fraction and density follow from the material's enthalpy law, and its thickness
+is its mass over the column's area and its own density (liquid is about 15 % less dense than solid). All columns are
+stored side by side in padded arrays (n, K): cell 0 is the top, cells 0 .. count - 1 are real, the rest hold nothing.
+
+Cells move with the metal: nothing re-divides a whole column. After every sub-step's exchanges a cell more than
+SPLIT_ABOVE times its target thickness is split in two and one less than MERGE_BELOW times it is merged into the cell
+beneath (the bottom cell into the one above), exactly in mass and enthalpy. The target is the fine cell within the fine
+zone, which is the minimum thickness below the top, and grows by (growth - 1) per unit depth below it -- the continuous
+form of each cell being `growth` times thicker than the one above.
+
+Stage 2 has no flow and no spraying: after each sub-step the contiguous cells at the top that are at or above T_feed
+leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model at
+the base temperature (`drawn`). The body (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the
+corners' displacements and reconciles each column with what the moving mesh actually swept."""
 import math
 from dataclasses import dataclass
 
 import numpy as np
 
-from .material import MELT_RAMP
 from .thermal import SIGMA_SB
 
-SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}  # m, the presets' cell sizes (spec section 11.1)
-INTERFACE_TOLERANCE = 1.0e-3     # |mismatch| / (|E_top| + |E_base|) above which a macro step repeats (spec 6.2)
-NEWTON_TOL = 1.0e-6              # K: a sub-step has converged when no cell moves by more than this
+SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (spec section 6.2)
+SPLIT_ABOVE = 1.5                 # a cell thicker than this times its target is split in two (spec 6.2)
+MERGE_BELOW = 0.5                 # a cell thinner than this times its target is merged into its neighbour (spec 6.2)
+REGRID_PASSES = 64                # merge-and-split rounds after an exchange: one unless a cell grew many-fold, each
+                                  # round halving it (2.6 mm added at once needs 9)
+DELTA_M_MARGIN = 50.0e-6          # m of liquid kept below Girin's conjugate depth in the minimum mass (spec 6.1)
+INTERFACE_TOLERANCE = 1.0e-3      # |mismatch| / (|E_top| + |E_base|) above which a macro step repeats (spec 7.2)
+JUMP_TOLERANCE = 5.0              # K between the metal crossing the base and the skin's bottom cell: a fault (spec 6.6,
+                                  # provisional)
+NEWTON_TOL = 1.0e-6               # K: a sub-step has converged when no cell moves by more than this
 NEWTON_MAX = 40
-LINE_SEARCH_MAX = 12           # halvings of a Newton step before it is taken anyway
-DZ_FLOOR = 1.0e-12               # m: an emptied cell conducts as if this thin (it holds no heat)
-MAX_THICKNESS_FACTOR = 2.0       # the resolution bound (spec 5.4, "Thickness bounds"): above this multiple of its target
-                                 # thickness a skin's cells are too coarse for the melt layer, so it returns its bottom
-                                 # metal to its element where the element has room (MeltingBody._return_from_skins)
+LINE_SEARCH_MAX = 12              # halvings of a Newton step before it is taken anyway
+DZ_FLOOR = 1.0e-12                # m: the conduction length of a vanishing cell
+SIDEWAYS_CFL = 0.9                # explicit sideways conduction: sub-cycles keep dt k sum(w) / (rho c_p A) below this
+TABLE_DT = 0.01                   # K, spacing of the skins' property tables (PropertyTable)
+TABLE_RANGE = (150.0, 3000.0)     # K, their extent; beyond it the end intervals are extended linearly
 
 
+# -- settings and cells (Task 2) ---------------------------------------------------------------------------------------
 @dataclass
 class SkinSettings:
-    thickness: float = 0.4e-3              # m, target thickness s
-    cell: float = SKIN_PRESETS["production"]
-    substep: float = 0.010                 # s, the skins' sub-step
+    min_thickness: float = 0.4e-3          # m of solid metal: the minimum mass, and the fine zone's depth (spec 6.1)
+    cell: float = SKIN_PRESETS["production"]   # m, the fine cell
+    growth: float = 1.10                   # each cell below the fine zone this much thicker than the one above
+    substep: float = 0.010                 # s, the skins' sub-step (spec 7.1)
 
     def __post_init__(self):
-        if not (self.thickness > 0.0 and self.cell > 0.0 and self.substep > 0.0):
-            raise ValueError("skin thickness, cell and substep must be positive")
-        if 2.0 * self.cell > self.thickness * (1.0 + 1e-12):
-            raise ValueError("a skin needs at least two cells: cell <= thickness / 2")
-
-    @property
-    def n_cells(self):
-        return int(round(self.thickness / self.cell))
-
-
-@dataclass
-class SkinBook:
-    """What a real pass did, per skin: energies [J] and masses [kg]."""
-    E_top: np.ndarray        # convective heat taken in at the top
-    E_rad: np.ndarray        # radiated from the top
-    E_base: np.ndarray       # passed down into the 3D model through the base
-    to_film: np.ndarray      # liquid handed to the film
-    to_deep: np.ndarray      # liquid handed to the deep account
-    drawn: np.ndarray        # metal drawn from the element below
-    drawn_H: np.ndarray      # the enthalpy that metal brought
-    L: np.ndarray            # the liquid on each top node after the pass
-    frozen: np.ndarray       # liquid frozen into the skin's top cell (spec 5.4, freeze-back)
+        if not (self.min_thickness > 0.0 and self.cell > 0.0 and self.substep > 0.0):
+            raise ValueError("skin minimum thickness, cell and substep must be positive")
+        if self.growth < 1.0:
+            raise ValueError("skin growth must be at least 1")
+        if 2.0 * self.cell > self.min_thickness * (1.0 + 1e-12):
+            raise ValueError("a skin needs at least two fine cells: cell <= min_thickness / 2")
 
 
 def thomas(sub, diag, sup, rhs):
@@ -77,425 +79,335 @@ def thomas(sub, diag, sup, rhs):
     return x
 
 
-def cumulative(m, Q, x):
-    """Per row: the integral from the top down to mass coordinate x (n, j) of a quantity Q (n, nc) carried uniformly
-    within each cell of mass m (n, nc). Exact for piecewise-uniform cells; one sorted search for all rows."""
-    n, nc = m.shape
-    cm = np.concatenate([np.zeros((n, 1)), np.cumsum(m, axis=1)], axis=1)
-    cQ = np.concatenate([np.zeros((n, 1)), np.cumsum(Q, axis=1)], axis=1)
-    M = np.where(cm[:, -1] > 0.0, cm[:, -1], 1.0)[:, None]
-    off = 2.0 * np.arange(n)[:, None]
-    flat = (cm / M + off).ravel()
-    i = np.searchsorted(flat, (x / M + off).ravel(), side="right").reshape(x.shape) - 1
-    i = np.clip(i - (nc + 1) * np.arange(n)[:, None], 0, nc - 1)
-    r = np.arange(n)[:, None]
-    mi = m[r, i]
-    frac = np.clip(np.divide(x - cm[r, i], mi, out=np.zeros_like(x, dtype=float), where=mi > 0.0), 0.0, 1.0)
-    return cQ[r, i] + frac * Q[r, i]
+class PropertyTable:
+    """The material's h(T), c_p,eff(T), k(T) and f_l(T) tabulated on a uniform TABLE_DT grid and interpolated
+    linearly: a lookup is index arithmetic instead of the material's binary search, which was half of a skin pass's
+    time (measured while planning: 11 s of a 4 mm sphere's macro step, 5.5 s of it in the property calls). The
+    interpolation moves h by at most about 60 J/kg (0.05 K) across a Scheil node, and the books never see it: every pass
+    starts from each cell's stored enthalpy."""
+
+    def __init__(self, material, dT=TABLE_DT, T_range=TABLE_RANGE):
+        self.T0, self.dT = float(T_range[0]), float(dT)
+        T = np.arange(T_range[0], T_range[1] + dT, dT)
+        self.n = len(T)
+        self._h, self._cp, self._k, self._f = (material.enthalpy(T), material.cp_eff(T), material.k(T),
+                                               material.liquid_fraction(T))
+
+    def _at(self, table, T):
+        x = (np.asarray(T, dtype=float) - self.T0) / self.dT
+        i = np.clip(x.astype(np.int64), 0, self.n - 2)
+        return table[i] + (x - i) * (table[i + 1] - table[i])
+
+    def conduction(self, T):
+        """(h, dh/dT, k) at T with one index computation, for the conduction's Newton iteration. The heat capacity is
+        the slope of the tabulated h itself, so the Newton tangent is exact: interpolating c_p,eff instead left it off
+        the slope near the Scheil curve's 1 K nodes and took five iterations a sub-step where three do (measured while
+        planning)."""
+        x = (np.asarray(T, dtype=float) - self.T0) / self.dT
+        i = np.clip(x.astype(np.int64), 0, self.n - 2)
+        dh = self._h[i + 1] - self._h[i]
+        return self._h[i] + (x - i) * dh, dh / self.dT, self._k[i] + (x - i) * (self._k[i + 1] - self._k[i])
+
+    def enthalpy(self, T):
+        return self._at(self._h, T)
+
+    def cp_eff(self, T):
+        return self._at(self._cp, T)
+
+    def k(self, T):
+        return self._at(self._k, T)
+
+    def liquid_fraction(self, T):
+        return np.clip(self._at(self._f, T), 0.0, 1.0)
 
 
-class SkinField:
-    """Every skin of the body, as arrays (module docstring)."""
+class Skins:
+    """The skins of every column, as padded arrays (module docstring). `area` [m2] is each column's area, the dual
+    area of its base corner; the body updates it when the corners move (the cells keep their mass). `S`, when not None,
+    is an intensive per-cell field every cell operation carries (the trial pass's dT/dT_b)."""
 
-    def __init__(self, material, settings=None):
+    def __init__(self, material, area, settings=None):
         self.material = material
         self.settings = settings or SkinSettings()
-        self.nc = self.settings.n_cells
-        self.face_id = np.zeros(0, dtype=np.int64)
-        self.area = np.zeros(0)
-        self.m = np.zeros((0, self.nc))
-        self.H = np.zeros((0, self.nc))
-        self.T = np.zeros((0, self.nc))
-        # freeze-back (spec 5.4): liquid on a top node below T_low = T_feed - 2 MELT_RAMP, the bottom of the feed ramp,
-        # freezes into the top cell; h(T_low) and h_l(T_low) are fixed by the material, so they are computed once
-        self.T_low = self.h_low = self.hl_low = None
-        if material.melts:
-            self.T_low = material.T_feed - 2.0 * MELT_RAMP
-            self.h_low = float(material.enthalpy(self.T_low))
-            self.hl_low = float(material.enthalpy_liquid(self.T_low))
-            if not self.hl_low - self.h_low > 0.0:
-                raise ValueError("freeze-back needs h_l(T_low) > h(T_low): the material releases no latent heat at T_feed - 2 MELT_RAMP")
+        self.area = np.array(area, dtype=float)
+        n = len(self.area)
+        self.m, self.H, self.T = np.zeros((n, 1)), np.zeros((n, 1)), np.full((n, 1), 300.0)
+        self.count = np.zeros(n, dtype=np.int64)
+        self.S = None
+        self.rho_l = material.liquid.rho if material.liquid is not None else material.rho
+        self.props = PropertyTable(material)
 
     # -- books ------------------------------------------------------------------------------------------------------
     @property
     def n(self):
-        return int(self.face_id.size)
+        return len(self.area)
+
+    @property
+    def valid(self):
+        return np.arange(self.m.shape[1])[None, :] < self.count[:, None]
 
     def mass(self):
         return float(self.m.sum())
 
     def energy(self):
-        """Metal enthalpy held by the skins [J]. The liquid on their top nodes is MeltingBody.film_energy's."""
         return float(self.H.sum())
 
-    def thickness(self):
-        return self.m.sum(axis=1) / (self.material.rho * self.area) if self.n else np.zeros(0)
+    def column_mass(self):
+        return self.m.sum(axis=1)
 
     def state(self):
-        return tuple(a.copy() for a in (self.face_id, self.area, self.m, self.H, self.T))
+        return tuple(a.copy() for a in (self.area, self.m, self.H, self.T, self.count))
 
     def set_state(self, state):
-        self.face_id, self.area, self.m, self.H, self.T = (a.copy() for a in state)
+        self.area, self.m, self.H, self.T, self.count = (a.copy() for a in state)
+        self.S = None
 
-    # -- membership -------------------------------------------------------------------------------------------------
-    def add(self, face_id, area, T_profile, thickness):
-        """Append skins with cell temperatures T_profile (k, nc) and thickness [m] (k,). Returns (mass, H) per new skin."""
-        area = np.asarray(area, dtype=float)
-        dz = np.asarray(thickness, dtype=float) / self.nc
-        m = self.material.rho * (area * dz)[:, None] * np.ones((1, self.nc))
-        T = np.asarray(T_profile, dtype=float).reshape(len(area), self.nc)
-        H = m * self.material.enthalpy(T)
-        self.face_id = np.concatenate([self.face_id, np.asarray(face_id, dtype=np.int64)])
-        self.area = np.concatenate([self.area, area])
-        self.m, self.H, self.T = np.vstack([self.m, m]), np.vstack([self.H, H]), np.vstack([self.T, T])
-        return m.sum(axis=1), H.sum(axis=1)
+    # -- geometry of the cells --------------------------------------------------------------------------------------
+    def density(self, T):
+        """Mixture density [kg/m3]: specific volumes add, (1 - f_l)/rho_s + f_l/rho_l."""
+        f = self.props.liquid_fraction(T)
+        return 1.0 / ((1.0 - f) / self.material.rho + f / self.rho_l)
 
-    def keep(self, rows):
-        rows = np.asarray(rows, dtype=np.int64)
-        self.face_id, self.area = self.face_id[rows], self.area[rows]
-        self.m, self.H, self.T = self.m[rows], self.H[rows], self.T[rows]
+    def dz(self):
+        """Cell thicknesses [m] (0 beyond each column's count)."""
+        return np.where(self.valid, self.m / (self.density(self.T) * self.area[:, None]), 0.0)
 
-    def rows_of(self, face_ids):
-        """The row of each face id's skin, -1 where it has none."""
-        face_ids = np.asarray(face_ids, dtype=np.int64)
-        if not self.n:
-            return np.full(face_ids.shape, -1, dtype=np.int64)
-        order = np.argsort(self.face_id)
-        s = self.face_id[order]
-        i = np.clip(np.searchsorted(s, face_ids), 0, len(s) - 1)
-        return np.where(s[i] == face_ids, order[i], -1)
+    def thickness(self):
+        return self.dz().sum(axis=1)
 
-    # -- the top node -----------------------------------------------------------------------------------------------
-    def top_energy(self, rows, L):
-        """Energy of the top node of `rows` with liquid L [kg] on it [J]."""
-        return self.H[rows, 0] + L * self.material.enthalpy_liquid(self.T[rows, 0])
+    def targets(self, dz=None):
+        """Target thickness of every cell [m] from the depth of its top below the column's top (module docstring)."""
+        dz = self.dz() if dz is None else dz
+        z = np.cumsum(dz, axis=1) - dz
+        s = self.settings
+        return s.cell + (s.growth - 1.0) * np.maximum(z - s.min_thickness, 0.0)
 
-    def equilibrate_top(self, rows, L, E_top):
-        """Put cell 0 of `rows` and the liquid L [kg] on it at one temperature holding E_top [J] together. Returns T_0."""
-        mat = self.material
-        m0 = self.m[rows, 0]
-        tot = m0 + L
-        w = np.divide(L, tot, out=np.zeros_like(tot), where=tot > 0.0)
-        h = np.divide(E_top, tot, out=np.zeros_like(tot), where=tot > 0.0)
-        T0 = np.where(tot > 0.0, mat.temperature_from_enthalpy_mixed(h, w), self.T[rows, 0])
-        self.T[rows, 0] = T0
-        self.H[rows, 0] = m0 * mat.enthalpy(T0)
-        return T0
+    # -- installing cells -------------------------------------------------------------------------------------------
+    def _install(self, m, H, count, S=None, T=None):
+        """Install padded cell arrays. Temperatures follow from the enthalpies, except where `T` is given for cells
+        whose specific enthalpy the operation did not change (a shifted, split or partly taken cell); nan in T marks
+        the cells to recompute."""
+        valid = np.arange(m.shape[1])[None, :] < count[:, None]
+        self.m, self.H, self.count = np.where(valid, m, 0.0), np.where(valid, H, 0.0), np.asarray(count, dtype=np.int64)
+        redo = valid if T is None else valid & np.isnan(T)
+        self.T = np.full(self.m.shape, 300.0) if T is None else np.where(valid & ~redo, T, 300.0)
+        if redo.any():
+            self.T[redo] = self.material.temperature_from_enthalpy(self.H[redo] / self.m[redo])
+        if self.S is not None:
+            self.S = np.where(valid, S, 0.0)
 
-    def book_top(self, rows, dE, L):
-        """Add dE [J] to the top node of `rows` carrying liquid L [kg] and re-solve its temperature."""
-        self.equilibrate_top(rows, L, self.top_energy(rows, L) + dE)
+    def fill(self, mass, T):
+        """Every column filled with `mass` [kg] (per column) of metal at temperature T [K] (per column), in equal cells of
+        about the fine size (the initial skins, spec 6.1)."""
+        mass, T = np.broadcast_to(np.asarray(mass, dtype=float), (self.n,)), np.broadcast_to(np.asarray(T, dtype=float), (self.n,))
+        thick = mass / (self.density(T) * self.area)
+        nc = np.maximum(np.rint(thick / self.settings.cell).astype(np.int64), 1)
+        K = int(nc.max())
+        valid = np.arange(K)[None, :] < nc[:, None]
+        m = np.where(valid, (mass / nc)[:, None], 0.0)
+        self.S = None
+        self._install(m, m * self.material.enthalpy(T)[:, None], nc)
 
-    def refreeze_top(self, rows, taken, L_after):
-        """Liquid `taken` [kg] freezes onto cell 0 of `rows`; the node's energy is unchanged (spec 7.1 (6)). L_after is
-        the liquid left on the node; the skin is remapped onto equal cells afterwards."""
-        E = self.top_energy(rows, L_after + taken)
-        self.m[rows, 0] += taken
-        self.equilibrate_top(rows, L_after, E)
-        self.remap(rows, L_after)
+    def _width(self, K):
+        """Pad the arrays to at least K cells."""
+        extra = K - self.m.shape[1]
+        if extra > 0:
+            pad = lambda a, v: np.hstack([a, np.full((self.n, extra), v)])
+            self.m, self.H, self.T = pad(self.m, 0.0), pad(self.H, 0.0), pad(self.T, 300.0)
+            if self.S is not None:
+                self.S = pad(self.S, 0.0)
 
-    def freeze_top(self, L):
-        """Freeze-back, limited by the top node's energy (spec 5.4, decided 2026-10-08), for every skin; L [kg] is the
-        liquid on each top node. Where the node -- the top cell's metal m0 and the liquid on it, at one temperature -- has
-        fallen below T_low = T_feed - 2 MELT_RAMP, the bottom of the feed ramp, liquid freezes into the top cell with the
-        node's energy E held fixed: as much as leaves the node exactly at T_low,
-            x = (m0 h(T_low) + L h_l(T_low) - E) / (h_l(T_low) - h(T_low)),
-        or all of it if even then the node stays colder. h_l - h at T_low is the latent heat a kilogram gives up by
-        freezing there; it stays in the node, and the following sub-steps' conduction carries it into the skin, so the
-        conduction sets the rate of solidification and no thickness enters the rule. Between T_low and T_feed the liquid
-        neither freezes nor feeds: the ramp is a dead band. Skins that freeze are remapped onto equal cells; the others
-        are left as they are. Returns (frozen, L_new) [kg] per skin."""
-        L = np.array(L, dtype=float)
-        if not self.n or self.T_low is None:
-            return np.zeros(self.n), L
-        E = self.top_energy(np.arange(self.n), L)
-        x = np.clip((self.m[:, 0] * self.h_low + L * self.hl_low - E) / (self.hl_low - self.h_low), 0.0, L)
-        some = np.flatnonzero(x > 0.0)
-        if some.size:
-            self.refreeze_top(some, x[some], (L - x)[some])
-        return x, L - x
-
-    # -- rezoning ---------------------------------------------------------------------------------------------------
-    def _rezone(self, rows, start, D, hD, S=None, S_drawn=1.0):
-        """Rows' columns below mass coordinate `start` [kg from the top], with D [kg] of metal added at the bottom at
-        specific enthalpy hD [J/kg], redistributed onto nc equal cells: within an old cell the specific enthalpy is
-        uniform, so the cumulative enthalpy is linear in the cumulative mass and the new cells' enthalpies are exact
-        differences of it. S (an intensive per-cell field, optional) is remapped mass-weighted, the drawn metal
-        carrying S_drawn. Returns (m, H, S) of the new cells."""
-        m, H = self.m[rows], self.H[rows]
-        nc = self.nc
-        start, D, hD = (np.broadcast_to(np.asarray(v, dtype=float), (len(rows),)) for v in (start, D, hD))
-        rest = m.sum(axis=1) - start
-        M_new = rest + D
-        y = M_new[:, None] * np.linspace(0.0, 1.0, nc + 1)[None, :]
-        x = start[:, None] + np.minimum(y, rest[:, None])
-        below = np.maximum(y - rest[:, None], 0.0)
-        E_top = cumulative(m, H, start[:, None])
-        cH = cumulative(m, H, x) - E_top + below * hD[:, None]
-        cH[:, 0] = 0.0
-        cH[:, -1] = H.sum(axis=1) - E_top[:, 0] + D * hD                      # exact totals
-        m_new = np.repeat((M_new / nc)[:, None], nc, axis=1)
-        S_new = None
-        if S is not None:
-            mS = m * S
-            cS = cumulative(m, mS, x) - cumulative(m, mS, start[:, None]) + below * S_drawn
-            S_new = np.divide(np.diff(cS, axis=1), m_new, out=np.ones_like(m_new) * S_drawn, where=m_new > 0.0)
-        return m_new, np.diff(cH, axis=1), S_new
-
-    def _set_cells(self, rows, m, H, L, E_liq_top):
-        """Install cell masses and enthalpies on `rows`, the temperatures from them, the top node with its liquid."""
-        mat = self.material
-        self.m[rows], self.H[rows] = m, H
-        h = np.divide(H, m, out=mat.enthalpy(self.T[rows]), where=m > 0.0)
-        self.T[rows] = mat.temperature_from_enthalpy(h)
-        self.equilibrate_top(rows, L, H[:, 0] + E_liq_top)
-
-    def remap(self, rows, L):
-        """Conservative remap of `rows` (any cell masses) onto nc equal cells; L [kg] is the liquid on their top nodes,
-        whose energy stays with the top node."""
-        rows = np.asarray(rows, dtype=np.int64)
-        if not rows.size:
-            return
-        E_liq = L * self.material.enthalpy_liquid(self.T[rows, 0])
-        m, H, _ = self._rezone(rows, 0.0, 0.0, 0.0)
-        self._set_cells(rows, m, H, L, E_liq)
-
-    def add_bottom(self, rows, mass, H, L):
-        """Metal `mass` [kg] carrying `H` [J] joins the bottom of `rows` (distinct rows; an element's remainder at its
-        death, spec section 9); L [kg] is the liquid on their top nodes."""
-        rows = np.asarray(rows, dtype=np.int64)
-        self.m[rows, -1] += mass
-        self.H[rows, -1] += H
-        self.remap(rows, L)
-
-    def take_bottom(self, rows, mass, L):
-        """Metal `mass` [kg] (0 <= mass < the column's mass) leaves the bottom of `rows` (distinct rows; the return of a
-        skin's metal above MAX_THICKNESS_FACTOR times its target thickness to its element, spec 5.4 "Thickness bounds").
-        The top M - mass stays, rezoned onto nc equal cells as `_rezone` does (the cumulative enthalpy is linear within
-        each old cell and the new cells' enthalpies are exact differences of it); L [kg] is the liquid on the top nodes,
-        whose energy stays with the node. Returns the enthalpy [J] that left with the metal, per row: what stays and what
-        left add up to the column's enthalpy before."""
-        rows = np.asarray(rows, dtype=np.int64)
-        if not rows.size:
-            return np.zeros(0)
-        m, H = self.m[rows], self.H[rows]
-        keep = m.sum(axis=1) - np.asarray(mass, dtype=float)
-        E_liq = L * self.material.enthalpy_liquid(self.T[rows, 0])
-        cH = cumulative(m, H, keep[:, None] * np.linspace(0.0, 1.0, self.nc + 1)[None, :])
-        cH[:, 0] = 0.0
-        H_new = np.diff(cH, axis=1)
-        taken = H.sum(axis=1) - H_new.sum(axis=1)
-        self._set_cells(rows, np.repeat((keep / self.nc)[:, None], self.nc, axis=1), H_new, L, E_liq)
-        return taken
-
-    # -- depths -----------------------------------------------------------------------------------------------------
-    def depth_above(self, T_level):
-        """Per skin: the depth [m] from the top to where the contiguous cells above T_level end, interpolated between
-        cell centres, and whether every cell is above it (the layer then continues into the 3D model)."""
-        if not self.n:
-            return np.zeros(0), np.zeros(0, dtype=bool)
-        k = np.cumprod(self.T > T_level, axis=1).sum(axis=1)
-        dz = self.thickness() / self.nc
-        r = np.arange(self.n)
-        Ta = self.T[r, np.clip(k - 1, 0, self.nc - 1)]
-        Tb = self.T[r, np.clip(k, 0, self.nc - 1)]
-        frac = np.clip(np.divide(Ta - T_level, Ta - Tb, out=np.zeros_like(Ta), where=Ta > Tb), 0.0, 1.0)
-        depth = np.where(k == 0, 0.0, np.where(k == self.nc, self.nc * dz, (k - 0.5 + frac) * dz))
-        return depth, k == self.nc
-
-    # -- hand-over --------------------------------------------------------------------------------------------------
-    def hand_over(self, src, tgt_faces, weights, face_area):
-        """Skins of vanished patches pass to the patches their deaths exposed, layer by layer (spec section 9).
-        src (k,) rows; tgt_faces (k, j) face ids of the receiving patches (-1: none); weights (k, j), summing to 1 over
-        the valid targets; face_area(face_ids) -> areas. A source skin holding mass must have valid target weights summing
-        to 1, or ValueError is raised. Every source has equal cells, so cell-wise weighted sums do too.
-        Returns (receiving rows, mass handed over). The caller removes `src` and any skin left without mass; the
-        receiving skins' top nodes are not re-equilibrated with the liquid on them (the caller books that liquid's
-        change of enthalpy, as the liquid's own hand-over does)."""
-        src = np.asarray(src, dtype=np.int64)
-        ok = (tgt_faces >= 0) & (weights > 0.0)
-        wsum = np.where(ok, weights, 0.0).sum(axis=1)
-        if src.size and np.any((np.abs(wsum - 1.0) > 1e-9) & (self.m[src].sum(axis=1) > 0.0)):
-            raise ValueError("a skin handed over needs valid target weights summing to 1")
-        if not src.size or not ok.any():
-            return np.zeros(0, dtype=np.int64), 0.0
-        faces = np.unique(tgt_faces[ok])
-        new = faces[self.rows_of(faces) < 0]
-        if new.size:
-            k = new.size
-            self.face_id = np.concatenate([self.face_id, new])
-            self.area = np.concatenate([self.area, np.asarray(face_area(new), dtype=float)])
-            self.m, self.H = np.vstack([self.m, np.zeros((k, self.nc))]), np.vstack([self.H, np.zeros((k, self.nc))])
-            self.T = np.vstack([self.T, np.zeros((k, self.nc))])
-        sj, tj = np.nonzero(ok)
-        trows = self.rows_of(tgt_faces[sj, tj])
-        w = weights[sj, tj][:, None]
-        np.add.at(self.m, trows, w * self.m[src[sj]])
-        np.add.at(self.H, trows, w * self.H[src[sj]])
-        recv = np.unique(trows)
-        full = recv[self.m[recv].sum(axis=1) > 0.0]
-        if full.size:
-            self.T[full] = self.material.temperature_from_enthalpy(self.H[full] / np.where(self.m[full] > 0.0, self.m[full], 1.0))
-        return recv, float(self.m[src].sum())
-
-    # -- the sub-step -----------------------------------------------------------------------------------------------
-    def conduct(self, dt, q_top, T_amb, emissivity, T_b, L, T_surface=None, sens=None):
-        """One implicit (backward-Euler) sub-step for every skin (spec section 5.4): the patch's convective flux q_top
-        [W/m2] in at the top, radiation from the top cell, conduction through the cells (harmonic conductances), and the
-        base held at T_b [K]. The liquid L [kg] on each top node shares cell 0's temperature and heat capacity. Newton
-        in the temperature with a backtracking line search per skin on the residual's norm (not the 3D solver's
-        enthalpy-consistent update; see the comment below). T_surface (tests only) holds the top face at that
-        temperature instead of the flux. `sens = (S, dEb)` carries dT/dT_b and the derivative of the base energy through
-        the sub-step (the trial pass). Returns (E_top, E_rad, E_base, sens) [J per skin]; E_base is what the books leave,
-        so they close exactly whatever the iteration error."""
-        mat, n, nc = self.material, self.n, self.nc
-        if n == 0:
-            z = np.zeros(0)
-            return z, z, z, sens
-        A = self.area
-        dz = np.maximum(self.m / (mat.rho * A[:, None]), DZ_FLOOR)
-        Mt = self.m.copy()
-        Mt[:, 0] += L
-        w = np.zeros_like(Mt)
-        w[:, 0] = np.divide(L, Mt[:, 0], out=np.zeros(n), where=Mt[:, 0] > 0.0)
-        T_old = self.T.copy()
-        E_old = Mt * mat.enthalpy_mixed(T_old, w)
-        eps_s = np.asarray(emissivity, dtype=float) * SIGMA_SB
-        q = np.asarray(q_top, dtype=float)
-        T_b = np.asarray(T_b, dtype=float)
-
-        def system(T):
-            """Residual R [W] of every cell at T, the conductances, and the diagonal of the Newton matrix."""
-            k = mat.k(T)
-            G = A[:, None] / (0.5 * dz[:, :-1] / k[:, :-1] + 0.5 * dz[:, 1:] / k[:, 1:])
-            Gb = A * k[:, -1] / (0.5 * dz[:, -1])
-            flux = G * (T[:, :-1] - T[:, 1:])
-            net = np.zeros((n, nc))
-            diag = Mt * mat.cp_mixed(T, w) / dt
-            if T_surface is None:
-                net[:, 0] += q * A - eps_s * A * (T[:, 0] ** 4 - T_amb ** 4)
-                diag[:, 0] += 4.0 * eps_s * A * T[:, 0] ** 3
+    # -- split and merge --------------------------------------------------------------------------------------------
+    def regrid(self):
+        """Merge cells below MERGE_BELOW of their target, split those above SPLIT_ABOVE, until none qualifies. Only the
+        columns that need it are rebuilt (a split every sub-step on every melting column is the common case)."""
+        for _ in range(REGRID_PASSES):
+            valid = self.valid
+            dz = self.dz()
+            t = self.targets(dz)
+            small = valid & (dz < MERGE_BELOW * t) & (self.count >= 2)[:, None]
+            big = valid & (dz > SPLIT_ABOVE * t)
+            if not (small.any() or big.any()):
+                return
+            if small.any():
+                self._merge(np.flatnonzero(small.any(axis=1)), small)
             else:
-                Gs = A * k[:, 0] / (0.5 * dz[:, 0])
-                net[:, 0] += Gs * (T_surface - T[:, 0])
-                diag[:, 0] += Gs
-            net[:, :-1] -= flux
-            net[:, 1:] += flux
-            net[:, -1] -= Gb * (T[:, -1] - T_b)
-            diag[:, :-1] += G
-            diag[:, 1:] += G
-            diag[:, -1] += Gb
-            return (Mt * mat.enthalpy_mixed(T, w) - E_old) / dt - net, G, Gb, diag
+                self._split(np.flatnonzero(big.any(axis=1)), big)
+        raise RuntimeError("the skin cells did not settle in {} split-and-merge passes".format(REGRID_PASSES))
 
-        # Newton in the temperature with a backtracking line search per skin on the residual's norm. Not the 3D solver's
-        # enthalpy-consistent update: in 10-micrometre cells conduction outweighs the heat capacity some five hundred
-        # times over a 10 ms sub-step, so a cell must move with its neighbours, and inverting each cell's own h(T) moved
-        # them apart by a tenth of the step wherever c_p,eff varies through the Scheil range -- the iteration stalled at
-        # a 0.4 K change (measured while planning). Across a sharp latent ramp the line search does what that update did.
-        T = T_old.copy()
-        R, G, Gb, diag = system(T)
-        for _ in range(NEWTON_MAX):
-            dT = thomas(-G, diag, -G, -R)
-            r0 = np.sqrt((R * R).sum(axis=1))
-            lam = np.ones(n)
-            for _ in range(LINE_SEARCH_MAX):
-                T_try = T + lam[:, None] * dT
-                R_try, G_try, Gb_try, diag_try = system(T_try)
-                moved = np.abs(T_try - T).max(axis=1)
-                worse = (np.sqrt((R_try * R_try).sum(axis=1)) > (1.0 - 1e-4 * lam) * r0) & (moved > NEWTON_TOL)
-                if not worse.any():
-                    break
-                lam = np.where(worse, 0.5 * lam, lam)
-            T, R, G, Gb, diag = T_try, R_try, G_try, Gb_try, diag_try
-            if moved.max() <= NEWTON_TOL:
-                break
-        else:
-            raise RuntimeError("a skin sub-step did not converge in {} iterations (last change {:.2e} K)".format(NEWTON_MAX, moved.max()))
-        E_new = Mt * mat.enthalpy_mixed(T, w)
-        if T_surface is None:
-            E_top = q * A * dt
-            E_rad = eps_s * A * (T[:, 0] ** 4 - T_amb ** 4) * dt
-        else:
-            E_top = A * mat.k(T[:, 0]) / (0.5 * dz[:, 0]) * (T_surface - T[:, 0]) * dt
-            E_rad = np.zeros(n)
-        E_base = E_top - E_rad - (E_new.sum(axis=1) - E_old.sum(axis=1))
-        if sens is not None:
-            S, dEb = sens
-            rhs = Mt * mat.cp_mixed(T_old, w) / dt * S
-            rhs[:, -1] += Gb
-            S = thomas(-G, diag, -G, rhs)
-            sens = (S, dEb + dt * Gb * (S[:, -1] - 1.0))
-        self.T = T
-        self.H = self.m * mat.enthalpy(T)
-        return E_top, E_rad, E_base, sens
+    def _put_rows(self, rows, m, H, T, S, count):
+        """Write rebuilt cell arrays for `rows` back (temperatures of nan are recomputed from the enthalpies), padding
+        or trimming the arrays to the longest column."""
+        self._width(m.shape[1])
+        K = self.m.shape[1]
+        pad = lambda a: np.hstack([a, np.zeros((len(rows), K - a.shape[1]))]) if a.shape[1] < K else a
+        valid = np.arange(K)[None, :] < count[:, None]
+        m, H, T = pad(m), pad(H), pad(T)
+        redo = valid & np.isnan(T)
+        if redo.any():
+            T[redo] = self.material.temperature_from_enthalpy(H[redo] / m[redo])
+        self.m[rows], self.H[rows] = np.where(valid, m, 0.0), np.where(valid, H, 0.0)
+        self.T[rows] = np.where(valid, T, 300.0)
+        self.count[rows] = count
+        if self.S is not None:
+            self.S[rows] = np.where(valid, pad(S), 0.0)
+        width = int(self.count.max()) if self.n else 1
+        if width < K:
+            self.m, self.H, self.T = self.m[:, :width], self.H[:, :width], self.T[:, :width]
+            if self.S is not None:
+                self.S = self.S[:, :width]
 
-    # -- feed and draw ----------------------------------------------------------------------------------------------
-    def feed_and_draw(self, L, room, avail, T_b, S=None):
-        """The contiguous fully liquid cells at the top (T >= T_feed) leave the skin for the liquid on its patch -- the
-        part within `room` [kg] (rho A delta_m, measured from the top, spec 5.4) to the film, the rest to the deep
-        account -- and the skin draws metal from the element below, at most `avail` [kg], at its base temperature T_b,
-        back to its target thickness. The remaining column and the drawn metal are rezoned onto equal cells, exactly in
-        mass and enthalpy. S (the trial pass's dT/dT_b, optional) is rezoned with them, drawn metal carrying 1.
-        Returns (to_film, to_deep, drawn, drawn_H, L_new, S_new) per skin."""
-        mat, n = self.material, self.n
-        if n == 0:
-            z = np.zeros(0)
-            return z, z, z, z, z, S
-        contig = np.cumprod(self.T >= mat.T_feed, axis=1).astype(bool)
-        R = (self.m * contig).sum(axis=1)
-        E_rem = (self.H * contig).sum(axis=1)
-        to_film = np.minimum(R, room)
-        to_deep = R - to_film
-        rest = self.m.sum(axis=1) - R
-        D = np.minimum(np.clip(mat.rho * self.area * self.settings.thickness - rest, 0.0, None), np.maximum(avail, 0.0))
-        hD = mat.enthalpy(np.asarray(T_b, dtype=float) * np.ones(n))
-        E_liq = L * mat.enthalpy_liquid(self.T[:, 0])
-        rows = np.arange(n)
-        m_new, H_new, S_new = self._rezone(rows, R, D, hD, S, 1.0)
-        L_new = L + R
-        self._set_cells(rows, m_new, H_new, L_new, E_liq + E_rem)
-        return to_film, to_deep, D, D * hD, L_new, S_new
+    def _merge(self, rows, small):
+        """Each run of small cells joins the cell beneath that ends it; a run at the bottom with no cell to end it joins
+        the group above (in `rows` only)."""
+        small = small[rows]
+        valid = self.valid[rows]
+        m0, H0, T0 = self.m[rows], self.H[rows], self.T[rows]
+        n, K = m0.shape
+        start = valid.copy()
+        start[:, 1:] &= ~small[:, :-1]
+        gid = np.cumsum(start, axis=1) - 1
+        groups = start.sum(axis=1)
+        r = np.arange(n)
+        trailing = small[r, np.maximum(self.count[rows] - 1, 0)] & (groups >= 2)
+        gid = np.where(trailing[:, None] & (gid == (groups - 1)[:, None]), gid - 1, gid)
+        groups = groups - trailing
+        flat = (r[:, None] * K + gid)[valid]
+        m, H = np.zeros(n * K), np.zeros(n * K)
+        np.add.at(m, flat, m0[valid])
+        np.add.at(H, flat, H0[valid])
+        size = np.bincount(flat, minlength=n * K)
+        T = np.full(n * K, np.nan)
+        T[flat] = np.where(size[flat] == 1, T0[valid], np.nan)             # a cell that merged with none keeps its T
+        S = None
+        if self.S is not None:
+            mS = np.zeros(n * K)
+            np.add.at(mS, flat, (m0 * self.S[rows])[valid])
+            S = np.divide(mS, m, out=np.zeros_like(m), where=m > 0.0).reshape(n, K)
+        self._put_rows(rows, m.reshape(n, K), H.reshape(n, K), T.reshape(n, K), S, groups)
 
-    # -- the macro step ---------------------------------------------------------------------------------------------
-    def advance(self, dt, q_top, T_amb, emissivity, T_b0, L, room, avail, T_b1=None):
-        """The macro step's sub-steps (spec section 6). T_b1=None: the trial pass, on a copy, base held at T_b0, returning
-        the base law (a, b) -- q_b(T) = a + b T [W/m2] of heat into the 3D model -- from the pass's base energy and its
-        derivative with respect to the base temperature. Otherwise the real pass with the base held at T_b1, the 3D
-        model's end-of-step facet temperature (what its backward-Euler step assumed for the boundary): feeds, draws,
-        freezes back and returns a SkinBook. Each sub-step conducts, feeds and draws, then freezes back (spec 7.1)."""
-        n = self.n
-        N = max(1, int(math.ceil(dt / self.settings.substep - 1e-9)))
-        h = dt / N
-        trial = T_b1 is None
-        saved = self.state() if trial else None
-        T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(n)
-        L = np.array(L, dtype=float)
-        avail = np.array(avail, dtype=float)
-        book = SkinBook(*(np.zeros(n) for _ in range(7)), L, np.zeros(n))
-        sens = (np.zeros((n, self.nc)), np.zeros(n)) if trial else None
-        for _ in range(N):
-            E_top, E_rad, E_base, sens = self.conduct(h, q_top, T_amb, emissivity, T_b, L, sens=sens)
-            to_film, to_deep, drawn, drawn_H, L, S = self.feed_and_draw(L, room, avail, T_b, None if sens is None else sens[0])
-            if sens is not None:
-                sens = (S, sens[1])
-            # freeze-back (spec 5.4). In the trial pass the sensitivity S is not rezoned for it -- remap does not carry
-            # S -- so the law ignores how freezing moves the cells; that error is the interface mismatch's to absorb
-            frozen, L = self.freeze_top(L)
-            avail = avail - drawn
-            book.E_top += E_top
-            book.E_rad += E_rad
-            book.E_base += E_base
-            book.to_film += to_film
-            book.to_deep += to_deep
-            book.drawn += drawn
-            book.drawn_H += drawn_H
-            book.frozen += frozen
-        book.L = L
-        if trial:
-            self.set_state(saved)
-            # the slope is clipped at zero: near the liquidus a warmer base can feed more and pass more heat down, and a
-            # law rising with the base temperature would cost the 3D matrix its diagonal dominance; what the clip
-            # misses is the interface mismatch's to book
-            b = np.minimum(sens[1] / (self.area * dt), 0.0)
-            return book.E_base / (self.area * dt) - b * T_b, b
-        return book
+    def _split(self, rows, big):
+        """Every big cell in `rows` becomes two equal halves of its mass and enthalpy (and its T and S)."""
+        valid = self.valid[rows]
+        reps = np.where(valid, 1 + big[rows], 0)
+        n, K = reps.shape
+        count = reps.sum(axis=1)
+        K2 = int(count.max())
+        pos = np.cumsum(reps, axis=1) - reps
+        r_all = np.repeat(np.arange(n)[:, None], K, axis=1)
+        m, H, T = np.zeros((n, K2)), np.zeros((n, K2)), np.zeros((n, K2))
+        S = np.zeros((n, K2)) if self.S is not None else None
+        share = 1.0 / reps.clip(1)
+        for part in (0, 1):
+            sel = valid & (part < reps)
+            r, c = r_all[sel], pos[sel] + part
+            m[r, c] = (self.m[rows] * share)[sel]
+            H[r, c] = (self.H[rows] * share)[sel]
+            T[r, c] = self.T[rows][sel]                                    # halves keep the specific enthalpy
+            if S is not None:
+                S[r, c] = self.S[rows][sel]
+        self._put_rows(rows, m, H, T, S, count)
+
+    # -- the top and the bottom -------------------------------------------------------------------------------------
+    def take_top(self, k):
+        """Remove the top k[i] cells of every column; returns (mass, enthalpy) removed per column."""
+        k = np.asarray(k, dtype=np.int64)
+        n, K = self.m.shape
+        top = np.arange(K)[None, :] < k[:, None]
+        mass, H = (self.m * top).sum(axis=1), (self.H * top).sum(axis=1)
+        if k.any():
+            src = np.minimum(np.arange(K)[None, :] + k[:, None], K - 1)
+            shift = lambda a: np.take_along_axis(a, src, axis=1)
+            S = shift(self.S) if self.S is not None else None
+            self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T))
+        return mass, H
+
+    def add_bottom(self, dm, h):
+        """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
+        a new cell); returns the enthalpy added. With S tracked, the metal carries S = 1 (it is at the base temperature)."""
+        dm, h = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,)), np.broadcast_to(np.asarray(h, dtype=float), (self.n,))
+        some = dm > 0.0
+        if not some.any():
+            return np.zeros(self.n)
+        self._width(int(np.max(np.maximum(self.count, 1))))
+        rows = np.flatnonzero(some)
+        b = np.maximum(self.count[rows] - 1, 0)
+        m_old = self.m[rows, b]
+        self.m[rows, b] += dm[rows]
+        self.H[rows, b] += dm[rows] * h[rows]
+        if self.S is not None:
+            self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows]) / self.m[rows, b]
+        self.count[rows] = np.maximum(self.count[rows], 1)
+        self.T[rows, b] = self.material.temperature_from_enthalpy(self.H[rows, b] / self.m[rows, b])
+        return np.where(some, dm * h, 0.0)
+
+    def take_bottom(self, dm):
+        """Remove dm >= 0 [kg] per column from the bottom up, each cell's metal at its own specific enthalpy (a partly
+        taken cell keeps its specific enthalpy); returns the enthalpy removed per column."""
+        dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
+        if np.any(dm > self.column_mass() * (1.0 + 1e-12) + 1e-300):
+            raise ValueError("cannot take more metal from a skin's bottom than the skin holds")
+        if not np.any(dm > 0.0):
+            return np.zeros(self.n)
+        n, K = self.m.shape
+        valid = self.valid
+        below = np.cumsum(self.m[:, ::-1], axis=1)[:, ::-1] - self.m      # mass beneath each cell
+        taken = np.clip(dm[:, None] - below, 0.0, self.m)                 # how much of each cell goes
+        frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
+        H_taken = (self.H * frac).sum(axis=1)
+        m, H = self.m - taken, self.H * (1.0 - frac)
+        keep = valid & (m > 0.0)
+        count = keep.sum(axis=1)                                          # the kept cells are the top ones
+        self._install(m, H, count, self.S, self.T)                        # a partly taken cell keeps its T
+        return H_taken
+
+    def exchange_bottom(self, dm, dH):
+        """Signed reconciliation at the bottom of every column: the skin gains dm [kg] (negative: loses) and its
+        enthalpy changes by exactly dH [J]. Gained metal joins the bottom cell; lost metal leaves from the bottom up at
+        the cells' own specific enthalpy, and the difference to dH stays in the new bottom cell."""
+        dm, dH = np.asarray(dm, dtype=float), np.asarray(dH, dtype=float)
+        gain = np.where(dm > 0.0, dm, 0.0)
+        h = np.divide(dH, gain, out=np.zeros_like(dH), where=gain > 0.0)
+        self.add_bottom(gain, h)
+        rest = np.where(dm > 0.0, 0.0, dH)
+        H_taken = self.take_bottom(np.where(dm < 0.0, -dm, 0.0))
+        rest = rest + H_taken                                              # what is left over after the cells left
+        rows = np.flatnonzero(rest != 0.0)
+        if rows.size:
+            b = self.count[rows] - 1
+            if np.any(b < 0):
+                raise ValueError("a skin emptied by a reconciliation cannot take the enthalpy difference")
+            self.H[rows, b] += rest[rows]
+            self.T[rows, b] = self.material.temperature_from_enthalpy(self.H[rows, b] / self.m[rows, b])
+
+    def depth_above(self, T_level):
+        """Per column: the depth [m] from the top to where the contiguous cells above T_level end, interpolated between
+        cell centres (0 if the top cell is below it, the whole skin if every cell is above)."""
+        valid = self.valid
+        above = np.cumprod(valid & (self.T > T_level), axis=1).astype(bool)
+        k = above.sum(axis=1)
+        dz = self.dz()
+        z_mid = np.cumsum(dz, axis=1) - 0.5 * dz
+        rows = np.arange(self.n)
+        Ka = np.clip(k - 1, 0, self.m.shape[1] - 1)
+        Kb = np.clip(k, 0, self.m.shape[1] - 1)
+        Ta, Tb = self.T[rows, Ka], self.T[rows, Kb]
+        frac = np.clip(np.divide(Ta - T_level, Ta - Tb, out=np.zeros_like(Ta), where=Ta > Tb), 0.0, 1.0)
+        inside = z_mid[rows, Ka] + frac * (z_mid[rows, Kb] - z_mid[rows, Ka])
+        return np.where(k == 0, 0.0, np.where(k >= self.count, self.thickness(), inside))
+
+
+# -- the minimum mass (Task 3) -----------------------------------------------------------------------------------------
+def minimum_mass(material, area, settings, delta_m=None):
+    """Each column's minimum mass [kg] (spec 6.1): the larger of `min_thickness` of solid metal over the column's area
+    and the liquid filling Girin's conjugate depth delta_m [m] plus DELTA_M_MARGIN, so that the sheared layer always lies
+    inside the fine cells. delta_m None (or nan where Girin's closure does not apply) leaves the solid term alone."""
+    area = np.asarray(area, dtype=float)
+    solid = material.rho * area * settings.min_thickness
+    if delta_m is None:
+        return solid
+    rho_l = material.liquid.rho if material.liquid is not None else material.rho
+    liquid = rho_l * area * (np.nan_to_num(np.asarray(delta_m, dtype=float), nan=-DELTA_M_MARGIN) + DELTA_M_MARGIN)
+    return np.maximum(solid, liquid)
+
+
