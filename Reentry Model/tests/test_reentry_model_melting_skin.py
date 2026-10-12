@@ -4,7 +4,8 @@ plan's Review Focus."""
 import numpy as np
 import pytest
 
-from reentry_model import body, heating, material, mesh, skin, thermal
+from reentry_model import body, heating, material, mesh, thermal
+from reentry_model import skin1d as skin
 from test_reentry_model_coupled import MASS_100MM, simulator
 
 pytest.importorskip("cantera")

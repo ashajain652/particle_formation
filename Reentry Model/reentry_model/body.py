@@ -282,7 +282,7 @@ class MeltingBody(ThermalBody):
         self.newtonian_drag_sphere = self.newtonian_drag()[0]      # the meshed sphere's own value: the normalisation
         self.skins = None                                          # sub-plan 18: the skins, with --surface-model skin
         if self.settings.surface_model == "skin" and self.settings.removal != "instant":
-            from . import skin as skin_mod
+            from . import skin1d as skin_mod
             self.skins = skin_mod.SkinField(material, self.settings.skin or skin_mod.SkinSettings())
         self._draw_m, self._draw_H = np.zeros(mesh.n_elements), np.zeros(mesh.n_elements)   # metal the skins drew this step
         self.skins_created = self.skin_short_events = self.interface_repeats = 0
@@ -422,7 +422,7 @@ class MeltingBody(ThermalBody):
         the rest of the melt step. Until the first skin exists this is the element model's step exactly."""
         import dataclasses
         import time
-        from . import skin as skin_mod
+        from . import skin1d as skin_mod
         from . import spray as spray_mod
         mat, liq, sk = self.material, self.liquid, self.skins
         self._create_skins(self.solver.temperature())
@@ -1190,7 +1190,7 @@ class MeltingBody(ThermalBody):
         the difference is booked to the element's nodes, as with the draw. Where the element is full the skin keeps the
         metal and the event is counted. It moves metal between two accounts of the same solid and changes neither how
         much freezes nor how much melts."""
-        from .skin import MAX_THICKNESS_FACTOR
+        from .skin1d import MAX_THICKNESS_FACTOR
         sk, s = self.skins, self.surface
         p = np.flatnonzero(self.skin_of_patch >= 0)
         r, e = self.skin_of_patch[p], s.owner[p]
@@ -1632,7 +1632,7 @@ class MeltingBody(ThermalBody):
     def _skin_stats(self):
         """The skins' history columns (sub-plan 18); zero or nan without skins. The resolved depths are the step's, taken
         in `_film_and_spray` on the surface they were evaluated on."""
-        from .skin import MAX_THICKNESS_FACTOR
+        from .skin1d import MAX_THICKNESS_FACTOR
         sk, lm, nan = self.skins, self.last_melt, float("nan")
         th = sk.thickness() if sk is not None and sk.n else np.zeros(0)
         return {"skin_count": float(sk.n) if sk is not None else 0.0, "skin_mass_kg": sk.mass() if sk is not None else 0.0,
