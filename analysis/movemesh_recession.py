@@ -8,7 +8,9 @@ from the flight direction, -x), so the nose goes 0.5 mm per step, a speed of 1 m
 material, `AA7075_nomelt`) so the field the remap and the rebuilds carry has the flight's steep near-surface gradient.
 The run stops at NOSE_TOTAL of nose recession.
 
-    python analysis/movemesh_recession.py [--nose-total-mm 30] [--solver skfem|fenicsx] [--out PATH.json]
+    python analysis/movemesh_recession.py [--nose-total-mm 30] [--solver skfem|fenicsx] [--neutral] [--out PATH.json]
+
+`--neutral` uses the volume-neutral smoothing of sub-plan 20 Task 0 (`MovingMesh.neutral_smoothing`).
 """
 import argparse
 import json
@@ -31,6 +33,7 @@ parser.add_argument("--out", default="movemesh_recession.json")
 parser.add_argument("--no-smoothing", action="store_true", help="corners move along their normals only")
 parser.add_argument("--smooth-lambda", type=float, default=None)
 parser.add_argument("--smooth-clamp", type=float, default=None)
+parser.add_argument("--neutral", action="store_true", help="volume-neutral smoothing (sub-plan 20 Task 0)")
 args = parser.parse_args()
 
 mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_nomelt"])
@@ -47,7 +50,9 @@ for k in range(steps):
     normal, _ = moving.frame()
     cos = np.clip(normal @ flight, 0.0, None)
     u = -NOSE_STEP * cos[:, None] * normal
-    if not args.no_smoothing:
+    if args.neutral:
+        u = u + moving.neutral_smoothing(normal)
+    elif not args.no_smoothing:
         u = u + moving.smoothing(normal, args.smooth_lambda, args.smooth_clamp)
     try:
         result = moving.move_with_policy(u)
@@ -82,6 +87,7 @@ summary = {"failure": failure, "completed_mm": rows[-1]["nose_mm"] if rows else 
            "max_abs_correction_over_swept": max(abs(r["correction_J"]) / r["swept_J"] for r in rows if r["swept_J"] > 0),
            "worst_ratio_min": min(r["worst_ratio"] for r in rows),
            "surface_quality_min": min(r["surface_quality"] for r in rows), "smoothing": not args.no_smoothing,
+           "neutral": args.neutral,
            "move_s_median": float(np.median([r["move_s"] for r in rows])),
            "step_s_median": float(np.median([r["step_s"] for r in rows]))}
 print(json.dumps(summary, indent=1))
