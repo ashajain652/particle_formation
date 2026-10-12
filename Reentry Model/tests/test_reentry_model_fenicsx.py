@@ -394,3 +394,29 @@ def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
         out.append((r, s.temperature()))
     (ra, Ta), (rb, Tb) = out
     assert np.allclose(Ta, Tb, rtol=0.0, atol=1e-6) and ra.Q_interface == pytest.approx(rb.Q_interface, rel=1e-9)
+
+
+def test_the_skin_body_matches_the_skfem_backend(coarse_sphere_mesh):
+    """The corner columns (sub-plan 20 Task 7) in both backends: 6 MW/m2 on the front for two 0.5 s steps from 880 K,
+    with liquid removed as it forms. Masses, removal and energy agree, both books are exact, and the fields agree except
+    where the solvers' round-off (about 1e-7 K) tipped a cell across a split, merge or removal threshold: measured while
+    planning, 2 of 2254 columns ended with a different cell count, and conduction spread that to 145 of 2934 3D nodes,
+    the largest difference 0.65 K."""
+    from reentry_model import heating, mesh, skin, skinbody
+    out = {}
+    for name in ("skfem", "fenicsx"):
+        np.random.seed(12345)
+        m = mesh.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+        b = skinbody.SkinBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver(name), 1.47,
+                              skin.SkinSettings(cell=20e-6), T0=880.0, v_hat=(-1.0, 0.0, 0.0))
+        for k in range(2):
+            q = 6e6 * np.clip(np.cos(b.theta), 0.0, None)
+            b.advance(0.5 * (k + 1), 0.5, heating.HeatingResult(q, 6e6, 0.0, 0.0, 0.0))
+        out[name] = b
+    s, f = out["skfem"], out["fenicsx"]
+    assert f.mass() == pytest.approx(s.mass(), rel=1e-9) and f.removed_mass == pytest.approx(s.removed_mass, rel=1e-8)
+    assert f.energy() == pytest.approx(s.energy(), rel=1e-8)
+    d = np.abs(f.solver.temperature() - s.solver.temperature())
+    assert np.mean(d < 1e-3) > 0.9 and d.max() < 2.0
+    assert np.mean(f.skins.count == s.skins.count) > 0.99
+    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8

@@ -637,3 +637,19 @@ def sideways_heat(sk, columns, dt):
     return total
 
 
+
+
+# -- the base (Task 7) -------------------------------------------------------------------------------------------------
+def hand_down(sk, m_min, T_rigid):
+    """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
+    oldest first, as far as the column stays at or above its minimum mass m_min (spec 6.6); a cell may go in part.
+    Returns (mass, enthalpy) handed down per column."""
+    n, K = sk.m.shape
+    j = np.arange(K)[None, :]
+    idx = np.clip(sk.count[:, None] - 1 - j, 0, K - 1)                 # the cells from the bottom up
+    rows = np.arange(n)[:, None]
+    rigid = (j < sk.count[:, None]) & (sk.T[rows, idx] <= T_rigid)
+    run = np.cumprod(rigid, axis=1).astype(bool)
+    available = np.where(run, sk.m[rows, idx], 0.0).sum(axis=1)
+    take = np.clip(np.minimum(available, sk.column_mass() - m_min), 0.0, None)
+    return take, sk.take_bottom(take)
