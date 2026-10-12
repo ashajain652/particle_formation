@@ -60,9 +60,7 @@ class FenicsxThermalSolver:
         self.cell_dofs = np.asarray(self.V.dofmap.list)[:, :4]
         # dolfinx cell k is the k-th cell passed in (create_mesh keeps the order in serial): cell volumes and the map
         # from dolfinx cells to mesh elements
-        x = self.V.tabulate_dof_coordinates()[self.cell_dofs]
-        J = np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2)
-        self.cell_volumes = np.abs(np.linalg.det(J)) / 6.0
+        self.cell_volumes = self._cell_volumes()
         self.cell_nodes = self.node_of_dof[self.cell_dofs]                   # mesh node ids of each dolfinx cell
         centroids = mesh.points[mesh.tets].mean(axis=1)
         self.element_of_cell = cKDTree(centroids).query(mesh.points[self.cell_nodes].mean(axis=1))[1]
@@ -90,11 +88,19 @@ class FenicsxThermalSolver:
         self._refresh_surface()
 
     # -- geometry / fractions -----------------------------------------------------------------------------------
+    def _cell_volumes(self):
+        """Volume of each dolfinx cell from the current dof coordinates (which follow the dolfinx geometry)."""
+        x = self.V.tabulate_dof_coordinates()[self.cell_dofs]
+        J = np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2)
+        return np.abs(np.linalg.det(J)) / 6.0
+
     def update_geometry(self, elements=None):
         """The mesh's node coordinates have moved (the moving 3D mesh, layered-skin design section 5.3): copy them into
-        dolfinx's geometry, which every assembly reads, and refresh the surface. The nodal pieces read the VolumeMesh.
-        `elements` is accepted for the protocol's sake: dolfinx recomputes every Jacobian at assembly anyway."""
+        dolfinx's geometry, which every assembly reads, then refresh the cell volumes and the surface. The nodal pieces
+        read the VolumeMesh. `elements` is accepted for the protocol's sake: dolfinx recomputes every Jacobian at
+        assembly anyway."""
         self.msh.geometry.x[:, :3] = self.mesh.points[self._geometry_nodes]
+        self.cell_volumes = self._cell_volumes()
         self._refresh_surface()
 
     def _refresh_surface(self):

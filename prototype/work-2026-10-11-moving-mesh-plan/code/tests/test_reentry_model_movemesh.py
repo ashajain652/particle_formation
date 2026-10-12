@@ -91,15 +91,33 @@ def test_tangential_smoothing_moves_along_the_surface_and_evens_it_out(coarse_sp
     assert movemesh.triangle_quality(pts, faces).min() > q0
 
 
+def test_swept_volumes_are_exact_prisms_and_nothing_where_a_face_slides():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = movemesh.orient_outward(m.points, s.faces, s.normals)
+    new = m.points.copy()
+    front = new[:, 0] == 0.0
+    new[front, 0] += 0.3e-3                                     # the x = 0 face moves into the box
+    dV = movemesh.swept_volumes(m.points, new, faces, local[faces], len(corners))
+    assert dV.sum() == pytest.approx(0.3e-3 * 2e-3 * 2e-3, rel=1e-12)
+    assert np.all(dV[front[corners]] > 0.0)
+    assert np.all(dV[~front[corners]] == 0.0)                  # the sides only stretched in their own planes
+
+
 # -- the backends on moved geometry (Task 2) -----------------------------------------------------------------------
 def test_moved_geometry_gives_the_operators_of_a_fresh_solver(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()
     solver = solver_on(m, mat, 450.0)
     r = np.linalg.norm(m.points, axis=1)
-    m.points *= (1.0 - 0.04 * (r / 0.05) ** 4)[:, None]       # an uneven squeeze toward the centre, in place
-    outer = np.flatnonzero((r[m.tets] > 0.02).any(axis=1))    # the elements whose nodes moved noticeably...
-    solver.update_geometry(np.arange(m.n_elements))           # ...but every node moved, so recompute all
+    moved = r > 0.04                                          # only the outer shell (r above 4 cm) moves; the core stays put
+    m.points[moved] *= (1.0 - 0.04 * (r[moved] / 0.05) ** 4)[:, None]    # an uneven squeeze toward the centre, in place
+    outer = np.flatnonzero(moved[m.tets].any(axis=1))         # the elements with a moved node: the only ones that change
+    assert outer.size < m.n_elements                          # a real subset: the core elements keep their matrices
+    solver.update_geometry(outer)                             # recompute just those elements, and the surface
     fresh = solver_on(mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, 450.0)
     T = solver.temperature()
     K1, M1 = solver.operators(T)
@@ -167,9 +185,17 @@ def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh
     solver.set_temperature(300.0 + 4000.0 * (r_node - 0.03).clip(0.0))           # warm near the surface
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
     E0, V0 = solver.energy(), m.volume()
+    _, area0 = moving.frame()
+    deep = np.linalg.norm(m.points, axis=1) < 0.05 - 15.5e-3          # below the zone: must not change at all
+    T0 = solver.temperature()
     r = moving.move(inward(moving, 3e-4))
     assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    # each corner books what its own faces swept: its dual area times 0.3 mm to within the curvature (1.0 % measured
+    # while planning), never negative
+    assert np.all(r.swept_volume > 0.0)
+    assert np.abs(r.swept_volume / (area0 * 3e-4) - 1.0).max() < 0.02
+    assert np.array_equal(solver.temperature()[deep], T0[deep])
     # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.7 % of what the
     # corners swept (measured while planning), the lumped quadrature's error on a field that is not linear
     assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
@@ -221,11 +247,13 @@ def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh
     solver = solver_on(m, mat)
     solver.set_temperature(300.0 + 2000.0 * m.points[:, 2])
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
-    normal, _ = moving.frame()
+    normal, area = moving.frame()
     tangent = np.cross(normal, [0.0, 0.0, 1.0])               # along the surface, around the z axis
     E0 = solver.energy()
     r = moving.move(1e-4 * tangent)
-    assert abs(r.swept_volume.sum()) < 1e-3 * 1e-4 * moving.frame()[1].sum()
+    # what a corner books is the curved surface's second-order change, at most 0.6 % of its dual area times its
+    # displacement (measured while planning); scaling first-order volumes to the total made it noise here
+    assert np.all(np.abs(r.swept_volume) < 0.02 * area * 1e-4 * np.linalg.norm(tangent, axis=1))
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
 
 
@@ -246,7 +274,7 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     solver = solver_on(m, mat)
     solver.set_temperature(300.0 + 4000.0 * (np.linalg.norm(m.points, axis=1) - 0.03).clip(0.0))
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
-    moving.move(inward(moving, 1e-3))
+    assert not moving.move(inward(moving, 1e-3)).refused
     corner_points = moving.mesh.points[moving.corners].copy()
     faces_before = moving.faces_corner.copy()
     V, E = moving.mesh.volume(), solver.energy()
@@ -259,7 +287,26 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     assert moving.mesh.volume() == pytest.approx(V, rel=1e-12)
     assert solver.energy() == pytest.approx(E, rel=1e-12)
     assert np.all(movemesh.signed_volumes(moving.mesh.points, moving.mesh.tets) != 0.0)
-    assert result.relative_residual < 1e-3 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+    # the interpolation loses -2612 J of 71236 J (-4.1 %) here: a kinked field on 4 to 20 mm cells, whose lumped sum
+    # differs between two meshes (final review: the earlier one-sided check "residual below 1e-3" passed on the sign
+    # alone). The residual is reported, and the offset closes it (the energy assertion above)
+    assert abs(result.relative_residual) < 0.06 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+
+
+def test_a_rebuild_of_a_linear_field_loses_nothing_to_interpolation(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    T_of = lambda p: 300.0 + 2000.0 * p[:, 0]
+    solver.set_temperature(T_of(m.points))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert not moving.move(inward(moving, 1e-3)).refused
+    result = moving.rebuild()
+    # linear interpolation and the lumped sum are both exact for a linear field: -6e-8 of the total measured (final
+    # review), two-sided
+    assert abs(result.relative_residual) < 1e-6
+    # the books' own uniform offsets (the move's, then the rebuild's) leave 2.1e-5 K at most (measured)
+    assert np.abs(solver.temperature() - T_of(moving.mesh.points)).max() < 1e-4
 
 
 def test_a_rebuild_keeps_a_uniform_field_uniform(coarse_sphere_mesh):
@@ -277,12 +324,71 @@ def test_corners_keep_their_order_through_repeated_rebuilds(coarse_sphere_mesh):
     moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     first = moving.mesh.points[moving.corners].copy()
     for _ in range(2):
-        moving.move(inward(moving, 3e-4))
+        assert not moving.move(inward(moving, 3e-4)).refused
         expected = moving.mesh.points[moving.corners].copy()
         moving.rebuild()
         assert np.array_equal(moving.mesh.points[moving.corners], expected)
     assert np.linalg.norm(moving.mesh.points[moving.corners], axis=1).max() < np.linalg.norm(first, axis=1).max()
     assert moving.rebuilds == 2
+
+
+def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    solver.set_temperature(300.0 + 4000.0 * (np.linalg.norm(m.points, axis=1) - 0.03).clip(0.0))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert moving.rebuild_residual_total == 0.0
+    residuals = []
+    for _ in range(2):
+        assert not moving.move(inward(moving, 5e-4)).refused
+        old_points, old_tets = moving.mesh.points.copy(), moving.mesh.tets.copy()
+        h_old = mat.enthalpy(solver.temperature())
+        residuals.append(moving.rebuild().residual)
+        # what the interpolation alone gives at the new nodes (the corners keep their own values, and are in the zone)
+        elem, bary = movemesh.locate(old_points, old_tets, moving.mesh.points)
+        h_interp = np.einsum("ij,ij->i", bary, h_old[old_tets[elem]])
+        h_after = mat.enthalpy(solver.temperature())
+        in_zone = np.zeros(moving.mesh.n_nodes, dtype=bool)
+        in_zone[moving.zone.corners] = True
+        in_zone[moving.zone.interior] = True
+        out = ~in_zone
+        # outside the zone (84 and 73 of about 2900 nodes on this coarse mesh) the field is the interpolation's to 3e-11
+        # J per kg; spread over the whole body the offset would have shifted those nodes by 1735 and 1244 J per kg (1.7
+        # and 1.2 K), and in the zone, noncorner nodes carry 2585 and 1804 J per kg (all measured, final review)
+        assert out.sum() > 50
+        assert np.abs(h_after[out] - h_interp[out]).max() < 1e-6 * np.abs(h_interp).max()      # tolerance 0.08 J per kg
+        zone_inner = in_zone & ~np.isin(np.arange(moving.mesh.n_nodes), moving.corners)
+        assert np.abs(h_after[zone_inner] - h_interp[zone_inner]).min() > 1000.0
+    assert min(abs(x) for x in residuals) > 1.0
+    assert moving.rebuild_residual_total == pytest.approx(sum(residuals), rel=1e-12, abs=0.0)
+
+
+def test_check_rebuilt_boundary_accepts_the_mesh_own_surface_and_rejects_a_changed_one():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    faces = m.surface().faces
+    movemesh.check_rebuilt_boundary(m, faces[::-1, ::-1])                        # any order of triangles and nodes
+    altered = faces.copy()
+    altered[0, 0] = (altered[0, 0] + 1) % m.n_nodes if (altered[0, 0] + 1) % m.n_nodes not in altered[0] else altered[0, 0] + 2
+    with pytest.raises(movemesh.RemeshError, match="boundary"):
+        movemesh.check_rebuilt_boundary(m, altered)
+
+
+def test_a_gmsh_failure_surfaces_as_a_remesh_error(monkeypatch):
+    import gmsh
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = local[movemesh.orient_outward(m.points, s.faces, s.normals)]
+
+    def boom(*args, **kwargs):
+        raise Exception("boom")
+    monkeypatch.setattr(gmsh.model.mesh, "generate", boom)
+    with pytest.raises(movemesh.RemeshError, match="gmsh could not mesh the surface: boom") as info:
+        movemesh.rebuild_volume(m.points[corners], faces, h_surface=1e-3, h_core=1e-3, band=0.0, ramp=1.0)
+    assert str(info.value.__cause__) == "boom"
 
 
 @pytest.mark.parametrize("case", ["two bodies", "non-manifold", "inside out"])
@@ -303,15 +409,17 @@ def test_the_validity_gate_stops_on_a_surface_it_cannot_rebuild(case):
 def test_compression_triggers_a_rebuild_only_after_the_minimum_gap(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()
-    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=3,
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=9, ratio_min=1e-6,
                                  sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     rebuilt_at = []
-    for step in range(8):
-        r = moving.move_with_policy(inward(moving, 0.8e-3))
+    for step in range(11):
+        r = moving.move_with_policy(inward(moving, 0.3e-3))
         if r.rebuilt:
-            rebuilt_at.append(step)
-    # compression passes half the 4 mm zone (2 mm) after the third move; the gap of 3 is met then too
-    assert rebuilt_at and rebuilt_at[0] == 3 and moving.rebuilds >= 1
+            rebuilt_at.append((step, moving.last_rebuild.reason))
+    # compression passes half the 4 mm zone (2 mm) after the seventh move, but the gap of 9 holds the rebuild back to
+    # call index 9; without the gap it comes at index 7 (both measured, Task 6 review). The radius-ratio floor is
+    # lowered so that no quality rebuild intervenes.
+    assert rebuilt_at and rebuilt_at[0] == (9, "compression")
 
 
 def test_a_refused_move_rebuilds_and_then_moves(coarse_sphere_mesh):

@@ -24,14 +24,16 @@ tangential smoothing), §5.3 (the moving 3D mesh) and §11 (level 1's moving-mes
 (skins, heat only), 21 (flow) and 22 (spraying and the flight) build on this one and are written in full after it is
 built and measured, as the spec gates each stage on the one before.
 
-**How this plan's code was checked (2026-10-11).** Every code and diff block below was applied to a copy of
-`prototype/work-2026-10-08-skin/code/` at its head 49d88e0 and tested there: the new module's 26 tests, the three new
-FEniCSx tests, and the whole unit tier, which goes from 303 to 329 passed with 1 skipped and the same five known
-failures (two failed and three errors, all needing the melting SESAM references of Task 11 of the original plan); the
-FEniCSx tier goes from 14 to 17 passed. The tested copy is committed at `prototype/work-2026-10-11-moving-mesh-plan/code/`,
-and this document is generated from it by `prototype/work-2026-10-11-moving-mesh-plan/make_plan19.py`, which also checks
-that the blocks, applied in order to the base, reproduce the tested files exactly. Measurements quoted below were each
-made once, on the cases named; they are recorded in Task 8 as facts.
+**How this plan's code was checked, and built.** Every code and diff block below was first tested in a copy of
+`prototype/work-2026-10-08-skin/code/` at its head 49d88e0 (2026-10-11), then built subagent-driven in
+`prototype/work-2026-10-12-moving-mesh/code/` (2026-10-12; task reviews, a final whole-branch review and their fixes are
+in the Results section at the end). After the build the tested copy, `prototype/work-2026-10-11-moving-mesh-plan/code/`,
+was made identical to the built one, so the blocks below are the code as built and reviewed. This document is generated
+from that copy by `prototype/work-2026-10-11-moving-mesh-plan/make_plan19.py`, which checks that the blocks, applied in
+order to the base, reproduce the files exactly. The new module has 31 tests and FEniCSx three more; the unit tier goes
+from 303 to 334 passed with 1 skipped and the same five known failures (two failed and three errors, all needing the
+melting SESAM references of Task 11 of the original plan); the FEniCSx tier goes from 14 to 17 passed. Measurements
+quoted below were each made once, on the cases named; they are recorded in Task 8 as facts.
 
 ## Global Constraints
 
@@ -111,7 +113,8 @@ prototype/work-2026-10-12-moving-mesh/code/
   faces) -> float` degrees; `element_gradients(points, tets) -> ((ne, 4, 3), (ne,))`; `nodal_gradient(points, tets, f,
   elements=None) -> (n, 3)`; `lumped_masses(points, tets, rho) -> (n,)`; `orient_outward(points, faces, normals) ->
   faces`; `corner_frame(points, faces, corners) -> (normals (nc, 3), dual_areas (nc,))`; `surface_edges(faces) -> (ne,
-  2)`; `tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_CLAMP, edges=None) -> (n, 3)`;
+  2)`; `swept_volumes(old, new, faces, faces_corner, n_corners) -> (nc,)` (each surface triangle's prism between its old
+  and new positions, a third to each corner, positive inward; added after the Task 4 review); `tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_CLAMP, edges=None) -> (n, 3)`;
   constants `DEFORM_DEPTH = 15e-3`, `RATIO_MIN = 0.05`, `MIN_GAP = 20`, `ZONE_NEIGHBOURS = 12`, `SMOOTH_LAMBDA = 0.5`,
   `SMOOTH_CLAMP = 0.35`.
 
@@ -132,9 +135,9 @@ Expected: collection error, `ImportError: cannot import name 'movemesh'`.
 - [ ] **Step 4: Run them to see them pass**
 
 Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q`
-Expected: 5 passed.
+Expected: 6 passed.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 308 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 309 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -151,8 +154,9 @@ git commit -m "Moving mesh: element and surface geometry helpers"
 **Interfaces:**
 - Produces: `solver.update_geometry(elements=None)` on both backends — the mesh's `points` have moved in place;
   scikit-fem recomputes the element matrices of `elements` (all if None) and the surface; FEniCSx copies the coordinates
-  into dolfinx's geometry and refreshes the surface (it recomputes every Jacobian at assembly anyway). `setup` on a new
-  mesh now discards the scikit-fem AMG hierarchy.
+  into dolfinx's geometry and refreshes its cell volumes and the surface (it recomputes every Jacobian at assembly
+  anyway). `setup` on a new mesh now discards the scikit-fem AMG hierarchy. (After the Task 2 review: the scikit-fem
+  test updates only the elements touching the moved outer shell, a real subset, and FEniCSx refreshes `cell_volumes`.)
 
 - [ ] **Step 1: Append the Task 2 tests** to `tests/test_reentry_model_movemesh.py`:
 
@@ -178,10 +182,10 @@ Expected: `AttributeError: 'SkfemThermalSolver' object has no attribute 'update_
 
 - [ ] **Step 5: Run them to see them pass**
 
-Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q` — expected 7 passed — and
+Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q` — expected 8 passed — and
 `FI_PROVIDER=tcp CC=... "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q -k moved_geometry` — expected 1 passed.
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 310 passed, 1 skipped, the five known; FEniCSx 15 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 311 passed, 1 skipped, the five known; FEniCSx 15 passed.
 
 ```bash
 git add reentry_model/thermal/skfem_backend.py reentry_model/thermal/fenicsx_backend.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -210,9 +214,9 @@ git commit -m "Thermal backends follow moved node coordinates, and a solver set 
 
 {{MM_T3}}
 
-- [ ] **Step 4: Run them to see them pass** — expected 9 passed in the file.
+- [ ] **Step 4: Run them to see them pass** — expected 10 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 312 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 313 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -228,7 +232,9 @@ git commit -m "Moving mesh: the deforming zone moves the nodes under the corners
 **Interfaces:**
 - Consumes: Tasks 1–3; the solver's `temperature()`, `set_temperature()`, `energy()`, `update_geometry(elements)`,
   `emissivity`; the material's `enthalpy`, `temperature_from_enthalpy`, `rho`.
-- Produces: `MoveResult(refused, swept_volume (nc,), swept_enthalpy (nc,), correction, worst_ratio, rebuilt=False)`;
+- Produces: `default_sizes(mesh) -> dict` (gmsh sizes for a rebuild from the generator's parameters; in this section
+  because `MovingMesh.__init__` calls it); `MoveResult(refused, swept_volume (nc,), swept_enthalpy (nc,), correction,
+  worst_ratio, rebuilt=False)`;
   `MovingMesh(mesh, solver, material, depth=DEFORM_DEPTH, ratio_min=RATIO_MIN, min_gap=MIN_GAP, sizes=None)` with
   `.mesh`, `.solver`, `.material`, `.corners` (current node id of each corner, fixed order), `.faces_corner` (surface
   triangles in corner numbering, outward), `.edges_corner`, `.zone`, `.compression` (inward motion of each corner since
@@ -247,12 +253,16 @@ git commit -m "Moving mesh: the deforming zone moves the nodes under the corners
 
 {{MM_T4}}
 
-- [ ] **Step 4: Run them to see them pass** — expected 16 passed in the file. The measured sizes behind the tolerances,
-  each from one run while planning: on the steep, kinked field of the books test over 4 mm cells the offset that closes
-  the books is 0.7 % of what the corners swept; on a linear field it is 0.0035 J against 3877 J swept and moves no node
-  by more than 3.3e-6 K.
+- [ ] **Step 4: Run them to see them pass** — expected 17 passed in the file. The measured sizes behind the tolerances,
+  each from one run: on the steep, kinked field of the books test over 4 mm cells the offset that closes the books is
+  0.7 % of what the corners swept, every corner books its dual area times the 0.3 mm move to within 1.0 %, and the
+  nodes below the zone do not change at all; on a linear field the offset is 0.0035 J against 3877 J swept and moves
+  no node by more than 3.3e-6 K; a move along the surface books at most 0.6 % of each corner's dual area times its
+  displacement. Each corner's swept volume is booked at its own enthalpy before the move: booking inward slabs at the
+  mean of old and remapped enthalpy shrank the offset (from -16.2 J to +0.29 J per 0.3 mm move) but made Task 7's exact
+  moving-front test nine times worse (0.0010 to 0.0093 of the rise), so the surface value stays (final review).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 319 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 320 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -268,8 +278,9 @@ git commit -m "Moving mesh: corners and zone move, the enthalpy is remapped by i
 **Interfaces:**
 - Consumes: Tasks 1–4; `mesh.VolumeMesh`; the solver's `setup(mesh, material, emissivity)`.
 - Produces: `MovingMesh.rebuild(reason="requested") -> RebuildResult(residual, relative_residual, n_nodes, n_elements,
-  seconds, reason)`; module functions `default_sizes(mesh) -> dict`, `check_surface(points, faces) -> volume` (raises
-  `RemeshError`), `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp) -> (points, tets,
+  seconds, reason)`; `MovingMesh.rebuild_residual_total` (the running sum of the pre-correction residuals); module
+  functions `check_surface(points, faces) -> volume` (raises `RemeshError`), `check_rebuilt_boundary(mesh,
+  expected_faces)` (raises `RemeshError` unless the rebuilt boundary is exactly the corner triangles), `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp) -> (points, tets,
   node_of_corner)`, `locate(points, tets, query, candidates=16) -> (elements, barycentric (nq, 4))`. After a rebuild
   `moving.mesh` and `moving.solver.mesh` are the new mesh; `moving.corners` maps each corner to its new node.
 
@@ -292,10 +303,13 @@ git commit -m "Moving mesh: corners and zone move, the enthalpy is remapped by i
 
 {{MM_T5B}}
 
-- [ ] **Step 5: Run them to see them pass** — expected 22 passed in the file and the FEniCSx rebuild test passing.
-  A rebuild of the coarse test sphere takes well under a second.
+- [ ] **Step 5: Run them to see them pass** — expected 27 passed in the file and the FEniCSx rebuild test passing.
+  A rebuild of the coarse test sphere takes well under a second. The offset that makes a rebuild's total exact is spread
+  over the new deforming zone only, where the interpolation error arises (final review: the residual is one-signed);
+  on the kinked test field over 4–20 mm cells the pre-correction residual is 4.1 % of the total, on a linear field
+  6e-8; gmsh errors reach the caller as `RemeshError`.
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 325 passed, 1 skipped, the five known; FEniCSx 16 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 330 passed, 1 skipped, the five known; FEniCSx 16 passed.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -326,9 +340,11 @@ git commit -m "Moving mesh: rebuild inside the unchanged surface triangulation, 
 
 {{MM_T6}}
 
-- [ ] **Step 4: Run them to see them pass** — expected 25 passed in the file.
+- [ ] **Step 4: Run them to see them pass** — expected 30 passed in the file. The minimum-gap test is built so that compression
+  crosses half the zone two moves before the gap is met: the rebuild comes at call 9 with the gap and at call 7 without
+  it (Task 6 review).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 328 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 333 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -363,7 +379,7 @@ It was checked while planning against a 4000-cell finite-difference solution in 
   largest error was 0.0010 of the temperature rise while planning, against a tolerance of 0.005) and the FEniCSx tier
   (expected 17 passed; the two backends agree to 1e-6 K).
 
-- [ ] **Step 3: Both tiers and commit.** Expected unit tier 329 passed, 1 skipped, the five known; FEniCSx 17 passed.
+- [ ] **Step 3: Both tiers and commit.** Expected unit tier 334 passed, 1 skipped, the five known; FEniCSx 17 passed.
 
 ```bash
 git add tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -417,8 +433,8 @@ PYEOF
 ```
 
   While planning (one run each, 2026-10-11): with smoothing the nose receded 29.5 mm before a move failed even after a
-  rebuild, 20 rebuilds, the first at 10.5 mm by compression and every later one by quality — every macro step from
-  21 mm; without smoothing 25.0 mm and 15 rebuilds. A rebuild took 1.6–2.3 s on one gmsh thread (130 000–177 000
+  rebuild, 20 rebuilds by the counter (19 recorded; the 20th was tried inside the failed move), the first at 10.5 mm by
+  compression and every later one by quality — almost every macro step from 21 mm; without smoothing 25.0 mm and 15 rebuilds. A rebuild took 1.6–2.3 s on one gmsh thread (130 000–177 000
   tetrahedra), against the spec's estimate of about 42 s; its pre-correction residual was 0.07–0.27 % of the total
   enthalpy, and a move's offset at most 1.4 % of what the corners swept. The worst surface triangle stayed at 0.71 with
   smoothing (0.36 without). What ends the run is the shape: the largest angle between neighbouring surface triangles grew
@@ -437,3 +453,50 @@ PYEOF
   measurements, and anything that differed from the numbers above. The fold limit is recorded, not resolved, here:
   Asha decided on 2026-10-11 to measure it under heating-driven recession in stage 2 (sub-plan 20) before building any
   surface refinement.
+
+## Results (built 2026-10-12)
+
+Built subagent-driven in `prototype/work-2026-10-12-moving-mesh/code/` (branch `moving-mesh`, 15 commits from 49d88e0
+to a18b531): one implementer per task on the cheapest model, a reviewer per task, a final whole-branch review on the most
+capable model, one fix wave and its re-review. The tested copy beside this plan was then made identical to the build.
+
+**Counts after each task** (movemesh test file / unit tier / FEniCSx tier): baseline – / 303 / 14; Task 1 6 / 309 / 14;
+Task 2 8 / 311 / 15; Task 3 10 / 313 / 15; Task 4 17 / 320 / 15; Task 5 27 / 330 / 16; Task 6 30 / 333 / 16; Task 7
+31 / 334 / 17; Task 8 and the final fixes 31 / 334 / 17. Every unit tier also had 1 skipped and the five known failures.
+The 100 mm flight to 30 s from the build is bit-identical to the base's (61 rows, 31 columns, 28 result fields).
+
+**What review changed against the code first planned.**
+- Task 2: the scikit-fem geometry test now updates a real subset of elements; FEniCSx refreshes `cell_volumes` on a move.
+- Task 4: each corner's swept volume is the exact prism its faces swept (`swept_volumes`), not the dual area times the
+  normal displacement scaled to the total, which blew up wherever the first-order volumes nearly cancelled (a move along
+  the surface gave a scale factor of about -7e14). New tests check the per-corner values. A first attempt that spread
+  the remainder by dual area times displacement broke Task 7's exact solution and was dropped before review.
+- Task 4/5: `default_sizes` sits beside `MovingMesh`, which calls it (the plan had put it in Task 5).
+- Task 6: the minimum-gap test now fails if the gap is not enforced.
+- Final review: the rebuild's offset is spread over the new deforming zone only and summed in
+  `rebuild_residual_total`; `check_rebuilt_boundary` checks the rebuilt boundary is exactly the corner triangles; gmsh
+  errors reach the caller as `RemeshError`; the rebuild-residual assertions are two-sided. Booking inward slabs at their
+  mean enthalpy was tried and reverted (it shrank the books' offset but made the exact moving-front test nine times
+  worse, 0.0010 to 0.0093 of the rise).
+
+**Measurements (Task 8, one run each, both on mains power).** As planned: with the tangential smoothing the nose
+receded 29.5 mm before a move failed even after a rebuild; 20 rebuilds by the counter (19 recorded), the first at
+10.5 mm by compression, the rest by quality; a rebuild took 1.63–2.06 s, with a pre-correction residual of 0.07–0.27 %
+of the total enthalpy; a move's offset at most 1.3 % of what the corners swept; worst element radius ratio 0.054, worst
+surface triangle 0.71; the fold 19.5 degrees at 10 mm, 51.9 at 20 mm and 95.4 at most; a macro step's mesh work a median
+0.43 s against 0.19 s of conduction. Without the smoothing: 25.0 mm, 15 rebuilds by the counter, worst surface triangle
+0.36, fold 22.3 and 73.7 degrees at 10 and 20 mm and 97.8 at most, mesh work 0.26 s. Moving-front error against the
+exact solution 0.00103 of the rise; the two backends agree to 4.3e-11 K.
+
+**Left for sub-plan 20** (from the final review; the build's ledger, kept as
+`prototype/work-2026-10-11-moving-mesh-plan/sdd-ledger.md`, holds every ruling and every deferred minor finding):
+- The tangential smoothing sweeps second-order volume of either sign at each corner (one smoothing-only move on the
+  100 mm sphere: up to about 1 µm of equivalent depth either way, 4 856 of 9 417 corners negative), which an empty skin
+  cannot supply. Decided 2026-10-12 (Asha): the smoothing is made volume-neutral per corner (spec §5.1), built as
+  sub-plan 20's Task 0.
+- The enthalpy of metal coming in on an outward move is booked at the corner's enthalpy; stage 2 will supply the skin's.
+- The rebuild residual is one-signed (99–186 J per rebuild in the run, 2.3 kJ in all); record it against each step's
+  heat input in stage 2's history and set the threshold for an exact (intersection-based) transfer in those terms.
+- Integration: `ThermalBody.i_centre` and the centre-node temperature after a rebuild (no centre node is embedded);
+  `params["path"]` still names the original mesh file; `MovingMesh` assumes every element is active.
+- The mesh work per step (0.43 s) is about twice the conduction step: optimise only if stage 2's run time asks for it.

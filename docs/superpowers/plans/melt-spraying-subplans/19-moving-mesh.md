@@ -24,14 +24,16 @@ tangential smoothing), §5.3 (the moving 3D mesh) and §11 (level 1's moving-mes
 (skins, heat only), 21 (flow) and 22 (spraying and the flight) build on this one and are written in full after it is
 built and measured, as the spec gates each stage on the one before.
 
-**How this plan's code was checked (2026-10-11).** Every code and diff block below was applied to a copy of
-`prototype/work-2026-10-08-skin/code/` at its head 49d88e0 and tested there: the new module's 26 tests, the three new
-FEniCSx tests, and the whole unit tier, which goes from 303 to 329 passed with 1 skipped and the same five known
-failures (two failed and three errors, all needing the melting SESAM references of Task 11 of the original plan); the
-FEniCSx tier goes from 14 to 17 passed. The tested copy is committed at `prototype/work-2026-10-11-moving-mesh-plan/code/`,
-and this document is generated from it by `prototype/work-2026-10-11-moving-mesh-plan/make_plan19.py`, which also checks
-that the blocks, applied in order to the base, reproduce the tested files exactly. Measurements quoted below were each
-made once, on the cases named; they are recorded in Task 8 as facts.
+**How this plan's code was checked, and built.** Every code and diff block below was first tested in a copy of
+`prototype/work-2026-10-08-skin/code/` at its head 49d88e0 (2026-10-11), then built subagent-driven in
+`prototype/work-2026-10-12-moving-mesh/code/` (2026-10-12; task reviews, a final whole-branch review and their fixes are
+in the Results section at the end). After the build the tested copy, `prototype/work-2026-10-11-moving-mesh-plan/code/`,
+was made identical to the built one, so the blocks below are the code as built and reviewed. This document is generated
+from that copy by `prototype/work-2026-10-11-moving-mesh-plan/make_plan19.py`, which checks that the blocks, applied in
+order to the base, reproduce the files exactly. The new module has 31 tests and FEniCSx three more; the unit tier goes
+from 303 to 334 passed with 1 skipped and the same five known failures (two failed and three errors, all needing the
+melting SESAM references of Task 11 of the original plan); the FEniCSx tier goes from 14 to 17 passed. Measurements
+quoted below were each made once, on the cases named; they are recorded in Task 8 as facts.
 
 ## Global Constraints
 
@@ -111,7 +113,8 @@ prototype/work-2026-10-12-moving-mesh/code/
   faces) -> float` degrees; `element_gradients(points, tets) -> ((ne, 4, 3), (ne,))`; `nodal_gradient(points, tets, f,
   elements=None) -> (n, 3)`; `lumped_masses(points, tets, rho) -> (n,)`; `orient_outward(points, faces, normals) ->
   faces`; `corner_frame(points, faces, corners) -> (normals (nc, 3), dual_areas (nc,))`; `surface_edges(faces) -> (ne,
-  2)`; `tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_CLAMP, edges=None) -> (n, 3)`;
+  2)`; `swept_volumes(old, new, faces, faces_corner, n_corners) -> (nc,)` (each surface triangle's prism between its old
+  and new positions, a third to each corner, positive inward; added after the Task 4 review); `tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_CLAMP, edges=None) -> (n, 3)`;
   constants `DEFORM_DEPTH = 15e-3`, `RATIO_MIN = 0.05`, `MIN_GAP = 20`, `ZONE_NEIGHBOURS = 12`, `SMOOTH_LAMBDA = 0.5`,
   `SMOOTH_CLAMP = 0.35`.
 
@@ -212,6 +215,22 @@ def test_tangential_smoothing_moves_along_the_surface_and_evens_it_out(coarse_sp
     assert movemesh.triangle_quality(pts, faces).min() > q0
 
 
+def test_swept_volumes_are_exact_prisms_and_nothing_where_a_face_slides():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = movemesh.orient_outward(m.points, s.faces, s.normals)
+    new = m.points.copy()
+    front = new[:, 0] == 0.0
+    new[front, 0] += 0.3e-3                                     # the x = 0 face moves into the box
+    dV = movemesh.swept_volumes(m.points, new, faces, local[faces], len(corners))
+    assert dV.sum() == pytest.approx(0.3e-3 * 2e-3 * 2e-3, rel=1e-12)
+    assert np.all(dV[front[corners]] > 0.0)
+    assert np.all(dV[~front[corners]] == 0.0)                  # the sides only stretched in their own planes
+
+
 ```
 
 - [ ] **Step 2: Run them to see them fail**
@@ -239,22 +258,29 @@ close to round-off. The conduction step that follows runs on the new geometry wi
 
 The corners also move along the surface: `tangential_smoothing` nudges each toward the mean of its neighbours in its
 tangent plane (design section 5.1), which keeps the fixed surface triangulation even. Measured while planning
-(sub-plan 19, 2026-10-11) on the 100 mm sphere receding at its nose by 0.5 mm per step in proportion to how directly
-each corner faces the flow: without it the run failed at 20.5 mm of nose recession, with it at 27.0 mm. What stopped it
-then was the shape, not the triangles: the angle between neighbouring surface triangles (`max_dihedral`) grew from
-4 to 82 degrees as that motion sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are
-flattened by their own corners' motion, which no rebuild inside the same surface can undo. The fold is reported.
+(sub-plan 19, Task 8, 2026-10-12, one thread) on the 100 mm sphere receding at its nose by 0.5 mm per step in
+proportion to how directly each corner faces the flow: without it the run failed at 25.0 mm of nose recession, with it
+at 29.5 mm. What stopped it was the shape, not the triangles: the angle between neighbouring surface triangles
+(`max_dihedral`) grew from 19.5 degrees at 10 mm of recession and 51.9 at 20 mm to about 95 degrees as that motion
+sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are flattened by their own corners'
+motion, which no rebuild inside the same surface can undo. The fold is reported.
 
-What left through the surface is booked per corner: the volume each corner sweeps is its dual area times its normal
-displacement (positive inward), rescaled so the corners' volumes add up exactly to the change of the mesh's volume, and
-it carries the corner's own nodal enthalpy. The layered skins take exactly that mass and enthalpy (stage 2).
+What left through the surface is booked per corner by the exact volume of the prism each surface triangle sweeps
+between its old and new positions (`swept_volumes`): a third of each prism to each of the triangle's corners, so a
+corner sliding along a flat face books nothing, and the third-order remainder by which the prisms miss the change of the
+mesh's volume spread over the corners in proportion to their own |volume|, so the corners' volumes add up exactly to
+that change. Each corner's volume carries the corner's own nodal enthalpy before the move (the surface value, which the
+exact moving-front solution favours over the mean of the old and remapped values). The layered skins take exactly
+that mass and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
-though gmsh renumbers nodes, so the corners are matched back by their coordinates). The enthalpy is interpolated onto
-the new nodes in the old mesh and its total made exact by a uniform offset, as the 2026-09-27 remeshing design does;
-the pre-correction residual is reported with every rebuild. The validity gate stops on a non-manifold surface, more
-than one connected body, or a non-positive enclosed volume."""
+though gmsh renumbers nodes, so the corners are matched back by their coordinates, and the rebuilt boundary is checked
+against the corner triangles). The enthalpy is interpolated onto the new nodes in the old mesh and its total made exact
+by a uniform offset over the new deforming zone only, where the interpolation error arises, as the 2026-09-27
+remeshing design does for the whole body; the pre-correction residual is reported with every rebuild and summed in
+`rebuild_residual_total`. The validity gate stops on a non-manifold surface, more than one connected body, or a
+non-positive enclosed volume."""
 import time
 from dataclasses import dataclass
 
@@ -400,15 +426,33 @@ def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_
     return step * np.minimum(1.0, limit / np.where(size > 0.0, size, 1.0))[:, None]
 
 
+def swept_volumes(old, new, faces, faces_corner, n_corners):
+    """The volume each corner's surface swept, positive inward: every surface triangle's prism between its old and new
+    positions, split into three tetrahedra, a third of it to each of the triangle's corners. A corner sliding along a
+    flat face sweeps exactly nothing; a corner on a sharp edge books only what the faces it touches swept (Task 4
+    review, 2026-10-12, replacing dual area times normal displacement, which mis-shares at edges and, scaled to the
+    total, blew up wherever the first-order volumes nearly cancelled). `faces` are the outward triangles' node ids,
+    `faces_corner` the same triangles in corner numbering."""
+    a, b, c = (old[faces[:, i]] for i in range(3))
+    A, B, C = (new[faces[:, i]] for i in range(3))
+
+    def vol(p, q, r, s):
+        return np.einsum("ij,ij->i", q - p, np.cross(r - p, s - p)) / 6.0
+    prism = -(vol(a, b, c, A) + vol(b, c, A, B) + vol(c, A, B, C))
+    out = np.zeros(n_corners)
+    for i in range(3):
+        np.add.at(out, faces_corner[:, i], prism / 3.0)
+    return out
+
 
 ```
 
 - [ ] **Step 4: Run them to see them pass**
 
 Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q`
-Expected: 5 passed.
+Expected: 6 passed.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 308 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 309 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -425,8 +469,9 @@ git commit -m "Moving mesh: element and surface geometry helpers"
 **Interfaces:**
 - Produces: `solver.update_geometry(elements=None)` on both backends — the mesh's `points` have moved in place;
   scikit-fem recomputes the element matrices of `elements` (all if None) and the surface; FEniCSx copies the coordinates
-  into dolfinx's geometry and refreshes the surface (it recomputes every Jacobian at assembly anyway). `setup` on a new
-  mesh now discards the scikit-fem AMG hierarchy.
+  into dolfinx's geometry and refreshes its cell volumes and the surface (it recomputes every Jacobian at assembly
+  anyway). `setup` on a new mesh now discards the scikit-fem AMG hierarchy. (After the Task 2 review: the scikit-fem
+  test updates only the elements touching the moved outer shell, a real subset, and FEniCSx refreshes `cell_volumes`.)
 
 - [ ] **Step 1: Append the Task 2 tests** to `tests/test_reentry_model_movemesh.py`:
 
@@ -437,9 +482,11 @@ def test_moved_geometry_gives_the_operators_of_a_fresh_solver(coarse_sphere_mesh
     mat = constant_material()
     solver = solver_on(m, mat, 450.0)
     r = np.linalg.norm(m.points, axis=1)
-    m.points *= (1.0 - 0.04 * (r / 0.05) ** 4)[:, None]       # an uneven squeeze toward the centre, in place
-    outer = np.flatnonzero((r[m.tets] > 0.02).any(axis=1))    # the elements whose nodes moved noticeably...
-    solver.update_geometry(np.arange(m.n_elements))           # ...but every node moved, so recompute all
+    moved = r > 0.04                                          # only the outer shell (r above 4 cm) moves; the core stays put
+    m.points[moved] *= (1.0 - 0.04 * (r[moved] / 0.05) ** 4)[:, None]    # an uneven squeeze toward the centre, in place
+    outer = np.flatnonzero(moved[m.tets].any(axis=1))         # the elements with a moved node: the only ones that change
+    assert outer.size < m.n_elements                          # a real subset: the core elements keep their matrices
+    solver.update_geometry(outer)                             # recompute just those elements, and the surface
     fresh = solver_on(mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, 450.0)
     T = solver.temperature()
     K1, M1 = solver.operators(T)
@@ -477,6 +524,7 @@ def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
     m.points *= (1.0 - 0.04 * (r / R) ** 4)[:, None]
     s1.update_geometry()
     s2 = solver("fenicsx", mesh_mod.VolumeMesh(m.points.copy(), m.tets.copy()), mat, linear_solver="direct")
+    assert np.allclose(s1.cell_volumes, s2.cell_volumes, rtol=1e-12, atol=0.0)   # the moved cells have the fresh cell volumes
     s2.set_temperature(s1.temperature())
     q = np.full(len(s1.faces), 2e5)
     r1, r2 = s1.step(0.5, q, 300.0), s2.step(0.5, q, 300.0)
@@ -525,7 +573,14 @@ Expected: `AttributeError: 'SkfemThermalSolver' object has no attribute 'update_
 ```diff
 --- a/reentry_model/thermal/fenicsx_backend.py
 +++ b/reentry_model/thermal/fenicsx_backend.py
-@@ -66,6 +66,8 @@
+@@ -60,12 +60,12 @@
+         self.cell_dofs = np.asarray(self.V.dofmap.list)[:, :4]
+         # dolfinx cell k is the k-th cell passed in (create_mesh keeps the order in serial): cell volumes and the map
+         # from dolfinx cells to mesh elements
+-        x = self.V.tabulate_dof_coordinates()[self.cell_dofs]
+-        J = np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2)
+-        self.cell_volumes = np.abs(np.linalg.det(J)) / 6.0
++        self.cell_volumes = self._cell_volumes()
          self.cell_nodes = self.node_of_dof[self.cell_dofs]                   # mesh node ids of each dolfinx cell
          centroids = mesh.points[mesh.tets].mean(axis=1)
          self.element_of_cell = cKDTree(centroids).query(mesh.points[self.cell_nodes].mean(axis=1))[1]
@@ -534,15 +589,23 @@ Expected: `AttributeError: 'SkfemThermalSolver' object has no attribute 'update_
          self.coef = fem.Function(self.V0)                                   # phi_e k(T_e) per cell
          u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
          self.a = fem.form(self.coef * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx)
-@@ -88,6 +90,13 @@
+@@ -88,6 +88,21 @@
          self._refresh_surface()
  
      # -- geometry / fractions -----------------------------------------------------------------------------------
++    def _cell_volumes(self):
++        """Volume of each dolfinx cell from the current dof coordinates (which follow the dolfinx geometry)."""
++        x = self.V.tabulate_dof_coordinates()[self.cell_dofs]
++        J = np.stack([x[:, 1] - x[:, 0], x[:, 2] - x[:, 0], x[:, 3] - x[:, 0]], axis=2)
++        return np.abs(np.linalg.det(J)) / 6.0
++
 +    def update_geometry(self, elements=None):
 +        """The mesh's node coordinates have moved (the moving 3D mesh, layered-skin design section 5.3): copy them into
-+        dolfinx's geometry, which every assembly reads, and refresh the surface. The nodal pieces read the VolumeMesh.
-+        `elements` is accepted for the protocol's sake: dolfinx recomputes every Jacobian at assembly anyway."""
++        dolfinx's geometry, which every assembly reads, then refresh the cell volumes and the surface. The nodal pieces
++        read the VolumeMesh. `elements` is accepted for the protocol's sake: dolfinx recomputes every Jacobian at
++        assembly anyway."""
 +        self.msh.geometry.x[:, :3] = self.mesh.points[self._geometry_nodes]
++        self.cell_volumes = self._cell_volumes()
 +        self._refresh_surface()
 +
      def _refresh_surface(self):
@@ -552,10 +615,10 @@ Expected: `AttributeError: 'SkfemThermalSolver' object has no attribute 'update_
 
 - [ ] **Step 5: Run them to see them pass**
 
-Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q` — expected 7 passed — and
+Run: `"$PY" -m pytest tests/test_reentry_model_movemesh.py -q` — expected 8 passed — and
 `FI_PROVIDER=tcp CC=... "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q -k moved_geometry` — expected 1 passed.
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 310 passed, 1 skipped, the five known; FEniCSx 15 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 311 passed, 1 skipped, the five known; FEniCSx 15 passed.
 
 ```bash
 git add reentry_model/thermal/skfem_backend.py reentry_model/thermal/fenicsx_backend.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -647,9 +710,9 @@ class ZoneMap:
 
 ```
 
-- [ ] **Step 4: Run them to see them pass** — expected 9 passed in the file.
+- [ ] **Step 4: Run them to see them pass** — expected 10 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 312 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 313 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -665,7 +728,9 @@ git commit -m "Moving mesh: the deforming zone moves the nodes under the corners
 **Interfaces:**
 - Consumes: Tasks 1–3; the solver's `temperature()`, `set_temperature()`, `energy()`, `update_geometry(elements)`,
   `emissivity`; the material's `enthalpy`, `temperature_from_enthalpy`, `rho`.
-- Produces: `MoveResult(refused, swept_volume (nc,), swept_enthalpy (nc,), correction, worst_ratio, rebuilt=False)`;
+- Produces: `default_sizes(mesh) -> dict` (gmsh sizes for a rebuild from the generator's parameters; in this section
+  because `MovingMesh.__init__` calls it); `MoveResult(refused, swept_volume (nc,), swept_enthalpy (nc,), correction,
+  worst_ratio, rebuilt=False)`;
   `MovingMesh(mesh, solver, material, depth=DEFORM_DEPTH, ratio_min=RATIO_MIN, min_gap=MIN_GAP, sizes=None)` with
   `.mesh`, `.solver`, `.material`, `.corners` (current node id of each corner, fixed order), `.faces_corner` (surface
   triangles in corner numbering, outward), `.edges_corner`, `.zone`, `.compression` (inward motion of each corner since
@@ -697,9 +762,17 @@ def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh
     solver.set_temperature(300.0 + 4000.0 * (r_node - 0.03).clip(0.0))           # warm near the surface
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
     E0, V0 = solver.energy(), m.volume()
+    _, area0 = moving.frame()
+    deep = np.linalg.norm(m.points, axis=1) < 0.05 - 15.5e-3          # below the zone: must not change at all
+    T0 = solver.temperature()
     r = moving.move(inward(moving, 3e-4))
     assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+    # each corner books what its own faces swept: its dual area times 0.3 mm to within the curvature (1.0 % measured
+    # while planning), never negative
+    assert np.all(r.swept_volume > 0.0)
+    assert np.abs(r.swept_volume / (area0 * 3e-4) - 1.0).max() < 0.02
+    assert np.array_equal(solver.temperature()[deep], T0[deep])
     # the offset that closed the books is reported; on this kinked field over 4 mm cells it is 0.7 % of what the
     # corners swept (measured while planning), the lumped quadrature's error on a field that is not linear
     assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
@@ -751,11 +824,13 @@ def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh
     solver = solver_on(m, mat)
     solver.set_temperature(300.0 + 2000.0 * m.points[:, 2])
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
-    normal, _ = moving.frame()
+    normal, area = moving.frame()
     tangent = np.cross(normal, [0.0, 0.0, 1.0])               # along the surface, around the z axis
     E0 = solver.energy()
     r = moving.move(1e-4 * tangent)
-    assert abs(r.swept_volume.sum()) < 1e-3 * 1e-4 * moving.frame()[1].sum()
+    # what a corner books is the curved surface's second-order change, at most 0.6 % of its dual area times its
+    # displacement (measured while planning); scaling first-order volumes to the total made it noise here
+    assert np.all(np.abs(r.swept_volume) < 0.02 * area * 1e-4 * np.linalg.norm(tangent, axis=1))
     assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
 
 
@@ -778,6 +853,16 @@ def test_the_moving_mesh_reports_its_surface_quality_and_fold(coarse_sphere_mesh
 
 ```python
 # -- moving the mesh -------------------------------------------------------------------------------------------------
+def default_sizes(mesh):
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    p = mesh.params
+    if "h_surface_m" in p:
+        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+
+
 @dataclass
 class MoveResult:
     refused: bool                       # the move would invert or degrade an element: nothing was changed
@@ -803,6 +888,7 @@ class MovingMesh:
         self._set_surface(orient_outward(mesh.points, s.faces, s.normals))
         self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
         self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
+        self.rebuild_residual_total = 0.0       # J, summed pre-correction residuals of all rebuilds
 
     def _set_surface(self, faces_nodes):
         local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
@@ -854,13 +940,19 @@ class MovingMesh:
         h_new = h + np.einsum("ij,ij->i", nodal_gradient(mesh.points, mesh.tets, h, touched), U)
         E_old = solver.energy()
         normal, area = self.frame()
-        dV = -area * np.einsum("ij,ij->i", normal, u)       # volume each corner sweeps, positive inward
+        faces = self.corners[self.faces_corner]
+        dV = swept_volumes(mesh.points, new_points, faces, self.faces_corner, len(self.corners))
         V_old = float(np.abs(signed_volumes(mesh.points, mesh.tets[touched])).sum())     # only touched elements change
         mesh.points[:] = new_points
         mesh.derived_points[:] = new_points
-        dV_total = V_old - float(np.abs(vol_new).sum())
-        if dV.sum() != 0.0:
-            dV = dV * (dV_total / dV.sum())
+        # the prisms tile what the surface swept up to how their shared side faces are split; that remainder (third
+        # order in the displacement) goes to the corners in proportion to what they swept, so the books are exact
+        remainder = (V_old - float(np.abs(vol_new).sum())) - dV.sum()
+        if np.abs(dV).sum() > 0.0:
+            dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
+        # the slab is booked at the corners' old enthalpy, not the mean of the old and remapped values: the exact-solution
+        # moving-front test is 0.0010 of the rise with the surface value against 0.0093 with the mean, and in stage 2
+        # the metal crossing the rigid front is booked at the base node's temperature
         swept_h = mat.rho * dV * h[self.corners]
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
@@ -874,12 +966,16 @@ class MovingMesh:
 
 ```
 
-- [ ] **Step 4: Run them to see them pass** — expected 16 passed in the file. The measured sizes behind the tolerances,
-  each from one run while planning: on the steep, kinked field of the books test over 4 mm cells the offset that closes
-  the books is 0.7 % of what the corners swept; on a linear field it is 0.0035 J against 3877 J swept and moves no node
-  by more than 3.3e-6 K.
+- [ ] **Step 4: Run them to see them pass** — expected 17 passed in the file. The measured sizes behind the tolerances,
+  each from one run: on the steep, kinked field of the books test over 4 mm cells the offset that closes the books is
+  0.7 % of what the corners swept, every corner books its dual area times the 0.3 mm move to within 1.0 %, and the
+  nodes below the zone do not change at all; on a linear field the offset is 0.0035 J against 3877 J swept and moves
+  no node by more than 3.3e-6 K; a move along the surface books at most 0.6 % of each corner's dual area times its
+  displacement. Each corner's swept volume is booked at its own enthalpy before the move: booking inward slabs at the
+  mean of old and remapped enthalpy shrank the offset (from -16.2 J to +0.29 J per 0.3 mm move) but made Task 7's exact
+  moving-front test nine times worse (0.0010 to 0.0093 of the rise), so the surface value stays (final review).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 319 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 320 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -895,8 +991,9 @@ git commit -m "Moving mesh: corners and zone move, the enthalpy is remapped by i
 **Interfaces:**
 - Consumes: Tasks 1–4; `mesh.VolumeMesh`; the solver's `setup(mesh, material, emissivity)`.
 - Produces: `MovingMesh.rebuild(reason="requested") -> RebuildResult(residual, relative_residual, n_nodes, n_elements,
-  seconds, reason)`; module functions `default_sizes(mesh) -> dict`, `check_surface(points, faces) -> volume` (raises
-  `RemeshError`), `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp) -> (points, tets,
+  seconds, reason)`; `MovingMesh.rebuild_residual_total` (the running sum of the pre-correction residuals); module
+  functions `check_surface(points, faces) -> volume` (raises `RemeshError`), `check_rebuilt_boundary(mesh,
+  expected_faces)` (raises `RemeshError` unless the rebuilt boundary is exactly the corner triangles), `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp) -> (points, tets,
   node_of_corner)`, `locate(points, tets, query, candidates=16) -> (elements, barycentric (nq, 4))`. After a rebuild
   `moving.mesh` and `moving.solver.mesh` are the new mesh; `moving.corners` maps each corner to its new node.
 
@@ -910,7 +1007,7 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     solver = solver_on(m, mat)
     solver.set_temperature(300.0 + 4000.0 * (np.linalg.norm(m.points, axis=1) - 0.03).clip(0.0))
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
-    moving.move(inward(moving, 1e-3))
+    assert not moving.move(inward(moving, 1e-3)).refused
     corner_points = moving.mesh.points[moving.corners].copy()
     faces_before = moving.faces_corner.copy()
     V, E = moving.mesh.volume(), solver.energy()
@@ -923,7 +1020,26 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     assert moving.mesh.volume() == pytest.approx(V, rel=1e-12)
     assert solver.energy() == pytest.approx(E, rel=1e-12)
     assert np.all(movemesh.signed_volumes(moving.mesh.points, moving.mesh.tets) != 0.0)
-    assert result.relative_residual < 1e-3 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+    # the interpolation loses -2612 J of 71236 J (-4.1 %) here: a kinked field on 4 to 20 mm cells, whose lumped sum
+    # differs between two meshes (final review: the earlier one-sided check "residual below 1e-3" passed on the sign
+    # alone). The residual is reported, and the offset closes it (the energy assertion above)
+    assert abs(result.relative_residual) < 0.06 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+
+
+def test_a_rebuild_of_a_linear_field_loses_nothing_to_interpolation(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    T_of = lambda p: 300.0 + 2000.0 * p[:, 0]
+    solver.set_temperature(T_of(m.points))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert not moving.move(inward(moving, 1e-3)).refused
+    result = moving.rebuild()
+    # linear interpolation and the lumped sum are both exact for a linear field: -6e-8 of the total measured (final
+    # review), two-sided
+    assert abs(result.relative_residual) < 1e-6
+    # the books' own uniform offsets (the move's, then the rebuild's) leave 2.1e-5 K at most (measured)
+    assert np.abs(solver.temperature() - T_of(moving.mesh.points)).max() < 1e-4
 
 
 def test_a_rebuild_keeps_a_uniform_field_uniform(coarse_sphere_mesh):
@@ -941,12 +1057,71 @@ def test_corners_keep_their_order_through_repeated_rebuilds(coarse_sphere_mesh):
     moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     first = moving.mesh.points[moving.corners].copy()
     for _ in range(2):
-        moving.move(inward(moving, 3e-4))
+        assert not moving.move(inward(moving, 3e-4)).refused
         expected = moving.mesh.points[moving.corners].copy()
         moving.rebuild()
         assert np.array_equal(moving.mesh.points[moving.corners], expected)
     assert np.linalg.norm(moving.mesh.points[moving.corners], axis=1).max() < np.linalg.norm(first, axis=1).max()
     assert moving.rebuilds == 2
+
+
+def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    solver.set_temperature(300.0 + 4000.0 * (np.linalg.norm(m.points, axis=1) - 0.03).clip(0.0))
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert moving.rebuild_residual_total == 0.0
+    residuals = []
+    for _ in range(2):
+        assert not moving.move(inward(moving, 5e-4)).refused
+        old_points, old_tets = moving.mesh.points.copy(), moving.mesh.tets.copy()
+        h_old = mat.enthalpy(solver.temperature())
+        residuals.append(moving.rebuild().residual)
+        # what the interpolation alone gives at the new nodes (the corners keep their own values, and are in the zone)
+        elem, bary = movemesh.locate(old_points, old_tets, moving.mesh.points)
+        h_interp = np.einsum("ij,ij->i", bary, h_old[old_tets[elem]])
+        h_after = mat.enthalpy(solver.temperature())
+        in_zone = np.zeros(moving.mesh.n_nodes, dtype=bool)
+        in_zone[moving.zone.corners] = True
+        in_zone[moving.zone.interior] = True
+        out = ~in_zone
+        # outside the zone (84 and 73 of about 2900 nodes on this coarse mesh) the field is the interpolation's to 3e-11
+        # J per kg; spread over the whole body the offset would have shifted those nodes by 1735 and 1244 J per kg (1.7
+        # and 1.2 K), and in the zone, noncorner nodes carry 2585 and 1804 J per kg (all measured, final review)
+        assert out.sum() > 50
+        assert np.abs(h_after[out] - h_interp[out]).max() < 1e-6 * np.abs(h_interp).max()      # tolerance 0.08 J per kg
+        zone_inner = in_zone & ~np.isin(np.arange(moving.mesh.n_nodes), moving.corners)
+        assert np.abs(h_after[zone_inner] - h_interp[zone_inner]).min() > 1000.0
+    assert min(abs(x) for x in residuals) > 1.0
+    assert moving.rebuild_residual_total == pytest.approx(sum(residuals), rel=1e-12, abs=0.0)
+
+
+def test_check_rebuilt_boundary_accepts_the_mesh_own_surface_and_rejects_a_changed_one():
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    faces = m.surface().faces
+    movemesh.check_rebuilt_boundary(m, faces[::-1, ::-1])                        # any order of triangles and nodes
+    altered = faces.copy()
+    altered[0, 0] = (altered[0, 0] + 1) % m.n_nodes if (altered[0, 0] + 1) % m.n_nodes not in altered[0] else altered[0, 0] + 2
+    with pytest.raises(movemesh.RemeshError, match="boundary"):
+        movemesh.check_rebuilt_boundary(m, altered)
+
+
+def test_a_gmsh_failure_surfaces_as_a_remesh_error(monkeypatch):
+    import gmsh
+    m = mesh_mod.box_mesh(4e-3, 2e-3, 2e-3, 1e-3)
+    s = m.surface()
+    corners = np.unique(s.faces)
+    local = np.full(m.n_nodes, -1)
+    local[corners] = np.arange(len(corners))
+    faces = local[movemesh.orient_outward(m.points, s.faces, s.normals)]
+
+    def boom(*args, **kwargs):
+        raise Exception("boom")
+    monkeypatch.setattr(gmsh.model.mesh, "generate", boom)
+    with pytest.raises(movemesh.RemeshError, match="gmsh could not mesh the surface: boom") as info:
+        movemesh.rebuild_volume(m.points[corners], faces, h_surface=1e-3, h_core=1e-3, band=0.0, ramp=1.0)
+    assert str(info.value.__cause__) == "boom"
 
 
 @pytest.mark.parametrize("case", ["two bodies", "non-manifold", "inside out"])
@@ -1005,13 +1180,20 @@ def test_a_rebuild_keeps_the_energy_on_fenicsx(coarse_sphere_mesh):
         h_new[node_of_corner] = h_old[self.corners]          # the surface is the same: corners keep their enthalpy
         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
+        check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
         solver.setup(new_mesh, mat, solver.emissivity)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         residual = E_old - solver.energy()
-        h_new += residual / lumped_masses(points, tets, mat.rho).sum()
-        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         self.mesh, self.corners = new_mesh, node_of_corner
-        self._set_surface(node_of_corner[self.faces_corner])
+        self._set_surface(node_of_corner[self.faces_corner])             # builds the new deforming zone
+        # the interpolation error arises where the field varies, near the surface (its residuals measured one-signed,
+        # 99 to 186 J per rebuild), so the offset that makes the total exact is spread over the deforming zone only,
+        # by lumped mass, and the deep body keeps the interpolated values untouched
+        in_zone = np.concatenate([self.zone.corners, self.zone.interior])
+        m_zone = lumped_masses(points, tets, mat.rho)[in_zone]
+        h_new[in_zone] += residual / m_zone.sum()
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        self.rebuild_residual_total += float(residual)
         self.compression[:] = 0.0
         self.steps_since_rebuild = 0
         self.rebuilds += 1
@@ -1033,16 +1215,6 @@ class RebuildResult:
     n_elements: int
     seconds: float
     reason: str
-
-
-def default_sizes(mesh):
-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
-    p = mesh.params
-    if "h_surface_m" in p:
-        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
-    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
 
 
 def check_surface(points, faces):
@@ -1068,6 +1240,17 @@ def check_surface(points, faces):
     if volume <= 0.0:
         raise RemeshError("the surface encloses a non-positive volume ({:.3g} m3)".format(volume))
     return volume
+
+
+def check_rebuilt_boundary(mesh, expected_faces):
+    """Raise RemeshError unless the boundary triangles of `mesh` are exactly `expected_faces` (node ids, any order of
+    triangles and of nodes within one): the rebuild must keep the surface it was given, with no face lost or added."""
+    def triples(faces):
+        return {tuple(f) for f in np.sort(np.asarray(faces, dtype=np.int64), axis=1)}
+    got, want = triples(mesh.surface().faces), triples(expected_faces)
+    if got != want:
+        raise RemeshError("the rebuilt mesh's boundary differs from the surface it was given: {} triangles missing, "
+                          "{} extra".format(len(want - got), len(got - want)))
 
 
 def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
@@ -1101,9 +1284,12 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
         # (checked 2026-10-11; drama_env's does not), and a rebuild takes under two seconds on one
         gmsh.option.setNumber("General.NumThreads", 1)
         gmsh.option.setNumber("Mesh.MaxNumThreads3D", 1)
-        gmsh.model.mesh.generate(3)
-        tags, coords, _ = gmsh.model.mesh.getNodes()
-        types, _, nodes = gmsh.model.mesh.getElements(3)
+        try:
+            gmsh.model.mesh.generate(3)
+            tags, coords, _ = gmsh.model.mesh.getNodes()
+            types, _, nodes = gmsh.model.mesh.getElements(3)
+        except Exception as error:
+            raise RemeshError("gmsh could not mesh the surface: {}".format(error)) from error
     finally:
         gmsh.finalize()
     if 4 not in list(types):
@@ -1141,10 +1327,13 @@ def locate(points, tets, query, candidates=16):
 
 ```
 
-- [ ] **Step 5: Run them to see them pass** — expected 22 passed in the file and the FEniCSx rebuild test passing.
-  A rebuild of the coarse test sphere takes well under a second.
+- [ ] **Step 5: Run them to see them pass** — expected 27 passed in the file and the FEniCSx rebuild test passing.
+  A rebuild of the coarse test sphere takes well under a second. The offset that makes a rebuild's total exact is spread
+  over the new deforming zone only, where the interpolation error arises (final review: the residual is one-signed);
+  on the kinked test field over 4–20 mm cells the pre-correction residual is 4.1 % of the total, on a linear field
+  6e-8; gmsh errors reach the caller as `RemeshError`.
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 325 passed, 1 skipped, the five known; FEniCSx 16 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 330 passed, 1 skipped, the five known; FEniCSx 16 passed.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -1170,15 +1359,17 @@ git commit -m "Moving mesh: rebuild inside the unchanged surface triangulation, 
 def test_compression_triggers_a_rebuild_only_after_the_minimum_gap(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()
-    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=3,
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=4e-3, min_gap=9, ratio_min=1e-6,
                                  sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     rebuilt_at = []
-    for step in range(8):
-        r = moving.move_with_policy(inward(moving, 0.8e-3))
+    for step in range(11):
+        r = moving.move_with_policy(inward(moving, 0.3e-3))
         if r.rebuilt:
-            rebuilt_at.append(step)
-    # compression passes half the 4 mm zone (2 mm) after the third move; the gap of 3 is met then too
-    assert rebuilt_at and rebuilt_at[0] == 3 and moving.rebuilds >= 1
+            rebuilt_at.append((step, moving.last_rebuild.reason))
+    # compression passes half the 4 mm zone (2 mm) after the seventh move, but the gap of 9 holds the rebuild back to
+    # call index 9; without the gap it comes at index 7 (both measured, Task 6 review). The radius-ratio floor is
+    # lowered so that no quality rebuild intervenes.
+    assert rebuilt_at and rebuilt_at[0] == (9, "compression")
 
 
 def test_a_refused_move_rebuilds_and_then_moves(coarse_sphere_mesh):
@@ -1243,9 +1434,11 @@ def test_a_move_refused_on_a_fresh_mesh_is_a_model_failure(coarse_sphere_mesh):
 
 ```
 
-- [ ] **Step 4: Run them to see them pass** — expected 25 passed in the file.
+- [ ] **Step 4: Run them to see them pass** — expected 30 passed in the file. The minimum-gap test is built so that compression
+  crosses half the zone two moves before the gap is met: the rebuild comes at call 9 with the gap and at call 7 without
+  it (Task 6 review).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 328 passed, 1 skipped, the five known.
+- [ ] **Step 5: Unit tier and commit.** Expected 333 passed, 1 skipped, the five known.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py
@@ -1323,7 +1516,7 @@ def test_a_moving_front_matches_the_skfem_backend():
   largest error was 0.0010 of the temperature rise while planning, against a tolerance of 0.005) and the FEniCSx tier
   (expected 17 passed; the two backends agree to 1e-6 K).
 
-- [ ] **Step 3: Both tiers and commit.** Expected unit tier 329 passed, 1 skipped, the five known; FEniCSx 17 passed.
+- [ ] **Step 3: Both tiers and commit.** Expected unit tier 334 passed, 1 skipped, the five known; FEniCSx 17 passed.
 
 ```bash
 git add tests/test_reentry_model_movemesh.py tests/test_reentry_model_fenicsx.py
@@ -1466,8 +1659,8 @@ json.dump({"summary": summary, "rows": rows}, open(args.out, "w"), indent=1)
 ```
 
   While planning (one run each, 2026-10-11): with smoothing the nose receded 29.5 mm before a move failed even after a
-  rebuild, 20 rebuilds, the first at 10.5 mm by compression and every later one by quality — every macro step from
-  21 mm; without smoothing 25.0 mm and 15 rebuilds. A rebuild took 1.6–2.3 s on one gmsh thread (130 000–177 000
+  rebuild, 20 rebuilds by the counter (19 recorded; the 20th was tried inside the failed move), the first at 10.5 mm by
+  compression and every later one by quality — almost every macro step from 21 mm; without smoothing 25.0 mm and 15 rebuilds. A rebuild took 1.6–2.3 s on one gmsh thread (130 000–177 000
   tetrahedra), against the spec's estimate of about 42 s; its pre-correction residual was 0.07–0.27 % of the total
   enthalpy, and a move's offset at most 1.4 % of what the corners swept. The worst surface triangle stayed at 0.71 with
   smoothing (0.36 without). What ends the run is the shape: the largest angle between neighbouring surface triangles grew
@@ -1486,3 +1679,50 @@ json.dump({"summary": summary, "rows": rows}, open(args.out, "w"), indent=1)
   measurements, and anything that differed from the numbers above. The fold limit is recorded, not resolved, here:
   Asha decided on 2026-10-11 to measure it under heating-driven recession in stage 2 (sub-plan 20) before building any
   surface refinement.
+
+## Results (built 2026-10-12)
+
+Built subagent-driven in `prototype/work-2026-10-12-moving-mesh/code/` (branch `moving-mesh`, 15 commits from 49d88e0
+to a18b531): one implementer per task on the cheapest model, a reviewer per task, a final whole-branch review on the most
+capable model, one fix wave and its re-review. The tested copy beside this plan was then made identical to the build.
+
+**Counts after each task** (movemesh test file / unit tier / FEniCSx tier): baseline – / 303 / 14; Task 1 6 / 309 / 14;
+Task 2 8 / 311 / 15; Task 3 10 / 313 / 15; Task 4 17 / 320 / 15; Task 5 27 / 330 / 16; Task 6 30 / 333 / 16; Task 7
+31 / 334 / 17; Task 8 and the final fixes 31 / 334 / 17. Every unit tier also had 1 skipped and the five known failures.
+The 100 mm flight to 30 s from the build is bit-identical to the base's (61 rows, 31 columns, 28 result fields).
+
+**What review changed against the code first planned.**
+- Task 2: the scikit-fem geometry test now updates a real subset of elements; FEniCSx refreshes `cell_volumes` on a move.
+- Task 4: each corner's swept volume is the exact prism its faces swept (`swept_volumes`), not the dual area times the
+  normal displacement scaled to the total, which blew up wherever the first-order volumes nearly cancelled (a move along
+  the surface gave a scale factor of about -7e14). New tests check the per-corner values. A first attempt that spread
+  the remainder by dual area times displacement broke Task 7's exact solution and was dropped before review.
+- Task 4/5: `default_sizes` sits beside `MovingMesh`, which calls it (the plan had put it in Task 5).
+- Task 6: the minimum-gap test now fails if the gap is not enforced.
+- Final review: the rebuild's offset is spread over the new deforming zone only and summed in
+  `rebuild_residual_total`; `check_rebuilt_boundary` checks the rebuilt boundary is exactly the corner triangles; gmsh
+  errors reach the caller as `RemeshError`; the rebuild-residual assertions are two-sided. Booking inward slabs at their
+  mean enthalpy was tried and reverted (it shrank the books' offset but made the exact moving-front test nine times
+  worse, 0.0010 to 0.0093 of the rise).
+
+**Measurements (Task 8, one run each, both on mains power).** As planned: with the tangential smoothing the nose
+receded 29.5 mm before a move failed even after a rebuild; 20 rebuilds by the counter (19 recorded), the first at
+10.5 mm by compression, the rest by quality; a rebuild took 1.63–2.06 s, with a pre-correction residual of 0.07–0.27 %
+of the total enthalpy; a move's offset at most 1.3 % of what the corners swept; worst element radius ratio 0.054, worst
+surface triangle 0.71; the fold 19.5 degrees at 10 mm, 51.9 at 20 mm and 95.4 at most; a macro step's mesh work a median
+0.43 s against 0.19 s of conduction. Without the smoothing: 25.0 mm, 15 rebuilds by the counter, worst surface triangle
+0.36, fold 22.3 and 73.7 degrees at 10 and 20 mm and 97.8 at most, mesh work 0.26 s. Moving-front error against the
+exact solution 0.00103 of the rise; the two backends agree to 4.3e-11 K.
+
+**Left for sub-plan 20** (from the final review; the build's ledger, kept as
+`prototype/work-2026-10-11-moving-mesh-plan/sdd-ledger.md`, holds every ruling and every deferred minor finding):
+- The tangential smoothing sweeps second-order volume of either sign at each corner (one smoothing-only move on the
+  100 mm sphere: up to about 1 µm of equivalent depth either way, 4 856 of 9 417 corners negative), which an empty skin
+  cannot supply. Decided 2026-10-12 (Asha): the smoothing is made volume-neutral per corner (spec §5.1), built as
+  sub-plan 20's Task 0.
+- The enthalpy of metal coming in on an outward move is booked at the corner's enthalpy; stage 2 will supply the skin's.
+- The rebuild residual is one-signed (99–186 J per rebuild in the run, 2.3 kJ in all); record it against each step's
+  heat input in stage 2's history and set the threshold for an exact (intersection-based) transfer in those terms.
+- Integration: `ThermalBody.i_centre` and the centre-node temperature after a rebuild (no centre node is embedded);
+  `params["path"]` still names the original mesh file; `MovingMesh` assumes every element is active.
+- The mesh work per step (0.43 s) is about twice the conduction step: optimise only if stage 2's run time asks for it.

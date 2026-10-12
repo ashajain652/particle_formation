@@ -21,6 +21,12 @@ temperature with a line search) and its conservative cell operations are reused.
 
 ## Tasks (to be written in full)
 
+0. **Volume-neutral smoothing** (`reentry_model/movemesh.py`, decided 2026-10-12): `MovingMesh.smoothing` returns the
+   tangential step plus the normal correction that cancels each corner's swept volume, found with `swept_volumes` (one
+   correction step, iterated if the remainder is not negligible). Tests: a smoothing-only move on the 100 mm sphere
+   books no corner more than a small fraction of its earlier sweep (fact 105: up to about 1 µm of equivalent depth),
+   the books stay exact, and sub-plan 19's recession measurement is repeated to show the fold limit and the rebuild
+   record are not made worse.
 1. **Columns** (`reentry_model/columns.py`): dual cells, areas, face lengths, neighbours, smoothed normals, the surface
    gradient and curvature operators on the corner graph. Tests against a sphere's exact areas, normals and curvature.
 2. **Cells with variable counts** (`reentry_model/skin.py`, rewritten): packed per-column arrays of mass, enthalpy and
@@ -55,7 +61,16 @@ temperature with a line search) and its conservative cell operations are reused.
   by more than about 75–95 degrees). Decided 2026-10-11 (Asha, option 1): this stage measures the fold under
   heating-driven recession — the box and the short 100 mm flight of Task 9 report the largest fold every step — and
   local surface refinement is planned only if real flights approach the limit.
-- The rebuild cost and residual measured in sub-plan 19 (about 2 s and 0.07–0.27 %), which decide whether the
-  intersection-based transfer is needed.
-- The mesh work per macro step measured in sub-plan 19 (0.27–0.45 s against 0.2 s of conduction), which decides whether
-  the zone motion needs optimising before skins are added.
+- **The tangential smoothing is volume-neutral per corner** (decided 2026-10-12, Asha; spec §5.1): each corner is moved
+  along its normal by minus the volume its smoothing swept over its dual area, so a column is never credited with
+  volume the smoothing alone swept. This is Task 0 below.
+- **The enthalpy of metal coming in on an outward move** (hand-down, freezing): `MovingMesh.move` books it at the
+  corner's enthalpy; this stage must pass the skin's bottom-cell enthalpy and put any difference on the corner node.
+- The rebuild cost and residual measured in sub-plan 19 (1.6–2.1 s; 0.07–0.27 %, one-signed, offset kept to the zone;
+  fact 102): record the residual against each step's heat input in the history, and set the threshold for the
+  intersection-based transfer in those terms.
+- The mesh work per macro step measured in sub-plan 19 (0.26–0.43 s against 0.2 s of conduction; fact 106), which decides
+  whether the zone motion needs optimising before skins are added.
+- Integration points the moving mesh leaves: `ThermalBody.i_centre` and the centre temperature after a rebuild (no
+  centre node is embedded; the nearest node moved 4.4 mm from the origin in one check), `params["path"]` still naming
+  the original mesh file, and the assumption that every element is active.

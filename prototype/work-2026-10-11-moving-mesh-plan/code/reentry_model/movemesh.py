@@ -15,22 +15,29 @@ close to round-off. The conduction step that follows runs on the new geometry wi
 
 The corners also move along the surface: `tangential_smoothing` nudges each toward the mean of its neighbours in its
 tangent plane (design section 5.1), which keeps the fixed surface triangulation even. Measured while planning
-(sub-plan 19, 2026-10-11) on the 100 mm sphere receding at its nose by 0.5 mm per step in proportion to how directly
-each corner faces the flow: without it the run failed at 20.5 mm of nose recession, with it at 27.0 mm. What stopped it
-then was the shape, not the triangles: the angle between neighbouring surface triangles (`max_dihedral`) grew from
-4 to 82 degrees as that motion sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are
-flattened by their own corners' motion, which no rebuild inside the same surface can undo. The fold is reported.
+(sub-plan 19, Task 8, 2026-10-12, one thread) on the 100 mm sphere receding at its nose by 0.5 mm per step in
+proportion to how directly each corner faces the flow: without it the run failed at 25.0 mm of nose recession, with it
+at 29.5 mm. What stopped it was the shape, not the triangles: the angle between neighbouring surface triangles
+(`max_dihedral`) grew from 19.5 degrees at 10 mm of recession and 51.9 at 20 mm to about 95 degrees as that motion
+sharpened the shoulder, and elements whose four nodes all lie on a fold that sharp are flattened by their own corners'
+motion, which no rebuild inside the same surface can undo. The fold is reported.
 
-What left through the surface is booked per corner: the volume each corner sweeps is its dual area times its normal
-displacement (positive inward), rescaled so the corners' volumes add up exactly to the change of the mesh's volume, and
-it carries the corner's own nodal enthalpy. The layered skins take exactly that mass and enthalpy (stage 2).
+What left through the surface is booked per corner by the exact volume of the prism each surface triangle sweeps
+between its old and new positions (`swept_volumes`): a third of each prism to each of the triangle's corners, so a
+corner sliding along a flat face books nothing, and the third-order remainder by which the prisms miss the change of the
+mesh's volume spread over the corners in proportion to their own |volume|, so the corners' volumes add up exactly to
+that change. Each corner's volume carries the corner's own nodal enthalpy before the move (the surface value, which the
+exact moving-front solution favours over the mean of the old and remapped values). The layered skins take exactly
+that mass and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
-though gmsh renumbers nodes, so the corners are matched back by their coordinates). The enthalpy is interpolated onto
-the new nodes in the old mesh and its total made exact by a uniform offset, as the 2026-09-27 remeshing design does;
-the pre-correction residual is reported with every rebuild. The validity gate stops on a non-manifold surface, more
-than one connected body, or a non-positive enclosed volume."""
+though gmsh renumbers nodes, so the corners are matched back by their coordinates, and the rebuilt boundary is checked
+against the corner triangles). The enthalpy is interpolated onto the new nodes in the old mesh and its total made exact
+by a uniform offset over the new deforming zone only, where the interpolation error arises, as the 2026-09-27
+remeshing design does for the whole body; the pre-correction residual is reported with every rebuild and summed in
+`rebuild_residual_total`. The validity gate stops on a non-manifold surface, more than one connected body, or a
+non-positive enclosed volume."""
 import time
 from dataclasses import dataclass
 
@@ -176,6 +183,24 @@ def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_
     return step * np.minimum(1.0, limit / np.where(size > 0.0, size, 1.0))[:, None]
 
 
+def swept_volumes(old, new, faces, faces_corner, n_corners):
+    """The volume each corner's surface swept, positive inward: every surface triangle's prism between its old and new
+    positions, split into three tetrahedra, a third of it to each of the triangle's corners. A corner sliding along a
+    flat face sweeps exactly nothing; a corner on a sharp edge books only what the faces it touches swept (Task 4
+    review, 2026-10-12, replacing dual area times normal displacement, which mis-shares at edges and, scaled to the
+    total, blew up wherever the first-order volumes nearly cancelled). `faces` are the outward triangles' node ids,
+    `faces_corner` the same triangles in corner numbering."""
+    a, b, c = (old[faces[:, i]] for i in range(3))
+    A, B, C = (new[faces[:, i]] for i in range(3))
+
+    def vol(p, q, r, s):
+        return np.einsum("ij,ij->i", q - p, np.cross(r - p, s - p)) / 6.0
+    prism = -(vol(a, b, c, A) + vol(b, c, A, B) + vol(c, A, B, C))
+    out = np.zeros(n_corners)
+    for i in range(3):
+        np.add.at(out, faces_corner[:, i], prism / 3.0)
+    return out
+
 
 # -- the deforming zone ----------------------------------------------------------------------------------------------
 class ZoneMap:
@@ -212,6 +237,16 @@ class ZoneMap:
 
 
 # -- moving the mesh -------------------------------------------------------------------------------------------------
+def default_sizes(mesh):
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    p = mesh.params
+    if "h_surface_m" in p:
+        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+
+
 @dataclass
 class MoveResult:
     refused: bool                       # the move would invert or degrade an element: nothing was changed
@@ -237,6 +272,7 @@ class MovingMesh:
         self._set_surface(orient_outward(mesh.points, s.faces, s.normals))
         self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
         self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
+        self.rebuild_residual_total = 0.0       # J, summed pre-correction residuals of all rebuilds
 
     def _set_surface(self, faces_nodes):
         local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
@@ -288,13 +324,19 @@ class MovingMesh:
         h_new = h + np.einsum("ij,ij->i", nodal_gradient(mesh.points, mesh.tets, h, touched), U)
         E_old = solver.energy()
         normal, area = self.frame()
-        dV = -area * np.einsum("ij,ij->i", normal, u)       # volume each corner sweeps, positive inward
+        faces = self.corners[self.faces_corner]
+        dV = swept_volumes(mesh.points, new_points, faces, self.faces_corner, len(self.corners))
         V_old = float(np.abs(signed_volumes(mesh.points, mesh.tets[touched])).sum())     # only touched elements change
         mesh.points[:] = new_points
         mesh.derived_points[:] = new_points
-        dV_total = V_old - float(np.abs(vol_new).sum())
-        if dV.sum() != 0.0:
-            dV = dV * (dV_total / dV.sum())
+        # the prisms tile what the surface swept up to how their shared side faces are split; that remainder (third
+        # order in the displacement) goes to the corners in proportion to what they swept, so the books are exact
+        remainder = (V_old - float(np.abs(vol_new).sum())) - dV.sum()
+        if np.abs(dV).sum() > 0.0:
+            dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
+        # the slab is booked at the corners' old enthalpy, not the mean of the old and remapped values: the exact-solution
+        # moving-front test is 0.0010 of the rise with the surface value against 0.0093 with the mean, and in stage 2
+        # the metal crossing the rigid front is booked at the base node's temperature
         swept_h = mat.rho * dV * h[self.corners]
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
@@ -320,13 +362,20 @@ class MovingMesh:
         h_new[node_of_corner] = h_old[self.corners]          # the surface is the same: corners keep their enthalpy
         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
+        check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
         solver.setup(new_mesh, mat, solver.emissivity)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         residual = E_old - solver.energy()
-        h_new += residual / lumped_masses(points, tets, mat.rho).sum()
-        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         self.mesh, self.corners = new_mesh, node_of_corner
-        self._set_surface(node_of_corner[self.faces_corner])
+        self._set_surface(node_of_corner[self.faces_corner])             # builds the new deforming zone
+        # the interpolation error arises where the field varies, near the surface (its residuals measured one-signed,
+        # 99 to 186 J per rebuild), so the offset that makes the total exact is spread over the deforming zone only,
+        # by lumped mass, and the deep body keeps the interpolated values untouched
+        in_zone = np.concatenate([self.zone.corners, self.zone.interior])
+        m_zone = lumped_masses(points, tets, mat.rho)[in_zone]
+        h_new[in_zone] += residual / m_zone.sum()
+        solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+        self.rebuild_residual_total += float(residual)
         self.compression[:] = 0.0
         self.steps_since_rebuild = 0
         self.rebuilds += 1
@@ -372,16 +421,6 @@ class RebuildResult:
     reason: str
 
 
-def default_sizes(mesh):
-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
-    p = mesh.params
-    if "h_surface_m" in p:
-        return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
-    h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
-
-
 def check_surface(points, faces):
     """The validity gate: every edge used by exactly two triangles, one connected surface, positive enclosed volume."""
     from scipy.sparse import coo_matrix
@@ -405,6 +444,17 @@ def check_surface(points, faces):
     if volume <= 0.0:
         raise RemeshError("the surface encloses a non-positive volume ({:.3g} m3)".format(volume))
     return volume
+
+
+def check_rebuilt_boundary(mesh, expected_faces):
+    """Raise RemeshError unless the boundary triangles of `mesh` are exactly `expected_faces` (node ids, any order of
+    triangles and of nodes within one): the rebuild must keep the surface it was given, with no face lost or added."""
+    def triples(faces):
+        return {tuple(f) for f in np.sort(np.asarray(faces, dtype=np.int64), axis=1)}
+    got, want = triples(mesh.surface().faces), triples(expected_faces)
+    if got != want:
+        raise RemeshError("the rebuilt mesh's boundary differs from the surface it was given: {} triangles missing, "
+                          "{} extra".format(len(want - got), len(got - want)))
 
 
 def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
@@ -438,9 +488,12 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
         # (checked 2026-10-11; drama_env's does not), and a rebuild takes under two seconds on one
         gmsh.option.setNumber("General.NumThreads", 1)
         gmsh.option.setNumber("Mesh.MaxNumThreads3D", 1)
-        gmsh.model.mesh.generate(3)
-        tags, coords, _ = gmsh.model.mesh.getNodes()
-        types, _, nodes = gmsh.model.mesh.getElements(3)
+        try:
+            gmsh.model.mesh.generate(3)
+            tags, coords, _ = gmsh.model.mesh.getNodes()
+            types, _, nodes = gmsh.model.mesh.getElements(3)
+        except Exception as error:
+            raise RemeshError("gmsh could not mesh the surface: {}".format(error)) from error
     finally:
         gmsh.finalize()
     if 4 not in list(types):
