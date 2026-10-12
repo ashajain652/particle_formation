@@ -33,7 +33,9 @@ from .body import ThermalBody
 from .thermal import SIGMA_SB
 
 ABSORB_MAX = 0.25                 # of the mean surface edge: the most a base absorbs in one macro step (the rest waits)
-GRADIENT_FLOOR = 1.0              # K/m: below this the 3D field gives no direction to absorb along
+GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
+                                  # whose gradient is below it (a flat or reversed field) is given this one, so its depth
+                                  # is huge and it absorbs up to the cap, ABSORB_MAX: it does not absorb nothing
 REPEAT_RULES = ("column", "total", "never")   # when a step's interface mismatch repeats it (spec 7.2: "column"; the others
                                               # are measured in sub-plan 20 Task 10 before any change of default)
 

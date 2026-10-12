@@ -94,6 +94,57 @@ def test_handing_down_moves_the_base_out_and_the_3d_model_takes_the_metal(coarse
     assert np.abs(b.solver.temperature() - 600.0).max() < 1e-6
 
 
+# -- how far a hot base absorbs (spec 6.6) ------------------------------------------------------------------------------
+def test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped(coarse_sphere_mesh, monkeypatch):
+    """The metal a base absorbs is the depth, along the column, from the base node to where the 3D temperature falls to
+    T_rigid. The field imposed is exactly linear, T = T_rigid + G (x_c - x) with G = 1000 K/m, hotter towards -x (the front,
+    where `make`'s v_hat points) with its T_rigid contour at x_c, 0.3 of the radius behind the centre: the corners beyond
+    the contour are below T_rigid, the front hot corners are hotter than the interior below them (the gradient along the
+    outward normal is positive, G times the normal's -x component), and the rear hot corners (the field falls outward
+    there) have a gradient below GRADIENT_FLOOR. The 3D gradient is exact for a linear field, so each depth is known
+    in closed form."""
+    G = 1000.0
+    b = make(coarse_sphere_mesh)
+    mat, corners, n = b.material, b.moving.corners, b.columns.normal
+    P = b.mesh.points
+    radial = P[corners] - P.mean(axis=0)
+    assert np.all(np.einsum("ij,ij->i", n, radial) > 0.99 * np.linalg.norm(radial, axis=1))      # the normals point outward
+    x_c = 0.3 * np.linalg.norm(radial, axis=1).mean()
+    T = mat.T_rigid + G * (x_c - P[:, 0])
+    b.solver.set_temperature(T)
+    excess = T[corners] - mat.T_rigid
+    g_n = n @ np.array([-G, 0.0, 0.0])                       # the gradient of T along the outward normal, in closed form
+    hot = excess > 0.0
+    usable = hot & (g_n >= skinbody.GRADIENT_FLOOR)
+    raw = np.where(hot, excess / np.maximum(g_n, skinbody.GRADIENT_FLOOR), 0.0)       # m, before the cap
+    assert hot.sum() > 100 and (~hot).sum() > 100 and (hot & ~usable).sum() > 100
+    # the sign: at a front hot corner the surface is hotter than the interior one millimetre below it, and that is a
+    # positive gradient along the outward normal -- with the normal or the gradient reversed the depths below fail
+    front = usable & (n[:, 0] < -0.5)
+    inner = mat.T_rigid + G * (x_c - (P[corners] - 1e-3 * n)[:, 0])
+    assert front.sum() > 100 and np.all(T[corners][front] > inner[front]) and np.all(g_n[front] > 0.0)
+
+    # the default cap, a quarter of the mean surface edge (about 1.0 mm of 4.0 mm): every hot corner needs more than that
+    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()
+    assert np.all(raw[hot] > cap)
+    depth = b._absorb_depth()
+    assert np.all(depth[~hot] == 0.0)                                      # below T_rigid: nothing to absorb
+    assert depth[hot] == pytest.approx(cap, rel=1e-12) and b.absorb_capped == hot.sum()
+
+    # a cap too high to bind for the corners with a real gradient: their depth is the excess over the gradient
+    monkeypatch.setattr(skinbody, "ABSORB_MAX", 100.0)
+    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()                # 0.4 m
+    b.absorb_capped = 0
+    depth = b._absorb_depth()
+    below = hot & (raw < cap)
+    capped = hot & ~below
+    assert below.sum() > 100 and capped.sum() > 100 and (capped & ~usable).sum() > 100     # the last: gradient under the floor
+    assert np.all(depth[~hot] == 0.0)
+    assert depth[below] == pytest.approx(raw[below], rel=1e-9) and np.all(depth[below] > 0.0)
+    assert depth[capped] == pytest.approx(cap, rel=1e-12)                  # a gradient under the floor absorbs up to the cap
+    assert b.absorb_capped == capped.sum()
+
+
 # -- what triggers the interface repeat (Task 7, measured in Task 10) --------------------------------------------------
 def test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it(coarse_sphere_mesh):
     """Each repeat rule (measured in Task 10; the spec's per-column rule is the default) leaves the books exact, and the

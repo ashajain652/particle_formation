@@ -440,6 +440,9 @@ def cmd_run(args, parser):
         parser.error("--surface-model skin with --melt on needs --removal instant (sub-plan 20: no flow or spraying yet)")
     if args.surface_model == "skin" and (args.animate or args.stills):
         parser.error("--animate/--stills read the element model's frames; with --surface-model skin use --frames-every")
+    if args.surface_model == "skin" and args.prism_layers is not None and args.prism_layers > 0:
+        parser.error("--prism-layers {} is refused with --surface-model skin: the moving mesh's rebuild cannot reproduce prism "
+                     "layers (a skin run uses 0, the default)".format(args.prism_layers))
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),

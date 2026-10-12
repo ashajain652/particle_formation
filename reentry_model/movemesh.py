@@ -23,21 +23,29 @@ sharpened the shoulder, and elements whose four nodes all lie on a fold that sha
 motion, which no rebuild inside the same surface can undo. The fold is reported.
 
 What left through the surface is booked per corner by the exact volume of the prism each surface triangle sweeps
-between its old and new positions (`swept_volumes`): a third of each prism to each of the triangle's corners, so a
-corner sliding along a flat face books nothing, and the third-order remainder by which the prisms miss the change of the
-mesh's volume spread over the corners in proportion to their own |volume|, so the corners' volumes add up exactly to
-that change. Each corner's volume carries the corner's own nodal enthalpy before the move (the surface value, which the
-exact moving-front solution favours over the mean of the old and remapped values). The layered skins take exactly
-that mass and enthalpy (stage 2).
+between its old and new positions (`swept_volumes`). Each corner is booked what its own motion swept, to first order
+A_t (u_k . n_t) / 3 for the triangle t at corner k (A_t the triangle's area, n_t its outward unit normal, u_k the
+corner's displacement), and the second-order rest of the prism, the part of its exact volume that is not the sum of its
+three corners' own sweeps, is shared among those corners in proportion to the absolute values of their own sweeps. So a
+corner sliding along a flat face books nothing, and a corner that does not move is never credited with what its moving
+neighbours swept (a third of each prism to every corner, as sub-plan 19 booked it, credited them with exactly that).
+The third-order remainder by which the prisms miss the change of the mesh's volume, which arises in how the prisms'
+shared side faces are split, is then spread over the corners in proportion to their own |volume| (in `move`), so the
+corners' volumes add up exactly to that change. Each corner's volume carries the corner's own nodal enthalpy before the
+move (the surface value, which the exact moving-front solution favours over the mean of the old and remapped values).
+The layered skins take exactly that mass and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
 though gmsh renumbers nodes, so the corners are matched back by their coordinates, and the rebuilt boundary is checked
-against the corner triangles). The enthalpy is interpolated onto the new nodes in the old mesh and its total made exact
-by a uniform offset over the new deforming zone only, where the interpolation error arises, as the 2026-09-27
-remeshing design does for the whole body; the pre-correction residual is reported with every rebuild and summed in
-`rebuild_residual_total`. The validity gate stops on a non-manifold surface, more than one connected body, or a
-non-positive enclosed volume."""
+against the corner triangles). The enthalpy is carried onto the new mesh by an L2 projection of the old P1 (piecewise
+linear) field (`project_enthalpy`): the new nodal values h solve M h = b, M being the new mesh's consistent mass matrix
+and b_i the integral of the shape function i times the old field over the new elements by a four-point quadrature rule,
+by preconditioned conjugate gradients. The projection reproduces a linear field exactly and keeps the energy where it
+was, region by region, to the rule's accuracy; what the quadrature still misses is made exact by a uniform offset over
+the new deforming zone only, where the field varies, as the 2026-09-27 remeshing design does for the whole body. The
+pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`. The validity gate stops
+on a non-manifold surface, more than one connected body, or a non-positive enclosed volume."""
 import time
 from dataclasses import dataclass
 
@@ -438,7 +446,7 @@ class MovingMesh:
 # -- rebuilding the mesh ---------------------------------------------------------------------------------------------
 @dataclass
 class RebuildResult:
-    residual: float                     # J, total enthalpy the interpolation lost or gained before the offset
+    residual: float                     # J, enthalpy the L2 projection's quadrature lost or gained before the offset
     relative_residual: float            # that over the total enthalpy
     n_nodes: int
     n_elements: int
