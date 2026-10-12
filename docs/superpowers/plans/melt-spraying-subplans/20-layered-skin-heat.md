@@ -19,6 +19,23 @@ the 3D model), `MovingMesh.frame()` (column directions and dual areas), `MovingM
 `update_geometry`. The stage-1 skin's conduction solver (`skin.py` in `prototype/work-2026-10-08-skin/code/`, Newton in
 temperature with a line search) and its conservative cell operations are reused.
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The slurry viscosity law comes from **`reentry_model/shared/rheology.py`** (stage S's **S1**), `material` from
+  `reentry_model.shared`. `columns.py` and the rewritten `skin.py` are skyscrapers' own and are **never shared** with
+  the level set.
+
 ## Tasks (to be written in full)
 
 0. **Volume-neutral smoothing** (`reentry_model/movemesh.py`, decided 2026-10-12): `MovingMesh.smoothing` returns the

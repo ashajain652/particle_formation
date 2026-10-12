@@ -3,6 +3,24 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the drivers switch by default, and the harness retires** (the section after that).
 
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The verification drivers and the reference-tier tests import the moved modules from `reentry_model.shared` (or
+  through the re-exports); run names and results of skyscrapers runs are unchanged.
+- Stage 0 is accepted only if the unit and reference tiers give bit-identical histories, so the verification table
+  here is not re-run because of the move.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Spec §9, §11.1, §11.2.

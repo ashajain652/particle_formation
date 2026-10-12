@@ -1799,3 +1799,32 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
 
 ---
 
+## Amendment of 2026-10-11 — the shared physics package and the second architecture (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14. Required reading for every sub-plan from now on.
+
+1. **Two architectures.** This plan's model is now called **skyscrapers**; a second architecture, the **level set**, is
+   built in parallel (`reentry_model/levelset/`, its documents in `docs/superpowers/specs/levelset/` and
+   `docs/superpowers/plans/levelset/`, its prototypes in `prototype/levelset/`, its tests in `tests/levelset/`).
+   `reentry_model run --architecture skyscrapers|levelset` chooses between them; the default is `skyscrapers`, whose
+   runs, run names and results do not change.
+2. **The shared package.** Code both use lives in `reentry_model/shared/`, and the package's own modules import it
+   from there. Moved in stage 0 (behaviour-preserving, on its own branch, merged before anything else):
+   `trajectory`, `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`,
+   `compare`; the `Body` protocol and `ConstantBody` (`shared/body.py`); the Step 2 thermal protocol, `StepResult`,
+   `MissingBackend`, `SIGMA_SB` (`shared/thermal.py`); the common run arguments and provenance (`shared/cli_common.py`);
+   frame reading and time-series plots (`shared/viz.py`). Each old path stays importable as a one-line re-export.
+3. **Step 3's shared physics** is promoted by stage S's six sub-plans in `docs/superpowers/plans/shared/`:
+   S1 `material` (Scheil, liquid properties) and `rheology` (slurry viscosity); S2 `dispersion`; S3 `surface_flow` and
+   the `gas` additions; S4 `spray` (the physics only: modes, `SprayModel`, droplet radius and release rate,
+   `SOURCE_COLUMNS`, `source_rows`, `histogram`); S5 `girin_case`; S6 `droplets` (`write_particles`, size distributions
+   and their plots). Where a skyscrapers sub-plan creates one of these modules, the matching S sub-plan is the
+   authoritative build; if it has landed, the skyscrapers task only imports it.
+4. **What stays skyscrapers'.** `mesh.py`, `movemesh.py`, `columns.py`, `skin.py`, `film.py`, the melting body in
+   `body.py`, `coupled.py`, the thermal backends and the extended thermal protocol of sub-plan 03, the run driver in
+   `cli.py`, and every rule that decides the film depth and mass handed to the shared spray model. **The skins are
+   never shared** with the level set, and the level set never imports skyscrapers' own modules.
+5. **Changing a shared module** requires both architectures' tests to pass.
+6. **Amended sub-plans** (each carries a block "Amendment of 2026-10-11 — the shared physics package"): 02, 03, 04, 05,
+   07, 08, 10, 12, 13, 14, 15, 19, 20, 21, 22. Sub-plans 01 and 11 touch no shared file and are unchanged.
+

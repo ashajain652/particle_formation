@@ -10,6 +10,23 @@
 
 ---
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/girin_case.py` → **`reentry_model/shared/girin_case.py`**; `analysis/girin_reference.py` is unchanged.
+  Girin's published cases validate the shared spray physics once, for both architectures.
+- Built by stage S's sub-plan **S5**.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Spec §8 and §9; no code in this sub-plan changes.

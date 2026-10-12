@@ -79,7 +79,8 @@ clashing.
   This refactor is the only edit to existing files, and it changes no behaviour (§14, stage 0).
 - **One flag selects the architecture** (§4.3).
 - **Documents and prototypes live apart**: this design in `docs/superpowers/specs/levelset/`, its sub-plans in
-  `docs/superpowers/plans/levelset/`, its prototype code in `prototype/levelset/`, its tests in `tests/levelset/`.
+  `docs/superpowers/plans/levelset/`, the sub-plans of the shared physics (§14, stage S) in the neutral folder
+  `docs/superpowers/plans/shared/`, its prototype code in `prototype/levelset/`, its tests in `tests/levelset/`.
   Nothing in `docs/superpowers/plans/melt-spraying-subplans/` or the skyscrapers prototype work copies is edited; where
   the level-set prototype needs skyscrapers code that is not yet in the package (Step 3's physics lives in prototype
   work copies), it copies it into `prototype/levelset/` and records where from.
@@ -106,11 +107,26 @@ The skyscrapers-specific code stays where it is (`mesh.py`, `coupled.py`, `therm
 working unchanged; the package's own modules import from `shared` directly.
 
 Step 3's physics — the gas-side surface flow, Girin's dispersion table and spray model, Scheil's material, the slurry
-viscosity (`rheology`) — is not yet in the package. **Whichever architecture promotes such a module into the package
-first puts it in `shared/`**, in an architecture-independent form; the other imports it. Until then each prototype
-holds its own copy. **The skins are the exception: they are separate entities in the two architectures and are never
-shared** (decided 2026-10-11). The level set's skins (§9) live only in `reentry_model/levelset/skin.py`; nothing of the
-skyscrapers skins (`skin.py`, `columns.py` of the layered-skin design) is imported or copied into it.
+viscosity — is not yet in the package; it lives in prototype work copies. **It is promoted into `reentry_model/shared/`
+by the six sub-plans of stage S (§14), written in the neutral folder `docs/superpowers/plans/shared/`** and built after
+stage 0, before either architecture's melting code lands in the package (decided 2026-10-11):
+
+| Stage S sub-plan | Shared module(s) | From (skyscrapers sub-plan, prototype module) |
+|---|---|---|
+| S1 material and rheology | `shared/material.py`, `shared/rheology.py` | 02; the Step 4 plan's slurry law |
+| S2 dispersion table | `shared/dispersion.py` (table data in `reentry_model/data/`) | 04 |
+| S3 surface flow | `shared/surface_flow.py`, additions to `shared/gas.py` | 05 |
+| S4 spray physics | `shared/spray.py`: the modes, `SprayModel`, droplet radius and release rate, `SOURCE_COLUMNS`, `source_rows`, `histogram` | 07 (core only) |
+| S5 Girin's published cases | `shared/girin_case.py`, `analysis/girin_reference.py` | 08 |
+| S6 droplet outputs | `shared/droplets.py`: the particle files, the size distributions and their plots | parts of 10 (`write_particles`) and 12 |
+
+`SprayModel.evaluate` already takes the film depth and mass per patch as arrays, so the shared module holds the physics
+and each architecture keeps the bookkeeping that decides those depths and masses (skyscrapers: its columns' top cells;
+the level set: its markers' liquid zones). The skyscrapers sub-plans 00, 02, 03, 04, 05, 07, 08, 10, 12, 13, 14, 15,
+19, 20 and 22 carry an amendment of 2026-10-11 pointing their files at `shared/` (Asha's instruction of 2026-10-11).
+**The skins are the exception: they are separate entities in the two architectures and are never shared** (decided
+2026-10-11). The level set's skins (§9) live only in `reentry_model/levelset/skin.py`; nothing of the skyscrapers skins
+(`skin.py`, `columns.py` of the layered-skin design) is imported or copied into it.
 
 ### 4.3 The architecture flag
 
@@ -395,7 +411,7 @@ When the fast phase ends inside a macro interval, one shortened slow-phase step 
 boundary (for example 101.37 → 101.5 s), so that histories and frames of different runs and seeds share their times.
 Fast phases may recur; each starts and ends the same way and is recorded.
 
-### 10.5 Cost (estimated; measured in stages 3 and 4)
+### 10.5 Cost (estimated; measured in stages 3 and 5)
 
 Fast phase at 1 mm: the remnant's metal (about 0.3 kg, §2) is about 0.9 million active tetrahedra, about 1.2 million
 with the margin; with the semi-implicit surface tension and flow speeds of 1–2 m/s, a flight window of 0.1–0.3 s takes a
@@ -419,7 +435,7 @@ flattening, the ring's position and size, the times of key events. The metrics (
 outlines in millimetres, and event times) are written down, with their acceptance values, **before** any comparison is
 made, so that nothing is tuned to the video.
 
-The record is not yet available (sample size, holder, gas, heat flux, pressure, speed, duration, frame rate); stage 5
+The record is not yet available (sample size, holder, gas, heat flux, pressure, speed, duration, frame rate); stage 6
 waits for it (§17).
 
 ## 12. Settings, outputs and code
@@ -459,46 +475,59 @@ velocity) for the later droplet step.
   own, never shared with skyscrapers), `tunnel.py`.
 - `tests/levelset/` with its own fixtures; the normal loop runs it with the rest of the unit tier.
 
-## 13. Verification and acceptance (decided 2026-10-11)
+## 13. Verification and acceptance (decided 2026-10-11; reordered the same day)
 
 Each stage is verified before the next is built; exact or published answers first, then agreement with skyscrapers
-where their scopes overlap.
+where their scopes overlap. The numbers follow the build stages of §14.
 
+S. **Shared physics**: each promoted module reproduces its prototype's outputs bit for bit on the prototype's tests;
+   Girin's published cases are reproduced as in sub-plan 08; the whole unit and reference tiers pass through the
+   re-exports.
 1. **Level set geometry**: a level set on the sphere reproduces its volume and area; a prescribed recession field gives
    its analytic shape; the per-piece correction is exact to round-off; a dumbbell with a shrinking neck pinches into two
    pieces with exact volumes.
 2. **Thermal**: with the zero contour on today's sphere, Step 2's verification against SESAM within its thresholds; a
    receding slab against the Stefan solution; energy closed to round-off across recession, a prescribed flow and the
    per-piece correction; a surface swept slowly through cells shows no temperature jumps as cells pass through slivers.
-3. **Flow**: a resting drop with negligible spurious currents; Chen et al.'s tin–bismuth case (spread 8 → about
+3. **Marker skins with Girin's spraying** (flow solve off; marker motion under prescribed velocity fields): rigid
+   translation and rotation leave skins unchanged; uniform stretching thins skins and draws exactly the implied metal;
+   merges conserve mass and enthalpy; a skin with a receding top against steady ablation (recession speed
+   q/(ρ(L + c_p ΔT)) and an exponential profile); the q6p box (8 × 10 × 10 mm, 6 MW/m², 2 s) with the level set's
+   surface on the box; the spray's release from a marker equals the shared model's for the same depth and gas state;
+   droplet records and size distributions written by the shared `droplets` module.
+4. **The spraying flight**: before the metal first softens, Step 1 and Step 2 against SESAM within their thresholds;
+   the 100 mm and 50 mm flights with the droplet population converged — droplet count, thick share of the sprayed mass,
+   medians by number and mass, sprayed mass and mass at 120 s within the scatter between seeds under halving the macro
+   step, 10 against 20 µm skin cells and 2 against 1 mm level-set cells; the skyscrapers flight as a sanity check, not
+   a reference; the melting SESAM references of sub-plan 11, if committed by then, for the mass history. **Girin's
+   spraying is complete in this architecture when this stage passes.**
+5. **Flow**: a resting drop with negligible spurious currents; Chen et al.'s tin–bismuth case (spread 8 → about
    14.2 mm against their measurements); a drop under a prescribed gas stream flattening without breakup below a Weber
    number of about 12 and breaking above; a slow viscous slump against Huppert's (1982) axisymmetric spreading law
-   (radius growing as time to the one-eighth); mass and energy exact across switch-on and switch-off.
-4. **Marker skins**: rigid translation and rotation leave skins unchanged; uniform stretching thins skins and draws
-   exactly the implied metal; merges conserve mass and enthalpy; the layered-skin design's level 1 skin checks (steady
-   ablation, receding top) and its level 2 box (q6p, 8 × 10 × 10 mm, 6 MW/m², 2 s) with the level set's surface on the
-   box; on the 100 mm flight while the body is rigid, agreement with the skyscrapers model within the scatter between
-   seeds (sanity check, not a reference).
-5. **Tunnel**: the comparison of §11 against the pre-registered metrics.
-- **Flight, throughout**: before the metal first softens, the level-set body reproduces Step 1 and Step 2 against SESAM
-  within their thresholds, so everything verified so far stays verified. The flight result is then reported with the
-  convergence checks of the layered-skin design's level 3 (halving the macro step, 10 against 20 µm cells) plus 2 against
-  1 mm cells for the level set.
+   (radius growing as time to the one-eighth); mass and energy exact across switch-on and switch-off; the flight re-run
+   with the flow on, stage 4's results unchanged before the first switch.
+6. **Tunnel**: the comparison of §11 against the pre-registered metrics.
 
-## 14. Build stages and documents
+## 14. Build stages and documents (reordered 2026-10-11)
 
 0. **Isolation**: the shared package, the re-exports, the imports, the `--architecture` flag (levelset exits 2 until
    stage 1's driver exists). Accepted on bit-identical unit and reference tiers. Own branch, merged first (§4.4).
+S. **Shared physics**: the six sub-plans S1–S6 of §4.2, in `docs/superpowers/plans/shared/`, promoting Step 3's physics
+   into `reentry_model/shared/`. Independent of both architectures; S1–S4 and S6 can be built in any order after stage 0
+   (S4 needs S1–S3; S5 needs S2–S4).
 1. **Level set geometry** (§6) with a prescribed surface motion; the box mesh's cost and memory measured.
 2. **Thermal solve** (§7) on the moving body, with prescribed motion and prescribed flow.
-3. **Flow solve** (§8) and the fast phase (§10.3–10.4).
-4. **Marker skins** (§9) and the flight.
-5. **Tunnel configuration** (§11) and the video comparison.
+3. **Marker skins with Girin's spraying** (§9) on a rigid, receding body (flow solve off).
+4. **The spraying flight** (§13, item 4): the convergence campaign. Girin's spraying is complete here.
+5. **Flow solve** (§8) and the fast phase (§10.3–10.4): the deformation.
+6. **Tunnel configuration** (§11) and the video comparison.
 
-Each stage gets its own sub-plan in `docs/superpowers/plans/levelset/` (`01-…`, `02-…`), written after the previous
-stage is verified; each is prototyped in `prototype/levelset/` with its code blocks tested before they are written into
-the plan, the repository's prototype-then-plan practice. `README.md` and `docs/model_assumptions.md` gain a level-set
-section, kept true as each stage lands.
+Each level-set stage gets its own sub-plan in `docs/superpowers/plans/levelset/` (`01-…`, `02-…`), written after the
+previous stage is verified; each is prototyped in `prototype/levelset/` with its code blocks tested before they are
+written into the plan, the repository's prototype-then-plan practice. The stage S sub-plans are prototyped by moving
+the prototype modules into a scratch copy of the package with `shared/` and running both the prototype's tests and the
+package's. `README.md` and `docs/model_assumptions.md` gain a section on the two architectures and the shared physics,
+and a level-set section kept true as each stage lands.
 
 ## 15. Risks and approximations
 
@@ -510,7 +539,7 @@ section, kept true as each stage lands.
 - **Thin soft metal under the skins is held in place before the switch** (the metal zone's slurry does not flow, and soft
   metal below the skin is rigid until it forms a region three cells thick). The skyscrapers design resolves this layer's
   flow in its columns; the level set's skins are kept separate from those by decision (§19), so this approximation is
-  measured in stage 4 (the soft depth held in place, per step) and revisited in a level-set design of its own if it
+  measured in stage 3 (the soft depth held in place, per step) and revisited in a level-set design of its own if it
   matters.
 - **Gas loads from the angle-based law** on shapes far from a sphere (a disc, a bag): rough; the CFD hook is the remedy.
 - **Grid-scale breakup**: sheets thinner than a cell tear at the cell size, so fragment sizes from breakup depend on the
@@ -530,7 +559,7 @@ volume correction; pieces other than the largest removed in flight (to the later
 
 1. **Resolved 2026-10-11: the skins are not shared.** The skyscrapers layered skin (whole flowing layer, a velocity in
    every cell) was considered as a shared skin; Asha decided the skins stay separate entities in the two architectures.
-2. **The tunnel record** (§11): needed for stage 5.
+2. **The tunnel record** (§11): needed for stage 6.
 3. **Gas loads on deformed shapes**: the CFD hook (Step 4) when the angle-based law is shown inadequate.
 4. **A FEniCSx port** of the cut-cell thermal solve, if MPI scaling is needed.
 5. **The large-droplet step**: turning pinched pieces into fragment records, and the boundary with the Spheral
@@ -573,6 +602,10 @@ volume correction; pieces other than the largest removed in flight (to the later
 - 2026-10-11: the thermal solve on cut cells with a ghost penalty, on scikit-fem first.
 - 2026-10-11: the verification of §13 and the settings, outputs and code of §12.
 - 2026-10-11: the skins are separate entities in the two architectures and are never shared (Asha).
+- 2026-10-11: the shared physics promoted by six sub-plans in `docs/superpowers/plans/shared/` (stage S), and the
+  skyscrapers sub-plans amended to point at `reentry_model/shared/` (Asha).
+- 2026-10-11: build order changed so that marker skins and Girin's spraying (stages 3–4) come before the flow solve
+  (stage 5); the spraying flight made its own stage (Asha).
 - 2026-10-11: isolation (Asha's instruction): copies of changed files in `reentry_model/levelset/`, shared code in
   `reentry_model/shared/` imported by the existing code, `--architecture skyscrapers|levelset`, documents and prototypes
   in their own `levelset` folders.

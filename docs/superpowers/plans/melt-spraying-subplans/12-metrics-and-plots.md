@@ -10,6 +10,27 @@
 
 ---
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The edits to `sesam_io.py` and `compare.py` → **`reentry_model/shared/sesam_io.py`** and
+  **`reentry_model/shared/compare.py`**.
+- `viz.py`'s replacement is split: frame reading, time-series plots → **`reentry_model/shared/viz.py`**; size-distribution
+  plots → **`reentry_model/shared/droplets.py`** (S6); the overlays drawn on the skyscrapers mesh (emitting patches,
+  film-thickness frame, liquidus and solidus isolines, melt stills) stay in `reentry_model/viz.py`, which imports the
+  shared parts.
+- `material`, `heating` and `body`'s protocol are imported from `reentry_model.shared`.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Spec §4, §9, §10.2.

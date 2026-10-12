@@ -3,6 +3,27 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's). **Amended 2026-10-07 (continuum step): `--dt-continuum`** (the section after the Scheil default's).
 
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/cli.py` keeps the **skyscrapers run driver** and all its melting flags. The common flight arguments,
+  `parse_epoch`, `make_atmosphere`, `provenance` and `git_commit` live in **`reentry_model/shared/cli_common.py`**, and
+  the `--architecture skyscrapers|levelset` flag is added by stage 0. Skyscrapers run names gain no suffix (it is the
+  default); level-set runs carry `_arch-levelset`.
+- `body.py`: the `Body` protocol and `ConstantBody` move to **`reentry_model/shared/body.py`** (stage 0); the melting body
+  stays in `body.py`.
+- `sesam_io`, `compare`, `trajectory` and `earth` are imported from `reentry_model.shared`.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Spec §9, §10.1, §10.3.

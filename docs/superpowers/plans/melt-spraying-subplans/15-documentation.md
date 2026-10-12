@@ -3,6 +3,23 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the film's flux and the step study in the README, assumptions and spec** (the section after the seed's). **Amended 2026-10-07: the rigid substrate, the Scheil default and the repeated step series** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the continuum step in the README, the assumptions and the spec** (the section after that).
 
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `README.md` gains a section on the two architectures, the `--architecture` flag and the shared physics (written with
+  stage 0 and stage S). Step 3's documentation blocks name modules by their shared paths
+  (`reentry_model/shared/spray.py`, …); `prototype/plan3/audit_docs.py` is re-run after the change.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Spec §9, §10, §14; the new design's documentation is task 6 of sub-plan 22.

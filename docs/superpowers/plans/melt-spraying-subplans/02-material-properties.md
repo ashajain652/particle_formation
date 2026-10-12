@@ -8,6 +8,26 @@
 **Read before implementing:** Measured facts 4, 5, and 25 in the shared context describe two specific wrong implementations that were tried and rejected during prototyping (debiting only the destination element on feed; booking the film at mixture enthalpy instead of liquid-only enthalpy) — both reproduced real bugs (melt reappearing, a "free melting" runaway). Do not collapse the four enthalpy functions into one general-purpose formula; that simplification is exactly what caused the rejected version. Read the amendment of 2026-09-27 below as well: Scheil is a separate material variant, and `AA7075_range` must not be edited to implement it.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan — file list, function signatures, test plan, and acceptance criteria.
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/material.py` → **`reentry_model/shared/material.py`**: every "Modify (replace)" and diff below applies
+  there. The material JSON files stay in `reentry_model/data/materials/`.
+- The slurry viscosity law (Li Yageng et al. 2014 with its bridge to the liquid) goes to **`reentry_model/shared/rheology.py`**,
+  not into `material.py`.
+- These modules are built by stage S's sub-plan **S1** (`docs/superpowers/plans/shared/`). If S1 has landed, this task's
+  module-creation steps are already done; its remaining steps import from `shared`.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §6.2, §6.6, §6.7, §9 and

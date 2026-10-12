@@ -10,6 +10,27 @@
 
 ---
 
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/thermal/__init__.py`: the **Step 2** protocol (`ThermalSolver`, `StepResult`, `MissingBackend`,
+  `SIGMA_SB`) moves to **`reentry_model/shared/thermal.py`** (stage 0). This task's rewritten protocol — nodal enthalpy,
+  pinned nodes, deferred loads — is skyscrapers' own and stays in `reentry_model/thermal/__init__.py`, which imports the
+  shared names it reuses. The two backends and the `thermal_solver` factory stay skyscrapers'.
+- `reentry_model/cli.py`: the `--lumped-mass` → `--consistent-mass` edit is made in the skyscrapers run driver, which
+  stays in `cli.py`; the common flight arguments live in `reentry_model/shared/cli_common.py` (stage 0).
+- `heating` and `body`'s `Body` protocol are imported from `reentry_model.shared`.
+
 ## Amendment of 2026-10-12 — the layered-skin redesign
 
 > Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §4, §5.3, §7.2, §9 and §10.3;
