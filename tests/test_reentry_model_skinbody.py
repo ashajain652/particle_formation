@@ -166,3 +166,23 @@ def test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it(coarse_
     assert results["never"] == 0 and results["column"] >= results["total"] > 0
     with pytest.raises(ValueError):
         make(coarse_sphere_mesh, repeat_rule="sometimes")
+
+
+def test_damped_repetition_converges_where_the_undamped_repeat_parks_the_heat(coarse_sphere_mesh):
+    """3 MW/m2 on 4 mm elements from 880 K, one 0.5 s step: the skins' base heat falls off a cliff a little above the
+    start-of-step base temperature, so the per-column rule's one repeat leaves heat in the deferred mismatch (7.7 % of
+    the step's absorbed heat, measured) while the damped rule repeats with Aitken's relaxation until the mismatch is
+    within INTERFACE_TOLERANCE (9 passes, 0.14 % left, measured). Mass is exact under both; the energy residual is below
+    1e-8 under the damped rule (the column rule's, 1.2e-8 after this one step, is the parked heat's book-keeping, not
+    asserted here)."""
+    parked = {}
+    for rule in ("column", "damped"):
+        b = make(coarse_sphere_mesh, repeat_rule=rule)
+        M0 = b.mass()
+        b.advance(0.5, 0.5, front_loads(b, 3e6))
+        assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
+        parked[rule] = np.abs(b.pending).sum() / b.absorbed_heat
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert parked["column"] > 0.05
+    assert parked["damped"] < 0.005
+    assert 2 < b.last_passes < skinbody.DAMPED_MAX_PASSES and b.last_total <= skin.INTERFACE_TOLERANCE

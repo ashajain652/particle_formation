@@ -36,8 +36,20 @@ ABSORB_MAX = 0.25                 # of the mean surface edge: the most a base ab
 GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
                                   # is huge and it absorbs up to the cap, ABSORB_MAX: it does not absorb nothing
-REPEAT_RULES = ("column", "total", "never")   # when a step's interface mismatch repeats it (spec 7.2: "column"; the others
-                                              # are measured in sub-plan 20 Task 10 before any change of default)
+REPEAT_RULES = ("column", "total", "never", "damped")   # when a step's interface mismatch repeats it (spec 7.2:
+                                              # "column"; the others are measured in sub-plan 20 Task 10 before any change
+                                              # of default; "damped" repeats until converged, see below)
+# The damped repetition (trial, 2026-10-12). The skins' base heat has a cliff a little above the start-of-step base
+# temperature once the skins near melting: a base held above the melting band for a whole step melts the skin, which
+# then draws metal at T_rigid and melts that too, so the heat sent down falls from +5 to -7 MW/m2 over 30 K (the
+# plate's centre at 0.5 s, measured). A base law fitted at one temperature cannot follow it, and the 3D surface, whose
+# admittance is about four times the law's slope, overshoots it: undamped repetition alternates between two states.
+# Damping moves the linearisation temperature only a fraction omega of the way to the 3D answer, Aitken's method
+# choosing omega from the last two passes.
+DAMPED_MAX_PASSES = 12            # passes of a macro step at most (the last pass's mismatch is deferred as before)
+DAMPED_OMEGA0 = 0.5               # the first pass's relaxation factor
+DAMPED_OMEGA_RANGE = (0.02, 1.0)  # Aitken's factor kept within these
+DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves more than this between passes
 
 
 class SkinBody(ThermalBody):
@@ -69,6 +81,7 @@ class SkinBody(ThermalBody):
         self.jump_faults = self.interface_repeats = self.absorb_capped = 0
         self.last_mismatch = self.last_shortfall = 0.0
         self.last_trigger = {"columns_over": 0, "worst_ratio": 0.0, "total_ratio": 0.0}    # the first pass's mismatch
+        self.last_passes, self.last_total = 1, 0.0           # the damped rule's passes and final total mismatch ratio
         self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
@@ -116,7 +129,9 @@ class SkinBody(ThermalBody):
         load[nodes] = self.pending / dt
         solver_state, skin_state = self.solver.state(), sk.state()
         T_lin = T_b0
-        for attempt in (0, 1):
+        damped = self.repeat_rule == "damped"
+        omega, r_prev = DAMPED_OMEGA0, None
+        for attempt in range(DAMPED_MAX_PASSES if damped else 2):
             started = time.perf_counter()
             a, b = skin_mod.advance(sk, dt, q, A_top, self.T_ambient, eps, T_lin, m_min, side=side, remove=self.remove)
             self.wall["skins"] += time.perf_counter() - started
@@ -136,6 +151,22 @@ class SkinBody(ThermalBody):
             if attempt == 0:
                 self.last_trigger = {"columns_over": int((ratio > skin_mod.INTERFACE_TOLERANCE).sum()),
                                      "worst_ratio": float(ratio.max()), "total_ratio": total}
+            if damped:
+                r = T_b1 - T_lin
+                self.last_passes, self.last_total = attempt + 1, total
+                if (total <= skin_mod.INTERFACE_TOLERANCE or np.abs(r).max() <= DAMPED_TOL_K
+                        or attempt == DAMPED_MAX_PASSES - 1):
+                    break
+                if r_prev is not None:                       # Aitken: omega from the change of the residual
+                    dr = r - r_prev
+                    denom = float(dr @ dr)
+                    if denom > 0.0:
+                        omega = float(np.clip(-omega * float(r_prev @ dr) / denom, *DAMPED_OMEGA_RANGE))
+                self.solver.set_state(solver_state)
+                sk.set_state(skin_state)
+                T_lin, r_prev = T_lin + omega * r, r
+                self.interface_repeats += 1
+                continue
             repeat = {"column": bool((ratio > skin_mod.INTERFACE_TOLERANCE).any()),
                       "total": total > skin_mod.INTERFACE_TOLERANCE, "never": False}[self.repeat_rule]
             if attempt == 0 and repeat:
