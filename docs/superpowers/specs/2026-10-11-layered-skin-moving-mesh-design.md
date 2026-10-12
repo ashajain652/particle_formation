@@ -3,7 +3,8 @@
 Date: 2026-10-11
 Status: draft for Asha's review. Designed with Asha in the brainstorming sessions of 2026-10-09 to 2026-10-11; every
 decision is listed with its date in §16, and the ledger `.superpowers/sdd/18-melt-layer-skin/progress.md` holds the
-discussion behind each.
+discussion behind each. Amended 2026-10-12 (while planning sub-plan 20): the booking of swept volumes (§5.2), the rebuild
+transfer (§5.3), level 2 of the ladder (§11.1), with the measurements behind each.
 Supersedes: `2026-10-07-melt-layer-skin-design.md` (one-dimensional skins under melting patches on a fixed mesh), whose
 stage 1 was built and failed its box test (§2); the derived surface of `2026-09-27-surface-recession-remeshing-design.md`
 §5 and §8 (the geometry follows the mesh here, not the reverse). Reuses from that design its dense band (§6), its mesh
@@ -121,7 +122,8 @@ second-order volume of either sign at each corner (up to about 1 µm of equivale
 corner is moved along its normal by minus the volume its smoothing swept, divided by its dual area, so that the
 smoothing sweeps no volume at any corner and the base still moves only by metal crossing it (§5.2). Columns move with
 their corners and keep their mass. (Decided 2026-10-12, Asha, on the recommendation of sub-plan 19's final review;
-built in sub-plan 20.) A history column records the
+built in sub-plan 20.) With each corner booked its own sweep (§5.2), three such corrections leave the worst corner's
+sweep at 3·10⁻¹¹ m on the 100 mm sphere, from 0.46 µm before them (measured 2026-10-12). A history column records the
 worst triangle quality (smallest inscribed-to-circumscribed radius ratio) on the surface; local remeshing of the surface
 is out of scope unless that number shows real degradation (§13). Measured while planning sub-plan 19 (2026-10-11, one
 run each, on the 100 mm sphere receding at its nose by 0.5 mm per step in proportion to how directly each corner faces
@@ -145,11 +147,15 @@ less dense than solid), so melting swells the column and freezing shrinks it by 
 - The top moves with the skin's mass: outward as runoff piles material on, inward as spray and runoff remove it.
 
 The top surface's normals and areas serve the gas-facing quantities and the runoff graph; the base surface is the 3D
-model's boundary. Each corner is credited with the exact prism its surface triangles swept between their old and new
-positions, a third of each triangle's prism to each of its corners (built in sub-plan 19, fact 105: within 1.0 % of the
-dual area times the displacement for an inward move, at most 0.6 % for a move along the surface); the prisms tile the
-swept region to third order and the remainder is spread in proportion to what each corner swept, so the 3D model's
-volume equals its metal exactly.
+model's boundary. Each corner is credited with what its own motion swept: every surface triangle's exact prism
+between its old and new positions is shared among the triangle's corners in proportion to their own first-order
+sweeps, A_t (u_k · n_t)/3 for corner k (A_t the triangle's area, u_k the corner's displacement, n_t the triangle's
+outward normal), the second-order rest of the prism in proportion to those; a corner sliding along a flat face sweeps
+nothing, and a corner that does not move is credited with nothing its neighbours swept. The prisms tile the swept
+region to third order and that remainder is spread in proportion to what each corner swept, so the 3D model's volume
+equals its metal exactly. (Amended 2026-10-12, Asha. Sub-plan 19 credited a third of each prism to each corner; while
+planning sub-plan 20, the level-2 box's side walls were credited with metal its receding front swept, handed it down,
+bulged out by 0.33 mm and folded the surface within 1.3 s.)
 
 ### 5.3 The moving 3D mesh
 
@@ -179,12 +185,16 @@ moves a base node by micrometres against millimetre elements, so the check alway
 exactly — the corners and their columns are untouched — with the dense band's size field (§2: about 310 000
 tetrahedra; about 42 s by the 2026-09-27 design's measurement of its own path, 1.6–2.1 s for this one as built in
 sub-plan 19, on one gmsh thread because fenicsx_env's gmsh segfaults on four; fact 102). Enthalpy is carried over by
-interpolation in the old mesh, then the total energy is made exact by a uniform enthalpy offset over the new deforming
-zone, where the interpolation error arises (the remeshing design spread it over the whole body; the residual proved
-one-signed, so sub-plan 19's final review kept it near the surface); the pre-correction residual is reported with every
-rebuild and summed (0.07–0.27 % of the total enthalpy, 99–186 J per rebuild in the sub-plan 19 run). The rebuilt boundary
-is checked to be exactly the corner triangles. An intersection-based (supermesh) transfer, locally exact, is the fallback if those residuals prove large
-(§13). The remeshing design's validity gate applies: a non-manifold surface, more than one connected body, or a
+the L2 projection of the old field onto the new mesh (its consistent mass matrix against the old field integrated over
+the new elements by a 4-point rule), which keeps each region's energy where it was and reproduces a linear field
+exactly; what the quadrature misses is made exact by a uniform enthalpy offset over the new deforming zone, reported with
+every rebuild and summed. (Amended 2026-10-12, the fallback this section provided for once the residuals proved large:
+sub-plan 19 interpolated at the new nodes, and under real melting its residuals were one-signed and ten times those of
+its prescribed motion -- on the level-2 plate two rebuilds moved 2 768 J, 4.9 % of the heat absorbed, from the cold
+bulk to the melting front, and the centre melted 9.5 % ahead of the exact solution; with the projection the two
+rebuilds left 14 J and the centre is within 0.7 % at 2 s. The projection is local to the quadrature's accuracy, not
+exact element by element; an intersection-based (supermesh) transfer stays the further fallback.) The rebuilt boundary
+is checked to be exactly the corner triangles. The remeshing design's validity gate applies: a non-manifold surface, more than one connected body, or a
 non-positive volume stops the run with a message. With a 15 mm zone rebuilt at half compression, the 100 mm flight's
 77 mm of nose recession needs about ten rebuilds, about 7 minutes (estimated).
 
@@ -436,11 +446,17 @@ position. Results gain the cumulative quantities; droplet records gain `solid_fr
 - Thickness pressures: a small bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
   rate, and bumps shorter than the surface-tension cutoff decay.
 
-**Level 2 — the box.** The q6p box (8 × 10 × 10 mm, 6 MW/m² projected heating, 700 K, Scheil, 2 s). With flow off
-and liquid removed as it forms: recession within 5 % at 1.0, 1.5 and 2.0 s of both the stage 1 fine box and a new
-independent one-dimensional reference with 1 µm cells (the middle of the front face is one-dimensional); mass closed to
-10⁻¹², energy to 10⁻⁸. With flow on and a push along the face: mass, momentum and energy close exactly and the result is
-physically sensible (no exact reference exists).
+**Level 2 — the plate** (amended 2026-10-12, Asha; it replaces the q6p box, whose 90-degree edges fold the fixed surface
+triangulation within 1.4 s, §13). A plate 8 mm deep and 110 × 110 mm across, of 2 mm elements at 700 K, Scheil, no
+radiation, its front face heated at 6 MW/m² within 32 mm of its centre, the flux falling to zero at 45 mm along a half
+cosine (each column receiving what its top dual cell's projection catches), for 2 s. With flow off and liquid removed as
+it forms: the centre's recession (within 3 mm of the centre) within 5 % at 1.0, 1.5 and 2.0 s of both the stage 1 fine
+box and a new independent one-dimensional reference with 1 µm cells (the centre is one-dimensional: the heated region
+reaches half again the diffusion length 2√(αt), about 19 mm at 2 s, beyond it); mass closed to 10⁻¹², energy to 10⁻⁸;
+the fold of the crater's wall reported every step. Measured while planning sub-plan 20 (2026-10-12, 20 µm cells, 0.05 s
+steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to 2.4·10⁻⁹. With
+flow on and a push along the face: mass, momentum and energy close exactly and the result is physically sensible (no
+exact reference exists).
 
 **Level 3 — flights.** The Step 2 verification against SESAM with skins on every corner, against Step 2's thresholds
 (it replaces the bit-for-bit match before melting that skins everywhere give up). The 100 mm flight to 120 s and the
@@ -494,18 +510,21 @@ Each stage is tested and measured before the next begins.
   of curvature; not expected at millimetre depths, watched through the top surface's triangle quality.
 - **Slurry rheology**: Li et al.'s law was measured to 490 1/s at solid fractions 0.1–0.5; the bridge to the liquid has
   no data.
-- **Rebuild transfer** is exact in total and approximate locally; if pre-correction residuals are large, the supermesh
-  transfer replaces it.
-- **Piecewise-flat surface**: a column is credited with a third of the prisms its corner's triangles swept, exact in
-  total. The volume-neutral correction of the smoothing (§5.1) cancels each corner's smoothing sweep to first order; the
-  remainder, second order in a correction of about a micrometre, is measured in sub-plan 20.
+- **Transfers between meshes**: the rebuild's projection keeps energy local to its quadrature's accuracy (14 J over two
+  rebuilds of the level-2 plate). Each move's gradient remap still closes its books by one uniform offset on the moved
+  nodes: 442 J over the plate's 42 moves, 0.8 % of the heat absorbed, one-signed (measured 2026-10-12); reported every
+  step, and the next thing to make local if a flight shows it.
+- **Piecewise-flat surface**: a column is credited with its own share of the prisms its corner's triangles swept, exact
+  in total (§5.2).
 
 ## 13. Open items, for later decisions
 
 - The volume-of-fluid patch study (level 4).
 - Local mesh repair (edge collapse and flip) in place of full rebuilds, if rebuilds prove expensive.
 - Local remeshing or refinement of the surface triangulation, if its quality degrades or it folds sharper than one
-  triangle (§12).
+  triangle (§12). The back-up to the level-2 plate (decided 2026-10-12, Asha): the q6p box's 90-degree edges cannot be
+  followed by corner columns on a fixed triangulation (1.4 s on 2 mm elements, 0.9 s on 1 mm), and remeshing would let
+  them be.
 - A finer skin surface (1 mm columns) as a grid study.
 - Whether the macro step can be raised once the skins carry the fast physics.
 - Fragmentation, which the validity gate detects and stops on (the remeshing design's decision).
@@ -576,3 +595,7 @@ Each stage is tested and measured before the next begins.
   before any surface refinement is built (option 1); sub-plan 19 is built subagent-driven.
 - 2026-10-12 (after sub-plan 19's build): the tangential smoothing is made volume-neutral per corner (§5.1), so that
   columns are never credited with volume the smoothing alone swept; built in sub-plan 20.
+- 2026-10-12 (while planning sub-plan 20): each corner is booked its own share of every prism its triangles swept
+  (§5.2); level 2 of the ladder is a plate with tapered heating instead of the box, with local surface remeshing (§13)
+  the back-up; a task measuring what triggers the interface repeats (Asha). Under the spec's own fallback clause, the
+  rebuild carries enthalpy by L2 projection (§5.3).

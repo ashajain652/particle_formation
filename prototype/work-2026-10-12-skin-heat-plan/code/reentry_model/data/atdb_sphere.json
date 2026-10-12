@@ -1,0 +1,8 @@
+{
+  "_provenance": "Values of /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_SPHERE.nc (ESA DRAMA 3.0 aerothermal database for the primitive SPHERE, Hyperschall Technologie Goettingen GmbH, file date 2019-04-11), read with ncdump on 2026-09-17. cd_free_molecular / cd_continuum are drag coefficients; heat_flux_factor_* are surface-average / stagnation heat-flux ratios (Step 2).",
+  "mach": [5.0, 10.0, 15.0, 20.0, 25.0, 30.0],
+  "cd_free_molecular": [2.360635, 2.147897, 2.089229, 2.062249, 2.046842, 2.036933],
+  "cd_continuum": [0.898818, 0.910198, 0.912322, 0.913067, 0.913411, 0.913599],
+  "heat_flux_factor_free_molecular": [0.270686, 0.254836, 0.251899, 0.250872, 0.2504, 0.250149],
+  "heat_flux_factor_continuum": [0.27471, 0.27471, 0.27471, 0.27471, 0.27471, 0.27471]
+}

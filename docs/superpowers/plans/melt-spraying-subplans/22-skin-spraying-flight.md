@@ -38,7 +38,11 @@ acceptance criterion; the comparison with the element model), §14 (the assumpti
    table. Tests: combining changes no radius; histograms exact.
 3. **Retirement**: element fill fractions, `PHI_DEATH`, deaths and hand-overs, the film and deep accounts, the feed rule
    and gate, the deep runoff, deep surfacing, the molten cascade, freeze-back and the stage-1 return device, removed from
-   the skin path; `--surface-model elements` keeps the current model bit for bit.
+   the skin path; `--surface-model elements` keeps the current model bit for bit. Since sub-plan 20 the skin path is
+   `skinbody.SkinBody`, which never had those mechanisms, and stage 1's skins are `skin1d.py` behind
+   `MeltSettings(surface_model="skin1d")`: the retirement is deleting `skin1d.py`, its tests and `MeltingBody`'s
+   `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
+   `--removal girin`.
 4. **Outputs**: the history columns, frame fields and results of spec §10.2.
 5. **Flights**: the 100 mm flight to 120 s and the 50 mm flight; convergence under halving of the macro step, 10 against
    20 µm cells, and a skin surface at 2 against 1 mm spacing; the acceptance criterion (droplet count, thick share,

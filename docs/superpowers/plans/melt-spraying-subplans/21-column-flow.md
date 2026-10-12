@@ -32,6 +32,10 @@ curvature operators, and the base operations.
 
 ## Tasks (to be written in full)
 
+0. **What sub-plan 20 left to this stage** (its rulings 7 and 9, 2026-10-12): the cells' velocity, stored and carried
+   through `Skins`' split, merge, take and add operations with exact momentum; the surface gradient and curvature
+   operators on the corner graph (`columns.Columns`), tested against a sphere's exact curvature and a linear field's
+   gradient; and the interface rule Asha chooses from sub-plan 20's Task 10 measurements.
 1. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
    fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
    the law's tabulated values.
@@ -46,7 +50,8 @@ curvature operators, and the base operations.
    projected between tangent planes. Tests: a translating pulse keeps its heat and arrives where it should; books to
    round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's volume.
 5. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
-6. **Verification**: level 2's box with flow on and a push along the face (mass, momentum and energy exact; sensible
+6. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
+   20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
    behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve.
 
 ## Inputs to settle before the code-level plan is written
