@@ -10,6 +10,27 @@
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §4, §5.3, §7.2, §9 and §10.3;
+> stage 1 is sub-plan 19 (`update_geometry` on both backends), stage 2 is sub-plan 20 (the nodal base law).
+
+The thermal core of this sub-plan is kept as the 3D model's solver: nodal enthalpy with the enthalpy-consistent Newton
+iteration, the lumped capacity, the AMG-then-direct fallback, the two backends behind one protocol and the cross-backend
+test. The redesign adds to it without replacing it. Sub-plan 19 gave each backend `update_geometry(elements=None)` for
+moved nodes (the scikit-fem backend also drops its AMG hierarchy in `setup`, which crashed when reused on a rebuilt
+mesh), and sub-plan 20 adds the base law of spec §7.2 as an implicit affine law at each corner's base node (heat a + b T
+over its dual area, linearised in the Newton iteration as the radiation is), the per-node counterpart of the per-facet
+`interface` argument the stage-1 skins added to `step`, with the 3D surface radiation off, since the base surface is no
+longer the free surface. What the skin path no longer uses is the element-fraction machinery (`set_fractions`, `phi`,
+the pinned nodes of dead material, `element_energies`) and the film-mass hooks (`set_film_mass`, `film_weight`,
+`film_mass` in `mass_matrix`): the domain now shrinks by node motion and rebuilds, with no element death and no film
+account (spec §5.3, §9), and `MovingMesh` assumes every element is active. They stay, tested and unchanged, for
+`--surface-model elements`; do not remove them and do not extend them for the skin path. The test counts and the
+"Expected" lines in this sub-plan are those of its own commit, not of the current base.
+
+---
+
 ### Task 3: Thermal core — nodal enthalpy, element fractions, pinned nodes, nodal loads
 
 **Files:**

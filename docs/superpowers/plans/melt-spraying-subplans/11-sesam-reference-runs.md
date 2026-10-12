@@ -9,6 +9,22 @@
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9 and §11 (level 3).
+
+The two melting SESAM references are committed records, not code, and the redesign leaves them untouched; regenerating
+or editing them is not part of any stage, and the commands above stay correct (the wrapper scripts and DRAMA's
+databases must still not be modified). They remain the reference for the element model kept behind `--surface-model
+elements`: the bookkeeping-device acceptance test of sub-plan 14 and the melt metrics of sub-plan 12. Spec §11 level 3
+names SESAM verification only for the Step 2 comparison re-run with skins on every corner, and names the element
+model's flight, not these references, as the melting comparison (a sanity check, "not a reference"). SESAM hollows the
+sphere at fixed outer geometry and has no melt film, spraying or moving surface, so these references cannot test the
+new design's flowing layer or receding surface. Whether to also report the skin path's mass loss against them as a
+sanity check is not decided by the spec; it is left to the flights task of sub-plan 22.
+
+---
+
 ### Task 11: The two melting SESAM references
 
 **Files:**

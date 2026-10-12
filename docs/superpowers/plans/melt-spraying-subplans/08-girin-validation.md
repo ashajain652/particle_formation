@@ -10,6 +10,23 @@
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §8 and §9; no code in this sub-plan changes.
+
+This sub-plan stands as written. It validates the physics spec §9 marks "kept, per column, unchanged": Girin's delta_m
+(his Eq. 2), the thin-film and Rayleigh-Taylor modes and the droplet size laws, run on Girin's own published cases
+with prescribed film thicknesses. It depends only on `dispersion`, `surface_flow.ranger_psi` and the pure functions of
+`spray`, and on nothing the redesign retires (no body, mesh, film account or element). The redesign changes where
+those functions are called, not what they compute: spec §8 evaluates them per column from the skin's top cells with
+the film thickness b taken as the whole flowing depth (spec §6.7), and that wiring is built and tested in sub-plan 22
+(task 1), not here. Its thresholds (exact tier within 2 %, integrated tier within 30 %) therefore remain the check
+that the shared spray module has not drifted when sub-plan 22 refactors `spray.py` for per-column use; re-run
+`tests/test_reentry_model_girin.py` after that refactor. Nothing here needs to be followed differently for the new
+design.
+
+---
+
 ### Task 8: Girin's published cases — the Girin-as-published driver and its analysis script
 
 **Files:**

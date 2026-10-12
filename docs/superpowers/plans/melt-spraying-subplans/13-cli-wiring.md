@@ -3,6 +3,27 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's). **Amended 2026-10-07 (continuum step): `--dt-continuum`** (the section after the Scheil default's).
 
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9, §10.1, §10.3.
+
+The flags above, with the 2026-10-02 to 2026-10-07 amendments, stay as the interface of the current model and remain
+bit-identical under the new switch `--surface-model skin|elements` (default `skin`, spec §10.1): with `elements` every
+flag means what it did and every run name is unchanged except the suffix `_surface-elements`. The settings of spec
+§10.1 are added to this CLI in the stages of sub-plans 20-22: `--surface-model`, `--skin-min-thickness` (0.4 mm),
+`--skin-cell` (10 micrometres), `--skin-growth` (1.10), `--skin-substep` (10 ms), `--skin-preset dev|production`,
+`--deform-depth` (15 mm) and `--slurry-spray on|off` (off), each with the run-name suffix the spec lists when not at
+its default, so runs of different settings still never overwrite one another, and a malformed value exits with code 2.
+`--seed`, `--material`, `--melt` and `--rigid-substrate` (the regime test is kept, spec §9) stay meaningful on the
+skin path; `--deep-runoff`, `--molten-cascade` and the other film-account controls act only on the element model, and
+how the skin path treats them is for sub-plan 20's CLI task. The 2026-09-27 block at the top of this file (`--remesh`,
+`--remesh-min-steps`, `--derived-surface`, the `_remesh` suffix, `--prism-layers` default 0) belongs to deprecated
+sub-plans 16 and 17 and must not be followed: spec §10.1 lists no remesh or derived-surface setting (the rebuild
+thresholds are constants in code). The skin path's macro-step defaults are fixed by the level 3 convergence study
+(spec §7.1), not by the 2026-10-07 `--dt-continuum` amendment.
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

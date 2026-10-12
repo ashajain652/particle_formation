@@ -10,6 +10,24 @@
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §4, §9, §10.2.
+
+The code of this sub-plan (`sesam_io.Reference`, `compare.melt_metrics` and the melt plots, `viz`'s melt overlays)
+stays, unchanged, for `--surface-model elements`, and `compare` and `viz` remain readers of exported files and
+histories only; the skin path must not make them import the body or the skin. What changes is the data they are given.
+Metrics and plots that use only the mass, sprayed mass, onset and demise times, closure fractions and Knudsen numbers
+apply to the skin path as long as its history keeps those columns. Anything that reads a film or deep-account column
+(`film_mass_kg`, the conjugate-depth, deep-liquid and cascade columns) or an element-model frame field (patch film
+thickness, emitting patches, deep liquid) has no source on the skin path and must be re-pointed at the history columns
+and surface-frame fields of spec §10.2: flowing and liquid depths, skin thickness, top temperature, top speed, base
+position, and the rebuild and books columns. That re-pointing, and any plots those columns call for, belong to sub-
+plan 22 (task 4); the section-view animation must also draw a mesh whose surface nodes move (sub-plan 19), which this
+sub-plan's fixed-mesh `viz` does not do. Add skin-path variants rather than editing the element model's plots.
+
+---
+
 ### Task 12: Comparison metrics, plots and visualisation of the melting run
 
 **Files:**

@@ -10,6 +10,27 @@
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §4 (step 1), §6.4, §8 and
+> §10.3; the new caller is sub-plan 20 (heating at the corners) and the new use of its output is sub-plan 21.
+
+This sub-plan stays and `surface_flow.py` is evaluated per corner in the skin path (spec §4, §10.3):
+`SurfaceFlow.evaluate` is given the angle of each corner's smoothed normal from `columns.py` where it was given each
+patch's angle, and the top cell's temperature as the wall temperature (spec §6.3: every quantity that reads a wall
+temperature reads the column's top cell). The three-branch regime gate, the modified Newtonian plus Prandtl–Meyer wall
+pressure, the Ranger boundary layer, τ and its slip and free-molecular forms, the Knudsen-based `closure` choice and
+`ranger_psi` are unchanged, and so are the gate's thresholds and the physics docstring. What changes is the use of `G`.
+The `G` that `evaluate` returns is the meridional derivative of p_w(θ) plus the inertial term, built for the patch film;
+the flow in the skin does not use it. Spec §6.4 builds the push in each column from `p_w`, from the deceleration split
+into the component along the surface a_t and into it a_n, and from the thickness and curvature terms, with the pressure
+gradient taken on the corner graph by the surface-gradient operators of `columns.py` (sub-plan 20, task 1; sub-plan 21,
+task 3). The `deceleration` field is the magnitude that split starts from, and `p_w`, `tau`, `closure`, `delta_a` and
+`kn_local` are the other inputs. `G` and the per-patch interface stay as written for `--surface-model elements`. Do not
+edit the gate's thresholds for the redesign.
+
+---
+
 ### Task 5: The flow-regime gate, the wall pressure and the surface flow per patch
 
 **Files:**

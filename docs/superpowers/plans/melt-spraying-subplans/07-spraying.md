@@ -2,6 +2,28 @@
 
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 3010–3949). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05 (runoff flux): what the spray sees of the film's new flux on thick patches** (the section after that). **Amended 2026-10-06: the regime test reads the non-rigid layer, and off the closure a film on slurry takes no shear mode** (the section after the runoff flux's).
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §6.7, §8 and §9; the rewiring
+> is sub-plan 22 (`22-skin-spraying-flight.md`, task 1 and task 2). `spray.py` itself is kept.
+
+The spray model of this sub-plan is kept: Girin's δ_m (`melt_layer` and its closure gate), the thin, thick and
+front-surface Rayleigh–Taylor modes (`rayleigh_taylor`, `rayleigh_taylor_bounded`, the applied mode), the wave-fit and
+critical-Weber-number gates, the release rates, the droplet caps and the histogram all stay, and `SprayModel.evaluate`
+is now called per column (spec §8). Its inputs change. The film thickness `b` is the column's flowing depth read from
+the skin (spec §6.7), and the regime test of the 2026-10-06 amendment is kept, comparing that depth with δ_m. The
+Rayleigh–Taylor criteria keep reading the liquid layer, which the skin supplies as its liquid depth (spec §6.7). The
+release leaves the top cells, liquid first, and the droplets' momentum leaves with it (spec §6.4, §8); exposed slurry
+sprays only under `--slurry-spray on`, off by default, by the cascade rule of the 2026-10-07 design. `source_rows` gains
+`solid_fraction` and `h_kg`, and the records are combined per column, per mode and per macro step without changing any
+radius (spec §8). The film and deep accounts (`m_f`, `m_d`), the runoff flux and the molten cascade as the 2026-10-02,
+2026-10-03 and 2026-10-05 amendments wire them into `evaluate` are not followed in the skin path: their inputs no longer
+exist (spec §9), and the amendments describe `--surface-model elements` only. Whether `on_slurry`, `extent` and
+`regime_layer` survive as arguments for the skin path is settled in sub-plan 22's code-level plan; the element model
+keeps them as written.
+
+---
+
 ## Amendment of 2026-10-02 — what the spray sees of the deep liquid (no code change)
 
 > Part of the deep-runoff amendment (sub-plan 09's amendment of this date; facts 46–53 in `00-shared-context.md`).

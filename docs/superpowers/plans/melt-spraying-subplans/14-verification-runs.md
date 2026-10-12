@@ -3,6 +3,26 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the drivers switch by default, and the harness retires** (the section after that).
 
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9, §11.1, §11.2.
+
+This sub-plan remains the verification record of `--surface-model elements`: its drivers, tables, sensitivity variants
+and the reference-tier test against the two melting SESAM references stay as built and are not edited. Two things in
+it are reused by the new design. The scatter between seeds measured in the amendment of 2026-10-05 is the yardstick of
+spec §11 level 3: the skin path's droplet count, thick share, medians by number and by mass, sprayed mass and mass at
+120 s must agree under halving of the macro step and under refinement of the surface to within that scatter. And the
+element model's 100 mm flight to 120 s and 50 mm flight, run with `--surface-model elements`, are the sanity
+comparison level 3 asks for ("not a reference"). The verification of the skin model itself is not this sub-plan but
+the ladder of spec §11.1, built in sub-plan 19 (level 1's moving-mesh checks), 20 (level 1's heat checks, level 2 with
+flow off, level 3's SESAM verification), 21 (level 1's flow checks, level 2 with flow on) and 22 (level 3's flights;
+level 4 is later). The 2026-09-27 block at the top of this file (re-measure with prism layers 0 and `PHI_DEATH` 0.50,
+the derived-surface shape A/B, the `PHI_DEATH` A/B, the remesh conservation record) belongs to deprecated sub-plans 16
+and 17 and must not be followed; the new design's counterpart is the rebuild residuals reported in the history (spec
+§10.2).
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

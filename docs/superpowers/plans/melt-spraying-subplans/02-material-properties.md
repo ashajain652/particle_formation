@@ -8,6 +8,27 @@
 **Read before implementing:** Measured facts 4, 5, and 25 in the shared context describe two specific wrong implementations that were tried and rejected during prototyping (debiting only the destination element on feed; booking the film at mixture enthalpy instead of liquid-only enthalpy) — both reproduced real bugs (melt reappearing, a "free melting" runaway). Do not collapse the four enthalpy functions into one general-purpose formula; that simplification is exactly what caused the rejected version. Read the amendment of 2026-09-27 below as well: Scheil is a separate material variant, and `AA7075_range` must not be edited to implement it.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan — file list, function signatures, test plan, and acceptance criteria.
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §6.2, §6.6, §6.7, §9 and
+> §10.3; built in sub-plans 20 (skin heat) and 21 (flow). This sub-plan stays and `material.py` is shared.
+
+The layered skin uses this module's material exactly as the 3D model does (spec §6.2): each skin cell holds mass and
+enthalpy, and its temperature, liquid fraction and density come from `Material.enthalpy`, `temperature_from_enthalpy`
+and `liquid_fraction`, with `k` and `cp` for the through-depth conduction. `Material.T_rigid` (the 2026-10-06 amendment,
+895.10 K for `AA7075_scheil`) stays the boundary between rigid and flowing metal: the skin's flowing depth, the base
+operation that absorbs metal turning non-rigid, and the rigid cells held still in the flow are all defined with it (spec
+§6.6, §6.7). `AA7075_scheil` stays the melting default and its latent heat, surface tension and liquid properties are
+the values spec §2 quotes. The one addition is outside this sub-plan: the slurry viscosity law of Li et al. (2014) with
+its bridge to liquid aluminium over 906.4 to 908 K goes into `material.py` in sub-plan 21 (spec §10.3). The functions
+written for the film and deep accounts and the feed rule (`enthalpy_liquid`, `enthalpy_mixed`, `cp_mixed`,
+`temperature_from_enthalpy_mixed`, `feed_fraction`, `T_feed`) are not used by the skin path, because the skin holds the
+mixture enthalpy per cell and no liquid exists outside the skins (spec §9); they stay, tested and unchanged, for
+`--surface-model elements`. The header's warning not to collapse the four enthalpy functions applies to that element
+model only. Do not delete any of them, and do not edit the checked material JSON files.
+
+---
+
 ## Amendment of 2026-10-07 — `AA7075_scheil` is now the melting default
 
 > Asha's decision of 2026-10-07 (facts 88–96 in `00-shared-context.md`). No change to `material.py` or its tests.

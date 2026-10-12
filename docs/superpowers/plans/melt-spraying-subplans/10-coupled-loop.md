@@ -3,6 +3,26 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-06: the rigid substrate's four history columns and its frame field** (the section after that). **Amended 2026-10-07 (continuum step): the macro step shortens where Girin's closure begins** (the section after the rigid substrate's).
 
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §4, §7.1, §9, §10.2, §10.3.
+
+Everything above still describes `--surface-model elements`, which spec §9 keeps unchanged for the comparison of level
+3: its `MELT_COLUMNS`, results, frame fields and amendments (deep runoff, cascade, rigid substrate, continuum step) stay
+bit-identical and are not to be edited. `coupled.py` is shared and is extended, not replaced: the lockstep macro step is
+the frame into which spec §4 puts the skin sequence, and the skin body of sub-plans 20-22 plugs in at the seam
+`MeltingBody` uses. For `--surface-model skin` the history, frame and result outputs are those of spec §10.2 (column
+cells, depths, rebuild residuals, drawn, absorbed and handed-down mass, interface mismatch, `solid_fraction` and `h_kg`
+in the droplet records), added in sub-plan 20 (those that exist at heat-only stage), 21 and 22 (task 4); the film and
+deep-account columns above have no counterpart there. The skin path's macro step is 0.5 s by default, provisional, with
+10 ms skin sub-steps (spec §7.1); the `dt_continuum` switch of the 2026-10-07 amendment is an element-model device, and
+whether it applies to the skin path is settled by the macro-step study of spec §11 level 3, not decided here. The
+2026-09-27 block at the top of this file (the recession and remesh stage in the melt step, its surface and remesh
+columns, re- seating the film after a remesh) belongs to deprecated sub-plans 16 and 17 and must not be followed: the
+moving mesh and its rebuild (sub-plan 19) replace it.
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 
