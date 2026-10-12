@@ -18,7 +18,7 @@ DEV = skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], substep=0.05)
 EXACT = dict(linear_solver="direct")
 
 
-def make_body(the_mesh, surface_model="skin", name="AA7075_scheil", solver="skfem", solver_options=None, **settings):
+def make_body(the_mesh, surface_model="skin1d", name="AA7075_scheil", solver="skfem", solver_options=None, **settings):
     mat = material.Material.from_drama_json(name)
     m = mesh.VolumeMesh(the_mesh.points, the_mesh.tets, dict(the_mesh.params), the_mesh.element_layer.copy())
     return body.MeltingBody(m, mat, thermal.thermal_solver(solver, **(solver_options or {})), MASS_100MM,
@@ -52,13 +52,13 @@ def test_settings_validate_the_surface_model():
     with pytest.raises(ValueError):
         body.MeltSettings(surface_model="magic")
     with pytest.raises(ValueError):
-        body.MeltSettings(surface_model="skin", removal="instant")
+        body.MeltSettings(surface_model="skin1d", removal="instant")
     assert body.MeltSettings().surface_model == "elements"
 
 
 def test_identical_to_the_element_model_until_the_first_skin(coarse_sphere_mesh):
     """Seeded alike before every step (the AMG set-up draws on numpy's generator, as the model's --seed handles)."""
-    be, bs = make_body(coarse_sphere_mesh, "elements"), make_body(coarse_sphere_mesh, "skin")
+    be, bs = make_body(coarse_sphere_mesh, "elements"), make_body(coarse_sphere_mesh, "skin1d")
     assert be.skins is None and bs.skins is not None and bs.skins.n == 0
     t, compared = 0.0, 0
     while t < 120.0:

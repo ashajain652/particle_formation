@@ -151,7 +151,8 @@ MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in 
                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
 NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
 REMOVAL_NAMES = ("girin", "instant")
-SURFACE_MODEL_NAMES = ("elements", "skin")    # skin: a one-dimensional skin under every melting patch (sub-plan 18)
+SURFACE_MODEL_NAMES = ("elements", "skin1d")  # skin1d: a one-dimensional skin under every melting patch (sub-plan 18, failed
+                                              # its box test; retired in sub-plan 22). The layered skins are skinbody.SkinBody
 
 
 @dataclass
@@ -170,9 +171,9 @@ class MeltSettings:
     rigid_substrate: bool = True      # the thin branch needs a rigid substrate: the regime test reads the film plus the slurry
                                       # (above 50 % liquid) beneath it, and off Girin's closure a film on slurry does not
                                       # spray (amendment of 2026-10-06)
-    surface_model: str = "elements"   # skin: a one-dimensional skin of fine cells under every melting patch resolves the
+    surface_model: str = "elements"   # skin1d: a one-dimensional skin of fine cells under every melting patch resolves the
                                       # melt layer and feeds the film continuously (sub-plan 18); elements: as before
-    skin: object = None               # skin.SkinSettings for surface_model "skin"; None: its defaults
+    skin: object = None               # skin1d.SkinSettings for surface_model "skin1d"; None: its defaults
 
     def __post_init__(self):
         if self.surface_model not in SURFACE_MODEL_NAMES:
@@ -185,8 +186,8 @@ class MeltSettings:
             raise ValueError("feed_depth must be one of {}, got {!r}".format(FEED_DEPTH_NAMES, self.feed_depth))
         if not 0.0 < self.demise_fraction < 1.0:
             raise ValueError("demise_fraction must be within (0, 1)")
-        if self.surface_model == "skin" and self.removal == "instant":
-            raise ValueError("surface_model 'skin' needs removal 'girin'")
+        if self.surface_model == "skin1d" and self.removal == "instant":
+            raise ValueError("surface_model 'skin1d' needs removal 'girin'")
 
 
 def fit_sphere(points):
@@ -280,8 +281,8 @@ class MeltingBody(ThermalBody):
         self.consumed = False
         self._refresh_geometry()
         self.newtonian_drag_sphere = self.newtonian_drag()[0]      # the meshed sphere's own value: the normalisation
-        self.skins = None                                          # sub-plan 18: the skins, with --surface-model skin
-        if self.settings.surface_model == "skin" and self.settings.removal != "instant":
+        self.skins = None                                          # sub-plan 18: the skins, with surface_model "skin1d"
+        if self.settings.surface_model == "skin1d" and self.settings.removal != "instant":
             from . import skin1d as skin_mod
             self.skins = skin_mod.SkinField(material, self.settings.skin or skin_mod.SkinSettings())
         self._draw_m, self._draw_H = np.zeros(mesh.n_elements), np.zeros(mesh.n_elements)   # metal the skins drew this step

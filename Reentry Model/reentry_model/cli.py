@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin1d as skin, spray, surface_flow, thermal, viz
+from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend
@@ -47,6 +47,10 @@ DEFAULT_SEED = 12345
 # seeds, the droplet count within 2.7 % of the 0.00625 s step's (plan facts 92-94) -- while the default 0.5 s step makes
 # six times fewer droplets. Before the switch the default step serves.
 DEFAULT_DT_CONTINUUM = 0.0125
+# The surface models a run can choose (sub-plan 20): the element model, or the layered skins on the corners of a moving
+# mesh (skinbody.SkinBody). The default stays the element model until sub-plan 22 gives the skins their flow and spraying;
+# sub-plan 18's one-dimensional skins are reachable only from Python (body.MeltSettings(surface_model="skin1d")).
+SURFACE_MODELS = ("elements", "skin")
 
 
 def parse_epoch(text):
@@ -96,9 +100,9 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
     `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
-    `_dtcontinuum-off` or `_dtcontinuum-<s>`, one with skins (sub-plan 18) in `_surface-skin` followed by `skin_suffix`
-    (the skins' non-default settings, `skin_name_suffix`), and any run with a seed other than DEFAULT_SEED (amendment of
-    2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
+    `_dtcontinuum-off` or `_dtcontinuum-<s>`, a thermal run with the layered skins (sub-plan 20) in `_surface-skin`
+    followed by `skin_suffix` (the skins' non-default settings, `skin_name_suffix`), and any run with a seed other than
+    DEFAULT_SEED (amendment of 2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
     dtc = dtc_default if dt_continuum == "default" else dt_continuum
     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
@@ -107,21 +111,26 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
-            + ("_surface-skin" + skin_suffix if melt and surface_model == "skin" else "")
+            + ("_surface-skin" + skin_suffix if heating_name and surface_model == "skin" else "")
             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
 
 
-def skin_name_suffix(thickness_mm, cell_um, substep_ms, preset):
-    """The run-name suffix of a skin run's non-default settings (sub-plan 18): `_skin-dev` for the dev preset,
-    `_skin<mm>mm` for another thickness, `_cell<um>um` for an explicit cell other than the preset's, `_sub<ms>ms` for
-    another sub-step; empty for the defaults."""
+def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm):
+    """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+    dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
+    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth; empty
+    for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
-    if thickness_mm != 0.4:
-        out += "_skin{:g}mm".format(thickness_mm)
+    if min_thickness_mm != 0.4:
+        out += "_skinmin{:g}mm".format(min_thickness_mm)
     if cell_um is not None and abs(cell_um * 1e-6 - skin.SKIN_PRESETS[preset]) > 1e-12:
         out += "_cell{:g}um".format(cell_um)
+    if growth != 1.10:
+        out += "_growth{:g}".format(growth)
     if substep_ms != 10.0:
         out += "_sub{:g}ms".format(substep_ms)
+    if deform_mm != 15.0:
+        out += "_deform{:g}mm".format(deform_mm)
     return out
 
 
@@ -250,15 +259,21 @@ def build_parser():
                          "with the film plus everything more than half liquid beneath it (slurry included), and where there "
                          "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
                          "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
-    me.add_argument("--surface-model", choices=body.SURFACE_MODEL_NAMES, default="elements",
-                    help="skin: a one-dimensional skin of fine cells under every melting patch resolves the melt layer and "
-                         "feeds the film continuously, coupled to the 3D conduction through an implicit interface (Step 3 "
-                         "sub-plan 18). elements: the surface elements melt and feed the film, as in every run before it (default)")
-    me.add_argument("--skin-thickness", type=float, default=0.4, help="skin target thickness [mm] (default %(default)s)")
-    me.add_argument("--skin-cell", type=float, default=None, help="skin cell size [um] (default: the preset's)")
+    me.add_argument("--surface-model", choices=SURFACE_MODELS, default="elements",
+                    help="skin: a layered skin on every corner of the surface holds the outer metal in fine cells above a "
+                         "moving 3D mesh (layered-skin design, sub-plan 20: heat only, so with --melt on it needs --removal "
+                         "instant, liquid leaving as it forms). elements: the surface elements melt and feed the film, as "
+                         "in every run before it (default)")
+    me.add_argument("--skin-min-thickness", type=float, default=0.4,
+                    help="the skins' minimum thickness [mm of solid], also the fine zone's depth (default %(default)s)")
+    me.add_argument("--skin-cell", type=float, default=None, help="skin fine cell [um] (default: the preset's)")
+    me.add_argument("--skin-growth", type=float, default=1.10,
+                    help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
     me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
     me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
                     help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
+    me.add_argument("--deform-depth", type=float, default=15.0,
+                    help="depth of the moving mesh's deforming zone [mm] (default %(default)s, the dense band's)")
     me.add_argument("--rt-spray", choices=("on", "off"), default="on",
                     help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
                          "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
@@ -301,10 +316,12 @@ def build_thermal(args, settings, mass):
     """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]."""
     radius = settings.diameter / 2.0
     melting = args.melt == "on"
+    skins = args.surface_model == "skin"
     h_surface, h_core = args.h_surface * 1e-3 * args.mesh_size, args.h_core * 1e-3 * args.mesh_size
-    layers = args.prism_layers if args.prism_layers is not None else (mesh.DEFAULT_LAYERS if melting else 0)
-    band = mesh.DEFAULT_BAND if melting else 0.0    # non-melting runs keep the Step 2 field: the committed Step 2
-                                                    # verification numbers were measured on it (fact 12)
+    layers = args.prism_layers if args.prism_layers is not None else (mesh.DEFAULT_LAYERS if melting and not skins else 0)
+    band = mesh.DEFAULT_BAND if melting or skins else 0.0    # non-melting runs keep the Step 2 field: the committed Step 2
+                                                    # verification numbers were measured on it (fact 12); the skins'
+                                                    # moving mesh is rebuilt with the dense band's size field
     the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
                                band=band)
     # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
@@ -314,7 +331,11 @@ def build_thermal(args, settings, mass):
     if args.k_scale != 1.0:
         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
-    if melting:
+    if skins:
+        the_body = skinbody.SkinBody(the_mesh, mat, solver, mass, skin_settings(args), T0=args.temperature,
+                                     emissivity=args.emissivity, T_ambient=args.t_ambient, deform_depth=args.deform_depth * 1e-3,
+                                     remove=melting, demise_fraction=args.demise_fraction)
+    elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
                                        rt_spray=args.rt_spray == "on")
@@ -322,8 +343,7 @@ def build_thermal(args, settings, mass):
         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
                                           particles=args.particles, size_feedback=size_feedback,
                                           deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
-                                          rigid_substrate=args.rigid_substrate == "on", surface_model=args.surface_model,
-                                          skin=skin_settings(args))
+                                          rigid_substrate=args.rigid_substrate == "on")
         the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
                                     emissivity=args.emissivity, T_ambient=args.t_ambient)
     else:
@@ -338,16 +358,20 @@ def build_thermal(args, settings, mass):
             "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
             "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
             "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
-            "k_scale": args.k_scale, "melt": args.melt}
+            "k_scale": args.k_scale, "melt": args.melt, "surface_model": args.surface_model}
+    if skins:
+        info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "cell_um": skin_settings(args).cell * 1e6,
+                        "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
+                        "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n}
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
-    if melting:
+    if melting and skins:
+        info.update({"removal": args.removal, "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus,
+                     "latent_heat_Jkg": mat.latent_heat})
+    elif melting:
         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
                      "molten_cascade": args.molten_cascade, "rigid_substrate": args.rigid_substrate, "rt_spray": args.rt_spray,
-                     "surface_model": args.surface_model,
-                     "skin": {"thickness_mm": args.skin_thickness, "cell_um": skin_settings(args).cell * 1e6,
-                              "substep_ms": args.skin_substep, "preset": args.skin_preset},
                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
@@ -357,9 +381,10 @@ def build_thermal(args, settings, mass):
 
 
 def skin_settings(args):
-    """The skins' settings from the command line (sub-plan 18)."""
+    """The layered skins' settings from the command line (sub-plan 20)."""
     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
-    return skin.SkinSettings(thickness=args.skin_thickness * 1e-3, cell=cell, substep=args.skin_substep * 1e-3)
+    return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
+                             substep=args.skin_substep * 1e-3)
 
 
 def cmd_run(args, parser):
@@ -399,15 +424,22 @@ def cmd_run(args, parser):
     dt_continuum = continuum_step(args)
     if dt_continuum is not None and dt_continuum > args.dt:
         parser.error("--dt-continuum must be no longer than --dt")
-    for label, value in (("--skin-thickness", args.skin_thickness), ("--skin-substep", args.skin_substep),
-                         ("--skin-cell", 1.0 if args.skin_cell is None else args.skin_cell)):
+    for label, value in (("--skin-min-thickness", args.skin_min_thickness), ("--skin-substep", args.skin_substep),
+                         ("--skin-cell", 1.0 if args.skin_cell is None else args.skin_cell),
+                         ("--deform-depth", args.deform_depth)):
         if value <= 0.0:
             parser.error("{} must be > 0".format(label))
+    if args.skin_growth < 1.0:
+        parser.error("--skin-growth must be at least 1")
     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
-    if 2.0 * cell_um * 1e-3 > args.skin_thickness * (1.0 + 1e-12):
-        parser.error("--skin-cell must be at most half of --skin-thickness")
-    if args.surface_model == "skin" and args.removal != "girin":
-        parser.error("--surface-model skin needs --removal girin")
+    if 2.0 * cell_um * 1e-3 > args.skin_min_thickness * (1.0 + 1e-12):
+        parser.error("--skin-cell must be at most half of --skin-min-thickness")
+    if args.surface_model == "skin" and args.thermal != "fem":
+        parser.error("--surface-model skin needs --thermal fem")
+    if args.surface_model == "skin" and args.melt == "on" and args.removal != "instant":
+        parser.error("--surface-model skin with --melt on needs --removal instant (sub-plan 20: no flow or spraying yet)")
+    if args.surface_model == "skin" and (args.animate or args.stills):
+        parser.error("--animate/--stills read the element model's frames; with --surface-model skin use --frames-every")
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
@@ -422,8 +454,8 @@ def cmd_run(args, parser):
                                        deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
                                        rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
                                        surface_model=args.surface_model,
-                                       skin_suffix=skin_name_suffix(args.skin_thickness, args.skin_cell, args.skin_substep,
-                                                                    args.skin_preset))
+                                       skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
+                                                                    args.skin_substep, args.skin_preset, args.deform_depth))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
@@ -464,7 +496,7 @@ def cmd_run(args, parser):
         "provenance": prov,
         "files": {"csv": os.path.abspath(csv_path)},
     }
-    melting = args.thermal == "fem" and args.melt == "on"
+    melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
     if melting:
         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
                             else {})
@@ -502,6 +534,11 @@ def cmd_run(args, parser):
                   "energy balance residual {:.1e}, {} macro steps, {:.1f} Newton iterations/step".format(
                       res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
                       res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
+        if args.thermal == "fem" and args.surface_model == "skin":
+            print("  skins: {} columns, removed {:.4g} kg, drawn {:.4g} kg, {} rebuilds, {} interface repeats, {} base faults; "
+                  "wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
+                      res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
+                      res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
         if melting:
             print("  melt: onset {} km, spraying onset {} km, demise {} km at t = {} s; sprayed {:.4f} kg of {:.4f}, film left {:.4f} kg, "
                   "{:.3g} droplets (median r {} um), {} source rows, melt balance {:.1e}".format(
