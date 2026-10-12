@@ -397,27 +397,26 @@ def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
 
 
 def test_the_skin_body_matches_the_skfem_backend(coarse_sphere_mesh):
-    """The corner columns (sub-plan 20 Task 7) in both backends: 6 MW/m2 on the front for two 0.5 s steps from 880 K,
-    with liquid removed as it forms. Masses, removal and energy agree, both books are exact, and the fields agree except
-    where the solvers' round-off (about 1e-7 K) tipped a cell across a split, merge or removal threshold: measured on
-    this build (2026-10-12, the same on a second run), 2 of 2254 columns ended with a different cell count, and
-    conduction spread that to 190 of the 2884 3D nodes the run ends with (the second step rebuilds the 2934-node mesh),
-    the largest difference 1.12 K (the figures first measured while planning were 145 of 2934 nodes and 0.65 K)."""
+    """The corner columns (sub-plan 20 Task 7) in both backends: 6 MW/m2 on the front for one 0.5 s step from 880 K,
+    with liquid removed as it forms, under the default damped repetition (the step runs as 5 parts, 31 passes in all,
+    and rebuilds nothing). Masses, removal, energy, every skin's cell count and the 3D field agree to round-off
+    (measured 2026-10-12, the same on a second run: mass 8e-12, removed mass 4e-10, energy 2e-10, the largest
+    temperature difference below 5e-4 K) and both books are exact. The comparison stops before any rebuild: the
+    rebuild's mesher answers round-off differences in the corner positions with a different mesh (two steps gave 2858
+    and 2863 nodes, or 1e-4 apart in mass, measured), so across a rebuild the backends agree only to that."""
     from reentry_model import heating, mesh, skin, skinbody
     out = {}
     for name in ("skfem", "fenicsx"):
-        np.random.seed(12345)
         m = mesh.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
         b = skinbody.SkinBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver(name), 1.47,
                               skin.SkinSettings(cell=20e-6), T0=880.0, v_hat=(-1.0, 0.0, 0.0))
-        for k in range(2):
-            q = 6e6 * np.clip(np.cos(b.theta), 0.0, None)
-            b.advance(0.5 * (k + 1), 0.5, heating.HeatingResult(q, 6e6, 0.0, 0.0, 0.0))
+        q = 6e6 * np.clip(np.cos(b.theta), 0.0, None)
+        b.advance(0.5, 0.5, heating.HeatingResult(q, 6e6, 0.0, 0.0, 0.0))
         out[name] = b
     s, f = out["skfem"], out["fenicsx"]
+    assert s.moving.rebuilds == f.moving.rebuilds == 0 and s.step_parts == f.step_parts > 1
     assert f.mass() == pytest.approx(s.mass(), rel=1e-9) and f.removed_mass == pytest.approx(s.removed_mass, rel=1e-8)
     assert f.energy() == pytest.approx(s.energy(), rel=1e-8)
-    d = np.abs(f.solver.temperature() - s.solver.temperature())
-    assert np.mean(d < 1e-3) > 0.9 and d.max() < 2.0
-    assert np.mean(f.skins.count == s.skins.count) > 0.99
+    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 1e-2
+    assert np.array_equal(f.skins.count, s.skins.count)
     assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8

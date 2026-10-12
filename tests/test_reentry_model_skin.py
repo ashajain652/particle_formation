@@ -242,6 +242,35 @@ def test_the_trial_law_keeps_its_slope_when_the_base_is_above_t_rigid():
     assert b[1:] == pytest.approx(fd[1:], rel=0.18)
 
 
+def test_the_profile_enthalpy_is_the_mean_along_the_3d_profile_and_a_draw_takes_it():
+    """Metal below a base whose 3D temperature falls with depth holds less enthalpy than the base node (Asha,
+    2026-10-12): `profile_enthalpy` is the mean of h(T) along T(s) = T_top - g s over the depth (within 12 J/kg of a
+    200 001-point mean on the Scheil curve, measured, against node-minus-profile differences of 8 000 to 90 000 J/kg),
+    capped where asked; and a skin drawing along the profile takes exactly that for the depth it draws."""
+    mat = scheil()
+    T_top, g = np.array([893.0, 900.0, 700.0, 895.0]), np.array([22e3, 22e3, -5e3, 4e3])
+    s1 = np.array([1.5e-3, 0.4e-3, 1e-3, 1e-3])
+    s = np.linspace(0.0, 1.0, 200001)[None, :] * s1[:, None]
+    for cap in (None, mat.T_rigid):
+        T = T_top[:, None] - g[:, None] * s
+        T = T if cap is None else np.minimum(T, cap)
+        dense = mat.enthalpy(T.ravel()).reshape(T.shape).mean(axis=1)
+        assert np.abs(skin.profile_enthalpy(mat, T_top, g, 0.0, s1, cap) - dense).max() < 50.0
+    assert skin.profile_enthalpy(mat, T_top, g, s1, s1) == pytest.approx(mat.enthalpy(T_top - g * s1), rel=1e-12)
+    # a skin at its minimum less half, over a base at 893 K with the 3D falling 22 K/mm, draws the half in one sub-step
+    s_ = skin.SkinSettings(substep=0.01)
+    sk = filled(mat, n=1, settings=s_, T=893.0)
+    m_min = skin.minimum_mass(mat, sk.area, s_)
+    sk.take_bottom(0.5 * m_min)
+    book = skin.advance(sk, 0.01, np.zeros(1), sk.area, 0.0, 0.0, np.array([893.0]), m_min, T_b1=np.array([893.0]),
+                        g_base=np.array([22e3]))
+    dd = book.drawn[0] / (mat.rho * sk.area[0])
+    assert book.drawn[0] == pytest.approx(0.5 * m_min[0], rel=1e-12)
+    assert book.drawn_H[0] == pytest.approx(book.drawn[0] * float(skin.profile_enthalpy(mat, 893.0, 22e3, 0.0, dd,
+                                                                                         cap=mat.T_rigid)), rel=1e-12)
+    assert book.drawn_H[0] < book.drawn[0] * float(mat.enthalpy(893.0))       # less than at the node's temperature
+
+
 # -- heat sideways (Task 5) --------------------------------------------------------------------------------------------
 def grid_skins(mat, n=7, h=1e-3, T=700.0, settings=None):
     """Columns on a flat n x n grid of h squares split in two triangles (open edges), each filled to its minimum."""
