@@ -51,6 +51,9 @@ MIN_GAP = 20                 # macro steps between rebuilds triggered by compres
 ZONE_NEIGHBOURS = 12         # surface nodes averaged for each interior node of the zone
 SMOOTH_LAMBDA = 0.5          # tangential smoothing: share of the way to the neighbours' mean per move
 SMOOTH_CLAMP = 0.35          # of the mean surface edge: the most a corner is nudged per move (2026-09-27 design)
+NEUTRAL_PASSES = 3           # normal corrections that make the smoothing volume-neutral per corner (sub-plan 20 Task 0):
+                             # on the 100 mm sphere each pass removes about 30 % of what is left, the worst corner's
+                             # sweep going from 1.0 to 0.37 um of equivalent depth after three (measured 2026-10-12)
 _REF_GRADS = np.array([[-1.0, -1.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
 
@@ -185,20 +188,28 @@ def tangential_smoothing(points, faces, normal, lam=SMOOTH_LAMBDA, clamp=SMOOTH_
 
 def swept_volumes(old, new, faces, faces_corner, n_corners):
     """The volume each corner's surface swept, positive inward: every surface triangle's prism between its old and new
-    positions, split into three tetrahedra, a third of it to each of the triangle's corners. A corner sliding along a
-    flat face sweeps exactly nothing; a corner on a sharp edge books only what the faces it touches swept (Task 4
-    review, 2026-10-12, replacing dual area times normal displacement, which mis-shares at edges and, scaled to the
-    total, blew up wherever the first-order volumes nearly cancelled). `faces` are the outward triangles' node ids,
-    `faces_corner` the same triangles in corner numbering."""
+    positions (exact, split into three tetrahedra), shared among the triangle's corners by what each corner's own motion
+    swept -- to first order A_t (u_k . n_t) / 3 for corner k, n_t the triangle's outward normal -- with the second-order
+    rest of the prism shared in proportion to those. A corner sliding along a flat face sweeps exactly nothing, and a
+    corner that does not move is never credited with what its moving neighbours swept: booking a third of each prism to
+    every corner (sub-plan 19) credited the side walls of the box test with metal its receding front swept, they handed
+    it down, bulged out and folded the surface at 1.3 s (sub-plan 20, 2026-10-12). `faces` are the outward
+    triangles' node ids, `faces_corner` the same triangles in corner numbering."""
     a, b, c = (old[faces[:, i]] for i in range(3))
     A, B, C = (new[faces[:, i]] for i in range(3))
 
     def vol(p, q, r, s):
         return np.einsum("ij,ij->i", q - p, np.cross(r - p, s - p)) / 6.0
     prism = -(vol(a, b, c, A) + vol(b, c, A, B) + vol(c, A, B, C))
+    n2 = np.cross(b - a, c - a)                                   # twice the area times the outward unit normal
+    own = np.stack([-np.einsum("ij,ij->i", Q - P, n2) / 6.0 for P, Q in ((a, A), (b, B), (c, C))], axis=1)
+    weight = np.abs(own)
+    total = weight.sum(axis=1)
+    share = np.where(total[:, None] > 0.0, weight / np.where(total > 0.0, total, 1.0)[:, None], 1.0 / 3.0)
+    booked = own + (prism - own.sum(axis=1))[:, None] * share
     out = np.zeros(n_corners)
     for i in range(3):
-        np.add.at(out, faces_corner[:, i], prism / 3.0)
+        np.add.at(out, faces_corner[:, i], booked[:, i])
     return out
 
 
@@ -293,6 +304,23 @@ class MovingMesh:
                                     SMOOTH_LAMBDA if lam is None else lam, SMOOTH_CLAMP if clamp is None else clamp,
                                     self.edges_corner)
 
+    def neutral_smoothing(self, normal=None, area=None, passes=NEUTRAL_PASSES):
+        """The tangential smoothing made volume-neutral per corner (layered-skin design section 5.1, decided 2026-10-12):
+        each pass moves every corner along its normal by the volume the displacement so far sweeps there, divided by
+        its dual area, so that a column is not credited with metal the smoothing alone swept. A corner's own normal
+        move books only a third of its prisms to itself, so the passes converge slowly for patterns that alternate
+        from corner to corner and never for a pattern summing to zero on every triangle; what is left is booked to the
+        columns like any other sweep (measured 2026-10-12 on the 100 mm sphere: the worst corner 1.03 um of equivalent
+        depth before, 0.37 um after three passes; the root mean square 0.115 um before, 0.038 um after)."""
+        if normal is None or area is None:
+            normal, area = self.frame()
+        points = self.mesh.points[self.corners]
+        u = self.smoothing(normal)
+        for _ in range(passes):
+            dV = swept_volumes(points, points + u, self.faces_corner, self.faces_corner, len(self.corners))
+            u = u + normal * (dV / area)[:, None]
+        return u
+
     def surface_quality(self):
         """The worst surface triangle's quality, 2 r_in / R_circ."""
         return float(triangle_quality(self.mesh.points[self.corners], self.faces_corner).min())
@@ -357,9 +385,7 @@ class MovingMesh:
         points, tets, node_of_corner = rebuild_volume(mesh.points[self.corners], self.faces_corner, **self.sizes)
         h_old = mat.enthalpy(solver.temperature())
         E_old = solver.energy()
-        elem, bary = locate(mesh.points, mesh.tets, points)
-        h_new = np.einsum("ij,ij->i", bary, h_old[mesh.tets[elem]])
-        h_new[node_of_corner] = h_old[self.corners]          # the surface is the same: corners keep their enthalpy
+        h_new = project_enthalpy(mesh.points, mesh.tets, h_old, points, tets)
         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
         check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
@@ -368,9 +394,8 @@ class MovingMesh:
         residual = E_old - solver.energy()
         self.mesh, self.corners = new_mesh, node_of_corner
         self._set_surface(node_of_corner[self.faces_corner])             # builds the new deforming zone
-        # the interpolation error arises where the field varies, near the surface (its residuals measured one-signed,
-        # 99 to 186 J per rebuild), so the offset that makes the total exact is spread over the deforming zone only,
-        # by lumped mass, and the deep body keeps the interpolated values untouched
+        # what the quadrature misses arises where the field varies, near the surface, so the offset that makes the
+        # total exact is spread over the deforming zone only, by lumped mass, and the deep body keeps its values
         in_zone = np.concatenate([self.zone.corners, self.zone.interior])
         m_zone = lumped_masses(points, tets, mat.rho)[in_zone]
         h_new[in_zone] += residual / m_zone.sum()
@@ -511,6 +536,45 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
     if d.max() > 0.0:
         raise RemeshError("gmsh moved a surface node by {:.3g} m".format(float(d.max())))
     return coords, tets, node_of_corner.astype(np.int64)
+
+
+_QUAD_A, _QUAD_B = 0.5854101966249685, 0.1381966011250105      # the 4-point rule exact for quadratics on a tetrahedron
+QUADRATURE = np.full((4, 4), _QUAD_B) + np.eye(4) * (_QUAD_A - _QUAD_B)   # barycentric coordinates, weights 1/4 each
+PROJECT_CHUNK = 200_000                                      # quadrature points located at a time (bounds the memory)
+
+
+def project_enthalpy(old_points, old_tets, h_old, points, tets):
+    """The nodal enthalpy on a new mesh as the L2 projection of the old P1 field: M h = b, M the new mesh's consistent
+    mass matrix and b_i the integral of phi_i times the old field over the new elements by the 4-point rule. The
+    projection reproduces a linear field exactly and keeps the integral of h -- the energy -- to the rule's accuracy,
+    region by region, because the rows of M add up to the lumped masses the solvers' energy uses (sub-plan 20, the spec's
+    fallback once the residuals proved large: interpolating at the new nodes and offsetting the total uniformly over the
+    zone moved 2 768 J -- 4.9 % of the heat absorbed -- from the cold bulk to the melting front of the level-2 plate in two
+    rebuilds, and its centre melted 9.5 % ahead of the exact solution; a lumped projection kept the energy local but
+    moved a linear field's surface values by up to 7 K). An old field point just outside the old mesh -- a quadrature
+    point across the shared surface -- is extrapolated linearly from the nearest element, as `locate` does."""
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spla
+    x = points[tets]                                         # (ne, 4, 3)
+    vol = np.abs(signed_volumes(points, tets))
+    qp = np.einsum("qa,eai->eqi", QUADRATURE, x).reshape(-1, 3)
+    h_q = np.empty(len(qp))
+    for start in range(0, len(qp), PROJECT_CHUNK):
+        elem, bary = locate(old_points, old_tets, qp[start:start + PROJECT_CHUNK])
+        h_q[start:start + PROJECT_CHUNK] = np.einsum("ij,ij->i", bary, h_old[old_tets[elem]])
+    h_q = h_q.reshape(len(tets), 4)
+    n = len(points)
+    rhs = np.zeros(n)
+    for a in range(4):                                       # integral of phi_a h: V/4 sum_q phi_a(q) h(q)
+        np.add.at(rhs, tets[:, a], vol / 4.0 * (QUADRATURE[:, a][None, :] * h_q).sum(axis=1))
+    local = np.full((4, 4), 1.0 / 20.0) + np.eye(4) / 20.0   # the P1 consistent mass on a tetrahedron, over its volume
+    rows, cols = np.repeat(tets, 4, axis=1).ravel(), np.tile(tets, (1, 4)).ravel()
+    M = sp.csr_matrix(((vol[:, None, None] * local[None]).ravel(), (rows, cols)), shape=(n, n))
+    lumped = np.asarray(M.sum(axis=1)).ravel()
+    h, info = spla.cg(M, rhs, x0=rhs / lumped, rtol=1e-13, maxiter=500, M=sp.diags(1.0 / lumped))
+    if info != 0:
+        raise RuntimeError("the rebuild's projection did not converge ({})".format(info))
+    return h
 
 
 def locate(points, tets, query, candidates=16):

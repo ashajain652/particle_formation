@@ -287,10 +287,9 @@ def test_a_rebuild_keeps_the_surface_exactly_and_the_energy_exactly(coarse_spher
     assert moving.mesh.volume() == pytest.approx(V, rel=1e-12)
     assert solver.energy() == pytest.approx(E, rel=1e-12)
     assert np.all(movemesh.signed_volumes(moving.mesh.points, moving.mesh.tets) != 0.0)
-    # the interpolation loses -2612 J of 71236 J (-4.1 %) here: a kinked field on 4 to 20 mm cells, whose lumped sum
-    # differs between two meshes (final review: the earlier one-sided check "residual below 1e-3" passed on the sign
-    # alone). The residual is reported, and the offset closes it (the energy assertion above)
-    assert abs(result.relative_residual) < 0.06 and moving.rebuilds == 1 and solver.mesh is moving.mesh
+    # a kinked field on 4 to 20 mm cells: the projection leaves -1.8 J of 63 219 J (3e-5) for the offset to close, where
+    # interpolating at the new nodes left -4.1 % (both measured, sub-plan 20)
+    assert abs(result.relative_residual) < 1e-3 and moving.rebuilds == 1 and solver.mesh is moving.mesh
 
 
 def test_a_rebuild_of_a_linear_field_loses_nothing_to_interpolation(coarse_sphere_mesh):
@@ -302,8 +301,7 @@ def test_a_rebuild_of_a_linear_field_loses_nothing_to_interpolation(coarse_spher
     moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
     assert not moving.move(inward(moving, 1e-3)).refused
     result = moving.rebuild()
-    # linear interpolation and the lumped sum are both exact for a linear field: -6e-8 of the total measured (final
-    # review), two-sided
+    # the projection and the lumped sum are both exact for a linear field (two-sided, to the solve's tolerance)
     assert abs(result.relative_residual) < 1e-6
     # the books' own uniform offsets (the move's, then the rebuild's) leave 2.1e-5 K at most (measured)
     assert np.abs(solver.temperature() - T_of(moving.mesh.points)).max() < 1e-4
@@ -345,22 +343,23 @@ def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sph
         old_points, old_tets = moving.mesh.points.copy(), moving.mesh.tets.copy()
         h_old = mat.enthalpy(solver.temperature())
         residuals.append(moving.rebuild().residual)
-        # what the interpolation alone gives at the new nodes (the corners keep their own values, and are in the zone)
-        elem, bary = movemesh.locate(old_points, old_tets, moving.mesh.points)
-        h_interp = np.einsum("ij,ij->i", bary, h_old[old_tets[elem]])
+        # what the projection alone gives at the new nodes
+        h_proj = movemesh.project_enthalpy(old_points, old_tets, h_old, moving.mesh.points, moving.mesh.tets)
         h_after = mat.enthalpy(solver.temperature())
         in_zone = np.zeros(moving.mesh.n_nodes, dtype=bool)
         in_zone[moving.zone.corners] = True
         in_zone[moving.zone.interior] = True
         out = ~in_zone
-        # outside the zone (84 and 73 of about 2900 nodes on this coarse mesh) the field is the interpolation's to 3e-11
-        # J per kg; spread over the whole body the offset would have shifted those nodes by 1735 and 1244 J per kg (1.7
-        # and 1.2 K), and in the zone, noncorner nodes carry 2585 and 1804 J per kg (all measured, final review)
+        # outside the zone (about 80 of 2900 nodes on this coarse mesh) the field is the projection's; inside, every node
+        # carries the same offset, the residual over the zone's mass
         assert out.sum() > 50
-        assert np.abs(h_after[out] - h_interp[out]).max() < 1e-6 * np.abs(h_interp).max()      # tolerance 0.08 J per kg
-        zone_inner = in_zone & ~np.isin(np.arange(moving.mesh.n_nodes), moving.corners)
-        assert np.abs(h_after[zone_inner] - h_interp[zone_inner]).min() > 1000.0
-    assert min(abs(x) for x in residuals) > 1.0
+        assert np.abs(h_after[out] - h_proj[out]).max() < 1e-6 * np.abs(h_proj).max()
+        shift = (h_after - h_proj)[in_zone]
+        assert np.ptp(shift) < 1e-6 * np.abs(h_proj).max() + 1e-9 * abs(shift).max()
+        assert np.sign(shift.mean()) == np.sign(residuals[-1]) or residuals[-1] == 0.0
+    # two-signed and small: 0.007 J and 19.7 J here, of 67 000 J (measured, sub-plan 20; interpolating at the new nodes
+    # left one-signed residuals of hundreds to thousands of J)
+    assert max(abs(x) for x in residuals) < 1e-3 * solver.energy()
     assert moving.rebuild_residual_total == pytest.approx(sum(residuals), rel=1e-12, abs=0.0)
 
 
@@ -479,3 +478,51 @@ def test_a_moving_front_follows_the_exact_solution():
     theta = (solver.temperature() - 300.0) / 300.0
     exact = exact_front(x - x_front, 0.5, 1e-5, 1e-2)
     assert np.abs(theta - exact).max() < 0.005          # 0.0010 measured while planning: 0.1 % of the rise
+
+
+# -- volume-neutral smoothing (sub-plan 20, Task 0) ----------------------------------------------------------------
+def test_neutral_smoothing_keeps_the_tangential_step_and_cancels_most_of_its_sweep(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=15e-3)
+    normal, area = moving.frame()
+    points, faces, n = moving.mesh.points[moving.corners], moving.faces_corner, len(moving.corners)
+    plain = moving.smoothing(normal)
+    neutral = moving.neutral_smoothing(normal, area)
+    # the passes add only normal motion: the tangential step is the plain smoothing's
+    extra = neutral - plain
+    assert np.abs(extra - np.einsum("ij,ij->i", extra, normal)[:, None] * normal).max() < 1e-15
+    before = movemesh.swept_volumes(points, points + plain, faces, faces, n) / area
+    after = movemesh.swept_volumes(points, points + neutral, faces, faces, n) / area
+    # equivalent depths of the sweep per corner; on this 4 mm sphere the root mean square falls from 0.78 to 0.27 um
+    # and the worst corner from 11.4 to 3.9 um (measured while planning)
+    assert np.sqrt((after ** 2).mean()) < 0.45 * np.sqrt((before ** 2).mean())
+    assert np.abs(after).max() < 0.5 * np.abs(before).max()
+
+
+def test_a_neutral_smoothing_move_keeps_the_books(coarse_sphere_mesh):
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    solver.set_temperature(300.0 + 2000.0 * m.points[:, 2])
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    E0, V0 = solver.energy(), m.volume()
+    r = moving.move(inward(moving, 1e-4) + moving.neutral_smoothing())
+    assert not r.refused
+    assert r.swept_volume.sum() == pytest.approx(V0 - moving.mesh.volume(), rel=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+
+
+def test_a_corner_that_does_not_move_is_credited_with_nothing_its_neighbours_swept(coarse_sphere_mesh):
+    """Own sweeps (sub-plan 20, spec 5.2 amended 2026-10-12): one corner moving in sweeps its own triangles' prisms, and
+    every other corner books nothing; a third of each prism to each corner credited its neighbours with two thirds."""
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat, depth=15e-3)
+    normal, area = moving.frame()
+    points, faces, n = moving.mesh.points[moving.corners], moving.faces_corner, len(moving.corners)
+    u = np.zeros((n, 3))
+    u[7] = -2e-4 * normal[7]
+    dV = movemesh.swept_volumes(points, points + u, faces, faces, n)
+    assert dV[7] == pytest.approx(area[7] * 2e-4, rel=0.02)
+    assert np.abs(np.delete(dV, 7)).max() == 0.0
