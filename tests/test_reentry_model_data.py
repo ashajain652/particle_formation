@@ -53,3 +53,22 @@ def test_constants():
     assert c.MU_EARTH == 3.986004418e14 and c.OMEGA_EARTH == 7.2921159e-5
     assert abs(c.M_BAR_AIR / c.ATOMIC_MASS_UNIT - 28.9644) < 1e-6
     assert c.HARD_SPHERE_DIAMETER == 3.65e-10 and c.GAMMA_AIR == 1.4
+
+
+MELTING_REFERENCE_NAMES = ["sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind",
+                           "sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_nowind"]
+
+
+def test_melting_reference_runs_are_committed_and_consistent():
+    """The two Step 3 melting references: DRAMA's drama-AA7075 (850 K, 400 kJ/kg) on the US76 table, winds off; the
+    sphere melts completely (mass 0 at the end, 'demised')."""
+    for name, onset_km, end_km in zip(MELTING_REFERENCE_NAMES, (71.005, 77.104), (66.476, 73.094)):
+        csv_path = os.path.join(REFERENCE_DIR, name + ".csv")
+        doc = json.load(open(os.path.join(REFERENCE_DIR, name + ".json")))
+        assert doc["run_name"] == name and doc["status"] == "ok" and doc["inputs"]["material"] == "drama-AA7075"
+        assert doc["inputs"]["atmosphere"] == "static" and doc["inputs"]["use_wind"] is False
+        assert doc["results"]["melting_temperature_K"] == 850.0 and abs(doc["results"]["altitude_first_melt_km"] - onset_km) < 1e-3
+        assert abs(doc["results"]["altitude_last_melt_km"] - end_km) < 1e-3
+        rows = list(csv.DictReader(open(csv_path)))
+        assert float(rows[-1]["mass_kg"]) == 0.0 and float(rows[-1]["thick_mm"]) == 0.0 and float(rows[-1]["altitude_km"]) > 60.0
+        assert abs(float(rows[0]["mass_kg"]) - doc["inputs"]["initial_mass_kg"]) < 1e-3

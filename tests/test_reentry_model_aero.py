@@ -100,4 +100,5 @@ class TestDragCoefficient:
         hyper = np.array(hyper)
         assert math.sqrt(np.mean(hyper ** 2)) <= 0.010, name
         assert np.abs(hyper).max() <= 0.030, name
-        assert np.abs(low).max() <= 1.5e-3, name       # the reference prints C_D with 3 decimals
+        if low:                                        # the melting references (Step 3) demise while still hypersonic
+            assert np.abs(low).max() <= 1.5e-3, name   # the reference prints C_D with 3 decimals
