@@ -322,10 +322,13 @@ class Skins:
             self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T))
         return mass, H
 
-    def add_bottom(self, dm, h):
+    def add_bottom(self, dm, h, s=1.0):
         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
-        a new cell); returns the enthalpy added. With S tracked, the metal carries S = 1 (it is at the base temperature)."""
+        a new cell); returns the enthalpy added. With S tracked, the metal carries the sensitivity s per column
+        (default 1: it is at the base temperature and follows it; 0 for metal whose enthalpy does not depend on the
+        base temperature, such as rigid metal drawn at T_rigid's enthalpy from a base above T_rigid)."""
         dm, h = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,)), np.broadcast_to(np.asarray(h, dtype=float), (self.n,))
+        s = np.broadcast_to(np.asarray(s, dtype=float), (self.n,))
         some = dm > 0.0
         if not some.any():
             return np.zeros(self.n)
@@ -336,7 +339,7 @@ class Skins:
         self.m[rows, b] += dm[rows]
         self.H[rows, b] += dm[rows] * h[rows]
         if self.S is not None:
-            self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows]) / self.m[rows, b]
+            self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows] * s[rows]) / self.m[rows, b]
         self.count[rows] = np.maximum(self.count[rows], 1)
         self.T[rows, b] = self.material.temperature_from_enthalpy(self.H[rows, b] / self.m[rows, b])
         return np.where(some, dm * h, 0.0)
@@ -534,6 +537,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     if trial:
         sk.S = np.zeros_like(sk.m)
     h_b = mat.enthalpy(np.minimum(T_b, mat.T_rigid))
+    s_b = (T_b < mat.T_rigid).astype(float)           # drawn metal follows the base only where the draw is not capped
     melting = remove and mat.melts
     for _ in range(N):
         Q_side = side(sk, h) if side is not None else None
@@ -551,7 +555,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
             book.removed_H += gone_H
         short = np.maximum(m_min - sk.column_mass(), 0.0)
         book.drawn += short
-        book.drawn_H += sk.add_bottom(short, h_b)
+        book.drawn_H += sk.add_bottom(short, h_b, s_b)
         sk.regrid()
     if trial:
         sk.set_state(saved)
