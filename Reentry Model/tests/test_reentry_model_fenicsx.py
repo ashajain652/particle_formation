@@ -378,3 +378,19 @@ def test_a_moving_front_matches_the_skfem_backend():
     _, s_fx, _ = run_moving_front("fenicsx")
     _, s_sk, _ = run_moving_front("skfem")
     assert np.abs(s_fx.temperature() - s_sk.temperature()).max() < 1e-6
+
+
+def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
+    """The corner columns' base law (sub-plan 20 Task 6) at the surface nodes, no radiation, in both backends."""
+    from reentry_model import material, thermal
+    corners = np.unique(coarse_sphere_mesh.surface().faces)
+    b = np.full(len(corners), -2e-3)
+    out = []
+    for name in ("skfem", "fenicsx"):
+        s = thermal.thermal_solver(name)
+        s.setup(coarse_sphere_mesh, material.Material.from_drama_json("AA7075_scheil"), 0.0)
+        s.set_temperature(700.0)
+        r = s.step(0.5, np.zeros(len(s.areas)), 0.0, nodal_law=(corners, -950.0 * b, b))
+        out.append((r, s.temperature()))
+    (ra, Ta), (rb, Tb) = out
+    assert np.allclose(Ta, Tb, rtol=0.0, atol=1e-6) and ra.Q_interface == pytest.approx(rb.Q_interface, rel=1e-9)

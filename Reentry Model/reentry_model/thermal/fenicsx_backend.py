@@ -205,7 +205,7 @@ class FenicsxThermalSolver:
         m.sum_duplicates()
         return PETSc.Mat().createAIJ(size=m.shape, csr=(m.indptr.astype(np.int32), m.indices.astype(np.int32), m.data), comm=self.msh.comm)
 
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None):
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None, nodal_law=None):
         from petsc4py import PETSc
         mat, n = self.material, self.mesh.n_nodes
         T_old = self.T
@@ -229,6 +229,11 @@ class FenicsxThermalSolver:
             b_int = np.where(mask, np.asarray(interface[2], dtype=float), 0.0)
         eps_f = self.emissivity if mask is None else np.where(mask, 0.0, self.emissivity)
         self._radiating = None if mask is None else ~mask
+        # the corner columns' base law (sub-plan 20): heat a + b T_i [W] into each listed node, implicit
+        if nodal_law is not None:
+            law_nodes = np.asarray(nodal_law[0], dtype=np.int64)
+            a_law, b_law = np.asarray(nodal_law[1], dtype=float), np.asarray(nodal_law[2], dtype=float)
+            B_law = sp.csr_matrix((-b_law, (law_nodes, law_nodes)), shape=(n, n))
         converged, last_relative_change, previous_change, damping, decreases = False, None, None, 1.0, 0
         T_new, iteration = T_k, 0
         for iteration in range(1, self.max_iterations + 1):
@@ -248,6 +253,9 @@ class FenicsxThermalSolver:
             if mask is not None:
                 B = B + sp.csr_matrix((np.repeat(-b_int * self.areas / 9.0, 9), (self._facet_rows, self._facet_cols)), shape=(n, n))
                 F_int = self.facet_load(a_int + b_int * Tf)
+            if nodal_law is not None:
+                B = B + B_law
+                F_int = F_int + np.bincount(law_nodes, weights=a_law + b_law * T_k[law_nodes], minlength=n)
             b = M_tan * T_k / dt + B @ T_k - E / dt + F_conv - F_rad + F_extra + F_int
             # operator in dof numbering: K (dolfinx) + diag(M_tan/dt) + B
             A = self.K.copy()
@@ -292,5 +300,7 @@ class FenicsxThermalSolver:
         self._T_prev, self.T = T_old, T_new
         self.last_damping = damping
         Q_int = float(((a_int + b_int * self.facet_temperature(T_new)) * self.areas).sum()) if mask is not None else 0.0
+        if nodal_law is not None:
+            Q_int += float((a_law + b_law * T_new[law_nodes]).sum())
         return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()),
                           Q_dropped, Q_int)

@@ -253,11 +253,13 @@ class SkfemThermalSolver:
         h = self.material.enthalpy(self.T if T is None else T)
         return self.phi * self.material.rho * self.vol * h[self.tets].mean(axis=1)
 
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None):
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None, nodal_law=None):
         """One backward-Euler step with the per-facet convective flux q_conv [W/m2] and an optional nodal load vector
         [W] (Step 3: the deferred melt energy; loads on pinned nodes are dropped and reported in StepResult.Q_dropped).
         `interface = (mask, a, b)` per facet: the skins' base law, heat a + b T_f [W/m2] into the body through the
-        masked facets, which neither take q_conv's place nor radiate (Step 3 sub-plan 18)."""
+        masked facets, which neither take q_conv's place nor radiate (Step 3 sub-plan 18). `nodal_law = (nodes, a, b)`:
+        the corner columns' base law (layered-skin design section 7.2, sub-plan 20), heat a + b T_i [W] into each listed
+        node, implicit like the radiation."""
         T_old = self.T
         # predictor: extrapolate the previous step (saves ~1 Newton iteration per step); plain T_old on the first step
         T_k = T_old + (T_old - self._T_prev) if self._T_prev is not None and dirichlet is None else T_old.copy()
@@ -278,6 +280,10 @@ class SkfemThermalSolver:
             b_int = np.where(mask, np.asarray(interface[2], dtype=float), 0.0)
         eps_f = self.emissivity if mask is None else np.where(mask, 0.0, self.emissivity)
         self._radiating = None if mask is None else ~mask
+        if nodal_law is not None:
+            law_nodes = np.asarray(nodal_law[0], dtype=np.int64)
+            a_law, b_law = np.asarray(nodal_law[1], dtype=float), np.asarray(nodal_law[2], dtype=float)
+            B_law = sp.csr_matrix((-b_law, (law_nodes, law_nodes)), shape=(len(self.points), len(self.points)))
         for iteration in range(1, self.max_iterations + 1):
             K, M, E = self.operators(T_k, T_old)
             Tf = self.facet_temperature(T_k)
@@ -287,6 +293,9 @@ class SkfemThermalSolver:
             if mask is not None:
                 B = B + self.facet_pattern.assemble(self.Bf * (-b_int)[:, None, None])
                 F_int = self.facet_load(a_int + b_int * Tf)
+            if nodal_law is not None:
+                B = B + B_law
+                F_int = F_int + np.bincount(law_nodes, weights=a_law + b_law * T_k[law_nodes], minlength=len(self.points))
             # Newton on R(T) = E(T)/dt + K T - F_conv + F_rad(T) - F_extra with the tangent M/dt + K + B:
             # A T_new = A T_k - R(T_k); with a smooth c_p (c_tan = c_sec) this is the Step 2 iteration unchanged
             A = (M / dt + K + B).tocsr()
@@ -323,6 +332,8 @@ class SkfemThermalSolver:
         self._T_prev, self.T = T_old, T_new
         self.last_damping = damping
         Q_int = float(((a_int + b_int * self.facet_temperature(T_new)) * self.areas).sum()) if mask is not None else 0.0
+        if nodal_law is not None:
+            Q_int += float((a_law + b_law * T_new[law_nodes]).sum())
         return StepResult(T_new.copy(), float(F_conv.sum()), self.radiated_power(T_amb), iteration, float(F_extra.sum()),
                           Q_dropped, Q_int)
 

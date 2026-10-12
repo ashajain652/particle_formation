@@ -24,13 +24,14 @@ class StepResult:
     iterations: int               # Newton/Picard iterations taken
     Q_extra: float = 0.0          # W, nodal load applied over the step (Step 3 deferred melt energy)
     Q_dropped: float = 0.0        # W, load that fell on pinned (material-free) nodes and was not applied
-    Q_interface: float = 0.0      # W, heat the skins passed in through their facets (Step 3 sub-plan 18)
+    Q_interface: float = 0.0      # W, heat the skins passed in through their facets (Step 3 sub-plan 18) or, with the
+                                  # corner columns, through the base nodes (sub-plan 20)
 
 
 class ThermalSolver(Protocol):
     def setup(self, mesh, material, emissivity) -> None: ...
     def set_temperature(self, T) -> None: ...                       # uniform float or nodal array
-    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None) -> StepResult: ...
+    def step(self, dt, q_conv, T_amb, dirichlet=None, nodal_load=None, interface=None, nodal_law=None) -> StepResult: ...
     def temperature(self) -> np.ndarray: ...
     def energy(self) -> float: ...                                  # stored enthalpy above material.T_REF [J]
     def element_energies(self, T=None) -> np.ndarray: ...           # phi_e rho V_e h(T_e) per element [J]
