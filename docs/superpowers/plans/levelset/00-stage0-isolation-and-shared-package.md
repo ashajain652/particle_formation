@@ -26,7 +26,10 @@ ends with the matching amendment.
 The tested change is `prototype/levelset/stage0/stage0.patch` (against `main`), the bit-identity script
 `prototype/levelset/stage0/bitid.sh`. Measured there: the three bit-identity histories identical byte for byte; the unit
 tier 352 → 375 tests selected (with the plan's final tests), all passing except the FEniCSx module (skipped in `drama_env`); `tests/test_reentry_model_fenicsx.py`
-7 passed in `fenicsx_env`; the reference tier — see Task 5 Step 6 for the recorded result.
+7 passed in `fenicsx_env`; the reference tier 13 passed, 1 skipped (the FEniCSx module) in 18 min. The history
+CSVs print about nine significant digits, and the Step 2 flights are not bit-reproducible run to run in their
+full-precision JSON summaries (measured on the unchanged base), so "byte-identical" means identical to the CSV's printed
+precision for those flights.
 
 ## Global Constraints
 
