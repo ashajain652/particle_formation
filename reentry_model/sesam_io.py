@@ -52,6 +52,8 @@ class Reference:
     convective_heat: np.ndarray = None      # W (SESAM's convective_heat_W), None if the CSV lacks the column
     rad_cooling: np.ndarray = None          # W, negative (SESAM's rad_cooling_W)
     integrated_heat: np.ndarray = None      # J, integral of the convective heat (SESAM's integrated_heat_J)
+    mass: np.ndarray = None                 # kg (SESAM's mass_kg; decreases while the sphere melts)
+    thickness: np.ndarray = None            # m (SESAM's thick_mm: the shell thickness of the melting sphere, Step 3 facts)
 
 
 def _sha256(path):
@@ -96,4 +98,5 @@ def load_reference(csv_path, json_path=None):
         downrange=col("downrange_km", 1e3), drag=col("drag"), knudsen=col("knudsen"), mach=col("mach"),
         density=col("density_kgm3"), dynamic_pressure=col("dynamic_pressure_Pa"), temperature=col("temperature_K"),
         convective_heat=optional("convective_heat_W"), rad_cooling=optional("rad_cooling_W"), integrated_heat=optional("integrated_heat_J"),
+        mass=optional("mass_kg"), thickness=col("thick_mm", 1e-3) if "thick_mm" in rows[0] else None,
     )
