@@ -565,3 +565,75 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     return book
 
 
+# -- heat sideways (Task 5) --------------------------------------------------------------------------------------------
+_SPAN = 1.0                       # m, larger than any column: separates the rows of a flattened row-wise search
+
+
+def _interp_rows(x, xp, fp):
+    """Row-wise linear interpolation of fp (n, q) given at non-decreasing xp (n, q), at x (n, p), held at the ends."""
+    n, q = xp.shape
+    off = (np.arange(n) * _SPAN)[:, None]
+    i = np.searchsorted((xp + off).ravel(), (x + off).ravel(), side="right").reshape(x.shape) - 1
+    i = np.clip(i - (np.arange(n) * q)[:, None], 0, q - 2)
+    r = np.arange(n)[:, None]
+    x0, x1, f0, f1 = xp[r, i], xp[r, i + 1], fp[r, i], fp[r, i + 1]
+    t = np.clip(np.divide(x - x0, x1 - x0, out=np.zeros_like(x, dtype=float), where=x1 > x0), 0.0, 1.0)
+    return f0 + t * (f1 - f0)
+
+
+def depth_grid(settings, depth):
+    """The common depth grid of the sideways exchange: breakpoints from the top down to `depth` [m], spaced by the cell
+    target at each depth (the fine cell, growing below the fine zone)."""
+    z = [0.0]
+    while z[-1] < depth:
+        z.append(z[-1] + settings.cell + (settings.growth - 1.0) * max(z[-1] - settings.min_thickness, 0.0))
+    return np.array(z)
+
+
+def _sideways_once(sk, columns, T, dz):
+    """Sideways heat [W per cell] at temperatures T: each column's cells averaged onto the depth grid, every surface
+    edge exchanging k w l (T_j - T_i) in every bin both columns reach (k the mean of the two bins' conductivities, w the
+    edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
+    cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
+    exact for a field linear along the surface where neighbouring columns have the same cells."""
+    n, K = T.shape
+    zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
+    H = zb[:, -1]
+    zg = depth_grid(sk.settings, float(H.max()))
+    zc = np.minimum(zg[None, :], H[:, None])                                        # the grid clipped to each column
+    C = np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1)      # integral of T from the top
+    Cg = _interp_rows(zc, zb, C)
+    length = np.diff(zc, axis=1)                                                    # each column's share of each bin
+    Tbar = np.divide(np.diff(Cg, axis=1), length, out=np.zeros_like(length), where=length > 0.0)
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    k = sk.props.k(Tbar)
+    flux = (0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * np.minimum(length[i], length[j])
+            * (Tbar[j] - Tbar[i]))
+    Qg = np.zeros_like(length)
+    np.add.at(Qg, i, flux)
+    np.add.at(Qg, j, -flux)
+    Qcum = np.concatenate([np.zeros((n, 1)), np.cumsum(Qg, axis=1)], axis=1)
+    return np.diff(_interp_rows(zb, zc, Qcum), axis=1)
+
+
+def sideways_heat(sk, columns, dt):
+    """The sideways conduction of one sub-step dt [s] as an explicit heat source [W per cell], the time average over
+    as many sub-cycles as keep dt k_max sum(w) / (rho c_p,min A) below SIDEWAYS_CFL (about 25 ms per cycle at 2 mm
+    spacing, spec 6.3); the cells' temperatures move between sub-cycles, the source being what `_conduct` then adds."""
+    mat = sk.material
+    valid = sk.valid
+    dz = sk.dz()
+    wsum = np.bincount(columns.edges.ravel(), weights=np.repeat(columns.conduct_weight, 2), minlength=sk.n)
+    rate = float((mat.k_table.max() * wsum / (mat.rho * mat.cp_table.min() * sk.area)).max())
+    cycles = max(1, int(math.ceil(dt * rate / SIDEWAYS_CFL)))
+    T, H = sk.T.copy(), sk.H.copy()
+    total = np.zeros_like(T)
+    for _ in range(cycles):
+        Q = np.where(valid, _sideways_once(sk, columns, T, dz), 0.0)
+        total += Q / cycles
+        if cycles > 1:
+            H = H + Q * dt / cycles
+            T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
+    return total
+
+

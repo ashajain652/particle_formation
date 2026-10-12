@@ -242,3 +242,72 @@ def test_the_trial_law_keeps_its_slope_when_the_base_is_above_t_rigid():
     assert b[1:] == pytest.approx(fd[1:], rel=0.18)
 
 
+# -- heat sideways (Task 5) --------------------------------------------------------------------------------------------
+def grid_skins(mat, n=7, h=1e-3, T=700.0, settings=None):
+    """Columns on a flat n x n grid of h squares split in two triangles (open edges), each filled to its minimum."""
+    from reentry_model import columns
+    x, y = np.meshgrid(np.arange(n) * h, np.arange(n) * h, indexing="ij")
+    pts = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)])
+    idx = np.arange(n * n).reshape(n, n)
+    a, b, c, d = idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()
+    col = columns.Columns(pts, np.vstack([np.column_stack([a, b, c]), np.column_stack([a, c, d])]))
+    s = settings or skin.SkinSettings(cell=20e-6)
+    sk = skin.Skins(mat, col.area, s)
+    sk.fill(skin.minimum_mass(mat, sk.area, s), T)
+    edge = (x.ravel() == 0) | (y.ravel() == 0) | (x.ravel() == x.max()) | (y.ravel() == y.max())
+    return sk, col, pts, edge
+
+
+def test_sideways_heat_sums_to_zero_between_columns_of_any_depth(coarse_sphere_mesh):
+    from test_reentry_model_columns import sphere_columns
+    mat = scheil()
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    sk = skin.Skins(mat, col.area, skin.SkinSettings())
+    rng = np.random.default_rng(4)
+    sk.fill(skin.minimum_mass(mat, sk.area, sk.settings) * rng.uniform(1.0, 3.0, col.n), rng.uniform(500.0, 900.0, col.n))
+    sk.regrid()
+    sk.T = np.where(sk.valid, sk.T + rng.normal(0.0, 20.0, sk.T.shape), sk.T)          # every cell different
+    sk.H = sk.m * mat.enthalpy(sk.T)
+    Q = skin.sideways_heat(sk, col, 0.01)
+    assert abs(Q.sum()) < 1e-12 * np.abs(Q).sum()
+    assert np.all(Q[~sk.valid] == 0.0)
+
+
+def test_sideways_heat_is_exact_for_a_field_linear_along_the_surface():
+    mat = sharp()                                                    # constant k: a linear field carries no net flux
+    sk, col, pts, edge = grid_skins(mat)
+    T = 600.0 + 2e4 * pts[:, 0] - 1e4 * pts[:, 1]                       # 20 K/mm and -10 K/mm, uniform in depth
+    sk.T = np.where(sk.valid, T[:, None], sk.T)
+    sk.H = sk.m * mat.enthalpy(sk.T)
+    Q = skin.sideways_heat(sk, col, 1e-4)                            # one cycle: the edge columns do not move first
+    assert np.abs(Q[~edge]).max() < 1e-9 * np.abs(Q[edge]).max()
+
+
+def test_conduction_between_columns_reaches_the_known_steady_temperature():
+    """Columns on a flat plate, insulated top and bottom, the boundary columns held at a linear field: the steady state
+    is that linear field everywhere (Laplace's equation, with a constant conductivity)."""
+    mat = sharp()
+    sk, col, pts, edge = grid_skins(mat, n=6)
+    T_edge = 600.0 + 3e4 * pts[:, 0] + 1e4 * pts[:, 1]
+    # 4 ms keeps one sideways cycle per step even at the grid's corner columns (a sixth of the interior's area): with
+    # two, the held columns would drift between cycles and the interior settle 1.8 K off (found while planning)
+    for _ in range(200):                                             # 0.8 s: the slowest mode decays e^-22 over it
+        sk.T[edge] = np.where(sk.valid[edge], T_edge[edge][:, None], 300.0)
+        sk.H = sk.m * mat.enthalpy(sk.T)
+        skin._conduct(sk, 0.004, np.zeros(sk.n), sk.area, 0.0, 0.0, None, skin.sideways_heat(sk, col, 0.004))
+    err = np.abs(sk.T[~edge][sk.valid[~edge]] - np.repeat(T_edge[~edge], sk.count[~edge]))
+    assert err.max() < 1e-9 * (T_edge.max() - T_edge.min())           # 3e-13 K measured: exact
+
+
+def test_a_sub_step_beyond_the_explicit_limit_is_sub_cycled_and_stays_bounded():
+    mat = scheil()
+    sk, col, pts, _ = grid_skins(mat, n=6)
+    hot = (np.rint(pts[:, 0] / 1e-3) + np.rint(pts[:, 1] / 1e-3)) % 2 == 0          # a checkerboard
+    sk.T = np.where(sk.valid, np.where(hot, 800.0, 400.0)[:, None], sk.T)
+    sk.H = sk.m * mat.enthalpy(sk.T)
+    E0 = sk.energy()
+    Q = skin.sideways_heat(sk, col, 0.2)                             # 0.2 s: about 30 times the limit on 1 mm columns
+    sk.H = sk.H + Q * 0.2
+    T = mat.temperature_from_enthalpy(sk.H[sk.valid] / sk.m[sk.valid])
+    assert sk.energy() == pytest.approx(E0, rel=1e-13)
+    assert T.min() >= 400.0 - 1e-6 and T.max() <= 800.0 + 1e-6
