@@ -1737,8 +1737,10 @@ of losing elements. Its sub-plans, one per build stage (spec §11.2):
   **Amended after the build** (Asha, 2026-10-12; facts 121–125): damped repetition is the interface's default, the
   metal crossing the base is valued along the 3D profile, and a macro step runs as parts. The coupling now converges at
   0.5 s and level 2 passes there; a melting step on the 100 mm sphere costs up to 1 041 s (fact 125), because long
-  parts during melting are rejected and need many passes: at 0.0625 s steps the same melting costs a quarter and is
-  converged (fact 126).
+  parts during melting are rejected and need many passes (fact 126). Built (Asha, option 1): while melting, a 0.5 s
+  macro step runs as parts of at most 0.0625 s with the heating interpolated in time, and the melting steps cost 122–226
+  s (fact 129). Open: the absorption cap is per macro step, so the absorbed and removed mass depend on the macro step
+  (fact 129).
 - `21-column-flow.md` — stage 3, flow in the columns. Scoped outline; written in full after 20.
 - `22-skin-spraying-flight.md` — stage 4, spraying from the skins and the flights. Scoped outline; written in full
   after 21.
@@ -1896,7 +1898,7 @@ they moved the plate's numbers by one to two points, and which of the two did it
      0.58–0.67 s a step; no rebuild; energy residuals 2.5e-11 and −1.4e-10. A 600 s flight at 0.5 s is therefore about
      20 hours, and each repeat doubles the skins' share. (One-repeat rule; the amended default's cost is fact 125.)
 
-## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–127)
+## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–129)
 
 Measured on `prototype/work-2026-10-12-skin-heat/code/` after the build, each once unless stated; the spike's scripts
 and outputs are in `prototype/work-2026-10-12-skin-heat/measure/spike/` (git-ignored). Asha's decisions from them
@@ -1954,13 +1956,41 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      the rest had settled; a skin pass costs about 0.65 s per 10 ms sub-step once melting (0.31 s before), 4.8 Newton
      iterations a sub-step. The same 1.5 s at 0.125 s macro steps: 425 s, 7 % rejected, 2.0 passes per part; at 0.0625
      s: 341 s, nothing rejected, 1.8 passes; the fully melting last quarter-second 1 011, 78 and 44 s. Removed by 1.5 s:
-     16.6, 21.15 and 21.28 g — converged at the small steps (0.6 % apart, 2 % at 1.0 s) and 22 % low at 0.5 s. Each
-     case measured once; heating was re-evaluated at every macro step.
+     16.6, 21.15 and 21.28 g. (Corrected 2026-10-12: that difference is not the small steps' accuracy, as first read, but
+     the absorption cap being per macro step, fact 129.) Each case measured once; heating was re-evaluated at every
+     macro step.
 127. **A base fault is a bottom cell outside the temperatures of the metal that crossed** (Asha, 2026-10-12; spec
      §6.6): between the base node's and the 3D profile's at the depth swept (`skinbody.jump_faults`). Compared with the
      node alone, the level-2 plate counted 812–1 694 faults at 0.1–0.5 s steps (none at 0.05 s), all of them the profile
      valuation's colder drawn metal; with the new definition the plate at 0.25 s counts none at any step, its recession
      unchanged to 1.5 s (fb4fe25; unit tier 388 passed, FEniCSx 19).
+128. **A 0.5 s macro step tracks the flight's heating.** From the committed SESAM references without melting (100 mm
+     from 77.5 km, peak 31.7 kW at 94.5 s and 59.9 km; 50 mm from 115 km, peak 9.1 kW at 221.6 s and 62.9 km), the
+     convective heating changes by at most 0.56 % (100 mm) and 0.74 % (50 mm) per 0.5 s within 90 % of its peak, 2.1 and
+     2.3 % within 50 %, and 7.0 and 6.4 % down to 10 %, the fastest on the falling tail where the body decelerates at
+     about 8 g (heating goes as about the square root of density times the cube of speed); its shortest time scale is
+     about 7 s. Held at the end-of-step value for 0.5 s, a step's heat is off by a median of 0.2 % (100 mm) and 0.8 %
+     (50 mm), at most 3.5 % on the tail, and the whole flight's by 0.11 % and 0.0005 % (mostly a 0.25 s shift in time).
+     In SESAM's lumped model the solidus is reached at 36.5 s (100 mm; heating at 72 % of peak, rising 0.4 % per 0.5 s)
+     and 173.6 s (50 mm; 43 %, 1.7 % per 0.5 s). The melting references' last samples (up to 19 % per 0.5 s) are the
+     lumped body's area collapsing at demise, not the flight. So the skins' need for short steps while melting is their
+     own, not the heating's (Asha, 2026-10-12: option 1, short parts under a 0.5 s macro step, with the heating
+     interpolated in time across the parts).
+129. **Option 1 built and measured; the absorption cap makes the result depend on the macro step.** While some skin's
+     top is non-rigid, a macro step runs as parts of at most 0.0625 s, each taking the heating interpolated in time at
+     its middle (d1b5636; unit tier 389 passed, FEniCSx 19). Level 2: at 0.5 s macro steps +4.5, −0.2, −2.5 % against
+     the one-dimensional reference at 1.0, 1.5, 2.0 s and +2.5, −0.8, −2.3 % against the fine box (parts 1, 4, 8, 8;
+     energy to 4.5e-10); at 0.05 s +0.3, −3.6, −3.8 % and −1.6, −4.3, −3.6 % (the heating's interpolation moved 1.5 s by
+     about a point) — both pass against both references. The 100 mm sphere at 0.5 s: below melting 80, 90, 59 s a step
+     (unchanged, no cap), melting 122, 121, 226 s (123, 307, 1 041 s before), energy residual −9.9e-9 against the 1e-8
+     criterion; its first 1.5 s of melting in 536 s against 1 454 s. The 4 mm sphere at 6 MW/m²: 5, 8 and 8 parts,
+     164 g removed, no base faults, energy residual 5.8e-9. But the removed mass on the 100 mm sphere is 16.5 g by 1.5 s
+     at 0.5 s macro steps (as before) against 21.2 g at 0.0625 s macro steps, and the difference is absorption: the cap,
+     a quarter of the mean edge per macro step shared by its parts, bound 18 848 times by 1.0 s at 0.5 s steps (14.7 g
+     absorbed) and never at 0.0625 s (30.0 g absorbed, 53.8 g by 1.5 s); with the cap scaled to the 0.5 s steps' rate
+     per second the 0.0625 s steps absorb 12.9 g and remove 4.50 g by 1.0 s against 4.61 g. Which absorption is physical
+     is open: the converged base sits a few kelvin above T_rigid, and on coarse elements the 3D gradient that sets the
+     absorbed depth is shallow.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

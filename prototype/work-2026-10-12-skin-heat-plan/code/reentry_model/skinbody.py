@@ -26,8 +26,12 @@ after the trajectory and the heating:
 A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part by
 drawing, absorbing and handing down (Asha, 2026-10-12): a part that would is run again as shorter parts (absorption's
 cap, ABSORB_MAX per macro step, is shared among the parts by their length), and the next macro step
-starts with as many parts as this one's moves called for. Within a part the base heat, the draws and the move all
-take the part's own step; the heating is the macro step's.
+starts with as many parts as this one's moves called for. While any skin's top is non-rigid (at or above T_rigid at
+the macro step's start), no part is longer than PART_MAX (Asha, 2026-10-12: long parts during melting were rejected for
+their moves and needed many passes). Within a part the base heat, the draws and the move all take the part's own step;
+the heating is interpolated in time between the last macro step's and this one's, at the part's middle, so a macro
+step receives the trapezoid of the two (Asha, 2026-10-12).
+
 The body's surface for the coupled run is the top surface, one 'patch' per corner (`columns.CornerSurface`), so the
 heating, the history and the trajectory's loop are unchanged."""
 import dataclasses
@@ -68,6 +72,11 @@ DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves 
 MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draw, absorb, hand down)
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
+# The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
+# (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s macro steps (1.8 passes);
+# before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
+# steps also removed 21.28 g against 16.6 g, but because ABSORB_MAX is per macro step, not because the parts were short.)
+PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid
 
 
 def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
@@ -87,10 +96,11 @@ class SkinBody(ThermalBody):
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
-                 repeat_rule=DEFAULT_REPEAT_RULE):
+                 repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX):
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
         self.repeat_rule = repeat_rule
+        self.part_max = part_max                             # s, or None: no cap on the parts while melting
         self.material, self.solver, self.mass_kg = material, solver, mass_kg
         self.emissivity = material.emissivity if emissivity is None else float(emissivity)
         self.T_ambient, self.remove, self.demise_fraction = float(T_ambient), bool(remove), float(demise_fraction)
@@ -112,6 +122,8 @@ class SkinBody(ThermalBody):
         self.last_trigger = {"columns_over": 0, "worst_ratio": 0.0, "total_ratio": 0.0}    # the first pass's mismatch
         self.last_passes, self.last_total = 1, 0.0           # the damped rule's passes and final total mismatch ratio
         self.step_parts, self._hint, self._ratio = 1, 1, 0.0   # parts of the last macro step; of the next; its move ratio
+        self._q_prev = None                                  # the last macro step's heating, for the interpolation in time
+        self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
         self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
@@ -150,15 +162,23 @@ class SkinBody(ThermalBody):
         """The macro step from t - dt to t (module docstring) as equal parts, as many as the last macro step's largest
         move called for."""
         n, self._ratio, self.step_parts = self._hint, 0.0, 0
+        sk, mat = self.skins, self.material
+        if self.part_max is not None and mat.melts and np.any(sk.valid[:, 0] & (sk.T[:, 0] >= mat.T_rigid)):
+            n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
+        q_end = np.asarray(loads.q_conv, dtype=float)
+        q_start = self._q_prev if self._q_prev is not None and self._q_prev.shape == q_end.shape else q_end
+        self._heating = (t - dt, dt, q_start, q_end)
         for k in range(n):
             self._advance_part(t if k == n - 1 else t - dt + (k + 1) * (dt / n), dt / n, dt, loads, 0 if n == 1 else 1)
         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
+        self._q_prev = q_end.copy()
 
     def _advance_part(self, t, dt, dt_macro, loads, depth):
         """One part of a macro step, ending at t: the passes, then -- if its draws and hand-downs would move a base more
         than MOVE_MAX of the mean surface edge -- the part again as shorter parts, else the books and the move."""
         mat, sk, mm = self.material, self.skins, self.moving
-        q = np.asarray(loads.q_conv, dtype=float)
+        t0, dt_m, q_start, q_end = self._heating
+        q = q_start + (q_end - q_start) * (((t - 0.5 * dt) - t0) / dt_m)     # the heating at the part's middle
         A_top = self.surface.areas
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)

@@ -354,7 +354,11 @@ The macro step Δt (`--dt`, 0.5 s by default, provisional) is the trajectory's a
 conduction run it as equal parts, so that no base moves more than a quarter of the mean surface edge in one part by
 drawing, absorbing and handing down: a part whose passes would move a base further is restored and run again as
 shorter parts, and the next macro step starts with as many parts as this one's largest move called for (Asha,
-2026-10-12). The heating is the macro step's throughout. The sub-step δt (`--skin-substep`, 10 ms) is the skins': heat,
+2026-10-12). While any skin's top is non-rigid at the macro step's start, no part is longer than 0.0625 s (Asha,
+2026-10-12, option 1: long parts during melting were rejected for their moves and needed many passes; fact 126). The
+heating is evaluated once per macro step and interpolated linearly in time between the last macro step's and this
+one's, each part taking it at its middle, so that a macro step receives the trapezoid of the two; a 0.5 s macro step
+tracks the flight's heating, whose shortest time scale is about 7 s (fact 128). The sub-step δt (`--skin-substep`, 10 ms) is the skins': heat,
 flow, sideways exchange and spray. The macro step's default is fixed by the convergence study of §11, level 3.
 (Measured 2026-10-12 on the level-2 plate over 2 s: the skins' work, counted as passes times sub-steps, is 1 346
 sub-step passes with 0.05 s macro steps, 1 630 with 0.1 s, 2 151 with 0.25 s and 2 437 with 0.5 s, because a longer
@@ -556,14 +560,17 @@ Each stage is tested and measured before the next begins.
   alone and about 400 with the one-repeat rule. Diagnosed on the 100 mm sphere's first 1.5 s of melting (2026-10-12):
   at 0.5 s macro steps 53 % of the time went on parts that converged and were then rejected for moving a base too far,
   and the accepted parts needed 4.4 passes on average; at 0.125 s steps 7 % and 2.0 passes, at 0.0625 s none and 1.8.
-  The three cost 1 454, 425 and 341 s, and removed 16.6, 21.15 and 21.28 g: the small steps are converged in the step
-  (0.6 % apart) and the 0.5 s step is 22 % low. Long parts during melting are both wrong and expensive.
+  The three cost 1 454, 425 and 341 s. With parts of at most 0.0625 s while melting under a 0.5 s macro step (§7.1),
+  the melting steps cost 122, 121 and 226 s against 123, 307 and 1 041 s.
 - **Melting onset at intermediate steps** (measured 2026-10-12, not explained): on the level-2 plate the centre is
   within 5 % of the exact solution at 1.0 s with 0.05 s and 0.5 s macro steps (+0.3 % and +4.5 %) but not with 0.1 s
   and 0.25 s (+8.0 % and +12.7 %, 0.06–0.10 mm), the excess arising in the steps where melting starts and staying as an
   offset; the profile's slope taken at the step's end instead of its start made it slightly worse.
 - **Absorption on coarse elements**: absorption's depth is the 3D gradient's extrapolation to T_rigid; on 4 mm elements
-  the gradient is shallow and absorption runs at its cap (§6.6).
+  the gradient is shallow and absorption runs at its cap (§6.6). The cap is per macro step, so the absorbed and removed
+  mass depend on the macro step: on the 100 mm sphere's first 1.5 s of melting, 16.5 g removed with 0.5 s macro steps
+  (the cap bound 18 848 times by 1.0 s) against 21.2 g with 0.0625 s (never bound); with the cap scaled to the same rate
+  per second the small steps match the large. Which is physical is open (measured 2026-10-12).
 - **The metal crossing the base at different temperatures**: what the move's sweep and the skins' draw or hand-down
   book differently still goes into one bottom cell; under 6 MW/m² on 4 mm elements 289 buried cells end above T_feed,
   at most 959 K (2 910 K before the profile valuation and damping; none at 3 MW/m²). Open, after the profile valuation
@@ -658,3 +665,6 @@ Each stage is tested and measured before the next begins.
   (§6.6, option a); a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in
   one part (§5.3, §7.1, option b) (Asha). The base-fault counter compares the bottom cell with the temperatures of the
   metal that crossed, not with the node alone (§6.6) (Asha).
+- 2026-10-12 (after the cost diagnosis): while the skins melt, a macro step's parts are at most 0.0625 s long, under a
+  0.5 s macro step for the trajectory and the heating, and the heating is interpolated in time across the parts
+  (§7.1, option 1) (Asha).

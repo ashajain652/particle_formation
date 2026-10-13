@@ -49,17 +49,18 @@ def test_a_body_with_no_heat_stays_uniform_and_its_mesh_and_skins_keep_their_boo
 def test_heating_with_removal_keeps_mass_and_energy_exact(coarse_sphere_mesh):
     """6 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, columns draw, the base recedes; the mass
     removed plus the mass left is the mass at start, and the energy books close to 1e-8 of the heat absorbed. Under the
-    damped repetition with the move limit (2026-10-12) each 0.5 s step runs as 5 to 7 parts and 169 g is removed, near
-    the 190 g the heat could melt from 880 K (measured; 8 g under the one-repeat rule, which left the heat parked)."""
+    damped repetition with the move limit and the melting part cap (2026-10-12) the three 0.5 s steps run as 5, 8 and 8
+    parts and 164 g is removed, near the 190 g the heat could melt from 880 K (measured; 8 g under the one-repeat rule,
+    which left the heat parked)."""
     b = make(coarse_sphere_mesh)
     M0 = b.mass()
     for k in range(3):
         b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
     assert b.removed_mass > 0.0 and b.drawn_mass > 0.0
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
-    assert abs(b.energy_balance_residual()) < 1e-8                  # 4.7e-9 measured (2026-10-12)
+    assert abs(b.energy_balance_residual()) < 1e-8                  # 5.8e-9 measured (2026-10-12)
     stats = b.skin_stats()
-    assert stats["base_recession_max_mm"] > 0.5                       # 10.2 mm at the nose (measured, 2026-10-12)
+    assert stats["base_recession_max_mm"] > 0.5                       # 10.4 mm at the nose (measured, 2026-10-12)
     assert b.surface_temperature().max() <= b.material.T_feed + 1.0   # liquid left as it formed
     assert stats["skin_cells"] == b.skins.count.sum() and b.last.Q_conv > 0.0
 
@@ -155,7 +156,7 @@ def test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it(coarse_
     while planning)."""
     results = {}
     for rule in ("column", "total", "never"):
-        b = make(coarse_sphere_mesh, repeat_rule=rule)
+        b = make(coarse_sphere_mesh, repeat_rule=rule, part_max=None)      # Task 10's conditions: whole 0.5 s parts
         M0 = b.mass()
         for k in range(3):
             b.advance(0.5 * (k + 1), 0.5, front_loads(b, 2e6))
@@ -180,7 +181,7 @@ def test_damped_repetition_converges_where_the_undamped_repeat_parks_the_heat(co
     asserted here)."""
     parked = {}
     for rule in ("column", "damped"):
-        b = make(coarse_sphere_mesh, repeat_rule=rule)
+        b = make(coarse_sphere_mesh, repeat_rule=rule, part_max=None)      # a whole 0.5 s part, where the cliff bites
         M0 = b.mass()
         b.advance(0.5, 0.5, front_loads(b, 3e6))
         assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
@@ -198,7 +199,7 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     1.65 mm here without it, measured; the tangential smoothing slides corners up to 1.4 mm along the surface besides);
     the parts give what the same shorter steps give when taken one by one with the same heating and the same share of
     the absorption cap (ABSORB_MAX is per macro step)."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, part_max=None)                          # the move limit alone, not the melting cap
     loads = front_loads(b, 6e6)
     moves = []
     policy = b.moving.move_with_policy
@@ -216,7 +217,7 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     assert abs(b.energy_balance_residual()) < 1e-8
     monkeypatch.setattr(skinbody, "MOVE_HINT_MARGIN", 1.0)              # one step at a time, as the parts were taken
     monkeypatch.setattr(skinbody, "ABSORB_MAX", skinbody.ABSORB_MAX / n)  # each with a part's share of the cap
-    c = make(coarse_sphere_mesh)
+    c = make(coarse_sphere_mesh, part_max=None)
     for k in range(n):
         c.advance(0.5 * (k + 1) / n, 0.5 / n, loads)
     assert c.removed_mass == pytest.approx(b.removed_mass, rel=1e-6)
@@ -234,3 +235,44 @@ def test_a_base_fault_is_a_bottom_cell_outside_the_temperatures_of_the_metal_tha
     T_bottom = np.array([886.0, 884.0 - tol + 0.1, 884.0 - tol - 0.1, 895.0 + tol + 0.1, 895.0 - tol + 0.1, 870.0])
     crossed = np.array([True, True, True, True, True, False])
     assert skinbody.jump_faults(T_bottom, T_node, T_deep, crossed).tolist() == [False, False, True, True, False, False]
+
+
+# -- the part length while melting and the heating in time (2026-10-12) ------------------------------------------------
+def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heating_at_its_middle(coarse_sphere_mesh):
+    """No part is longer than PART_MAX while some skin's top is non-rigid, none is capped before (from 880 K the first
+    0.5 s step is one part; with the tops melting the second is 8, measured), and every pass of a part takes the
+    heating interpolated linearly between the last macro step's and this one's at the part's middle, so a macro step
+    receives the trapezoid of the two."""
+    b = make(coarse_sphere_mesh)
+    seen = []
+    advance = skin.advance
+
+    def recorded(sk, dt, q_top, *a, **k):
+        seen.append((dt, np.array(q_top, dtype=float)))
+        return advance(sk, dt, q_top, *a, **k)
+    parts = []
+    part = b._advance_part
+
+    def recorded_part(t, dt, dt_macro, loads, depth):
+        parts.append((t, dt))
+        return part(t, dt, dt_macro, loads, depth)
+    b._advance_part = recorded_part
+    skinbody.skin_mod.advance = recorded
+    try:
+        q1 = front_loads(b, 2e6)
+        b.advance(0.5, 0.5, q1)
+        assert b.step_parts == 1 and all(np.array_equal(q, q1.q_conv) for _, q in seen)   # no earlier step: held
+        assert np.any(b.skins.T[:, 0] >= b.material.T_rigid)
+        seen.clear(), parts.clear()
+        q2 = front_loads(b, 3e6)
+        b.advance(1.0, 0.5, q2)
+    finally:
+        skinbody.skin_mod.advance = advance
+    assert b.step_parts >= int(np.ceil(0.5 / skinbody.PART_MAX)) and max(dt for _, dt in parts) <= skinbody.PART_MAX + 1e-12
+    expected = {round(dt, 12): [] for _, dt in parts}
+    for t, dt in parts:
+        frac = ((t - 0.5 * dt) - 0.5) / 0.5
+        expected[round(dt, 12)].append(q1.q_conv + (q2.q_conv - q1.q_conv) * frac)
+    for dt, q in seen:                                                     # every pass of every part
+        assert any(np.allclose(q, e, rtol=1e-12, atol=0.0) for e in expected[round(dt, 12)])
+

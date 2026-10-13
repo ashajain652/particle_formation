@@ -74,8 +74,9 @@ curvature operators, and the base operations.
   repetition, the profile valuation and the parts make the coupling converge and level 2 pass at 0.5 s, but a melting
   step on the 100 mm sphere costs up to 1 041 s (fact 125), the onset at 0.1–0.25 s steps and a late slow bias of 3–5 %
   at 0.05 s are unexplained, and buried superheated cells remain at 6 MW/m² (fact 124). Flow makes each pass dearer,
-  so the pass count is the first thing to settle: long parts during melting are rejected and need many passes, and
-  0.0625 s steps cost a quarter of 0.5 s steps on the 100 mm sphere's melting and are converged (fact 126).
+  so the pass count is the first thing to settle: long parts during melting were rejected and needed many passes
+  (fact 126), and parts of at most 0.0625 s while melting now cut a melting step to 122–226 s (fact 129). The absorption
+  cap, per macro step, makes the absorbed and removed mass depend on the macro step (fact 129): settle it before flow.
 - Sub-plan 20's measured run time (fact 120 under the one-repeat rule; fact 125 under the amended default: 60–93 s a
   macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which decides whether the
   sideways solve can be implicit over every cell or needs sub-cycling.
