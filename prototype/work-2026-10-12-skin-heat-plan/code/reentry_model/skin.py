@@ -15,7 +15,9 @@ form of each cell being `growth` times thicker than the one above.
 
 Stage 2 has no flow and no spraying: after each sub-step the contiguous cells at the top that are at or above T_feed
 leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model
-(`drawn`) at the base temperature, capped at T_rigid: the drawn metal's enthalpy is h(min(T_b, T_rigid)). The body
+(`drawn`) at the base temperature, capped at T_rigid: the drawn metal's enthalpy is h(min(T_b, T_rigid)), or, given the
+3D model's temperature gradient below the base, h(min(T, T_rigid)) averaged over the depth each draw takes along the
+3D model's linear profile (`profile_enthalpy`; Asha, 2026-10-12). The body
 (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the corners' displacements and reconciles
 each column with what the moving mesh actually swept."""
 import math
@@ -31,7 +33,7 @@ MERGE_BELOW = 0.5                 # a cell thinner than this times its target is
 REGRID_PASSES = 64                # merge-and-split rounds after an exchange: one unless a cell grew many-fold, each
                                   # round halving it (2.6 mm added at once needs 9)
 DELTA_M_MARGIN = 50.0e-6          # m of liquid kept below Girin's conjugate depth in the minimum mass (spec 6.1)
-INTERFACE_TOLERANCE = 1.0e-3      # |mismatch| / (|E_top| + |E_base|) above which a macro step repeats (spec 7.2)
+INTERFACE_TOLERANCE = 1.0e-3      # |mismatch| / (|E_top| + |E_base|): a macro step repeats above it (spec 7.2)
 JUMP_TOLERANCE = 5.0              # K between the metal crossing the base and the skin's bottom cell: a fault (spec 6.6,
                                   # provisional)
 NEWTON_TOL = 1.0e-6               # K: a sub-step has converged when no cell moves by more than this
@@ -41,6 +43,7 @@ DZ_FLOOR = 1.0e-12                # m: the conduction length of a vanishing cell
 SIDEWAYS_CFL = 0.9                # explicit sideways conduction: sub-cycles keep dt k sum(w) / (rho c_p A) below this
 TABLE_DT = 0.01                   # K, spacing of the skins' property tables (PropertyTable)
 TABLE_RANGE = (150.0, 3000.0)     # K, their extent; beyond it the end intervals are extended linearly
+PROFILE_POINTS = 8                # Gauss-Legendre points of an enthalpy averaged over a depth of the 3D profile
 
 
 # -- settings and cells (Task 2) ---------------------------------------------------------------------------------------
@@ -416,6 +419,21 @@ def minimum_mass(material, area, settings, delta_m=None):
 
 
 # -- heat through the depth (Task 4) -----------------------------------------------------------------------------------
+def profile_enthalpy(material, T_top, g, s0, s1, cap=None):
+    """The specific enthalpy [J/kg] averaged over the depths s0 to s1 [m] below a corner along the 3D model's linear
+    temperature profile T(s) = T_top - g s (g [K/m] the temperature gradient along the outward normal), each depth's
+    temperature capped at `cap` if given; s1 equal to s0 gives the value there. Metal swept or drawn from a layer whose
+    temperature falls with depth carries this, not the surface node's enthalpy: on the steep Scheil curve the two differ
+    by about 1e5 J/kg over a 1.5 mm layer falling 22 K/mm (the plate at 0.5 s, measured 2026-10-12)."""
+    x, w = np.polynomial.legendre.leggauss(PROFILE_POINTS)
+    T_top, g, s0, s1 = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in (T_top, g, s0, s1)))
+    s = 0.5 * (s0 + s1)[..., None] + 0.5 * (s1 - s0)[..., None] * x
+    T = T_top[..., None] - g[..., None] * s
+    if cap is not None:
+        T = np.minimum(T, cap)
+    return (material.enthalpy(T.ravel()).reshape(T.shape) * w).sum(axis=-1) / 2.0
+
+
 @dataclass
 class SkinBook:
     """What a pass did, per column: energies [J] and masses [kg]."""
@@ -513,14 +531,16 @@ def _conduct(sk, dt, q_top, A_top, T_amb, eps, T_b, Q_side=None):
     return tuple(out)
 
 
-def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True):
+def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None):
     """The macro step's sub-steps for every column (spec 7.2). Each sub-step: the sideways heat `side(sk, h)` [W per
     cell] if given (Task 5), the implicit conduction, then -- with `remove` and a melting material -- the contiguous top
     cells at or above T_feed leave, a column below its minimum mass m_min [kg] draws back to it, and the cells are split
     and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but never above T_rigid -- a 3D base
     node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it reached 930 K in one 0.5 s step, found
     while planning), and drawing at its temperature would draw liquid that the next sub-step removes, without limit;
-    what the 3D model actually loses is reconciled by the body after the base moves.
+    what the 3D model actually loses is reconciled by the body after the base moves. With `g_base` [K/m per column], the
+    3D model's temperature gradient along the outward normal below the base, each draw takes the next layer down: its
+    enthalpy is h(min(T, T_rigid)) averaged along T(s) = T_b - g_base s over the depth it takes (`profile_enthalpy`).
 
     T_b1 None: the trial pass, on a copy (the skins are left as they were), base held at T_b0; returns the base law
     (a, b) per column, E_base / dt = a + b T_b [W into the 3D model], from the pass's base energy and its derivative with
@@ -539,6 +559,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
         sk.S = np.zeros_like(sk.m)
     h_b = mat.enthalpy(np.minimum(T_b, mat.T_rigid))
     s_b = (T_b < mat.T_rigid).astype(float)           # drawn metal follows the base only where the draw is not capped
+    drawn_depth = np.zeros(sk.n)                      # m, how far down the 3D profile this pass has drawn
     melting = remove and mat.melts
     for _ in range(N):
         Q_side = side(sk, h) if side is not None else None
@@ -555,6 +576,14 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
             book.removed += gone
             book.removed_H += gone_H
         short = np.maximum(m_min - sk.column_mass(), 0.0)
+        if g_base is not None and np.any(short > 0.0):
+            rows = np.flatnonzero(short > 0.0)
+            dd = short[rows] / (mat.rho * sk.area[rows])
+            h_b, s_b = h_b.copy(), s_b.copy()
+            h_b[rows] = profile_enthalpy(mat, T_b[rows], g_base[rows], drawn_depth[rows], drawn_depth[rows] + dd,
+                                         cap=mat.T_rigid)
+            s_b[rows] = (T_b[rows] - g_base[rows] * (drawn_depth[rows] + 0.5 * dd) < mat.T_rigid).astype(float)
+            drawn_depth[rows] += dd
         book.drawn += short
         book.drawn_H += sk.add_bottom(short, h_b, s_b)
         sk.regrid()

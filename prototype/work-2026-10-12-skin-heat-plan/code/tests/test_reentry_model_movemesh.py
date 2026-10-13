@@ -201,6 +201,26 @@ def test_the_books_close_what_the_corners_swept_left_the_body(coarse_sphere_mesh
     assert 0.0 < abs(r.correction) < 0.02 * r.swept_enthalpy.sum()
 
 
+def test_an_inward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_its_depth(coarse_sphere_mesh):
+    """`h_inward(depth)` values the metal each corner's inward sweep takes out of the 3D model (the skins pass the
+    average along the 3D profile below the corner, 2026-10-12): it is called with each corner's swept depth, the
+    volume over its dual area, and the books still close exactly."""
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    E0 = solver.energy()
+    seen = {}
+
+    def h_inward(depth):
+        seen["depth"] = depth
+        return np.full(depth.shape, 1.0e5)
+    r = moving.move(inward(moving, 3e-4), h_inward)
+    assert np.abs(seen["depth"] / 3e-4 - 1.0).max() < 0.02                  # the dual-area depth, to the curvature
+    assert r.swept_enthalpy == pytest.approx(mat.rho * r.swept_volume * 1.0e5, rel=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+
+
 def test_a_linear_field_is_carried_to_the_moved_nodes(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()

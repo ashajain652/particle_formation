@@ -48,16 +48,18 @@ def test_a_body_with_no_heat_stays_uniform_and_its_mesh_and_skins_keep_their_boo
 
 def test_heating_with_removal_keeps_mass_and_energy_exact(coarse_sphere_mesh):
     """6 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, columns draw, the base recedes; the mass
-    removed plus the mass left is the mass at start, and the energy books close to 1e-8 of the heat absorbed."""
+    removed plus the mass left is the mass at start, and the energy books close to 1e-8 of the heat absorbed. Under the
+    damped repetition with the move limit (2026-10-12) each 0.5 s step runs as 5 to 7 parts and 169 g is removed, near
+    the 190 g the heat could melt from 880 K (measured; 8 g under the one-repeat rule, which left the heat parked)."""
     b = make(coarse_sphere_mesh)
     M0 = b.mass()
     for k in range(3):
         b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
     assert b.removed_mass > 0.0 and b.drawn_mass > 0.0
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
-    assert abs(b.energy_balance_residual()) < 1e-8                  # 1.6e-9 measured while planning
+    assert abs(b.energy_balance_residual()) < 1e-8                  # 4.7e-9 measured (2026-10-12)
     stats = b.skin_stats()
-    assert stats["base_recession_max_mm"] > 0.5                       # 0.88 mm at the nose (measured)
+    assert stats["base_recession_max_mm"] > 0.5                       # 10.2 mm at the nose (measured, 2026-10-12)
     assert b.surface_temperature().max() <= b.material.T_feed + 1.0   # liquid left as it formed
     assert stats["skin_cells"] == b.skins.count.sum() and b.last.Q_conv > 0.0
 
@@ -147,7 +149,7 @@ def test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_a
 
 # -- what triggers the interface repeat (Task 7, measured in Task 10) --------------------------------------------------
 def test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it(coarse_sphere_mesh):
-    """Each repeat rule (measured in Task 10; the spec's per-column rule is the default) leaves the books exact, and the
+    """Each undamped repeat rule (measured in Task 10; the damped rule is the default) leaves the books exact, and the
     first pass's mismatch is recorded whatever the rule. 2 MW/m2 from 880 K on 4 mm elements: without a repeat, 3 MW/m2
     already runs away -- the 3D base overshoots T_feed and every sub-step removes and redraws a whole skin (measured
     while planning)."""
@@ -166,3 +168,57 @@ def test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it(coarse_
     assert results["never"] == 0 and results["column"] >= results["total"] > 0
     with pytest.raises(ValueError):
         make(coarse_sphere_mesh, repeat_rule="sometimes")
+    assert make(coarse_sphere_mesh).repeat_rule == skinbody.DEFAULT_REPEAT_RULE == "damped"     # Asha, 2026-10-12
+
+
+def test_damped_repetition_converges_where_the_undamped_repeat_parks_the_heat(coarse_sphere_mesh):
+    """3 MW/m2 on 4 mm elements from 880 K, one 0.5 s step: the skins' base heat falls off a cliff a little above the
+    start-of-step base temperature, so the per-column rule's one repeat leaves heat in the deferred mismatch (7.7 % of
+    the step's absorbed heat, measured) while the damped rule repeats with Aitken's relaxation until the mismatch is
+    within INTERFACE_TOLERANCE (9 passes, 0.14 % left, measured). Mass is exact under both; the energy residual is below
+    1e-8 under the damped rule (the column rule's, 1.2e-8 after this one step, is the parked heat's book-keeping, not
+    asserted here)."""
+    parked = {}
+    for rule in ("column", "damped"):
+        b = make(coarse_sphere_mesh, repeat_rule=rule)
+        M0 = b.mass()
+        b.advance(0.5, 0.5, front_loads(b, 3e6))
+        assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
+        parked[rule] = np.abs(b.pending).sum() / b.absorbed_heat
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert parked["column"] > 0.05
+    assert parked["damped"] < 0.005
+    assert 2 < b.last_passes < skinbody.DAMPED_MAX_PASSES and b.last_total <= skin.INTERFACE_TOLERANCE
+
+
+# -- the move limit (2026-10-12) ---------------------------------------------------------------------------------------
+def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_shorter_steps(coarse_sphere_mesh, monkeypatch):
+    """6 MW/m2 from 880 K on 4 mm elements: a 0.5 s step would draw and absorb more than MOVE_MAX of the mean edge
+    (1 mm), so it is run again as shorter parts, every move's inward part within the limit (a mesh refused moves of
+    1.65 mm here without it, measured; the tangential smoothing slides corners up to 1.4 mm along the surface besides);
+    the parts give what the same shorter steps give when taken one by one with the same heating and the same share of
+    the absorption cap (ABSORB_MAX is per macro step)."""
+    b = make(coarse_sphere_mesh)
+    loads = front_loads(b, 6e6)
+    moves = []
+    policy = b.moving.move_with_policy
+
+    def recorded(u, h_inward=None):
+        moves.append(float(np.abs(np.einsum("ij,ij->i", u, b.columns.normal)).max()))
+        return policy(u, h_inward)
+    b.moving.move_with_policy = recorded
+    M0 = b.mass()
+    b.advance(0.5, 0.5, loads)
+    n = b.step_parts
+    limit = skinbody.MOVE_MAX * b.columns.edge_length.mean()
+    assert n > 1 and len(moves) == n and max(moves) < 1.01 * limit       # the smoothing's own normal correction on top
+    assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    monkeypatch.setattr(skinbody, "MOVE_HINT_MARGIN", 1.0)              # one step at a time, as the parts were taken
+    monkeypatch.setattr(skinbody, "ABSORB_MAX", skinbody.ABSORB_MAX / n)  # each with a part's share of the cap
+    c = make(coarse_sphere_mesh)
+    for k in range(n):
+        c.advance(0.5 * (k + 1) / n, 0.5 / n, loads)
+    assert c.removed_mass == pytest.approx(b.removed_mass, rel=1e-6)
+    assert c.energy() == pytest.approx(b.energy(), rel=1e-9)
+    assert np.abs(c.moving.mesh.points[c.moving.corners] - b.moving.mesh.points[b.moving.corners]).max() < 1e-9

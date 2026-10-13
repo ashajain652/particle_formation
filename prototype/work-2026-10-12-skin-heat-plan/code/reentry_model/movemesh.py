@@ -337,9 +337,12 @@ class MovingMesh:
         """The largest angle between neighbouring surface triangles' normals [degrees]."""
         return max_dihedral(self.mesh.points[self.corners], self.faces_corner)
 
-    def move(self, u_corners):
+    def move(self, u_corners, h_inward=None):
         """Move the corners by `u_corners` (n_corners, 3), the zone with them; remap the enthalpy; close the books.
-        Refuses, changing nothing, if any element the move touches would invert or fall below the radius-ratio floor."""
+        Refuses, changing nothing, if any element the move touches would invert or fall below the radius-ratio floor.
+        `h_inward(depth)`: the specific enthalpy [J/kg] per corner of metal swept inward to `depth` [m] (the swept volume
+        over the corner's area), for the corners whose sweep takes metal out of the 3D model; None books every sweep at
+        the corner's enthalpy."""
         mesh, solver, mat = self.mesh, self.solver, self.material
         u = np.asarray(u_corners, dtype=float)
         U = self.zone.displacement(u)
@@ -371,9 +374,13 @@ class MovingMesh:
         if np.abs(dV).sum() > 0.0:
             dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
         # the slab is booked at the corners' old enthalpy, not the mean of the old and remapped values: the exact-solution
-        # moving-front test is 0.0010 of the rise with the surface value against 0.0093 with the mean, and in stage 2
-        # the metal crossing the rigid front is booked at the base node's temperature
+        # moving-front test is 0.0010 of the rise with the surface value against 0.0093 with the mean. A metal layer
+        # leaving through the rigid front is booked along the 3D profile below its corner when the caller gives it
+        # (`h_inward`): at 0.5 s steps the corner's own enthalpy overstated it by about 1e5 J/kg (2026-10-12)
         swept_h = mat.rho * dV * h[self.corners]
+        if h_inward is not None and np.any(dV > 0.0):
+            inward = dV > 0.0
+            swept_h = np.where(inward, mat.rho * dV * h_inward(np.where(inward, dV / area, 0.0)), swept_h)
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         correction = (E_old - swept_h.sum()) - solver.energy()
@@ -422,7 +429,7 @@ class MovingMesh:
             return "compression"
         return None
 
-    def move_with_policy(self, u_corners):
+    def move_with_policy(self, u_corners, h_inward=None):
         """Rebuild first if compression calls for it; move; if the move is refused, rebuild and move again. A move
         refused on a fresh mesh is a model failure (RuntimeError, exit code 1)."""
         rebuilt = False
@@ -430,11 +437,11 @@ class MovingMesh:
         if reason:
             self.rebuild(reason)
             rebuilt = True
-        result = self.move(u_corners)
+        result = self.move(u_corners, h_inward)
         if result.refused:
             self.rebuild("quality")
             rebuilt = True
-            result = self.move(u_corners)
+            result = self.move(u_corners, h_inward)
             if result.refused:
                 raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
                     float(np.linalg.norm(u_corners, axis=1).max())))

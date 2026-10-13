@@ -70,11 +70,13 @@ curvature operators, and the base operations.
 
 ## Inputs to settle before the code-level plan is written
 
-- **The skins' interface at 0.5 s macro steps** (sub-plan 20's Results; facts 118–119, built 2026-10-12). At the
-  flight's step the deferred mismatch holds half the absorbed heat and the plate never melts, and the base
-  reconciliation can bury superheated cells. Stage 2 is verified at 0.05 s only. Asha chooses the cure first; flow
-  would build on the same interface.
-- Sub-plan 20's measured run time (fact 120: 62–70 s a macro step solid, 82–133 s melting on the 100 mm sphere, 98–99 %
-  in the skins), which decides whether the sideways solve can be implicit over every cell or needs sub-cycling.
+- **The skins' interface** (sub-plan 20's Results; facts 118–125). Amended after the build (Asha, 2026-10-12): damped
+  repetition, the profile valuation and the parts make the coupling converge and level 2 pass at 0.5 s, but a melting
+  step on the 100 mm sphere costs up to 1 041 s (fact 125), the onset at 0.1–0.25 s steps and a late slow bias of 3–5 %
+  at 0.05 s are unexplained, and buried superheated cells remain at 6 MW/m² (fact 124). Flow makes each pass dearer,
+  so the pass count is the first thing to settle.
+- Sub-plan 20's measured run time (fact 120 under the one-repeat rule; fact 125 under the amended default: 60–93 s a
+  macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which decides whether the
+  sideways solve can be implicit over every cell or needs sub-cycling.
 - Whether the implicit thickness pressures are enough to keep grid-scale growth out (level 1's growth test), given
   that the capillary length (about 1.8 mm) is close to the column spacing.

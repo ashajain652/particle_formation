@@ -71,7 +71,7 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule="column"):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
@@ -121,7 +121,7 @@ def main():
     a.add_argument("--solver", default="skfem")
     a.add_argument("--h-mm", type=float, default=2.0, help="3D element size [mm]")
     a.add_argument("--width-mm", type=float, default=WIDTH * 1e3)
-    a.add_argument("--repeat-rule", default="column", choices=skinbody.REPEAT_RULES)
+    a.add_argument("--repeat-rule", default=skinbody.DEFAULT_REPEAT_RULE, choices=skinbody.REPEAT_RULES)
     a.add_argument("--r-flat-mm", type=float, default=R_FLAT * 1e3)
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
     a.add_argument("--out", default="skin_plate.json")

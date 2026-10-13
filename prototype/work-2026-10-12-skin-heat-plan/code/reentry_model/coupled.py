@@ -44,7 +44,7 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
                     "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
                     "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
-                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s"]
+                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 

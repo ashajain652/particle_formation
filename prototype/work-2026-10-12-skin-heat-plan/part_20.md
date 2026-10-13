@@ -31,14 +31,16 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 383 passed (1 skipped, no
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 387 passed (1 skipped, no
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
-70ecbdd..f5d6633). The planning copy was then synced from the build and this document regenerated, so the code below is
-the code as built, with the build's corrections, and the measurements of Tasks 0, 9 and 10 are the build's. The
-corrections and the rulings that made them are listed under Results at the end. **Read Results before running the skins
-at a macro step longer than 0.05 s: the interface coupling is verified at 0.05 s only, and at 0.5 s it is wrong.**
+70ecbdd..f5d6633), then **amended after the build** the same day (a45f204) by Asha's three decisions on the interface,
+below: damped repetition is the default, the metal crossing the base is valued along the 3D profile, and a macro step
+runs as parts so that no base moves more than a quarter of the mean surface edge in one. The planning copy was then
+synced from the code and this document regenerated, so the code below is the code as amended, and the measurements of
+Tasks 0, 9 and 10 are the build's or the amendment's, as marked. Results at the end lists the corrections, the
+amendment's measurements and what is still open.
 
 ## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
 
@@ -90,6 +92,19 @@ Asha's decisions while this plan was written (2026-10-12; the spec records them 
   triangulation (1.4 s on 2 mm elements, 0.9 s on 1 mm); local surface remeshing (spec §13) is the back-up. Task 9.
 - **A task measures what triggers the interface repeat.** Task 10.
 
+Asha's decisions after the build (2026-10-12, from a diagnosis of the interface at 0.5 s macro steps; spec §5.3, §6.6,
+§7.1, §7.2 and §16 amended; Results):
+
+- **Damped repetition is the default** (`repeat_rule="damped"`): the step repeats, each pass re-linearised at a
+  temperature moved only a fraction of the way to the last 3D answer (Aitken's method), until the mismatch is within
+  10⁻³ of the throughput. The one-repeat rules stay selectable. Task 7.
+- **The metal crossing the base is valued along the 3D model's linear profile below it** (option a): each draw takes
+  the next layer down at its own enthalpy (`skin.profile_enthalpy`, Task 4), and the moving mesh books an inward sweep
+  the same way (`MovingMesh.move(u, h_inward)`, Task 0).
+- **A macro step runs as parts** (option b) so that no base moves more than `MOVE_MAX`, a quarter of the mean surface
+  edge, in one part by drawing, absorbing and handing down; absorption's cap stays per macro step, shared among the
+  parts. Task 7.
+
 Rulings made while writing, with their reasons (each is stated again where its code is):
 
 1. **The rebuild carries enthalpy by L2 projection** (spec §5.3, under its own fallback clause): interpolating at the new
@@ -112,15 +127,16 @@ Rulings made while writing, with their reasons (each is stated again where its c
 7. **The surface gradient and curvature operators and the cells' velocity are left to sub-plan 21**, the first stage to
    use them; nothing here could test them.
 8. **`SkinBody` is a module of its own**, `skinbody.py`: `body.py` holds the element model, which must stay bit for bit.
-9. **The interface keeps the spec's per-column repeat as the default**, with the other rules selectable for Task 10's
+9. **The interface kept the spec's per-column repeat as the default**, with the other rules selectable for Task 10's
    measurement. A predictor for the linearisation temperature was tried and dropped: it ran away on 4 mm elements.
-   The build measured the rules (Task 10) and found the coupling itself wrong at 0.5 s macro steps (Results).
+   Superseded after the build: the coupling was wrong at 0.5 s macro steps, and damped repetition is the default
+   (above).
 10. **A skin run's frames carry per-corner data**; `--animate` and `--stills`, which read the element model's frames, are
     refused with skins. Task 8.
 11. **Skin runs mesh without prism layers and with the dense band**, which the moving mesh's rebuild reproduces; an
     explicit `--prism-layers` above 0 is refused with exit code 2 (added in the build). Task 8.
 12. **Level 3's Step 2 runs against SESAM are the build's**, not this plan's planning: at the measured cost each takes
-    hours (Task 10). The build holds them: they run at 0.5 s, where the coupling is not yet right (Results).
+    hours (Task 10). Still to run: held while the coupling was wrong at 0.5 s, and now a question of cost (Results).
 
 ## Global Constraints
 
@@ -143,10 +159,11 @@ Rulings made while writing, with their reasons (each is stated again where its c
 
 ## Review Focus
 
-1. **A coarse 3D base overshooting T_rigid or T_feed within a macro step** — the draw is capped at T_rigid, and the
-   interface's repeat keeps the step from failing (built: without it, 3 MW/m² on 4 mm elements asks for a 4.65 mm corner
-   move in the first 0.5 s step, which the mesh mover refuses; with it the steps complete, but with 75 base faults —
-   Results). Pinned by
+1. **A coarse 3D base overshooting T_rigid or T_feed within a macro step** — the draw is capped at T_rigid, the
+   damped repetition converges the interface, and the parts keep every move within the mesh's reach (without them,
+   3 MW/m² on 4 mm elements asked for a 4.65 mm corner move that the mesh mover refused). Pinned by
+   `test_damped_repetition_converges_where_the_undamped_repeat_parks_the_heat`,
+   `test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_shorter_steps` (Task 7),
    `test_a_draw_from_a_base_above_t_rigid_takes_rigid_metal` (Task 4) and
    `test_every_repeat_rule_keeps_the_books_and_records_what_triggered_it` (Task 7).
 2. **Neighbouring corners receding at different speeds** — each is booked its own sweep. Pinned by
@@ -213,7 +230,10 @@ their residuals (the interpolation's −4.1 %).
 
 {{DIFF_MOVEMESH}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 35 passed. The build added the retry in `locate`
+- [ ] **Step 4: Run them to see them pass.** Expected: 36 passed. The amendment added `move(u, h_inward)`, which books
+  an inward sweep at the enthalpy the caller gives for each corner's swept depth (the skins pass the 3D profile's
+  average), pinned by `test_an_inward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_its_depth`. The build added
+  the retry in `locate`
   (`LOCATE_RETRY = 256`): 0.3–0.4 % of a rebuild's quadrature points, all interior, had been placed in a wrong element
   and extrapolated from it (worst barycentric coordinate −0.27 on the 100 mm sphere); they are now retried with 256
   candidates, pinned by `test_locate_finds_the_containing_element_for_every_quadrature_point_of_a_rebuild`.
@@ -229,7 +249,7 @@ their residuals (the interpolation's −4.1 %).
   at 30.0 mm (29.5 mm completed: the fold of the prescribed motion law, fact 104), and the rebuilds' residuals fall to
   4·10⁻⁶–1.6·10⁻⁵ of the total enthalpy, in 167 s (20 rebuilds of 6.2–7.5 s each).
 
-- [ ] **Step 6: Unit tier and commit.** Expected 345 passed, 1 skipped.
+- [ ] **Step 6: Unit tier and commit.** Expected 346 passed, 1 skipped.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py analysis/movemesh_recession.py
@@ -268,7 +288,7 @@ positivity: 3 of 6 756 edges on the 4 mm test sphere, 4 of 28 245 on the default
 
 - [ ] **Step 4: Run them to see them pass.** Expected: 5 passed.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 350 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 351 passed, 1 skipped.
 
 ```bash
 git add reentry_model/columns.py tests/test_reentry_model_columns.py
@@ -325,7 +345,7 @@ git mv tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py
 
 {{DIFF_FENICSX_A}}
 
-  Run the unit tier: expected 350 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
+  Run the unit tier: expected 351 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
 
 - [ ] **Step 2: Write the new skin's tests** (`tests/test_reentry_model_skin.py`, which grows by a section per task):
 
@@ -341,7 +361,7 @@ git mv tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py
 - [ ] **Step 5: Run them to see them pass.** Expected: 7 passed — once Task 3's `minimum_mass` exists, because these
   tests' helper calls it. Do Tasks 2 and 3 together and commit once, after Task 3 (the build did).
 
-- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 358 passed, 1 skipped, after Task 3.
+- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 359 passed, 1 skipped, after Task 3.
 
 ```bash
 git add -A reentry_model/skin.py reentry_model/skin1d.py reentry_model/body.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py tests/test_reentry_model_melting_skin.py tests/test_reentry_model_fenicsx.py
@@ -373,7 +393,7 @@ Done in the same pass as Task 2, whose tests need `minimum_mass`; one commit for
 
 - [ ] **Step 4: Run it to see it pass.** Expected: 8 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 358 passed, 1 skipped (Tasks 2 and 3).
+- [ ] **Step 5: Unit tier and commit.** Expected 359 passed, 1 skipped (Tasks 2 and 3).
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -398,7 +418,10 @@ search per column, stage 1's solver, the tangent the property table's own slope)
 material — the contiguous top cells at or above T_feed leave with their enthalpy, a column below its minimum draws back
 to it, and the cells are re-split. The draw takes rigid metal: at the base temperature, never above T_rigid (ruling 4),
 and metal drawn at the cap carries no sensitivity to the base (`add_bottom(dm, h, s)` with s 0 where capped), pinned by
-`test_the_trial_law_keeps_its_slope_when_the_base_is_above_t_rigid` against a ±0.05 K finite difference.
+`test_the_trial_law_keeps_its_slope_when_the_base_is_above_t_rigid` against a ±0.05 K finite difference. Given the 3D
+model's gradient below the base (`g_base`, amended after the build), each draw takes the next layer down the 3D
+model's linear profile at that layer's enthalpy, `profile_enthalpy` (an 8-point Gauss average, within 12 J/kg of a
+200 001-point one on the Scheil curve), pinned by `test_the_profile_enthalpy_is_the_mean_along_the_3d_profile_and_a_draw_takes_it`.
 Steady ablation checks it against the exact solution: 2.1 % slow with 20 µm cells and 0.5 ms sub-steps, 1.1 % with
 10 µm and 0.25 ms — the first-order error of removing whole cells.
 
@@ -412,9 +435,9 @@ Steady ablation checks it against the exact solution: 2.1 % slow with 20 µm cel
 
 {{SKIN_T4}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 14 passed in the file.
+- [ ] **Step 4: Run them to see them pass.** Expected: 15 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 364 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 366 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -448,10 +471,10 @@ about 25 ms, so the default 10 ms sub-step needs one.
 
 {{SKIN_T5}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 18 passed in the file (the steady two-dimensional field to
+- [ ] **Step 4: Run them to see them pass.** Expected: 19 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 368 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 370 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -492,7 +515,7 @@ git commit -m "Layered skins: explicit sideways conduction between columns, cons
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 370 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 372 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -510,23 +533,33 @@ git commit -m "Thermal backends: the corner columns' base law as an implicit nod
 - Consumes: Tasks 0–6.
 - Produces: `skin.hand_down(sk, m_min, T_rigid) -> (mass, H)`; `skinbody.SkinBody(mesh, material, solver, mass_kg,
   settings=None, T0=300.0, emissivity=None, T_ambient=0.0, v_hat=(1, 0, 0), deform_depth=DEFORM_DEPTH, remove=True,
-  demise_fraction=0.01, repeat_rule="column")` with `.moving`, `.columns`, `.skins`, `.surface` (a `CornerSurface`),
+  demise_fraction=0.01, repeat_rule=DEFAULT_REPEAT_RULE)` with `.moving`, `.columns`, `.skins`, `.surface` (a `CornerSurface`),
   `.theta`, `.pending`, `.column_removed`, `.removed_mass`, `.removed_enthalpy`, `.drawn_mass`, `.absorbed_mass`,
-  `.handed_mass`, `.interface_repeats`, `.jump_faults`, `.absorb_capped`, `.wall`, `.last_trigger`; `advance(t, dt,
+  `.handed_mass`, `.interface_repeats`, `.jump_faults`, `.absorb_capped`, `.wall`, `.last_trigger`, `.last_passes`,
+  `.last_total`, `.step_parts`; `advance(t, dt,
   loads, state=None)`, `mass(t=None)`, `energy()`, `energy_balance_residual()`, `mean_temperature()`,
   `surface_temperature()` (the top cells), `radiated_power()`, `field()`, `nose_radius()`, `demised()`,
   `surface_stats()`, `skin_stats()` (the history columns of spec §10.2 that exist at stage 2), `mesh` (property);
-  `REPEAT_RULES = ("column", "total", "never")`, `ABSORB_MAX`, `GRADIENT_FLOOR`.
+  `REPEAT_RULES = ("column", "total", "never", "damped")`, `DEFAULT_REPEAT_RULE = "damped"`, `DAMPED_MAX_PASSES`,
+  `DAMPED_OMEGA0`, `DAMPED_OMEGA_RANGE`, `DAMPED_TOL_K`, `MOVE_MAX`, `SPLIT_DEPTH_MAX`, `MOVE_HINT_MARGIN`,
+  `ABSORB_MAX`, `GRADIENT_FLOOR`.
 
 At time zero each column takes its minimum from the 3D model: the corners move in by it and the skins hold exactly what
 they swept. The macro step (spec §4, §7.2): the trial pass gives each column its base law; the 3D step takes that law
 at the corner nodes with no convective load and no radiation on its boundary, and last step's deferred mismatch as a
 nodal load; the real pass books the heat, removes the liquid and draws; the mismatch is deferred to the node, and the
-step repeats once, re-linearised, under the repeat rule. Then the base moves: draw (already in the skins), absorb (the
-base node's excess over T_rigid along the 3D gradient, capped at `ABSORB_MAX` of the mean edge) and hand-down become one
+step repeats under the repeat rule: by default (amended after the build) until the mismatch is within the tolerance,
+each pass re-linearised at a temperature moved only a fraction ω of the way to the last 3D answer, Aitken's method
+choosing ω; the draws take the 3D profile below each base, its slope from the part's start. A macro step runs as
+equal parts (amended after the build): a part whose draws, absorption and hand-downs would move a base more than
+`MOVE_MAX` of the mean edge is restored and run again as shorter parts, and the next macro step starts with as many
+parts as this one's largest move called for. Then the base moves: draw (already in the skins), absorb (the
+base node's excess over T_rigid along the 3D gradient, capped at `ABSORB_MAX` of the mean edge per macro step, shared
+among its parts) and hand-down become one
 inward displacement per corner, plus the volume-neutral smoothing; `move_with_policy` applies it, and each column is
 reconciled with what its corner actually swept — its bottom gains the swept mass less what it already exchanged, its
-enthalpy the swept enthalpy less what it already exchanged — so mass and energy are exact. Heating and radiation use the
+enthalpy the swept enthalpy less what it already exchanged, an inward sweep booked along the profile the draws used —
+so mass and energy are exact. Heating and radiation use the
 top surface (the bases moved out by the skins' thicknesses).
 
 - [ ] **Step 1: Write the tests**
@@ -547,13 +580,13 @@ top surface (the bases moved out by the skins' thicknesses).
 
 {{SKINBODY}}
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 7 passed (about 75 s; the seventh,
-  `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped`, was added at the final review); FEniCSx
-  `-k skin_body` 1 passed (on that test's two 0.5 s steps the backends' round-off tips 2 of 2 254 columns across a split
-  or removal threshold, so the masses agree to 1e-9 relative and the removed mass to 1e-8 — measured 4e-12 in the build —
-  and the largest temperature difference is 1.12 K).
+- [ ] **Step 5: Run them to see them pass.** Expected: 9 passed (about 5 minutes: the 6 MW/m² test runs each 0.5 s step
+  as 5 to 7 parts; `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added
+  at the final review, the damped and parts tests with the amendment); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
+  5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
+  because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 377 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 381 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -602,7 +635,8 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 - [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 54 passed (the skin run about 40 s; two of them
   pin the refusal of an explicit `--prism-layers` with skins, added at the final review).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 383 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 5: Both tiers.** Expected unit tier 387 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+  `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
   copy and compare the histories:
@@ -675,6 +709,30 @@ inside the criterion, in a single run.
   by 2 s; on the wider plate with the old rebuild interpolation it ran 9.5 % ahead (ruling 1); 1 mm elements put the
   melt onset right where 2 mm elements are 12 % late on the narrow plate.
 
+  **Under the amended default** (damped repetition, the profile valuation and the parts; measured 2026-10-12, beside
+  other runs, so wall times are indicative; the skins' work is counted in sub-step passes, each pass times its
+  sub-steps), the same plate:
+
+The table shows that at the plate's own 0.05 s steps the production cells pass against both references, the development
+cells miss the fine box at 1.5 s by half a point, and the two cell sizes no longer agree to 1 %; and that at the
+flight's 0.5 s step the plate passes, where before the amendment it never melted.
+
+| Macro step, cells | 1.0 s | 1.5 s | 2.0 s | Against the fine box | Skins' work |
+|---|---|---|---|---|---|
+| 0.05 s, 20 µm (dev) | 0.7916 mm (+0.3 %) | 2.5796 mm (−4.9 %) | 5.0481 mm (−3.3 %) | −1.6, −5.5, −3.0 % | 1 346 sub-step passes |
+| 0.05 s, 10 µm (production) | 0.7900 mm (+0.1 %) | 2.6162 mm (−3.5 %) | 4.9790 mm (−4.6 %) | −1.8, −4.1, −4.4 % | 781 (each pass twice the cells) |
+| 0.1 s, dev | 0.8522 mm (+8.0 %) | 2.6968 mm (−0.6 %) | 5.0291 mm (−3.6 %) | +5.9, −1.2, −3.4 % | 1 630 |
+| 0.25 s, dev | 0.8888 mm (+12.7 %) | 2.7227 mm (+0.4 %) | 5.0814 mm (−2.6 %) | +10.5, −0.2, −2.4 % | 2 151 |
+| 0.5 s, dev | 0.8245 mm (+4.5 %) | 2.6994 mm (−0.5 %) | 5.0108 mm (−4.0 %) | +2.5, −1.1, −3.7 % | 2 437 |
+
+  Every run keeps the books (mass to 1.4e-15, energy to 2.4e-9) and leaves at most 0.44 % of a step's heat deferred.
+  The two cell sizes differ by 1.4 % at 1.5 and 2.0 s (0.8 % before the amendment). At 0.1 and 0.25 s the excess at
+  1.0 s (0.06–0.10 mm) arises in the steps where melting starts and then stays as an offset; taking the profile's slope
+  at the step's end instead of its start made it slightly worse (+14.6 % at 0.25 s), so its cause is not found. The
+  base-fault counter, which compares the skin's bottom cell with the 3D node, reads 0 at 0.05 s and 812–1 694 at 0.1–
+  0.5 s: the drawn metal now comes from below the node, colder by the profile's slope times the depth drawn (about
+  0.35 mm at 22 K/mm is 7.7 K, over the 5 K tolerance), so at larger parts the counter flags the valuation itself.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -702,6 +760,10 @@ outside the 5 % criterion. Wall times are of runs made alone, except the total r
 | column (spec §7.2, default) | +4.17 % [+1.9] | −1.30 % [−0.1] | −2.04 % [−0.7] | every step | 161 s [193] |
 | total | +4.17 % [+1.9] | −1.30 % [−0.1] | −2.20 % [−0.8] | every step | 245 s, side by side [194] |
 | never | +6.71 % | +1.96 % | −2.38 % | none | 90 s [114] |
+| damped (the default since the amendment; before the profile valuation and the parts) | +4.17 % | −1.48 % | +0.34 % | a median of 4 passes a step | 346 s |
+
+  The damped row was measured after the build, alone, before the profile valuation and the parts were added; with
+  them the plate at 0.05 s is the first row of Task 9's amended table.
 
   What triggers it (`repeat_columns_over`, `mismatch_worst_ratio`, `mismatch_total_ratio` in the history): a median of
   6 783 of 6 932 columns exceed 10⁻³ of their throughput every step (never fewer than 6 248), most of them columns with
@@ -723,6 +785,11 @@ complete at all, though not accurately.
 | 3 MW/m² | column | completed; last step's total mismatch 66 % of the throughput | 0.0194 kg (0, 0.0053, 0.0142 kg a step) | 3 | 75 | 5.5e-9 |
 | 3 MW/m² | never | refused in step 1: a 4.65 mm corner move degrades the mesh even after a rebuild | — | 0 | — | — |
 
+  Under the amended default (2026-10-12), the same sphere: at 3 MW/m² the steps complete with 47.4 g removed, 66
+  repeats, no base faults and no buried cell above T_feed, energy residual 3.9e-9; at 6 MW/m² with 169.0 g removed
+  (near the 190 g the heat could melt from 880 K), 154 repeats, 49 base faults and 289 buried cells above T_feed, the
+  hottest 959 K, energy residual 6.9e-9. Each 0.5 s step ran as several parts (5 to 7 at 6 MW/m²).
+
 - [ ] **Step 3: The cost of a step on the 100 mm sphere.** Create `analysis/skin_timing.py`:
 
 {{TIMING}}
@@ -739,15 +806,22 @@ melting.
 | below melting (300 K, 1 MW/m²) | 374 708 | 62, 70 and 66 s [55–57] | 0.54 s [0.45] | 0.58 s [0.50] |
 | melting (880 K, 2 MW/m²) | 456 769 [449 911] | 82, 115 and 133 s, rising as more columns melt [64, 110, 131] | 0.71 s [0.77] | 0.67 s [0.65] |
 
+  Under the amended default (2026-10-12, run alone): below melting 82, 93 and 60 s a macro step (8 passes in all over
+  the three steps); melting 123, 307 and 1 041 s, rising
+  steeply as more columns melt (48 repeats in all; 16.6 g removed, against 8.3 g under the one-repeat rule; energy
+  residual −7.5e-9). The skins took 1 449 s of the 1 470 s and the 3D solves 15 s. At the third step's rate a 600 s
+  flight of 1 200 macro steps would take about two weeks, and more as melting spreads.
+
 - [ ] **Step 4: Level 3, the Step 2 check against SESAM with skins** (spec §11.1). At these costs each flight takes
   hours; run them in the build, not before: the Step 2 verification cases of `analysis/reentry_model_thermal_verification.py`
   with `--surface-model skin` (non-melting, so no `--melt`), against Step 2's thresholds in
   `tests/test_reentry_model_reference_thermal.py`; record the differences from the element model's results.
-  **Held in the build:** the flights run at 0.5 s macro steps, where the interface coupling is wrong (Results); run them
-  once the coupling is cured.
+  **Not yet run.** Held in the build because the coupling was wrong at 0.5 s; since the amendment the coupling
+  converges and level 2 passes at 0.5 s, so what remains is the cost (Step 3) and Asha's decision to spend it.
 
 - [ ] **Step 5: Record and commit.** Add the measurements of Tasks 0, 9 and 10 to `00-shared-context.md` as facts, and
-  write the Results section of this sub-plan. (Done: facts 115–120 and Results, below.)
+  write the Results section of this sub-plan. (Done: facts 115–120 for the build, 121–125 for the amendment, and
+  Results, below.)
 
 ```bash
 git add analysis/skin_timing.py
@@ -758,49 +832,67 @@ git commit -m "Skins: the interface repeat's triggers and the cost of a step mea
 
 - Sub-plan 21 adds the cells' velocity, the surface gradient and curvature operators (ruling 7), and level 2 with flow
   on — on the plate, not the box.
-- The interface rule (Task 10) and the cure for the coupling at 0.5 s (Results) are Asha's decisions before sub-plan 21
-  makes a step more expensive.
+- The interface is damped repetition with parts (Asha, 2026-10-12). Flow will make each pass dearer, and the skins'
+  passes are already almost all of a step's time, so the pass count is the first thing to watch in sub-plan 21.
 - Sub-plan 22's retirement of stage 1 is now the deletion of `skin1d.py`, its tests and `MeltingBody`'s `skin1d` path.
 - The moves' remap still closes its books by one uniform offset on the moved nodes: 442 J over the plate's 42 moves,
   0.8 % of its absorbed heat, one-signed. It is reported every step; make it local if a flight shows it matters.
 
-## Results (built 2026-10-12)
+## Results (built and amended 2026-10-12)
 
 **What was built.** Tasks 0–10, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` on branch `skin-heat`
-(70ecbdd..f5d6633, 14 commits). Every task was reviewed for spec compliance and quality, and the whole branch once more
-at the end. The unit tier went from 341 to 383 passed (1 skipped), the FEniCSx tier from 17 to 19, and a melting
-element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 in `00-shared-context.md` record the
-measurements.
+(70ecbdd..f5d6633, 14 commits); every task was reviewed for spec compliance and quality, and the whole branch once more
+at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro steps and Asha's three decisions (a45f204):
+damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
+parts. The unit tier went from 341 to 387 passed (1 skipped), the FEniCSx tier from 17 to 19, and a melting
+element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the build's measurements and 121–125
+the amendment's.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
-law, the books) pass as unit tests. Level 2, the plate at 0.05 s macro steps, passes: the centre's recession is within
-+4.2, −1.3 and −2.1 % of the one-dimensional reference at 1.0, 1.5 and 2.0 s, and within 2.2 % of the fine box, with
-mass closed to 1.4e-15 and energy to 2.4e-9 (Task 9). **The skins are verified at 0.05 s macro steps only.** Level 3
-against SESAM was not run (below).
+law, the books, the profile valuation, the parts) pass as unit tests. Level 2, the plate (Task 9): under the amended
+default, the production cells at 0.05 s macro steps are within 5 % of both references at 1.0, 1.5 and 2.0 s; the
+development cells miss the fine box by half a point at 1.5 s (−5.5 %); the two cell sizes differ by 1.4 % (1 % asked);
+at 0.5 s steps the plate passes against both references; at 0.1 and 0.25 s it fails at 1.0 s (+8.0 % and +12.7 %).
+Mass closes to 1.4e-15 and energy to 2.4e-9 throughout. Level 3 against SESAM was not run (Task 10 Step 4).
 
-### Open findings for Asha (from the final review, reproduced by the controller)
+### The final review's findings, and what became of them
 
-1. **At 0.5 s macro steps the interface coupling is wrong.** The same plate at 0.5 s: by 2 s the deferred interface
-   mismatch (`SkinBody.pending`, heat owed to the 3D nodes and held in no metal) is 29.9 kJ of the 56.2 kJ absorbed,
-   53 %; the centre's top stays between 826 and 880 K, so nothing melts and nothing recedes, against 5.2 mm in the
-   reference. The books still close (energy residual 5e-11), because the parked heat is counted. At 0.25 s it stalls
-   the same way, recedes 0.4 mm by 1.75 s, and at 2.0 s the mesh mover refuses a 4 mm move. Iterating the trial and
-   real passes, relinearised at the last base temperature, converges on the first step (the total mismatch 2 %, then
-   0.1 %, then 0.01 %), but from the second step on it alternates between two states (at 1.0 s: 72, 29, 71, 29 %) — a
-   partitioned coupling whose linear base law is too weak once the skins near melting (Task 4's review measured the
-   law's slope 64 % short at 5 MW/m²). The cure changes spec §7's interface: relaxed iteration, a real pass with a
-   Robin base (the 3D model's local conductance and response) instead of a Dirichlet one, a monolithic base solve, or a
-   3D sub-cycle. Measured once per step size, on the plate only. Level 3 (Task 10 Step 4) is held until it is cured.
-2. **The base reconciliation can bury superheated cells.** The move books each corner's sweep at the corner node's
-   enthalpy, while the skins book a draw at the T_rigid enthalpy and a hand-down at the cells' own; the difference goes
-   into the single bottom cell. On the 4 mm test sphere after three 0.5 s steps: at 6 MW/m² 42 buried cells above
-   T_feed in 28 columns, the hottest at 2 910 K, while the 3D maximum is 901 K; at 3 MW/m² 13 such cells, the hottest
-   1 898 K; at 2 MW/m² none. The base-fault counter is the only signal. It departs from spec §6.6 (the 3D model gains
-   exactly the handed cells' enthalpy). The likely fix — a per-corner enthalpy for outward sweeps through
-   `MovingMesh.move`, and the residual spread over the metal that crossed — interacts with the cure for finding 1.
-3. **The per-column repeat rule is "always repeat"** (Task 10 Step 1): 98 % of columns exceed 10⁻³ on every step,
-   mostly columns with almost no heat through them, so it doubles the cost. A floor on the ratio's denominator would
-   make the rule select. The rule is Asha's decision (Task 10).
+1. **At 0.5 s macro steps the interface coupling was wrong — cured by damped repetition.** Found by the final review
+   and reproduced: on the plate at 0.5 s, 53 % of the absorbed heat (29.9 of 56.2 kJ) stayed in the deferred mismatch
+   by 2 s and nothing melted, while the books closed. The diagnosis (fact 121): once the skins near melting, the heat a
+   skin sends down falls off a cliff a little above the start-of-step base temperature — at the plate's centre from
+   +5.0 to −7.1 MW/m² between 30 and 60 K above it, as a base held above the melting band melts the skin, draws metal
+   at T_rigid and melts that too. The 3D surface's admittance (about 29 000 W/m²K) is four times the law's slope there,
+   so each repeat jumped the cliff and back (828 and 927 K, alternately). Damped repetition (Aitken's relaxation)
+   converges every step at every macro step tried, with at most 0.44 % of a step's heat deferred.
+2. **Large steps then melted too much — cured by the profile valuation and the parts.** With the coupling converged,
+   the plate at 0.5 s was 97 % ahead at 1.0 s: the draws and the move valued 1.55 mm of swept metal at the base node's
+   enthalpy, about 99 000 J/kg above the 3D profile's average, which predicts 0.72 mm of extra melting against 0.76 mm
+   observed (0.46 against 0.45 mm at 0.25 s; fact 122). And single steps asked for moves of 1.3–5.2 mm, which the mesh
+   refused. Valued along the profile and run as parts no longer than a quarter-edge move, the plate at 0.5 s is within
+   5 % of both references (fact 123).
+3. **The base reconciliation buried superheated cells — reduced, still open.** Under 6 MW/m² on 4 mm elements, 289
+   buried cells end above T_feed, the hottest at 959 K (2 910 K before); none at 3 MW/m² (fact 124). What the move's
+   sweep and the skins' draw or hand-down book differently still goes into one bottom cell (spec §12).
+4. **The repeat rule** is decided: damped repetition (Asha).
+
+### Still open after the amendment
+
+- **Melting onset at 0.1 and 0.25 s macro steps**: +8.0 and +12.7 % at 1.0 s, an offset of 0.06–0.10 mm made in the
+  onset steps; not explained (the profile's slope at the step's end made it worse).
+- **A late slow bias at 0.05 s**: −3 to −5 % at 1.5 and 2.0 s under the amended default (−2.0 % under the one-repeat
+  rule, +0.3 % with damping before the profile valuation, whose overvaluation had hidden it); the development cells miss
+  the fine box at 1.5 s by half a point, and the cell sizes differ by 1.4 %.
+- **The base-fault counter** compares the bottom cell with the 3D node; with draws from below the node it flags the
+  valuation itself at parts longer than about 0.05 s (812–1 694 faults at 0.1–0.5 s, none at 0.05 s). It should compare
+  with the profile's temperature at the depth drawn.
+- **The cost** (fact 125): the skins' work grows with the macro step (1 346 to 2 437 sub-step passes over the plate's
+  2 s from 0.05 to 0.5 s), and the amendment adds about half again at 0.05 s; on the 100 mm sphere the melting 0.5 s steps took
+  123, 307 and 1 041 s, against 82, 115 and 133 s under the one-repeat rule, so a flight at the third step's rate would
+  take about two weeks.
+- **Agreement of the backends across a rebuild**: to round-off only up to the first rebuild, because the mesher answers
+  round-off in the corner positions with a different mesh.
+- **Level 3** against SESAM (Task 10 Step 4).
 
 ### Corrections made in the build, with the rulings that made them
 
