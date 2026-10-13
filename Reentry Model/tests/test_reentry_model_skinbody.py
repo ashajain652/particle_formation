@@ -222,3 +222,15 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     assert c.removed_mass == pytest.approx(b.removed_mass, rel=1e-6)
     assert c.energy() == pytest.approx(b.energy(), rel=1e-9)
     assert np.abs(c.moving.mesh.points[c.moving.corners] - b.moving.mesh.points[b.moving.corners]).max() < 1e-9
+
+
+def test_a_base_fault_is_a_bottom_cell_outside_the_temperatures_of_the_metal_that_crossed():
+    """The fault counter (spec 6.6, redefined 2026-10-12): a bottom cell within the tolerance of the range between the
+    node's temperature and the 3D profile's at the depth swept is no fault, however far from the node; outside it, or
+    above the node where nothing was drawn, it is; a column nothing crossed never counts."""
+    tol = skin.JUMP_TOLERANCE
+    T_node = np.full(6, 895.0)
+    T_deep = np.array([884.0, 884.0, 884.0, 895.0, 895.0, 884.0])        # 0.5 mm drawn at 22 K/mm; nothing drawn
+    T_bottom = np.array([886.0, 884.0 - tol + 0.1, 884.0 - tol - 0.1, 895.0 + tol + 0.1, 895.0 - tol + 0.1, 870.0])
+    crossed = np.array([True, True, True, True, True, False])
+    assert skinbody.jump_faults(T_bottom, T_node, T_deep, crossed).tolist() == [False, False, True, True, False, False]
