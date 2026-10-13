@@ -330,8 +330,11 @@ through a profile falling 22 K/mm, which on the steep Scheil curve overstated th
 excess predicts 0.72 mm of extra melting, and 0.76 mm was observed, the centre 97 % ahead of the exact solution. At
 0.25 s the prediction is 0.46 mm against 0.45 mm observed.) Temperatures are never
 overwritten: a cell receiving metal takes the mixture's temperature from its total mass and enthalpy. Because the base
-is the rigid front, the metal crossing it is close to the bottom cell's temperature; a jump larger than a set tolerance
-(provisionally 5 K) means the coupling has not converged and is counted as a fault, not absorbed (§10.2). A column whose
+is the rigid front, the metal crossing it is close to the bottom cell's temperature: a bottom cell more than a set
+tolerance (provisionally 5 K) outside the temperatures of the metal that crossed — between the base node's and the 3D
+profile's at the depth swept — means the coupling has not converged and is counted as a fault, not absorbed (§10.2).
+(Amended 2026-10-12, Asha: the comparison was with the node alone, which counted the profile valuation's colder drawn
+metal as faults, 812–1 694 on the level-2 plate at 0.1–0.5 s steps and none at 0.05 s.) A column whose
 flowing material drains away entirely draws rigid metal back to its minimum; no skin is ever created or removed.
 
 ### 6.7 Depths read from the skin
@@ -550,7 +553,11 @@ Each stage is tested and measured before the next begins.
 - **The interface's cost** (measured 2026-10-12): damped repetition takes a median of 4 passes per step at 0.05 s and
   15 or more per part once melting is under way at larger steps; the skins' passes are almost all of a step's time.
   With the profile valuation and the parts, the plate at 0.05 s costs 1 346 sub-step passes against 880 with damping
-  alone and about 400 with the one-repeat rule.
+  alone and about 400 with the one-repeat rule. Diagnosed on the 100 mm sphere's first 1.5 s of melting (2026-10-12):
+  at 0.5 s macro steps 53 % of the time went on parts that converged and were then rejected for moving a base too far,
+  and the accepted parts needed 4.4 passes on average; at 0.125 s steps 7 % and 2.0 passes, at 0.0625 s none and 1.8.
+  The three cost 1 454, 425 and 341 s, and removed 16.6, 21.15 and 21.28 g: the small steps are converged in the step
+  (0.6 % apart) and the 0.5 s step is 22 % low. Long parts during melting are both wrong and expensive.
 - **Melting onset at intermediate steps** (measured 2026-10-12, not explained): on the level-2 plate the centre is
   within 5 % of the exact solution at 1.0 s with 0.05 s and 0.5 s macro steps (+0.3 % and +4.5 %) but not with 0.1 s
   and 0.25 s (+8.0 % and +12.7 %, 0.06–0.10 mm), the excess arising in the steps where melting starts and staying as an
@@ -649,4 +656,5 @@ Each stage is tested and measured before the next begins.
 - 2026-10-12 (after sub-plan 20's build and a diagnosis spike): damped repetition is the interface's default (§7.2);
   the metal crossing the base is valued along the 3D model's linear profile below it, for the draws and the move alike
   (§6.6, option a); a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in
-  one part (§5.3, §7.1, option b) (Asha).
+  one part (§5.3, §7.1, option b) (Asha). The base-fault counter compares the bottom cell with the temperatures of the
+  metal that crossed, not with the node alone (§6.6) (Asha).

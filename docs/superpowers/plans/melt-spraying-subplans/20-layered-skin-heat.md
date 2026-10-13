@@ -31,13 +31,14 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 387 passed (1 skipped, no
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 388 passed (1 skipped, no
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
-70ecbdd..f5d6633), then **amended after the build** the same day (a45f204) by Asha's three decisions on the interface,
-below: damped repetition is the default, the metal crossing the base is valued along the 3D profile, and a macro step
-runs as parts so that no base moves more than a quarter of the mean surface edge in one. The planning copy was then
+70ecbdd..f5d6633), then **amended after the build** the same day (a45f204, fb4fe25) by Asha's decisions on the
+interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile, a
+macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one, and a base fault is
+a bottom cell outside the temperatures of the metal that crossed. The planning copy was then
 synced from the code and this document regenerated, so the code below is the code as amended, and the measurements of
 Tasks 0, 9 and 10 are the build's or the amendment's, as marked. Results at the end lists the corrections, the
 amendment's measurements and what is still open.
@@ -104,6 +105,8 @@ Asha's decisions after the build (2026-10-12, from a diagnosis of the interface 
 - **A macro step runs as parts** (option b) so that no base moves more than `MOVE_MAX`, a quarter of the mean surface
   edge, in one part by drawing, absorbing and handing down; absorption's cap stays per macro step, shared among the
   parts. Task 7.
+- **A base fault is a bottom cell outside the temperatures of the metal that crossed** the base, between the node's and
+  the 3D profile's at the depth swept (`skinbody.jump_faults`), not one far from the node alone. Task 7.
 
 Rulings made while writing, with their reasons (each is stated again where its code is):
 
@@ -2811,6 +2814,18 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     assert c.removed_mass == pytest.approx(b.removed_mass, rel=1e-6)
     assert c.energy() == pytest.approx(b.energy(), rel=1e-9)
     assert np.abs(c.moving.mesh.points[c.moving.corners] - b.moving.mesh.points[b.moving.corners]).max() < 1e-9
+
+
+def test_a_base_fault_is_a_bottom_cell_outside_the_temperatures_of_the_metal_that_crossed():
+    """The fault counter (spec 6.6, redefined 2026-10-12): a bottom cell within the tolerance of the range between the
+    node's temperature and the 3D profile's at the depth swept is no fault, however far from the node; outside it, or
+    above the node where nothing was drawn, it is; a column nothing crossed never counts."""
+    tol = skin.JUMP_TOLERANCE
+    T_node = np.full(6, 895.0)
+    T_deep = np.array([884.0, 884.0, 884.0, 895.0, 895.0, 884.0])        # 0.5 mm drawn at 22 K/mm; nothing drawn
+    T_bottom = np.array([886.0, 884.0 - tol + 0.1, 884.0 - tol - 0.1, 895.0 + tol + 0.1, 895.0 - tol + 0.1, 870.0])
+    crossed = np.array([True, True, True, True, True, False])
+    assert skinbody.jump_faults(T_bottom, T_node, T_deep, crossed).tolist() == [False, False, True, True, False, False]
 ```
 
   and append to `tests/test_reentry_model_fenicsx.py`:
@@ -2936,6 +2951,17 @@ DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves 
 MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draw, absorb, hand down)
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
+
+
+def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
+    """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
+    that crossed their base (spec 6.6): between the base node's and the 3D profile's at the depth swept, `T_deep` (equal
+    to T_node where nothing was taken from the 3D model). Metal drawn from below the node is colder than the node by the
+    profile's slope times the depth, which is not a fault (Asha, 2026-10-12: comparing with the node alone counted 812-1
+    694 faults on the level-2 plate at 0.1-0.5 s steps, none at 0.05 s)."""
+    tol = skin_mod.JUMP_TOLERANCE if tol is None else tol
+    lo, hi = np.minimum(T_node, T_deep), np.maximum(T_node, T_deep)
+    return crossed & ((T_bottom < lo - tol) | (T_bottom > hi + tol))
 
 
 class SkinBody(ThermalBody):
@@ -3163,7 +3189,8 @@ class SkinBody(ThermalBody):
             self.wall["rebuild"] += mm.last_rebuild.seconds
         crossed = (book.drawn > 0.0) | (depth > 0.0) | (handed > 0.0)
         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]
-        self.jump_faults += int((crossed & (np.abs(T_node - T_bottom) > skin_mod.JUMP_TOLERANCE)).sum())
+        T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed).sum())
         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
         sk.regrid()
         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
@@ -3246,13 +3273,13 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", self._top0 - self.surface.points, self._normal0)
 ```
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 9 passed (about 5 minutes: the 6 MW/m² test runs each 0.5 s step
+- [ ] **Step 5: Run them to see them pass.** Expected: 10 passed (about 5 minutes: the 6 MW/m² test runs each 0.5 s step
   as 5 to 7 parts; `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added
-  at the final review, the damped and parts tests with the amendment); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
+  at the final review, the damped, parts and fault-counter tests with the amendment); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 381 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 382 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -3848,7 +3875,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 - [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 54 passed (the skin run about 40 s; two of them
   pin the refusal of an explicit `--prism-layers` with skins, added at the final review).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 387 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 388 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -4207,9 +4234,10 @@ flight's 0.5 s step the plate passes, where before the amendment it never melted
   The two cell sizes differ by 1.4 % at 1.5 and 2.0 s (0.8 % before the amendment). At 0.1 and 0.25 s the excess at
   1.0 s (0.06–0.10 mm) arises in the steps where melting starts and then stays as an offset; taking the profile's slope
   at the step's end instead of its start made it slightly worse (+14.6 % at 0.25 s), so its cause is not found. The
-  base-fault counter, which compares the skin's bottom cell with the 3D node, reads 0 at 0.05 s and 812–1 694 at 0.1–
-  0.5 s: the drawn metal now comes from below the node, colder by the profile's slope times the depth drawn (about
-  0.35 mm at 22 K/mm is 7.7 K, over the 5 K tolerance), so at larger parts the counter flags the valuation itself.
+  base-fault counter, when it compared the skin's bottom cell with the 3D node alone, read 0 at 0.05 s and 812–1 694 at
+  0.1–0.5 s: the drawn metal comes from below the node, colder by the profile's slope times the depth drawn (about
+  0.35 mm at 22 K/mm is 7.7 K, over the 5 K tolerance), so it flagged the valuation itself. Redefined (fb4fe25) to the
+  range of the metal that crossed, it reads 0 at every step of the 0.25 s run.
 
 - [ ] **Step 5: Commit**
 
@@ -4348,9 +4376,9 @@ git commit -m "Skins: the interface repeat's triggers and the cost of a step mea
 (70ecbdd..f5d6633, 14 commits); every task was reviewed for spec compliance and quality, and the whole branch once more
 at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro steps and Asha's three decisions (a45f204):
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
-parts. The unit tier went from 341 to 387 passed (1 skipped), the FEniCSx tier from 17 to 19, and a melting
-element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the build's measurements and 121–125
-the amendment's.
+parts; then the fault counter redefined (fb4fe25). The unit tier went from 341 to 388 passed (1 skipped), the FEniCSx
+tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
+build's measurements, 121–127 the amendment's.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts) pass as unit tests. Level 2, the plate (Task 9): under the amended
@@ -4387,13 +4415,12 @@ Mass closes to 1.4e-15 and energy to 2.4e-9 throughout. Level 3 against SESAM wa
 - **A late slow bias at 0.05 s**: −3 to −5 % at 1.5 and 2.0 s under the amended default (−2.0 % under the one-repeat
   rule, +0.3 % with damping before the profile valuation, whose overvaluation had hidden it); the development cells miss
   the fine box at 1.5 s by half a point, and the cell sizes differ by 1.4 %.
-- **The base-fault counter** compares the bottom cell with the 3D node; with draws from below the node it flags the
-  valuation itself at parts longer than about 0.05 s (812–1 694 faults at 0.1–0.5 s, none at 0.05 s). It should compare
-  with the profile's temperature at the depth drawn.
-- **The cost** (fact 125): the skins' work grows with the macro step (1 346 to 2 437 sub-step passes over the plate's
-  2 s from 0.05 to 0.5 s), and the amendment adds about half again at 0.05 s; on the 100 mm sphere the melting 0.5 s steps took
-  123, 307 and 1 041 s, against 82, 115 and 133 s under the one-repeat rule, so a flight at the third step's rate would
-  take about two weeks.
+- **The cost, diagnosed** (facts 125–126): on the 100 mm sphere the melting 0.5 s steps took 123, 307 and 1 041 s
+  (82, 115 and 133 s under the one-repeat rule). Logged part by part, 53 % of that went on parts that converged and were
+  then rejected for moving a base too far, and the accepted parts needed 4.4 passes on average. The same 1.5 s of
+  melting at 0.125 s macro steps cost 425 s and at 0.0625 s 341 s (1.8 passes a part, nothing rejected), and removed
+  21.15 and 21.28 g where 0.5 s steps removed 16.6 g: long parts during melting are both wrong (22 % low) and
+  expensive. A cure (shorter parts while melting, fewer passes) is Asha's decision.
 - **Agreement of the backends across a rebuild**: to round-off only up to the first rebuild, because the mesher answers
   round-off in the corner positions with a different mesh.
 - **Level 3** against SESAM (Task 10 Step 4).

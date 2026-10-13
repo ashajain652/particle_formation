@@ -1736,7 +1736,9 @@ of losing elements. Its sub-plans, one per build stage (spec §11.2):
   sweeps, the rebuild's projection, level 2 on a plate) and measured facts 108–114; the build measured facts 115–120.
   **Amended after the build** (Asha, 2026-10-12; facts 121–125): damped repetition is the interface's default, the
   metal crossing the base is valued along the 3D profile, and a macro step runs as parts. The coupling now converges at
-  0.5 s and level 2 passes there; a melting step on the 100 mm sphere costs up to 1 041 s (fact 125).
+  0.5 s and level 2 passes there; a melting step on the 100 mm sphere costs up to 1 041 s (fact 125), because long
+  parts during melting are rejected and need many passes: at 0.0625 s steps the same melting costs a quarter and is
+  converged (fact 126).
 - `21-column-flow.md` — stage 3, flow in the columns. Scoped outline; written in full after 20.
 - `22-skin-spraying-flight.md` — stage 4, spraying from the skins and the flights. Scoped outline; written in full
   after 21.
@@ -1894,7 +1896,7 @@ they moved the plate's numbers by one to two points, and which of the two did it
      0.58–0.67 s a step; no rebuild; energy residuals 2.5e-11 and −1.4e-10. A 600 s flight at 0.5 s is therefore about
      20 hours, and each repeat doubles the skins' share. (One-repeat rule; the amended default's cost is fact 125.)
 
-## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–125)
+## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–127)
 
 Measured on `prototype/work-2026-10-12-skin-heat/code/` after the build, each once unless stated; the spike's scripts
 and outputs are in `prototype/work-2026-10-12-skin-heat/measure/spike/` (git-ignored). Asha's decisions from them
@@ -1943,6 +1945,22 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      and 60 s a step below melting (62–70 s before), and 123, 307 and 1 041 s melting (82, 115 and 133 s before), 48
      repeats in all, the skins 1 449 s of the 1 470 s; energy residuals 2.5e-11 and −7.5e-9. At the third melting
      step's rate a 600 s flight would take about two weeks.
+126. **Why a melting step was so dear: long parts.** The 100 mm sphere's first 1.5 s of melting (production cells, 880
+     K, 2 MW/m² at the nose), every part and pass logged: at 0.5 s macro steps it took 1 454 s, 773 s of them (53 %)
+     on parts that converged and were then rejected because their move came out 1.26–1.46 times the limit (the next
+     step's parts are sized from the last step's moves, which lag while recession accelerates; the first pass's drawn
+     mass overshoots the converged one by 50–250 % in melting parts, so it cannot size a part either); the accepted parts
+     needed 4.4 passes on average (up to 12), the residual often held up by a few nose columns swinging ±1–3 K while
+     the rest had settled; a skin pass costs about 0.65 s per 10 ms sub-step once melting (0.31 s before), 4.8 Newton
+     iterations a sub-step. The same 1.5 s at 0.125 s macro steps: 425 s, 7 % rejected, 2.0 passes per part; at 0.0625
+     s: 341 s, nothing rejected, 1.8 passes; the fully melting last quarter-second 1 011, 78 and 44 s. Removed by 1.5 s:
+     16.6, 21.15 and 21.28 g — converged at the small steps (0.6 % apart, 2 % at 1.0 s) and 22 % low at 0.5 s. Each
+     case measured once; heating was re-evaluated at every macro step.
+127. **A base fault is a bottom cell outside the temperatures of the metal that crossed** (Asha, 2026-10-12; spec
+     §6.6): between the base node's and the 3D profile's at the depth swept (`skinbody.jump_faults`). Compared with the
+     node alone, the level-2 plate counted 812–1 694 faults at 0.1–0.5 s steps (none at 0.05 s), all of them the profile
+     valuation's colder drawn metal; with the new definition the plate at 0.25 s counts none at any step, its recession
+     unchanged to 1.5 s (fb4fe25; unit tier 388 passed, FEniCSx 19).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
