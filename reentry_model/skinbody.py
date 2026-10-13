@@ -73,9 +73,9 @@ MOVE_MAX = 0.25                   # of the mean surface edge: the most a base mo
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
 # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
-# (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s parts (1.8 passes), which
-# also removed 21.28 g against 16.6 g, the step converged to 0.6 % (0.125 s: 21.15 g); before melting short parts cost
-# about 18 % more, so the cap holds only while some skin's top is non-rigid.
+# (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s macro steps (1.8 passes);
+# before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
+# steps also removed 21.28 g against 16.6 g, but because ABSORB_MAX is per macro step, not because the parts were short.)
 PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid
 
 
