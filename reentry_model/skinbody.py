@@ -70,6 +70,17 @@ SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
 
 
+def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
+    """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
+    that crossed their base (spec 6.6): between the base node's and the 3D profile's at the depth swept, `T_deep` (equal
+    to T_node where nothing was taken from the 3D model). Metal drawn from below the node is colder than the node by the
+    profile's slope times the depth, which is not a fault (Asha, 2026-10-12: comparing with the node alone counted 812-1
+    694 faults on the level-2 plate at 0.1-0.5 s steps, none at 0.05 s)."""
+    tol = skin_mod.JUMP_TOLERANCE if tol is None else tol
+    lo, hi = np.minimum(T_node, T_deep), np.maximum(T_node, T_deep)
+    return crossed & ((T_bottom < lo - tol) | (T_bottom > hi + tol))
+
+
 class SkinBody(ThermalBody):
     """A ThermalBody whose surface is resolved by corner columns with layered skins on a moving mesh (module docstring).
     `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass."""
@@ -295,7 +306,8 @@ class SkinBody(ThermalBody):
             self.wall["rebuild"] += mm.last_rebuild.seconds
         crossed = (book.drawn > 0.0) | (depth > 0.0) | (handed > 0.0)
         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]
-        self.jump_faults += int((crossed & (np.abs(T_node - T_bottom) > skin_mod.JUMP_TOLERANCE)).sum())
+        T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed).sum())
         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
         sk.regrid()
         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
