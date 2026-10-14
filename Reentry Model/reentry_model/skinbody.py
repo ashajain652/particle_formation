@@ -23,10 +23,12 @@ after the trajectory and the heating:
    the swept enthalpy less what it already exchanged, so mass and energy are exact. A sweep that takes metal out of
    the 3D model is booked along the same profile as the draws.
 
-A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part by
-drawing, absorbing and handing down (Asha, 2026-10-12): a part that would is run again as shorter parts (absorption's
-cap, ABSORB_MAX per macro step, is shared among the parts by their length), and the next macro step
-starts with as many parts as this one's moves called for. While any skin's top is non-rigid (at or above T_rigid at
+A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part
+(Asha, 2026-10-12): a part whose draws and hand-downs would move a base further is run again as shorter parts, and the
+next macro step starts with as many parts as this one's moves called for. Absorption takes what is left of a part's
+allowance after its draws and hand-downs, and the rest of the non-rigid metal waits for the next part (Asha,
+2026-10-14: a cap of a quarter-edge per macro step stranded up to 1.3 mm of non-rigid metal in the 3D model of a plate
+started at 880 K, whose exact non-rigid layer is 1.5-1.7 mm thick, and the plate melted 4-8 % slow). While any skin's top is non-rigid (at or above T_rigid at
 the macro step's start), no part is longer than PART_MAX (Asha, 2026-10-12: long parts during melting were rejected for
 their moves and needed many passes). Within a part the base heat, the draws and the move all take the part's own step;
 the heating is interpolated in time between the last macro step's and this one's, at the part's middle, so a macro
@@ -46,10 +48,9 @@ from . import skin as skin_mod
 from .body import ThermalBody
 from .thermal import SIGMA_SB
 
-ABSORB_MAX = 0.25                 # of the mean surface edge: the most a base absorbs in one macro step (the rest waits)
 GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
-                                  # is huge and it absorbs up to the cap, ABSORB_MAX: it does not absorb nothing
+                                  # is huge and it absorbs up to its part's move allowance: it does not absorb nothing
 REPEAT_RULES = ("column", "total", "never", "damped")   # when a step's interface mismatch repeats it: "damped"
                                               # repeats until converged (below); the others at most once -- "column" (the
                                               # spec's first rule) when any column's mismatch exceeds the tolerance,
@@ -69,7 +70,8 @@ DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves 
 # The move limit (2026-10-12). The metal a base sweeps in one step is valued along a straight 3D profile, and the moving
 # mesh refuses moves of more than about half an element (1.3 mm on 2 mm elements, 5.2 mm on 4 mm, measured): a step
 # whose draws and hand-downs would move a base further than this is split.
-MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draw, absorb, hand down)
+MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draws and hand-downs
+                                  # split a part beyond it; absorption takes what they leave)
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
 # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
@@ -77,6 +79,10 @@ MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the 
 # before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
 # steps also removed 21.28 g against 16.6 g, but because ABSORB_MAX is per macro step, not because the parts were short.)
 PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid
+SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin run: at its default 1e-10 the skin body's
+                                  # books drifted by 1e-8 of the heat absorbed over 17 short parts (about 5e-5 J a solve
+                                  # on the 4 mm test sphere); at 1e-13, as with a direct solve, 2e-11, at no cost
+                                  # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
 
 
 def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
@@ -106,6 +112,8 @@ class SkinBody(ThermalBody):
         self.T_ambient, self.remove, self.demise_fraction = float(T_ambient), bool(remove), float(demise_fraction)
         self.v_hat = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
         self.settings = settings or skin_mod.SkinSettings()
+        if getattr(solver, "cg_tol", None) is not None:
+            solver.cg_tol = min(solver.cg_tol, SKIN_CG_TOL)
         solver.setup(mesh, material, 0.0)                    # the 3D boundary lies under the skins: it does not radiate
         solver.set_temperature(T0)
         self.mass0 = material.rho * mesh.volume()
@@ -238,8 +246,7 @@ class SkinBody(ThermalBody):
                 self.interface_repeats += 1
                 continue
             break
-        share = dt / dt_macro                                # of the macro step: absorption's cap is shared by length
-        ratio = self._move_ratio(book, m_min, share)
+        ratio = self._move_ratio(book, m_min)
         if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:          # too far for one part: run it again as shorter parts
             self.solver.set_state(solver_state)
             sk.set_state(skin_state)
@@ -261,15 +268,16 @@ class SkinBody(ThermalBody):
         self.drawn_mass += float(book.drawn.sum())
         self.iterations.append(res.iterations)
         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
-        self._move_base(book, m_min, g0, share)
+        self._move_base(book, m_min, g0)
         self.last_shortfall = float(np.maximum(skin_mod.minimum_mass(mat, sk.area, self.settings) - sk.column_mass(),
                                                0.0).sum())
 
-    def _absorb_depth(self, share=1.0, count=True):
+    def _absorb_depth(self, allowance, count=True):
         """Per corner, the depth [m] along the column's direction from the base node to where the 3D temperature falls
-        to T_rigid (spec 6.6), from the node's temperature and the 3D gradient along the normal, capped at ABSORB_MAX
-        of the mean surface edge per macro step: `share` of it in a part of that length. `count`: add the capped
-        corners to absorb_capped."""
+        to T_rigid (spec 6.6), from the node's temperature and the 3D gradient along the normal, at most `allowance` [m,
+        per corner or one for all]: what the part's draws and hand-downs left of its move. `count`: add the corners the
+        allowance held back to absorb_capped. (Against the 3D field traced along the normal, the line method, the
+        extrapolation agrees within 0.07 mm on 2 mm elements, measured 2026-10-14.)"""
         mat, mm = self.material, self.moving
         if not mat.melts:
             return np.zeros(self.columns.n)
@@ -279,10 +287,9 @@ class SkinBody(ThermalBody):
             return np.zeros(self.columns.n)
         g = self._normal_gradient(T)
         depth = np.where(excess > 0.0, excess / np.maximum(g, GRADIENT_FLOOR), 0.0)
-        cap = ABSORB_MAX * self.columns.edge_length.mean() * share
         if count:
-            self.absorb_capped += int((depth > cap).sum())
-        return np.minimum(depth, cap)
+            self.absorb_capped += int((depth > allowance).sum())
+        return np.minimum(depth, allowance)
 
     def _normal_gradient(self, T=None):
         """dT/dn [K/m] at every corner along its column's outward direction, from the 3D field's nodal gradient (exact
@@ -296,27 +303,30 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", movemesh.nodal_gradient(mesh.points, mesh.tets, T, elements)[mm.corners],
                          self.columns.normal)
 
-    def _move_ratio(self, book, m_min, share):
-        """The largest distance a base would move in this part by drawing, absorbing and handing down, over MOVE_MAX of
-        the mean surface edge. The hand-down is found on a copy of the skins."""
+    def _move_ratio(self, book, m_min):
+        """The largest distance a base would move in this part by drawing and handing down, over MOVE_MAX of the mean
+        surface edge (absorption takes what is left, so it never splits a part). The hand-down is found on a copy of
+        the skins."""
         mat, sk = self.material, self.skins
         handed = np.zeros(sk.n)
         if mat.melts:
             saved = sk.state()
             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid)
             sk.set_state(saved)
-        d = np.abs((book.drawn - handed) / (mat.rho * self.columns.area) + self._absorb_depth(share, count=False))
+        d = np.abs(book.drawn - handed) / (mat.rho * self.columns.area)
         return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
 
-    def _move_base(self, book, m_min, g0, share=1.0):
+    def _move_base(self, book, m_min, g0):
         """Draw (already in the skins), absorb and hand down become one corner displacement; the move's actual sweep
-        is then reconciled on every column's bottom (module docstring, step 4). Metal swept out of the 3D model is
-        booked along the profile T(s) = T_node - g0 s that the draws used."""
+        is then reconciled on every column's bottom (module docstring, step 4). Absorption takes what the draws and
+        hand-downs leave of MOVE_MAX of the mean edge. Metal swept out of the 3D model is booked along the profile
+        T(s) = T_node - g0 s that the draws used."""
         mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
         started = time.perf_counter()
         T_node = self.solver.temperature()[mm.corners]
-        depth = self._absorb_depth(share)
         handed, handed_H = skin_mod.hand_down(sk, m_min, mat.T_rigid) if mat.melts else (np.zeros(sk.n), np.zeros(sk.n))
+        moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
+        depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
         inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
         rebuilds = mm.rebuilds

@@ -47,21 +47,25 @@ def test_a_body_with_no_heat_stays_uniform_and_its_mesh_and_skins_keep_their_boo
 
 
 def test_heating_with_removal_keeps_mass_and_energy_exact(coarse_sphere_mesh):
-    """6 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, columns draw, the base recedes; the mass
-    removed plus the mass left is the mass at start, and the energy books close to 1e-8 of the heat absorbed. Under the
-    damped repetition with the move limit and the melting part cap (2026-10-12) the three 0.5 s steps run as 5, 8 and 8
-    parts and 164 g is removed, near the 190 g the heat could melt from 880 K (measured; 8 g under the one-repeat rule,
-    which left the heat parked)."""
+    """3 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, the skins absorb the non-rigid metal below
+    them, the base recedes; the mass removed plus the mass left is the mass at start, and the energy books close to 1e-8
+    of the heat absorbed. The three 0.5 s steps run as 1, 8 and 8 parts and 53 g is removed (measured 2026-10-14).
+    3 MW/m2, not 6: on these 4 mm elements the rim of a strongly melting region is one edge wide, a corner there absorbs
+    a 0.7 mm lens its neighbours do not have, and the mesh refuses the move; the 2 mm production mesh follows it
+    (`test_strong_melting_on_the_production_mesh`, reference tier)."""
     b = make(coarse_sphere_mesh)
     M0 = b.mass()
     for k in range(3):
-        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
     assert b.removed_mass > 0.0 and b.drawn_mass > 0.0
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
-    assert abs(b.energy_balance_residual()) < 1e-8                  # 5.8e-9 measured (2026-10-12)
+    assert abs(b.energy_balance_residual()) < 1e-8                  # 2e-11 measured (2026-10-14)
     stats = b.skin_stats()
-    assert stats["base_recession_max_mm"] > 0.5                       # 10.4 mm at the nose (measured, 2026-10-12)
+    assert stats["base_recession_max_mm"] > 0.5                       # 4.5 mm at the nose (measured, 2026-10-14)
     assert b.surface_temperature().max() <= b.material.T_feed + 1.0   # liquid left as it formed
+    # absorption keeps up: no base is left more than 2 K above T_rigid, no non-rigid metal stranded in the 3D model
+    # (0.3 K measured, 2026-10-14; 7 to 8 K under the old quarter-edge cap per macro step)
+    assert b.solver.temperature()[b.moving.corners].max() - b.material.T_rigid < 2.0
     assert stats["skin_cells"] == b.skins.count.sum() and b.last.Q_conv > 0.0
 
 
@@ -127,24 +131,28 @@ def test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_a
     inner = mat.T_rigid + G * (x_c - (P[corners] - 1e-3 * n)[:, 0])
     assert front.sum() > 100 and np.all(T[corners][front] > inner[front]) and np.all(g_n[front] > 0.0)
 
-    # the default cap, a quarter of the mean surface edge (about 1.0 mm of 4.0 mm): every hot corner needs more than that
-    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()
+    # a whole part's allowance, a quarter of the mean surface edge (about 1.0 mm of 4.0 mm): every hot corner needs more
+    cap = skinbody.MOVE_MAX * b.columns.edge_length.mean()
     assert np.all(raw[hot] > cap)
-    depth = b._absorb_depth()
+    depth = b._absorb_depth(cap)
     assert np.all(depth[~hot] == 0.0)                                      # below T_rigid: nothing to absorb
     assert depth[hot] == pytest.approx(cap, rel=1e-12) and b.absorb_capped == hot.sum()
-
-    # a cap too high to bind for the corners with a real gradient: their depth is the excess over the gradient
-    monkeypatch.setattr(skinbody, "ABSORB_MAX", 100.0)
-    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()                # 0.4 m
+    # per corner: what a corner's draws already used of the allowance is not absorbed again
+    used = np.where(np.arange(len(raw)) % 2 == 0, 0.6 * cap, 0.0)
     b.absorb_capped = 0
-    depth = b._absorb_depth()
+    assert b._absorb_depth(cap - used, count=False)[hot] == pytest.approx((cap - used)[hot], rel=1e-12)
+    assert b.absorb_capped == 0                                            # not counted when asked not to
+
+    # an allowance too large to bind for the corners with a real gradient: their depth is the excess over the gradient
+    cap = 0.4                                                              # m
+    b.absorb_capped = 0
+    depth = b._absorb_depth(cap)
     below = hot & (raw < cap)
     capped = hot & ~below
     assert below.sum() > 100 and capped.sum() > 100 and (capped & ~usable).sum() > 100     # the last: gradient under the floor
     assert np.all(depth[~hot] == 0.0)
     assert depth[below] == pytest.approx(raw[below], rel=1e-9) and np.all(depth[below] > 0.0)
-    assert depth[capped] == pytest.approx(cap, rel=1e-12)                  # a gradient under the floor absorbs up to the cap
+    assert depth[capped] == pytest.approx(cap, rel=1e-12)                  # a gradient under the floor takes its allowance
     assert b.absorb_capped == capped.sum()
 
 
@@ -197,8 +205,7 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     """6 MW/m2 from 880 K on 4 mm elements: a 0.5 s step would draw and absorb more than MOVE_MAX of the mean edge
     (1 mm), so it is run again as shorter parts, every move's inward part within the limit (a mesh refused moves of
     1.65 mm here without it, measured; the tangential smoothing slides corners up to 1.4 mm along the surface besides);
-    the parts give what the same shorter steps give when taken one by one with the same heating and the same share of
-    the absorption cap (ABSORB_MAX is per macro step)."""
+    the parts give what the same shorter steps give when taken one by one with the same heating."""
     b = make(coarse_sphere_mesh, part_max=None)                          # the move limit alone, not the melting cap
     loads = front_loads(b, 6e6)
     moves = []
@@ -216,7 +223,6 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
     assert abs(b.energy_balance_residual()) < 1e-8
     monkeypatch.setattr(skinbody, "MOVE_HINT_MARGIN", 1.0)              # one step at a time, as the parts were taken
-    monkeypatch.setattr(skinbody, "ABSORB_MAX", skinbody.ABSORB_MAX / n)  # each with a part's share of the cap
     c = make(coarse_sphere_mesh, part_max=None)
     for k in range(n):
         c.advance(0.5 * (k + 1) / n, 0.5 / n, loads)
@@ -275,4 +281,47 @@ def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heatin
         expected[round(dt, 12)].append(q1.q_conv + (q2.q_conv - q1.q_conv) * frac)
     for dt, q in seen:                                                     # every pass of every part
         assert any(np.allclose(q, e, rtol=1e-12, atol=0.0) for e in expected[round(dt, 12)])
+
+
+# -- the reference tier: strong melting on the production mesh, and level 2b (2026-10-14) -----------------------------
+@pytest.mark.reference
+def test_strong_melting_on_the_production_mesh():
+    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band) for 1.5 s from 880 K: absorption
+    takes the non-rigid metal as it forms, the base stays within 2 K of T_rigid, no skin cell is left buried above
+    T_feed, and the books are exact. The 4 mm test sphere is refused at the rim of the melting region here; the 2 mm
+    mesh follows it, moving no corner more than its quarter-edge allowance (0.49 mm). Measured 2026-10-14: 172.9 g
+    removed, the base 1.2 K above T_rigid at most, one rebuild."""
+    m = mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND)
+    b = make(m)
+    M0 = b.mass()
+    for k in range(3):
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
+    assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert b.solver.temperature()[b.moving.corners].max() - b.material.T_rigid < 2.0
+    assert not np.any(b.skins.valid & (b.skins.T > b.material.T_feed))
+    assert 0.16 < b.removed_mass < 0.19                                    # kg; the heat could melt at most about 0.19
+
+
+@pytest.mark.reference
+def test_the_hot_plate_passes_level_2b():
+    """The level-2 plate started at 880 K under 2 MW/m2 (`analysis/skin_plate.py --case hot`) at the flight's 0.5 s macro
+    step: the centre's recession within 5 % of the one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth
+    within 10 % of its exact non-rigid depth (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold
+    the non-rigid layer, none is left in the 3D model."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis"))
+    import skin_plate
+    T_start, q0 = skin_plate.CASES["hot"]
+    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0)
+    assert failure is None
+    ref = skin_plate.hot_reference()
+    at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
+    for t_ in (1.5, 2.0):
+        assert at(t_, "recession_mm") == pytest.approx(ref[t_][0], rel=0.05)
+    for t_ in (1.0, 1.5, 2.0):
+        assert at(t_, "flowing_mm") == pytest.approx(ref[t_][1], rel=skin_plate.HOT_FLOWING_TOL)
+        assert at(t_, "base_excess_K") <= skin_plate.HOT_BASE_TOL_K
+    assert max(abs(x["mass_error"]) for x in rows) < 1e-12 and max(abs(x["energy_residual"]) for x in rows) < 1e-8
 
