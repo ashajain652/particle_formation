@@ -35,7 +35,8 @@ and checks that the result is the tested copy byte for byte. The unit tier goes 
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
-70ecbdd..f5d6633), then **amended after the build** the same day (a45f204, fb4fe25, d1b5636) by Asha's decisions
+70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
+and the hot plate) by Asha's decisions
 on the interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile,
 a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one and, while
 melting, no part is longer than 0.0625 s, with the heating interpolated in time across the parts; and a base fault is
@@ -104,8 +105,15 @@ Asha's decisions after the build (2026-10-12, from a diagnosis of the interface 
   the next layer down at its own enthalpy (`skin.profile_enthalpy`, Task 4), and the moving mesh books an inward sweep
   the same way (`MovingMesh.move(u, h_inward)`, Task 0).
 - **A macro step runs as parts** (option b) so that no base moves more than `MOVE_MAX`, a quarter of the mean surface
-  edge, in one part by drawing, absorbing and handing down; absorption's cap stays per macro step, shared among the
-  parts. Task 7.
+  edge, in one part by drawing and handing down. Task 7.
+- **Absorption is limited only by what a part's draws and hand-downs leave of its move allowance** (2026-10-14, option 1
+  after investigating absorption): the cap of a quarter-edge per macro step stranded non-rigid metal in the 3D model
+  and made the plate started at 880 K melt 4-8 % slow. Coarse surface meshes are not supported under strong melting
+  (the 4 mm test sphere is refused at the rim of a melting region at 6 MW/m²; the unit test heats it at 3 MW/m², and
+  the strong case runs on the production mesh in the reference tier). Task 7.
+- **The hot plate is level 2b** (2026-10-14): the plate started at 880 K under 2 MW/m², against its one-dimensional
+  reference's recession and non-rigid depth. Task 9.
+
 - **A base fault is a bottom cell outside the temperatures of the metal that crossed** the base, between the node's and
   the 3D profile's at the depth swept (`skinbody.jump_faults`), not one far from the node alone. Task 7.
 - **While melting, no part is longer than `PART_MAX` (0.0625 s)**, under a 0.5 s macro step for the trajectory and the
@@ -2573,7 +2581,7 @@ git commit -m "Thermal backends: the corner columns' base law as an implicit nod
   `REPEAT_RULES = ("column", "total", "never", "damped")`, `DEFAULT_REPEAT_RULE = "damped"`, `DAMPED_MAX_PASSES`,
   `DAMPED_OMEGA0`, `DAMPED_OMEGA_RANGE`, `DAMPED_TOL_K`, `MOVE_MAX`, `SPLIT_DEPTH_MAX`, `MOVE_HINT_MARGIN`, `PART_MAX`,
   `jump_faults(T_bottom, T_node, T_deep, crossed, tol=None)`; the constructor's `part_max=PART_MAX` (None: no cap),
-  `ABSORB_MAX`, `GRADIENT_FLOOR`.
+  `SKIN_CG_TOL` (the 3D solver's linear tolerance in a skin run), `GRADIENT_FLOOR`.
 
 At time zero each column takes its minimum from the 3D model: the corners move in by it and the skins hold exactly what
 they swept. The macro step (spec §4, §7.2): the trial pass gives each column its base law; the 3D step takes that law
@@ -2587,8 +2595,8 @@ equal parts (amended after the build): a part whose draws, absorption and hand-d
 parts as this one's largest move called for; while any skin's top is non-rigid at the macro step's start, no part is
 longer than `part_max`. Each part takes the heating interpolated linearly in time between the last macro step's and
 this one's, at its middle. Then the base moves: draw (already in the skins), absorb (the
-base node's excess over T_rigid along the 3D gradient, capped at `ABSORB_MAX` of the mean edge per macro step, shared
-among its parts) and hand-down become one
+base node's excess over T_rigid along the 3D gradient, at most what the part's draws and hand-downs leave of
+`MOVE_MAX` of the mean edge, the rest waiting for the next part) and hand-down become one
 inward displacement per corner, plus the volume-neutral smoothing; `move_with_policy` applies it, and each column is
 reconciled with what its corner actually swept — its bottom gains the swept mass less what it already exchanged, its
 enthalpy the swept enthalpy less what it already exchanged, an inward sweep booked along the profile the draws used —
@@ -2647,21 +2655,25 @@ def test_a_body_with_no_heat_stays_uniform_and_its_mesh_and_skins_keep_their_boo
 
 
 def test_heating_with_removal_keeps_mass_and_energy_exact(coarse_sphere_mesh):
-    """6 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, columns draw, the base recedes; the mass
-    removed plus the mass left is the mass at start, and the energy books close to 1e-8 of the heat absorbed. Under the
-    damped repetition with the move limit and the melting part cap (2026-10-12) the three 0.5 s steps run as 5, 8 and 8
-    parts and 164 g is removed, near the 190 g the heat could melt from 880 K (measured; 8 g under the one-repeat rule,
-    which left the heat parked)."""
+    """3 MW/m2 on the front for 1.5 s from 880 K: liquid forms and leaves, the skins absorb the non-rigid metal below
+    them, the base recedes; the mass removed plus the mass left is the mass at start, and the energy books close to 1e-8
+    of the heat absorbed. The three 0.5 s steps run as 1, 8 and 8 parts and 53 g is removed (measured 2026-10-14).
+    3 MW/m2, not 6: on these 4 mm elements the rim of a strongly melting region is one edge wide, a corner there absorbs
+    a 0.7 mm lens its neighbours do not have, and the mesh refuses the move; the 2 mm production mesh follows it
+    (`test_strong_melting_on_the_production_mesh`, reference tier)."""
     b = make(coarse_sphere_mesh)
     M0 = b.mass()
     for k in range(3):
-        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
     assert b.removed_mass > 0.0 and b.drawn_mass > 0.0
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
-    assert abs(b.energy_balance_residual()) < 1e-8                  # 5.8e-9 measured (2026-10-12)
+    assert abs(b.energy_balance_residual()) < 1e-8                  # 2e-11 measured (2026-10-14)
     stats = b.skin_stats()
-    assert stats["base_recession_max_mm"] > 0.5                       # 10.4 mm at the nose (measured, 2026-10-12)
+    assert stats["base_recession_max_mm"] > 0.5                       # 4.5 mm at the nose (measured, 2026-10-14)
     assert b.surface_temperature().max() <= b.material.T_feed + 1.0   # liquid left as it formed
+    # absorption keeps up: no base is left more than 2 K above T_rigid, no non-rigid metal stranded in the 3D model
+    # (0.3 K measured, 2026-10-14; 7 to 8 K under the old quarter-edge cap per macro step)
+    assert b.solver.temperature()[b.moving.corners].max() - b.material.T_rigid < 2.0
     assert stats["skin_cells"] == b.skins.count.sum() and b.last.Q_conv > 0.0
 
 
@@ -2727,24 +2739,28 @@ def test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_a
     inner = mat.T_rigid + G * (x_c - (P[corners] - 1e-3 * n)[:, 0])
     assert front.sum() > 100 and np.all(T[corners][front] > inner[front]) and np.all(g_n[front] > 0.0)
 
-    # the default cap, a quarter of the mean surface edge (about 1.0 mm of 4.0 mm): every hot corner needs more than that
-    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()
+    # a whole part's allowance, a quarter of the mean surface edge (about 1.0 mm of 4.0 mm): every hot corner needs more
+    cap = skinbody.MOVE_MAX * b.columns.edge_length.mean()
     assert np.all(raw[hot] > cap)
-    depth = b._absorb_depth()
+    depth = b._absorb_depth(cap)
     assert np.all(depth[~hot] == 0.0)                                      # below T_rigid: nothing to absorb
     assert depth[hot] == pytest.approx(cap, rel=1e-12) and b.absorb_capped == hot.sum()
-
-    # a cap too high to bind for the corners with a real gradient: their depth is the excess over the gradient
-    monkeypatch.setattr(skinbody, "ABSORB_MAX", 100.0)
-    cap = skinbody.ABSORB_MAX * b.columns.edge_length.mean()                # 0.4 m
+    # per corner: what a corner's draws already used of the allowance is not absorbed again
+    used = np.where(np.arange(len(raw)) % 2 == 0, 0.6 * cap, 0.0)
     b.absorb_capped = 0
-    depth = b._absorb_depth()
+    assert b._absorb_depth(cap - used, count=False)[hot] == pytest.approx((cap - used)[hot], rel=1e-12)
+    assert b.absorb_capped == 0                                            # not counted when asked not to
+
+    # an allowance too large to bind for the corners with a real gradient: their depth is the excess over the gradient
+    cap = 0.4                                                              # m
+    b.absorb_capped = 0
+    depth = b._absorb_depth(cap)
     below = hot & (raw < cap)
     capped = hot & ~below
     assert below.sum() > 100 and capped.sum() > 100 and (capped & ~usable).sum() > 100     # the last: gradient under the floor
     assert np.all(depth[~hot] == 0.0)
     assert depth[below] == pytest.approx(raw[below], rel=1e-9) and np.all(depth[below] > 0.0)
-    assert depth[capped] == pytest.approx(cap, rel=1e-12)                  # a gradient under the floor absorbs up to the cap
+    assert depth[capped] == pytest.approx(cap, rel=1e-12)                  # a gradient under the floor takes its allowance
     assert b.absorb_capped == capped.sum()
 
 
@@ -2797,8 +2813,7 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     """6 MW/m2 from 880 K on 4 mm elements: a 0.5 s step would draw and absorb more than MOVE_MAX of the mean edge
     (1 mm), so it is run again as shorter parts, every move's inward part within the limit (a mesh refused moves of
     1.65 mm here without it, measured; the tangential smoothing slides corners up to 1.4 mm along the surface besides);
-    the parts give what the same shorter steps give when taken one by one with the same heating and the same share of
-    the absorption cap (ABSORB_MAX is per macro step)."""
+    the parts give what the same shorter steps give when taken one by one with the same heating."""
     b = make(coarse_sphere_mesh, part_max=None)                          # the move limit alone, not the melting cap
     loads = front_loads(b, 6e6)
     moves = []
@@ -2816,7 +2831,6 @@ def test_a_step_that_would_move_a_base_too_far_runs_as_parts_and_matches_the_sho
     assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
     assert abs(b.energy_balance_residual()) < 1e-8
     monkeypatch.setattr(skinbody, "MOVE_HINT_MARGIN", 1.0)              # one step at a time, as the parts were taken
-    monkeypatch.setattr(skinbody, "ABSORB_MAX", skinbody.ABSORB_MAX / n)  # each with a part's share of the cap
     c = make(coarse_sphere_mesh, part_max=None)
     for k in range(n):
         c.advance(0.5 * (k + 1) / n, 0.5 / n, loads)
@@ -2875,6 +2889,49 @@ def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heatin
         expected[round(dt, 12)].append(q1.q_conv + (q2.q_conv - q1.q_conv) * frac)
     for dt, q in seen:                                                     # every pass of every part
         assert any(np.allclose(q, e, rtol=1e-12, atol=0.0) for e in expected[round(dt, 12)])
+
+
+# -- the reference tier: strong melting on the production mesh, and level 2b (2026-10-14) -----------------------------
+@pytest.mark.reference
+def test_strong_melting_on_the_production_mesh():
+    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band) for 1.5 s from 880 K: absorption
+    takes the non-rigid metal as it forms, the base stays within 2 K of T_rigid, no skin cell is left buried above
+    T_feed, and the books are exact. The 4 mm test sphere is refused at the rim of the melting region here; the 2 mm
+    mesh follows it, moving no corner more than its quarter-edge allowance (0.49 mm). Measured 2026-10-14: 172.9 g
+    removed, the base 1.2 K above T_rigid at most, one rebuild."""
+    m = mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND)
+    b = make(m)
+    M0 = b.mass()
+    for k in range(3):
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
+    assert b.mass() + b.removed_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert b.solver.temperature()[b.moving.corners].max() - b.material.T_rigid < 2.0
+    assert not np.any(b.skins.valid & (b.skins.T > b.material.T_feed))
+    assert 0.16 < b.removed_mass < 0.19                                    # kg; the heat could melt at most about 0.19
+
+
+@pytest.mark.reference
+def test_the_hot_plate_passes_level_2b():
+    """The level-2 plate started at 880 K under 2 MW/m2 (`analysis/skin_plate.py --case hot`) at the flight's 0.5 s macro
+    step: the centre's recession within 5 % of the one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth
+    within 10 % of its exact non-rigid depth (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold
+    the non-rigid layer, none is left in the 3D model."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis"))
+    import skin_plate
+    T_start, q0 = skin_plate.CASES["hot"]
+    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0)
+    assert failure is None
+    ref = skin_plate.hot_reference()
+    at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
+    for t_ in (1.5, 2.0):
+        assert at(t_, "recession_mm") == pytest.approx(ref[t_][0], rel=0.05)
+    for t_ in (1.0, 1.5, 2.0):
+        assert at(t_, "flowing_mm") == pytest.approx(ref[t_][1], rel=skin_plate.HOT_FLOWING_TOL)
+        assert at(t_, "base_excess_K") <= skin_plate.HOT_BASE_TOL_K
+    assert max(abs(x["mass_error"]) for x in rows) < 1e-12 and max(abs(x["energy_residual"]) for x in rows) < 1e-8
 
 ```
 
@@ -2956,10 +3013,12 @@ after the trajectory and the heating:
    the swept enthalpy less what it already exchanged, so mass and energy are exact. A sweep that takes metal out of
    the 3D model is booked along the same profile as the draws.
 
-A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part by
-drawing, absorbing and handing down (Asha, 2026-10-12): a part that would is run again as shorter parts (absorption's
-cap, ABSORB_MAX per macro step, is shared among the parts by their length), and the next macro step
-starts with as many parts as this one's moves called for. While any skin's top is non-rigid (at or above T_rigid at
+A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part
+(Asha, 2026-10-12): a part whose draws and hand-downs would move a base further is run again as shorter parts, and the
+next macro step starts with as many parts as this one's moves called for. Absorption takes what is left of a part's
+allowance after its draws and hand-downs, and the rest of the non-rigid metal waits for the next part (Asha,
+2026-10-14: a cap of a quarter-edge per macro step stranded up to 1.3 mm of non-rigid metal in the 3D model of a plate
+started at 880 K, whose exact non-rigid layer is 1.5-1.7 mm thick, and the plate melted 4-8 % slow). While any skin's top is non-rigid (at or above T_rigid at
 the macro step's start), no part is longer than PART_MAX (Asha, 2026-10-12: long parts during melting were rejected for
 their moves and needed many passes). Within a part the base heat, the draws and the move all take the part's own step;
 the heating is interpolated in time between the last macro step's and this one's, at the part's middle, so a macro
@@ -2979,10 +3038,9 @@ from . import skin as skin_mod
 from .body import ThermalBody
 from .thermal import SIGMA_SB
 
-ABSORB_MAX = 0.25                 # of the mean surface edge: the most a base absorbs in one macro step (the rest waits)
 GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
-                                  # is huge and it absorbs up to the cap, ABSORB_MAX: it does not absorb nothing
+                                  # is huge and it absorbs up to its part's move allowance: it does not absorb nothing
 REPEAT_RULES = ("column", "total", "never", "damped")   # when a step's interface mismatch repeats it: "damped"
                                               # repeats until converged (below); the others at most once -- "column" (the
                                               # spec's first rule) when any column's mismatch exceeds the tolerance,
@@ -3002,7 +3060,8 @@ DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves 
 # The move limit (2026-10-12). The metal a base sweeps in one step is valued along a straight 3D profile, and the moving
 # mesh refuses moves of more than about half an element (1.3 mm on 2 mm elements, 5.2 mm on 4 mm, measured): a step
 # whose draws and hand-downs would move a base further than this is split.
-MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draw, absorb, hand down)
+MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draws and hand-downs
+                                  # split a part beyond it; absorption takes what they leave)
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
 # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
@@ -3010,6 +3069,10 @@ MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the 
 # before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
 # steps also removed 21.28 g against 16.6 g, but because ABSORB_MAX is per macro step, not because the parts were short.)
 PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid
+SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin run: at its default 1e-10 the skin body's
+                                  # books drifted by 1e-8 of the heat absorbed over 17 short parts (about 5e-5 J a solve
+                                  # on the 4 mm test sphere); at 1e-13, as with a direct solve, 2e-11, at no cost
+                                  # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
 
 
 def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
@@ -3039,6 +3102,8 @@ class SkinBody(ThermalBody):
         self.T_ambient, self.remove, self.demise_fraction = float(T_ambient), bool(remove), float(demise_fraction)
         self.v_hat = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
         self.settings = settings or skin_mod.SkinSettings()
+        if getattr(solver, "cg_tol", None) is not None:
+            solver.cg_tol = min(solver.cg_tol, SKIN_CG_TOL)
         solver.setup(mesh, material, 0.0)                    # the 3D boundary lies under the skins: it does not radiate
         solver.set_temperature(T0)
         self.mass0 = material.rho * mesh.volume()
@@ -3171,8 +3236,7 @@ class SkinBody(ThermalBody):
                 self.interface_repeats += 1
                 continue
             break
-        share = dt / dt_macro                                # of the macro step: absorption's cap is shared by length
-        ratio = self._move_ratio(book, m_min, share)
+        ratio = self._move_ratio(book, m_min)
         if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:          # too far for one part: run it again as shorter parts
             self.solver.set_state(solver_state)
             sk.set_state(skin_state)
@@ -3194,15 +3258,16 @@ class SkinBody(ThermalBody):
         self.drawn_mass += float(book.drawn.sum())
         self.iterations.append(res.iterations)
         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
-        self._move_base(book, m_min, g0, share)
+        self._move_base(book, m_min, g0)
         self.last_shortfall = float(np.maximum(skin_mod.minimum_mass(mat, sk.area, self.settings) - sk.column_mass(),
                                                0.0).sum())
 
-    def _absorb_depth(self, share=1.0, count=True):
+    def _absorb_depth(self, allowance, count=True):
         """Per corner, the depth [m] along the column's direction from the base node to where the 3D temperature falls
-        to T_rigid (spec 6.6), from the node's temperature and the 3D gradient along the normal, capped at ABSORB_MAX
-        of the mean surface edge per macro step: `share` of it in a part of that length. `count`: add the capped
-        corners to absorb_capped."""
+        to T_rigid (spec 6.6), from the node's temperature and the 3D gradient along the normal, at most `allowance` [m,
+        per corner or one for all]: what the part's draws and hand-downs left of its move. `count`: add the corners the
+        allowance held back to absorb_capped. (Against the 3D field traced along the normal, the line method, the
+        extrapolation agrees within 0.07 mm on 2 mm elements, measured 2026-10-14.)"""
         mat, mm = self.material, self.moving
         if not mat.melts:
             return np.zeros(self.columns.n)
@@ -3212,10 +3277,9 @@ class SkinBody(ThermalBody):
             return np.zeros(self.columns.n)
         g = self._normal_gradient(T)
         depth = np.where(excess > 0.0, excess / np.maximum(g, GRADIENT_FLOOR), 0.0)
-        cap = ABSORB_MAX * self.columns.edge_length.mean() * share
         if count:
-            self.absorb_capped += int((depth > cap).sum())
-        return np.minimum(depth, cap)
+            self.absorb_capped += int((depth > allowance).sum())
+        return np.minimum(depth, allowance)
 
     def _normal_gradient(self, T=None):
         """dT/dn [K/m] at every corner along its column's outward direction, from the 3D field's nodal gradient (exact
@@ -3229,27 +3293,30 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", movemesh.nodal_gradient(mesh.points, mesh.tets, T, elements)[mm.corners],
                          self.columns.normal)
 
-    def _move_ratio(self, book, m_min, share):
-        """The largest distance a base would move in this part by drawing, absorbing and handing down, over MOVE_MAX of
-        the mean surface edge. The hand-down is found on a copy of the skins."""
+    def _move_ratio(self, book, m_min):
+        """The largest distance a base would move in this part by drawing and handing down, over MOVE_MAX of the mean
+        surface edge (absorption takes what is left, so it never splits a part). The hand-down is found on a copy of
+        the skins."""
         mat, sk = self.material, self.skins
         handed = np.zeros(sk.n)
         if mat.melts:
             saved = sk.state()
             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid)
             sk.set_state(saved)
-        d = np.abs((book.drawn - handed) / (mat.rho * self.columns.area) + self._absorb_depth(share, count=False))
+        d = np.abs(book.drawn - handed) / (mat.rho * self.columns.area)
         return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
 
-    def _move_base(self, book, m_min, g0, share=1.0):
+    def _move_base(self, book, m_min, g0):
         """Draw (already in the skins), absorb and hand down become one corner displacement; the move's actual sweep
-        is then reconciled on every column's bottom (module docstring, step 4). Metal swept out of the 3D model is
-        booked along the profile T(s) = T_node - g0 s that the draws used."""
+        is then reconciled on every column's bottom (module docstring, step 4). Absorption takes what the draws and
+        hand-downs leave of MOVE_MAX of the mean edge. Metal swept out of the 3D model is booked along the profile
+        T(s) = T_node - g0 s that the draws used."""
         mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
         started = time.perf_counter()
         T_node = self.solver.temperature()[mm.corners]
-        depth = self._absorb_depth(share)
         handed, handed_H = skin_mod.hand_down(sk, m_min, mat.T_rigid) if mat.melts else (np.zeros(sk.n), np.zeros(sk.n))
+        moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
+        depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
         inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
         rebuilds = mm.rebuilds
@@ -3343,10 +3410,13 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", self._top0 - self.surface.points, self._normal0)
 ```
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 11 passed (about 5 minutes: the 6 MW/m² test runs its 0.5 s
-  steps as 5, 8 and 8 parts; `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped`
-  was added at the final review, the damped, parts, fault-counter and part-cap tests with the amendment; the tests of
-  the repeat rules and of the move limit run with `part_max=None`, the conditions they study); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
+- [ ] **Step 5: Run them to see them pass.** Expected: 11 passed and 2 deselected (about 4 minutes: the heating test
+  runs its 0.5 s steps as 1, 8 and 8 parts at 3 MW/m²;
+  `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added at the final
+  review, the damped, parts, fault-counter and part-cap tests with the amendment; the tests of the repeat rules and of
+  the move limit run with `part_max=None`, the conditions they study). The two deselected are the reference tier's
+  (2026-10-14): `-m reference` runs `test_strong_melting_on_the_production_mesh` (6 MW/m² on the 2 mm production
+  mesh, about 11 minutes) and `test_the_hot_plate_passes_level_2b` (about 3 minutes); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
@@ -3970,12 +4040,17 @@ git commit -m "Command line: --surface-model skin with its settings, run names, 
 
 **Files:**
 - Create: `analysis/ablation_1d.py` (the independent one-dimensional reference), `analysis/skin_plate.py` (the plate),
-  `data/reference_values/box_q6p_fine.json` (sub-plan 18's fine box, extracted)
+  `data/reference_values/box_q6p_fine.json` (sub-plan 18's fine box, extracted),
+  `data/reference_values/plate_hot_1d.json` (the hot plate's one-dimensional reference, added 2026-10-14)
 
 Level 2 (spec §11.1 as amended): a plate 8 mm deep and 110 × 110 mm across, of 2 mm elements at 700 K, Scheil, no
 radiation, its front heated at 6 MW/m² within 32 mm of its centre and tapering to zero at 45 mm, for 2 s, liquid removed
 as it forms. The centre's recession within 5 % at 1.0, 1.5 and 2.0 s of the 1 µm one-dimensional reference and of the
-fine box; mass to 1e-12, energy to 1e-8.
+fine box; mass to 1e-12, energy to 1e-8. Level 2b, the hot plate (added 2026-10-14, Asha; `--case hot`): the same
+plate started at 880 K under 2 MW/m², where the metal between the melt front and T_rigid is 1.5–1.7 mm thick and the
+skins' absorption is exercised; the recession within 5 % of its one-dimensional reference at 1.5 and 2.0 s (the onset
+at 1.0 s reported), the skins' flowing depth at the centre within 10 % of the exact non-rigid depth, and the centre's
+base within 1 K of T_rigid. The harness judges each case and records whether it passes.
 
 - [ ] **Step 1: The one-dimensional reference.** Create `analysis/ablation_1d.py`:
 
@@ -3986,7 +4061,8 @@ The centre of the level-2 plate (and the middle of sub-plan 18's fine box) is on
 heated at its front by a constant flux, adiabatic behind, no radiation, liquid removed as it forms. This solves it on a
 fixed grid of `cell` cells with its own code -- backward Euler in the enthalpy, Newton in the temperature with a banded
 solve, and the contiguous front cells at or above T_feed removed after every step -- sharing nothing with
-`reentry_model.skin` but the material.
+`reentry_model.skin` but the material. It also records the non-rigid depth: from the front to where the slab falls to
+T_rigid, the layer the skins must hold (the hot plate's reference, 2026-10-14).
 
     python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2] [--out PATH]
 """
@@ -4003,12 +4079,13 @@ from reentry_model import material  # noqa: E402
 
 
 def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05):
-    """Recession [m] of the slab's front at multiples of `every` [s], as (times, recession) arrays."""
+    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid) at multiples of `every` [s],
+    as (times, recession, non-rigid depth) arrays."""
     n = int(round(length / cell))
     T = np.full(n, T0)
     front = 0                                            # index of the first cell still in the slab
     m = mat.rho * cell                                   # kg per m2 per cell
-    times, recession = [0.0], [0.0]
+    times, recession, nonrigid = [0.0], [0.0], [0.0]
     steps = int(round(t_end / dt))
     record = max(1, int(round(every / dt)))
     for step in range(1, steps + 1):
@@ -4043,7 +4120,9 @@ def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0
         if step % record == 0:
             times.append(step * dt)
             recession.append(front * cell)
-    return np.array(times), np.array(recession)
+            cold = np.flatnonzero(T[front:] <= mat.T_rigid)
+            nonrigid.append((cold[0] if cold.size else n - front) * cell)
+    return np.array(times), np.array(recession), np.array(nonrigid)
 
 
 def main():
@@ -4057,13 +4136,14 @@ def main():
     p.add_argument("--out", default="ablation_1d.json")
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
-    t, r = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
+    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
     doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms,
-           "material": mat.name, "t_s": t.tolist(), "recession_mm": (r * 1e3).tolist()}
-    json.dump(doc, open(a.out, "w"), indent=1)
+           "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
+           "recession_mm": [round(x, 6) for x in (r * 1e3).tolist()], "nonrigid_mm": [round(x, 6) for x in (nr * 1e3).tolist()]}
+    json.dump(doc, open(a.out, "w"), indent=0)
     for t_ in (1.0, 1.5, 2.0):
         i = int(np.argmin(np.abs(t - t_)))
-        print("t = {:.2f} s: recession {:.4f} mm".format(t[i], r[i] * 1e3))
+        print("t = {:.2f} s: recession {:.4f} mm, non-rigid depth {:.4f} mm".format(t[i], r[i] * 1e3, nr[i] * 1e3))
 
 
 if __name__ == "__main__":
@@ -4071,7 +4151,149 @@ if __name__ == "__main__":
 ```
 
   Run `"$PY" analysis/ablation_1d.py --out ../measure/ablation_1d_1um.json` (about 12 s). Expected (measured while
-  planning): 0.7890, 2.7120 and 5.2190 mm at 1.0, 1.5 and 2.0 s; at 5 µm and 1 ms 0.7900, 2.7100, 5.2150.
+  planning): 0.7890, 2.7120 and 5.2190 mm at 1.0, 1.5 and 2.0 s; at 5 µm and 1 ms 0.7900, 2.7100, 5.2150. The hot
+  plate's reference: `"$PY" analysis/ablation_1d.py --t0 880 --q 2e6 --out data/reference_values/plate_hot_1d.json`,
+  recession 0.789, 1.817 and 2.917 mm and non-rigid depth 1.487, 1.570 and 1.674 mm at 1.0, 1.5 and 2.0 s:
+
+```json
+{
+"q_Wm2": 2000000.0,
+"T0_K": 880.0,
+"length_mm": 8.0,
+"cell_um": 1.0,
+"dt_ms": 0.5,
+"material": "AA7075_scheil",
+"t_s": [
+0.0,
+0.05,
+0.1,
+0.15,
+0.2,
+0.25,
+0.3,
+0.35,
+0.4,
+0.45,
+0.5,
+0.55,
+0.6,
+0.65,
+0.7,
+0.75,
+0.8,
+0.85,
+0.9,
+0.95,
+1.0,
+1.05,
+1.1,
+1.15,
+1.2,
+1.25,
+1.3,
+1.35,
+1.4,
+1.45,
+1.5,
+1.55,
+1.6,
+1.65,
+1.7,
+1.75,
+1.8,
+1.85,
+1.9,
+1.95,
+2.0
+],
+"recession_mm": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.049,
+0.134,
+0.222,
+0.312,
+0.404,
+0.498,
+0.594,
+0.691,
+0.789,
+0.888,
+0.988,
+1.089,
+1.191,
+1.294,
+1.397,
+1.501,
+1.606,
+1.711,
+1.817,
+1.924,
+2.031,
+2.139,
+2.248,
+2.358,
+2.468,
+2.579,
+2.691,
+2.803,
+2.917
+],
+"nonrigid_mm": [
+0.0,
+0.0,
+0.006,
+0.202,
+0.377,
+0.537,
+0.684,
+0.822,
+0.952,
+1.075,
+1.192,
+1.305,
+1.365,
+1.389,
+1.408,
+1.426,
+1.441,
+1.455,
+1.466,
+1.477,
+1.487,
+1.497,
+1.506,
+1.514,
+1.522,
+1.53,
+1.538,
+1.546,
+1.553,
+1.562,
+1.57,
+1.578,
+1.587,
+1.596,
+1.605,
+1.615,
+1.625,
+1.637,
+1.648,
+1.661,
+1.674
+]
+}
+```
 
 - [ ] **Step 2: The fine box's series.** Save as `../extract_fine_box.py` beside the work copy and run it from the work
   copy's root (the run file is git-ignored, so it is read from the main checkout's
@@ -4120,7 +4342,17 @@ the one-dimensional 1 um reference (`analysis/ablation_1d.py`) and the stage-1 f
 The crater's wall is where the surface folds under heating-driven recession: the fold, the triangle and element
 quality, rebuilds, faults, repeats and the wall time are recorded every step.
 
-    python analysis/skin_plate.py [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2] [--out PATH.json]
+The hot plate (`--case hot`, added 2026-10-14, Asha): the same plate started at 880 K and heated at 2 MW/m2, where the
+metal between the melt front and T_rigid -- the non-rigid layer the skins must hold -- is 1.5-1.7 mm thick in the exact
+solution, so the skins' absorption is exercised as it is not at 700 K. Its reference is the one-dimensional solution at
+1 um and 0.5 ms, recession and non-rigid depth (`data/reference_values/plate_hot_1d.json`, `analysis/ablation_1d.py
+--t0 880 --q 2e6`). Criterion: recession within 5 % at 1.5 and 2.0 s (the onset at 1.0 s is reported, not judged: the
+melting onset is open), the skins' flowing depth at the centre within 10 % of the exact non-rigid depth at 1.0, 1.5
+and 2.0 s, and the centre's base no more than 1 K above T_rigid -- the skins hold the non-rigid metal, none is left in
+the 3D model; mass closed to 1e-12 and energy to 1e-8.
+
+    python analysis/skin_plate.py [--case cold|hot] [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2]
+                                  [--out PATH.json]
 """
 import argparse
 import json
@@ -4140,6 +4372,16 @@ R_FLAT, R_ZERO, R_READ = 32e-3, 45e-3, 3e-3  # m: full flux within R_FLAT, none 
 # R_FLAT - R_READ is half again the diffusion length 2 sqrt(alpha t), about 19 mm at 2 s: with full flux only to 12 mm
 # the centre lost heat sideways and fell 9 % behind the exact solution by 2 s (measured while planning)
 REFERENCE_1D = {1.0: 0.7890, 1.5: 2.7120, 2.0: 5.2190}       # mm, analysis/ablation_1d.py at 1 um and 0.5 ms (2026-10-12)
+CASES = {"cold": (T0, Q0), "hot": (880.0, 2.0e6)}            # K, W/m2: the level-2 plate and the hot plate (2026-10-14)
+HOT_FLOWING_TOL, HOT_BASE_TOL_K = 0.10, 1.0                    # the hot plate's flowing depth (relative) and base excess
+
+
+def hot_reference():
+    """The hot plate's one-dimensional reference at 1.0, 1.5 and 2.0 s: {t: (recession mm, non-rigid depth mm)}."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    doc = json.load(open(os.path.join(here, "data", "reference_values", "plate_hot_1d.json")))
+    return {t: (float(np.interp(t, doc["t_s"], doc["recession_mm"])), float(np.interp(t, doc["t_s"], doc["nonrigid_mm"])))
+            for t in (1.0, 1.5, 2.0)}
 
 
 def fine_box():
@@ -4154,8 +4396,8 @@ def taper(r, r_flat=R_FLAT, r_zero=R_ZERO):
     return 0.5 * (1.0 + np.cos(np.pi * x))
 
 
-def projected_flux(body, radius, r_flat=R_FLAT, r_zero=R_ZERO):
-    """Each column's flux [W/m2 over its top area]: Q0 times the taper at its corner's starting radius `radius`, times
+def projected_flux(body, radius, r_flat=R_FLAT, r_zero=R_ZERO, q0=Q0):
+    """Each column's flux [W/m2 over its top area]: q0 times the taper at its corner's starting radius `radius`, times
     the projection of its top dual cell on the face -- a third of each touching top triangle times that triangle's
     -n_x, floored at zero -- over its area. A column on a tilted crater wall receives the heat its projection catches."""
     s = body.surface
@@ -4164,7 +4406,7 @@ def projected_flux(body, radius, r_flat=R_FLAT, r_zero=R_ZERO):
     proj = np.zeros(len(s.areas))
     for i in range(3):
         np.add.at(proj, s.faces[:, i], np.clip(-n2[:, 0], 0.0, None) / 6.0)
-    return Q0 * taper(radius, r_flat, r_zero) * proj / s.areas
+    return q0 * taper(radius, r_flat, r_zero) * proj / s.areas
 
 
 def solid_top(body):
@@ -4176,12 +4418,12 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
     body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(),
-                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset]), T0=T0, emissivity=0.0,
+                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset]), T0=T_start, emissivity=0.0,
                              v_hat=(-1.0, 0.0, 0.0), deform_depth=deform, repeat_rule=repeat_rule)
     p = body._top0                                                 # the top surface at time zero: the plate's own
     front = np.abs(p[:, 0]) < 0.05e-3
@@ -4191,8 +4433,8 @@ def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=T
     M0, rows, t, started, failure = body.mass(), [], 0.0, time.perf_counter(), None
     for k in range(int(round(t_end / dt))):
         try:
-            q = projected_flux(body, radius, r_flat, r_zero)
-            body.advance(t + dt, dt, heating.HeatingResult(q, Q0, 0.0, 0.0, 0.0))
+            q = projected_flux(body, radius, r_flat, r_zero, q0)
+            body.advance(t + dt, dt, heating.HeatingResult(q, q0, 0.0, 0.0, 0.0))
         except RuntimeError as exc:                        # a move no rebuild can absorb: record where, and stop
             failure = {"t": t + dt, "error": str(exc), "fold_deg": body.moving.surface_fold()}
             print(json.dumps(failure), flush=True)
@@ -4204,6 +4446,8 @@ def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=T
                      "removed_recession_mm": float(body.column_removed[centre].sum() / (body.material.rho * area0[centre].sum()) * 1e3),
                      "centre_area_ratio": float(body.surface.areas[centre].sum() / area0[centre].sum()),
                      "T_top_centre": float(body.surface_temperature()[centre].mean()),
+                     "flowing_mm": float(body.skins.depth_above(mat.T_rigid)[centre].mean() * 1e3),
+                     "base_excess_K": float((body.solver.temperature()[body.moving.corners][centre] - mat.T_rigid).max()),
                      "mass_error": (body.mass() + body.removed_mass) / M0 - 1.0,
                      "energy_residual": body.energy_balance_residual(), "fold_deg": st["surface_fold_deg"],
                      "quality": st["surface_quality_min"], "zone_ratio": st["zone_ratio_min"], "rebuilds": st["rebuilds"],
@@ -4219,6 +4463,7 @@ def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=T
 
 def main():
     a = argparse.ArgumentParser()
+    a.add_argument("--case", default="cold", choices=tuple(CASES))
     a.add_argument("--dt", type=float, default=0.05)
     a.add_argument("--preset", default="dev", choices=tuple(skin.SKIN_PRESETS))
     a.add_argument("--deform-mm", type=float, default=4.0)
@@ -4231,19 +4476,33 @@ def main():
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
     a.add_argument("--out", default="skin_plate.json")
     args = a.parse_args()
+    T_start, q0 = CASES[args.case]
     body, rows, n_centre, failure = run(args.dt, args.preset, args.deform_mm * 1e-3, args.t_end, args.solver,
                                         h=args.h_mm * 1e-3, width=args.width_mm * 1e-3, r_flat=args.r_flat_mm * 1e-3,
-                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule)
-    fine, compare = fine_box(), {}
+                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0)
+    at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
+    compare, verdict = {}, []
+    fine = fine_box() if args.case == "cold" else None
+    hot = hot_reference() if args.case == "hot" else None
     for t_ in (1.0, 1.5, 2.0):
         if not rows or t_ > rows[-1]["t"] + 1e-9:
             continue
-        r = float(np.interp(t_, [x["t"] for x in rows], [x["recession_mm"] for x in rows]))
-        g = float(np.interp(t_, [x["t"] for x in rows], [x["removed_recession_mm"] for x in rows]))
-        compare[str(t_)] = {"centre_mm": r, "removed_mm": g, "fine_mm": fine[t_], "ref1d_mm": REFERENCE_1D[t_],
-                            "rel_fine": r / fine[t_] - 1.0, "rel_1d": r / REFERENCE_1D[t_] - 1.0,
-                            "removed_rel_1d": g / REFERENCE_1D[t_] - 1.0}
-    summary = {"failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
+        r, g = at(t_, "recession_mm"), at(t_, "removed_recession_mm")
+        if fine is not None:
+            compare[str(t_)] = {"centre_mm": r, "removed_mm": g, "fine_mm": fine[t_], "ref1d_mm": REFERENCE_1D[t_],
+                                "rel_fine": r / fine[t_] - 1.0, "rel_1d": r / REFERENCE_1D[t_] - 1.0,
+                                "removed_rel_1d": g / REFERENCE_1D[t_] - 1.0}
+            verdict.append(abs(r / fine[t_] - 1.0) <= 0.05 and abs(r / REFERENCE_1D[t_] - 1.0) <= 0.05)
+        else:
+            ref_r, ref_nr = hot[t_]
+            flow = at(t_, "flowing_mm")
+            compare[str(t_)] = {"centre_mm": r, "ref1d_mm": ref_r, "rel_1d": r / ref_r - 1.0, "flowing_mm": flow,
+                                "nonrigid_ref_mm": ref_nr, "flowing_rel": flow / ref_nr - 1.0,
+                                "base_excess_K": at(t_, "base_excess_K")}
+            verdict.append((t_ < 1.25 or abs(r / ref_r - 1.0) <= 0.05) and abs(flow / ref_nr - 1.0) <= HOT_FLOWING_TOL
+                           and at(t_, "base_excess_K") <= HOT_BASE_TOL_K)
+    summary = {"case": args.case, "T0_K": T_start, "q_Wm2": q0, "passes": bool(verdict) and all(verdict) and failure is None,
+               "failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
                "width_mm": args.width_mm, "r_flat_mm": args.r_flat_mm, "r_zero_mm": args.r_zero_mm,
                "repeat_rule": args.repeat_rule,
                "preset": args.preset, "deform_mm": args.deform_mm, "n_columns": body.columns.n, "n_centre": n_centre,
@@ -4316,10 +4575,24 @@ flight's 0.5 s step the plate passes, where before the amendment it never melted
   0.35 mm at 22 K/mm is 7.7 K, over the 5 K tolerance), so it flagged the valuation itself. Redefined (fb4fe25) to the
   range of the metal that crossed, it reads 0 at every step of the 0.25 s run.
 
+  **The hot plate and absorption** (2026-10-14). Under the quarter-edge cap per macro step the hot plate failed: at
+  0.5 s macro steps −7.7, −3.9 and −5.3 % at 1.0, 1.5 and 2.0 s, the skins 0.54–0.59 mm thick against the exact
+  non-rigid depth of 1.49–1.67 mm, and the centre's base 7–8 K above T_rigid. With absorption limited only by the move
+  allowance (the default since then), measured once each:
+
+The table shows both plates passing at both macro steps with the absorption of option 1.
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria |
+|---|---|---|---|---|
+| hot, 0.5 s | +1.4 % | +2.5 % | +1.2 % | flowing depth within 3.6 %, base at most 0.08 K above T_rigid |
+| hot, 0.05 s | +7.1 % (onset, not judged) | +0.8 % | +1.3 % | flowing depth within 5.9 %, base at most 0.08 K above |
+| cold, 0.5 s | +4.5 % | −0.2 % | −2.8 % | fine box +2.5, −0.8, −2.6 % |
+| cold, 0.05 s | +0.3 % | −3.6 % | −4.2 % | fine box −1.6, −4.3, −3.9 % |
+
 - [ ] **Step 5: Commit**
 
 ```bash
-git add analysis/ablation_1d.py analysis/skin_plate.py data/reference_values/box_q6p_fine.json
+git add analysis/ablation_1d.py analysis/skin_plate.py data/reference_values/box_q6p_fine.json data/reference_values/plate_hot_1d.json
 git commit -m "Level 2: the plate with tapered heating against the 1 um one-dimensional reference and the fine box"
 ```
 
@@ -4455,18 +4728,20 @@ git commit -m "Skins: the interface repeat's triggers and the cost of a step mea
 (70ecbdd..f5d6633, 14 commits); every task was reviewed for spec compliance and quality, and the whole branch once more
 at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro steps and Asha's three decisions (a45f204):
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
-parts; then the fault counter redefined (fb4fe25), and the melting part cap with the heating in time (d1b5636). The
-unit tier went from 341 to 389 passed (1 skipped), the FEniCSx
+parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
+2026-10-14 the absorption rule with the hot plate as level 2b. The unit tier went from 341 to 389 passed (1 skipped),
+the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–129 the amendment's.
+build's measurements, 121–131 the amendment's.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and the heating in time) pass as unit tests.
-Level 2, the plate (Task 9): with the default since option 1, the development cells pass against both references at
-0.5 s macro steps (+4.5, −0.2, −2.5 % against the one-dimensional reference) and at 0.05 s (+0.3, −3.6, −3.8 %); before
-it, the production cells passed at 0.05 s, the development cells missed the fine box by half a point at 1.5 s, the two
-cell sizes differed by 1.4 % (1 % asked), and 0.1 and 0.25 s steps failed at 1.0 s (+8.0 % and +12.7 %; not
-remeasured with the cap). Mass closes to 1.4e-15 and energy to 2.4e-9 throughout. Level 3 against SESAM was not run (Task 10 Step 4).
+Level 2, the plate (Task 9), with the current default: the cold plate passes against both references at 0.5 s macro
+steps (+4.5, −0.2, −2.8 % against the one-dimensional reference) and at 0.05 s (+0.3, −3.6, −4.2 %); level 2b, the hot
+plate, passes at 0.5 s (+1.4, +2.5, +1.2 %, the skins' flowing depth within 3.6 % of the exact non-rigid depth) and at
+0.05 s. Earlier measurements: the production cells passed at 0.05 s, the two cell sizes differed by 1.4 % (1 % asked),
+and 0.1 and 0.25 s steps failed at 1.0 s (+8.0 % and +12.7 %; not remeasured since). Mass closes to 1.4e-15 and energy
+to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened in skin runs). Level 3 against SESAM was not run (Task 10 Step 4).
 
 ### The final review's findings, and what became of them
 
@@ -4496,10 +4771,9 @@ remeasured with the cap). Mass closes to 1.4e-15 and energy to 2.4e-9 throughout
 - **A late slow bias at 0.05 s**: −3 to −5 % at 1.5 and 2.0 s under the amended default (−2.0 % under the one-repeat
   rule, +0.3 % with damping before the profile valuation, whose overvaluation had hidden it); the development cells miss
   the fine box at 1.5 s by half a point, and the cell sizes differ by 1.4 %.
-- **The absorption cap makes the result depend on the macro step** (fact 129). The cap, a quarter of the mean edge
-  per macro step shared by its parts, bound 18 848 times by 1.0 s on the 100 mm sphere at 0.5 s macro steps and never
-  at 0.0625 s, which absorbed twice the metal (30.0 against 14.7 g by 1.0 s) and removed 21.2 g by 1.5 s against
-  16.5 g; scaled to the same rate per second, the small steps match the large. Which absorption is physical is open.
+- **Coarse surface meshes under strong melting** (fact 131): the 4 mm test sphere is refused at the rim of a melting
+  region at 6 MW/m², where a corner absorbs a 0.7 mm lens its neighbours do not have; not supported. The 2 mm
+  production mesh follows the same case. A rim limit on absorption made the 4 mm sphere pass and is the fallback.
 - **The cost** (facts 125, 126 and 129): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and 1 041 s, 53 %
   of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121 and 226 s
   (82, 115 and 133 s under the one-repeat rule, which left heat parked).

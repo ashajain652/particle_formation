@@ -161,6 +161,9 @@ def main():
                      ("TIMING", "analysis/skin_timing.py")):
         blocks[key] = fence(read(NEW, rel))
         steps.append(("write", rel, read(NEW, rel)))
+    rel = "data/reference_values/plate_hot_1d.json"                       # the hot plate's reference (2026-10-14)
+    blocks["PLATE_HOT_REF"] = fence(read(NEW, rel), "json")
+    steps.append(("write", rel, read(NEW, rel)))
     blocks["EXTRACT"] = fence(read(HERE, "extract_fine_box.py"))
     steps.append(("extract", "data/reference_values/box_q6p_fine.json", None))
 

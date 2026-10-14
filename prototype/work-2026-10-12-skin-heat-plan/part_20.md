@@ -35,7 +35,8 @@ and checks that the result is the tested copy byte for byte. The unit tier goes 
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
-70ecbdd..f5d6633), then **amended after the build** the same day (a45f204, fb4fe25, d1b5636) by Asha's decisions
+70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
+and the hot plate) by Asha's decisions
 on the interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile,
 a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one and, while
 melting, no part is longer than 0.0625 s, with the heating interpolated in time across the parts; and a base fault is
@@ -104,8 +105,15 @@ Asha's decisions after the build (2026-10-12, from a diagnosis of the interface 
   the next layer down at its own enthalpy (`skin.profile_enthalpy`, Task 4), and the moving mesh books an inward sweep
   the same way (`MovingMesh.move(u, h_inward)`, Task 0).
 - **A macro step runs as parts** (option b) so that no base moves more than `MOVE_MAX`, a quarter of the mean surface
-  edge, in one part by drawing, absorbing and handing down; absorption's cap stays per macro step, shared among the
-  parts. Task 7.
+  edge, in one part by drawing and handing down. Task 7.
+- **Absorption is limited only by what a part's draws and hand-downs leave of its move allowance** (2026-10-14, option 1
+  after investigating absorption): the cap of a quarter-edge per macro step stranded non-rigid metal in the 3D model
+  and made the plate started at 880 K melt 4-8 % slow. Coarse surface meshes are not supported under strong melting
+  (the 4 mm test sphere is refused at the rim of a melting region at 6 MW/m²; the unit test heats it at 3 MW/m², and
+  the strong case runs on the production mesh in the reference tier). Task 7.
+- **The hot plate is level 2b** (2026-10-14): the plate started at 880 K under 2 MW/m², against its one-dimensional
+  reference's recession and non-rigid depth. Task 9.
+
 - **A base fault is a bottom cell outside the temperatures of the metal that crossed** the base, between the node's and
   the 3D profile's at the depth swept (`skinbody.jump_faults`), not one far from the node alone. Task 7.
 - **While melting, no part is longer than `PART_MAX` (0.0625 s)**, under a 0.5 s macro step for the trajectory and the
@@ -551,7 +559,7 @@ git commit -m "Thermal backends: the corner columns' base law as an implicit nod
   `REPEAT_RULES = ("column", "total", "never", "damped")`, `DEFAULT_REPEAT_RULE = "damped"`, `DAMPED_MAX_PASSES`,
   `DAMPED_OMEGA0`, `DAMPED_OMEGA_RANGE`, `DAMPED_TOL_K`, `MOVE_MAX`, `SPLIT_DEPTH_MAX`, `MOVE_HINT_MARGIN`, `PART_MAX`,
   `jump_faults(T_bottom, T_node, T_deep, crossed, tol=None)`; the constructor's `part_max=PART_MAX` (None: no cap),
-  `ABSORB_MAX`, `GRADIENT_FLOOR`.
+  `SKIN_CG_TOL` (the 3D solver's linear tolerance in a skin run), `GRADIENT_FLOOR`.
 
 At time zero each column takes its minimum from the 3D model: the corners move in by it and the skins hold exactly what
 they swept. The macro step (spec §4, §7.2): the trial pass gives each column its base law; the 3D step takes that law
@@ -565,8 +573,8 @@ equal parts (amended after the build): a part whose draws, absorption and hand-d
 parts as this one's largest move called for; while any skin's top is non-rigid at the macro step's start, no part is
 longer than `part_max`. Each part takes the heating interpolated linearly in time between the last macro step's and
 this one's, at its middle. Then the base moves: draw (already in the skins), absorb (the
-base node's excess over T_rigid along the 3D gradient, capped at `ABSORB_MAX` of the mean edge per macro step, shared
-among its parts) and hand-down become one
+base node's excess over T_rigid along the 3D gradient, at most what the part's draws and hand-downs leave of
+`MOVE_MAX` of the mean edge, the rest waiting for the next part) and hand-down become one
 inward displacement per corner, plus the volume-neutral smoothing; `move_with_policy` applies it, and each column is
 reconciled with what its corner actually swept — its bottom gains the swept mass less what it already exchanged, its
 enthalpy the swept enthalpy less what it already exchanged, an inward sweep booked along the profile the draws used —
@@ -591,10 +599,13 @@ top surface (the bases moved out by the skins' thicknesses).
 
 {{SKINBODY}}
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 11 passed (about 5 minutes: the 6 MW/m² test runs its 0.5 s
-  steps as 5, 8 and 8 parts; `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped`
-  was added at the final review, the damped, parts, fault-counter and part-cap tests with the amendment; the tests of
-  the repeat rules and of the move limit run with `part_max=None`, the conditions they study); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
+- [ ] **Step 5: Run them to see them pass.** Expected: 11 passed and 2 deselected (about 4 minutes: the heating test
+  runs its 0.5 s steps as 1, 8 and 8 parts at 3 MW/m²;
+  `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added at the final
+  review, the damped, parts, fault-counter and part-cap tests with the amendment; the tests of the repeat rules and of
+  the move limit run with `part_max=None`, the conditions they study). The two deselected are the reference tier's
+  (2026-10-14): `-m reference` runs `test_strong_melting_on_the_production_mesh` (6 MW/m² on the 2 mm production
+  mesh, about 11 minutes) and `test_the_hot_plate_passes_level_2b` (about 3 minutes); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
@@ -671,19 +682,28 @@ git commit -m "Command line: --surface-model skin with its settings, run names, 
 
 **Files:**
 - Create: `analysis/ablation_1d.py` (the independent one-dimensional reference), `analysis/skin_plate.py` (the plate),
-  `data/reference_values/box_q6p_fine.json` (sub-plan 18's fine box, extracted)
+  `data/reference_values/box_q6p_fine.json` (sub-plan 18's fine box, extracted),
+  `data/reference_values/plate_hot_1d.json` (the hot plate's one-dimensional reference, added 2026-10-14)
 
 Level 2 (spec §11.1 as amended): a plate 8 mm deep and 110 × 110 mm across, of 2 mm elements at 700 K, Scheil, no
 radiation, its front heated at 6 MW/m² within 32 mm of its centre and tapering to zero at 45 mm, for 2 s, liquid removed
 as it forms. The centre's recession within 5 % at 1.0, 1.5 and 2.0 s of the 1 µm one-dimensional reference and of the
-fine box; mass to 1e-12, energy to 1e-8.
+fine box; mass to 1e-12, energy to 1e-8. Level 2b, the hot plate (added 2026-10-14, Asha; `--case hot`): the same
+plate started at 880 K under 2 MW/m², where the metal between the melt front and T_rigid is 1.5–1.7 mm thick and the
+skins' absorption is exercised; the recession within 5 % of its one-dimensional reference at 1.5 and 2.0 s (the onset
+at 1.0 s reported), the skins' flowing depth at the centre within 10 % of the exact non-rigid depth, and the centre's
+base within 1 K of T_rigid. The harness judges each case and records whether it passes.
 
 - [ ] **Step 1: The one-dimensional reference.** Create `analysis/ablation_1d.py`:
 
 {{ABLATION}}
 
   Run `"$PY" analysis/ablation_1d.py --out ../measure/ablation_1d_1um.json` (about 12 s). Expected (measured while
-  planning): 0.7890, 2.7120 and 5.2190 mm at 1.0, 1.5 and 2.0 s; at 5 µm and 1 ms 0.7900, 2.7100, 5.2150.
+  planning): 0.7890, 2.7120 and 5.2190 mm at 1.0, 1.5 and 2.0 s; at 5 µm and 1 ms 0.7900, 2.7100, 5.2150. The hot
+  plate's reference: `"$PY" analysis/ablation_1d.py --t0 880 --q 2e6 --out data/reference_values/plate_hot_1d.json`,
+  recession 0.789, 1.817 and 2.917 mm and non-rigid depth 1.487, 1.570 and 1.674 mm at 1.0, 1.5 and 2.0 s:
+
+{{PLATE_HOT_REF}}
 
 - [ ] **Step 2: The fine box's series.** Save as `../extract_fine_box.py` beside the work copy and run it from the work
   copy's root (the run file is git-ignored, so it is read from the main checkout's
@@ -752,10 +772,24 @@ flight's 0.5 s step the plate passes, where before the amendment it never melted
   0.35 mm at 22 K/mm is 7.7 K, over the 5 K tolerance), so it flagged the valuation itself. Redefined (fb4fe25) to the
   range of the metal that crossed, it reads 0 at every step of the 0.25 s run.
 
+  **The hot plate and absorption** (2026-10-14). Under the quarter-edge cap per macro step the hot plate failed: at
+  0.5 s macro steps −7.7, −3.9 and −5.3 % at 1.0, 1.5 and 2.0 s, the skins 0.54–0.59 mm thick against the exact
+  non-rigid depth of 1.49–1.67 mm, and the centre's base 7–8 K above T_rigid. With absorption limited only by the move
+  allowance (the default since then), measured once each:
+
+The table shows both plates passing at both macro steps with the absorption of option 1.
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria |
+|---|---|---|---|---|
+| hot, 0.5 s | +1.4 % | +2.5 % | +1.2 % | flowing depth within 3.6 %, base at most 0.08 K above T_rigid |
+| hot, 0.05 s | +7.1 % (onset, not judged) | +0.8 % | +1.3 % | flowing depth within 5.9 %, base at most 0.08 K above |
+| cold, 0.5 s | +4.5 % | −0.2 % | −2.8 % | fine box +2.5, −0.8, −2.6 % |
+| cold, 0.05 s | +0.3 % | −3.6 % | −4.2 % | fine box −1.6, −4.3, −3.9 % |
+
 - [ ] **Step 5: Commit**
 
 ```bash
-git add analysis/ablation_1d.py analysis/skin_plate.py data/reference_values/box_q6p_fine.json
+git add analysis/ablation_1d.py analysis/skin_plate.py data/reference_values/box_q6p_fine.json data/reference_values/plate_hot_1d.json
 git commit -m "Level 2: the plate with tapered heating against the 1 um one-dimensional reference and the fine box"
 ```
 
@@ -865,18 +899,20 @@ git commit -m "Skins: the interface repeat's triggers and the cost of a step mea
 (70ecbdd..f5d6633, 14 commits); every task was reviewed for spec compliance and quality, and the whole branch once more
 at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro steps and Asha's three decisions (a45f204):
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
-parts; then the fault counter redefined (fb4fe25), and the melting part cap with the heating in time (d1b5636). The
-unit tier went from 341 to 389 passed (1 skipped), the FEniCSx
+parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
+2026-10-14 the absorption rule with the hot plate as level 2b. The unit tier went from 341 to 389 passed (1 skipped),
+the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–129 the amendment's.
+build's measurements, 121–131 the amendment's.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and the heating in time) pass as unit tests.
-Level 2, the plate (Task 9): with the default since option 1, the development cells pass against both references at
-0.5 s macro steps (+4.5, −0.2, −2.5 % against the one-dimensional reference) and at 0.05 s (+0.3, −3.6, −3.8 %); before
-it, the production cells passed at 0.05 s, the development cells missed the fine box by half a point at 1.5 s, the two
-cell sizes differed by 1.4 % (1 % asked), and 0.1 and 0.25 s steps failed at 1.0 s (+8.0 % and +12.7 %; not
-remeasured with the cap). Mass closes to 1.4e-15 and energy to 2.4e-9 throughout. Level 3 against SESAM was not run (Task 10 Step 4).
+Level 2, the plate (Task 9), with the current default: the cold plate passes against both references at 0.5 s macro
+steps (+4.5, −0.2, −2.8 % against the one-dimensional reference) and at 0.05 s (+0.3, −3.6, −4.2 %); level 2b, the hot
+plate, passes at 0.5 s (+1.4, +2.5, +1.2 %, the skins' flowing depth within 3.6 % of the exact non-rigid depth) and at
+0.05 s. Earlier measurements: the production cells passed at 0.05 s, the two cell sizes differed by 1.4 % (1 % asked),
+and 0.1 and 0.25 s steps failed at 1.0 s (+8.0 % and +12.7 %; not remeasured since). Mass closes to 1.4e-15 and energy
+to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened in skin runs). Level 3 against SESAM was not run (Task 10 Step 4).
 
 ### The final review's findings, and what became of them
 
@@ -906,10 +942,9 @@ remeasured with the cap). Mass closes to 1.4e-15 and energy to 2.4e-9 throughout
 - **A late slow bias at 0.05 s**: −3 to −5 % at 1.5 and 2.0 s under the amended default (−2.0 % under the one-repeat
   rule, +0.3 % with damping before the profile valuation, whose overvaluation had hidden it); the development cells miss
   the fine box at 1.5 s by half a point, and the cell sizes differ by 1.4 %.
-- **The absorption cap makes the result depend on the macro step** (fact 129). The cap, a quarter of the mean edge
-  per macro step shared by its parts, bound 18 848 times by 1.0 s on the 100 mm sphere at 0.5 s macro steps and never
-  at 0.0625 s, which absorbed twice the metal (30.0 against 14.7 g by 1.0 s) and removed 21.2 g by 1.5 s against
-  16.5 g; scaled to the same rate per second, the small steps match the large. Which absorption is physical is open.
+- **Coarse surface meshes under strong melting** (fact 131): the 4 mm test sphere is refused at the rim of a melting
+  region at 6 MW/m², where a corner absorbs a 0.7 mm lens its neighbours do not have; not supported. The 2 mm
+  production mesh follows the same case. A rim limit on absorption made the 4 mm sphere pass and is the fallback.
 - **The cost** (facts 125, 126 and 129): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and 1 041 s, 53 %
   of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121 and 226 s
   (82, 115 and 133 s under the one-repeat rule, which left heat parked).

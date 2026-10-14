@@ -313,10 +313,15 @@ After the sub-steps, each column's base moves by the metal crossing it:
   restored. The base node moves inward by the drawn volume over the dual area.
 - **Absorb.** Metal at the base that has become non-rigid (above T_rigid) joins the skin: the depth along the column's
   direction from the base node to where the 3D temperature falls to T_rigid is absorbed, by the line method of the
-  rigid-substrate amendment's `nonrigid_depth`. The base node moves inward by that depth, at most a quarter of the
-  mean surface edge per macro step. (Measured 2026-10-12: with the interface converged, the base sits a few kelvin above
-  T_rigid while melting, and on 4 mm elements the 3D gradient is shallow, so absorption runs at that cap; on the 2 mm
-  plate it is rarely used.)
+  rigid-substrate amendment's `nonrigid_depth` (the build extrapolates the node's temperature along the 3D gradient,
+  which agrees with the line method within 0.07 mm on 2 mm elements, measured 2026-10-14). The base node moves inward by
+  that depth, at most what the part's draws and hand-downs leave of its move allowance (§7.1); the rest waits for the
+  next part. (Amended 2026-10-14, Asha. A cap of a quarter of the mean edge per macro step stranded non-rigid metal in
+  the 3D model: on a plate started at 880 K, whose exact non-rigid layer — melt front to T_rigid — is 1.5–1.7 mm thick,
+  the skins held only 0.54–0.59 mm, 1.0–1.3 mm of non-rigid metal stayed below the base 7–8 K above T_rigid, and the
+  plate melted 4–8 % slow; the stranded metal's draws at T_rigid's enthalpy were also what buried superheated cells.
+  When the body starts near its melting range the non-rigid layer is genuinely thick, so the base sitting above T_rigid
+  is physics, and the skins must absorb it as fast as the T_rigid isotherm advances.)
 - **Hand down.** Rigid cells at the bottom of a skin above its minimum pass to the 3D model, oldest first, as far as
   the skin stays at or above its minimum. The base node moves outward by their volume.
 
@@ -352,8 +357,8 @@ flowing material drains away entirely draws rigid metal back to its minimum; no 
 
 The macro step Δt (`--dt`, 0.5 s by default, provisional) is the trajectory's and the gas flow's. The skins and the 3D
 conduction run it as equal parts, so that no base moves more than a quarter of the mean surface edge in one part by
-drawing, absorbing and handing down: a part whose passes would move a base further is restored and run again as
-shorter parts, and the next macro step starts with as many parts as this one's largest move called for (Asha,
+drawing and handing down: a part whose passes would move a base further is restored and run again as shorter parts
+(absorption takes what is left of the allowance, so it never splits a part), and the next macro step starts with as many parts as this one's largest move called for (Asha,
 2026-10-12). While any skin's top is non-rigid at the macro step's start, no part is longer than 0.0625 s (Asha,
 2026-10-12, option 1: long parts during melting were rejected for their moves and needed many passes; fact 126). The
 heating is evaluated once per macro step and interpolated linearly in time between the last macro step's and this
@@ -491,7 +496,11 @@ cosine (each column receiving what its top dual cell's projection catches), for 
 it forms: the centre's recession (within 3 mm of the centre) within 5 % at 1.0, 1.5 and 2.0 s of both the stage 1 fine
 box and a new independent one-dimensional reference with 1 µm cells (the centre is one-dimensional: the heated region
 reaches half again the diffusion length 2√(αt), about 19 mm at 2 s, beyond it); mass closed to 10⁻¹², energy to 10⁻⁸;
-the fold of the crater's wall reported every step. Measured while planning sub-plan 20 (2026-10-12, 20 µm cells, 0.05 s
+the fold of the crater's wall reported every step. **Level 2b — the hot plate** (added 2026-10-14, Asha): the same plate
+started at 880 K under 2 MW/m², where the non-rigid layer is 1.5–1.7 mm thick and the skins' absorption is exercised as
+it is not at 700 K; against the one-dimensional reference's recession and non-rigid depth, the recession within 5 % at
+1.5 and 2.0 s (the onset at 1.0 s reported), the skins' flowing depth at the centre within 10 % of the exact non-rigid
+depth, and the centre's base within 1 K of T_rigid. Measured while planning sub-plan 20 (2026-10-12, 20 µm cells, 0.05 s
 steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to 2.4·10⁻⁹. With
 flow on and a push along the face: mass, momentum and energy close exactly and the result is physically sensible (no
 exact reference exists).
@@ -566,15 +575,19 @@ Each stage is tested and measured before the next begins.
   within 5 % of the exact solution at 1.0 s with 0.05 s and 0.5 s macro steps (+0.3 % and +4.5 %) but not with 0.1 s
   and 0.25 s (+8.0 % and +12.7 %, 0.06–0.10 mm), the excess arising in the steps where melting starts and staying as an
   offset; the profile's slope taken at the step's end instead of its start made it slightly worse.
-- **Absorption on coarse elements**: absorption's depth is the 3D gradient's extrapolation to T_rigid; on 4 mm elements
-  the gradient is shallow and absorption runs at its cap (§6.6). The cap is per macro step, so the absorbed and removed
-  mass depend on the macro step: on the 100 mm sphere's first 1.5 s of melting, 16.5 g removed with 0.5 s macro steps
-  (the cap bound 18 848 times by 1.0 s) against 21.2 g with 0.0625 s (never bound); with the cap scaled to the same rate
-  per second the small steps match the large. Which is physical is open (measured 2026-10-12).
+- **Coarse surface meshes under strong melting are not supported**: the rim of a melting region, where the non-rigid
+  layer ends, must span several corners. On the 4 mm test sphere under 6 MW/m² from 880 K it spans one edge: a corner
+  absorbs a 0.7 mm lens its neighbours do not have and the mesh refuses the move (2026-10-14); per-second caps on
+  absorption (1.5 and 2 edges per second) did not help, because the step builds up over the parts. The 2 mm production
+  mesh follows the same case (172.9 g removed in 1.5 s, no corner moved beyond its 0.49 mm allowance, one rebuild).
+  The unit tests' 4 mm sphere is therefore heated at 3 MW/m², and the strong case runs on the production mesh in the
+  reference tier. A limit on absorption at rims (a corner taking at most its shallowest neighbour's depth plus a
+  twentieth of the mean edge per part) made the 4 mm sphere pass and is kept as the fallback.
 - **The metal crossing the base at different temperatures**: what the move's sweep and the skins' draw or hand-down
-  book differently still goes into one bottom cell; under 6 MW/m² on 4 mm elements 289 buried cells end above T_feed,
-  at most 959 K (2 910 K before the profile valuation and damping; none at 3 MW/m²). Open, after the profile valuation
-  (Asha, 2026-10-12).
+  book differently still goes into one bottom cell. Under 6 MW/m² on 4 mm elements 289 buried cells ended above T_feed,
+  at most 959 K (2 910 K before the profile valuation and damping). With absorption keeping up (2026-10-14) none remain
+  in the cases measured — 3 MW/m² on the 4 mm sphere and 6 MW/m² on the production mesh — because no non-rigid metal is
+  left below the base to be drawn at T_rigid's enthalpy; the mechanism remains if metal were stranded.
 - **Agreement of the backends across a rebuild**: the rebuild's mesher answers round-off differences in the corner
   positions with a different mesh, so the two thermal backends agree to round-off only up to the first rebuild.
 
@@ -668,3 +681,6 @@ Each stage is tested and measured before the next begins.
 - 2026-10-12 (after the cost diagnosis): while the skins melt, a macro step's parts are at most 0.0625 s long, under a
   0.5 s macro step for the trajectory and the heating, and the heating is interpolated in time across the parts
   (§7.1, option 1) (Asha).
+- 2026-10-14 (after investigating absorption): absorption is limited only by what a part's draws and hand-downs leave
+  of its move allowance (§6.6, option 1); the hot plate is level 2b (§11.1); coarse surface meshes are not supported
+  under strong melting, and the strong case runs on the production mesh (§12) (Asha).

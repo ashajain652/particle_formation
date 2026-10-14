@@ -4,7 +4,8 @@ The centre of the level-2 plate (and the middle of sub-plan 18's fine box) is on
 heated at its front by a constant flux, adiabatic behind, no radiation, liquid removed as it forms. This solves it on a
 fixed grid of `cell` cells with its own code -- backward Euler in the enthalpy, Newton in the temperature with a banded
 solve, and the contiguous front cells at or above T_feed removed after every step -- sharing nothing with
-`reentry_model.skin` but the material.
+`reentry_model.skin` but the material. It also records the non-rigid depth: from the front to where the slab falls to
+T_rigid, the layer the skins must hold (the hot plate's reference, 2026-10-14).
 
     python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2] [--out PATH]
 """
@@ -21,12 +22,13 @@ from reentry_model import material  # noqa: E402
 
 
 def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05):
-    """Recession [m] of the slab's front at multiples of `every` [s], as (times, recession) arrays."""
+    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid) at multiples of `every` [s],
+    as (times, recession, non-rigid depth) arrays."""
     n = int(round(length / cell))
     T = np.full(n, T0)
     front = 0                                            # index of the first cell still in the slab
     m = mat.rho * cell                                   # kg per m2 per cell
-    times, recession = [0.0], [0.0]
+    times, recession, nonrigid = [0.0], [0.0], [0.0]
     steps = int(round(t_end / dt))
     record = max(1, int(round(every / dt)))
     for step in range(1, steps + 1):
@@ -61,7 +63,9 @@ def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0
         if step % record == 0:
             times.append(step * dt)
             recession.append(front * cell)
-    return np.array(times), np.array(recession)
+            cold = np.flatnonzero(T[front:] <= mat.T_rigid)
+            nonrigid.append((cold[0] if cold.size else n - front) * cell)
+    return np.array(times), np.array(recession), np.array(nonrigid)
 
 
 def main():
@@ -75,13 +79,14 @@ def main():
     p.add_argument("--out", default="ablation_1d.json")
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
-    t, r = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
+    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
     doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms,
-           "material": mat.name, "t_s": t.tolist(), "recession_mm": (r * 1e3).tolist()}
-    json.dump(doc, open(a.out, "w"), indent=1)
+           "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
+           "recession_mm": [round(x, 6) for x in (r * 1e3).tolist()], "nonrigid_mm": [round(x, 6) for x in (nr * 1e3).tolist()]}
+    json.dump(doc, open(a.out, "w"), indent=0)
     for t_ in (1.0, 1.5, 2.0):
         i = int(np.argmin(np.abs(t - t_)))
-        print("t = {:.2f} s: recession {:.4f} mm".format(t[i], r[i] * 1e3))
+        print("t = {:.2f} s: recession {:.4f} mm, non-rigid depth {:.4f} mm".format(t[i], r[i] * 1e3, nr[i] * 1e3))
 
 
 if __name__ == "__main__":

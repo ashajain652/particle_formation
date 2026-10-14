@@ -1739,8 +1739,8 @@ of losing elements. Its sub-plans, one per build stage (spec §11.2):
   0.5 s and level 2 passes there; a melting step on the 100 mm sphere costs up to 1 041 s (fact 125), because long
   parts during melting are rejected and need many passes (fact 126). Built (Asha, option 1): while melting, a 0.5 s
   macro step runs as parts of at most 0.0625 s with the heating interpolated in time, and the melting steps cost 122–226
-  s (fact 129). Open: the absorption cap is per macro step, so the absorbed and removed mass depend on the macro step
-  (fact 129).
+  s (fact 129). The absorption cap stranded non-rigid metal; absorption is now limited only by the move allowance,
+  the hot plate is level 2b, and coarse surface meshes are not supported under strong melting (facts 130–131).
 - `21-column-flow.md` — stage 3, flow in the columns. Scoped outline; written in full after 20.
 - `22-skin-spraying-flight.md` — stage 4, spraying from the skins and the flights. Scoped outline; written in full
   after 21.
@@ -1898,7 +1898,7 @@ they moved the plate's numbers by one to two points, and which of the two did it
      0.58–0.67 s a step; no rebuild; energy residuals 2.5e-11 and −1.4e-10. A 600 s flight at 0.5 s is therefore about
      20 hours, and each repeat doubles the skins' share. (One-repeat rule; the amended default's cost is fact 125.)
 
-## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–129)
+## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–131)
 
 Measured on `prototype/work-2026-10-12-skin-heat/code/` after the build, each once unless stated; the spike's scripts
 and outputs are in `prototype/work-2026-10-12-skin-heat/measure/spike/` (git-ignored). Asha's decisions from them
@@ -1990,7 +1990,37 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      absorbed) and never at 0.0625 s (30.0 g absorbed, 53.8 g by 1.5 s); with the cap scaled to the 0.5 s steps' rate
      per second the 0.0625 s steps absorb 12.9 g and remove 4.50 g by 1.0 s against 4.61 g. Which absorption is physical
      is open: the converged base sits a few kelvin above T_rigid, and on coarse elements the 3D gradient that sets the
-     absorbed depth is shallow.
+     absorbed depth is shallow. (Settled by facts 130 and 131.)
+130. **The base above T_rigid is physics; the absorption cap stranded the metal.** The plate started at 880 K under
+     2 MW/m² against its exact one-dimensional solution (1 µm, 0.5 ms): the non-rigid layer, from the melt front to the
+     T_rigid isotherm, is 1.49, 1.57 and 1.67 mm thick at 1.0, 1.5 and 2.0 s, the gradient at the isotherm 5–8 K/mm,
+     and the isotherm advances about 2.3 mm/s — three to four times the skin's 0.4 mm minimum, so metal below the base
+     is genuinely non-rigid when a body starts near its melting range. The cap (a quarter of the mean edge per macro
+     step, about 1 mm/s at 0.5 s steps on 2 mm elements) could not keep up: the skins held 0.54–0.59 mm, 1.0–1.3 mm of
+     non-rigid metal stayed below the base 7–8 K above T_rigid, and the plate receded −7.7, −3.9 and −5.3 % against the
+     exact solution; the same cap at the same rate per second with 0.0625 s steps gave −6.5, −2.1, −6.3 %, and with no
+     cap the skins held 1.49–1.60 mm, the base sat 0.1 K above T_rigid and the plate was +6.8, +1.9, +1.1 %. The
+     absorbed depth is not the fault: extrapolated from the node it agrees with the 3D field traced along the normal (the
+     spec's line method) within 0.07 mm on 2 mm elements, the 3D gradient 6.2 K/mm against the exact 5–8. On the 4 mm
+     test sphere at 6 MW/m² the cap left 350 buried cells above T_feed and no cap none: the stranded metal, drawn at
+     T_rigid's enthalpy from a hotter base, was what overheated them. The cold level-2 plate is unaffected (the centre's
+     base stays 3–4 K below T_rigid). Each case once, 2026-10-14.
+131. **Absorption limited by the move allowance (option 1), built.** A part absorbs at most what its draws and
+     hand-downs leave of a quarter of the mean edge; the rest waits for the next part, and absorption never splits a
+     part (Asha, 2026-10-14). Level 2 and 2b pass at 0.5 and 0.05 s macro steps (hot plate at 0.5 s +1.4, +2.5, +1.2 %,
+     the skins' flowing depth within 3.6 % of the exact non-rigid depth, the base at most 0.08 K above T_rigid; cold
+     plate +4.5, −0.2, −2.8 %). On the 4 mm test sphere at 6 MW/m² it is refused in the third step: at the rim of the
+     melting region a corner absorbs a 0.7 mm lens its neighbours do not have (0.686 mm extrapolated, 0.710 mm by the
+     line method, no gradient-floor corner involved), a 0.86 mm single-corner move no rebuild absorbs; per-second caps
+     of 1.5 and 2 mean edges per second fail too (the rim step builds up over the parts), while a rim limit (at most
+     the shallowest neighbour's depth plus a twentieth of the mean edge per part) passes and is the fallback. On 2 mm
+     surfaces the same case completes: the test sphere with 2 mm surface elements removed 172.2 g in 1.5 s and the
+     production mesh 172.9 g (largest move 0.49 mm, the full allowance; one rebuild; the base at most 1.2 K above
+     T_rigid; no buried cells). So coarse surface meshes are not supported under strong melting: the unit test heats the
+     4 mm sphere at 3 MW/m² (53.0 g removed, the base 0.3 K above T_rigid), and the strong case and the hot plate run
+     in the reference tier. On the 100 mm sphere at 2 MW/m² the first 1.5 s of melting remove 19.75 g at 137, 118 and
+     91 s a step. The books drifted by about 5e-5 J a 3D solve at the solver's linear tolerance of 1e-10, 1.1e-8 of the
+     heat absorbed over 17 short parts; at 1e-13 (as with a direct solve) 2e-11, at no cost, so skin runs tighten it.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
