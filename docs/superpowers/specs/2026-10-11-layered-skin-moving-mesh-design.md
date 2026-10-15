@@ -204,6 +204,21 @@ is checked to be exactly the corner triangles. The remeshing design's validity g
 non-positive volume stops the run with a message. With a 15 mm zone rebuilt at half compression, the 100 mm flight's
 77 mm of nose recession needs about ten rebuilds, about 7 minutes (estimated).
 
+**The fine band** (decided 2026-10-14, Asha, option 1; built 2026-10-15). On 2 mm elements the 3D model cannot follow
+the temperature just below the rigid front — the layer ahead of the front, to 1/e of its rise, is 2.2–3.4 mm thick on
+the hot plate — and the plates melted 2–6 % late (§12). So a skin run's 3D mesh is finer to 4 mm below its surface while
+the surface keeps its 2 mm triangulation: gmsh fills the volume under the fixed surface with elements of 0.7 mm asked,
+growing to the surface size over one surface element below the band, at the start and at every rebuild alike, the sizes
+read from the mesh's parameters (`movemesh.refined_mesh`, `--fine-band 4 --fine-size 0.7`). Under a fixed 2 mm surface
+gmsh fills the band coarser than asked (1 mm asked gave shortest edges of about 1.1 mm and recovered about half of the
+delay; 0.7 mm asked matches 1 mm elements throughout on both plates). On the 100 mm sphere it takes the 3D model from
+177 000 to 1.21 million elements and a 3D step from 0.16 to 1.17 s; the strong-melting reference case (6 MW/m² for
+1.5 s) costs 1 010 s against 695 s, the extra in the 3D solves (153 s), the moves' remap of the larger mesh (119 s) and
+its one rebuild (55 s), and removes 172.0 g against 172.9 g. Prism layers pushed in from the surface were tried first and
+dropped: they fold over their neighbours at a 90-degree edge unless each corner steps the layer's depth away from every
+face around it, and at the plate's corners, where three faces meet, three 1 mm layers could not be built above a
+radius ratio of 0.054 however they were tapered, so a single sharp feature would have taken the layers away everywhere.
+
 **No element death.** The domain shrinks continuously by node motion and is cleared by rebuilds; there are no element
 fill fractions, no deaths and no death threshold. Metal below the rigid front can be partly melted — less than half
 liquid — and its latent heat is carried by the 3D enthalpy, as now; it does not move.
@@ -439,6 +454,7 @@ size histograms accumulate each sub-step. Two source columns are added: `solid_f
 | `--skin-preset dev\|production` | `production` | `_skin-dev` (20 µm cells) |
 | `--deform-depth` (mm) | 15 | `_deform<value>mm` |
 | `--skin-swell on\|off` (each cell at its phase's density, §5.2) | `on` | `_noswell` |
+| `--fine-band` (mm below the surface, §5.3; 0 none), `--fine-size` (mm asked) | 4, 0.7 | `_fine<depth>x<size>mm`, `_fine0` |
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
@@ -513,11 +529,14 @@ depth, and the centre's base within 1 K of T_rigid. Both plates run with the ski
 (`--skin-swell off`, decided 2026-10-14, Asha): the one-dimensional references and the fine box hold their metal at one
 density, while the skins' law swells the liquid by 15 % (§5.2), which alone melts the exact plates sooner — by
 0.033 mm (cold, 4.2 % at 1.0 s) and 0.094 mm (hot, 11.9 %) when it is given to the non-rigid metal — and had hidden a
-numerical delay of about the same size. Measured with swelling off (2026-10-14, 2 mm elements): the hot plate passes
-at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, flowing depth within 3.4 %, base at most 0.08 K above T_rigid) and at
-0.05 s (3.6 and 1.7 % late, flowing depth within 8.5 %); the cold plate passes at 0.5 s (1.2, 2.2 and 3.9 % late
-against the reference, 3.1, 2.8 and 3.7 % against the fine box) and fails at 0.05 s (6.2, 6.2 and 6.4 % late; 8.0,
-6.8 and 6.1 % against the fine box), §12. Measured while planning sub-plan 20 with the skins swelling (2026-10-12, 20 µm
+numerical delay of about the same size. Both plates have the skin runs' fine band (§5.3). Measured with swelling off
+and the fine band (2026-10-15): the hot plate passes at 0.5 s (5.6 % late at 1.0 s, not judged; 1.9 and 0.7 % late at
+1.5 and 2.0 s; flowing depth within 0.7 %; base at most 0.10 K above T_rigid) and at 0.05 s (2.5, 1.6 and 1.0 % late;
+flowing depth within 0.5 %); the cold plate passes at 0.5 s (4.9 % ahead, 2.5 and 3.3 % late against the reference;
+2.8 % ahead, 3.1 and 3.0 % late against the fine box) and at 0.05 s (1.6 % ahead, 2.2 and 2.7 % late; 0.3, 2.8 and
+2.5 % late against the fine box). On 2 mm elements throughout the cold plate had failed at 0.05 s (6.2, 6.2 and 6.4 %
+late), §12. The band costs the plates 50–80 % more wall time and rebuilds every 1 mm or so of recession instead of
+2 mm, their 4 mm deforming zone compressing its fine elements directly. Measured while planning sub-plan 20 with the skins swelling (2026-10-12, 20 µm
 cells, 0.05 s steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to
 2.4·10⁻⁹. With
 flow on and a push along the face: mass, momentum and energy close exactly and the result is physically sensible (no
@@ -589,7 +608,8 @@ Each stage is tested and measured before the next begins.
   and the accepted parts needed 4.4 passes on average; at 0.125 s steps 7 % and 2.0 passes, at 0.0625 s none and 1.8.
   The three cost 1 454, 425 and 341 s. With parts of at most 0.0625 s while melting under a 0.5 s macro step (§7.1),
   the melting steps cost 122, 121 and 226 s against 123, 307 and 1 041 s.
-- **Melting late on 2 mm elements** (investigated 2026-10-14). The onset excess once measured at 0.1 and 0.25 s macro
+- **Melting late on 2 mm elements** (investigated 2026-10-14; resolved 2026-10-15 by the fine band, §5.3, which brings
+  both plates within 3.3 % at 1.5 and 2.0 s at both macro steps). The onset excess once measured at 0.1 and 0.25 s macro
   steps (+8.0 and +12.7 % at 1.0 s on the level-2 plate) was cured by the part cap while melting (§7.1): without the
   cap the 0.25 s case is +11.7 % again, with it +4.4 %. What remains, compared like with like (skins at the solid's
   density, §11.1), is a delay: on 2 mm elements the plates melt 2–6 % late at 1.0–2.0 s (cold at 0.1 s steps 6.2, 5.4,
@@ -601,7 +621,8 @@ Each stage is tested and measured before the next begins.
   body: no change), the depth of the skins' minimum (1.2 mm instead of 0.4: no change at 0.8 s). Element layers of 1 mm
   in depth under the 2 mm surface edges reproduce the 1 mm results up to the first rebuild (cold: 0.001 mm ahead at
   0.8 s, 0.008 mm late at 1.0 s), but a rebuild meshes the volume isotropically again and the run is then worse than on
-  2 mm elements (0.21 mm late after a rebuild at 1.1 s), so layers need a rebuild that regenerates them (§13).
+  2 mm elements (0.21 mm late after a rebuild at 1.1 s), so the refinement must be made again at every rebuild: the
+  fine band is (§5.3).
 - **The plate's 90-degree edges and thin elements** (measured 2026-10-14): the fill moves every corner in by the
   minimum thickness at once, and at the box's edges and the face corners beside them the sweep misses the request (the
   skins hold 0.65–1.07 of their minimum on 2 mm elements, 0.89–1.31 on 0.5 mm). The first steps correct it by draws and
@@ -636,9 +657,8 @@ Each stage is tested and measured before the next begins.
   followed by corner columns on a fixed triangulation (1.4 s on 2 mm elements, 0.9 s on 1 mm), and remeshing would let
   them be.
 - A finer skin surface (1 mm columns) as a grid study.
-- Element layers in depth under the surface (1 mm under 2 mm surface edges, §12), with a rebuild that regenerates them
-  by extruding the surface triangulation inward along the corner normals before meshing the rest (as `mesh.sphere_mesh`
-  builds prism layers on an exact sphere). Spiked on the plates 2026-10-14; adoption pending Asha.
+- The fine band's cost (§5.3): a 45 % longer melting step on the 100 mm sphere, a third of it in the moves' remap of the
+  larger mesh; a deforming zone that spares the deep elements, or a band only where the surface melts, would cut it.
 - Whether the macro step can be raised once the skins carry the fast physics.
 - Fragmentation, which the validity gate detects and stops on (the remeshing design's decision).
 
@@ -727,3 +747,6 @@ Each stage is tested and measured before the next begins.
   verification setting, against their one-density references unchanged, and the skins' swelling is verified at level 1
   against the one-dimensional slab with the same density law (§5.2, §11.1, option A); the delay on 2 mm elements is
   addressed by refining the 3D model in depth only, as a spike first (§12, §13, option B) (Asha).
+- 2026-10-14 (after the spike): the 3D model is refined in depth under the 2 mm surface and the refinement made again
+  at every rebuild (option 1, Asha). Built 2026-10-15 as the fine band (§5.3) rather than prism layers, which could not
+  be built at the plate's corners and would have been lost everywhere at any sharp feature.

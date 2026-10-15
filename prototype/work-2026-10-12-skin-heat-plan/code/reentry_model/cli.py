@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
+from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend
@@ -51,6 +51,13 @@ DEFAULT_DT_CONTINUUM = 0.0125
 # mesh (skinbody.SkinBody). The default stays the element model until sub-plan 22 gives the skins their flow and spraying;
 # sub-plan 18's one-dimensional skins are reachable only from Python (body.MeltSettings(surface_model="skin1d")).
 SURFACE_MODELS = ("elements", "skin")
+# The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
+# while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
+# (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
+# (movemesh.refined_mesh). Under a fixed 2 mm surface gmsh fills the band coarser than asked: 0.7 mm asked matches 1 mm
+# elements throughout on both plates' onset, 1 mm asked gets about half way (measured 2026-10-15); on the 100 mm sphere
+# it takes the 3D model from 177 000 to 1.21 million elements and a 3D step from 0.16 to 1.17 s.
+FINE_BAND_MM, FINE_SIZE_MM = 4.0, 0.7
 
 
 def parse_epoch(text):
@@ -115,11 +122,13 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
 
 
-def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True):
+def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
-    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth, and
-    `_noswell` for skins held at the solid's density; empty for the defaults."""
+    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
+    `_noswell` for skins held at the solid's density, and `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
+    empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.4:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -133,6 +142,10 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_deform{:g}mm".format(deform_mm)
     if not swell:
         out += "_noswell"
+    if fine_band_mm <= 0.0:
+        out += "_fine0"
+    elif (fine_band_mm, fine_size_mm) != (FINE_BAND_MM, FINE_SIZE_MM):
+        out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
     return out
 
 
@@ -272,6 +285,12 @@ def build_parser():
     me.add_argument("--skin-growth", type=float, default=1.10,
                     help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
     me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
+    me.add_argument("--fine-band", type=float, default=FINE_BAND_MM,
+                    help="with --surface-model skin: the 3D model's elements are --fine-size to this depth [mm] below the "
+                         "surface, which keeps its triangulation, and every rebuild makes the band again; 0: none "
+                         "(default %(default)s)")
+    me.add_argument("--fine-size", type=float, default=FINE_SIZE_MM,
+                    help="the elements' size asked for in the fine band [mm] (default %(default)s; capped at the surface's)")
     me.add_argument("--skin-swell", choices=("on", "off"), default="on",
                     help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
                          "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
@@ -330,6 +349,8 @@ def build_thermal(args, settings, mass):
                                                     # moving mesh is rebuilt with the dense band's size field
     the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
                                band=band)
+    if skins and args.fine_band > 0.0:                  # the fine band (FINE_BAND_MM), made again at every rebuild
+        the_mesh = movemesh.refined_mesh(the_mesh, args.fine_band * 1e-3, min(args.fine_size * 1e-3, h_surface))
     # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
     # selectable by name
     material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
@@ -368,7 +389,9 @@ def build_thermal(args, settings, mass):
     if skins:
         info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "cell_um": skin_settings(args).cell * 1e6,
                         "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
-                        "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n}
+                        "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
+                        "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
+                        "swell": args.skin_swell == "on"}
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -437,6 +460,8 @@ def cmd_run(args, parser):
             parser.error("{} must be > 0".format(label))
     if args.skin_growth < 1.0:
         parser.error("--skin-growth must be at least 1")
+    if args.fine_band < 0.0 or args.fine_size <= 0.0:
+        parser.error("--fine-band must be >= 0 and --fine-size > 0")
     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
     if 2.0 * cell_um * 1e-3 > args.skin_min_thickness * (1.0 + 1e-12):
         parser.error("--skin-cell must be at most half of --skin-min-thickness")
@@ -465,7 +490,7 @@ def cmd_run(args, parser):
                                        surface_model=args.surface_model,
                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
                                                                     args.skin_substep, args.skin_preset, args.deform_depth,
-                                                                    args.skin_swell == "on"))
+                                                                    args.skin_swell == "on", args.fine_band, args.fine_size))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)

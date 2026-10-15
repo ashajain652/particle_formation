@@ -31,12 +31,13 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 390 passed (1 skipped, no
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 394 passed (1 skipped, no
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
-and the hot plate, then the skins' swelling setting for levels 2 and 2b) by Asha's decisions
+and the hot plate, then the skins' swelling setting for levels 2 and 2b and, on 2026-10-15, the fine band under the
+surface) by Asha's decisions
 on the interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile,
 a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one and, while
 melting, no part is longer than 0.0625 s, with the heating interpolated in time across the parts; and a base fault is
@@ -199,7 +200,8 @@ Rulings made while writing, with their reasons (each is stated again where its c
 
 **Files:**
 - Modify: `reentry_model/movemesh.py` (`NEUTRAL_PASSES`, `MovingMesh.neutral_smoothing`, `swept_volumes`, the rebuild's
-  transfer, new `project_enthalpy`, `QUADRATURE`, `PROJECT_CHUNK`)
+  transfer, new `project_enthalpy`, `QUADRATURE`, `PROJECT_CHUNK`; the fine band, added 2026-10-15: `rebuild_volume`'s
+  `fine_depth` and `h_fine`, `default_sizes` reading them, new `refined_mesh`)
 - Modify: `analysis/movemesh_recession.py` (`--neutral`)
 - Test: `tests/test_reentry_model_movemesh.py` (three tests changed for the projection, three appended)
 
@@ -207,7 +209,9 @@ Rulings made while writing, with their reasons (each is stated again where its c
 - Produces: `swept_volumes(old, new, faces, faces_corner, n_corners)` — same signature, each corner booked its own
   sweep (spec §5.2 as amended); `MovingMesh.neutral_smoothing(normal=None, area=None, passes=NEUTRAL_PASSES) -> (nc, 3)`
   (the tangential smoothing plus the normal corrections that cancel what it sweeps per corner);
-  `project_enthalpy(old_points, old_tets, h_old, points, tets) -> (n,)`, the rebuild's transfer.
+  `project_enthalpy(old_points, old_tets, h_old, points, tets) -> (n,)`, the rebuild's transfer;
+  `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp, fine_depth=0.0, h_fine=None)`;
+  `refined_mesh(mesh, fine_depth, h_fine) -> VolumeMesh` (its parameters `fine_depth_m`, `h_fine_m`).
 
 Why: on the level-2 box the third-of-a-prism booking credited the side walls with metal the front swept (Decisions).
 With own sweeps, the plain smoothing books at most 0.46 µm at a corner of the 100 mm sphere (1.03 µm before), and three
@@ -217,7 +221,13 @@ melting front (2 768 J in two rebuilds of the plate, 4.9 % of its absorbed heat)
 the new mesh's consistent mass matrix against the old field integrated over the new elements by the 4-point rule — keeps
 each region's energy to the rule's accuracy and reproduces a linear field exactly (a lumped projection, also tried,
 moved a linear field's surface values by up to 7 K). On the tests' kinked field the residual goes from −4.1 % of the
-energy to −1.8 J of 63 219 J.
+energy to −1.8 J of 63 219 J. The fine band (Asha, 2026-10-14, option 1; added 2026-10-15, facts 138–140): on 2 mm
+elements the 3D model cannot follow the temperature just below the rigid front and the plates melt 2–6 % late, so a
+mesh may be finer to `fine_depth` below its surface while the surface keeps its triangulation — gmsh fills the volume
+under it to that size field, at the start (`refined_mesh`) and at every rebuild, the sizes read from the mesh's
+parameters — pinned by `test_a_refined_mesh_keeps_its_surface_and_is_finer_to_the_fine_depth` and
+`test_a_rebuild_makes_the_fine_band_again`. Prism layers pushed in from the surface were tried first and could not be
+built at the plate's corners (fact 138).
 
 - [ ] **Step 0: The work copy**
 
@@ -287,7 +297,57 @@ git -C work-2026-10-12-skin-heat/code checkout -b skin-heat 70ecbdd
      assert abs(result.relative_residual) < 1e-6
      # the books' own uniform offsets (the move's, then the rebuild's) leave 2.1e-5 K at most (measured)
      assert np.abs(solver.temperature() - T_of(moving.mesh.points)).max() < 1e-4
-@@ -345,22 +363,23 @@
+@@ -332,6 +350,49 @@
+     assert moving.rebuilds == 2
+ 
+ 
++def shortest_edges_by_depth(mesh, depth_of):
++    """Each element's shortest edge [m] and the depth of its centroid below the surface [m] (`depth_of(centroids)`):
++    elements touching the fixed surface keep its edges, so the shortest edge shows the size gmsh filled in."""
++    x = mesh.points[mesh.tets]
++    pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
++    edge = np.min([np.linalg.norm(x[:, i] - x[:, j], axis=1) for i, j in pairs], axis=0)
++    return edge, depth_of(x.mean(axis=1))
++
++
++def test_a_refined_mesh_keeps_its_surface_and_is_finer_to_the_fine_depth():
++    """The fine band (option 1, 2026-10-14): a 16 mm cube of 2 mm elements meshed again inside its own surface with
++    1 mm asked to 3 mm below it, growing to 2 mm by 5 mm: the surface triangles and the volume are kept exactly, and
++    gmsh fills the band finer than below it, though not to the size asked under a fixed 2 mm surface (measured: the
++    shortest edges 1.10-1.13 mm at 1-3 mm depth, 2.01 mm below 5 mm; 3 072 elements become 7 787)."""
++    m = mesh_mod.box_mesh(16e-3, 16e-3, 16e-3, 2e-3)
++    r = movemesh.refined_mesh(m, 3e-3, 1e-3)
++    tri = lambda mm: {tuple(sorted(map(tuple, np.round(mm.points[f] * 1e9).astype(int)))) for f in mm.surface().faces}
++    assert tri(r) == tri(m)
++    assert r.volume() == pytest.approx(m.volume(), rel=1e-12)
++    assert r.params["fine_depth_m"] == 3e-3 and r.params["h_fine_m"] == 1e-3
++    edge, depth = shortest_edges_by_depth(r, lambda c: np.minimum(c, 16e-3 - c).min(axis=1))
++    assert np.median(edge[(depth > 1e-3) & (depth < 3e-3)]) < 1.3e-3 < 1.7e-3 < np.median(edge[depth > 5e-3])
++    assert r.n_elements > 2 * m.n_elements
++    assert movemesh.radius_ratio(r.points, r.tets).min() > 0.1
++
++
++def test_a_rebuild_makes_the_fine_band_again(coarse_sphere_mesh):
++    """The moving mesh reads the fine band from the mesh's parameters and every rebuild makes it again (the coarse
++    sphere's 4 mm surface with 2 mm asked to 6 mm: measured shortest edges 2.2 mm in the band, 4.3 mm at 12-20 mm)."""
++    m = movemesh.refined_mesh(coarse_sphere_mesh, 6e-3, 2e-3)
++    assert movemesh.default_sizes(m)["fine_depth"] == 6e-3 and movemesh.default_sizes(m)["h_fine"] == 2e-3
++    mat = constant_material()
++    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat)
++    edge0, depth0 = shortest_edges_by_depth(moving.mesh, lambda c: 0.05 - np.linalg.norm(c, axis=1))
++    band0 = np.median(edge0[(depth0 > 2e-3) & (depth0 < 6e-3)])
++    assert band0 < 2.8e-3 < np.median(edge0[(depth0 > 12e-3) & (depth0 < 20e-3)])
++    assert not moving.move(inward(moving, 1e-3)).refused
++    moving.rebuild()
++    edge, depth = shortest_edges_by_depth(moving.mesh, lambda c: 0.049 - np.linalg.norm(c, axis=1))
++    assert np.median(edge[(depth > 2e-3) & (depth < 6e-3)]) == pytest.approx(band0, rel=0.15)
++    assert moving.mesh.params["fine_depth_m"] == 6e-3
++
++
+ def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sphere_mesh):
+     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+     mat = constant_material()
+@@ -345,22 +406,23 @@
          old_points, old_tets = moving.mesh.points.copy(), moving.mesh.tets.copy()
          h_old = mat.enthalpy(solver.temperature())
          residuals.append(moving.rebuild().residual)
@@ -321,7 +381,7 @@ git -C work-2026-10-12-skin-heat/code checkout -b skin-heat 70ecbdd
      assert moving.rebuild_residual_total == pytest.approx(sum(residuals), rel=1e-12, abs=0.0)
  
  
-@@ -479,3 +498,68 @@
+@@ -479,3 +541,68 @@
      theta = (solver.temperature() - 300.0) / 300.0
      exact = exact_front(x - x_front, 0.5, 1e-5, 1e-2)
      assert np.abs(theta - exact).max() < 0.005          # 0.0010 measured while planning: 0.1 % of the rise
@@ -404,7 +464,7 @@ their residuals (the interpolation's −4.1 %).
 ```diff
 --- a/reentry_model/movemesh.py
 +++ b/reentry_model/movemesh.py
-@@ -23,21 +23,29 @@
+@@ -23,21 +23,40 @@
  motion, which no rebuild inside the same surface can undo. The fold is reported.
  
  What left through the surface is booked per corner by the exact volume of the prism each surface triangle sweeps
@@ -441,11 +501,22 @@ their residuals (the interpolation's −4.1 %).
 +was, region by region, to the rule's accuracy; what the quadrature still misses is made exact by a uniform offset over
 +the new deforming zone only, where the field varies, as the 2026-09-27 remeshing design does for the whole body. The
 +pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`. The validity gate stops
-+on a non-manifold surface, more than one connected body, or a non-positive enclosed volume."""
++on a non-manifold surface, more than one connected body, or a non-positive enclosed volume.
++
++The fine band (Asha, 2026-10-14, option 1): on 2 mm elements the 3D model cannot follow the temperature just below the
++rigid front -- the layer ahead of the front is 2-3 mm thick on the hot plate -- and the plates melt 2-6 % late; 1 mm
++elements remove the cold plate's onset delay. So a mesh may be finer to `fine_depth` below its surface (elements of
++`h_fine`, growing to the surface size over one surface element below it) while its surface keeps its triangulation:
++gmsh fills the volume under the fixed surface to that size field (`rebuild_volume`), at the start (`refined_mesh`) and
++at every rebuild alike, the sizes read from the mesh's parameters. Prism layers pushed in from the surface were tried
++first: they fold over their neighbours at a 90-degree edge, and at the plate's corners, where three faces meet, three
++layers of 1 mm could not be built above a radius ratio of 0.054 however they were tapered (2026-10-15); the fine band
++works on any shape. Under a fixed 2 mm surface gmsh fills it coarser than asked, so skin runs ask 0.7 mm to 4 mm
++(`cli.FINE_BAND_MM`, `cli.FINE_SIZE_MM`), which takes the 100 mm sphere from 177 000 to 1.21 million elements."""
  import time
  from dataclasses import dataclass
  
-@@ -51,6 +59,10 @@
+@@ -51,6 +70,10 @@
  ZONE_NEIGHBOURS = 12         # surface nodes averaged for each interior node of the zone
  SMOOTH_LAMBDA = 0.5          # tangential smoothing: share of the way to the neighbours' mean per move
  SMOOTH_CLAMP = 0.35          # of the mean surface edge: the most a corner is nudged per move (2026-09-27 design)
@@ -456,7 +527,7 @@ their residuals (the interpolation's −4.1 %).
  _REF_GRADS = np.array([[-1.0, -1.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
  
  
-@@ -185,20 +197,28 @@
+@@ -185,20 +208,28 @@
  
  def swept_volumes(old, new, faces, faces_corner, n_corners):
      """The volume each corner's surface swept, positive inward: every surface triangle's prism between its old and new
@@ -491,7 +562,26 @@ their residuals (the interpolation's −4.1 %).
      return out
  
  
-@@ -293,6 +313,22 @@
+@@ -238,13 +269,15 @@
+ 
+ # -- moving the mesh -------------------------------------------------------------------------------------------------
+ def default_sizes(mesh):
+-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
++    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h; and the
++    fine band under the surface the mesh was refined with (`refined_mesh`; none unless its parameters name one)."""
+     p = mesh.params
++    fine = {"fine_depth": p.get("fine_depth_m", 0.0), "h_fine": p.get("h_fine_m")}
+     if "h_surface_m" in p:
+         return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
+-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
++                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9), **fine}
+     h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
+-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
++    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0, **fine}
+ 
+ 
+ @dataclass
+@@ -293,6 +326,22 @@
                                      SMOOTH_LAMBDA if lam is None else lam, SMOOTH_CLAMP if clamp is None else clamp,
                                      self.edges_corner)
  
@@ -514,7 +604,7 @@ their residuals (the interpolation's −4.1 %).
      def surface_quality(self):
          """The worst surface triangle's quality, 2 r_in / R_circ."""
          return float(triangle_quality(self.mesh.points[self.corners], self.faces_corner).min())
-@@ -301,9 +337,12 @@
+@@ -301,9 +350,12 @@
          """The largest angle between neighbouring surface triangles' normals [degrees]."""
          return max_dihedral(self.mesh.points[self.corners], self.faces_corner)
  
@@ -529,7 +619,7 @@ their residuals (the interpolation's −4.1 %).
          mesh, solver, mat = self.mesh, self.solver, self.material
          u = np.asarray(u_corners, dtype=float)
          U = self.zone.displacement(u)
-@@ -335,9 +374,13 @@
+@@ -335,9 +387,13 @@
          if np.abs(dV).sum() > 0.0:
              dV = dV + remainder * np.abs(dV) / np.abs(dV).sum()
          # the slab is booked at the corners' old enthalpy, not the mean of the old and remapped values: the exact-solution
@@ -545,7 +635,7 @@ their residuals (the interpolation's −4.1 %).
          solver.update_geometry(touched)
          solver.set_temperature(mat.temperature_from_enthalpy(h_new))
          correction = (E_old - swept_h.sum()) - solver.energy()
-@@ -357,9 +400,7 @@
+@@ -357,9 +413,7 @@
          points, tets, node_of_corner = rebuild_volume(mesh.points[self.corners], self.faces_corner, **self.sizes)
          h_old = mat.enthalpy(solver.temperature())
          E_old = solver.energy()
@@ -556,7 +646,7 @@ their residuals (the interpolation's −4.1 %).
          params = dict(mesh.params, rebuilds=self.rebuilds + 1)
          new_mesh = mesh_mod.VolumeMesh(points, tets, params)
          check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
-@@ -368,9 +409,8 @@
+@@ -368,9 +422,8 @@
          residual = E_old - solver.energy()
          self.mesh, self.corners = new_mesh, node_of_corner
          self._set_surface(node_of_corner[self.faces_corner])             # builds the new deforming zone
@@ -568,7 +658,7 @@ their residuals (the interpolation's −4.1 %).
          in_zone = np.concatenate([self.zone.corners, self.zone.interior])
          m_zone = lumped_masses(points, tets, mat.rho)[in_zone]
          h_new[in_zone] += residual / m_zone.sum()
-@@ -389,7 +429,7 @@
+@@ -389,7 +442,7 @@
              return "compression"
          return None
  
@@ -577,7 +667,7 @@ their residuals (the interpolation's −4.1 %).
          """Rebuild first if compression calls for it; move; if the move is refused, rebuild and move again. A move
          refused on a fresh mesh is a model failure (RuntimeError, exit code 1)."""
          rebuilt = False
-@@ -397,11 +437,11 @@
+@@ -397,11 +450,11 @@
          if reason:
              self.rebuild(reason)
              rebuilt = True
@@ -591,7 +681,7 @@ their residuals (the interpolation's −4.1 %).
              if result.refused:
                  raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
                      float(np.linalg.norm(u_corners, axis=1).max())))
-@@ -413,7 +453,7 @@
+@@ -413,7 +466,7 @@
  # -- rebuilding the mesh ---------------------------------------------------------------------------------------------
  @dataclass
  class RebuildResult:
@@ -600,10 +690,54 @@ their residuals (the interpolation's −4.1 %).
      relative_residual: float            # that over the total enthalpy
      n_nodes: int
      n_elements: int
-@@ -513,19 +553,75 @@
+@@ -457,9 +510,11 @@
+                           "{} extra".format(len(want - got), len(got - want)))
+ 
+ 
+-def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
+-    """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly. Returns the new
+-    points, tets and the new node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
++def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp, fine_depth=0.0, h_fine=None):
++    """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly: h_surface to `band`
++    below it, growing to h_core over `ramp`, and with `fine_depth` > 0 elements of h_fine to that depth, growing to
++    h_surface over one h_surface below it (the fine band, module docstring). Returns the new points, tets and the new
++    node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
+     import gmsh
+     from scipy.spatial import cKDTree
+     gmsh.initialize()
+@@ -480,6 +535,14 @@
+         for key, value in (("InField", dist), ("SizeMin", h_surface), ("SizeMax", h_core), ("DistMin", d_min),
+                            ("DistMax", d_max)):
+             gmsh.model.mesh.field.setNumber(thr, key, value)
++        if fine_depth > 0.0 and h_fine is not None and h_fine < h_surface:
++            fine = gmsh.model.mesh.field.add("Threshold")
++            for key, value in (("InField", dist), ("SizeMin", h_fine), ("SizeMax", h_surface), ("DistMin", fine_depth),
++                               ("DistMax", fine_depth + h_surface)):
++                gmsh.model.mesh.field.setNumber(fine, key, value)
++            both = gmsh.model.mesh.field.add("Min")
++            gmsh.model.mesh.field.setNumbers(both, "FieldsList", [thr, fine])
++            thr = both
+         gmsh.model.mesh.field.setAsBackgroundMesh(thr)
+         for option in ("Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeFromCurvature"):
+             gmsh.option.setNumber(option, 0)
+@@ -513,19 +576,89 @@
      return coords, tets, node_of_corner.astype(np.int64)
  
  
++def refined_mesh(mesh, fine_depth, h_fine):
++    """`mesh` meshed again inside its own surface, kept exactly, with the fine band of `fine_depth` and `h_fine` under
++    it (module docstring) at the sizes its parameters give; its parameters record the band, so that every rebuild of
++    the moving mesh makes it again."""
++    s = mesh.surface()
++    corners = np.unique(s.faces)
++    local = np.full(mesh.n_nodes, -1, dtype=np.int64)
++    local[corners] = np.arange(len(corners))
++    faces = local[orient_outward(mesh.points, s.faces, s.normals)]
++    sizes = dict(default_sizes(mesh), fine_depth=fine_depth, h_fine=h_fine)
++    points, tets, _ = rebuild_volume(mesh.points[corners], faces, **sizes)
++    return mesh_mod.VolumeMesh(points, tets, dict(mesh.params, fine_depth_m=fine_depth, h_fine_m=h_fine))
++
++
 +_QUAD_A, _QUAD_B = 0.5854101966249685, 0.1381966011250105      # the 4-point rule exact for quadratics on a tetrahedron
 +QUADRATURE = np.full((4, 4), _QUAD_B) + np.eye(4) * (_QUAD_A - _QUAD_B)   # barycentric coordinates, weights 1/4 each
 +PROJECT_CHUNK = 200_000                                      # quadrature points located at a time (bounds the memory)
@@ -691,7 +825,7 @@ their residuals (the interpolation's −4.1 %).
 +
 ```
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 36 passed. The amendment added `move(u, h_inward)`, which books
+- [ ] **Step 4: Run them to see them pass.** Expected: 38 passed. The amendment added `move(u, h_inward)`, which books
   an inward sweep at the enthalpy the caller gives for each corner's swept depth (the skins pass the 3D profile's
   average), pinned by `test_an_inward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_its_depth`. The build added
   the retry in `locate`
@@ -751,7 +885,7 @@ their residuals (the interpolation's −4.1 %).
   at 30.0 mm (29.5 mm completed: the fold of the prescribed motion law, fact 104), and the rebuilds' residuals fall to
   4·10⁻⁶–1.6·10⁻⁵ of the total enthalpy, in 167 s (20 rebuilds of 6.2–7.5 s each).
 
-- [ ] **Step 6: Unit tier and commit.** Expected 346 passed, 1 skipped.
+- [ ] **Step 6: Unit tier and commit.** Expected 348 passed, 1 skipped.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py analysis/movemesh_recession.py
@@ -1000,7 +1134,7 @@ class CornerSurface:
 
 - [ ] **Step 4: Run them to see them pass.** Expected: 5 passed.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 351 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 353 passed, 1 skipped.
 
 ```bash
 git add reentry_model/columns.py tests/test_reentry_model_columns.py
@@ -1166,7 +1300,7 @@ git mv tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py
      for name in ("skfem", "fenicsx"):
 ```
 
-  Run the unit tier: expected 351 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
+  Run the unit tier: expected 353 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
 
 - [ ] **Step 2: Write the new skin's tests** (`tests/test_reentry_model_skin.py`, which grows by a section per task):
 
@@ -1707,7 +1841,7 @@ class Skins:
 - [ ] **Step 5: Run them to see them pass.** Expected: 7 passed — once Task 3's `minimum_mass` exists, because these
   tests' helper calls it. Do Tasks 2 and 3 together and commit once, after Task 3 (the build did).
 
-- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 359 passed, 1 skipped, after Task 3.
+- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 361 passed, 1 skipped, after Task 3.
 
 ```bash
 git add -A reentry_model/skin.py reentry_model/skin1d.py reentry_model/body.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py tests/test_reentry_model_melting_skin.py tests/test_reentry_model_fenicsx.py
@@ -1769,7 +1903,7 @@ def minimum_mass(material, area, settings, delta_m=None):
 
 - [ ] **Step 4: Run it to see it pass.** Expected: 8 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 359 passed, 1 skipped (Tasks 2 and 3).
+- [ ] **Step 5: Unit tier and commit.** Expected 361 passed, 1 skipped (Tasks 2 and 3).
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -2264,7 +2398,7 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
 
 - [ ] **Step 4: Run them to see them pass.** Expected: 16 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 367 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 369 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py data/reference_values/skin_swell_1d.json
@@ -2444,7 +2578,7 @@ def sideways_heat(sk, columns, dt):
 - [ ] **Step 4: Run them to see them pass.** Expected: 20 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 371 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 373 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -2684,7 +2818,7 @@ def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 373 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 375 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -2742,7 +2876,7 @@ trial and real passes around the 3D step, the base moving the 3D mesh, and the b
 import numpy as np
 import pytest
 
-from reentry_model import heating, material, mesh, skin, skinbody
+from reentry_model import heating, material, mesh, movemesh, skin, skinbody
 from reentry_model.thermal import thermal_solver
 
 DEV = skin.SkinSettings(cell=20e-6)
@@ -3025,12 +3159,13 @@ def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heatin
 # -- the reference tier: strong melting on the production mesh, and level 2b (2026-10-14) -----------------------------
 @pytest.mark.reference
 def test_strong_melting_on_the_production_mesh():
-    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band) for 1.5 s from 880 K: absorption
-    takes the non-rigid metal as it forms, the base stays within 2 K of T_rigid, no skin cell is left buried above
-    T_feed, and the books are exact. The 4 mm test sphere is refused at the rim of the melting region here; the 2 mm
-    mesh follows it, moving no corner more than its quarter-edge allowance (0.49 mm). Measured 2026-10-14: 172.9 g
-    removed, the base 1.2 K above T_rigid at most, one rebuild."""
-    m = mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND)
+    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band, the skin runs' fine band of
+    0.7 mm to 4 mm) for 1.5 s from 880 K: absorption takes the non-rigid metal as it forms, the base stays within 2 K of
+    T_rigid, no skin cell is left buried above T_feed, and the books are exact. The 4 mm test sphere is refused at the
+    rim of the melting region here; the 2 mm mesh follows it, moving no corner more than its quarter-edge allowance
+    (0.49 mm). Measured 2026-10-14 without the fine band: 172.9 g removed, the base 1.2 K above T_rigid at most, one
+    rebuild."""
+    m = movemesh.refined_mesh(mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND), 4e-3, 0.7e-3)
     b = make(m)
     M0 = b.mass()
     for k in range(3):
@@ -3552,7 +3687,7 @@ class SkinBody(ThermalBody):
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 384 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 386 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -3572,9 +3707,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 **Interfaces:**
 - Produces: `--surface-model elements|skin` (default `elements`), `--skin-min-thickness` (mm, 0.4), `--skin-cell` (µm),
   `--skin-growth` (1.10), `--skin-substep` (ms, 10), `--skin-preset dev|production`, `--deform-depth` (mm, 15),
-  `--skin-swell on|off` (on; added 2026-10-14); run-name suffix `_surface-skin` plus `skin_name_suffix(min_thickness_mm,
-  cell_um, growth, substep_ms, preset, deform_mm, swell=True)` (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`,
-  `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`, `_noswell`); `--surface-model skin`
+  `--skin-swell on|off` (on; added 2026-10-14), `--fine-band` (mm, 4; 0 none) and `--fine-size` (mm, 0.7; added
+  2026-10-15: a skin run's mesh is `movemesh.refined_mesh` of the sphere); run-name suffix `_surface-skin` plus
+  `skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True, fine_band_mm=4.0,
+  fine_size_mm=0.7)` (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`, `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`,
+  `_noswell`, `_fine<depth>x<size>mm`, `_fine0`); `--surface-model skin`
   needs `--thermal fem` and, with `--melt on`, `--removal instant`; `--animate`/`--stills` are refused with it.
   `coupled.SKINBODY_COLUMNS` in every skin run's history; results `skin_columns`, the totals, `surface_fold_max_deg`,
   `surface_quality_min`, `zone_ratio_min`; frames `surface_<k>.vtp` with per-corner point data `T_top`, `q_conv`,
@@ -3585,7 +3722,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 ```diff
 --- a/tests/test_reentry_model_cli.py
 +++ b/tests/test_reentry_model_cli.py
-@@ -333,54 +333,80 @@
+@@ -333,54 +333,87 @@
  
  
  # ---------------------------------------------------------------------------------------------------------------
@@ -3617,6 +3754,9 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    assert (cli.skin_name_suffix(0.8, 5.0, 1.2, 20.0, "production", 10.0)
 +            == "_skinmin0.8mm_cell5um_growth1.2_sub20ms_deform10mm")
 +    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0, swell=False) == "_skin-dev_noswell"
++    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=0.0) == "_fine0"
++    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=3.0, fine_size_mm=0.5) == "_fine3x0.5mm"
++    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=4.0, fine_size_mm=0.7) == ""
 +    run = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"]
 +    assert cli.skin_settings(cli.build_parser().parse_args(run + ["--skin-swell", "off"])).swell is False
 +    assert cli.skin_settings(cli.build_parser().parse_args(run)).swell is True
@@ -3634,18 +3774,20 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 -        "--heating", "physics", "--altitude", "71", "--velocity", "7.24", "--temperature", "800", "--t-max", "3",
 -        "--dt-continuum", "off", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "2", "--outdir", str(tmp_path)]
 +    argv = MELT + ["--removal", "instant", "--altitude", "71", "--velocity", "7.24", "--temperature", "880", "--t-max", "1",
-+                   "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1", "--outdir", str(tmp_path)]
++                   "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1", "--fine-size", "2",
++                   "--outdir", str(tmp_path)]
      assert cli.main(argv) == 0
      (path,) = glob.glob(str(tmp_path / "*.json"))
      doc = json.load(open(path))
 -    assert doc["run_name"].endswith("_melt-girin_dtcontinuum-off_surface-skin_skin-dev")
-+    assert doc["run_name"].endswith("_melt-instant_surface-skin_skin-dev")
++    assert doc["run_name"].endswith("_melt-instant_surface-skin_skin-dev_fine4x2mm")
      s, r = doc["settings"], doc["results"]
 -    assert s["surface_model"] == "skin" and s["skin"] == {"thickness_mm": 0.4, "cell_um": 20.0, "substep_ms": 10.0, "preset": "dev"}
 -    assert r["skins_created"] > 0 and r["skin_drawn_mass_kg"] >= 0.0 and abs(r["melt_energy_balance_residual"]) < 1e-6
 +    assert s["surface_model"] == "skin" and s["prism_layers"] == 0
 +    assert s["skin"] == {"min_thickness_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
-+                         "deform_depth_mm": 15.0, "n_columns": r["skin_columns"]}
++                         "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
++                         "swell": True}
 +    assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
      rows = list(csv.DictReader(open(path[:-5] + ".csv")))
 -    assert all(k in rows[0] for k in coupled.SKIN_COLUMNS) and float(rows[-1]["skin_count"]) > 0.0
@@ -3670,6 +3812,8 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-preset", "fine"],
 +    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-growth", "0.9"],
 +    MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
++    MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
++    MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
 +    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs flow and spraying
 +    MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
 +    MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
@@ -3801,11 +3945,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
  import numpy as np
  
 -from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin1d as skin, spray, surface_flow, thermal, viz
-+from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
++from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
  from . import trajectory as tj
  from .earth import GRAVITY_MODELS
  from .thermal import MissingBackend
-@@ -47,6 +47,10 @@
+@@ -47,6 +47,17 @@
  # seeds, the droplet count within 2.7 % of the 0.00625 s step's (plan facts 92-94) -- while the default 0.5 s step makes
  # six times fewer droplets. Before the switch the default step serves.
  DEFAULT_DT_CONTINUUM = 0.0125
@@ -3813,10 +3957,17 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +# mesh (skinbody.SkinBody). The default stays the element model until sub-plan 22 gives the skins their flow and spraying;
 +# sub-plan 18's one-dimensional skins are reachable only from Python (body.MeltSettings(surface_model="skin1d")).
 +SURFACE_MODELS = ("elements", "skin")
++# The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
++# while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
++# (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
++# (movemesh.refined_mesh). Under a fixed 2 mm surface gmsh fills the band coarser than asked: 0.7 mm asked matches 1 mm
++# elements throughout on both plates' onset, 1 mm asked gets about half way (measured 2026-10-15); on the 100 mm sphere
++# it takes the 3D model from 177 000 to 1.21 million elements and a 3D step from 0.16 to 1.17 s.
++FINE_BAND_MM, FINE_SIZE_MM = 4.0, 0.7
  
  
  def parse_epoch(text):
-@@ -96,9 +100,9 @@
+@@ -96,9 +107,9 @@
      run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
      (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
      `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
@@ -3829,7 +3980,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
      dtc = dtc_default if dt_continuum == "default" else dt_continuum
      name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
-@@ -107,21 +111,28 @@
+@@ -107,21 +118,34 @@
              + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
              + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
              + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
@@ -3842,11 +3993,13 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 -    """The run-name suffix of a skin run's non-default settings (sub-plan 18): `_skin-dev` for the dev preset,
 -    `_skin<mm>mm` for another thickness, `_cell<um>um` for an explicit cell other than the preset's, `_sub<ms>ms` for
 -    another sub-step; empty for the defaults."""
-+def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True):
++def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
++                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM):
 +    """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
 +    dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
-+    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth, and
-+    `_noswell` for skins held at the solid's density; empty for the defaults."""
++    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
++    `_noswell` for skins held at the solid's density, and `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
++    empty for the defaults."""
      out = "_skin-dev" if preset == "dev" else ""
 -    if thickness_mm != 0.4:
 -        out += "_skin{:g}mm".format(thickness_mm)
@@ -3862,10 +4015,14 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +        out += "_deform{:g}mm".format(deform_mm)
 +    if not swell:
 +        out += "_noswell"
++    if fine_band_mm <= 0.0:
++        out += "_fine0"
++    elif (fine_band_mm, fine_size_mm) != (FINE_BAND_MM, FINE_SIZE_MM):
++        out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
      return out
  
  
-@@ -250,15 +261,25 @@
+@@ -250,15 +274,31 @@
                           "with the film plus everything more than half liquid beneath it (slurry included), and where there "
                           "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
                           "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
@@ -3886,6 +4043,12 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    me.add_argument("--skin-growth", type=float, default=1.10,
 +                    help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
      me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
++    me.add_argument("--fine-band", type=float, default=FINE_BAND_MM,
++                    help="with --surface-model skin: the 3D model's elements are --fine-size to this depth [mm] below the "
++                         "surface, which keeps its triangulation, and every rebuild makes the band again; 0: none "
++                         "(default %(default)s)")
++    me.add_argument("--fine-size", type=float, default=FINE_SIZE_MM,
++                    help="the elements' size asked for in the fine band [mm] (default %(default)s; capped at the surface's)")
 +    me.add_argument("--skin-swell", choices=("on", "off"), default="on",
 +                    help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
 +                         "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
@@ -3897,7 +4060,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      me.add_argument("--rt-spray", choices=("on", "off"), default="on",
                      help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
                           "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
-@@ -301,10 +322,12 @@
+@@ -301,12 +341,16 @@
      """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]."""
      radius = settings.diameter / 2.0
      melting = args.melt == "on"
@@ -3912,8 +4075,12 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +                                                    # moving mesh is rebuilt with the dense band's size field
      the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
                                 band=band)
++    if skins and args.fine_band > 0.0:                  # the fine band (FINE_BAND_MM), made again at every rebuild
++        the_mesh = movemesh.refined_mesh(the_mesh, args.fine_band * 1e-3, min(args.fine_size * 1e-3, h_surface))
      # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
-@@ -314,7 +337,11 @@
+     # selectable by name
+     material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
+@@ -314,7 +358,11 @@
      if args.k_scale != 1.0:
          mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
      solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
@@ -3926,7 +4093,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
          flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
          spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
                                         rt_spray=args.rt_spray == "on")
-@@ -322,8 +349,7 @@
+@@ -322,8 +370,7 @@
          melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
                                            particles=args.particles, size_feedback=size_feedback,
                                            deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
@@ -3936,7 +4103,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
          the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
                                      emissivity=args.emissivity, T_ambient=args.t_ambient)
      else:
-@@ -338,16 +364,20 @@
+@@ -338,16 +385,22 @@
              "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
              "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
              "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
@@ -3945,7 +4112,9 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    if skins:
 +        info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "cell_um": skin_settings(args).cell * 1e6,
 +                        "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
-+                        "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n}
++                        "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
++                        "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
++                        "swell": args.skin_swell == "on"}
      if args.heating == "physics":
          info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                       "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -3962,7 +4131,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
                       "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                       "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
                       "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
-@@ -357,9 +387,10 @@
+@@ -357,9 +410,10 @@
  
  
  def skin_settings(args):
@@ -3975,7 +4144,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
  
  
  def cmd_run(args, parser):
-@@ -399,15 +430,25 @@
+@@ -399,15 +453,27 @@
      dt_continuum = continuum_step(args)
      if dt_continuum is not None and dt_continuum > args.dt:
          parser.error("--dt-continuum must be no longer than --dt")
@@ -3988,6 +4157,8 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
              parser.error("{} must be > 0".format(label))
 +    if args.skin_growth < 1.0:
 +        parser.error("--skin-growth must be at least 1")
++    if args.fine_band < 0.0 or args.fine_size <= 0.0:
++        parser.error("--fine-band must be >= 0 and --fine-size > 0")
      cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
 -    if 2.0 * cell_um * 1e-3 > args.skin_thickness * (1.0 + 1e-12):
 -        parser.error("--skin-cell must be at most half of --skin-thickness")
@@ -4007,7 +4178,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
  
      initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                                flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
-@@ -422,8 +463,9 @@
+@@ -422,8 +488,9 @@
                                         deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
                                         rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
                                         surface_model=args.surface_model,
@@ -4015,11 +4186,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 -                                                                    args.skin_preset))
 +                                       skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
 +                                                                    args.skin_substep, args.skin_preset, args.deform_depth,
-+                                                                    args.skin_swell == "on"))
++                                                                    args.skin_swell == "on", args.fine_band, args.fine_size))
      run_dir = os.path.join(args.outdir, name)
      os.makedirs(args.outdir, exist_ok=True)
      thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
-@@ -464,7 +506,7 @@
+@@ -464,7 +531,7 @@
          "provenance": prov,
          "files": {"csv": os.path.abspath(csv_path)},
      }
@@ -4028,7 +4199,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      if melting:
          doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
                              else {})
-@@ -502,6 +544,11 @@
+@@ -502,6 +569,11 @@
                    "energy balance residual {:.1e}, {} macro steps, {:.1f} Newton iterations/step".format(
                        res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
                        res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
@@ -4157,10 +4328,10 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths."""
 ```
 
-- [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 54 passed (the skin run about 40 s; two of them
-  pin the refusal of an explicit `--prism-layers` with skins, added at the final review).
+- [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 56 passed (the skin run about 40 s; two of them
+  pin the refusal of an explicit `--prism-layers` with skins, added at the final review, and two a bad fine band).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 390 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 394 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -4199,7 +4370,9 @@ at the solid's density (`--swell off`, the harness's default; Asha, 2026-10-14, 
 box hold their metal at one density, while the skins' own law swells the liquid by 15 % (spec §5.2), which alone melts
 the exact plates sooner and had hidden a numerical delay of the same size (facts 133–135); the one-dimensional
 reference can be given the skins' law too (`--swell all|nonrigid`), which is how the swelling's own level-1 check
-(Task 4) gets its reference.
+(Task 4) gets its reference. Both plates also have the skin runs' fine band (`--fine-mm 4 --fine-size-mm 0.7`, the
+defaults; Asha, option 1, built 2026-10-15): the 3D model's elements finer to 4 mm below the surface, made again at
+every rebuild (Task 0, facts 138–140).
 
 - [ ] **Step 1: The one-dimensional reference.** Create `analysis/ablation_1d.py`:
 
@@ -4523,6 +4696,10 @@ melting onset is open), the skins' flowing depth at the centre within 10 % of th
 and 2.0 s, and the centre's base no more than 1 K above T_rigid -- the skins hold the non-rigid metal, none is left in
 the 3D model; mass closed to 1e-12 and energy to 1e-8.
 
+Both plates have the skin runs' fine band (`--fine-mm 4 --fine-size-mm 0.7`, the defaults; Asha, 2026-10-14, option 1):
+the 3D model's elements are finer to 4 mm below the surface, which keeps its 2 mm triangulation, and every rebuild makes
+the band again; on 2 mm elements throughout the plates melted 2-6 % late.
+
 Both cases run with the skins held at the solid's density (`--swell off`, the default here; Asha, 2026-10-14): the
 references and the fine box hold their metal at one density, while the skins' own law (spec 5.2) swells the liquid by
 15 %, which alone melts the exact plates sooner -- by 0.033 mm (cold) and 0.094 mm (hot) at 1.0 s -- and had hidden a
@@ -4530,7 +4707,7 @@ numerical delay of the same size. `--swell on` runs the skins' own law; the swel
 (`tests/test_reentry_model_skin.py`, against the one-dimensional reference with the skins' density law).
 
     python analysis/skin_plate.py [--case cold|hot] [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2]
-                                  [--swell off|on] [--out PATH.json]
+                                  [--swell off|on] [--fine-mm 4] [--fine-size-mm 0.7] [--out PATH.json]
 """
 import argparse
 import json
@@ -4541,7 +4718,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from reentry_model import heating, material, mesh, skin, skinbody  # noqa: E402
+from reentry_model import heating, material, mesh, movemesh, skin, skinbody  # noqa: E402
 from reentry_model.thermal import thermal_solver  # noqa: E402
 
 Q0, T0 = 6.0e6, 700.0
@@ -4552,6 +4729,7 @@ R_FLAT, R_ZERO, R_READ = 32e-3, 45e-3, 3e-3  # m: full flux within R_FLAT, none 
 REFERENCE_1D = {1.0: 0.7890, 1.5: 2.7120, 2.0: 5.2190}       # mm, analysis/ablation_1d.py at 1 um and 0.5 ms (2026-10-12)
 CASES = {"cold": (T0, Q0), "hot": (880.0, 2.0e6)}            # K, W/m2: the level-2 plate and the hot plate (2026-10-14)
 HOT_FLOWING_TOL, HOT_BASE_TOL_K = 0.10, 1.0                    # the hot plate's flowing depth (relative) and base excess
+FINE = (4.0e-3, 0.7e-3)                                         # m: the fine band's depth and size, as a skin run's
 
 
 def hot_reference():
@@ -4596,10 +4774,12 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False, fine=FINE):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
+    if fine is not None and fine[0] > 0.0:                         # the fine band (depth, size) m, as a skin run's
+        m = movemesh.refined_mesh(m, fine[0], min(fine[1], h))
     body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(),
                              skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell), T0=T_start, emissivity=0.0,
                              v_hat=(-1.0, 0.0, 0.0), deform_depth=deform, repeat_rule=repeat_rule)
@@ -4652,6 +4832,8 @@ def main():
     a.add_argument("--repeat-rule", default=skinbody.DEFAULT_REPEAT_RULE, choices=skinbody.REPEAT_RULES)
     a.add_argument("--r-flat-mm", type=float, default=R_FLAT * 1e3)
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
+    a.add_argument("--fine-mm", type=float, default=FINE[0] * 1e3, help="the fine band's depth [mm]; 0: none")
+    a.add_argument("--fine-size-mm", type=float, default=FINE[1] * 1e3, help="the fine band's element size asked [mm]")
     a.add_argument("--swell", choices=("off", "on"), default="off",
                    help="off: the skins at the solid's density, as the references hold their metal (default); on: the "
                         "skins' own law, each cell at its phase's density")
@@ -4661,7 +4843,7 @@ def main():
     body, rows, n_centre, failure = run(args.dt, args.preset, args.deform_mm * 1e-3, args.t_end, args.solver,
                                         h=args.h_mm * 1e-3, width=args.width_mm * 1e-3, r_flat=args.r_flat_mm * 1e-3,
                                         r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0,
-                                        swell=args.swell == "on")
+                                        swell=args.swell == "on", fine=(args.fine_mm * 1e-3, args.fine_size_mm * 1e-3))
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
     compare, verdict = {}, []
     fine = fine_box() if args.case == "cold" else None
@@ -4686,7 +4868,8 @@ def main():
     summary = {"case": args.case, "T0_K": T_start, "q_Wm2": q0, "passes": bool(verdict) and all(verdict) and failure is None,
                "failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
                "width_mm": args.width_mm, "r_flat_mm": args.r_flat_mm, "r_zero_mm": args.r_zero_mm,
-               "repeat_rule": args.repeat_rule, "swell": args.swell,
+               "repeat_rule": args.repeat_rule, "swell": args.swell, "fine_mm": args.fine_mm,
+               "fine_size_mm": args.fine_size_mm, "n_elements": body.mesh.n_elements,
                "preset": args.preset, "deform_mm": args.deform_mm, "n_columns": body.columns.n, "n_centre": n_centre,
                "compare": compare, "worst_mass_error": max((abs(x["mass_error"]) for x in rows), default=0.0),
                "worst_energy_residual": max((abs(x["energy_residual"]) for x in rows), default=0.0),
@@ -4784,6 +4967,21 @@ it at 0.05 s by a delay of about 6 %, which is the 3D model's resolution in dept
 | hot, 0.05 s | −6.8 % (onset, not judged) | −3.6 % | −1.7 % | flowing depth within 8.5 %, base at most 0.08 K above |
 | cold, 0.5 s | −1.2 % | −2.2 % | −3.9 % | fine box −3.1, −2.8, −3.7 % |
 | cold, 0.05 s | −6.2 % | −6.2 % | −6.4 % | fine box −8.0, −6.8, −6.1 % (fails) |
+
+  **With the fine band** (2026-10-15, the default since option 1; facts 139–140), measured once each:
+
+The table shows both plates passing at both macro steps once the 3D model is finer below the surface, the cold plate at
+0.05 s turning from 6.2 % late to 1.6 % ahead at 1.0 s.
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria | Wall time |
+|---|---|---|---|---|---|
+| hot, 0.5 s | −5.6 % (onset, not judged) | −1.9 % | −0.7 % | flowing depth within 0.7 %, base at most 0.10 K above T_rigid | 539 s (363 s) |
+| hot, 0.05 s | −2.5 % (onset, not judged) | −1.6 % | −1.0 % | flowing depth within 0.5 %, base at most 0.08 K above | 624 s (357 s) |
+| cold, 0.5 s | +4.9 % | −2.5 % | −3.3 % | fine box +2.8, −3.1, −3.0 % | 2 036 s (1 280 s) |
+| cold, 0.05 s | +1.6 % | −2.2 % | −2.7 % | fine box −0.3, −2.8, −2.5 % | 2 022 s (1 116 s) |
+
+  The wall times in brackets are without the band. The plates rebuild 4–5 times instead of 1–2, every 1 mm or so of
+  recession, because their 4 mm deforming zone compresses the band's elements directly; each rebuild takes about 40 s.
 
 - [ ] **Step 5: Commit**
 
@@ -4926,18 +5124,20 @@ at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro step
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
 parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
-solid's density and the swelling checked at level 1. The unit tier went from 341 to 390 passed (1 skipped),
+solid's density and the swelling checked at level 1, then the fine band under the surface (option 1). The unit tier
+went from 341 to 394 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
 build's measurements, 121–137 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and the heating in time, the swelling) pass as unit
-tests. Level 2, the plate (Task 9), with the skins at the solid's density as the references hold their metal: the
-cold plate passes against both references at 0.5 s macro steps (1.2, 2.2, 3.9 % late against the one-dimensional
-reference) and fails at 0.05 s (6.2, 6.2, 6.4 % late; 8.0 % against the fine box at 1.0 s); level 2b, the hot plate,
-passes at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, the skins' flowing depth within 3.4 % of the exact non-rigid
-depth) and at 0.05 s. With the skins swelling, as measured before 2026-10-14, both plates passed at both steps, the
+tests. Level 2, the plate (Task 9), with the skins at the solid's density as the references hold their metal and the
+fine band under the surface: the cold plate passes against both references at 0.5 s macro steps (4.9 % ahead, 2.5
+and 3.3 % late against the one-dimensional reference) and at 0.05 s (1.6 % ahead, 2.2 and 2.7 % late); level 2b, the
+hot plate, passes at 0.5 s (1.9 and 0.7 % late at 1.5 and 2.0 s, the skins' flowing depth within 0.7 % of the exact
+non-rigid depth) and at 0.05 s (1.6 and 1.0 % late). On 2 mm elements throughout, the cold plate failed at 0.05 s
+(6.2, 6.2, 6.4 % late). With the skins swelling, as measured before 2026-10-14, both plates passed at both steps, the
 swelling's head start cancelling the delay (fact 133). Earlier measurements: the production cells passed at 0.05 s and
 the two cell sizes differed by 1.4 % (1 % asked); the 0.1 and 0.25 s excesses at 1.0 s (+8.0 and +12.7 %) were cured
 by the melting part cap (fact 132). Mass closes to 1.4e-15 and energy
@@ -4966,13 +5166,9 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 
 ### Still open after the amendment
 
-- **Melting late on 2 mm elements** (facts 133–134, 137): compared like with like the plates melt 2–6 % late, the
-  cold plate failing level 2 at 0.05 s; it is the 3D model's resolution in depth below the rigid front (1 mm elements
-  remove the cold plate's onset delay). Element layers of 1 mm in depth under the 2 mm surface edges reproduce the 1 mm
-  results until the first rebuild, which meshes the volume isotropically again and leaves the run worse than on 2 mm
-  elements; adoption needs a rebuild that regenerates the layers (spec §13), pending Asha. The late slow bias at 0.05 s
-  (−6 % at 1.5 and 2.0 s with the skins at the solid's density) is part of the same delay or a second effect: the narrow
-  plates leak heat sideways late in the run, so they could not separate it.
+- **The fine band's cost** (facts 139–140): it resolved the delay on 2 mm elements (both plates within 3.3 % at 1.5
+  and 2.0 s), but a melting step on the 100 mm sphere costs 45 % more (1 010 against 695 s for the strong-melting case),
+  the extra in the 3D solves, the moves' remap of the larger mesh and the rebuild; the plates cost 50–80 % more.
 - **Thin elements at the plate's 90-degree edges** (fact 136): the fill misses its request at the box's edges, and on
   0.5 mm elements the corrections exceed the move allowance and grow until a skin runs empty; layers under the faces
   are crushed by the fill unless blended to uniform near the sides. The sphere has no such edges.

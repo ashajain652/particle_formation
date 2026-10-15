@@ -350,6 +350,49 @@ def test_corners_keep_their_order_through_repeated_rebuilds(coarse_sphere_mesh):
     assert moving.rebuilds == 2
 
 
+def shortest_edges_by_depth(mesh, depth_of):
+    """Each element's shortest edge [m] and the depth of its centroid below the surface [m] (`depth_of(centroids)`):
+    elements touching the fixed surface keep its edges, so the shortest edge shows the size gmsh filled in."""
+    x = mesh.points[mesh.tets]
+    pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    edge = np.min([np.linalg.norm(x[:, i] - x[:, j], axis=1) for i, j in pairs], axis=0)
+    return edge, depth_of(x.mean(axis=1))
+
+
+def test_a_refined_mesh_keeps_its_surface_and_is_finer_to_the_fine_depth():
+    """The fine band (option 1, 2026-10-14): a 16 mm cube of 2 mm elements meshed again inside its own surface with
+    1 mm asked to 3 mm below it, growing to 2 mm by 5 mm: the surface triangles and the volume are kept exactly, and
+    gmsh fills the band finer than below it, though not to the size asked under a fixed 2 mm surface (measured: the
+    shortest edges 1.10-1.13 mm at 1-3 mm depth, 2.01 mm below 5 mm; 3 072 elements become 7 787)."""
+    m = mesh_mod.box_mesh(16e-3, 16e-3, 16e-3, 2e-3)
+    r = movemesh.refined_mesh(m, 3e-3, 1e-3)
+    tri = lambda mm: {tuple(sorted(map(tuple, np.round(mm.points[f] * 1e9).astype(int)))) for f in mm.surface().faces}
+    assert tri(r) == tri(m)
+    assert r.volume() == pytest.approx(m.volume(), rel=1e-12)
+    assert r.params["fine_depth_m"] == 3e-3 and r.params["h_fine_m"] == 1e-3
+    edge, depth = shortest_edges_by_depth(r, lambda c: np.minimum(c, 16e-3 - c).min(axis=1))
+    assert np.median(edge[(depth > 1e-3) & (depth < 3e-3)]) < 1.3e-3 < 1.7e-3 < np.median(edge[depth > 5e-3])
+    assert r.n_elements > 2 * m.n_elements
+    assert movemesh.radius_ratio(r.points, r.tets).min() > 0.1
+
+
+def test_a_rebuild_makes_the_fine_band_again(coarse_sphere_mesh):
+    """The moving mesh reads the fine band from the mesh's parameters and every rebuild makes it again (the coarse
+    sphere's 4 mm surface with 2 mm asked to 6 mm: measured shortest edges 2.2 mm in the band, 4.3 mm at 12-20 mm)."""
+    m = movemesh.refined_mesh(coarse_sphere_mesh, 6e-3, 2e-3)
+    assert movemesh.default_sizes(m)["fine_depth"] == 6e-3 and movemesh.default_sizes(m)["h_fine"] == 2e-3
+    mat = constant_material()
+    moving = movemesh.MovingMesh(m, solver_on(m, mat), mat)
+    edge0, depth0 = shortest_edges_by_depth(moving.mesh, lambda c: 0.05 - np.linalg.norm(c, axis=1))
+    band0 = np.median(edge0[(depth0 > 2e-3) & (depth0 < 6e-3)])
+    assert band0 < 2.8e-3 < np.median(edge0[(depth0 > 12e-3) & (depth0 < 20e-3)])
+    assert not moving.move(inward(moving, 1e-3)).refused
+    moving.rebuild()
+    edge, depth = shortest_edges_by_depth(moving.mesh, lambda c: 0.049 - np.linalg.norm(c, axis=1))
+    assert np.median(edge[(depth > 2e-3) & (depth < 6e-3)]) == pytest.approx(band0, rel=0.15)
+    assert moving.mesh.params["fine_depth_m"] == 6e-3
+
+
 def test_the_rebuild_offset_stays_in_the_deforming_zone_and_is_summed(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()

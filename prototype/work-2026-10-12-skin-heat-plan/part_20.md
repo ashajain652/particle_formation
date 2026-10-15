@@ -31,12 +31,13 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 390 passed (1 skipped, no
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 394 passed (1 skipped, no
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
-and the hot plate, then the skins' swelling setting for levels 2 and 2b) by Asha's decisions
+and the hot plate, then the skins' swelling setting for levels 2 and 2b and, on 2026-10-15, the fine band under the
+surface) by Asha's decisions
 on the interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile,
 a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one and, while
 melting, no part is longer than 0.0625 s, with the heating interpolated in time across the parts; and a base fault is
@@ -199,7 +200,8 @@ Rulings made while writing, with their reasons (each is stated again where its c
 
 **Files:**
 - Modify: `reentry_model/movemesh.py` (`NEUTRAL_PASSES`, `MovingMesh.neutral_smoothing`, `swept_volumes`, the rebuild's
-  transfer, new `project_enthalpy`, `QUADRATURE`, `PROJECT_CHUNK`)
+  transfer, new `project_enthalpy`, `QUADRATURE`, `PROJECT_CHUNK`; the fine band, added 2026-10-15: `rebuild_volume`'s
+  `fine_depth` and `h_fine`, `default_sizes` reading them, new `refined_mesh`)
 - Modify: `analysis/movemesh_recession.py` (`--neutral`)
 - Test: `tests/test_reentry_model_movemesh.py` (three tests changed for the projection, three appended)
 
@@ -207,7 +209,9 @@ Rulings made while writing, with their reasons (each is stated again where its c
 - Produces: `swept_volumes(old, new, faces, faces_corner, n_corners)` — same signature, each corner booked its own
   sweep (spec §5.2 as amended); `MovingMesh.neutral_smoothing(normal=None, area=None, passes=NEUTRAL_PASSES) -> (nc, 3)`
   (the tangential smoothing plus the normal corrections that cancel what it sweeps per corner);
-  `project_enthalpy(old_points, old_tets, h_old, points, tets) -> (n,)`, the rebuild's transfer.
+  `project_enthalpy(old_points, old_tets, h_old, points, tets) -> (n,)`, the rebuild's transfer;
+  `rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp, fine_depth=0.0, h_fine=None)`;
+  `refined_mesh(mesh, fine_depth, h_fine) -> VolumeMesh` (its parameters `fine_depth_m`, `h_fine_m`).
 
 Why: on the level-2 box the third-of-a-prism booking credited the side walls with metal the front swept (Decisions).
 With own sweeps, the plain smoothing books at most 0.46 µm at a corner of the 100 mm sphere (1.03 µm before), and three
@@ -217,7 +221,13 @@ melting front (2 768 J in two rebuilds of the plate, 4.9 % of its absorbed heat)
 the new mesh's consistent mass matrix against the old field integrated over the new elements by the 4-point rule — keeps
 each region's energy to the rule's accuracy and reproduces a linear field exactly (a lumped projection, also tried,
 moved a linear field's surface values by up to 7 K). On the tests' kinked field the residual goes from −4.1 % of the
-energy to −1.8 J of 63 219 J.
+energy to −1.8 J of 63 219 J. The fine band (Asha, 2026-10-14, option 1; added 2026-10-15, facts 138–140): on 2 mm
+elements the 3D model cannot follow the temperature just below the rigid front and the plates melt 2–6 % late, so a
+mesh may be finer to `fine_depth` below its surface while the surface keeps its triangulation — gmsh fills the volume
+under it to that size field, at the start (`refined_mesh`) and at every rebuild, the sizes read from the mesh's
+parameters — pinned by `test_a_refined_mesh_keeps_its_surface_and_is_finer_to_the_fine_depth` and
+`test_a_rebuild_makes_the_fine_band_again`. Prism layers pushed in from the surface were tried first and could not be
+built at the plate's corners (fact 138).
 
 - [ ] **Step 0: The work copy**
 
@@ -246,7 +256,7 @@ their residuals (the interpolation's −4.1 %).
 
 {{DIFF_MOVEMESH}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 36 passed. The amendment added `move(u, h_inward)`, which books
+- [ ] **Step 4: Run them to see them pass.** Expected: 38 passed. The amendment added `move(u, h_inward)`, which books
   an inward sweep at the enthalpy the caller gives for each corner's swept depth (the skins pass the 3D profile's
   average), pinned by `test_an_inward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_its_depth`. The build added
   the retry in `locate`
@@ -265,7 +275,7 @@ their residuals (the interpolation's −4.1 %).
   at 30.0 mm (29.5 mm completed: the fold of the prescribed motion law, fact 104), and the rebuilds' residuals fall to
   4·10⁻⁶–1.6·10⁻⁵ of the total enthalpy, in 167 s (20 rebuilds of 6.2–7.5 s each).
 
-- [ ] **Step 6: Unit tier and commit.** Expected 346 passed, 1 skipped.
+- [ ] **Step 6: Unit tier and commit.** Expected 348 passed, 1 skipped.
 
 ```bash
 git add reentry_model/movemesh.py tests/test_reentry_model_movemesh.py analysis/movemesh_recession.py
@@ -304,7 +314,7 @@ positivity: 3 of 6 756 edges on the 4 mm test sphere, 4 of 28 245 on the default
 
 - [ ] **Step 4: Run them to see them pass.** Expected: 5 passed.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 351 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 353 passed, 1 skipped.
 
 ```bash
 git add reentry_model/columns.py tests/test_reentry_model_columns.py
@@ -362,7 +372,7 @@ git mv tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py
 
 {{DIFF_FENICSX_A}}
 
-  Run the unit tier: expected 351 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
+  Run the unit tier: expected 353 passed, 1 skipped (stage 1's 21 tests now in `test_reentry_model_skin1d.py`).
 
 - [ ] **Step 2: Write the new skin's tests** (`tests/test_reentry_model_skin.py`, which grows by a section per task):
 
@@ -378,7 +388,7 @@ git mv tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py
 - [ ] **Step 5: Run them to see them pass.** Expected: 7 passed — once Task 3's `minimum_mass` exists, because these
   tests' helper calls it. Do Tasks 2 and 3 together and commit once, after Task 3 (the build did).
 
-- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 359 passed, 1 skipped, after Task 3.
+- [ ] **Step 6: Unit tier and commit** (with Task 3, below). Expected 361 passed, 1 skipped, after Task 3.
 
 ```bash
 git add -A reentry_model/skin.py reentry_model/skin1d.py reentry_model/body.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skin1d.py tests/test_reentry_model_melting_skin.py tests/test_reentry_model_fenicsx.py
@@ -410,7 +420,7 @@ Done in the same pass as Task 2, whose tests need `minimum_mass`; one commit for
 
 - [ ] **Step 4: Run it to see it pass.** Expected: 8 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 359 passed, 1 skipped (Tasks 2 and 3).
+- [ ] **Step 5: Unit tier and commit.** Expected 361 passed, 1 skipped (Tasks 2 and 3).
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -463,7 +473,7 @@ phase's density than with `swell=False`, by the amount the one-dimensional slab 
 
 - [ ] **Step 4: Run them to see them pass.** Expected: 16 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 367 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 369 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py data/reference_values/skin_swell_1d.json
@@ -500,7 +510,7 @@ about 25 ms, so the default 10 ms sub-step needs one.
 - [ ] **Step 4: Run them to see them pass.** Expected: 20 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 371 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 373 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -541,7 +551,7 @@ git commit -m "Layered skins: explicit sideways conduction between columns, cons
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 373 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 375 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -619,7 +629,7 @@ top surface (the bases moved out by the skins' thicknesses).
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 384 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 386 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -639,9 +649,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 **Interfaces:**
 - Produces: `--surface-model elements|skin` (default `elements`), `--skin-min-thickness` (mm, 0.4), `--skin-cell` (µm),
   `--skin-growth` (1.10), `--skin-substep` (ms, 10), `--skin-preset dev|production`, `--deform-depth` (mm, 15),
-  `--skin-swell on|off` (on; added 2026-10-14); run-name suffix `_surface-skin` plus `skin_name_suffix(min_thickness_mm,
-  cell_um, growth, substep_ms, preset, deform_mm, swell=True)` (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`,
-  `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`, `_noswell`); `--surface-model skin`
+  `--skin-swell on|off` (on; added 2026-10-14), `--fine-band` (mm, 4; 0 none) and `--fine-size` (mm, 0.7; added
+  2026-10-15: a skin run's mesh is `movemesh.refined_mesh` of the sphere); run-name suffix `_surface-skin` plus
+  `skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True, fine_band_mm=4.0,
+  fine_size_mm=0.7)` (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`, `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`,
+  `_noswell`, `_fine<depth>x<size>mm`, `_fine0`); `--surface-model skin`
   needs `--thermal fem` and, with `--melt on`, `--removal instant`; `--animate`/`--stills` are refused with it.
   `coupled.SKINBODY_COLUMNS` in every skin run's history; results `skin_columns`, the totals, `surface_fold_max_deg`,
   `surface_quality_min`, `zone_ratio_min`; frames `surface_<k>.vtp` with per-corner point data `T_top`, `q_conv`,
@@ -666,10 +678,10 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 
 {{DIFF_COUPLED}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 54 passed (the skin run about 40 s; two of them
-  pin the refusal of an explicit `--prism-layers` with skins, added at the final review).
+- [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 56 passed (the skin run about 40 s; two of them
+  pin the refusal of an explicit `--prism-layers` with skins, added at the final review, and two a bad fine band).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 390 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 394 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -708,7 +720,9 @@ at the solid's density (`--swell off`, the harness's default; Asha, 2026-10-14, 
 box hold their metal at one density, while the skins' own law swells the liquid by 15 % (spec §5.2), which alone melts
 the exact plates sooner and had hidden a numerical delay of the same size (facts 133–135); the one-dimensional
 reference can be given the skins' law too (`--swell all|nonrigid`), which is how the swelling's own level-1 check
-(Task 4) gets its reference.
+(Task 4) gets its reference. Both plates also have the skin runs' fine band (`--fine-mm 4 --fine-size-mm 0.7`, the
+defaults; Asha, option 1, built 2026-10-15): the 3D model's elements finer to 4 mm below the surface, made again at
+every rebuild (Task 0, facts 138–140).
 
 - [ ] **Step 1: The one-dimensional reference.** Create `analysis/ablation_1d.py`:
 
@@ -815,6 +829,21 @@ it at 0.05 s by a delay of about 6 %, which is the 3D model's resolution in dept
 | hot, 0.05 s | −6.8 % (onset, not judged) | −3.6 % | −1.7 % | flowing depth within 8.5 %, base at most 0.08 K above |
 | cold, 0.5 s | −1.2 % | −2.2 % | −3.9 % | fine box −3.1, −2.8, −3.7 % |
 | cold, 0.05 s | −6.2 % | −6.2 % | −6.4 % | fine box −8.0, −6.8, −6.1 % (fails) |
+
+  **With the fine band** (2026-10-15, the default since option 1; facts 139–140), measured once each:
+
+The table shows both plates passing at both macro steps once the 3D model is finer below the surface, the cold plate at
+0.05 s turning from 6.2 % late to 1.6 % ahead at 1.0 s.
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria | Wall time |
+|---|---|---|---|---|---|
+| hot, 0.5 s | −5.6 % (onset, not judged) | −1.9 % | −0.7 % | flowing depth within 0.7 %, base at most 0.10 K above T_rigid | 539 s (363 s) |
+| hot, 0.05 s | −2.5 % (onset, not judged) | −1.6 % | −1.0 % | flowing depth within 0.5 %, base at most 0.08 K above | 624 s (357 s) |
+| cold, 0.5 s | +4.9 % | −2.5 % | −3.3 % | fine box +2.8, −3.1, −3.0 % | 2 036 s (1 280 s) |
+| cold, 0.05 s | +1.6 % | −2.2 % | −2.7 % | fine box −0.3, −2.8, −2.5 % | 2 022 s (1 116 s) |
+
+  The wall times in brackets are without the band. The plates rebuild 4–5 times instead of 1–2, every 1 mm or so of
+  recession, because their 4 mm deforming zone compresses the band's elements directly; each rebuild takes about 40 s.
 
 - [ ] **Step 5: Commit**
 
@@ -931,18 +960,20 @@ at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro step
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
 parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
-solid's density and the swelling checked at level 1. The unit tier went from 341 to 390 passed (1 skipped),
+solid's density and the swelling checked at level 1, then the fine band under the surface (option 1). The unit tier
+went from 341 to 394 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
 build's measurements, 121–137 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and the heating in time, the swelling) pass as unit
-tests. Level 2, the plate (Task 9), with the skins at the solid's density as the references hold their metal: the
-cold plate passes against both references at 0.5 s macro steps (1.2, 2.2, 3.9 % late against the one-dimensional
-reference) and fails at 0.05 s (6.2, 6.2, 6.4 % late; 8.0 % against the fine box at 1.0 s); level 2b, the hot plate,
-passes at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, the skins' flowing depth within 3.4 % of the exact non-rigid
-depth) and at 0.05 s. With the skins swelling, as measured before 2026-10-14, both plates passed at both steps, the
+tests. Level 2, the plate (Task 9), with the skins at the solid's density as the references hold their metal and the
+fine band under the surface: the cold plate passes against both references at 0.5 s macro steps (4.9 % ahead, 2.5
+and 3.3 % late against the one-dimensional reference) and at 0.05 s (1.6 % ahead, 2.2 and 2.7 % late); level 2b, the
+hot plate, passes at 0.5 s (1.9 and 0.7 % late at 1.5 and 2.0 s, the skins' flowing depth within 0.7 % of the exact
+non-rigid depth) and at 0.05 s (1.6 and 1.0 % late). On 2 mm elements throughout, the cold plate failed at 0.05 s
+(6.2, 6.2, 6.4 % late). With the skins swelling, as measured before 2026-10-14, both plates passed at both steps, the
 swelling's head start cancelling the delay (fact 133). Earlier measurements: the production cells passed at 0.05 s and
 the two cell sizes differed by 1.4 % (1 % asked); the 0.1 and 0.25 s excesses at 1.0 s (+8.0 and +12.7 %) were cured
 by the melting part cap (fact 132). Mass closes to 1.4e-15 and energy
@@ -971,13 +1002,9 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 
 ### Still open after the amendment
 
-- **Melting late on 2 mm elements** (facts 133–134, 137): compared like with like the plates melt 2–6 % late, the
-  cold plate failing level 2 at 0.05 s; it is the 3D model's resolution in depth below the rigid front (1 mm elements
-  remove the cold plate's onset delay). Element layers of 1 mm in depth under the 2 mm surface edges reproduce the 1 mm
-  results until the first rebuild, which meshes the volume isotropically again and leaves the run worse than on 2 mm
-  elements; adoption needs a rebuild that regenerates the layers (spec §13), pending Asha. The late slow bias at 0.05 s
-  (−6 % at 1.5 and 2.0 s with the skins at the solid's density) is part of the same delay or a second effect: the narrow
-  plates leak heat sideways late in the run, so they could not separate it.
+- **The fine band's cost** (facts 139–140): it resolved the delay on 2 mm elements (both plates within 3.3 % at 1.5
+  and 2.0 s), but a melting step on the 100 mm sphere costs 45 % more (1 010 against 695 s for the strong-melting case),
+  the extra in the 3D solves, the moves' remap of the larger mesh and the rebuild; the plates cost 50–80 % more.
 - **Thin elements at the plate's 90-degree edges** (fact 136): the fill misses its request at the box's edges, and on
   0.5 mm elements the corrections exceed the move allowance and grow until a skin runs empty; layers under the faces
   are crushed by the fill unless blended to uniform near the sides. The sphere has no such edges.

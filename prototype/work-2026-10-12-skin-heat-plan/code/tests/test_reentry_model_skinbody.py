@@ -3,7 +3,7 @@ trial and real passes around the 3D step, the base moving the 3D mesh, and the b
 import numpy as np
 import pytest
 
-from reentry_model import heating, material, mesh, skin, skinbody
+from reentry_model import heating, material, mesh, movemesh, skin, skinbody
 from reentry_model.thermal import thermal_solver
 
 DEV = skin.SkinSettings(cell=20e-6)
@@ -286,12 +286,13 @@ def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heatin
 # -- the reference tier: strong melting on the production mesh, and level 2b (2026-10-14) -----------------------------
 @pytest.mark.reference
 def test_strong_melting_on_the_production_mesh():
-    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band) for 1.5 s from 880 K: absorption
-    takes the non-rigid metal as it forms, the base stays within 2 K of T_rigid, no skin cell is left buried above
-    T_feed, and the books are exact. The 4 mm test sphere is refused at the rim of the melting region here; the 2 mm
-    mesh follows it, moving no corner more than its quarter-edge allowance (0.49 mm). Measured 2026-10-14: 172.9 g
-    removed, the base 1.2 K above T_rigid at most, one rebuild."""
-    m = mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND)
+    """6 MW/m2 on the front of the 100 mm production sphere (2 mm surface, dense band, the skin runs' fine band of
+    0.7 mm to 4 mm) for 1.5 s from 880 K: absorption takes the non-rigid metal as it forms, the base stays within 2 K of
+    T_rigid, no skin cell is left buried above T_feed, and the books are exact. The 4 mm test sphere is refused at the
+    rim of the melting region here; the 2 mm mesh follows it, moving no corner more than its quarter-edge allowance
+    (0.49 mm). Measured 2026-10-14 without the fine band: 172.9 g removed, the base 1.2 K above T_rigid at most, one
+    rebuild."""
+    m = movemesh.refined_mesh(mesh.sphere_mesh(0.05, band=mesh.DEFAULT_BAND), 4e-3, 0.7e-3)
     b = make(m)
     M0 = b.mass()
     for k in range(3):

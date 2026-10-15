@@ -2066,6 +2066,32 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      0.21 mm late after a rebuild at 1.1 s against 0.05 mm); on the plate the rebuilds come early (0.55–1.1 s), from
      elements near the back corners that degrade, and 0.5 mm layers are crushed at the front edges by the fill unless
      blended. Adoption needs a rebuild that regenerates the layers by extrusion along the corner normals.
+138. **Prism layers by extrusion could not be built on the plate (2026-10-15).** Option 1 (Asha) as first built:
+     every corner pushed inward to each layer's depth, the shells joined by prisms, gmsh meshing inside the innermost
+     shell, at the start and at every rebuild. Along the vertex normal the shell folds over its neighbours at a
+     90-degree edge (a 1 mm step there leaves the corner 0.71 mm from each face); stepping each corner the layer's depth
+     away from every face around it (the bisector times the square root of two on an edge) cures that, but at the box's
+     corners, where three faces meet, three 1 mm layers could not be built above a radius ratio of 0.054 under any of
+     18 tapers tried (twice the move floor, 0.1, was asked), and the count falls for the whole body, so one sharp feature
+     would take the layers away everywhere.
+139. **The fine band, built (option 1 as built).** gmsh fills the volume under the fixed surface with elements of
+     `--fine-size` (0.7 mm) to `--fine-band` (4 mm) below it, growing to the surface size over one surface element, at
+     the start (`movemesh.refined_mesh`) and at every rebuild (the sizes read from the mesh's parameters); skin runs have
+     it by default (run name `_fine<depth>x<size>mm` or `_fine0` otherwise), and so do both plates. Under a fixed 2 mm
+     surface gmsh fills coarser than asked (1 mm asked: shortest edges about 1.1 mm, about half the delay recovered).
+     With 0.7 mm asked, at one density: the narrow cold plate's onset within 0.019 mm of the exact solution from 0.8 to
+     1.2 s (2 mm elements 0.051–0.099 mm late, 1 mm elements within 0.017 mm), the hot plate's 0.016–0.026 mm late over
+     0.6–0.8 s (2 mm 0.042–0.054, 1 mm 0.009–0.023) and its surface 0.42–0.45 K cold before melting (2 mm 0.92–1.06 K);
+     a rebuild makes the band again and the results stay. Levels 2 and 2b pass at 0.5 and 0.05 s: hot 1.9, 0.7 % and
+     1.6, 1.0 % late at 1.5 and 2.0 s (flowing depth within 0.7 %, base at most 0.10 K above T_rigid); cold 4.9 % ahead,
+     2.5 and 3.3 % late at 0.5 s, 1.6 % ahead, 2.2 and 2.7 % late at 0.05 s (fine box 0.3, 2.8, 2.5 % late). The plates
+     cost 50–80 % more (446 870 elements on the plate against 72 600) and rebuild every 1 mm or so of recession instead
+     of 2 mm, their 4 mm deforming zone compressing the band directly.
+140. **The fine band on the 100 mm sphere.** 177 363 elements become 1 211 188 (meshing 10.6 s), a 3D step 0.16 s
+     becomes 1.17 s. The reference tier's strong-melting case (6 MW/m² on the front from 880 K, three 0.5 s steps, dev
+     cells): 172.0 g removed against 172.9 g, the base at most 0.56 K above T_rigid against 1.17 K, one rebuild each,
+     books to 3e-13; 1 010 s against 695 s, the extra in the 3D solves (175 against 22 s), the moves' remap (141 against
+     22 s) and the rebuild (63 against 8 s), the skins unchanged (691 against 650 s).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

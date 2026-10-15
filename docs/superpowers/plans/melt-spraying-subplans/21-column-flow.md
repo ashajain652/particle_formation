@@ -75,7 +75,8 @@ curvature operators, and the base operations.
   step on the 100 mm sphere costs up to 1 041 s (fact 125), and buried superheated cells remain at 6 MW/m² (fact 124).
   The onset excess at 0.1–0.25 s steps was cured by the melting part cap (fact 132); levels 2 and 2b now verify with the
   skins at the solid's density (`swell=False`), and compared like that the plates melt 2–6 % late on 2 mm elements, the
-  3D model's resolution in depth (facts 133–137; element layers in depth are being decided). To settle: whether flow's
+  3D model's resolution in depth (facts 133–137), now resolved by the fine band, 0.7 mm elements to 4 mm under the
+  2 mm surface, which makes a melting step on the 100 mm sphere 45 % dearer (facts 138–140). To settle: whether flow's
   level-2 run uses the same setting, since with it the flowing layer's thickness is that of solid metal, not liquid. Flow makes each pass dearer,
   so the pass count is the first thing to settle: long parts during melting were rejected and needed many passes
   (fact 126), and parts of at most 0.0625 s while melting now cut a melting step to 122–226 s (fact 129). Absorption
