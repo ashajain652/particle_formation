@@ -7,7 +7,14 @@ solve, and the contiguous front cells at or above T_feed removed after every ste
 `reentry_model.skin` but the material. It also records the non-rigid depth: from the front to where the slab falls to
 T_rigid, the layer the skins must hold (the hot plate's reference, 2026-10-14).
 
-    python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2] [--out PATH]
+`--swell` (2026-10-14): each cell holds a fixed mass (`cell` of solid metal) and is `off` one density thick, as the
+level-2 references are; `all` gives every cell the skins' mixture density (spec 5.2: specific volumes add, the liquid at
+its own density), so heat crosses the swollen thickness as it does in a skin -- the level-1 reference of the skins'
+swelling; `nonrigid` swells only the cells at or above T_rigid, the metal the skins hold above a 3D model of one
+density. Lengths are reported as solid metal (cells times `cell`).
+
+    python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2]
+                                   [--swell off|all|nonrigid] [--out PATH]
 """
 import argparse
 import json
@@ -21,9 +28,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from reentry_model import material  # noqa: E402
 
 
-def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05):
-    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid) at multiples of `every` [s],
-    as (times, recession, non-rigid depth) arrays."""
+SWELL_MODES = ("off", "all", "nonrigid")
+
+
+def thickness(mat, T, cell, swell):
+    """Each cell's thickness [m]: `cell` of solid metal at one density, or at the mixture density (module docstring)."""
+    if swell == "off" or mat.liquid is None:
+        return np.full(T.shape, cell)
+    f = mat.liquid_fraction(T)
+    dz = cell * mat.rho * ((1.0 - f) / mat.rho + f / mat.liquid.rho)
+    return dz if swell == "all" else np.where(T >= mat.T_rigid, dz, cell)
+
+
+def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05, swell="off"):
+    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid), both as solid metal, at
+    multiples of `every` [s], as (times, recession, non-rigid depth) arrays."""
+    if swell not in SWELL_MODES:
+        raise ValueError("swell must be one of {}, got {!r}".format(SWELL_MODES, swell))
     n = int(round(length / cell))
     T = np.full(n, T0)
     front = 0                                            # index of the first cell still in the slab
@@ -38,9 +59,10 @@ def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0
             break
         H_old = m * mat.enthalpy(Tc)
         Tk = Tc.copy()
-        for _ in range(60):
+        for _ in range(80):
             k = mat.k(Tk)
-            G = 1.0 / (0.5 * cell / k[:-1] + 0.5 * cell / k[1:])          # W/m2/K between neighbours
+            dz = thickness(mat, Tk, cell, swell)                            # at this iterate's temperatures
+            G = 1.0 / (0.5 * dz[:-1] / k[:-1] + 0.5 * dz[1:] / k[1:])      # W/m2/K between neighbours
             flux = G * (Tk[:-1] - Tk[1:])
             R = (m * mat.enthalpy(Tk) - H_old) / dt
             R[0] -= q
@@ -76,11 +98,12 @@ def main():
     p.add_argument("--t0", type=float, default=700.0)
     p.add_argument("--length-mm", type=float, default=8.0)
     p.add_argument("--t-end", type=float, default=2.0)
+    p.add_argument("--swell", choices=SWELL_MODES, default="off")
     p.add_argument("--out", default="ablation_1d.json")
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
-    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
-    doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms,
+    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end, swell=a.swell)
+    doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms, "swell": a.swell,
            "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
            "recession_mm": [round(x, 6) for x in (r * 1e3).tolist()], "nonrigid_mm": [round(x, 6) for x in (nr * 1e3).tolist()]}
     json.dump(doc, open(a.out, "w"), indent=0)
