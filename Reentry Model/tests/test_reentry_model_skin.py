@@ -167,6 +167,42 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
     assert np.abs(sk.T[0, :n][near] - exact[near]).max() < 0.02 * (mat.T_feed - T0)    # 9.2 K measured
 
 
+def test_the_skins_swelling_melts_a_column_sooner_as_it_does_the_exact_slab_with_their_density_law():
+    """Level 1 of the swelling (Asha, 2026-10-14): one column 8 mm deep started at 880 K under 2 MW/m2, liquid removed as
+    it forms, with each cell at its own phase's density (the skins' law, spec 5.2) and at the solid's (`swell=False`,
+    the setting levels 2 and 2b verify with), against the one-dimensional reference with the same two laws
+    (`data/reference_values/skin_swell_1d.json`, 1 um, 0.5 ms, 16 mm). The swollen layer conducts more slowly, so the
+    surface reaches T_feed sooner: 0.119 mm further by 1.0 s in the exact slab. Measured: within 1.1 % (off) and 1.4 %
+    (on) at 1.0 s, the 20 um cells' whole-cell removal; the advance 1.3 % above the exact one over 0.7-1.0 s."""
+    import json
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ref = json.load(open(os.path.join(here, "data", "reference_values", "skin_swell_1d.json")))
+    mat = scheil()
+    times = (0.7, 0.8, 0.9, 1.0)
+    recession = {}
+    for swell in (False, True):
+        s = skin.SkinSettings(min_thickness=8e-3, cell=20e-6, substep=0.01, swell=swell)
+        sk = skin.Skins(mat, np.array([1e-6]), s)
+        m_min = skin.minimum_mass(mat, sk.area, s)
+        sk.fill(m_min, 880.0)
+        removed, at = 0.0, {}
+        for k in range(20):
+            book = skin.advance(sk, 0.05, np.array([2.0e6]), sk.area, 0.0, 0.0, np.array([880.0]), m_min,
+                                T_b1=np.array([880.0]))
+            removed += book.removed[0]
+            at[round(0.05 * (k + 1), 6)] = removed / (mat.rho * 1e-6) * 1e3            # mm of solid metal
+        recession[swell] = np.array([at[t] for t in times])
+        if not swell:                                       # one density: the thickness is the solid's
+            assert sk.thickness()[0] == pytest.approx(sk.column_mass()[0] / (mat.rho * 1e-6), rel=1e-12)
+        exact = np.interp(times, ref["t_s"], ref["recession_mm"]["all" if swell else "off"])
+        assert recession[swell][-2:] == pytest.approx(exact[-2:], rel=0.03)
+    exact_advance = (np.interp(times, ref["t_s"], ref["recession_mm"]["all"])
+                     - np.interp(times, ref["t_s"], ref["recession_mm"]["off"]))
+    assert exact_advance.mean() == pytest.approx(0.113, abs=0.002)                   # mm: the effect is not small
+    assert (recession[True] - recession[False]).mean() == pytest.approx(exact_advance.mean(), rel=0.05)
+
+
 def test_the_books_of_a_pass_close_exactly():
     mat = scheil()
     s = skin.SkinSettings(substep=0.01)

@@ -24,8 +24,14 @@ melting onset is open), the skins' flowing depth at the centre within 10 % of th
 and 2.0 s, and the centre's base no more than 1 K above T_rigid -- the skins hold the non-rigid metal, none is left in
 the 3D model; mass closed to 1e-12 and energy to 1e-8.
 
+Both cases run with the skins held at the solid's density (`--swell off`, the default here; Asha, 2026-10-14): the
+references and the fine box hold their metal at one density, while the skins' own law (spec 5.2) swells the liquid by
+15 %, which alone melts the exact plates sooner -- by 0.033 mm (cold) and 0.094 mm (hot) at 1.0 s -- and had hidden a
+numerical delay of the same size. `--swell on` runs the skins' own law; the swelling itself is verified at level 1
+(`tests/test_reentry_model_skin.py`, against the one-dimensional reference with the skins' density law).
+
     python analysis/skin_plate.py [--case cold|hot] [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2]
-                                  [--out PATH.json]
+                                  [--swell off|on] [--out PATH.json]
 """
 import argparse
 import json
@@ -91,12 +97,12 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
     body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(),
-                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset]), T0=T_start, emissivity=0.0,
+                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell), T0=T_start, emissivity=0.0,
                              v_hat=(-1.0, 0.0, 0.0), deform_depth=deform, repeat_rule=repeat_rule)
     p = body._top0                                                 # the top surface at time zero: the plate's own
     front = np.abs(p[:, 0]) < 0.05e-3
@@ -147,12 +153,16 @@ def main():
     a.add_argument("--repeat-rule", default=skinbody.DEFAULT_REPEAT_RULE, choices=skinbody.REPEAT_RULES)
     a.add_argument("--r-flat-mm", type=float, default=R_FLAT * 1e3)
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
+    a.add_argument("--swell", choices=("off", "on"), default="off",
+                   help="off: the skins at the solid's density, as the references hold their metal (default); on: the "
+                        "skins' own law, each cell at its phase's density")
     a.add_argument("--out", default="skin_plate.json")
     args = a.parse_args()
     T_start, q0 = CASES[args.case]
     body, rows, n_centre, failure = run(args.dt, args.preset, args.deform_mm * 1e-3, args.t_end, args.solver,
                                         h=args.h_mm * 1e-3, width=args.width_mm * 1e-3, r_flat=args.r_flat_mm * 1e-3,
-                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0)
+                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0,
+                                        swell=args.swell == "on")
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
     compare, verdict = {}, []
     fine = fine_box() if args.case == "cold" else None
@@ -177,7 +187,7 @@ def main():
     summary = {"case": args.case, "T0_K": T_start, "q_Wm2": q0, "passes": bool(verdict) and all(verdict) and failure is None,
                "failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
                "width_mm": args.width_mm, "r_flat_mm": args.r_flat_mm, "r_zero_mm": args.r_zero_mm,
-               "repeat_rule": args.repeat_rule,
+               "repeat_rule": args.repeat_rule, "swell": args.swell,
                "preset": args.preset, "deform_mm": args.deform_mm, "n_columns": body.columns.n, "n_centre": n_centre,
                "compare": compare, "worst_mass_error": max((abs(x["mass_error"]) for x in rows), default=0.0),
                "worst_energy_residual": max((abs(x["energy_residual"]) for x in rows), default=0.0),

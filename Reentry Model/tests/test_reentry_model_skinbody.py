@@ -306,15 +306,16 @@ def test_strong_melting_on_the_production_mesh():
 @pytest.mark.reference
 def test_the_hot_plate_passes_level_2b():
     """The level-2 plate started at 880 K under 2 MW/m2 (`analysis/skin_plate.py --case hot`) at the flight's 0.5 s macro
-    step: the centre's recession within 5 % of the one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth
-    within 10 % of its exact non-rigid depth (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold
-    the non-rigid layer, none is left in the 3D model."""
+    step, the skins at the solid's density as the reference holds its metal: the centre's recession within 5 % of the
+    one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth within 10 % of its exact non-rigid depth
+    (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold the non-rigid layer, none is left in the
+    3D model."""
     import os
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis"))
     import skin_plate
     T_start, q0 = skin_plate.CASES["hot"]
-    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0)
+    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0, swell=False)
     assert failure is None
     ref = skin_plate.hot_reference()
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
