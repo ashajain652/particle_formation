@@ -31,12 +31,12 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 389 passed (1 skipped, no
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 390 passed (1 skipped, no
 failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
-and the hot plate) by Asha's decisions
+and the hot plate, then the skins' swelling setting for levels 2 and 2b) by Asha's decisions
 on the interface, below: damped repetition is the default, the metal crossing the base is valued along the 3D profile,
 a macro step runs as parts so that no base moves more than a quarter of the mean surface edge in one and, while
 melting, no part is longer than 0.0625 s, with the heating interpolated in time across the parts; and a base fault is
@@ -1021,7 +1021,8 @@ git commit -m "Corner columns: dual cells, normals and the edge graph with cotan
 - Produces: `SKIN_PRESETS`, `SPLIT_ABOVE = 1.5`, `MERGE_BELOW = 0.5`, `REGRID_PASSES`, `DELTA_M_MARGIN = 50e-6`,
   `INTERFACE_TOLERANCE = 1e-3`, `JUMP_TOLERANCE = 5.0`, `NEWTON_TOL`, `NEWTON_MAX`, `LINE_SEARCH_MAX`, `DZ_FLOOR`,
   `SIDEWAYS_CFL`, `TABLE_DT`, `TABLE_RANGE`; `SkinSettings(min_thickness=0.4e-3, cell=10e-6, growth=1.10,
-  substep=0.010)`; `thomas(sub, diag, sup, rhs)`; `PropertyTable(material)` with `enthalpy`, `cp_eff`, `k`,
+  substep=0.010, swell=True)` (`swell=False` holds every cell at the solid's density, the setting levels 2 and 2b verify
+  with; added 2026-10-14); `thomas(sub, diag, sup, rhs)`; `PropertyTable(material)` with `enthalpy`, `cp_eff`, `k`,
   `liquid_fraction`, `conduction(T) -> (h, dh/dT, k)`; `Skins(material, area, settings)` with `.m`, `.H`, `.T` (n, K;
   cell 0 the top), `.count`, `.area`, `.S` (the trial pass's dT/dT_b, or None), `.props`, `.valid`, `mass()`,
   `energy()`, `column_mass()`, `state()`, `set_state()`, `density(T)`, `dz()`, `thickness()`, `targets(dz=None)`,
@@ -1346,6 +1347,10 @@ class SkinSettings:
     cell: float = SKIN_PRESETS["production"]   # m, the fine cell
     growth: float = 1.10                   # each cell below the fine zone this much thicker than the one above
     substep: float = 0.010                 # s, the skins' sub-step (spec 7.1)
+    swell: bool = True                     # each cell at its own phase's density, so melting swells the skin (spec 5.2);
+                                           # False holds every cell at the solid's density, the setting levels 2 and 2b
+                                           # verify with (Asha, 2026-10-14: their references hold one density, and the
+                                           # swelling alone melts the exact hot plate 0.094 mm sooner by 1.0 s)
 
     def __post_init__(self):
         if not (self.min_thickness > 0.0 and self.cell > 0.0 and self.substep > 0.0):
@@ -1431,7 +1436,7 @@ class Skins:
         self.m, self.H, self.T = np.zeros((n, 1)), np.zeros((n, 1)), np.full((n, 1), 300.0)
         self.count = np.zeros(n, dtype=np.int64)
         self.S = None
-        self.rho_l = material.liquid.rho if material.liquid is not None else material.rho
+        self.rho_l = material.liquid.rho if material.liquid is not None and self.settings.swell else material.rho
         self.props = PropertyTable(material)
 
     # -- books ------------------------------------------------------------------------------------------------------
@@ -1775,6 +1780,9 @@ git commit -m "Layered skins: the minimum mass, 400 um of solid or Girin's layer
 
 **Files:**
 - Modify: `reentry_model/skin.py` (append), `tests/test_reentry_model_skin.py` (append)
+- Create: `data/reference_values/skin_swell_1d.json` (the swelling test's reference, added 2026-10-14: what Task 9's
+  `analysis/ablation_1d.py --t0 880 --q 2e6 --length-mm 16 --t-end 1.0 --swell off|all` writes, the two runs' recession
+  in one file)
 
 **Interfaces:**
 - Produces: `SkinBook(E_top, E_rad, E_base, E_side, removed, removed_H, drawn, drawn_H)` per column;
@@ -1794,7 +1802,94 @@ model's gradient below the base (`g_base`, amended after the build), each draw t
 model's linear profile at that layer's enthalpy, `profile_enthalpy` (an 8-point Gauss average, within 12 J/kg of a
 200 001-point one on the Scheil curve), pinned by `test_the_profile_enthalpy_is_the_mean_along_the_3d_profile_and_a_draw_takes_it`.
 Steady ablation checks it against the exact solution: 2.1 % slow with 20 µm cells and 0.5 ms sub-steps, 1.1 % with
-10 µm and 0.25 ms — the first-order error of removing whole cells.
+10 µm and 0.25 ms — the first-order error of removing whole cells. The skins' swelling is checked the same way (level 1,
+added 2026-10-14, Asha): one column 8 mm deep started at 880 K under 2 MW/m² melts sooner with each cell at its own
+phase's density than with `swell=False`, by the amount the one-dimensional slab does with the same two density laws
+(0.113 mm on average over 0.7–1.0 s; the skins' advance 1.3 % above it, each run within 2.4 % of its own reference),
+`test_the_skins_swelling_melts_a_column_sooner_as_it_does_the_exact_slab_with_their_density_law`. Its reference values:
+
+```json
+{
+"description": "The skins' swelling at level 1 (2026-10-14): a slab started at 880 K and heated at 2 MW/m2, liquid removed as it forms, at one density (off) and with every cell at the skins' mixture density (all); recession as solid metal. analysis/ablation_1d.py --t0 880 --q 2e6 --length-mm 16 --t-end 1.0 --swell off|all",
+"q_Wm2": 2000000.0,
+"T0_K": 880.0,
+"length_mm": 16.0,
+"cell_um": 1.0,
+"dt_ms": 0.5,
+"material": "AA7075_scheil",
+"t_s": [
+0.0,
+0.05,
+0.1,
+0.15,
+0.2,
+0.25,
+0.3,
+0.35,
+0.4,
+0.45,
+0.5,
+0.55,
+0.6,
+0.65,
+0.7,
+0.75,
+0.8,
+0.85,
+0.9,
+0.95,
+1.0
+],
+"recession_mm": {
+"off": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.049,
+0.134,
+0.222,
+0.312,
+0.404,
+0.498,
+0.594,
+0.691,
+0.789
+],
+"all": [
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.0,
+0.064,
+0.149,
+0.237,
+0.328,
+0.421,
+0.516,
+0.612,
+0.709,
+0.808,
+0.908
+]
+}
+}
+```
 
 - [ ] **Step 1: Append the tests**
 
@@ -1839,6 +1934,42 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
     exact = T0 + (mat.T_feed - T0) * np.exp(-v * z / alpha)
     near = z < 3e-3
     assert np.abs(sk.T[0, :n][near] - exact[near]).max() < 0.02 * (mat.T_feed - T0)    # 9.2 K measured
+
+
+def test_the_skins_swelling_melts_a_column_sooner_as_it_does_the_exact_slab_with_their_density_law():
+    """Level 1 of the swelling (Asha, 2026-10-14): one column 8 mm deep started at 880 K under 2 MW/m2, liquid removed as
+    it forms, with each cell at its own phase's density (the skins' law, spec 5.2) and at the solid's (`swell=False`,
+    the setting levels 2 and 2b verify with), against the one-dimensional reference with the same two laws
+    (`data/reference_values/skin_swell_1d.json`, 1 um, 0.5 ms, 16 mm). The swollen layer conducts more slowly, so the
+    surface reaches T_feed sooner: 0.119 mm further by 1.0 s in the exact slab. Measured: within 1.1 % (off) and 1.4 %
+    (on) at 1.0 s, the 20 um cells' whole-cell removal; the advance 1.3 % above the exact one over 0.7-1.0 s."""
+    import json
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ref = json.load(open(os.path.join(here, "data", "reference_values", "skin_swell_1d.json")))
+    mat = scheil()
+    times = (0.7, 0.8, 0.9, 1.0)
+    recession = {}
+    for swell in (False, True):
+        s = skin.SkinSettings(min_thickness=8e-3, cell=20e-6, substep=0.01, swell=swell)
+        sk = skin.Skins(mat, np.array([1e-6]), s)
+        m_min = skin.minimum_mass(mat, sk.area, s)
+        sk.fill(m_min, 880.0)
+        removed, at = 0.0, {}
+        for k in range(20):
+            book = skin.advance(sk, 0.05, np.array([2.0e6]), sk.area, 0.0, 0.0, np.array([880.0]), m_min,
+                                T_b1=np.array([880.0]))
+            removed += book.removed[0]
+            at[round(0.05 * (k + 1), 6)] = removed / (mat.rho * 1e-6) * 1e3            # mm of solid metal
+        recession[swell] = np.array([at[t] for t in times])
+        if not swell:                                       # one density: the thickness is the solid's
+            assert sk.thickness()[0] == pytest.approx(sk.column_mass()[0] / (mat.rho * 1e-6), rel=1e-12)
+        exact = np.interp(times, ref["t_s"], ref["recession_mm"]["all" if swell else "off"])
+        assert recession[swell][-2:] == pytest.approx(exact[-2:], rel=0.03)
+    exact_advance = (np.interp(times, ref["t_s"], ref["recession_mm"]["all"])
+                     - np.interp(times, ref["t_s"], ref["recession_mm"]["off"]))
+    assert exact_advance.mean() == pytest.approx(0.113, abs=0.002)                   # mm: the effect is not small
+    assert (recession[True] - recession[False]).mean() == pytest.approx(exact_advance.mean(), rel=0.05)
 
 
 def test_the_books_of_a_pass_close_exactly():
@@ -2131,12 +2262,12 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
 
 ```
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 15 passed in the file.
+- [ ] **Step 4: Run them to see them pass.** Expected: 16 passed in the file.
 
-- [ ] **Step 5: Unit tier and commit.** Expected 366 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 367 passed, 1 skipped.
 
 ```bash
-git add reentry_model/skin.py tests/test_reentry_model_skin.py
+git add reentry_model/skin.py tests/test_reentry_model_skin.py data/reference_values/skin_swell_1d.json
 git commit -m "Layered skins: implicit heat through the depth, liquid removed as it forms, rigid metal drawn back to the minimum"
 ```
 
@@ -2310,10 +2441,10 @@ def sideways_heat(sk, columns, dt):
 
 ```
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 19 passed in the file (the steady two-dimensional field to
+- [ ] **Step 4: Run them to see them pass.** Expected: 20 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 370 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 371 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -2553,7 +2684,7 @@ def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 372 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 373 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -2914,15 +3045,16 @@ def test_strong_melting_on_the_production_mesh():
 @pytest.mark.reference
 def test_the_hot_plate_passes_level_2b():
     """The level-2 plate started at 880 K under 2 MW/m2 (`analysis/skin_plate.py --case hot`) at the flight's 0.5 s macro
-    step: the centre's recession within 5 % of the one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth
-    within 10 % of its exact non-rigid depth (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold
-    the non-rigid layer, none is left in the 3D model."""
+    step, the skins at the solid's density as the reference holds its metal: the centre's recession within 5 % of the
+    one-dimensional reference at 1.5 and 2.0 s, the skins' flowing depth within 10 % of its exact non-rigid depth
+    (1.49-1.67 mm) and the centre's base within 1 K of T_rigid: the skins hold the non-rigid layer, none is left in the
+    3D model."""
     import os
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis"))
     import skin_plate
     T_start, q0 = skin_plate.CASES["hot"]
-    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0)
+    body, rows, n_centre, failure = skin_plate.run(dt=0.5, t_end=2.0, verbose=False, T_start=T_start, q0=q0, swell=False)
     assert failure is None
     ref = skin_plate.hot_reference()
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
@@ -3420,7 +3552,7 @@ class SkinBody(ThermalBody):
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 383 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 384 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -3439,9 +3571,10 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 
 **Interfaces:**
 - Produces: `--surface-model elements|skin` (default `elements`), `--skin-min-thickness` (mm, 0.4), `--skin-cell` (µm),
-  `--skin-growth` (1.10), `--skin-substep` (ms, 10), `--skin-preset dev|production`, `--deform-depth` (mm, 15); run-name
-  suffix `_surface-skin` plus `skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm)`
-  (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`, `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`); `--surface-model skin`
+  `--skin-growth` (1.10), `--skin-substep` (ms, 10), `--skin-preset dev|production`, `--deform-depth` (mm, 15),
+  `--skin-swell on|off` (on; added 2026-10-14); run-name suffix `_surface-skin` plus `skin_name_suffix(min_thickness_mm,
+  cell_um, growth, substep_ms, preset, deform_mm, swell=True)` (`_skin-dev`, `_skinmin<mm>mm`, `_cell<um>um`,
+  `_growth<r>`, `_sub<ms>ms`, `_deform<mm>mm`, `_noswell`); `--surface-model skin`
   needs `--thermal fem` and, with `--melt on`, `--removal instant`; `--animate`/`--stills` are refused with it.
   `coupled.SKINBODY_COLUMNS` in every skin run's history; results `skin_columns`, the totals, `surface_fold_max_deg`,
   `surface_quality_min`, `zone_ratio_min`; frames `surface_<k>.vtp` with per-corner point data `T_top`, `q_conv`,
@@ -3452,7 +3585,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 ```diff
 --- a/tests/test_reentry_model_cli.py
 +++ b/tests/test_reentry_model_cli.py
-@@ -333,54 +333,76 @@
+@@ -333,54 +333,80 @@
  
  
  # ---------------------------------------------------------------------------------------------------------------
@@ -3483,6 +3616,10 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0) == "_skin-dev"
 +    assert (cli.skin_name_suffix(0.8, 5.0, 1.2, 20.0, "production", 10.0)
 +            == "_skinmin0.8mm_cell5um_growth1.2_sub20ms_deform10mm")
++    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0, swell=False) == "_skin-dev_noswell"
++    run = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"]
++    assert cli.skin_settings(cli.build_parser().parse_args(run + ["--skin-swell", "off"])).swell is False
++    assert cli.skin_settings(cli.build_parser().parse_args(run)).swell is True
  
  
  def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
@@ -3692,7 +3829,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
      dtc = dtc_default if dt_continuum == "default" else dt_continuum
      name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
-@@ -107,21 +111,26 @@
+@@ -107,21 +111,28 @@
              + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
              + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
              + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
@@ -3705,11 +3842,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 -    """The run-name suffix of a skin run's non-default settings (sub-plan 18): `_skin-dev` for the dev preset,
 -    `_skin<mm>mm` for another thickness, `_cell<um>um` for an explicit cell other than the preset's, `_sub<ms>ms` for
 -    another sub-step; empty for the defaults."""
-+def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm):
++def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True):
 +    """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
 +    dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
-+    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth; empty
-+    for the defaults."""
++    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth, and
++    `_noswell` for skins held at the solid's density; empty for the defaults."""
      out = "_skin-dev" if preset == "dev" else ""
 -    if thickness_mm != 0.4:
 -        out += "_skin{:g}mm".format(thickness_mm)
@@ -3723,10 +3860,12 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
          out += "_sub{:g}ms".format(substep_ms)
 +    if deform_mm != 15.0:
 +        out += "_deform{:g}mm".format(deform_mm)
++    if not swell:
++        out += "_noswell"
      return out
  
  
-@@ -250,15 +259,21 @@
+@@ -250,15 +261,25 @@
                           "with the film plus everything more than half liquid beneath it (slurry included), and where there "
                           "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
                           "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
@@ -3747,6 +3886,10 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 +    me.add_argument("--skin-growth", type=float, default=1.10,
 +                    help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
      me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
++    me.add_argument("--skin-swell", choices=("on", "off"), default="on",
++                    help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
++                         "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
++                         "one density")
      me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
                      help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
 +    me.add_argument("--deform-depth", type=float, default=15.0,
@@ -3754,7 +3897,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      me.add_argument("--rt-spray", choices=("on", "off"), default="on",
                      help="apply Girin & Kopyt's front-surface Rayleigh-Taylor mode as a release mechanism, on the patches where it "
                           "grows faster than the shear mode (default on). off: evaluate and report it but release nothing through it, "
-@@ -301,10 +316,12 @@
+@@ -301,10 +322,12 @@
      """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]."""
      radius = settings.diameter / 2.0
      melting = args.melt == "on"
@@ -3770,7 +3913,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      the_mesh = mesh.sphere_mesh(radius, h_surface, h_core, layers=layers, layer_thickness=args.layer_thickness * 1e-3,
                                 band=band)
      # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
-@@ -314,7 +331,11 @@
+@@ -314,7 +337,11 @@
      if args.k_scale != 1.0:
          mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
      solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
@@ -3783,7 +3926,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
          flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
          spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
                                         rt_spray=args.rt_spray == "on")
-@@ -322,8 +343,7 @@
+@@ -322,8 +349,7 @@
          melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
                                            particles=args.particles, size_feedback=size_feedback,
                                            deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
@@ -3793,7 +3936,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
          the_body = body.MeltingBody(the_mesh, mat, solver, mass, flow, spray_model, melt_settings, T0=args.temperature,
                                      emissivity=args.emissivity, T_ambient=args.t_ambient)
      else:
-@@ -338,16 +358,20 @@
+@@ -338,16 +364,20 @@
              "h_surface_mm": h_surface * 1e3, "h_core_mm": h_core * 1e3, "prism_layers": layers, "layer_thickness_mm": args.layer_thickness,
              "n_nodes": the_mesh.n_nodes, "n_elements": the_mesh.n_elements, "n_patches": the_body.surface.n_patches,
              "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
@@ -3819,7 +3962,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
                       "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
                       "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
                       "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
-@@ -357,9 +381,10 @@
+@@ -357,9 +387,10 @@
  
  
  def skin_settings(args):
@@ -3828,11 +3971,11 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
 -    return skin.SkinSettings(thickness=args.skin_thickness * 1e-3, cell=cell, substep=args.skin_substep * 1e-3)
 +    return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
-+                             substep=args.skin_substep * 1e-3)
++                             substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on")
  
  
  def cmd_run(args, parser):
-@@ -399,15 +424,25 @@
+@@ -399,15 +430,25 @@
      dt_continuum = continuum_step(args)
      if dt_continuum is not None and dt_continuum > args.dt:
          parser.error("--dt-continuum must be no longer than --dt")
@@ -3864,18 +4007,19 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
  
      initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                                flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
-@@ -422,8 +457,8 @@
+@@ -422,8 +463,9 @@
                                         deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
                                         rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
                                         surface_model=args.surface_model,
 -                                       skin_suffix=skin_name_suffix(args.skin_thickness, args.skin_cell, args.skin_substep,
 -                                                                    args.skin_preset))
 +                                       skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
-+                                                                    args.skin_substep, args.skin_preset, args.deform_depth))
++                                                                    args.skin_substep, args.skin_preset, args.deform_depth,
++                                                                    args.skin_swell == "on"))
      run_dir = os.path.join(args.outdir, name)
      os.makedirs(args.outdir, exist_ok=True)
      thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
-@@ -464,7 +499,7 @@
+@@ -464,7 +506,7 @@
          "provenance": prov,
          "files": {"csv": os.path.abspath(csv_path)},
      }
@@ -3884,7 +4028,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
      if melting:
          doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
                              else {})
-@@ -502,6 +537,11 @@
+@@ -502,6 +544,11 @@
                    "energy balance residual {:.1e}, {} macro steps, {:.1f} Newton iterations/step".format(
                        res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
                        res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
@@ -4016,7 +4160,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 - [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 54 passed (the skin run about 40 s; two of them
   pin the refusal of an explicit `--prism-layers` with skins, added at the final review).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 389 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 390 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -4050,7 +4194,12 @@ fine box; mass to 1e-12, energy to 1e-8. Level 2b, the hot plate (added 2026-10-
 plate started at 880 K under 2 MW/m², where the metal between the melt front and T_rigid is 1.5–1.7 mm thick and the
 skins' absorption is exercised; the recession within 5 % of its one-dimensional reference at 1.5 and 2.0 s (the onset
 at 1.0 s reported), the skins' flowing depth at the centre within 10 % of the exact non-rigid depth, and the centre's
-base within 1 K of T_rigid. The harness judges each case and records whether it passes.
+base within 1 K of T_rigid. The harness judges each case and records whether it passes. Both cases run with the skins
+at the solid's density (`--swell off`, the harness's default; Asha, 2026-10-14, option A): the references and the fine
+box hold their metal at one density, while the skins' own law swells the liquid by 15 % (spec §5.2), which alone melts
+the exact plates sooner and had hidden a numerical delay of the same size (facts 133–135); the one-dimensional
+reference can be given the skins' law too (`--swell all|nonrigid`), which is how the swelling's own level-1 check
+(Task 4) gets its reference.
 
 - [ ] **Step 1: The one-dimensional reference.** Create `analysis/ablation_1d.py`:
 
@@ -4064,7 +4213,14 @@ solve, and the contiguous front cells at or above T_feed removed after every ste
 `reentry_model.skin` but the material. It also records the non-rigid depth: from the front to where the slab falls to
 T_rigid, the layer the skins must hold (the hot plate's reference, 2026-10-14).
 
-    python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2] [--out PATH]
+`--swell` (2026-10-14): each cell holds a fixed mass (`cell` of solid metal) and is `off` one density thick, as the
+level-2 references are; `all` gives every cell the skins' mixture density (spec 5.2: specific volumes add, the liquid at
+its own density), so heat crosses the swollen thickness as it does in a skin -- the level-1 reference of the skins'
+swelling; `nonrigid` swells only the cells at or above T_rigid, the metal the skins hold above a 3D model of one
+density. Lengths are reported as solid metal (cells times `cell`).
+
+    python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2]
+                                   [--swell off|all|nonrigid] [--out PATH]
 """
 import argparse
 import json
@@ -4078,9 +4234,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from reentry_model import material  # noqa: E402
 
 
-def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05):
-    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid) at multiples of `every` [s],
-    as (times, recession, non-rigid depth) arrays."""
+SWELL_MODES = ("off", "all", "nonrigid")
+
+
+def thickness(mat, T, cell, swell):
+    """Each cell's thickness [m]: `cell` of solid metal at one density, or at the mixture density (module docstring)."""
+    if swell == "off" or mat.liquid is None:
+        return np.full(T.shape, cell)
+    f = mat.liquid_fraction(T)
+    dz = cell * mat.rho * ((1.0 - f) / mat.rho + f / mat.liquid.rho)
+    return dz if swell == "all" else np.where(T >= mat.T_rigid, dz, cell)
+
+
+def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05, swell="off"):
+    """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid), both as solid metal, at
+    multiples of `every` [s], as (times, recession, non-rigid depth) arrays."""
+    if swell not in SWELL_MODES:
+        raise ValueError("swell must be one of {}, got {!r}".format(SWELL_MODES, swell))
     n = int(round(length / cell))
     T = np.full(n, T0)
     front = 0                                            # index of the first cell still in the slab
@@ -4095,9 +4265,10 @@ def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0
             break
         H_old = m * mat.enthalpy(Tc)
         Tk = Tc.copy()
-        for _ in range(60):
+        for _ in range(80):
             k = mat.k(Tk)
-            G = 1.0 / (0.5 * cell / k[:-1] + 0.5 * cell / k[1:])          # W/m2/K between neighbours
+            dz = thickness(mat, Tk, cell, swell)                            # at this iterate's temperatures
+            G = 1.0 / (0.5 * dz[:-1] / k[:-1] + 0.5 * dz[1:] / k[1:])      # W/m2/K between neighbours
             flux = G * (Tk[:-1] - Tk[1:])
             R = (m * mat.enthalpy(Tk) - H_old) / dt
             R[0] -= q
@@ -4133,11 +4304,12 @@ def main():
     p.add_argument("--t0", type=float, default=700.0)
     p.add_argument("--length-mm", type=float, default=8.0)
     p.add_argument("--t-end", type=float, default=2.0)
+    p.add_argument("--swell", choices=SWELL_MODES, default="off")
     p.add_argument("--out", default="ablation_1d.json")
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
-    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end)
-    doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms,
+    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end, swell=a.swell)
+    doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms, "swell": a.swell,
            "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
            "recession_mm": [round(x, 6) for x in (r * 1e3).tolist()], "nonrigid_mm": [round(x, 6) for x in (nr * 1e3).tolist()]}
     json.dump(doc, open(a.out, "w"), indent=0)
@@ -4351,8 +4523,14 @@ melting onset is open), the skins' flowing depth at the centre within 10 % of th
 and 2.0 s, and the centre's base no more than 1 K above T_rigid -- the skins hold the non-rigid metal, none is left in
 the 3D model; mass closed to 1e-12 and energy to 1e-8.
 
+Both cases run with the skins held at the solid's density (`--swell off`, the default here; Asha, 2026-10-14): the
+references and the fine box hold their metal at one density, while the skins' own law (spec 5.2) swells the liquid by
+15 %, which alone melts the exact plates sooner -- by 0.033 mm (cold) and 0.094 mm (hot) at 1.0 s -- and had hidden a
+numerical delay of the same size. `--swell on` runs the skins' own law; the swelling itself is verified at level 1
+(`tests/test_reentry_model_skin.py`, against the one-dimensional reference with the skins' density law).
+
     python analysis/skin_plate.py [--case cold|hot] [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2]
-                                  [--out PATH.json]
+                                  [--swell off|on] [--out PATH.json]
 """
 import argparse
 import json
@@ -4418,12 +4596,12 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
     body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(),
-                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset]), T0=T_start, emissivity=0.0,
+                             skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell), T0=T_start, emissivity=0.0,
                              v_hat=(-1.0, 0.0, 0.0), deform_depth=deform, repeat_rule=repeat_rule)
     p = body._top0                                                 # the top surface at time zero: the plate's own
     front = np.abs(p[:, 0]) < 0.05e-3
@@ -4474,12 +4652,16 @@ def main():
     a.add_argument("--repeat-rule", default=skinbody.DEFAULT_REPEAT_RULE, choices=skinbody.REPEAT_RULES)
     a.add_argument("--r-flat-mm", type=float, default=R_FLAT * 1e3)
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
+    a.add_argument("--swell", choices=("off", "on"), default="off",
+                   help="off: the skins at the solid's density, as the references hold their metal (default); on: the "
+                        "skins' own law, each cell at its phase's density")
     a.add_argument("--out", default="skin_plate.json")
     args = a.parse_args()
     T_start, q0 = CASES[args.case]
     body, rows, n_centre, failure = run(args.dt, args.preset, args.deform_mm * 1e-3, args.t_end, args.solver,
                                         h=args.h_mm * 1e-3, width=args.width_mm * 1e-3, r_flat=args.r_flat_mm * 1e-3,
-                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0)
+                                        r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0,
+                                        swell=args.swell == "on")
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
     compare, verdict = {}, []
     fine = fine_box() if args.case == "cold" else None
@@ -4504,7 +4686,7 @@ def main():
     summary = {"case": args.case, "T0_K": T_start, "q_Wm2": q0, "passes": bool(verdict) and all(verdict) and failure is None,
                "failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
                "width_mm": args.width_mm, "r_flat_mm": args.r_flat_mm, "r_zero_mm": args.r_zero_mm,
-               "repeat_rule": args.repeat_rule,
+               "repeat_rule": args.repeat_rule, "swell": args.swell,
                "preset": args.preset, "deform_mm": args.deform_mm, "n_columns": body.columns.n, "n_centre": n_centre,
                "compare": compare, "worst_mass_error": max((abs(x["mass_error"]) for x in rows), default=0.0),
                "worst_energy_residual": max((abs(x["energy_residual"]) for x in rows), default=0.0),
@@ -4588,6 +4770,20 @@ The table shows both plates passing at both macro steps with the absorption of o
 | hot, 0.05 s | +7.1 % (onset, not judged) | +0.8 % | +1.3 % | flowing depth within 5.9 %, base at most 0.08 K above |
 | cold, 0.5 s | +4.5 % | −0.2 % | −2.8 % | fine box +2.5, −0.8, −2.6 % |
 | cold, 0.05 s | +0.3 % | −3.6 % | −4.2 % | fine box −1.6, −4.3, −3.9 % |
+
+  **With the skins at the solid's density** (2026-10-14, the default since option A; facts 133–135). The swelling had
+  been ahead of the references by itself: given to the non-rigid metal, it melts the exact cold plate 0.033 mm sooner
+  (4.2 % at 1.0 s) and the hot plate 0.094 mm sooner (11.9 %). Without it, measured once each on 2 mm elements:
+
+The table shows the hot plate passing level 2b at both macro steps, the cold plate passing level 2 at 0.5 s and failing
+it at 0.05 s by a delay of about 6 %, which is the 3D model's resolution in depth (fact 134).
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria |
+|---|---|---|---|---|
+| hot, 0.5 s | −10.2 % (onset, not judged) | −2.9 % | −2.0 % | flowing depth within 3.4 %, base at most 0.08 K above T_rigid |
+| hot, 0.05 s | −6.8 % (onset, not judged) | −3.6 % | −1.7 % | flowing depth within 8.5 %, base at most 0.08 K above |
+| cold, 0.5 s | −1.2 % | −2.2 % | −3.9 % | fine box −3.1, −2.8, −3.7 % |
+| cold, 0.05 s | −6.2 % | −6.2 % | −6.4 % | fine box −8.0, −6.8, −6.1 % (fails) |
 
 - [ ] **Step 5: Commit**
 
@@ -4729,18 +4925,22 @@ git commit -m "Skins: the interface repeat's triggers and the cost of a step mea
 at the end. Then, the same day, a diagnosis of the interface at 0.5 s macro steps and Asha's three decisions (a45f204):
 damped repetition as the default, the metal crossing the base valued along the 3D profile, and the macro step run as
 parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
-2026-10-14 the absorption rule with the hot plate as level 2b. The unit tier went from 341 to 389 passed (1 skipped),
+2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
+solid's density and the swelling checked at level 1. The unit tier went from 341 to 390 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–131 the amendment's.
+build's measurements, 121–137 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
-law, the books, the profile valuation, the parts, the melting cap and the heating in time) pass as unit tests.
-Level 2, the plate (Task 9), with the current default: the cold plate passes against both references at 0.5 s macro
-steps (+4.5, −0.2, −2.8 % against the one-dimensional reference) and at 0.05 s (+0.3, −3.6, −4.2 %); level 2b, the hot
-plate, passes at 0.5 s (+1.4, +2.5, +1.2 %, the skins' flowing depth within 3.6 % of the exact non-rigid depth) and at
-0.05 s. Earlier measurements: the production cells passed at 0.05 s, the two cell sizes differed by 1.4 % (1 % asked),
-and 0.1 and 0.25 s steps failed at 1.0 s (+8.0 % and +12.7 %; not remeasured since). Mass closes to 1.4e-15 and energy
+law, the books, the profile valuation, the parts, the melting cap and the heating in time, the swelling) pass as unit
+tests. Level 2, the plate (Task 9), with the skins at the solid's density as the references hold their metal: the
+cold plate passes against both references at 0.5 s macro steps (1.2, 2.2, 3.9 % late against the one-dimensional
+reference) and fails at 0.05 s (6.2, 6.2, 6.4 % late; 8.0 % against the fine box at 1.0 s); level 2b, the hot plate,
+passes at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, the skins' flowing depth within 3.4 % of the exact non-rigid
+depth) and at 0.05 s. With the skins swelling, as measured before 2026-10-14, both plates passed at both steps, the
+swelling's head start cancelling the delay (fact 133). Earlier measurements: the production cells passed at 0.05 s and
+the two cell sizes differed by 1.4 % (1 % asked); the 0.1 and 0.25 s excesses at 1.0 s (+8.0 and +12.7 %) were cured
+by the melting part cap (fact 132). Mass closes to 1.4e-15 and energy
 to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened in skin runs). Level 3 against SESAM was not run (Task 10 Step 4).
 
 ### The final review's findings, and what became of them
@@ -4766,11 +4966,16 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 
 ### Still open after the amendment
 
-- **Melting onset at 0.1 and 0.25 s macro steps**: +8.0 and +12.7 % at 1.0 s, an offset of 0.06–0.10 mm made in the
-  onset steps; not explained (the profile's slope at the step's end made it worse).
-- **A late slow bias at 0.05 s**: −3 to −5 % at 1.5 and 2.0 s under the amended default (−2.0 % under the one-repeat
-  rule, +0.3 % with damping before the profile valuation, whose overvaluation had hidden it); the development cells miss
-  the fine box at 1.5 s by half a point, and the cell sizes differ by 1.4 %.
+- **Melting late on 2 mm elements** (facts 133–134, 137): compared like with like the plates melt 2–6 % late, the
+  cold plate failing level 2 at 0.05 s; it is the 3D model's resolution in depth below the rigid front (1 mm elements
+  remove the cold plate's onset delay). Element layers of 1 mm in depth under the 2 mm surface edges reproduce the 1 mm
+  results until the first rebuild, which meshes the volume isotropically again and leaves the run worse than on 2 mm
+  elements; adoption needs a rebuild that regenerates the layers (spec §13), pending Asha. The late slow bias at 0.05 s
+  (−6 % at 1.5 and 2.0 s with the skins at the solid's density) is part of the same delay or a second effect: the narrow
+  plates leak heat sideways late in the run, so they could not separate it.
+- **Thin elements at the plate's 90-degree edges** (fact 136): the fill misses its request at the box's edges, and on
+  0.5 mm elements the corrections exceed the move allowance and grow until a skin runs empty; layers under the faces
+  are crushed by the fill unless blended to uniform near the sides. The sphere has no such edges.
 - **Coarse surface meshes under strong melting** (fact 131): the 4 mm test sphere is refused at the rim of a melting
   region at 6 MW/m², where a corner absorbs a 0.7 mm lens its neighbours do not have; not supported. The 2 mm
   production mesh follows the same case. A rim limit on absorption made the 4 mm sphere pass and is the fallback.

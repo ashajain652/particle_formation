@@ -350,6 +350,10 @@ def test_skin_settings_reach_the_run_name():
     assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0) == "_skin-dev"
     assert (cli.skin_name_suffix(0.8, 5.0, 1.2, 20.0, "production", 10.0)
             == "_skinmin0.8mm_cell5um_growth1.2_sub20ms_deform10mm")
+    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0, swell=False) == "_skin-dev_noswell"
+    run = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"]
+    assert cli.skin_settings(cli.build_parser().parse_args(run + ["--skin-swell", "off"])).swell is False
+    assert cli.skin_settings(cli.build_parser().parse_args(run)).swell is True
 
 
 def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):

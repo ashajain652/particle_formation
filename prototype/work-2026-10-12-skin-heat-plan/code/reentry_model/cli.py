@@ -115,11 +115,11 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
 
 
-def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm):
+def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
-    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth; empty
-    for the defaults."""
+    preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth, and
+    `_noswell` for skins held at the solid's density; empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.4:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -131,6 +131,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_sub{:g}ms".format(substep_ms)
     if deform_mm != 15.0:
         out += "_deform{:g}mm".format(deform_mm)
+    if not swell:
+        out += "_noswell"
     return out
 
 
@@ -270,6 +272,10 @@ def build_parser():
     me.add_argument("--skin-growth", type=float, default=1.10,
                     help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
     me.add_argument("--skin-substep", type=float, default=10.0, help="skin sub-step [ms] (default %(default)s)")
+    me.add_argument("--skin-swell", choices=("on", "off"), default="on",
+                    help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
+                         "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
+                         "one density")
     me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
                     help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
     me.add_argument("--deform-depth", type=float, default=15.0,
@@ -384,7 +390,7 @@ def skin_settings(args):
     """The layered skins' settings from the command line (sub-plan 20)."""
     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
     return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
-                             substep=args.skin_substep * 1e-3)
+                             substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on")
 
 
 def cmd_run(args, parser):
@@ -458,7 +464,8 @@ def cmd_run(args, parser):
                                        rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
                                        surface_model=args.surface_model,
                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
-                                                                    args.skin_substep, args.skin_preset, args.deform_depth))
+                                                                    args.skin_substep, args.skin_preset, args.deform_depth,
+                                                                    args.skin_swell == "on"))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)

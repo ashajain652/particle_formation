@@ -53,6 +53,10 @@ class SkinSettings:
     cell: float = SKIN_PRESETS["production"]   # m, the fine cell
     growth: float = 1.10                   # each cell below the fine zone this much thicker than the one above
     substep: float = 0.010                 # s, the skins' sub-step (spec 7.1)
+    swell: bool = True                     # each cell at its own phase's density, so melting swells the skin (spec 5.2);
+                                           # False holds every cell at the solid's density, the setting levels 2 and 2b
+                                           # verify with (Asha, 2026-10-14: their references hold one density, and the
+                                           # swelling alone melts the exact hot plate 0.094 mm sooner by 1.0 s)
 
     def __post_init__(self):
         if not (self.min_thickness > 0.0 and self.cell > 0.0 and self.substep > 0.0):
@@ -138,7 +142,7 @@ class Skins:
         self.m, self.H, self.T = np.zeros((n, 1)), np.zeros((n, 1)), np.full((n, 1), 300.0)
         self.count = np.zeros(n, dtype=np.int64)
         self.S = None
-        self.rho_l = material.liquid.rho if material.liquid is not None else material.rho
+        self.rho_l = material.liquid.rho if material.liquid is not None and self.settings.swell else material.rho
         self.props = PropertyTable(material)
 
     # -- books ------------------------------------------------------------------------------------------------------

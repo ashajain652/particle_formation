@@ -2021,6 +2021,51 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      in the reference tier. On the 100 mm sphere at 2 MW/m² the first 1.5 s of melting remove 19.75 g at 137, 118 and
      91 s a step. The books drifted by about 5e-5 J a 3D solve at the solver's linear tolerance of 1e-10, 1.1e-8 of the
      heat absorbed over 17 short parts; at 1e-13 (as with a direct solve) 2e-11, at no cost, so skin runs tighten it.
+132. **The onset excess at 0.1 and 0.25 s macro steps was cured by the part cap while melting.** Under the current
+     code the level-2 plate is 0.3 and 4.4 % ahead of the one-dimensional reference at 1.0 s (recorded +8.0 and
+     +12.7 % before fact 128's cap); with the cap removed the 0.25 s case is 11.7 % ahead again (2026-10-14).
+133. **The skins swell and the plates' references do not.** Each skin cell is its mass over its own phase's density
+     (spec §5.2: liquid 2 400 kg/m³, solid 2 813, the Scheil liquid fraction 0.29 already at 880 K); a swollen layer
+     conducts more slowly, so the surface reaches T_feed sooner. The exact slab with that law given to its non-rigid
+     metal melts sooner by 0.033 mm on the cold plate (4.2 % at 1.0 s, 0.7 % at 2.0 s) and 0.094–0.101 mm on the hot one
+     (11.9 %, 3.5 %); the skins reproduce it (the narrow hot plate with and without swelling: 0.079 mm on 2 mm elements,
+     0.088 on 1 mm, against the exact 0.090 at 0.8 s). Compared like with like (skins at the solid's density) the plates
+     melt late on 2 mm elements: cold at 0.1 and 0.25 s steps 6.2, 5.4, 4.8 % and 3.4, 1.5, 3.1 % at 1.0, 1.5, 2.0 s;
+     hot 4.9, 3.7, 2.5 % and 6.3, 3.0, 2.0 %. The passes of facts 123 and 131 rested on the cancellation.
+134. **The delay is the 3D model's resolution in depth.** Narrow plates at one density: the cold onset 0.060 mm late
+     at 1.0 s on 2 mm elements, 0.002 mm ahead on 1 mm; the hot plate 0.044 and 0.024 mm late at 0.8 s, its surface
+     1.0 K and 0.35 K cold before melting. The layer ahead of the hot plate's rigid front is 2.2–3.4 mm thick (to 1/e
+     of its rise), about one 2 mm element. Not the cause: the skins' cells (the one-dimensional solve at 20 µm and 10 ms
+     is 1.1 % slow at 1.0 s), the moves' book-closing offsets (spread over the whole body instead of the moved nodes:
+     identical results on 2 and 1 mm elements), the depth where the skin meets the 3D model (a 1.2 mm minimum skin
+     removed a 2 K early surface cold bias but left the delay at 0.044 mm). The macro step changes the like-for-like
+     error by 1.4–2.8 points between 0.1 and 0.25 s, in no consistent direction.
+135. **Verification with the skins at the solid's density (Asha, 2026-10-14, option A), built.** `SkinSettings.swell`
+     (default True, the spec's law; False holds every cell at the solid's density), `--skin-swell on|off` with the
+     run-name suffix `_noswell`; `analysis/skin_plate.py` runs both plates with `--swell off` by default and the
+     reference-tier hot plate passes `swell=False`; `analysis/ablation_1d.py --swell off|all|nonrigid`; the level-1 test
+     of the swelling against `data/reference_values/skin_swell_1d.json` (one column 8 mm deep from 880 K under 2 MW/m²:
+     the exact advance 0.113 mm on average over 0.7–1.0 s, the skins' 1.3 % above it). With swelling off: the hot plate
+     passes level 2b at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, flowing depth within 3.4 %, base at most 0.08 K
+     above T_rigid) and at 0.05 s (3.6, 1.7 %; flowing depth within 8.5 %); the cold plate passes level 2 at 0.5 s
+     (1.2, 2.2, 3.9 % late against the reference, 3.1, 2.8, 3.7 % against the fine box) and fails at 0.05 s (6.2, 6.2,
+     6.4 %; 8.0, 6.8, 6.1 % against the fine box).
+136. **Why 0.5 mm elements fail on the plate.** The fill moves every corner in by the minimum thickness at once; at
+     the box's 90-degree edges and the face corners beside them the sweep misses the request, so the skins start at
+     0.65–1.07 of their minimum on 2 mm elements and 0.89–1.31 on 0.5 mm. The first steps correct it by draws and
+     hand-downs that do not shrink with the part; on 0.5 mm elements they exceed the quarter-edge allowance (0.125 mm),
+     the part is split six times in vain, and at an edge the corrections alternate and grow (0.12, 0.13, 0.16, 0.17,
+     0.21, 0.22 mm) until a sweep takes more than the skin holds ("cannot take more metal from a skin's bottom"). A box
+     artefact: the sphere has no edges.
+137. **Element layers in depth, spiked (Asha, 2026-10-14, option B).** Kuhn-split layers 1 mm thick to 4 mm (or
+     throughout) under the 2 mm surface edges, blended to uniform within 4 mm of the plate's sides: until the first
+     rebuild they reproduce the 1 mm results (cold onset 0.001 mm ahead at 0.8 s and 0.008 mm late at 1.0 s; the hot
+     plate's removed metal 0.020–0.029 mm late over 0.6–0.8 s against 0.012–0.024 on 1 mm and 0.042–0.054 on 2 mm; the
+     surface 0.4 K cold before melting). The 3D solve stays about 3 % of the wall time. But the rebuild meshes the volume
+     isotropically at the surface size, losing the layers, and the run is then worse than on 2 mm elements (cold
+     0.21 mm late after a rebuild at 1.1 s against 0.05 mm); on the plate the rebuilds come early (0.55–1.1 s), from
+     elements near the back corners that degrade, and 0.5 mm layers are crushed at the front edges by the fill unless
+     blended. Adoption needs a rebuild that regenerates the layers by extrusion along the corner normals.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

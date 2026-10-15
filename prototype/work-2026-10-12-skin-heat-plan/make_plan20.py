@@ -129,6 +129,9 @@ def main():
         blocks["SKIN_T{}".format(task)], blocks["TEST_SKIN_T{}".format(task)] = fence(s_part), fence(t_part)
         steps.append(("append", "reentry_model/skin.py", s_part))
         steps.append(("append", "tests/test_reentry_model_skin.py", t_part))
+    rel = "data/reference_values/skin_swell_1d.json"                      # Task 4's swelling reference (2026-10-14)
+    blocks["SKIN_SWELL_REF"] = fence(read(NEW, rel), "json")
+    steps.append(("write", rel, read(NEW, rel)))
     # -- Task 6: the nodal base law -----------------------------------------------------------------------------------
     for key, rel in (("DIFF_SKFEM", "reentry_model/thermal/skfem_backend.py"),
                      ("DIFF_FENICSX_BACKEND", "reentry_model/thermal/fenicsx_backend.py"),

@@ -139,7 +139,10 @@ smoothed normals, so a pit or bump one column wide does not change its own heati
 A column has a **base**, its corner on the 3D mesh's surface, which is the rigid front; and a **top**, the base plus
 the skin's thickness along the column's direction, which is the metal's free surface. The skin's thickness is the sum
 of its cells' thicknesses, each cell's being its mass over its area and its own phase's density (liquid about 15 %
-less dense than solid), so melting swells the column and freezing shrinks it by the right amount.
+less dense than solid), so melting swells the column and freezing shrinks it by the right amount. A verification
+setting holds every cell at the solid's density (`--skin-swell off`, 2026-10-14): levels 2 and 2b run with it, because
+their references hold one density and the swelling alone melts the exact plates sooner (§11.1); the swelling itself is
+verified at level 1.
 
 - The base moves only by metal crossing it (§6.6): inward when the skin takes rigid metal from the 3D model, outward
   when rigid metal at the skin's bottom passes to the 3D model. The 3D model's surface is therefore always exactly where
@@ -435,6 +438,7 @@ size histograms accumulate each sub-step. Two source columns are added: `solid_f
 | `--skin-substep` (ms) | 10 | `_sub<value>ms` |
 | `--skin-preset dev\|production` | `production` | `_skin-dev` (20 µm cells) |
 | `--deform-depth` (mm) | 15 | `_deform<value>mm` |
+| `--skin-swell on\|off` (each cell at its phase's density, §5.2) | `on` | `_noswell` |
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
@@ -477,6 +481,11 @@ position. Results gain the cumulative quantities; droplet records gain `solid_fr
 **Level 1 — each piece against an exact solution.**
 - Skin heat with a receding top: steady ablation with liquid removed as it forms — recession speed
   q/(ρ (L + c_p ΔT)) and an exponential temperature profile beneath the top.
+- Skin swelling (added 2026-10-14, Asha): a column 8 mm deep started at 880 K under 2 MW/m², liquid removed as it
+  forms, melts sooner with the skins' density law (§5.2) than at the solid's density by the amount the exact
+  one-dimensional slab does with the same two laws (0.113 mm on average over 0.7–1.0 s), within 5 %; each run within
+  3 % of its own reference at 0.9 and 1.0 s. Measured (20 µm cells, 10 ms sub-steps): the advance 1.3 % above the
+  exact one, the runs within 2.4 % (one density) and 1.4 % (swelling), the 20 µm cells' whole-cell removal.
 - Flow in a column: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry two joined
   profiles with the known kink at the viscosity jump; a layer pushed from rest (Stokes' first problem) its known
   spin-up.
@@ -500,8 +509,17 @@ the fold of the crater's wall reported every step. **Level 2b — the hot plate*
 started at 880 K under 2 MW/m², where the non-rigid layer is 1.5–1.7 mm thick and the skins' absorption is exercised as
 it is not at 700 K; against the one-dimensional reference's recession and non-rigid depth, the recession within 5 % at
 1.5 and 2.0 s (the onset at 1.0 s reported), the skins' flowing depth at the centre within 10 % of the exact non-rigid
-depth, and the centre's base within 1 K of T_rigid. Measured while planning sub-plan 20 (2026-10-12, 20 µm cells, 0.05 s
-steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to 2.4·10⁻⁹. With
+depth, and the centre's base within 1 K of T_rigid. Both plates run with the skins at the solid's density
+(`--skin-swell off`, decided 2026-10-14, Asha): the one-dimensional references and the fine box hold their metal at one
+density, while the skins' law swells the liquid by 15 % (§5.2), which alone melts the exact plates sooner — by
+0.033 mm (cold, 4.2 % at 1.0 s) and 0.094 mm (hot, 11.9 %) when it is given to the non-rigid metal — and had hidden a
+numerical delay of about the same size. Measured with swelling off (2026-10-14, 2 mm elements): the hot plate passes
+at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, flowing depth within 3.4 %, base at most 0.08 K above T_rigid) and at
+0.05 s (3.6 and 1.7 % late, flowing depth within 8.5 %); the cold plate passes at 0.5 s (1.2, 2.2 and 3.9 % late
+against the reference, 3.1, 2.8 and 3.7 % against the fine box) and fails at 0.05 s (6.2, 6.2 and 6.4 % late; 8.0,
+6.8 and 6.1 % against the fine box), §12. Measured while planning sub-plan 20 with the skins swelling (2026-10-12, 20 µm
+cells, 0.05 s steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to
+2.4·10⁻⁹. With
 flow on and a push along the face: mass, momentum and energy close exactly and the result is physically sensible (no
 exact reference exists).
 
@@ -571,10 +589,28 @@ Each stage is tested and measured before the next begins.
   and the accepted parts needed 4.4 passes on average; at 0.125 s steps 7 % and 2.0 passes, at 0.0625 s none and 1.8.
   The three cost 1 454, 425 and 341 s. With parts of at most 0.0625 s while melting under a 0.5 s macro step (§7.1),
   the melting steps cost 122, 121 and 226 s against 123, 307 and 1 041 s.
-- **Melting onset at intermediate steps** (measured 2026-10-12, not explained): on the level-2 plate the centre is
-  within 5 % of the exact solution at 1.0 s with 0.05 s and 0.5 s macro steps (+0.3 % and +4.5 %) but not with 0.1 s
-  and 0.25 s (+8.0 % and +12.7 %, 0.06–0.10 mm), the excess arising in the steps where melting starts and staying as an
-  offset; the profile's slope taken at the step's end instead of its start made it slightly worse.
+- **Melting late on 2 mm elements** (investigated 2026-10-14). The onset excess once measured at 0.1 and 0.25 s macro
+  steps (+8.0 and +12.7 % at 1.0 s on the level-2 plate) was cured by the part cap while melting (§7.1): without the
+  cap the 0.25 s case is +11.7 % again, with it +4.4 %. What remains, compared like with like (skins at the solid's
+  density, §11.1), is a delay: on 2 mm elements the plates melt 2–6 % late at 1.0–2.0 s (cold at 0.1 s steps 6.2, 5.4,
+  4.8 %; hot 4.9, 3.7, 2.5 %). It is the 3D model's resolution in depth below the rigid front: on the narrow cold plate
+  the onset is 0.060 mm late at 1.0 s on 2 mm elements and 0.002 mm ahead on 1 mm ones; on the hot plate 0.044 against
+  0.024 mm at 0.8 s, and the surface runs 1.0 K cold before melting on 2 mm elements against 0.35 K on 1 mm. The layer
+  ahead of the rigid front is 2.2–3.4 mm thick on the hot plate (to 1/e of its rise), about one 2 mm element. Not the
+  cause: the skins' cells (one-dimensional at 20 µm: 1.1 % slow), the moves' book-closing offsets (spread over the whole
+  body: no change), the depth of the skins' minimum (1.2 mm instead of 0.4: no change at 0.8 s). Element layers of 1 mm
+  in depth under the 2 mm surface edges reproduce the 1 mm results up to the first rebuild (cold: 0.001 mm ahead at
+  0.8 s, 0.008 mm late at 1.0 s), but a rebuild meshes the volume isotropically again and the run is then worse than on
+  2 mm elements (0.21 mm late after a rebuild at 1.1 s), so layers need a rebuild that regenerates them (§13).
+- **The plate's 90-degree edges and thin elements** (measured 2026-10-14): the fill moves every corner in by the
+  minimum thickness at once, and at the box's edges and the face corners beside them the sweep misses the request (the
+  skins hold 0.65–1.07 of their minimum on 2 mm elements, 0.89–1.31 on 0.5 mm). The first steps correct it by draws and
+  hand-downs that do not shrink with the part, so on 0.5 mm elements they exceed the quarter-edge allowance (0.125 mm),
+  the part is split six times in vain, and at an edge the corrections alternate and grow (0.12, 0.13, 0.16, 0.17, 0.21,
+  0.22 mm) until a sweep takes more than a skin holds. Thin layers under the plate's faces are crushed between the front
+  and side faces' moves (0.5 mm layers refused at the fill) unless they blend to uniform near the sides, and elements
+  near the back corners degrade over the first second (rebuilds at 0.55–1.1 s with 1 mm layers). The sphere has no
+  such edges.
 - **Coarse surface meshes under strong melting are not supported**: the rim of a melting region, where the non-rigid
   layer ends, must span several corners. On the 4 mm test sphere under 6 MW/m² from 880 K it spans one edge: a corner
   absorbs a 0.7 mm lens its neighbours do not have and the mesh refuses the move (2026-10-14); per-second caps on
@@ -600,6 +636,9 @@ Each stage is tested and measured before the next begins.
   followed by corner columns on a fixed triangulation (1.4 s on 2 mm elements, 0.9 s on 1 mm), and remeshing would let
   them be.
 - A finer skin surface (1 mm columns) as a grid study.
+- Element layers in depth under the surface (1 mm under 2 mm surface edges, §12), with a rebuild that regenerates them
+  by extruding the surface triangulation inward along the corner normals before meshing the rest (as `mesh.sphere_mesh`
+  builds prism layers on an exact sphere). Spiked on the plates 2026-10-14; adoption pending Asha.
 - Whether the macro step can be raised once the skins carry the fast physics.
 - Fragmentation, which the validity gate detects and stops on (the remeshing design's decision).
 
@@ -684,3 +723,7 @@ Each stage is tested and measured before the next begins.
 - 2026-10-14 (after investigating absorption): absorption is limited only by what a part's draws and hand-downs leave
   of its move allowance (§6.6, option 1); the hot plate is level 2b (§11.1); coarse surface meshes are not supported
   under strong melting, and the strong case runs on the production mesh (§12) (Asha).
+- 2026-10-14 (after investigating the melting onset): levels 2 and 2b verify with the skins at the solid's density, a
+  verification setting, against their one-density references unchanged, and the skins' swelling is verified at level 1
+  against the one-dimensional slab with the same density law (§5.2, §11.1, option A); the delay on 2 mm elements is
+  addressed by refining the 3D model in depth only, as a spike first (§12, §13, option B) (Asha).
