@@ -24,6 +24,10 @@ melting onset is open), the skins' flowing depth at the centre within 10 % of th
 and 2.0 s, and the centre's base no more than 1 K above T_rigid -- the skins hold the non-rigid metal, none is left in
 the 3D model; mass closed to 1e-12 and energy to 1e-8.
 
+Both plates have the skin runs' fine band (`--fine-mm 4 --fine-size-mm 0.7`, the defaults; Asha, 2026-10-14, option 1):
+the 3D model's elements are finer to 4 mm below the surface, which keeps its 2 mm triangulation, and every rebuild makes
+the band again; on 2 mm elements throughout the plates melted 2-6 % late.
+
 Both cases run with the skins held at the solid's density (`--swell off`, the default here; Asha, 2026-10-14): the
 references and the fine box hold their metal at one density, while the skins' own law (spec 5.2) swells the liquid by
 15 %, which alone melts the exact plates sooner -- by 0.033 mm (cold) and 0.094 mm (hot) at 1.0 s -- and had hidden a
@@ -31,7 +35,7 @@ numerical delay of the same size. `--swell on` runs the skins' own law; the swel
 (`tests/test_reentry_model_skin.py`, against the one-dimensional reference with the skins' density law).
 
     python analysis/skin_plate.py [--case cold|hot] [--dt 0.05] [--preset dev|production] [--h-mm 2] [--t-end 2]
-                                  [--swell off|on] [--out PATH.json]
+                                  [--swell off|on] [--fine-mm 4] [--fine-size-mm 0.7] [--out PATH.json]
 """
 import argparse
 import json
@@ -42,7 +46,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from reentry_model import heating, material, mesh, skin, skinbody  # noqa: E402
+from reentry_model import heating, material, mesh, movemesh, skin, skinbody  # noqa: E402
 from reentry_model.thermal import thermal_solver  # noqa: E402
 
 Q0, T0 = 6.0e6, 700.0
@@ -53,6 +57,7 @@ R_FLAT, R_ZERO, R_READ = 32e-3, 45e-3, 3e-3  # m: full flux within R_FLAT, none 
 REFERENCE_1D = {1.0: 0.7890, 1.5: 2.7120, 2.0: 5.2190}       # mm, analysis/ablation_1d.py at 1 um and 0.5 ms (2026-10-12)
 CASES = {"cold": (T0, Q0), "hot": (880.0, 2.0e6)}            # K, W/m2: the level-2 plate and the hot plate (2026-10-14)
 HOT_FLOWING_TOL, HOT_BASE_TOL_K = 0.10, 1.0                    # the hot plate's flowing depth (relative) and base excess
+FINE = (4.0e-3, 0.7e-3)                                         # m: the fine band's depth and size, as a skin run's
 
 
 def hot_reference():
@@ -97,10 +102,12 @@ def solid_top(body):
 
 
 def run(dt=0.05, preset="dev", deform=4e-3, t_end=2.0, solver="skfem", verbose=True, h=2e-3, width=WIDTH, r_flat=R_FLAT,
-        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False):
+        r_zero=R_ZERO, repeat_rule=skinbody.DEFAULT_REPEAT_RULE, T_start=T0, q0=Q0, swell=False, fine=FINE):
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     m = mesh.box_mesh(LENGTH, width, width, h)
     m.points[:, 1:] -= 0.5 * width                                 # the face's centre on the x axis
+    if fine is not None and fine[0] > 0.0:                         # the fine band (depth, size) m, as a skin run's
+        m = movemesh.refined_mesh(m, fine[0], min(fine[1], h))
     body = skinbody.SkinBody(m, mat, thermal_solver(solver), mat.rho * m.volume(),
                              skin.SkinSettings(cell=skin.SKIN_PRESETS[preset], swell=swell), T0=T_start, emissivity=0.0,
                              v_hat=(-1.0, 0.0, 0.0), deform_depth=deform, repeat_rule=repeat_rule)
@@ -153,6 +160,8 @@ def main():
     a.add_argument("--repeat-rule", default=skinbody.DEFAULT_REPEAT_RULE, choices=skinbody.REPEAT_RULES)
     a.add_argument("--r-flat-mm", type=float, default=R_FLAT * 1e3)
     a.add_argument("--r-zero-mm", type=float, default=R_ZERO * 1e3)
+    a.add_argument("--fine-mm", type=float, default=FINE[0] * 1e3, help="the fine band's depth [mm]; 0: none")
+    a.add_argument("--fine-size-mm", type=float, default=FINE[1] * 1e3, help="the fine band's element size asked [mm]")
     a.add_argument("--swell", choices=("off", "on"), default="off",
                    help="off: the skins at the solid's density, as the references hold their metal (default); on: the "
                         "skins' own law, each cell at its phase's density")
@@ -162,7 +171,7 @@ def main():
     body, rows, n_centre, failure = run(args.dt, args.preset, args.deform_mm * 1e-3, args.t_end, args.solver,
                                         h=args.h_mm * 1e-3, width=args.width_mm * 1e-3, r_flat=args.r_flat_mm * 1e-3,
                                         r_zero=args.r_zero_mm * 1e-3, repeat_rule=args.repeat_rule, T_start=T_start, q0=q0,
-                                        swell=args.swell == "on")
+                                        swell=args.swell == "on", fine=(args.fine_mm * 1e-3, args.fine_size_mm * 1e-3))
     at = lambda t_, key: float(np.interp(t_, [x["t"] for x in rows], [x[key] for x in rows]))
     compare, verdict = {}, []
     fine = fine_box() if args.case == "cold" else None
@@ -187,7 +196,8 @@ def main():
     summary = {"case": args.case, "T0_K": T_start, "q_Wm2": q0, "passes": bool(verdict) and all(verdict) and failure is None,
                "failure": failure, "completed_s": rows[-1]["t"] if rows else 0.0, "h_mm": args.h_mm, "dt": args.dt,
                "width_mm": args.width_mm, "r_flat_mm": args.r_flat_mm, "r_zero_mm": args.r_zero_mm,
-               "repeat_rule": args.repeat_rule, "swell": args.swell,
+               "repeat_rule": args.repeat_rule, "swell": args.swell, "fine_mm": args.fine_mm,
+               "fine_size_mm": args.fine_size_mm, "n_elements": body.mesh.n_elements,
                "preset": args.preset, "deform_mm": args.deform_mm, "n_columns": body.columns.n, "n_centre": n_centre,
                "compare": compare, "worst_mass_error": max((abs(x["mass_error"]) for x in rows), default=0.0),
                "worst_energy_residual": max((abs(x["energy_residual"]) for x in rows), default=0.0),
