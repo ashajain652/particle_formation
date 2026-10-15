@@ -2091,7 +2091,8 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      becomes 1.17 s. The reference tier's strong-melting case (6 MW/m² on the front from 880 K, three 0.5 s steps, dev
      cells): 172.0 g removed against 172.9 g, the base at most 0.56 K above T_rigid against 1.17 K, one rebuild each,
      books to 3e-13; 1 010 s against 695 s, the extra in the 3D solves (175 against 22 s), the moves' remap (141 against
-     22 s) and the rebuild (63 against 8 s), the skins unchanged (691 against 650 s).
+     22 s) and the rebuild (63 against 8 s), the skins unchanged (691 against 650 s). Asha accepted the fine band in
+     place of prism layers and its cost until level 3 times real flights (2026-10-15).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

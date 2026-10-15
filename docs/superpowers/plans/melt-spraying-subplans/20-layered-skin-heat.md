@@ -5169,6 +5169,7 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 - **The fine band's cost** (facts 139–140): it resolved the delay on 2 mm elements (both plates within 3.3 % at 1.5
   and 2.0 s), but a melting step on the 100 mm sphere costs 45 % more (1 010 against 695 s for the strong-melting case),
   the extra in the 3D solves, the moves' remap of the larger mesh and the rebuild; the plates cost 50–80 % more.
+  Accepted, with the band in place of prism layers, until level 3 times real flights (Asha, 2026-10-15).
 - **Thin elements at the plate's 90-degree edges** (fact 136): the fill misses its request at the box's edges, and on
   0.5 mm elements the corrections exceed the move allowance and grow until a skin runs empty; layers under the faces
   are crushed by the fill unless blended to uniform near the sides. The sphere has no such edges.

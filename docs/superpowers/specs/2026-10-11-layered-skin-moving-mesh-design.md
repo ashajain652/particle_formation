@@ -659,6 +659,7 @@ Each stage is tested and measured before the next begins.
 - A finer skin surface (1 mm columns) as a grid study.
 - The fine band's cost (§5.3): a 45 % longer melting step on the 100 mm sphere, a third of it in the moves' remap of the
   larger mesh; a deforming zone that spares the deep elements, or a band only where the surface melts, would cut it.
+  Accepted for now (Asha, 2026-10-15); revisited when level 3 times real flights.
 - Whether the macro step can be raised once the skins carry the fast physics.
 - Fragmentation, which the validity gate detects and stops on (the remeshing design's decision).
 
@@ -750,3 +751,5 @@ Each stage is tested and measured before the next begins.
 - 2026-10-14 (after the spike): the 3D model is refined in depth under the 2 mm surface and the refinement made again
   at every rebuild (option 1, Asha). Built 2026-10-15 as the fine band (§5.3) rather than prism layers, which could not
   be built at the plate's corners and would have been lost everywhere at any sharp feature.
+- 2026-10-15: the fine band is accepted in place of prism layers (option A), and its cost — a melting step on the 100 mm
+  sphere 45 % dearer — is accepted until level 3 times real flights (option A) (Asha).
