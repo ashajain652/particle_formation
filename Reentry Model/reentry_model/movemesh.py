@@ -45,7 +45,18 @@ by preconditioned conjugate gradients. The projection reproduces a linear field 
 was, region by region, to the rule's accuracy; what the quadrature still misses is made exact by a uniform offset over
 the new deforming zone only, where the field varies, as the 2026-09-27 remeshing design does for the whole body. The
 pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`. The validity gate stops
-on a non-manifold surface, more than one connected body, or a non-positive enclosed volume."""
+on a non-manifold surface, more than one connected body, or a non-positive enclosed volume.
+
+The fine band (Asha, 2026-10-14, option 1): on 2 mm elements the 3D model cannot follow the temperature just below the
+rigid front -- the layer ahead of the front is 2-3 mm thick on the hot plate -- and the plates melt 2-6 % late; 1 mm
+elements remove the cold plate's onset delay. So a mesh may be finer to `fine_depth` below its surface (elements of
+`h_fine`, growing to the surface size over one surface element below it) while its surface keeps its triangulation:
+gmsh fills the volume under the fixed surface to that size field (`rebuild_volume`), at the start (`refined_mesh`) and
+at every rebuild alike, the sizes read from the mesh's parameters. Prism layers pushed in from the surface were tried
+first: they fold over their neighbours at a 90-degree edge, and at the plate's corners, where three faces meet, three
+layers of 1 mm could not be built above a radius ratio of 0.054 however they were tapered (2026-10-15); the fine band
+works on any shape. Under a fixed 2 mm surface gmsh fills it coarser than asked, so skin runs ask 0.7 mm to 4 mm
+(`cli.FINE_BAND_MM`, `cli.FINE_SIZE_MM`), which takes the 100 mm sphere from 177 000 to 1.21 million elements."""
 import time
 from dataclasses import dataclass
 
@@ -258,13 +269,15 @@ class ZoneMap:
 
 # -- moving the mesh -------------------------------------------------------------------------------------------------
 def default_sizes(mesh):
-    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h."""
+    """gmsh sizes for a rebuild, from the generator's parameters: a sphere's dense band, or a box's uniform h; and the
+    fine band under the surface the mesh was refined with (`refined_mesh`; none unless its parameters name one)."""
     p = mesh.params
+    fine = {"fine_depth": p.get("fine_depth_m", 0.0), "h_fine": p.get("h_fine_m")}
     if "h_surface_m" in p:
         return {"h_surface": p["h_surface_m"], "h_core": p["h_core_m"], "band": p.get("band_m", mesh_mod.DEFAULT_BAND),
-                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9)}
+                "ramp": max(p.get("band_ramp_m", mesh_mod.DEFAULT_BAND_RAMP), 1e-9), **fine}
     h = p.get("h", mesh_mod.DEFAULT_H_SURFACE)
-    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0}
+    return {"h_surface": h, "h_core": h, "band": 0.0, "ramp": 1.0, **fine}
 
 
 @dataclass
@@ -497,9 +510,11 @@ def check_rebuilt_boundary(mesh, expected_faces):
                           "{} extra".format(len(want - got), len(got - want)))
 
 
-def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
-    """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly. Returns the new
-    points, tets and the new node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
+def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp, fine_depth=0.0, h_fine=None):
+    """Tetrahedra inside the closed triangulation (corner_points, faces_corner), keeping it exactly: h_surface to `band`
+    below it, growing to h_core over `ramp`, and with `fine_depth` > 0 elements of h_fine to that depth, growing to
+    h_surface over one h_surface below it (the fine band, module docstring). Returns the new points, tets and the new
+    node id of every corner (matched by coordinates: gmsh renumbers the nodes)."""
     import gmsh
     from scipy.spatial import cKDTree
     gmsh.initialize()
@@ -520,6 +535,14 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
         for key, value in (("InField", dist), ("SizeMin", h_surface), ("SizeMax", h_core), ("DistMin", d_min),
                            ("DistMax", d_max)):
             gmsh.model.mesh.field.setNumber(thr, key, value)
+        if fine_depth > 0.0 and h_fine is not None and h_fine < h_surface:
+            fine = gmsh.model.mesh.field.add("Threshold")
+            for key, value in (("InField", dist), ("SizeMin", h_fine), ("SizeMax", h_surface), ("DistMin", fine_depth),
+                               ("DistMax", fine_depth + h_surface)):
+                gmsh.model.mesh.field.setNumber(fine, key, value)
+            both = gmsh.model.mesh.field.add("Min")
+            gmsh.model.mesh.field.setNumbers(both, "FieldsList", [thr, fine])
+            thr = both
         gmsh.model.mesh.field.setAsBackgroundMesh(thr)
         for option in ("Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeFromCurvature"):
             gmsh.option.setNumber(option, 0)
@@ -551,6 +574,20 @@ def rebuild_volume(corner_points, faces_corner, h_surface, h_core, band, ramp):
     if d.max() > 0.0:
         raise RemeshError("gmsh moved a surface node by {:.3g} m".format(float(d.max())))
     return coords, tets, node_of_corner.astype(np.int64)
+
+
+def refined_mesh(mesh, fine_depth, h_fine):
+    """`mesh` meshed again inside its own surface, kept exactly, with the fine band of `fine_depth` and `h_fine` under
+    it (module docstring) at the sizes its parameters give; its parameters record the band, so that every rebuild of
+    the moving mesh makes it again."""
+    s = mesh.surface()
+    corners = np.unique(s.faces)
+    local = np.full(mesh.n_nodes, -1, dtype=np.int64)
+    local[corners] = np.arange(len(corners))
+    faces = local[orient_outward(mesh.points, s.faces, s.normals)]
+    sizes = dict(default_sizes(mesh), fine_depth=fine_depth, h_fine=h_fine)
+    points, tets, _ = rebuild_volume(mesh.points[corners], faces, **sizes)
+    return mesh_mod.VolumeMesh(points, tets, dict(mesh.params, fine_depth_m=fine_depth, h_fine_m=h_fine))
 
 
 _QUAD_A, _QUAD_B = 0.5854101966249685, 0.1381966011250105      # the 4-point rule exact for quadratics on a tetrahedron
