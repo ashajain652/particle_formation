@@ -26,9 +26,10 @@ def test_every_corner_starts_with_its_minimum_taken_from_the_3d_model(coarse_sph
     assert b.skins.n == b.columns.n == len(np.unique(coarse_sphere_mesh.surface().faces))
     assert b.mass() == pytest.approx(b.material.rho * V0, rel=1e-14)                  # nothing made or lost
     assert b.energy() == pytest.approx(b.material.rho * V0 * float(b.material.enthalpy(880.0)), rel=1e-12)
-    # each column holds what its corner swept moving in by its minimum: within 2 % of it (prisms against dual areas
-    # on 4 mm triangles), so the first sub-step draws any shortfall
-    assert np.abs(b.skins.column_mass() / m_min - 1.0).max() < 0.02
+    # each column holds what its corner swept moving in by its minimum: within 3 % of it (prisms against dual areas
+    # on 4 mm triangles: 2.4 % for the 0.8 mm minimum of option B', under 2 % for 0.4 mm), so the first sub-step draws
+    # any shortfall
+    assert np.abs(b.skins.column_mass() / m_min - 1.0).max() < 0.03
     assert np.allclose(b.skins.T[b.skins.valid], 880.0)
     assert b.surface.n_patches == b.columns.n and b.theta[b.i_stag] < np.radians(5.0)
 
@@ -281,6 +282,24 @@ def test_while_melting_a_step_runs_as_short_parts_and_each_part_takes_the_heatin
         expected[round(dt, 12)].append(q1.q_conv + (q2.q_conv - q1.q_conv) * frac)
     for dt, q in seen:                                                     # every pass of every part
         assert any(np.allclose(q, e, rtol=1e-12, atol=0.0) for e in expected[round(dt, 12)])
+
+
+def test_the_step_in_which_a_top_becomes_non_rigid_is_capped_too(coarse_sphere_mesh):
+    """The part cap's look-ahead (Asha, 2026-10-16): a macro step whose tops are all below T_rigid at its start still runs
+    in parts of at most PART_MAX when a top's rise over the last step, carried on over this one, would reach T_rigid;
+    a smaller rise leaves the step whole."""
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    for rise, capped in ((10.0, True), (4.0, False)):
+        b = make(coarse_sphere_mesh)
+        no_heat = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+        b.advance(0.5, 0.5, no_heat)                                     # the tops' start temperature recorded: 880 K
+        sk = b.skins
+        sk.T[:, 0] = 880.0 + rise                                        # as if the last step had raised them
+        sk.H[:, 0] = sk.m[:, 0] * mat.enthalpy(sk.T[:, 0])
+        b._top_start = np.full(sk.n, 880.0)
+        b.advance(1.0, 0.5, no_heat)
+        assert (b.step_parts == 8) is capped and b.capped_ahead == int(capped)   # 0.5 s / 0.0625 s
+        assert np.all(sk.T[sk.valid] < mat.T_rigid)
 
 
 # -- the reference tier: strong melting on the production mesh, and level 2b (2026-10-14) -----------------------------

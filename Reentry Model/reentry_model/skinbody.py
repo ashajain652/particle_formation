@@ -30,7 +30,10 @@ allowance after its draws and hand-downs, and the rest of the non-rigid metal wa
 2026-10-14: a cap of a quarter-edge per macro step stranded up to 1.3 mm of non-rigid metal in the 3D model of a plate
 started at 880 K, whose exact non-rigid layer is 1.5-1.7 mm thick, and the plate melted 4-8 % slow). While any skin's top is non-rigid (at or above T_rigid at
 the macro step's start), no part is longer than PART_MAX (Asha, 2026-10-12: long parts during melting were rejected for
-their moves and needed many passes). Within a part the base heat, the draws and the move all take the part's own step;
+their moves and needed many passes), and also in the macro step in which a top is about to become non-rigid: its rise
+over the last macro step, carried on across this one, reaches T_rigid (Asha, 2026-10-16: with the skins' 0.8 mm minimum
+the level-2 cold plate's top stood at 884.8 K at 0.5 s, so the step in which it melted ran as one part, and the plate
+was 14.2 % ahead at 1.0 s; capped one step early, 3.2 %). Within a part the base heat, the draws and the move all take the part's own step;
 the heating is interpolated in time between the last macro step's and this one's, at the part's middle, so a macro
 step receives the trapezoid of the two (Asha, 2026-10-12).
 
@@ -78,7 +81,7 @@ MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the 
 # (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s macro steps (1.8 passes);
 # before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
 # steps also removed 21.28 g against 16.6 g, but because ABSORB_MAX is per macro step, not because the parts were short.)
-PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid
+PART_MAX = 0.0625                 # s: the longest part while any skin's top is at or above T_rigid, or about to be
 SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin run: at its default 1e-10 the skin body's
                                   # books drifted by 1e-8 of the heat absorbed over 17 short parts (about 5e-5 J a solve
                                   # on the 4 mm test sphere); at 1e-13, as with a direct solve, 2e-11, at no cost
@@ -131,6 +134,9 @@ class SkinBody(ThermalBody):
         self.last_passes, self.last_total = 1, 0.0           # the damped rule's passes and final total mismatch ratio
         self.step_parts, self._hint, self._ratio = 1, 1, 0.0   # parts of the last macro step; of the next; its move ratio
         self._q_prev = None                                  # the last macro step's heating, for the interpolation in time
+        self._top_start = None                               # the tops' temperatures [K] at the last macro step's start
+        self._dt_last = None                                 # s, and its length: the look-ahead of the part cap
+        self.capped_ahead = 0                                # macro steps capped because a top was about to be non-rigid
         self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
         self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
         self.iterations, self.last, self.last_move = [], None, None
@@ -171,8 +177,17 @@ class SkinBody(ThermalBody):
         move called for."""
         n, self._ratio, self.step_parts = self._hint, 0.0, 0
         sk, mat = self.skins, self.material
-        if self.part_max is not None and mat.melts and np.any(sk.valid[:, 0] & (sk.T[:, 0] >= mat.T_rigid)):
-            n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
+        top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+        if self.part_max is not None and mat.melts:
+            if np.any(sk.valid[:, 0] & (sk.T[:, 0] >= mat.T_rigid)):
+                n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
+            elif self._top_start is not None and self._top_start.shape == top.shape:
+                with np.errstate(invalid="ignore"):          # a top that rose over the last step, carried on over this one
+                    ahead = top + (top - self._top_start) * (dt / self._dt_last)
+                if np.any(np.nan_to_num(ahead, nan=-np.inf) >= mat.T_rigid):
+                    n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
+                    self.capped_ahead += 1
+        self._top_start, self._dt_last = top, dt
         q_end = np.asarray(loads.q_conv, dtype=float)
         q_start = self._q_prev if self._q_prev is not None and self._q_prev.shape == q_end.shape else q_end
         self._heating = (t - dt, dt, q_start, q_end)
