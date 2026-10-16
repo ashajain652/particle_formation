@@ -28,6 +28,10 @@ Both plates have the skin runs' fine band (`--fine-mm 4 --fine-size-mm 0.7`, the
 the 3D model's elements are finer to 4 mm below the surface, which keeps its 2 mm triangulation, and every rebuild makes
 the band again; on 2 mm elements throughout the plates melted 2-6 % late.
 
+The skins have their defaults: a 0.8 mm minimum with the finest cells in the top 0.4 mm (option B', Asha,
+2026-10-16), so that on the cold plate, whose non-rigid layer is 0.39-0.49 mm thick, the skin-3D interface lies in rigid
+metal below the front; with 0.4 mm for both the cold plate melted 3.6 % slow from 1.0 to 2.0 s, with B' 1.7 %.
+
 Both cases run with the skins held at the solid's density (`--swell off`, the default here; Asha, 2026-10-14): the
 references and the fine box hold their metal at one density, while the skins' own law (spec 5.2) swells the liquid by
 15 %, which alone melts the exact plates sooner -- by 0.033 mm (cold) and 0.094 mm (hot) at 1.0 s -- and had hidden a

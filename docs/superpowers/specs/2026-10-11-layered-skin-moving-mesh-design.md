@@ -136,7 +136,9 @@ smoothed normals, so a pit or bump one column wide does not change its own heati
 
 ### 5.2 The two surfaces
 
-A column has a **base**, its corner on the 3D mesh's surface, which is the rigid front; and a **top**, the base plus
+A column has a **base**, its corner on the 3D mesh's surface, which is the rigid front or, where the non-rigid layer is
+thinner than the skin's minimum (§6.1), the bottom of the minimum skin, in rigid metal below the front; and a **top**,
+the base plus
 the skin's thickness along the column's direction, which is the metal's free surface. The skin's thickness is the sum
 of its cells' thicknesses, each cell's being its mass over its area and its own phase's density (liquid about 15 %
 less dense than solid), so melting swells the column and freezing shrinks it by the right amount. A verification
@@ -146,7 +148,8 @@ verified at level 1.
 
 - The base moves only by metal crossing it (§6.6): inward when the skin takes rigid metal from the 3D model, outward
   when rigid metal at the skin's bottom passes to the 3D model. The 3D model's surface is therefore always exactly where
-  the rigid metal ends.
+  the skin's metal ends: at the rigid front wherever the non-rigid layer is at least the minimum, and below it where the
+  skin carries rigid metal to make up its minimum.
 - The top moves with the skin's mass: outward as runoff piles material on, inward as spray and runoff remove it.
 
 The top surface's normals and areas serve the gas-facing quantities and the runoff graph; the base surface is the 3D
@@ -229,9 +232,14 @@ liquid — and its latent heat is carried by the 3D enthalpy, as now; it does no
 
 Every column carries a skin from time zero. The skin holds all metal outward of the rigid front: every cell that is
 more than half liquid, and the metal needed to reach its minimum. The **minimum mass** is the larger of the mass of
-400 µm of solid metal over the column's area and the mass that fills δ_m plus 50 µm as liquid, so Girin's sheared layer
-is always inside the 10 µm cells with a margin (§2: δ_m reached 485 µm). At time zero each skin takes its minimum from
-the 3D model at the initial temperature; nothing is created later.
+800 µm of solid metal over the column's area and the mass that fills δ_m plus 50 µm as liquid, so Girin's sheared layer
+is always inside the skin with a margin (§2: δ_m reached 485 µm; the second term decides only beyond 888 µm). Where the
+non-rigid layer is thinner than the minimum, the skin's bottom is rigid metal: the skin-3D interface then lies below the
+rigid front, off the steepest part of the temperature profile, which the skin's fine cells resolve (option B′, Asha,
+2026-10-16; 400 µm before, when the level-2 cold plate's interface sat on its rigid front -- its non-rigid layer is
+0.39–0.49 mm thick -- the 3D base node rose 1.6 K above T_rigid within each part before absorption reset it, and the plate
+melted 3.6 % slow from 1.0 to 2.0 s; with 800 µm 1.7 %, §12). At time zero each skin takes its minimum from the 3D model
+at the initial temperature; nothing is created later.
 
 A skin is thicker than its minimum wherever the flowing layer is deeper or runoff has piled material on. It returns to
 its minimum only by losing material — spray, runoff on, or rigid bottom metal passing to the 3D model — and never goes
@@ -246,9 +254,11 @@ Temperature, liquid fraction and density follow from the material's enthalpy law
 `temperature_from_enthalpy`, `liquid_fraction`), so the skin uses the 3D model's material exactly.
 
 **Target sizes.** A cell's target thickness depends on its depth below the top: 10 µm (production) or 20 µm
-(development) within the **fine zone**, which is the column's minimum thickness; below it, each cell's target is 10 %
+(development) within the **fine zone**, the top 400 µm (`--skin-fine-zone`; set apart from the minimum by option B′,
+2026-10-16, so that the 800 µm minimum's lower half takes graded cells, not fine ones); below it, each cell's target is 10 %
 thicker than the one above. The deepest layer seen in the flight (about 3.4 mm) then needs about 47 fine and 36 graded
-cells (estimated); most columns hold 40–47.
+cells (estimated); a column at its 800 µm minimum holds 40 fine and 19 graded cells, 59 in all (measured; 40 before
+option B′, 80 had the fine zone been the whole minimum).
 
 **Split and merge.** Cells move with the material through the depth. After each sub-step's exchanges, a cell more than
 1.5 times its target is split in two, sharing its specific enthalpy and its velocity; a cell less than half its target
@@ -378,7 +388,11 @@ conduction run it as equal parts, so that no base moves more than a quarter of t
 drawing and handing down: a part whose passes would move a base further is restored and run again as shorter parts
 (absorption takes what is left of the allowance, so it never splits a part), and the next macro step starts with as many parts as this one's largest move called for (Asha,
 2026-10-12). While any skin's top is non-rigid at the macro step's start, no part is longer than 0.0625 s (Asha,
-2026-10-12, option 1: long parts during melting were rejected for their moves and needed many passes; fact 126). The
+2026-10-12, option 1: long parts during melting were rejected for their moves and needed many passes; fact 126), nor
+in the macro step in which a top is about to become non-rigid: its rise over the last macro step, carried on across
+this one, reaches T_rigid (Asha, 2026-10-16: with the 800 µm minimum the level-2 cold plate's top stood at 884.8 K at
+0.5 s, the step in which it melted ran as one part, and the plate was 14.2 % ahead at 1.0 s, failing level 2; capped
+one step early it is 3.2 % ahead, and its run is a third faster). The
 heating is evaluated once per macro step and interpolated linearly in time between the last macro step's and this
 one's, each part taking it at its middle, so that a macro step receives the trapezoid of the two; a 0.5 s macro step
 tracks the flight's heating, whose shortest time scale is about 7 s (fact 128). The sub-step δt (`--skin-substep`, 10 ms) is the skins': heat,
@@ -447,7 +461,8 @@ size histograms accumulate each sub-step. Two source columns are added: `solid_f
 | Setting | Default | Run-name suffix when not default |
 |---|---|---|
 | `--surface-model skin\|elements` | `skin` | `_surface-elements` |
-| `--skin-min-thickness` (mm of solid) | 0.4 | `_skinmin<value>mm` |
+| `--skin-min-thickness` (mm of solid) | 0.8 | `_skinmin<value>mm` |
+| `--skin-fine-zone` (mm below the top in fine cells) | 0.4 | `_skinfine<value>mm` |
 | `--skin-cell` (µm, fine zone) | 10 | `_cell<value>um` |
 | `--skin-growth` (ratio below the fine zone) | 1.10 | `_growth<value>` |
 | `--skin-substep` (ms) | 10 | `_sub<value>ms` |
@@ -536,7 +551,12 @@ flowing depth within 0.5 %); the cold plate passes at 0.5 s (4.9 % ahead, 2.5 an
 2.8 % ahead, 3.1 and 3.0 % late against the fine box) and at 0.05 s (1.6 % ahead, 2.2 and 2.7 % late; 0.3, 2.8 and
 2.5 % late against the fine box). On 2 mm elements throughout the cold plate had failed at 0.05 s (6.2, 6.2 and 6.4 %
 late), §12. The band costs the plates 50–80 % more wall time and rebuilds every 1 mm or so of recession instead of
-2 mm, their 4 mm deforming zone compressing its fine elements directly. Measured while planning sub-plan 20 with the skins swelling (2026-10-12, 20 µm
+2 mm, their 4 mm deforming zone compressing its fine elements directly. With the 800 µm minimum and the cap's look-ahead (2026-10-16, measured once
+each, on battery power so the wall times are indicative): the cold plate 3.6 % ahead, 0.0 and 0.9 % late at 0.05 s
+(fine box 1.6 % ahead, 0.6 and 0.6 % late) and 3.2 % ahead, 0.4 % ahead and 0.9 % late at 0.5 s (1.2 % ahead, 0.2 and
+0.6 % late); the hot plate 1.5 and 0.8 % late at 1.5 and 2.0 s at 0.05 s and 2.8 and 1.1 % at 0.5 s (its onset 3.1 and
+9.0 % late at 1.0 s, not judged: at 0.5 s its top crosses T_rigid inside the first step, before the look-ahead has a
+rise to read), the flowing depth within 1.2 %, the base at most 0.09 K above T_rigid, the books to 2·10⁻¹⁰. Measured while planning sub-plan 20 with the skins swelling (2026-10-12, 20 µm
 cells, 0.05 s steps): within 1.9, 0.1 and 0.7 % of the reference (0.789, 2.712, 5.219 mm), mass to 10⁻¹⁵, energy to
 2.4·10⁻⁹. With
 flow on and a push along the face: mass, momentum and energy close exactly and the result is physically sensible (no
@@ -574,8 +594,10 @@ Each stage is tested and measured before the next begins.
 
 ## 12. Risks and approximations
 
-- **Run time** is the main unknown: about 420 000–490 000 skin cells (estimated), an implicit sideways solve per
-  sub-step, and moving-mesh assembly in the zone. Measured in stage 2 (heat) and stage 3 (flow).
+- **Run time** is the main unknown: about 420 000–490 000 skin cells (estimated before option B′, whose 800 µm minimum
+  puts 59 cells instead of 40 in a column at its minimum; on the 100 mm sphere's strong-melting case with development
+  cells it ended with 333 000 cells against 248 000, measured 2026-10-16), an implicit sideways solve per sub-step, and
+  moving-mesh assembly in the zone. Measured in stage 2 (heat) and stage 3 (flow).
 - **Capillary stiffness at the grid scale**: the capillary length (about 1.8 mm) is close to the column spacing, so the
   surface-tension cutoff is barely resolved and grid-scale Rayleigh–Taylor growth is possible if the implicit treatment
   is not adequate. Level 1's linear-growth test and the roughness history column watch for it.
@@ -623,6 +645,26 @@ Each stage is tested and measured before the next begins.
   0.8 s, 0.008 mm late at 1.0 s), but a rebuild meshes the volume isotropically again and the run is then worse than on
   2 mm elements (0.21 mm late after a rebuild at 1.1 s), so the refinement must be made again at every rebuild: the
   fine band is (§5.3).
+- **The late slow bias** (investigated 2026-10-15/16). With the fine band the level-2 cold plate (700 K, 6 MW/m²)
+  melted 3.6 % slow from 1.0 to 2.0 s; the hot plate's rate was within 1.6 %. Not the skins: one skin column standing
+  for the whole 8 mm plate, with no 3D model, is within 1.1 % of the exact solution and 0.7–1.1 % slow late, and 10 µm
+  cells changed nothing in the plate (3.5 %). Two mechanisms at the skin-3D interface. (1) A rebuild resets surface
+  elements the deforming zone had compressed (made finer), and the new mesh cannot hold the steep profile below the
+  base: the L2 transfer keeps the energy but leaves the base nodes 4.5–6.2 K cold on 2 mm elements (35 kJ/m² moved from
+  the top 0.5 mm to 0.5–2 mm), the skins send 50–70 kJ/m² extra into the 3D model, and each rebuild costs 0.15–0.21 mm
+  of recession, the whole late lag on 2 mm elements; offline the error is 1.3 K after 0.2 mm of compression and 4.8 K
+  after 2 mm (0.07 and 2.2 K with the fine band). Imposing the base's temperature in the transfer removes the drop but
+  overheats the metal beneath (10 K at 1 mm) and, with the books closed over the zone, puts heat at the centre: no
+  transfer cures it on 2 mm elements. (2) With the fine band the base drop is 1.3–1.5 K and the deficit is mainly the
+  interface on the rigid front: the cold plate's non-rigid layer (0.39–0.49 mm) is about the old 400 µm minimum, so the
+  3D base node rose 1.6 K above T_rigid within each part before absorption reset it. The heat through the base matched
+  the exact conducted flux at T_rigid to 0.1 % over 1.0–2.0 s, while the metal entering the skins was 5.9 kJ/kg below
+  h(T_rigid): the base lay below the front and passed the front's flux. Parts of 0.0125 s halved the overshoot and the
+  deficit (1.6 %) but made the onset late enough to fail level 2 (5.5 % behind the fine box at 1.0 s); an 800 µm
+  minimum moved the interface into rigid metal (the base node 7.3 K below T_rigid) and halved it too (1.9 %, 1.7 % with
+  the fine zone kept at 400 µm, option B′, adopted, §6.1). Timed alone (2026-10-15/16): the sphere's strong-melting case
+  took 990 s by default, 1 027 s with an all-fine 800 µm minimum, 954 s with short parts and 914 s with B′; the cold
+  plate 1 267, 732, 874 and 675 s; the hot plate 317, 388, 640 and 313 s.
 - **The plate's 90-degree edges and thin elements** (measured 2026-10-14): the fill moves every corner in by the
   minimum thickness at once, and at the box's edges and the face corners beside them the sweep misses the request (the
   skins hold 0.65–1.07 of their minimum on 2 mm elements, 0.89–1.31 on 0.5 mm). The first steps correct it by draws and
@@ -753,3 +795,11 @@ Each stage is tested and measured before the next begins.
   be built at the plate's corners and would have been lost everywhere at any sharp feature.
 - 2026-10-15: the fine band is accepted in place of prism layers (option A), and its cost — a melting step on the 100 mm
   sphere 45 % dearer — is accepted until level 3 times real flights (option A) (Asha).
+- 2026-10-16 (after investigating the late slow bias and timing options B, B′ and C alone): the skins' minimum is
+  800 µm of solid with the fine zone kept at the top 400 µm, set apart (§6.1, §6.2, option B′) (Asha). The macro step's
+  continuum switch (`--dt-continuum`) is not the shorter-parts option: it shortens the whole macro step from the body's
+  continuum Knudsen number, costs 25 % more than shorter parts on the cold plate, and, like them, made its melting onset
+  fail level 2.
+- 2026-10-16 (after building B′): the melting part cap also covers the macro step in which a skin's top is about to
+  become non-rigid, judged from its rise over the last macro step (§7.1) (Asha), without which the cold plate failed
+  level 2 at 0.5 s macro steps with B′.

@@ -77,7 +77,11 @@ curvature operators, and the base operations.
   skins at the solid's density (`swell=False`), and compared like that the plates melt 2–6 % late on 2 mm elements, the
   3D model's resolution in depth (facts 133–137), now resolved by the fine band, 0.7 mm elements to 4 mm under the
   2 mm surface, which makes a melting step on the 100 mm sphere 45 % dearer (facts 138–140). To settle: whether flow's
-  level-2 run uses the same setting, since with it the flowing layer's thickness is that of solid metal, not liquid. Flow makes each pass dearer,
+  level-2 run uses the same setting, since with it the flowing layer's thickness is that of solid metal, not liquid.
+- **The skins' 0.8 mm minimum** (option B′, Asha, 2026-10-16; facts 141–146): where the non-rigid layer is thinner than
+  0.8 mm a skin's bottom is rigid metal, so the column flow must hold rigid cells still and count only the cells above
+  T_rigid in the flowing depth; the finest cells stay in the top 0.4 mm (`SkinSettings.fine_zone`), and a column at its
+  minimum holds 59 cells rather than 40, which the flow's per-cell work will feel. Flow makes each pass dearer,
   so the pass count is the first thing to settle: long parts during melting were rejected and needed many passes
   (fact 126), and parts of at most 0.0625 s while melting now cut a melting step to 122–226 s (fact 129). Absorption
   is limited only by the move allowance and the hot plate (level 2b) checks it; coarse surface meshes are not supported

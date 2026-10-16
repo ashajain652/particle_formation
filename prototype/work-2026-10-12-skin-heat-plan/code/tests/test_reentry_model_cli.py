@@ -345,18 +345,22 @@ def test_skin_settings_reach_the_run_name():
     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", None,
                               surface_model="skin") == cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table",
                                                                           "none", None)        # no thermal model, no skins
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0) == ""
-    assert cli.skin_name_suffix(0.4, 10.0, 1.10, 10.0, "production", 15.0) == ""
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0) == "_skin-dev"
-    assert (cli.skin_name_suffix(0.8, 5.0, 1.2, 20.0, "production", 10.0)
-            == "_skinmin0.8mm_cell5um_growth1.2_sub20ms_deform10mm")
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "dev", 15.0, swell=False) == "_skin-dev_noswell"
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=0.0) == "_fine0"
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=3.0, fine_size_mm=0.5) == "_fine3x0.5mm"
-    assert cli.skin_name_suffix(0.4, None, 1.10, 10.0, "production", 15.0, fine_band_mm=4.0, fine_size_mm=0.7) == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0) == ""
+    assert cli.skin_name_suffix(0.8, 10.0, 1.10, 10.0, "production", 15.0) == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0) == "_skin-dev"
+    assert (cli.skin_name_suffix(0.4, 5.0, 1.2, 20.0, "production", 10.0)
+            == "_skinmin0.4mm_cell5um_growth1.2_sub20ms_deform10mm")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, fine_zone_mm=0.8) == "_skinfine0.8mm"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False) == "_skin-dev_noswell"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, fine_band_mm=0.0) == "_fine0"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, fine_band_mm=3.0, fine_size_mm=0.5) == "_fine3x0.5mm"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, fine_band_mm=4.0, fine_size_mm=0.7) == ""
     run = ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"]
     assert cli.skin_settings(cli.build_parser().parse_args(run + ["--skin-swell", "off"])).swell is False
     assert cli.skin_settings(cli.build_parser().parse_args(run)).swell is True
+    defaults = cli.skin_settings(cli.build_parser().parse_args(run))
+    assert (defaults.min_thickness, defaults.fine_zone) == (0.8e-3, 0.4e-3)
+    assert cli.skin_settings(cli.build_parser().parse_args(run + ["--skin-fine-zone", "0.8"])).fine_zone == 0.8e-3
 
 
 def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
@@ -373,7 +377,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert doc["run_name"].endswith("_melt-instant_surface-skin_skin-dev_fine4x2mm")
     s, r = doc["settings"], doc["results"]
     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
-    assert s["skin"] == {"min_thickness_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
+    assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
                          "swell": True}
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
@@ -389,6 +393,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-min-thickness", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-substep", "-1"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-cell", "300"],      # more than half of 0.4 mm
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-fine-zone", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-preset", "fine"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-growth", "0.9"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],

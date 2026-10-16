@@ -10,8 +10,15 @@ stored side by side in padded arrays (n, K): cell 0 is the top, cells 0 .. count
 Cells move with the metal: nothing re-divides a whole column. After every sub-step's exchanges a cell more than
 SPLIT_ABOVE times its target thickness is split in two and one less than MERGE_BELOW times it is merged into the cell
 beneath (the bottom cell into the one above), exactly in mass and enthalpy. The target is the fine cell within the fine
-zone, which is the minimum thickness below the top, and grows by (growth - 1) per unit depth below it -- the continuous
-form of each cell being `growth` times thicker than the one above.
+zone (`fine_zone` below the top) and grows by (growth - 1) per unit depth below it -- the continuous form of each cell
+being `growth` times thicker than the one above.
+
+The minimum and the fine zone are set apart (Asha, 2026-10-16, option B'): a skin holds at least 0.8 mm of metal, so
+that where the non-rigid layer is thinner -- a cold body melting fast -- its bottom is rigid metal and the skin-3D
+interface lies below the rigid front, off the steepest part of the temperature profile, while the finest cells stay in
+the top 0.4 mm. With 0.4 mm for both the level-2 cold plate's interface sat on the rigid front (its non-rigid layer is
+0.39-0.49 mm), the 3D base node rose 1.6 K above T_rigid within each part before absorption reset it, and the plate
+melted 3.6 % slow from 1.0 to 2.0 s; with B' 1.7 % (measured 2026-10-16).
 
 Stage 2 has no flow and no spraying: after each sub-step the contiguous cells at the top that are at or above T_feed
 leave the body with their enthalpy (`removed`), and a column below its minimum draws rigid metal from the 3D model
@@ -49,8 +56,9 @@ PROFILE_POINTS = 8                # Gauss-Legendre points of an enthalpy average
 # -- settings and cells (Task 2) ---------------------------------------------------------------------------------------
 @dataclass
 class SkinSettings:
-    min_thickness: float = 0.4e-3          # m of solid metal: the minimum mass, and the fine zone's depth (spec 6.1)
+    min_thickness: float = 0.8e-3          # m of solid metal: the minimum mass (spec 6.1); was 0.4 mm before option B'
     cell: float = SKIN_PRESETS["production"]   # m, the fine cell
+    fine_zone: float = 0.4e-3              # m below the top held in fine cells (spec 6.2); the minimum's depth before B'
     growth: float = 1.10                   # each cell below the fine zone this much thicker than the one above
     substep: float = 0.010                 # s, the skins' sub-step (spec 7.1)
     swell: bool = True                     # each cell at its own phase's density, so melting swells the skin (spec 5.2);
@@ -59,12 +67,12 @@ class SkinSettings:
                                            # swelling alone melts the exact hot plate 0.094 mm sooner by 1.0 s)
 
     def __post_init__(self):
-        if not (self.min_thickness > 0.0 and self.cell > 0.0 and self.substep > 0.0):
-            raise ValueError("skin minimum thickness, cell and substep must be positive")
+        if not (self.min_thickness > 0.0 and self.fine_zone > 0.0 and self.cell > 0.0 and self.substep > 0.0):
+            raise ValueError("skin minimum thickness, fine zone, cell and substep must be positive")
         if self.growth < 1.0:
             raise ValueError("skin growth must be at least 1")
-        if 2.0 * self.cell > self.min_thickness * (1.0 + 1e-12):
-            raise ValueError("a skin needs at least two fine cells: cell <= min_thickness / 2")
+        if 2.0 * self.cell > min(self.min_thickness, self.fine_zone) * (1.0 + 1e-12):
+            raise ValueError("a skin needs at least two fine cells: cell <= min(min_thickness, fine_zone) / 2")
 
 
 def thomas(sub, diag, sup, rhs):
@@ -188,7 +196,7 @@ class Skins:
         dz = self.dz() if dz is None else dz
         z = np.cumsum(dz, axis=1) - dz
         s = self.settings
-        return s.cell + (s.growth - 1.0) * np.maximum(z - s.min_thickness, 0.0)
+        return s.cell + (s.growth - 1.0) * np.maximum(z - s.fine_zone, 0.0)
 
     # -- installing cells -------------------------------------------------------------------------------------------
     def _install(self, m, H, count, S=None, T=None):
@@ -620,7 +628,7 @@ def depth_grid(settings, depth):
     target at each depth (the fine cell, growing below the fine zone)."""
     z = [0.0]
     while z[-1] < depth:
-        z.append(z[-1] + settings.cell + (settings.growth - 1.0) * max(z[-1] - settings.min_thickness, 0.0))
+        z.append(z[-1] + settings.cell + (settings.growth - 1.0) * max(z[-1] - settings.fine_zone, 0.0))
     return np.array(z)
 
 

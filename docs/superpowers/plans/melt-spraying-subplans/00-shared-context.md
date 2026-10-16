@@ -2093,6 +2093,52 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      books to 3e-13; 1 010 s against 695 s, the extra in the 3D solves (175 against 22 s), the moves' remap (141 against
      22 s) and the rebuild (63 against 8 s), the skins unchanged (691 against 650 s). Asha accepted the fine band in
      place of prism layers and its cost until level 3 times real flights (2026-10-15).
+141. **The late slow bias is the cold plate's, and not the skins'.** With the fine band the level-2 cold plate (700 K,
+     6 MW/m²) melts 3.6 % slow from 1.0 to 2.0 s, its lag growing from 0.013 mm ahead to 0.148 mm behind; the hot
+     plate's rate is within 1.6 %. One skin column standing for the whole 8 mm plate, with an insulated base and no 3D
+     model, is within 1.1 % of the exact slab and 0.7–1.1 % slow late (0.5 % with 2 ms sub-steps); the removed liquid
+     carries 0.2–1.1 kJ/kg above h(T_feed); 10 µm cells in the plate change nothing (3.5 %). The bias is in the coupling.
+142. **Rebuilds cost recession on 2 mm elements.** Between rebuilds the cold plate keeps pace (0.05 mm gained over 14
+     steps); its rebuilds at 1.30 and 1.80 s cost 0.15 and 0.21 mm over the next three steps, the base nodes coming out
+     of the L2 transfer 4.5 and 6.2 K cold and the skins sending 54 and 69 kJ/m² extra into the 3D model in the step
+     after. Offline (the exact cold profile at 1.3 s below a front moved 2 mm into a 4 mm zone): the transfer moves
+     35 kJ/m² from the top 0.5 mm to 0.5–2 mm, conserving the total to 6 kJ/m²; the base error is 1.3 K after 0.2 mm of
+     compression and 4.8 K after 2 mm (0.07 and 2.2 K with the fine band): the rebuild resets surface elements the zone
+     had made finer. Keeping the base's temperature through the rebuild removes the losses but, with the books closed
+     by a uniform offset over the plate's zone, puts heat at the centre (2.1 % ahead by 2.0 s); imposing it in the
+     projection overheats the metal beneath by up to 10 K at 1 mm on 2 mm elements. With the fine band the base drop is
+     1.3–1.5 K and imposing it changes little (0.148 against 0.167 mm at 2.0 s); a lower quality floor (0.02) rebuilt 4
+     times instead of 5 and lost as much.
+143. **With the fine band the cold plate's interface sits on its rigid front.** Its non-rigid layer (0.39–0.49 mm) is
+     about the 400 µm minimum: each step the skins draw 0.16–0.28 mm from below the base, the base node rises to 896.7 K
+     (1.6 K above T_rigid) by the end of each part before absorption resets it, the metal entering the skins is
+     5.9 kJ/kg below h(T_rigid), and the heat through the base matches the exact flux at the T_rigid isotherm to 0.1 %
+     over 1.0–2.0 s -- the flux of the front passed at a base lying below it. Parts of 0.0125 s (base node 895.85 K)
+     made the late rate 1.6 % slow, an 800 µm minimum (base node 887.8 K) 1.9 %, 10 µm cells 3.5 %.
+144. **Options timed alone** (2026-10-15/16, mains power, one run at a time). The reference tier's strong-melting case
+     on the 100 mm sphere (fine band, three 0.5 s steps): 990 s by default (172.0 g removed), 1 027 s with an all-fine
+     800 µm minimum (B, 175.1 g, 401 034 cells against 248 196), 954 s with 0.0125 s parts while melting (C, 174.3 g),
+     914 s with an 800 µm minimum and a 400 µm fine zone (B′, 175.0 g, 333 131 cells). The cold plate at 0.05 s: 1 267,
+     732, 874 and 675 s, late rates 3.6, 1.8, 0.9 and 1.7 % slow, C failing level 2 (3.7 % late at 1.0 s, 5.5 % behind
+     the fine box) and C as a 0.0125 s macro step (the `--dt-continuum` route) the same at 1 093 s; the hot plate 317,
+     388, 640 and 313 s, all passing. `--dt-continuum` (2026-10-07, default 0.0125 s) shortens the whole macro step from
+     the first step with a continuum body Knudsen number, latched, on by default only with Girin removal: not option C.
+145. **Option B′ built (Asha, 2026-10-16).** `SkinSettings.min_thickness` 0.8 mm (0.4 before) and a new
+     `SkinSettings.fine_zone` 0.4 mm, read by the cells' targets and the sideways depth grid in place of the minimum;
+     `--skin-min-thickness` (default 0.8) and `--skin-fine-zone` (0.4) with run-name suffixes `_skinmin<mm>mm` and
+     `_skinfine<mm>mm` for other values. A column at its minimum holds 59 cells (40 fine of 10 µm, 19 growing to 39 µm)
+     instead of 40. The cell tests keep a 0.4 mm skin of fine cells (`CELLS_04`); the trial-pass law misses by 2.3e-3 of
+     the top's energy 2 K from its linearisation (7.6e-4 for 0.4 mm), and the fill on the 4 mm test sphere leaves a
+     column up to 2.4 % off its minimum (under 2 % for 0.4 mm). With B′ alone the cold plate failed level 2 at 0.5 s
+     macro steps: 14.2 % ahead at 1.0 s (12.0 % against the fine box), its top at 884.8 K at 0.5 s so the step in which
+     it melted ran as one part; the hot plate was 9.0 % late at 1.0 s at 0.5 s (5.6 % with 0.4 mm, not judged).
+146. **The part cap's look-ahead (Asha, 2026-10-16).** A macro step whose tops are all below T_rigid at its start is
+     capped too when a top's rise over the last macro step, carried on across this one, reaches T_rigid
+     (`SkinBody.capped_ahead` counts them). On the cold plate at 0.5 s it fires once, for the step from 0.5 to 1.0 s:
+     3.2 % ahead at 1.0 s (passing), 0.4 % ahead and 0.9 % late at 1.5 and 2.0 s, in 611 s against 936 s (both on
+     battery power, so indicative); the hot plate is unchanged (its top is non-rigid at the second step's start). With
+     both, every tier passes (unit 397, FEniCSx 19, the reference tier's strong melting and hot plate), and levels 2 and
+     2b pass at 0.05 and 0.5 s (spec §11.1).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

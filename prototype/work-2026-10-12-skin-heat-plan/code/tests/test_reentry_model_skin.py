@@ -18,8 +18,13 @@ def sharp(k=100.0, rho=2800.0, cp=1000.0, latent=4.0e5, T_melt=900.0):
                                  np.array([k, k]), latent, T_melt, T_melt, material_mod.LiquidProperties(rho, 1e-3, 0.8))
 
 
+# The cell tests below were written for a skin of 0.4 mm held in fine cells -- the minimum and the fine zone before
+# option B' (2026-10-16) -- and keep that geometry; the defaults are tested by themselves.
+CELLS_04 = dict(min_thickness=0.4e-3, fine_zone=0.4e-3)
+
+
 def filled(mat, n=3, area=4e-6, T=700.0, settings=None):
-    s = settings or skin.SkinSettings()
+    s = settings or skin.SkinSettings(**CELLS_04)
     sk = skin.Skins(mat, np.full(n, area), s)
     sk.fill(skin.minimum_mass(mat, sk.area, s), T)
     return sk
@@ -27,7 +32,8 @@ def filled(mat, n=3, area=4e-6, T=700.0, settings=None):
 
 # -- settings and cells (Task 2) ---------------------------------------------------------------------------------------
 def test_settings_reject_impossible_values():
-    for bad in ({"min_thickness": 0.0}, {"cell": -1e-6}, {"substep": 0.0}, {"growth": 0.9}, {"cell": 0.3e-3}):
+    for bad in ({"min_thickness": 0.0}, {"cell": -1e-6}, {"substep": 0.0}, {"growth": 0.9}, {"cell": 0.3e-3},
+                {"fine_zone": 0.0}, {"cell": 0.25e-3}):                   # 0.25 mm: more than half the 0.4 mm fine zone
         with pytest.raises(ValueError):
             skin.SkinSettings(**bad)
 
@@ -112,17 +118,39 @@ def test_depths_read_from_the_cells():
 
 
 # -- the minimum mass (Task 3) -----------------------------------------------------------------------------------------
-def test_the_minimum_is_400_um_of_solid_unless_girins_layer_needs_more():
+def test_the_minimum_is_800_um_of_solid_unless_girins_layer_needs_more():
+    """Option B' (2026-10-16): 0.8 mm of solid, the larger term unless Girin's sheared layer is deeper than 888 um --
+    deeper than any measured in the 100 mm flight (485 um)."""
     mat = scheil()
     s = skin.SkinSettings()
     area = np.full(4, 4e-6)
-    solid = mat.rho * 4e-6 * 0.4e-3
-    # 400 um of solid is the liquid of 469 um (2813 / 2400 x 400): delta_m + 50 um decides above 419 um
-    m = skin.minimum_mass(mat, area, s, np.array([np.nan, 300e-6, 419e-6, 500e-6]))
+    solid = mat.rho * 4e-6 * 0.8e-3
+    # 800 um of solid is the liquid of 938 um (2813 / 2400 x 800): delta_m + 50 um decides above 888 um
+    m = skin.minimum_mass(mat, area, s, np.array([np.nan, 485e-6, 888e-6, 1000e-6]))
     assert m[0] == solid and m[1] == solid
     assert m[2] == pytest.approx(solid, rel=2e-3)
-    assert m[3] == pytest.approx(mat.liquid.rho * 4e-6 * 550e-6, rel=1e-12) and m[3] > solid
+    assert m[3] == pytest.approx(mat.liquid.rho * 4e-6 * 1050e-6, rel=1e-12) and m[3] > solid
     assert np.all(skin.minimum_mass(mat, area, s) == solid)
+
+
+def test_a_skin_at_its_minimum_holds_fine_cells_only_in_its_fine_zone():
+    """Option B' (2026-10-16): the 0.8 mm minimum with the finest cells in the top 0.4 mm and the cells' target growing
+    by a tenth of their depth below it: 40 fine cells of 10 um, then about 10 ln(1 + 0.1 x 400 / 10) = 16 more as a
+    continuous growth would need (19 measured, the deepest 39 um, as split and merge leave them) -- 59 cells, where a
+    fine zone as deep as the minimum held 80."""
+    mat = scheil()
+    s = skin.SkinSettings()
+    sk = skin.Skins(mat, np.full(2, 4e-6), s)
+    sk.fill(skin.minimum_mass(mat, sk.area, s), 700.0)
+    sk.regrid()
+    dz = sk.dz()[0, :sk.count[0]]
+    z = np.cumsum(dz) - dz
+    assert sk.thickness() == pytest.approx(np.full(2, 0.8e-3), rel=1e-12)
+    assert np.allclose(dz[z < 0.4e-3 - 1e-9], 10e-6)
+    assert np.all(dz[z >= 0.4e-3 - 1e-9] > 10e-6 - 1e-12) and dz[-1] > 3.0 * 10e-6
+    assert 50 <= sk.count[0] <= 62
+    t = sk.targets()[0, :sk.count[0]]
+    assert np.all(dz >= skin.MERGE_BELOW * t) and np.all(dz <= skin.SPLIT_ABOVE * t)
 
 
 # -- heat through the depth (Task 4) -----------------------------------------------------------------------------------
@@ -145,7 +173,7 @@ def test_steady_ablation_recedes_at_the_energy_limited_speed_with_the_exponentia
     h(T0))) and the temperature beneath it is T0 + (T_feed - T0) exp(-v z / alpha)."""
     mat = sharp()
     q, T0 = 1.0e8, 300.0
-    s = skin.SkinSettings(min_thickness=5e-3, cell=20e-6, substep=5e-4)     # 5 decay lengths, base held at T0
+    s = skin.SkinSettings(min_thickness=5e-3, fine_zone=5e-3, cell=20e-6, substep=5e-4)   # 5 decay lengths, all fine
     sk = skin.Skins(mat, np.array([1e-6]), s)
     m_min = skin.minimum_mass(mat, sk.area, s)
     sk.fill(m_min, T0)
@@ -182,7 +210,7 @@ def test_the_skins_swelling_melts_a_column_sooner_as_it_does_the_exact_slab_with
     times = (0.7, 0.8, 0.9, 1.0)
     recession = {}
     for swell in (False, True):
-        s = skin.SkinSettings(min_thickness=8e-3, cell=20e-6, substep=0.01, swell=swell)
+        s = skin.SkinSettings(min_thickness=8e-3, fine_zone=8e-3, cell=20e-6, substep=0.01, swell=swell)
         sk = skin.Skins(mat, np.array([1e-6]), s)
         m_min = skin.minimum_mass(mat, sk.area, s)
         sk.fill(m_min, 880.0)
@@ -228,7 +256,7 @@ def test_the_trial_pass_leaves_the_skins_and_gives_the_real_pass_its_base_energy
     a, b = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, np.full(2, 840.0), m_min)
     assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
     assert np.all(b <= 0.0)
-    for dT, tol in ((0.0, 1e-9), (2.0, 2e-3)):
+    for dT, tol in ((0.0, 1e-9), (2.0, 3e-3)):         # 2 K away 2.3e-3 for the 0.8 mm minimum (7.6e-4 for 0.4 mm)
         sk.set_state(before)
         book = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, np.full(2, 840.0), m_min, T_b1=np.full(2, 840.0 + dT))
         law = (a + b * (840.0 + dT)) * 0.1

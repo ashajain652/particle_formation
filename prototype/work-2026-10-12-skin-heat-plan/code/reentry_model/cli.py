@@ -123,15 +123,18 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 
 
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
-                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM):
+                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
-    dev preset, `_skinmin<mm>mm` for another minimum thickness, `_cell<um>um` for an explicit cell other than the
+    dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+    option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
     `_noswell` for skins held at the solid's density, and `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
     empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
-    if min_thickness_mm != 0.4:
+    if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
+    if fine_zone_mm != 0.4:
+        out += "_skinfine{:g}mm".format(fine_zone_mm)
     if cell_um is not None and abs(cell_um * 1e-6 - skin.SKIN_PRESETS[preset]) > 1e-12:
         out += "_cell{:g}um".format(cell_um)
     if growth != 1.10:
@@ -279,8 +282,12 @@ def build_parser():
                          "moving 3D mesh (layered-skin design, sub-plan 20: heat only, so with --melt on it needs --removal "
                          "instant, liquid leaving as it forms). elements: the surface elements melt and feed the film, as "
                          "in every run before it (default)")
-    me.add_argument("--skin-min-thickness", type=float, default=0.4,
-                    help="the skins' minimum thickness [mm of solid], also the fine zone's depth (default %(default)s)")
+    me.add_argument("--skin-min-thickness", type=float, default=0.8,
+                    help="the skins' minimum thickness [mm of solid]: where the non-rigid layer is thinner, a skin's bottom "
+                         "is rigid metal (default %(default)s)")
+    me.add_argument("--skin-fine-zone", type=float, default=0.4,
+                    help="the depth below a skin's top held in fine cells [mm]; below it each cell is --skin-growth times "
+                         "thicker than the one above (default %(default)s)")
     me.add_argument("--skin-cell", type=float, default=None, help="skin fine cell [um] (default: the preset's)")
     me.add_argument("--skin-growth", type=float, default=1.10,
                     help="each skin cell below the fine zone this much thicker than the one above (default %(default)s)")
@@ -387,7 +394,8 @@ def build_thermal(args, settings, mass):
             "thermal_solver": args.thermal_solver, "linear_solver": args.linear_solver, "lumped_mass": not args.consistent_mass,
             "k_scale": args.k_scale, "melt": args.melt, "surface_model": args.surface_model}
     if skins:
-        info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "cell_um": skin_settings(args).cell * 1e6,
+        info["skin"] = {"min_thickness_mm": args.skin_min_thickness, "fine_zone_mm": args.skin_fine_zone,
+                        "cell_um": skin_settings(args).cell * 1e6,
                         "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
                         "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
                         "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
@@ -413,7 +421,8 @@ def skin_settings(args):
     """The layered skins' settings from the command line (sub-plan 20)."""
     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
     return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
-                             substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on")
+                             substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on",
+                             fine_zone=args.skin_fine_zone * 1e-3)
 
 
 def cmd_run(args, parser):
@@ -453,7 +462,8 @@ def cmd_run(args, parser):
     dt_continuum = continuum_step(args)
     if dt_continuum is not None and dt_continuum > args.dt:
         parser.error("--dt-continuum must be no longer than --dt")
-    for label, value in (("--skin-min-thickness", args.skin_min_thickness), ("--skin-substep", args.skin_substep),
+    for label, value in (("--skin-min-thickness", args.skin_min_thickness), ("--skin-fine-zone", args.skin_fine_zone),
+                         ("--skin-substep", args.skin_substep),
                          ("--skin-cell", 1.0 if args.skin_cell is None else args.skin_cell),
                          ("--deform-depth", args.deform_depth)):
         if value <= 0.0:
@@ -463,8 +473,8 @@ def cmd_run(args, parser):
     if args.fine_band < 0.0 or args.fine_size <= 0.0:
         parser.error("--fine-band must be >= 0 and --fine-size > 0")
     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
-    if 2.0 * cell_um * 1e-3 > args.skin_min_thickness * (1.0 + 1e-12):
-        parser.error("--skin-cell must be at most half of --skin-min-thickness")
+    if 2.0 * cell_um * 1e-3 > min(args.skin_min_thickness, args.skin_fine_zone) * (1.0 + 1e-12):
+        parser.error("--skin-cell must be at most half of --skin-min-thickness and of --skin-fine-zone")
     if args.surface_model == "skin" and args.thermal != "fem":
         parser.error("--surface-model skin needs --thermal fem")
     if args.surface_model == "skin" and args.melt == "on" and args.removal != "instant":
@@ -490,7 +500,8 @@ def cmd_run(args, parser):
                                        surface_model=args.surface_model,
                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
                                                                     args.skin_substep, args.skin_preset, args.deform_depth,
-                                                                    args.skin_swell == "on", args.fine_band, args.fine_size))
+                                                                    args.skin_swell == "on", args.fine_band, args.fine_size,
+                                                                    args.skin_fine_zone))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
