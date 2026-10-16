@@ -169,6 +169,11 @@ def main():
     steps.append(("write", rel, read(NEW, rel)))
     blocks["EXTRACT"] = fence(read(HERE, "extract_fine_box.py"))
     steps.append(("extract", "data/reference_values/box_q6p_fine.json", None))
+    rel = "analysis/reentry_model_thermal_verification.py"                # level 3's option (2026-10-16)
+    diff_step("DIFF_THERMAL_VERIFICATION", rel, read(BASE, rel), read(NEW, rel))
+    rel = "tests/test_reentry_model_thermal_verification.py"
+    blocks["TEST_THERMAL_VERIFICATION"] = fence(read(NEW, rel))
+    steps.append(("write", rel, read(NEW, rel)))
 
     # -- replay on a copy of the base and compare with code/ ----------------------------------------------------------
     tmp = tempfile.mkdtemp()

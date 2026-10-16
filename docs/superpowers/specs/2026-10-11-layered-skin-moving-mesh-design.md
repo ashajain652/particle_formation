@@ -803,3 +803,7 @@ Each stage is tested and measured before the next begins.
 - 2026-10-16 (after building B′): the melting part cap also covers the macro step in which a skin's top is about to
   become non-rigid, judged from its rise over the last macro step (§7.1) (Asha), without which the cold plate failed
   level 2 at 0.5 s macro steps with B′.
+- 2026-10-16: level 3 of build stage 2 is run now (option B), the 100 mm Step 2 flight under SESAM-equivalent heating
+  alone on the laptop and the other three (the 100 mm under physics heating, both 50 mm flights) side by side on the Mac
+  Studio by a second agent, from `docs/superpowers/plans/2026-10-16-skin-level3-flights.md`, with the four element
+  flights beside them (Asha). The Step 2 verification script gained the skins as an option (sub-plan 20 Task 10 Step 4).

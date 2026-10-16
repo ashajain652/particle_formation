@@ -31,8 +31,8 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 397 passed (1 skipped, no
-failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 403 passed (1 skipped, no
+failures; 397 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
@@ -5212,8 +5212,353 @@ melting.
   hours; run them in the build, not before: the Step 2 verification cases of `analysis/reentry_model_thermal_verification.py`
   with `--surface-model skin` (non-melting, so no `--melt`), against Step 2's thresholds in
   `tests/test_reentry_model_reference_thermal.py`; record the differences from the element model's results.
-  **Not yet run.** Held in the build because the coupling was wrong at 0.5 s; since the amendment the coupling
-  converges and level 2 passes at 0.5 s, so what remains is the cost (Step 3) and Asha's decision to spend it.
+  Held in the build because the coupling was wrong at 0.5 s; since the amendment the coupling converges and level 2
+  passes at 0.5 s. Asha chose to spend the cost on 2026-10-16: the 100 mm flight under SESAM-equivalent heating alone on
+  the laptop, the other three on a second machine (`docs/superpowers/plans/2026-10-16-skin-level3-flights.md`).
+
+  **Files:** Modify `analysis/reentry_model_thermal_verification.py`; Create `tests/test_reentry_model_thermal_verification.py`.
+  The script gains `--surface-model skin`: each skin run is labelled `<case>__<mode>__skin`, so it shares the output
+  directory with the element run of the same case and mode, and `summary_skin.md` puts the two side by side; every run
+  is judged against Step 2's thresholds (a test keeps the script's copy equal to the reference test's), reports the
+  skins' totals and its wall time a macro step, and appends a line of progress every 20 macro steps to
+  `<label>.progress`; `--t-max` ends the flights early as a smoke check, kept out of the summaries, and
+  `--summary-only` tabulates the runs gathered in the output directory from several machines.
+
+```diff
+--- a/analysis/reentry_model_thermal_verification.py
++++ b/analysis/reentry_model_thermal_verification.py
+@@ -3,54 +3,145 @@
+ the heat/temperature errors (Step 2 verification, spec section 10).
+ 
+     "$PY" analysis/reentry_model_thermal_verification.py [--outdir reentry_model_output/verification_thermal]
+-        [--cases d100,d050] [--modes sesam,physics] [--animate]
++        [--cases d100,d050] [--modes sesam,physics] [--surface-model elements|skin] [--t-max S] [--summary-only]
++        [--animate]
+ 
+ Cases left out by --cases/--modes are read back from an existing <outdir>/<case>__<mode>.json, so summary.md /
+ summary.json always cover every result available in the output directory.
++
++--surface-model skin is level 3 of the layered-skin design (section 11.1, sub-plan 20 Task 10 Step 4): the same flights
++with a skin on every corner of a moving 3D mesh, labelled <case>__<mode>__skin, against the same thresholds; its
++summary_skin.md / summary_skin.json put each skin run beside the element run of the same case and mode when that is in
++the output directory. Every run appends a line to <outdir>/<label>.progress every PROGRESS_EVERY macro steps, so a
++flight of many hours can be followed. --t-max ends each flight early (a smoke check of the set-up); such a run is
++labelled __t<S> and stays out of the summaries. --summary-only runs nothing and tabulates the runs already in --outdir
++(the flights of one check may be run on several machines and their JSONs gathered in one directory).
+ """
+ import argparse
+ import json
+ import os
+ import sys
++import time
+ 
+ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ sys.path.insert(0, REPO_ROOT)
+ 
+-from reentry_model import cli, sesam_io  # noqa: E402
++from reentry_model import cli, coupled, sesam_io  # noqa: E402
+ 
+ CASES = {
+     "d100": ("sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind", ["--diameter", "100", "--altitude", "77.500133"]),
+     "d050": ("sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_nowind", ["--diameter", "50", "--altitude", "115"]),
+ }
+ MODES = ("sesam", "physics")
++SURFACE_MODELS = ("elements", "skin")
++# Step 2's acceptance thresholds for SESAM-equivalent heating, as tests/test_reentry_model_reference_thermal.py states
++# them (a test keeps the two equal); physics mode is reported, bounded only by its integrated heat at the end over SESAM's
++THRESHOLDS = {"Q_conv_peak_rel_max": 0.03, "Q_conv_continuum_rel_max": 0.03, "integrated_heat_rel_hypersonic": 0.03,
++              "dT_rel_max": 0.02, "radiated_peak_rel_max": 0.08}
++PHYSICS_RATIO = (0.4, 1.1)
++PROGRESS_EVERY = 20
+ COLUMNS = ["case", "mode", "Q_conv max (of peak)", "Q_conv max (continuum, point-wise)", "integrated heat (end of hypersonic)",
+-           "integrated heat (end)", "max |dT_eq|", "radiated max (of peak)", "peak surface T", "runtime"]
++           "integrated heat (end)", "max |dT_eq|", "radiated max (of peak)", "peak surface T", "runtime", "verdict"]
++SKIN_COLUMNS = ["case", "mode", "surface"] + COLUMNS[2:] + ["skins"]
+ 
+ 
+-def run_case(key, mode, outdir, animate):
++def label_of(key, mode, surface="elements", t_max=None):
++    return "{}__{}".format(key, mode) + ("__skin" if surface == "skin" else "") + ("__t{:g}".format(t_max) if t_max else "")
++
++
++def argv_of(key, mode, outdir, surface="elements", t_max=None, animate=False):
+     name, args = CASES[key]
+     ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
+-    label = "{}__{}".format(key, mode)
+     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+-                             "--heating", mode, "--reference", ref, "--outdir", outdir, "--name", label, "--quiet"]
++                             "--heating", mode, "--reference", ref, "--outdir", outdir, "--name", label_of(key, mode, surface, t_max),
++                             "--quiet"]
++    if surface == "skin":
++        argv += ["--surface-model", "skin"]
++    if t_max:
++        argv += ["--t-max", "{:g}".format(t_max)]
+     if animate:
+         argv.append("--animate")
+-    rc = cli.main(argv)
++    return argv
++
++
++def watch(path, every=PROGRESS_EVERY):
++    """Make every coupled run append a line to `path` every `every` macro steps: flight time, altitude, speed, mean
++    and hottest surface temperature, and wall time since the run began. It only reads each step's history row, so the
++    results are unchanged. Returns the function that undoes it."""
++    original = coupled.CoupledRun.row
++    seen, started = [0], time.perf_counter()
++
++    def row(self, t, y, a, loads):
++        r = original(self, t, y, a, loads)
++        if seen[0] % every == 0:
++            with open(path, "a") as fh:
++                fh.write("step {:6d}  t {:8.2f} s  h {:8.3f} km  V {:7.4f} km/s  T {:7.1f} K  T_surface_max {:7.1f} K  "
++                         "wall {:9.0f} s\n".format(seen[0], r["time_s"], r["altitude_km"], r["velocity_kms"],
++                                                   r["temperature_K"], r["surface_T_max_K"], time.perf_counter() - started))
++        seen[0] += 1
++        return r
++
++    coupled.CoupledRun.row = row
++    return lambda: setattr(coupled.CoupledRun, "row", original)
++
++
++def run_case(key, mode, outdir, animate, surface="elements", t_max=None):
++    label = label_of(key, mode, surface, t_max)
++    undo = watch(os.path.join(outdir, label + ".progress"))
++    try:
++        rc = cli.main(argv_of(key, mode, outdir, surface, t_max, animate))
++    finally:
++        undo()
+     if rc != 0:
+         raise SystemExit("run {} failed with exit code {}".format(label, rc))
+     return label
+ 
+ 
+-def row_from_doc(key, mode, doc):
++def verdict(mode, tm, results):
++    """SESAM-equivalent heating: `pass` or `FAIL (<the metrics outside their threshold>)` against THRESHOLDS, the
++    energy books and the ground; physics mode is reported, checked only as the reference test checks it."""
++    if results.get("end_reason") != "ground":
++        return "FAIL (ended by {})".format(results.get("end_reason"))
++    if mode == "physics":
++        ratio = tm["integrated_heat"]["ratio_end"]
++        return "reported" if PHYSICS_RATIO[0] < ratio < PHYSICS_RATIO[1] else "FAIL (heat ratio {:.3f})".format(ratio)
++    measured = {"Q_conv_peak_rel_max": tm["Q_conv"]["max"], "Q_conv_continuum_rel_max": tm["Q_conv"]["continuum_rel_max"],
++                "integrated_heat_rel_hypersonic": abs(tm["integrated_heat"]["rel_error_end_of_hypersonic"]),
++                "dT_rel_max": tm["temperature"]["dT_rel_max"], "radiated_peak_rel_max": tm["radiated"]["max"]}
++    over = [k for k, v in measured.items() if not v <= THRESHOLDS[k]]
++    if not abs(results["energy_balance_residual"]) < 1e-6:
++        over.append("energy_balance_residual")
++    return "pass" if not over else "FAIL ({})".format(", ".join(over))
++
++
++def row_from_doc(key, mode, doc, surface="elements"):
+     tm, res = doc["comparison"]["thermal_metrics"], doc["results"]
+-    return {"case": key, "mode": mode, "Q_conv max (of peak)": "{:.2%}".format(tm["Q_conv"]["max"]),
+-            "Q_conv max (continuum, point-wise)": "{:.2%}".format(tm["Q_conv"]["continuum_rel_max"]),
+-            "integrated heat (end of hypersonic)": "{:+.2%}".format(tm["integrated_heat"]["rel_error_end_of_hypersonic"]),
+-            "integrated heat (end)": "{:+.2%} (ratio {:.3f})".format(tm["integrated_heat"]["rel_error_end"], tm["integrated_heat"]["ratio_end"]),
+-            "max |dT_eq|": "{:.1f} K ({:.2%})".format(tm["temperature"]["dT_max_K"], tm["temperature"]["dT_rel_max"]),
+-            "radiated max (of peak)": "{:.2%}".format(tm["radiated"]["max"]),
+-            "peak surface T": "{:.0f} K at {:.0f} s".format(res["peak_surface_T_K"], res["time_of_peak_surface_T_s"]),
+-            "runtime": "{:.0f} s, {} steps, {:.1f} it/step".format(res["runtime_s"], res["n_macro_steps"], res["mean_newton_iterations"])}
++    row = {"case": key, "mode": mode, "surface": surface, "Q_conv max (of peak)": "{:.2%}".format(tm["Q_conv"]["max"]),
++           "Q_conv max (continuum, point-wise)": "{:.2%}".format(tm["Q_conv"]["continuum_rel_max"]),
++           "integrated heat (end of hypersonic)": "{:+.2%}".format(tm["integrated_heat"]["rel_error_end_of_hypersonic"]),
++           "integrated heat (end)": "{:+.2%} (ratio {:.3f})".format(tm["integrated_heat"]["rel_error_end"], tm["integrated_heat"]["ratio_end"]),
++           "max |dT_eq|": "{:.1f} K ({:.2%})".format(tm["temperature"]["dT_max_K"], tm["temperature"]["dT_rel_max"]),
++           "radiated max (of peak)": "{:.2%}".format(tm["radiated"]["max"]),
++           "peak surface T": "{:.0f} K at {:.0f} s".format(res["peak_surface_T_K"], res["time_of_peak_surface_T_s"]),
++           "runtime": "{:.0f} s, {} steps, {:.1f} it/step".format(res["runtime_s"], res["n_macro_steps"], res["mean_newton_iterations"]),
++           "verdict": verdict(mode, tm, res), "skins": ""}
++    if "skin_columns" in res:
++        row["skins"] = ("{} columns, {} rebuilds, {} repeats, {} base faults; {:.0f} s in the skins, {:.0f} s in the 3D solve, "
++                        "{:.1f} s a step".format(res["skin_columns"], res["rebuilds"], res["interface_repeats"], res["jump_faults"],
++                                                 res["wall_skins_s"], res["wall_3d_s"], res["runtime_s"] / max(res["n_macro_steps"], 1)))
++    return row
++
++
++def read_doc(outdir, label):
++    path = os.path.join(outdir, label + ".json")
++    if not os.path.isfile(path):
++        return None
++    with open(path) as fh:
++        doc = json.load(fh)
++    if not doc.get("comparison"):
++        print("skipping {}: no comparison block (not a run of this script)".format(label))
++        return None
++    return doc
+ 
+ 
+ def main(argv=None):
+@@ -58,32 +149,45 @@
+     p.add_argument("--outdir", default=os.path.join(REPO_ROOT, "reentry_model_output", "verification_thermal"))
+     p.add_argument("--cases", default=",".join(CASES))
+     p.add_argument("--modes", default=",".join(MODES))
++    p.add_argument("--surface-model", choices=SURFACE_MODELS, default="elements")
++    p.add_argument("--t-max", type=float, default=None, help="end each flight at this time [s]: a smoke check, kept out of "
++                                                              "the summaries")
++    p.add_argument("--summary-only", action="store_true", help="run nothing: tabulate the runs already in --outdir")
+     p.add_argument("--animate", action="store_true")
+     args = p.parse_args(argv)
+     os.makedirs(args.outdir, exist_ok=True)
+     wanted = {(k, m) for k in args.cases.split(",") for m in args.modes.split(",")}
++    if args.summary_only and args.t_max is not None:
++        p.error("--summary-only and --t-max exclude each other")
++    unknown = {k for k, _ in wanted if k not in CASES} | {m for _, m in wanted if m not in MODES}
++    if unknown:
++        p.error("unknown case or mode: {}".format(", ".join(sorted(unknown))))
++    if args.t_max is not None:
++        if args.t_max <= 0.0:
++            p.error("--t-max must be > 0")
++        for key, mode in sorted(wanted):
++            run_case(key, mode, args.outdir, args.animate, args.surface_model, args.t_max)
++        return 0
++    skins = args.surface_model == "skin"
+     rows = []
+     for key in CASES:
+         for mode in MODES:
+-            label = "{}__{}".format(key, mode)
+-            if (key, mode) in wanted:
+-                run_case(key, mode, args.outdir, args.animate)
+-            path = os.path.join(args.outdir, label + ".json")
+-            if os.path.isfile(path):
+-                with open(path) as fh:
+-                    doc = json.load(fh)
+-                if not doc.get("comparison"):
+-                    print("skipping {}: no comparison block (not a run of this script)".format(label))
+-                else:
+-                    rows.append(row_from_doc(key, mode, doc))
+-    with open(os.path.join(args.outdir, "summary.json"), "w") as fh:
+-        json.dump(rows, fh, indent=2)
+-    lines = ["| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
+-    lines += ["| " + " | ".join(str(r[c]) for c in COLUMNS) + " |" for r in rows]
++            if (key, mode) in wanted and not args.summary_only:
++                run_case(key, mode, args.outdir, args.animate, args.surface_model)
++            for surface in (("elements", "skin") if skins else ("elements",)):
++                doc = read_doc(args.outdir, label_of(key, mode, surface))
++                if doc is not None:
++                    rows.append(row_from_doc(key, mode, doc, surface))
++    columns = SKIN_COLUMNS if skins else COLUMNS
++    stem = "summary_skin" if skins else "summary"
++    with open(os.path.join(args.outdir, stem + ".json"), "w") as fh:
++        json.dump([{c: r[c] for c in columns} for r in rows], fh, indent=2)
++    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
++    lines += ["| " + " | ".join(str(r[c]) for c in columns) + " |" for r in rows]
+     if any(r["mode"] == "physics" for r in rows):
+         lines.append("")
+         lines.append("physics-mode power errors are differences from SESAM's surface-averaged model, not thresholds")
+-    with open(os.path.join(args.outdir, "summary.md"), "w") as fh:
++    with open(os.path.join(args.outdir, stem + ".md"), "w") as fh:
+         fh.write("\n".join(lines) + "\n")
+     print("\n".join(lines))
+     return 0
+```
+
+```python
+"""The Step 2 verification script's level-3 option (layered-skin design section 11.1, sub-plan 20 Task 10 Step 4): a
+skin run's command line and label, the thresholds it is judged by, the verdicts, the progress watch and the summary that
+puts a skin run beside its element run. No flight is run."""
+import json
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis"))
+import reentry_model_thermal_verification as tv  # noqa: E402
+from reentry_model import coupled  # noqa: E402
+from test_reentry_model_reference_thermal import THRESHOLDS  # noqa: E402
+
+GROUND = {"end_reason": "ground", "energy_balance_residual": 1e-9}
+
+
+def metrics(q=0.01, cont=0.01, hyp=0.01, dT=0.01, rad=0.05, ratio=0.9):
+    return {"Q_conv": {"max": q, "continuum_rel_max": cont},
+            "integrated_heat": {"rel_error_end_of_hypersonic": hyp, "rel_error_end": ratio - 1.0, "ratio_end": ratio},
+            "temperature": {"dT_max_K": 5.0, "dT_rel_max": dT}, "radiated": {"max": rad}}
+
+
+def test_the_thresholds_are_step_2s():
+    assert tv.THRESHOLDS == THRESHOLDS
+
+
+def test_a_skin_run_is_the_element_run_with_skins_and_its_own_label():
+    elements = tv.argv_of("d100", "sesam", "out")
+    skins = tv.argv_of("d100", "sesam", "out", surface="skin")
+    assert elements[elements.index("--name") + 1] == "d100__sesam"
+    assert skins[skins.index("--name") + 1] == "d100__sesam__skin"
+    drop = lambda a: a[:a.index("--name")] + a[a.index("--name") + 2:]
+    assert drop(skins) == drop(elements) + ["--surface-model", "skin"]
+    smoke = tv.argv_of("d050", "physics", "out", surface="skin", t_max=2.0)
+    assert smoke[smoke.index("--name") + 1] == "d050__physics__skin__t2" and smoke[-2:] == ["--t-max", "2"]
+
+
+def test_the_verdicts():
+    assert tv.verdict("sesam", metrics(), GROUND) == "pass"
+    assert tv.verdict("sesam", metrics(hyp=-0.031, dT=0.021), GROUND) == "FAIL (integrated_heat_rel_hypersonic, dT_rel_max)"
+    assert tv.verdict("sesam", metrics(cont=float("nan")), GROUND) == "FAIL (Q_conv_continuum_rel_max)"
+    assert tv.verdict("sesam", metrics(), {**GROUND, "energy_balance_residual": 2e-6}) == "FAIL (energy_balance_residual)"
+    assert tv.verdict("sesam", metrics(), {**GROUND, "end_reason": "t_max"}) == "FAIL (ended by t_max)"
+    assert tv.verdict("physics", metrics(q=0.5), GROUND) == "reported"
+    assert tv.verdict("physics", metrics(ratio=1.2), GROUND) == "FAIL (heat ratio 1.200)"
+
+
+def test_the_progress_watch_reads_the_rows_and_is_undone(tmp_path, monkeypatch):
+    row = {"time_s": 1.0, "altitude_km": 70.0, "velocity_kms": 7.4, "temperature_K": 301.0, "surface_T_max_K": 305.0}
+    monkeypatch.setattr(coupled.CoupledRun, "row", lambda self, t, y, a, loads: dict(row))
+    plain = coupled.CoupledRun.row
+    undo = tv.watch(str(tmp_path / "p.progress"), every=2)
+    for _ in range(5):
+        assert coupled.CoupledRun.row(None, 0.0, None, None, None) == row
+    undo()
+    assert coupled.CoupledRun.row is plain
+    lines = (tmp_path / "p.progress").read_text().splitlines()
+    assert len(lines) == 3 and lines[0].startswith("step      0") and lines[2].startswith("step      4")
+
+
+def test_run_case_passes_the_skins_and_undoes_the_watch(tmp_path, monkeypatch):
+    plain = coupled.CoupledRun.row
+    seen = []
+    monkeypatch.setattr(tv.cli, "main", lambda argv: seen.append(argv) or 0)
+    assert tv.run_case("d050", "physics", str(tmp_path), False, "skin") == "d050__physics__skin"
+    assert seen[0][-2:] == ["--surface-model", "skin"] and coupled.CoupledRun.row is plain
+    monkeypatch.setattr(tv.cli, "main", lambda argv: 1)
+    with pytest.raises(SystemExit):
+        tv.run_case("d050", "physics", str(tmp_path), False, "skin")
+    assert coupled.CoupledRun.row is plain
+
+
+def test_the_skin_summary_puts_each_skin_run_beside_its_element_run(tmp_path, monkeypatch):
+    results = {**GROUND, "peak_surface_T_K": 900.0, "time_of_peak_surface_T_s": 60.0, "runtime_s": 120.0,
+               "n_macro_steps": 732, "mean_newton_iterations": 3.0}
+    skins = {"skin_columns": 9417, "rebuilds": 0, "interface_repeats": 12, "jump_faults": 0, "wall_skins_s": 100.0,
+             "wall_3d_s": 10.0}
+    for label, res, tm in (("d100__sesam", results, metrics()), ("d100__sesam__skin", {**results, **skins}, metrics(dT=0.03))):
+        with open(tmp_path / (label + ".json"), "w") as fh:
+            json.dump({"comparison": {"thermal_metrics": tm}, "results": res}, fh)
+    monkeypatch.setattr(tv.cli, "main", lambda argv: 0)
+    assert tv.main(["--outdir", str(tmp_path), "--cases", "d100", "--modes", "sesam", "--surface-model", "skin"]) == 0
+    rows = json.loads((tmp_path / "summary_skin.json").read_text())
+    assert [(r["surface"], r["verdict"]) for r in rows] == [("elements", "pass"), ("skin", "FAIL (dT_rel_max)")]
+    assert rows[1]["skins"].startswith("9417 columns") and rows[0]["skins"] == ""
+    assert not (tmp_path / "summary.json").exists()
+    monkeypatch.setattr(tv.cli, "main", lambda argv: pytest.fail("--summary-only ran a flight"))
+    (tmp_path / "summary_skin.json").unlink()
+    assert tv.main(["--outdir", str(tmp_path), "--surface-model", "skin", "--summary-only"]) == 0
+    assert json.loads((tmp_path / "summary_skin.json").read_text()) == rows
+```
+
+  Run `"$PY" -m pytest tests/test_reentry_model_thermal_verification.py -q` (6 passed), then the smoke check
+  `"$PY" analysis/reentry_model_thermal_verification.py --outdir <scratch> --cases d050 --modes sesam --surface-model skin --t-max 2`.
+  Measured on the laptop: 4 macro steps on 2 367 columns in 60 s, 15 s a step at 115 km, the books to 3·10⁻¹², peak
+  memory 1.1 GB. Then the flights, each alone or on a machine with cores to spare:
+  `caffeinate -i "$PY" analysis/reentry_model_thermal_verification.py --cases d100 --modes sesam --surface-model skin`.
+  **Results: not yet measured.** The 100 mm reference reaches the ground at 366 s (732 macro steps), the 50 mm one at
+  559 s (1 118).
+
+```bash
+git add analysis/reentry_model_thermal_verification.py tests/test_reentry_model_thermal_verification.py
+git commit -m "Skins: level 3 flies the Step 2 verification with a skin on every corner, against Step 2's thresholds"
+```
 
 - [ ] **Step 5: Record and commit.** Add the measurements of Tasks 0, 9 and 10 to `00-shared-context.md` as facts, and
   write the Results section of this sub-plan. (Done: facts 115–120 for the build, 121–125 for the amendment, and
@@ -5243,8 +5588,8 @@ damped repetition as the default, the metal crossing the base valued along the 3
 parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
 solid's density and the swelling checked at level 1, then the fine band under the surface (option 1), and on 2026-10-16
-the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead. The unit tier went from
-341 to 397 passed (1 skipped),
+the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead, and level 3's option in
+the Step 2 verification script. The unit tier went from 341 to 403 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
 build's measurements, 121–146 the amendments'.

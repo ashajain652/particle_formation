@@ -31,8 +31,8 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 397 passed (1 skipped, no
-failures); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 403 passed (1 skipped, no
+failures; 397 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
@@ -958,8 +958,34 @@ melting.
   hours; run them in the build, not before: the Step 2 verification cases of `analysis/reentry_model_thermal_verification.py`
   with `--surface-model skin` (non-melting, so no `--melt`), against Step 2's thresholds in
   `tests/test_reentry_model_reference_thermal.py`; record the differences from the element model's results.
-  **Not yet run.** Held in the build because the coupling was wrong at 0.5 s; since the amendment the coupling
-  converges and level 2 passes at 0.5 s, so what remains is the cost (Step 3) and Asha's decision to spend it.
+  Held in the build because the coupling was wrong at 0.5 s; since the amendment the coupling converges and level 2
+  passes at 0.5 s. Asha chose to spend the cost on 2026-10-16: the 100 mm flight under SESAM-equivalent heating alone on
+  the laptop, the other three on a second machine (`docs/superpowers/plans/2026-10-16-skin-level3-flights.md`).
+
+  **Files:** Modify `analysis/reentry_model_thermal_verification.py`; Create `tests/test_reentry_model_thermal_verification.py`.
+  The script gains `--surface-model skin`: each skin run is labelled `<case>__<mode>__skin`, so it shares the output
+  directory with the element run of the same case and mode, and `summary_skin.md` puts the two side by side; every run
+  is judged against Step 2's thresholds (a test keeps the script's copy equal to the reference test's), reports the
+  skins' totals and its wall time a macro step, and appends a line of progress every 20 macro steps to
+  `<label>.progress`; `--t-max` ends the flights early as a smoke check, kept out of the summaries, and
+  `--summary-only` tabulates the runs gathered in the output directory from several machines.
+
+{{DIFF_THERMAL_VERIFICATION}}
+
+{{TEST_THERMAL_VERIFICATION}}
+
+  Run `"$PY" -m pytest tests/test_reentry_model_thermal_verification.py -q` (6 passed), then the smoke check
+  `"$PY" analysis/reentry_model_thermal_verification.py --outdir <scratch> --cases d050 --modes sesam --surface-model skin --t-max 2`.
+  Measured on the laptop: 4 macro steps on 2 367 columns in 60 s, 15 s a step at 115 km, the books to 3·10⁻¹², peak
+  memory 1.1 GB. Then the flights, each alone or on a machine with cores to spare:
+  `caffeinate -i "$PY" analysis/reentry_model_thermal_verification.py --cases d100 --modes sesam --surface-model skin`.
+  **Results: not yet measured.** The 100 mm reference reaches the ground at 366 s (732 macro steps), the 50 mm one at
+  559 s (1 118).
+
+```bash
+git add analysis/reentry_model_thermal_verification.py tests/test_reentry_model_thermal_verification.py
+git commit -m "Skins: level 3 flies the Step 2 verification with a skin on every corner, against Step 2's thresholds"
+```
 
 - [ ] **Step 5: Record and commit.** Add the measurements of Tasks 0, 9 and 10 to `00-shared-context.md` as facts, and
   write the Results section of this sub-plan. (Done: facts 115–120 for the build, 121–125 for the amendment, and
@@ -989,8 +1015,8 @@ damped repetition as the default, the metal crossing the base valued along the 3
 parts; then the fault counter redefined (fb4fe25), the melting part cap with the heating in time (d1b5636), and on
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
 solid's density and the swelling checked at level 1, then the fine band under the surface (option 1), and on 2026-10-16
-the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead. The unit tier went from
-341 to 397 passed (1 skipped),
+the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead, and level 3's option in
+the Step 2 verification script. The unit tier went from 341 to 403 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
 build's measurements, 121–146 the amendments'.
