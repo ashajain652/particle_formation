@@ -276,10 +276,14 @@ On each sub-step the skin's enthalpy equation is solved:
   Newton in the temperature with a backtracking line search on each column's residual (the solver built and reviewed in
   stage 1), the convective heat flux at the top cell and the radiation εσ(T_top⁴ − T_amb⁴) from it over the column's
   top area, and the base law at the bottom (§7.2). All columns are solved side by side.
-- **Sideways by conduction, explicitly**: each cell exchanges heat with the neighbouring columns' cells at the same
-  depth below the top (the neighbour's temperature interpolated between its cells), across the shared face's length
-  times the overlap of the two cells' depth ranges. Stable for sub-steps below Δx²/(4α), about 25 ms at 2 mm spacing
-  (§2); the default 10 ms is within it.
+- **Sideways by conduction, explicitly** (stage 2): each cell exchanges heat with the neighbouring columns' cells at
+  the same depth below the top (the neighbour's temperature interpolated between its cells), across the shared face's
+  length times the overlap of the two cells' depth ranges. Stable for sub-steps below Δx²/(4α), estimated at about
+  25 ms at 2 mm spacing (§2). Measured (2026-10-17), the smallest columns set the limit: on the 100 mm sphere's 2 mm
+  surface the dual areas range from 1.26 to 4.59 mm² (median 3.31), a stable cycle is 3.8 ms, and every 10 ms
+  sub-step runs three, the sideways conduction taking three fifths of a step's time on the level-3 flight. **From
+  stage 3 it is implicit** (Asha, 2026-10-17; sub-plan 21's amendment of that date), solved with the sideways
+  transport of §6.5, so a sub-step has no sideways stability limit.
 - **Sideways with the flow**: enthalpy moves with the mass of §6.5, at the donor cell's specific enthalpy.
 
 The 3D model's radiation is off on the base surface, which is no longer the free surface. Every quantity that reads a
@@ -597,7 +601,11 @@ Each stage is tested and measured before the next begins.
 - **Run time** is the main unknown: about 420 000–490 000 skin cells (estimated before option B′, whose 800 µm minimum
   puts 59 cells instead of 40 in a column at its minimum; on the 100 mm sphere's strong-melting case with development
   cells it ended with 333 000 cells against 248 000, measured 2026-10-16), an implicit sideways solve per sub-step, and
-  moving-mesh assembly in the zone. Measured in stage 2 (heat) and stage 3 (flow).
+  moving-mesh assembly in the zone. Measured in stage 2 (heat) and stage 3 (flow). Stage 2's level-3 flight of the
+  100 mm sphere, which never melts, took 14.6 h, 72 s a macro step against 0.04 s for the element model: four fifths
+  in the skins, three fifths of a step in their explicit sideways conduction (§6.3) and 12 % in measuring the body's
+  mass at every trajectory evaluation (2026-10-17, facts 147 and 148); option A removed the repeated work, a third of
+  a step on the flight's first six, without changing a result.
 - **Capillary stiffness at the grid scale**: the capillary length (about 1.8 mm) is close to the column spacing, so the
   surface-tension cutoff is barely resolved and grid-scale Rayleigh–Taylor growth is possible if the implicit treatment
   is not adequate. Level 1's linear-growth test and the roughness history column watch for it.
@@ -807,3 +815,6 @@ Each stage is tested and measured before the next begins.
   alone on the laptop and the other three (the 100 mm under physics heating, both 50 mm flights) side by side on the Mac
   Studio by a second agent, from `docs/superpowers/plans/2026-10-16-skin-level3-flights.md`, with the four element
   flights beside them (Asha). The Step 2 verification script gained the skins as an option (sub-plan 20 Task 10 Step 4).
+- 2026-10-17 (after profiling the 100 mm level-3 flight): option A is built, the body measuring its 3D volume once per
+  move and the sideways sub-cycles sharing their geometry, with every result unchanged to the last bit; the sideways
+  conduction becomes implicit in stage 3, as sub-plan 21's first task (§6.3) (Asha).

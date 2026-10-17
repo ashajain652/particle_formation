@@ -8,12 +8,61 @@ depth by the viscosity at each interface, pushed by the gas pressure gradient, t
 pressures, dragged by the gas shear at the top and held at the rigid front; mass, momentum and heat cross between
 neighbouring columns layer by layer.
 
-**Spec:** §6.4 (flow), §6.5 (sideways exchange and the arrival rule), §11 (build stage 3; level 1's flow and
-Rayleigh–Taylor checks; level 2 with flow on), §12 (the risks this stage carries: capillary stiffness at the grid scale,
-the flowing-layer coordinate, momentum between tangent planes).
+**Spec:** §6.3 (heat: the sideways conduction made implicit, amended 2026-10-17), §6.4 (flow), §6.5 (sideways exchange
+and the arrival rule), §11 (build stage 3; level 1's flow and Rayleigh–Taylor checks; level 2 with flow on), §12 (the
+risks this stage carries: capillary stiffness at the grid scale, the flowing-layer coordinate, momentum between tangent
+planes).
 
 **Builds on:** sub-plan 20 — the columns, the packed cells (with their unused velocity), the surface gradient and
 curvature operators, and the base operations.
+
+## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
+
+> Design of record: spec §6.3 as amended on 2026-10-17; facts 147 and 148. **Write and build this task first, before
+> the flow**: it is heat only, so the plates verify it with flow off before anything else changes.
+
+**Why.** Sub-plan 20 conducts heat between neighbouring columns explicitly (`skin.sideways_heat`), sub-cycled inside each
+sub-step to stay below the explicit stability limit, and the smallest columns set that limit: on the 100 mm sphere's
+2 mm surface the columns' dual areas range from 1.26 to 4.59 mm² (median 3.31), so a cycle is 3.8 ms and every 10 ms
+sub-step takes three, where the median column alone would need one. On the level-3 flight of the 100 mm sphere (no
+melting; 14.6 h, 72 s a macro step) the sideways conduction took three fifths of a step, against an eighth for the
+conduction through the depth that the skins exist to resolve (fact 147). Option A (fact 148) removed the work the
+sub-cycles repeated without changing a result; what remains is the sub-cycling itself, which an explicit step cannot do
+without. Task 4's transport of mass, enthalpy and momentum, layer by layer on the same depth matching, is already
+linearly implicit (spec §6.5); the conduction joins it.
+
+**What.** Backward Euler for the sideways conduction, so a sub-step has no sideways stability limit and no sub-cycles.
+The code-level plan chooses, with a measurement of each on the 100 mm sphere's first six steps, between:
+
+- (a) one implicit system per sub-step: the columns' depth tridiagonals coupled by the edges' bin exchanges, solved
+  inside the existing Newton iteration by a Krylov method preconditioned by the depth solve (Thomas on every column).
+  The sub-step stays one backward-Euler step.
+- (b) a split sub-step: the depth solve, then an implicit sideways solve on the depth grid's bins (a graph Laplacian over
+  the columns in each bin, with the exchange's k w l weights), the bins' heat given back to the cells by the existing
+  overlaps. Simpler, but it adds a splitting error of first order in the sub-step.
+
+Either keeps the exchange antisymmetric edge by edge, so the books close to round-off, and exact for a field linear
+along the surface; either then carries Task 4's implicit transport.
+
+**Tests (level 1).**
+- Sub-plan 20's four still hold:
+  - the heat sums to zero between columns of any depth;
+  - it is exact for a field linear along the surface;
+  - the steady two-dimensional temperature between held boundary columns is reached;
+  - the checkerboard over 0.2 s, about 30 times the old limit on 1 mm columns, stays within its initial bounds, now in
+    one step and monotone.
+- New: a warm spot spreading sideways in an insulated slab, against the two-dimensional heat equation's exact solution.
+  The check runs at sub-steps of 1, 3 and 10 times the old explicit limit, and the error must fall in proportion to the
+  sub-step. The books close to round-off.
+- Sub-plan 20's pin of the explicit heat to the build's (`test_the_sub_cycles_share_their_geometry_and_give_the_heat_as_built_to_the_last_bit`)
+  is retired with the explicit step.
+
+**Verification.**
+- Levels 2 and 2b: the cold and hot plates, flow off, at both macro steps, pass as before. The changes from sub-plan
+  20's results are reported, because the plates' heating falls off along a half cosine and so carries sideways heat.
+- Level 3's 100 mm flight under SESAM-equivalent heating is flown and timed again. That one sideways solve a sub-step
+  brings a flight to roughly 5–6 hours is an estimate, not a measurement. The solve must cost less than the three
+  explicit cycles it replaces, or it is not worth having.
 
 ## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
 
@@ -59,7 +108,8 @@ curvature operators, and the base operations.
 3. **The push**: −∇_s p_w − ρ_l a_t + ρ_l a_n ∇_s H − σ ∇_s κ on every layer, with the two thickness terms implicit
    (linearised in the column heights). Tests: a bump on a flat layer under deceleration grows at the thin-film
    Rayleigh–Taylor linear rate; bumps below the surface-tension cutoff decay.
-4. **Sideways exchange**: implicit upwind transport of mass, enthalpy and momentum by fraction of the flowing depth; the
+4. **Sideways exchange** (in the solve of the implicit sideways conduction, amendment of 2026-10-17): implicit upwind
+   transport of mass, enthalpy and momentum by fraction of the flowing depth; the
    arrival rule (same fraction where the receiver flows from its top down, on top of a rigid top otherwise); velocities
    projected between tangent planes. Tests: a translating pulse keeps its heat and arrives where it should; books to
    round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's volume.
@@ -87,7 +137,8 @@ curvature operators, and the base operations.
   is limited only by the move allowance and the hot plate (level 2b) checks it; coarse surface meshes are not supported
   under strong melting, so flow's verification should use 2 mm surfaces (facts 130–131).
 - Sub-plan 20's measured run time (fact 120 under the one-repeat rule; fact 125 under the amended default: 60–93 s a
-  macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which decides whether the
-  sideways solve can be implicit over every cell or needs sub-cycling.
+  macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which was to decide whether the
+  sideways solve can be implicit over every cell or needs sub-cycling. Decided (Asha, 2026-10-17): implicit, the
+  amendment above, from the level-3 flight's profile (facts 147 and 148).
 - Whether the implicit thickness pressures are enough to keep grid-scale growth out (level 1's growth test), given
   that the capillary length (about 1.8 mm) is close to the column spacing.

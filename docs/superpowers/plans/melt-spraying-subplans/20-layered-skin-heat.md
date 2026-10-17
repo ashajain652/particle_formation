@@ -31,8 +31,8 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 403 passed (1 skipped, no
-failures; 397 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 405 passed (1 skipped, no
+failures; 399 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
@@ -2468,8 +2468,13 @@ Each column's cells are averaged onto a common depth grid (spaced by the cell ta
 k w l (T_j − T_i) in each bin both columns reach (k the mean of the two bins' conductivities, w the cotangent weight,
 l the depth they share); each column's bin heat goes back to its cells by their overlap with the bin. That is
 antisymmetric edge by edge — the total is zero to round-off — and exact for a field linear along the surface. The
-explicit step is sub-cycled to keep dt k_max Σw / (ρ c_p,min A) below `SIDEWAYS_CFL`; on 2 mm spacing one cycle covers
-about 25 ms, so the default 10 ms sub-step needs one.
+explicit step is sub-cycled to keep dt k_max Σw / (ρ c_p,min A) below `SIDEWAYS_CFL`. The smallest columns set it: on
+the 100 mm sphere's 2 mm surface, dual areas of 1.26–4.59 mm² (median 3.31) make a cycle 3.8 ms, three to the default
+10 ms sub-step, where the median column alone would need one (measured 2026-10-17; planning had assumed about 25 ms
+per cycle). The sub-cycles share the step's depth grid and interpolation weights, which depend on the cells'
+thicknesses only, and the temperatures after the last are not computed (Asha, 2026-10-17, option A: remaking them in
+every sub-cycle took a third of the sideways heat's time on the level-3 flight; a test pins the heat to the build's to
+the last bit). Sub-plan 21 makes the sideways conduction implicit (Asha, 2026-10-17).
 
 - [ ] **Step 1: Append the tests**
 
@@ -2543,6 +2548,67 @@ def test_a_sub_step_beyond_the_explicit_limit_is_sub_cycled_and_stays_bounded():
     T = mat.temperature_from_enthalpy(sk.H[sk.valid] / sk.m[sk.valid])
     assert sk.energy() == pytest.approx(E0, rel=1e-13)
     assert T.min() >= 400.0 - 1e-6 and T.max() <= 800.0 + 1e-6
+
+
+def _sideways_as_built(sk, columns, dt):
+    """The sideways heat as sub-plan 20 built it (before 2026-10-17): the depth grid, the interpolation weights and the
+    temperatures made again in every sub-cycle, the last included."""
+    def interp(x, xp, fp):
+        n, q = xp.shape
+        off = (np.arange(n) * skin._SPAN)[:, None]
+        i = np.searchsorted((xp + off).ravel(), (x + off).ravel(), side="right").reshape(x.shape) - 1
+        i = np.clip(i - (np.arange(n) * q)[:, None], 0, q - 2)
+        r = np.arange(n)[:, None]
+        x0, x1, f0, f1 = xp[r, i], xp[r, i + 1], fp[r, i], fp[r, i + 1]
+        t = np.clip(np.divide(x - x0, x1 - x0, out=np.zeros_like(x, dtype=float), where=x1 > x0), 0.0, 1.0)
+        return f0 + t * (f1 - f0)
+
+    def once(T, dz):
+        n = T.shape[0]
+        zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)
+        H = zb[:, -1]
+        zc = np.minimum(skin.depth_grid(sk.settings, float(H.max()))[None, :], H[:, None])
+        Cg = interp(zc, zb, np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1))
+        length = np.diff(zc, axis=1)
+        Tbar = np.divide(np.diff(Cg, axis=1), length, out=np.zeros_like(length), where=length > 0.0)
+        i, j = columns.edges[:, 0], columns.edges[:, 1]
+        k = sk.props.k(Tbar)
+        flux = (0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * np.minimum(length[i], length[j])
+                * (Tbar[j] - Tbar[i]))
+        Qg = np.zeros_like(length)
+        np.add.at(Qg, i, flux)
+        np.add.at(Qg, j, -flux)
+        return np.diff(interp(zb, zc, np.concatenate([np.zeros((n, 1)), np.cumsum(Qg, axis=1)], axis=1)), axis=1)
+
+    mat, valid, dz = sk.material, sk.valid, sk.dz()
+    wsum = np.bincount(columns.edges.ravel(), weights=np.repeat(columns.conduct_weight, 2), minlength=sk.n)
+    rate = float((mat.k_table.max() * wsum / (mat.rho * mat.cp_table.min() * sk.area)).max())
+    cycles = max(1, int(np.ceil(dt * rate / skin.SIDEWAYS_CFL)))
+    T, H, total = sk.T.copy(), sk.H.copy(), np.zeros_like(sk.T)
+    for _ in range(cycles):
+        Q = np.where(valid, once(T, dz), 0.0)
+        total += Q / cycles
+        if cycles > 1:
+            H = H + Q * dt / cycles
+            T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
+    return total, cycles
+
+
+def test_the_sub_cycles_share_their_geometry_and_give_the_heat_as_built_to_the_last_bit():
+    """Asha, 2026-10-17: the sub-cycles of a sideways step share its depth grid and interpolation weights, and the
+    temperatures after the last are not computed -- a third of the sideways heat's time on the 100 mm sphere. Columns of
+    different depths, every cell at its own temperature, over several sub-cycles: the heat is the build's exactly."""
+    mat = scheil()
+    sk, col, pts, _ = grid_skins(mat, n=6)
+    rng = np.random.default_rng(7)
+    sk.fill(skin.minimum_mass(mat, sk.area, sk.settings) * rng.uniform(1.0, 2.5, col.n), rng.uniform(450.0, 850.0, col.n))
+    sk.regrid()
+    sk.T = np.where(sk.valid, sk.T + rng.normal(0.0, 15.0, sk.T.shape), sk.T)
+    sk.H = sk.m * mat.enthalpy(sk.T)
+    for dt in (1e-4, 0.05):
+        reference, cycles = _sideways_as_built(sk, col, dt)
+        np.testing.assert_array_equal(skin.sideways_heat(sk, col, dt), reference)
+    assert cycles >= 3                                               # the second dt is sub-cycled
 ```
 
 - [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError: ... no attribute 'sideways_heat'`.
@@ -2554,15 +2620,24 @@ def test_a_sub_step_beyond_the_explicit_limit_is_sub_cycled_and_stays_bounded():
 _SPAN = 1.0                       # m, larger than any column: separates the rows of a flattened row-wise search
 
 
-def _interp_rows(x, xp, fp):
-    """Row-wise linear interpolation of fp (n, q) given at non-decreasing xp (n, q), at x (n, p), held at the ends."""
+def _interp_weights(x, xp):
+    """Row-wise linear interpolation at x (n, p) of a function given at non-decreasing xp (n, q), held at the ends, as
+    (rows, index, fraction) for `_interp_apply`: they depend on the abscissae only, so the sub-cycles of a sideways step,
+    whose cells keep their thicknesses, share them."""
     n, q = xp.shape
     off = (np.arange(n) * _SPAN)[:, None]
     i = np.searchsorted((xp + off).ravel(), (x + off).ravel(), side="right").reshape(x.shape) - 1
     i = np.clip(i - (np.arange(n) * q)[:, None], 0, q - 2)
     r = np.arange(n)[:, None]
-    x0, x1, f0, f1 = xp[r, i], xp[r, i + 1], fp[r, i], fp[r, i + 1]
+    x0, x1 = xp[r, i], xp[r, i + 1]
     t = np.clip(np.divide(x - x0, x1 - x0, out=np.zeros_like(x, dtype=float), where=x1 > x0), 0.0, 1.0)
+    return r, i, t
+
+
+def _interp_apply(weights, fp):
+    """fp (n, q), given at the abscissae `weights` were made from, interpolated at their points."""
+    r, i, t = weights
+    f0, f1 = fp[r, i], fp[r, i + 1]
     return f0 + t * (f1 - f0)
 
 
@@ -2575,48 +2650,66 @@ def depth_grid(settings, depth):
     return np.array(z)
 
 
-def _sideways_once(sk, columns, T, dz):
-    """Sideways heat [W per cell] at temperatures T: each column's cells averaged onto the depth grid, every surface
-    edge exchanging k w l (T_j - T_i) in every bin both columns reach (k the mean of the two bins' conductivities, w the
-    edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
-    cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
-    exact for a field linear along the surface where neighbouring columns have the same cells."""
-    n = T.shape[0]
+def _sideways_geometry(sk, columns, dz):
+    """What every sub-cycle of a sideways step shares, from the cells' thicknesses dz alone: the cells' boundaries from
+    the top, each column's share of each bin of the depth grid, the depth each edge's two columns share in each bin,
+    and the interpolation weights from cells to bins and back."""
+    n = dz.shape[0]
     zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
     H = zb[:, -1]
     zg = depth_grid(sk.settings, float(H.max()))
     zc = np.minimum(zg[None, :], H[:, None])                                        # the grid clipped to each column
-    C = np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1)      # integral of T from the top
-    Cg = _interp_rows(zc, zb, C)
     length = np.diff(zc, axis=1)                                                    # each column's share of each bin
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    return {"length": length, "shared": np.minimum(length[i], length[j]),
+            "to_bins": _interp_weights(zc, zb), "to_cells": _interp_weights(zb, zc)}
+
+
+def _sideways_once(sk, columns, T, dz, geometry=None):
+    """Sideways heat [W per cell] at temperatures T: each column's cells averaged onto the depth grid, every surface
+    edge exchanging k w l (T_j - T_i) in every bin both columns reach (k the mean of the two bins' conductivities, w the
+    edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
+    cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
+    exact for a field linear along the surface where neighbouring columns have the same cells. `geometry`: the step's
+    `_sideways_geometry`, made here if not given."""
+    n = T.shape[0]
+    g = _sideways_geometry(sk, columns, dz) if geometry is None else geometry
+    C = np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1)      # integral of T from the top
+    Cg = _interp_apply(g["to_bins"], C)
+    length = g["length"]
     Tbar = np.divide(np.diff(Cg, axis=1), length, out=np.zeros_like(length), where=length > 0.0)
     i, j = columns.edges[:, 0], columns.edges[:, 1]
     k = sk.props.k(Tbar)
-    flux = (0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * np.minimum(length[i], length[j])
-            * (Tbar[j] - Tbar[i]))
+    flux = 0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * g["shared"] * (Tbar[j] - Tbar[i])
     Qg = np.zeros_like(length)
     np.add.at(Qg, i, flux)
     np.add.at(Qg, j, -flux)
     Qcum = np.concatenate([np.zeros((n, 1)), np.cumsum(Qg, axis=1)], axis=1)
-    return np.diff(_interp_rows(zb, zc, Qcum), axis=1)
+    return np.diff(_interp_apply(g["to_cells"], Qcum), axis=1)
 
 
 def sideways_heat(sk, columns, dt):
     """The sideways conduction of one sub-step dt [s] as an explicit heat source [W per cell], the time average over
-    as many sub-cycles as keep dt k_max sum(w) / (rho c_p,min A) below SIDEWAYS_CFL (about 25 ms per cycle at 2 mm
-    spacing, spec 6.3); the cells' temperatures move between sub-cycles, the source being what `_conduct` then adds."""
+    as many sub-cycles as keep dt k_max sum(w) / (rho c_p,min A) below SIDEWAYS_CFL (spec 6.3); the cells' temperatures
+    move between sub-cycles, the source being what `_conduct` then adds. The smallest columns set the count: on the
+    100 mm sphere's 2 mm surface, dual areas of 1.26-4.59 mm2 (median 3.31) give a cycle of 3.8 ms, three to a 10 ms
+    sub-step, where the median column alone would need one (measured 2026-10-17). The sub-cycles share the step's
+    geometry, and the temperatures after the last are not computed (Asha, 2026-10-17: remaking the one in every
+    sub-cycle and computing the other took a third of the sideways heat's time; the result is the same to the last
+    bit)."""
     mat = sk.material
     valid = sk.valid
     dz = sk.dz()
     wsum = np.bincount(columns.edges.ravel(), weights=np.repeat(columns.conduct_weight, 2), minlength=sk.n)
     rate = float((mat.k_table.max() * wsum / (mat.rho * mat.cp_table.min() * sk.area)).max())
     cycles = max(1, int(math.ceil(dt * rate / SIDEWAYS_CFL)))
+    geometry = _sideways_geometry(sk, columns, dz)
     T, H = sk.T.copy(), sk.H.copy()
     total = np.zeros_like(T)
-    for _ in range(cycles):
-        Q = np.where(valid, _sideways_once(sk, columns, T, dz), 0.0)
+    for c in range(cycles):
+        Q = np.where(valid, _sideways_once(sk, columns, T, dz, geometry), 0.0)
         total += Q / cycles
-        if cycles > 1:
+        if c < cycles - 1:
             H = H + Q * dt / cycles
             T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
     return total
@@ -2624,10 +2717,10 @@ def sideways_heat(sk, columns, dt):
 
 ```
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 21 passed in the file (the steady two-dimensional field to
+- [ ] **Step 4: Run them to see them pass.** Expected: 22 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 374 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 375 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -2867,7 +2960,7 @@ def test_backends_agree_with_a_nodal_law(coarse_sphere_mesh):
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 376 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 377 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -3268,6 +3361,21 @@ def test_the_hot_plate_passes_level_2b():
         assert at(t_, "base_excess_K") <= skin_plate.HOT_BASE_TOL_K
     assert max(abs(x["mass_error"]) for x in rows) < 1e-12 and max(abs(x["energy_residual"]) for x in rows) < 1e-8
 
+
+
+def test_the_mass_is_measured_again_after_every_move(coarse_sphere_mesh):
+    """Asha, 2026-10-17: the body measures its 3D volume once per move, not at every call -- the trajectory asks at
+    every evaluation, and on the 100 mm sphere's fine band the measurements took 12 % of a flight's first steps. After
+    steps that move the corners the mass is still exactly the 3D model's volume and the skins' metal, as measured
+    afresh."""
+    b = make(coarse_sphere_mesh)
+    fresh = lambda: b.material.rho * b.mesh.volume() + b.skins.mass()
+    assert b.mass() == fresh()
+    V0 = b.mesh.volume()
+    for k in range(2):
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
+        assert b.mass() == fresh()
+    assert b.mesh.volume() != V0                                     # the corners moved
 ```
 
   and append to `tests/test_reentry_model_fenicsx.py`:
@@ -3464,6 +3572,7 @@ class SkinBody(ThermalBody):
         self.capped_ahead = 0                                # macro steps capped because a top was about to be non-rigid
         self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
         self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
+        self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
         self.energy0 = self.energy()
@@ -3483,8 +3592,10 @@ class SkinBody(ThermalBody):
         self._refresh_geometry()                       # the top surface: the bases moved out by the filled skins
 
     def _refresh_geometry(self):
-        """The columns, their areas and the top surface after the corners moved."""
+        """The columns, their areas and the top surface after the corners moved; the 3D model's volume is measured again
+        when next asked for (`mass`)."""
         mm = self.moving
+        self._volume = None
         self.columns.update(mm.mesh.points[mm.corners])
         self.skins.area = self.columns.area.copy()
         self.surface = columns_mod.CornerSurface.from_points(self.columns.top_points(self.skins.thickness()),
@@ -3688,7 +3799,13 @@ class SkinBody(ThermalBody):
 
     # -- what the coupled run reads ---------------------------------------------------------------------------------
     def mass(self, t=None):
-        return self.material.rho * self.mesh.volume() + self.skins.mass()
+        """The 3D model's metal and the skins'. The 3D volume changes only when the corners move, so it is measured once
+        per move (`_refresh_geometry`), not at every call: the trajectory asks at every evaluation of its right-hand
+        side, and on the 1.2 million elements of the 100 mm sphere's fine band those measurements took 12 % of the time
+        of a flight's first six steps (Asha, 2026-10-17)."""
+        if self._volume is None:
+            self._volume = self.mesh.volume()
+        return self.material.rho * self._volume + self.skins.mass()
 
     def energy(self):
         """Enthalpy held by the 3D model and the skins, and the deferred mismatch in transit to the 3D nodes [J]."""
@@ -3760,18 +3877,19 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", self._top0 - self.surface.points, self._normal0)
 ```
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 12 passed and 2 deselected (about 4 minutes: the heating test
+- [ ] **Step 5: Run them to see them pass.** Expected: 13 passed and 2 deselected (about 4 minutes: the heating test
   runs its 0.5 s steps as 1, 8 and 8 parts at 3 MW/m²;
   `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added at the final
   review, the damped, parts, fault-counter and part-cap tests with the amendment, the cap's look-ahead,
-  `test_the_step_in_which_a_top_becomes_non_rigid_is_capped_too`, on 2026-10-16; the tests of the repeat rules and of
+  `test_the_step_in_which_a_top_becomes_non_rigid_is_capped_too`, on 2026-10-16, and
+  `test_the_mass_is_measured_again_after_every_move` with option A on 2026-10-17; the tests of the repeat rules and of
   the move limit run with `part_max=None`, the conditions they study). The two deselected are the reference tier's
   (2026-10-14): `-m reference` runs `test_strong_melting_on_the_production_mesh` (6 MW/m² on the 2 mm production
   mesh, about 11 minutes) and `test_the_hot_plate_passes_level_2b` (about 3 minutes); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 388 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 390 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -4432,7 +4550,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 - [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 57 passed (the skin run about 40 s; two of them
   pin the refusal of an explicit `--prism-layers` with skins, added at the final review, two a bad fine band and one a bad fine zone).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 397 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 399 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -5589,10 +5707,11 @@ parts; then the fault counter redefined (fb4fe25), the melting part cap with the
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
 solid's density and the swelling checked at level 1, then the fine band under the surface (option 1), and on 2026-10-16
 the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead, and level 3's option in
-the Step 2 verification script. The unit tier went from 341 to 403 passed (1 skipped),
+the Step 2 verification script, and option A's exact savings (the mass measured once per move, the sideways
+sub-cycles sharing their geometry). The unit tier went from 341 to 405 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–146 the amendments'.
+build's measurements, 121–148 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and its look-ahead, the heating in time, the
@@ -5646,9 +5765,13 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 - **Coarse surface meshes under strong melting** (fact 131): the 4 mm test sphere is refused at the rim of a melting
   region at 6 MW/m², where a corner absorbs a 0.7 mm lens its neighbours do not have; not supported. The 2 mm
   production mesh follows the same case. A rim limit on absorption made the 4 mm sphere pass and is the fallback.
-- **The cost** (facts 125, 126 and 129): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and 1 041 s, 53 %
-  of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121 and 226 s
-  (82, 115 and 133 s under the one-repeat rule, which left heat parked).
+- **The cost** (facts 125, 126, 129, 147 and 148): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and
+  1 041 s, 53 % of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121
+  and 226 s (82, 115 and 133 s under the one-repeat rule, which left heat parked). The level-3 flight of the 100 mm
+  sphere, which never melts, took 14.6 h, 72 s a macro step: three fifths of a step in the skins' explicit sideways
+  conduction, held to three sub-cycles a sub-step by the smallest columns, and 12 % in measuring the mass. Option A
+  (2026-10-17) removes the repeated work without changing a result; the sideways conduction becomes implicit in
+  sub-plan 21.
 - **Agreement of the backends across a rebuild**: to round-off only up to the first rebuild, because the mesher answers
   round-off in the corner positions with a different mesh.
 - **Level 3** against SESAM (Task 10 Step 4).

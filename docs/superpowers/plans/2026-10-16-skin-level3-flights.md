@@ -82,8 +82,10 @@ grep -c "summary-only" "$CODE/analysis/reentry_model_thermal_verification.py"   
 ```
 
 `$CODE` is a complete, runnable copy of the model package with the skins: the tracked copy from which sub-plan 20 is
-generated, byte-identical to the laptop's build repository (`prototype/work-2026-10-12-skin-heat/code` at f6e12fb,
-which is git-ignored and so not in your clone). Every command below runs from `$CODE`, never from `$REPO`.
+generated, byte-identical to the laptop's build repository (`prototype/work-2026-10-12-skin-heat/code`, git-ignored and
+so not in your clone: f6e12fb when this runbook was written, f11e326 after option A of 2026-10-17, which makes a skin
+step about a third cheaper and changes no result to the last bit, so flights from either commit compare directly).
+Every command below runs from `$CODE`, never from `$REPO`.
 
 ## 4. The Python environment
 

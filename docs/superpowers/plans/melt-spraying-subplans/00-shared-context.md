@@ -2139,6 +2139,28 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      battery power, so indicative); the hot plate is unchanged (its top is non-rigid at the second step's start). With
      both, every tier passes (unit 397, FEniCSx 19, the reference tier's strong melting and hot plate), and levels 2 and
      2b pass at 0.05 and 0.5 s (spec §11.1).
+147. **Where a skin flight's time goes (2026-10-17).** Level 3's 100 mm flight (SESAM-equivalent heating, no melting,
+     733 macro steps, 2026-10-16/17) took 52 720 s (14.6 h), 71.9 s a macro step, against 32 s for the element model's
+     whole flight on the same laptop: 81 % in the skins, 4 % in the moves, 1.8 % in the 3D solve; peak memory 3.3 GB
+     against 0.5 GB. Profiled over its first six steps (380 s): the skins' sideways conduction 61 % (three explicit
+     sub-cycles a 10 ms sub-step, 2 400 evaluations, each making the depth grid's interpolation weights again), the
+     conduction through the depth 13 %, the trajectory's mass queries 12 % (187 in six steps, each measuring the volume
+     of the fine band's 1 211 188 elements), the 3D solve 4 %, the moves 4 %. The smallest columns set the sub-cycles:
+     dual areas of 1.26-4.59 mm² (median 3.31) give a stable cycle of 3.8 ms (236 1/s at the material's highest
+     conductivity, 182.6 W/m/K, and lowest heat capacity, 877.5 J/kg/K, which come from different temperatures); 982 of
+     the 9 417 columns need more than one cycle and two more than two, and with the cells' own properties it is still
+     three at 300 K, two from about 900 K.
+148. **Option A (Asha, 2026-10-17).** `SkinBody.mass` measures the 3D volume once per move (cleared in
+     `_refresh_geometry`), and the sub-cycles of `skin.sideways_heat` share the step's geometry (`_sideways_geometry`: the
+     depth grid clipped to each column, each column's share of each bin, the depth each edge shares, and the
+     interpolation weights, `_interp_weights` and `_interp_apply`), the temperatures after the last sub-cycle not
+     computed. The six steps take 254 s (235 s of processor time) against 385 s (353 s), 34 % (33 %) less, every physical
+     column of the history identical to the last bit; two more runs under the laptop's background load (the app and
+     Spotlight using about two cores) took 284 and 297 s. A sparse matrix in place of `np.add.at` would save 10 s more
+     but changes the round-off (2e-15 relative), and was left out. After option A the sideways conduction is still 58 %
+     of a profiled step and the depth conduction 18 %; sub-plan 21 makes the sideways conduction implicit. A test pins
+     the sub-cycled heat to the build's routine to the last bit over 25 sub-cycles, another the mass to a fresh
+     measurement after every move; unit tier 405 passed (1 skipped), FEniCSx 19.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

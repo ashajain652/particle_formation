@@ -346,3 +346,18 @@ def test_the_hot_plate_passes_level_2b():
         assert at(t_, "base_excess_K") <= skin_plate.HOT_BASE_TOL_K
     assert max(abs(x["mass_error"]) for x in rows) < 1e-12 and max(abs(x["energy_residual"]) for x in rows) < 1e-8
 
+
+
+def test_the_mass_is_measured_again_after_every_move(coarse_sphere_mesh):
+    """Asha, 2026-10-17: the body measures its 3D volume once per move, not at every call -- the trajectory asks at
+    every evaluation, and on the 100 mm sphere's fine band the measurements took 12 % of a flight's first steps. After
+    steps that move the corners the mass is still exactly the 3D model's volume and the skins' metal, as measured
+    afresh."""
+    b = make(coarse_sphere_mesh)
+    fresh = lambda: b.material.rho * b.mesh.volume() + b.skins.mass()
+    assert b.mass() == fresh()
+    V0 = b.mesh.volume()
+    for k in range(2):
+        b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
+        assert b.mass() == fresh()
+    assert b.mesh.volume() != V0                                     # the corners moved

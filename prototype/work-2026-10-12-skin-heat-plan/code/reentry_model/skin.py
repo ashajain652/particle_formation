@@ -611,15 +611,24 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
 _SPAN = 1.0                       # m, larger than any column: separates the rows of a flattened row-wise search
 
 
-def _interp_rows(x, xp, fp):
-    """Row-wise linear interpolation of fp (n, q) given at non-decreasing xp (n, q), at x (n, p), held at the ends."""
+def _interp_weights(x, xp):
+    """Row-wise linear interpolation at x (n, p) of a function given at non-decreasing xp (n, q), held at the ends, as
+    (rows, index, fraction) for `_interp_apply`: they depend on the abscissae only, so the sub-cycles of a sideways step,
+    whose cells keep their thicknesses, share them."""
     n, q = xp.shape
     off = (np.arange(n) * _SPAN)[:, None]
     i = np.searchsorted((xp + off).ravel(), (x + off).ravel(), side="right").reshape(x.shape) - 1
     i = np.clip(i - (np.arange(n) * q)[:, None], 0, q - 2)
     r = np.arange(n)[:, None]
-    x0, x1, f0, f1 = xp[r, i], xp[r, i + 1], fp[r, i], fp[r, i + 1]
+    x0, x1 = xp[r, i], xp[r, i + 1]
     t = np.clip(np.divide(x - x0, x1 - x0, out=np.zeros_like(x, dtype=float), where=x1 > x0), 0.0, 1.0)
+    return r, i, t
+
+
+def _interp_apply(weights, fp):
+    """fp (n, q), given at the abscissae `weights` were made from, interpolated at their points."""
+    r, i, t = weights
+    f0, f1 = fp[r, i], fp[r, i + 1]
     return f0 + t * (f1 - f0)
 
 
@@ -632,48 +641,66 @@ def depth_grid(settings, depth):
     return np.array(z)
 
 
-def _sideways_once(sk, columns, T, dz):
-    """Sideways heat [W per cell] at temperatures T: each column's cells averaged onto the depth grid, every surface
-    edge exchanging k w l (T_j - T_i) in every bin both columns reach (k the mean of the two bins' conductivities, w the
-    edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
-    cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
-    exact for a field linear along the surface where neighbouring columns have the same cells."""
-    n = T.shape[0]
+def _sideways_geometry(sk, columns, dz):
+    """What every sub-cycle of a sideways step shares, from the cells' thicknesses dz alone: the cells' boundaries from
+    the top, each column's share of each bin of the depth grid, the depth each edge's two columns share in each bin,
+    and the interpolation weights from cells to bins and back."""
+    n = dz.shape[0]
     zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
     H = zb[:, -1]
     zg = depth_grid(sk.settings, float(H.max()))
     zc = np.minimum(zg[None, :], H[:, None])                                        # the grid clipped to each column
-    C = np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1)      # integral of T from the top
-    Cg = _interp_rows(zc, zb, C)
     length = np.diff(zc, axis=1)                                                    # each column's share of each bin
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    return {"length": length, "shared": np.minimum(length[i], length[j]),
+            "to_bins": _interp_weights(zc, zb), "to_cells": _interp_weights(zb, zc)}
+
+
+def _sideways_once(sk, columns, T, dz, geometry=None):
+    """Sideways heat [W per cell] at temperatures T: each column's cells averaged onto the depth grid, every surface
+    edge exchanging k w l (T_j - T_i) in every bin both columns reach (k the mean of the two bins' conductivities, w the
+    edge's cotangent weight, l the depth the two columns share in the bin), and each column's bin heat given back to its
+    cells in proportion to their overlap with the bin. Antisymmetric edge by edge, so the total is zero to round-off;
+    exact for a field linear along the surface where neighbouring columns have the same cells. `geometry`: the step's
+    `_sideways_geometry`, made here if not given."""
+    n = T.shape[0]
+    g = _sideways_geometry(sk, columns, dz) if geometry is None else geometry
+    C = np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1)      # integral of T from the top
+    Cg = _interp_apply(g["to_bins"], C)
+    length = g["length"]
     Tbar = np.divide(np.diff(Cg, axis=1), length, out=np.zeros_like(length), where=length > 0.0)
     i, j = columns.edges[:, 0], columns.edges[:, 1]
     k = sk.props.k(Tbar)
-    flux = (0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * np.minimum(length[i], length[j])
-            * (Tbar[j] - Tbar[i]))
+    flux = 0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * g["shared"] * (Tbar[j] - Tbar[i])
     Qg = np.zeros_like(length)
     np.add.at(Qg, i, flux)
     np.add.at(Qg, j, -flux)
     Qcum = np.concatenate([np.zeros((n, 1)), np.cumsum(Qg, axis=1)], axis=1)
-    return np.diff(_interp_rows(zb, zc, Qcum), axis=1)
+    return np.diff(_interp_apply(g["to_cells"], Qcum), axis=1)
 
 
 def sideways_heat(sk, columns, dt):
     """The sideways conduction of one sub-step dt [s] as an explicit heat source [W per cell], the time average over
-    as many sub-cycles as keep dt k_max sum(w) / (rho c_p,min A) below SIDEWAYS_CFL (about 25 ms per cycle at 2 mm
-    spacing, spec 6.3); the cells' temperatures move between sub-cycles, the source being what `_conduct` then adds."""
+    as many sub-cycles as keep dt k_max sum(w) / (rho c_p,min A) below SIDEWAYS_CFL (spec 6.3); the cells' temperatures
+    move between sub-cycles, the source being what `_conduct` then adds. The smallest columns set the count: on the
+    100 mm sphere's 2 mm surface, dual areas of 1.26-4.59 mm2 (median 3.31) give a cycle of 3.8 ms, three to a 10 ms
+    sub-step, where the median column alone would need one (measured 2026-10-17). The sub-cycles share the step's
+    geometry, and the temperatures after the last are not computed (Asha, 2026-10-17: remaking the one in every
+    sub-cycle and computing the other took a third of the sideways heat's time; the result is the same to the last
+    bit)."""
     mat = sk.material
     valid = sk.valid
     dz = sk.dz()
     wsum = np.bincount(columns.edges.ravel(), weights=np.repeat(columns.conduct_weight, 2), minlength=sk.n)
     rate = float((mat.k_table.max() * wsum / (mat.rho * mat.cp_table.min() * sk.area)).max())
     cycles = max(1, int(math.ceil(dt * rate / SIDEWAYS_CFL)))
+    geometry = _sideways_geometry(sk, columns, dz)
     T, H = sk.T.copy(), sk.H.copy()
     total = np.zeros_like(T)
-    for _ in range(cycles):
-        Q = np.where(valid, _sideways_once(sk, columns, T, dz), 0.0)
+    for c in range(cycles):
+        Q = np.where(valid, _sideways_once(sk, columns, T, dz, geometry), 0.0)
         total += Q / cycles
-        if cycles > 1:
+        if c < cycles - 1:
             H = H + Q * dt / cycles
             T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
     return total

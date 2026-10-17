@@ -31,8 +31,8 @@ build stage 2). Sub-plans 21 (flow) and 22 (spraying and the flight) build on th
 (sub-plan 19 built, sub-plans 11 and 12's reference data and loader). This document is generated from that copy by
 `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py`, which replays the tasks below in order on a copy of the base —
 every diff through `patch`, every file and appended section as written here, the renames and the reference extraction —
-and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 403 passed (1 skipped, no
-failures; 397 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
+and checks that the result is the tested copy byte for byte. The unit tier goes from 341 to 405 passed (1 skipped, no
+failures; 399 by Task 8, six more in Task 10 Step 4); the FEniCSx tier from 17 to 19. Measurements quoted were each made once, on the case named, on 2026-10-12.
 
 **Built** 2026-10-12, subagent-driven, in `prototype/work-2026-10-12-skin-heat/code/` (branch `skin-heat`,
 70ecbdd..f5d6633), then **amended after the build** (a45f204, fb4fe25, d1b5636, and on 2026-10-14 the absorption rule
@@ -507,8 +507,13 @@ Each column's cells are averaged onto a common depth grid (spaced by the cell ta
 k w l (T_j − T_i) in each bin both columns reach (k the mean of the two bins' conductivities, w the cotangent weight,
 l the depth they share); each column's bin heat goes back to its cells by their overlap with the bin. That is
 antisymmetric edge by edge — the total is zero to round-off — and exact for a field linear along the surface. The
-explicit step is sub-cycled to keep dt k_max Σw / (ρ c_p,min A) below `SIDEWAYS_CFL`; on 2 mm spacing one cycle covers
-about 25 ms, so the default 10 ms sub-step needs one.
+explicit step is sub-cycled to keep dt k_max Σw / (ρ c_p,min A) below `SIDEWAYS_CFL`. The smallest columns set it: on
+the 100 mm sphere's 2 mm surface, dual areas of 1.26–4.59 mm² (median 3.31) make a cycle 3.8 ms, three to the default
+10 ms sub-step, where the median column alone would need one (measured 2026-10-17; planning had assumed about 25 ms
+per cycle). The sub-cycles share the step's depth grid and interpolation weights, which depend on the cells'
+thicknesses only, and the temperatures after the last are not computed (Asha, 2026-10-17, option A: remaking them in
+every sub-cycle took a third of the sideways heat's time on the level-3 flight; a test pins the heat to the build's to
+the last bit). Sub-plan 21 makes the sideways conduction implicit (Asha, 2026-10-17).
 
 - [ ] **Step 1: Append the tests**
 
@@ -520,10 +525,10 @@ about 25 ms, so the default 10 ms sub-step needs one.
 
 {{SKIN_T5}}
 
-- [ ] **Step 4: Run them to see them pass.** Expected: 21 passed in the file (the steady two-dimensional field to
+- [ ] **Step 4: Run them to see them pass.** Expected: 22 passed in the file (the steady two-dimensional field to
   3·10⁻¹³ K).
 
-- [ ] **Step 5: Unit tier and commit.** Expected 374 passed, 1 skipped.
+- [ ] **Step 5: Unit tier and commit.** Expected 375 passed, 1 skipped.
 
 ```bash
 git add reentry_model/skin.py tests/test_reentry_model_skin.py
@@ -564,7 +569,7 @@ git commit -m "Layered skins: explicit sideways conduction between columns, cons
 
 - [ ] **Step 4: Run them to see them pass.** Expected: the thermal module 20 passed; FEniCSx `-k nodal_law` 1 passed.
 
-- [ ] **Step 5: Both tiers and commit.** Expected unit tier 376 passed, 1 skipped; FEniCSx 18 passed.
+- [ ] **Step 5: Both tiers and commit.** Expected unit tier 377 passed, 1 skipped; FEniCSx 18 passed.
 
 ```bash
 git add reentry_model/thermal tests/test_reentry_model_thermal.py tests/test_reentry_model_fenicsx.py
@@ -632,18 +637,19 @@ top surface (the bases moved out by the skins' thicknesses).
 
 {{SKINBODY}}
 
-- [ ] **Step 5: Run them to see them pass.** Expected: 12 passed and 2 deselected (about 4 minutes: the heating test
+- [ ] **Step 5: Run them to see them pass.** Expected: 13 passed and 2 deselected (about 4 minutes: the heating test
   runs its 0.5 s steps as 1, 8 and 8 parts at 3 MW/m²;
   `test_the_absorption_depth_is_the_excess_over_the_gradient_along_the_normal_and_is_capped` was added at the final
   review, the damped, parts, fault-counter and part-cap tests with the amendment, the cap's look-ahead,
-  `test_the_step_in_which_a_top_becomes_non_rigid_is_capped_too`, on 2026-10-16; the tests of the repeat rules and of
+  `test_the_step_in_which_a_top_becomes_non_rigid_is_capped_too`, on 2026-10-16, and
+  `test_the_mass_is_measured_again_after_every_move` with option A on 2026-10-17; the tests of the repeat rules and of
   the move limit run with `part_max=None`, the conditions they study). The two deselected are the reference tier's
   (2026-10-14): `-m reference` runs `test_strong_melting_on_the_production_mesh` (6 MW/m² on the 2 mm production
   mesh, about 11 minutes) and `test_the_hot_plate_passes_level_2b` (about 3 minutes); FEniCSx `-k skin_body` 1 passed (one 0.5 s step,
   5 parts, no rebuild: the backends agree to round-off, mass 8e-12, removed mass 4e-10; across a rebuild they do not,
   because the mesher answers round-off in the corner positions with a different mesh).
 
-- [ ] **Step 6: Both tiers and commit.** Expected unit tier 388 passed, 1 skipped; FEniCSx 19 passed.
+- [ ] **Step 6: Both tiers and commit.** Expected unit tier 390 passed, 1 skipped; FEniCSx 19 passed.
 
 ```bash
 git add reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_fenicsx.py
@@ -696,7 +702,7 @@ git commit -m "Skin body: skins on every corner from time zero, the trial and re
 - [ ] **Step 4: Run them to see them pass.** Expected: the CLI module 57 passed (the skin run about 40 s; two of them
   pin the refusal of an explicit `--prism-layers` with skins, added at the final review, two a bad fine band and one a bad fine zone).
 
-- [ ] **Step 5: Both tiers.** Expected unit tier 397 passed, 1 skipped; FEniCSx 19 passed. (The history gains
+- [ ] **Step 5: Both tiers.** Expected unit tier 399 passed, 1 skipped; FEniCSx 19 passed. (The history gains
   `step_parts`, the parts the last macro step took, with the amendment.)
 
 - [ ] **Step 6: The element model is unchanged.** Run the same short melting flight from the base and from the work
@@ -1016,10 +1022,11 @@ parts; then the fault counter redefined (fb4fe25), the melting part cap with the
 2026-10-14 the absorption rule with the hot plate as level 2b, then the skins' swelling setting: levels 2 and 2b at the
 solid's density and the swelling checked at level 1, then the fine band under the surface (option 1), and on 2026-10-16
 the skins' 0.8 mm minimum with a 0.4 mm fine zone (option B′) and the part cap's look-ahead, and level 3's option in
-the Step 2 verification script. The unit tier went from 341 to 403 passed (1 skipped),
+the Step 2 verification script, and option A's exact savings (the mass measured once per move, the sideways
+sub-cycles sharing their geometry). The unit tier went from 341 to 405 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–146 the amendments'.
+build's measurements, 121–148 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and its look-ahead, the heating in time, the
@@ -1073,9 +1080,13 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 - **Coarse surface meshes under strong melting** (fact 131): the 4 mm test sphere is refused at the rim of a melting
   region at 6 MW/m², where a corner absorbs a 0.7 mm lens its neighbours do not have; not supported. The 2 mm
   production mesh follows the same case. A rim limit on absorption made the 4 mm sphere pass and is the fallback.
-- **The cost** (facts 125, 126 and 129): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and 1 041 s, 53 %
-  of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121 and 226 s
-  (82, 115 and 133 s under the one-repeat rule, which left heat parked).
+- **The cost** (facts 125, 126, 129, 147 and 148): the melting 0.5 s steps on the 100 mm sphere took 123, 307 and
+  1 041 s, 53 % of it on parts rejected for their moves; with parts of at most 0.0625 s while melting they take 122, 121
+  and 226 s (82, 115 and 133 s under the one-repeat rule, which left heat parked). The level-3 flight of the 100 mm
+  sphere, which never melts, took 14.6 h, 72 s a macro step: three fifths of a step in the skins' explicit sideways
+  conduction, held to three sub-cycles a sub-step by the smallest columns, and 12 % in measuring the mass. Option A
+  (2026-10-17) removes the repeated work without changing a result; the sideways conduction becomes implicit in
+  sub-plan 21.
 - **Agreement of the backends across a rebuild**: to round-off only up to the first rebuild, because the mesher answers
   round-off in the corner positions with a different mesh.
 - **Level 3** against SESAM (Task 10 Step 4).
