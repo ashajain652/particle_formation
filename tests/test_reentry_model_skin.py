@@ -404,3 +404,64 @@ def test_a_sub_step_beyond_the_explicit_limit_is_sub_cycled_and_stays_bounded():
     T = mat.temperature_from_enthalpy(sk.H[sk.valid] / sk.m[sk.valid])
     assert sk.energy() == pytest.approx(E0, rel=1e-13)
     assert T.min() >= 400.0 - 1e-6 and T.max() <= 800.0 + 1e-6
+
+
+def _sideways_as_built(sk, columns, dt):
+    """The sideways heat as sub-plan 20 built it (before 2026-10-17): the depth grid, the interpolation weights and the
+    temperatures made again in every sub-cycle, the last included."""
+    def interp(x, xp, fp):
+        n, q = xp.shape
+        off = (np.arange(n) * skin._SPAN)[:, None]
+        i = np.searchsorted((xp + off).ravel(), (x + off).ravel(), side="right").reshape(x.shape) - 1
+        i = np.clip(i - (np.arange(n) * q)[:, None], 0, q - 2)
+        r = np.arange(n)[:, None]
+        x0, x1, f0, f1 = xp[r, i], xp[r, i + 1], fp[r, i], fp[r, i + 1]
+        t = np.clip(np.divide(x - x0, x1 - x0, out=np.zeros_like(x, dtype=float), where=x1 > x0), 0.0, 1.0)
+        return f0 + t * (f1 - f0)
+
+    def once(T, dz):
+        n = T.shape[0]
+        zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)
+        H = zb[:, -1]
+        zc = np.minimum(skin.depth_grid(sk.settings, float(H.max()))[None, :], H[:, None])
+        Cg = interp(zc, zb, np.concatenate([np.zeros((n, 1)), np.cumsum(T * dz, axis=1)], axis=1))
+        length = np.diff(zc, axis=1)
+        Tbar = np.divide(np.diff(Cg, axis=1), length, out=np.zeros_like(length), where=length > 0.0)
+        i, j = columns.edges[:, 0], columns.edges[:, 1]
+        k = sk.props.k(Tbar)
+        flux = (0.5 * (k[i] + k[j]) * columns.conduct_weight[:, None] * np.minimum(length[i], length[j])
+                * (Tbar[j] - Tbar[i]))
+        Qg = np.zeros_like(length)
+        np.add.at(Qg, i, flux)
+        np.add.at(Qg, j, -flux)
+        return np.diff(interp(zb, zc, np.concatenate([np.zeros((n, 1)), np.cumsum(Qg, axis=1)], axis=1)), axis=1)
+
+    mat, valid, dz = sk.material, sk.valid, sk.dz()
+    wsum = np.bincount(columns.edges.ravel(), weights=np.repeat(columns.conduct_weight, 2), minlength=sk.n)
+    rate = float((mat.k_table.max() * wsum / (mat.rho * mat.cp_table.min() * sk.area)).max())
+    cycles = max(1, int(np.ceil(dt * rate / skin.SIDEWAYS_CFL)))
+    T, H, total = sk.T.copy(), sk.H.copy(), np.zeros_like(sk.T)
+    for _ in range(cycles):
+        Q = np.where(valid, once(T, dz), 0.0)
+        total += Q / cycles
+        if cycles > 1:
+            H = H + Q * dt / cycles
+            T = np.where(valid, mat.temperature_from_enthalpy(np.divide(H, sk.m, out=np.zeros_like(H), where=sk.m > 0.0)), T)
+    return total, cycles
+
+
+def test_the_sub_cycles_share_their_geometry_and_give_the_heat_as_built_to_the_last_bit():
+    """Asha, 2026-10-17: the sub-cycles of a sideways step share its depth grid and interpolation weights, and the
+    temperatures after the last are not computed -- a third of the sideways heat's time on the 100 mm sphere. Columns of
+    different depths, every cell at its own temperature, over several sub-cycles: the heat is the build's exactly."""
+    mat = scheil()
+    sk, col, pts, _ = grid_skins(mat, n=6)
+    rng = np.random.default_rng(7)
+    sk.fill(skin.minimum_mass(mat, sk.area, sk.settings) * rng.uniform(1.0, 2.5, col.n), rng.uniform(450.0, 850.0, col.n))
+    sk.regrid()
+    sk.T = np.where(sk.valid, sk.T + rng.normal(0.0, 15.0, sk.T.shape), sk.T)
+    sk.H = sk.m * mat.enthalpy(sk.T)
+    for dt in (1e-4, 0.05):
+        reference, cycles = _sideways_as_built(sk, col, dt)
+        np.testing.assert_array_equal(skin.sideways_heat(sk, col, dt), reference)
+    assert cycles >= 3                                               # the second dt is sub-cycled
