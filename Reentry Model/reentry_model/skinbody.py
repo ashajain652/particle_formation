@@ -139,6 +139,7 @@ class SkinBody(ThermalBody):
         self.capped_ahead = 0                                # macro steps capped because a top was about to be non-rigid
         self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
         self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
+        self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
         self.energy0 = self.energy()
@@ -158,8 +159,10 @@ class SkinBody(ThermalBody):
         self._refresh_geometry()                       # the top surface: the bases moved out by the filled skins
 
     def _refresh_geometry(self):
-        """The columns, their areas and the top surface after the corners moved."""
+        """The columns, their areas and the top surface after the corners moved; the 3D model's volume is measured again
+        when next asked for (`mass`)."""
         mm = self.moving
+        self._volume = None
         self.columns.update(mm.mesh.points[mm.corners])
         self.skins.area = self.columns.area.copy()
         self.surface = columns_mod.CornerSurface.from_points(self.columns.top_points(self.skins.thickness()),
@@ -363,7 +366,13 @@ class SkinBody(ThermalBody):
 
     # -- what the coupled run reads ---------------------------------------------------------------------------------
     def mass(self, t=None):
-        return self.material.rho * self.mesh.volume() + self.skins.mass()
+        """The 3D model's metal and the skins'. The 3D volume changes only when the corners move, so it is measured once
+        per move (`_refresh_geometry`), not at every call: the trajectory asks at every evaluation of its right-hand
+        side, and on the 1.2 million elements of the 100 mm sphere's fine band those measurements took 12 % of the time
+        of a flight's first six steps (Asha, 2026-10-17)."""
+        if self._volume is None:
+            self._volume = self.mesh.volume()
+        return self.material.rho * self._volume + self.skins.mass()
 
     def energy(self):
         """Enthalpy held by the 3D model and the skins, and the deferred mismatch in transit to the 3D nodes [J]."""
