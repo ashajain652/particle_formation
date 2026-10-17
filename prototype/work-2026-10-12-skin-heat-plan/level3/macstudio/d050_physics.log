@@ -1,0 +1,25 @@
+
+| case | mode | surface | Q_conv max (of peak) | Q_conv max (continuum, point-wise) | integrated heat (end of hypersonic) | integrated heat (end) | max |dT_eq| | radiated max (of peak) | peak surface T | runtime | verdict | skins |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| d050 | physics | elements | 25.96% | 35.42% | -22.94% | -22.98% (ratio 0.770) | 351.5 K (15.96%) | 40.60% | 2494 K at 239 s | 12 s, 1118 steps, 2.0 it/step | reported |  |
+| d050 | physics | skin | 25.82% | 33.69% | -22.83% | -22.86% (ratio 0.771) | 353.4 K (15.73%) | 40.44% | 2497 K at 240 s | 57206 s, 1118 steps, 2.2 it/step | reported | 2367 columns, 0 rebuilds, 835 repeats, 0 base faults; 52492 s in the skins, 648 s in the 3D solve, 51.2 s a step |
+
+physics-mode power errors are differences from SESAM's surface-averaged model, not thresholds
+    68366.26 real     47320.15 user      9692.03 sys
+          2797125632  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              194456  page reclaims
+                  19  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  40  voluntary context switches
+            10021281  involuntary context switches
+     505952413248199  instructions retired
+     119756083168365  cycles elapsed
+           548390472  peak memory footprint

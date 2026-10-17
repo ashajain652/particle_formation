@@ -1,0 +1,10 @@
+Apple M5 Max
+6
+18
+68719476736
+ProductName:		macOS
+ProductVersion:		27.0
+BuildVersion:		26A428
+3.12.15 (main, Oct  6 2026, 13:29:44) [Clang 21.1.8 ]
+2.5.3 1.18.1 12.0.2 4.15.2 5.3.0 3.2.0
+97475f7e39c51e616b661ab4de67bd207ae39279

@@ -1,0 +1,3 @@
+d100 physics pid 88384  started 2026-10-16 18:53:12
+d050 sesam pid 88390  started 2026-10-16 18:53:13
+d050 physics pid 88394  started 2026-10-16 18:53:14
