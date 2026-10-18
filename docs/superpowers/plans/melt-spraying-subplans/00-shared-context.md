@@ -2182,6 +2182,28 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      have a quarter of the columns (2 367) at about 70 % of the cost a step. The Mac Studio slept about 3.2 h mid-run
      (11 390 s between each flight's elapsed and processor time), which pauses a flight and changes nothing. Results in
      `prototype/work-2026-10-12-skin-heat-plan/level3/` (`laptop/`, `macstudio/`, the joint `summary_skin.md`).
+150. **The implicit sideways conduction, designs (a) and (b) (2026-10-17/18).** Spikes in
+     `prototype/work-2026-10-12-skin-heat/measure/implicit/`, on the 100 mm level-3 sphere (9 417 columns, 555 604 cells,
+     58 depth bins). Design (b), the sideways step split from the depth solve and solved by conjugate gradients on the
+     bins: the first six steps 200 s (171 s of processor time) against 254 s (235 s) for the explicit exchange after
+     option A, 5.4 iterations a sub-step; over the first 20 steps under physics heating the hottest surface within
+     0.06 K of the explicit exchange's; on a warm spot (100 K, 6 mm, 2 mm columns) 0.32 K from a 0.5 ms explicit run at
+     10 ms sub-steps against the explicit exchange's 0.29 K, growing in proportion to the sub-step (1.5 K at 50 ms).
+     Design (a), the exchange coupled into each sub-step's Newton iteration (`skin._coupled_solve`, conjugate gradients
+     preconditioned by the columns' tridiagonal solves): each coupled solve stopped at 10⁻³ of its right-hand side takes
+     1.13 iterations from the columns' own solve; the six steps 308 s as first built, 260 s (224 s of processor time,
+     measured under a passing load average of 42) once the line search takes the sideways heat from the solve's
+     products and the geometry is reused while the cells keep their thicknesses, against 254 s (235 s) explicit; no
+     history column moves by more than 6e-9 between solves stopped at 10⁻², 10⁻³ and 10⁻⁶, the last 61 % dearer. Asha
+     chose (a) (2026-10-18): one backward-Euler sub-step, no splitting error. Its tests: the map sums to zero and is
+     symmetric and negative semi-definite on random-depth sphere skins; a warm spot (100 K, 4 mm, 2 mm columns) within
+     the grid's own 1.29 K of the exact solution, its time errors at 40, 20 and 10 ms 2.79, 1.32 and 0.57 K against a
+     2.5 ms run (first order); a 400/800 K checkerboard on 1 mm columns smoothed to 622-629 K in one 0.2 s sub-step,
+     its heat kept to 3.5e-13; unit tier 409 passed (1 skipped), FEniCSx 19, the reference tier's strong melting and
+     hot plate. Level 2 with (a) (the four plates side by side, each once): all pass, no judged number more than 0.2
+     points from the explicit exchange's -- the cold plate +3.7, +0.2, -0.9 % at 0.05 s and +3.2, +0.5, -0.9 % at 0.5 s,
+     the hot plate -1.5, -0.8 % and -3.0, -1.1 % at 1.5 and 2.0 s, flowing depth within 1.1 %, base at most 0.09 K above
+     T_rigid, books to 2.2e-10.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

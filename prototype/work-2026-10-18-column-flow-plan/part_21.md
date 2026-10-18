@@ -1,0 +1,283 @@
+# Sub-plan 21 — flow in the columns (stage 3 of the layered-skin design)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Task 1 (2026-10-18).** Tasks 2–8
+> are still the scoped outline at the end; each is written out with tested code in turn, the same way, and this
+> document regenerated.
+
+**Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
+depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
+pressures, dragged by the gas shear at the top and held at the rigid front; mass, momentum and heat cross between
+neighbouring columns layer by layer.
+
+**Architecture:** Everything happens inside the skin body's existing sub-steps; the 3D model, the moving mesh and the
+coupled run are unchanged. Task 1 first makes the sideways conduction implicit: one coupled solve per Newton iteration
+of each sub-step, the columns' tridiagonal depth solves as its preconditioner. The flow tasks then give the cells a
+velocity, couple it through the depth by an implicit tridiagonal viscous solve per column, and carry mass, enthalpy and
+momentum between neighbouring columns in the same implicit sideways solve.
+
+**Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy (sparse matrices; the conjugate gradients are written out),
+scikit-fem for the 3D model, gmsh for its rebuilds.
+
+**Spec:** `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` — §6.3 (heat: the sideways conduction
+made implicit, amended 2026-10-17), §6.4 (flow), §6.5 (sideways exchange and the arrival rule), §11 (build stage 3;
+level 1's flow and Rayleigh–Taylor checks; level 2 with flow on), §12 (the risks this stage carries: capillary stiffness
+at the grid scale, the flowing-layer coordinate, momentum between tangent planes).
+
+**Builds on:** sub-plan 20 — the columns, the packed cells (with their unused velocity), the surface gradient and
+curvature operators, and the base operations. Build stage 2 is complete: levels 1, 2 and 3 pass (fact 149).
+
+**How this plan's code is checked.** Every code and diff block below was written and tested in a planning copy,
+`prototype/work-2026-10-18-column-flow-plan/code/`, made from sub-plan 20's tested copy,
+`prototype/work-2026-10-12-skin-heat-plan/code/`, as committed at 1d01be5 (identical to the skins build's f11e326,
+option A included). This document is generated from it by `prototype/work-2026-10-18-column-flow-plan/make_plan21.py`,
+which replays the tasks written so far on a copy of the base — every diff through `patch` — and checks that the result
+is the tested copy byte for byte. Never edit this document by hand: change `part_21.md` or the tested copy, and
+regenerate.
+
+## Global Constraints
+
+- Work in a fresh work copy, `prototype/work-2026-10-18-column-flow/code/`: a git repository of its own, ignored by the
+  outer one, cloned from the skins build (`prototype/work-2026-10-12-skin-heat/code/`, branch `skin-heat` at f11e326).
+  Commit there after every task. Never edit `prototype/proto3/`, the package `reentry_model/` at the repo root, the
+  specs or the generated plans. Step 3 code stays in the prototype until the skyscrapers architecture is verified
+  (Asha, 2026-10-12).
+- Interpreters: `PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python`;
+  `FX=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/python`, run with
+  `FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang`.
+- Unit tier, run in the work copy: `"$PY" -m pytest -m "not drama and not reference" -q --ignore=tests/test_integration_drama.py --ignore=tests/test_sphere_reentry.py --ignore=tests/test_sphere_sweep.py`.
+  Baseline at f11e326: 405 passed, 1 skipped. Record the counts after every task; no failure is acceptable.
+- FEniCSx tier: `FI_PROVIDER=tcp CC=... "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q`. Baseline 19 passed.
+- `--surface-model elements` (the default) is unchanged by this sub-plan.
+- Books: in every skin test and run, the mass is closed to 1e-12 and the energy balance residual is below 1e-8.
+- Exit codes: a Newton or coupled solve that does not converge raises `RuntimeError` (exit code 1 at the command line);
+  bad settings exit 2.
+- Long runs under `caffeinate -i`, on mains power, the power source logged at start and end (`pmset -g batt`).
+- Quote every path: the repository's path contains a space (`University Documents /MIT`).
+
+## Review Focus
+
+1. **A coupled solve that cannot converge** — it stops the run (exit code 1), never a sub-step taken on an unconverged
+   Newton step. Pinned by `test_a_coupled_solve_that_cannot_converge_raises` (Task 1).
+2. **Cells that change between sub-steps** (draws, removal, a regrid) — a sub-step's sideways map is rebuilt, never the
+   last one's geometry reused. Pinned by
+   `test_a_sideways_map_reuses_the_last_geometry_only_while_the_cells_keep_their_thicknesses` (Task 1).
+3. **Loosely converged coupled solves** — the inexact Newton steps reach the answer tight ones give. Pinned by
+   `test_the_inexact_coupled_solves_reach_the_tight_solve_s_answer` (Task 1).
+4. **Neighbouring columns of very different depths** — a melting column beside one at its minimum: the exchange still
+   sums to zero and stays symmetric. Pinned by `test_the_sideways_map_sums_to_zero_between_columns_of_any_depth` and
+   `test_the_sideways_map_is_symmetric_and_negative_semi_definite` (Task 1).
+5. **A sub-step far beyond the old explicit limit** (a finer surface, smaller columns) — bounded, the heat kept. Pinned
+   by `test_a_sub_step_far_beyond_the_explicit_limit_stays_bounded_and_keeps_its_heat` (Task 1).
+
+## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
+
+> Design of record: spec §6.3 as amended on 2026-10-17; facts 147 and 148. **Write and build this task first, before
+> the flow**: it is heat only, so the plates verify it with flow off before anything else changes. **Decided
+> (Asha, 2026-10-18): design (a)**, measured against (b) on the 100 mm sphere (fact 150); written out as Task 1 below,
+> where the steady two-dimensional test is replaced by the map's symmetry and definiteness and the warm spot's
+> convergence, which test the same exchange more directly.
+
+**Why.** Sub-plan 20 conducts heat between neighbouring columns explicitly (`skin.sideways_heat`), sub-cycled inside each
+sub-step to stay below the explicit stability limit, and the smallest columns set that limit: on the 100 mm sphere's
+2 mm surface the columns' dual areas range from 1.26 to 4.59 mm² (median 3.31), so a cycle is 3.8 ms and every 10 ms
+sub-step takes three, where the median column alone would need one. On the level-3 flight of the 100 mm sphere (no
+melting; 14.6 h, 72 s a macro step) the sideways conduction took three fifths of a step, against an eighth for the
+conduction through the depth that the skins exist to resolve (fact 147). Option A (fact 148) removed the work the
+sub-cycles repeated without changing a result; what remains is the sub-cycling itself, which an explicit step cannot do
+without. Task 6's transport of mass, enthalpy and momentum, layer by layer on the same depth matching, is already
+linearly implicit (spec §6.5); the conduction joins it.
+
+**What.** Backward Euler for the sideways conduction, so a sub-step has no sideways stability limit and no sub-cycles.
+The code-level plan chooses, with a measurement of each on the 100 mm sphere's first six steps, between:
+
+- (a) one implicit system per sub-step: the columns' depth tridiagonals coupled by the edges' bin exchanges, solved
+  inside the existing Newton iteration by a Krylov method preconditioned by the depth solve (Thomas on every column).
+  The sub-step stays one backward-Euler step.
+- (b) a split sub-step: the depth solve, then an implicit sideways solve on the depth grid's bins (a graph Laplacian over
+  the columns in each bin, with the exchange's k w l weights), the bins' heat given back to the cells by the existing
+  overlaps. Simpler, but it adds a splitting error of first order in the sub-step.
+
+Either keeps the exchange antisymmetric edge by edge, so the books close to round-off, and exact for a field linear
+along the surface; either then carries Task 6's implicit transport.
+
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** the slurry viscosity law it reads; the column flow is skyscrapers' own.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The viscosity in the cells comes from **`reentry_model/shared/rheology.py`** (S1); the column flow is skyscrapers' own.
+
+---
+
+### Task 1: Implicit sideways conduction (design (a))
+
+**Files:**
+- Modify: `reentry_model/columns.py` (`Columns.incidence`), `reentry_model/skin.py` (the coupled sub-step and the
+  `Sideways` map, which replaces the explicit exchange), `reentry_model/skinbody.py` (the hook that makes the map)
+- Test: `tests/test_reentry_model_skin.py` (the sideways tests, Task 5 of sub-plan 20, rewritten)
+
+**Interfaces:**
+- Consumes: sub-plan 20's `skin._sideways_geometry`, `skin._interp_weights`, `skin._interp_apply`, `skin.depth_grid`,
+  `skin.thomas`, `Columns.edges` and `Columns.conduct_weight`.
+- Produces: `skin.Sideways(sk, columns, previous=None)` with `.heat(x) -> (n, K)` [W per cell], linear in the cell
+  temperatures x, and `.bins(x) -> (n, bins)`; `skin._conduct(sk, dt, q_top, A_top, T_amb, eps, T_b, sideways=None)`;
+  `skin.advance(..., side=...)` with `side(sk, previous) -> Sideways`; `Columns.incidence` (scipy CSR, columns by
+  edges); `skin.KRYLOV_TOL`, `skin.KRYLOV_MAX` and the diagnostic counter `skin.KRYLOV`.
+- Retires: `skin.sideways_heat`, `skin._sideways_once`, `skin.SIDEWAYS_CFL`, and sub-plan 20's pin of the explicit heat
+  to its build (`test_the_sub_cycles_share_their_geometry_and_give_the_heat_as_built_to_the_last_bit`).
+
+The sideways exchange keeps sub-plan 20's construction: each column's cells averaged onto the common depth grid, every
+surface edge exchanging k w l (T_j − T_i) in every bin both columns reach, each column's bin heat given back to its
+cells by their overlap with the bin. Written as a map on the cells, S = Pᵀ L P (P the averaging onto the bins, L the
+edges' conductances, Pᵀ the return to the cells), it is symmetric and negative semi-definite, so it can join the
+implicit sub-step: every Newton step solves J dT = −R with J the columns' tridiagonal depth Jacobians less S, by
+conjugate gradients preconditioned by the columns' own tridiagonal solves (`_coupled_solve`). Three choices keep it
+cheap, each measured on the 100 mm sphere's first six steps (fact 150):
+
+- **Inexact Newton steps.** Each coupled solve stops at `KRYLOV_TOL` = 10⁻³ of its right-hand side and the Newton
+  iteration corrects the rest; started from the columns' own solve, it takes about one conjugate-gradient iteration
+  (1.13 measured). Solving each step to 10⁻⁶ instead moves no column of the history by more than 6 parts in a billion
+  and costs 61 % more.
+- **The map is linear**, so the line search's first try takes the sideways heat at T + dT from the solve's own
+  products instead of evaluating it again; only a column whose step is cut back costs an evaluation.
+- **The geometry is reused** from the last sub-step while the cells keep their thicknesses — in a body that does not
+  melt, every sub-step; k is taken afresh at each sub-step's start.
+
+The sensitivity the trial pass tracks for the base law (dT/dT_b) stays through the depth only: the law each column gives
+the 3D model is its own, and the neighbours' share is the interface mismatch's to book. Against (b) — the same
+exchange split from the depth solve and solved on the bins alone — (a) has no splitting error and costs more: 260 s for
+the six steps against 200 s for (b) and 254 s for sub-plan 20's explicit exchange after option A, its processor time
+(224 s) a little below the explicit exchange's (235 s).
+
+- [ ] **Step 1: Replace the sideways tests** in `tests/test_reentry_model_skin.py` (everything after `grid_skins`, the
+  helper the tests share):
+
+{{DIFF_TEST_SKIN_T1}}
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py -q -k "sideways or
+  coupled or warm_spot or explicit_limit"`. Expected: `AttributeError: module 'reentry_model.skin' has no attribute
+  'Sideways'`.
+
+- [ ] **Step 3: The edges' incidence matrix** in `reentry_model/columns.py`:
+
+{{DIFF_COLUMNS_T1}}
+
+- [ ] **Step 4: The coupled sub-step and the sideways map** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T1}}
+
+- [ ] **Step 5: The skin body's hook** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T1}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` and
+  `tests/test_reentry_model_columns.py` 31 passed (the warm spot's grid error 1.29 K; its time errors at 40, 20 and
+  10 ms 2.79, 1.32 and 0.57 K against a 2.5 ms run, as first order predicts; the checkerboard smoothed to 622–629 K in
+  one 0.2 s sub-step with its heat kept to 3.5·10⁻¹³). Then the unit tier: 409 passed, 1 skipped; and the FEniCSx tier:
+  19 passed.
+
+- [ ] **Step 7: Level 2 with the implicit exchange.** Run the four plates, flow off, side by side:
+  `"$PY" analysis/skin_plate.py --case cold|hot --dt 0.05|0.5 --out <json>`. Each must pass as it did with the
+  explicit exchange (spec §11.1: recession within 5 % of the references at 1.5 and 2.0 s, and at 1.0 s for the cold
+  plate; for the hot plate the flowing depth within 10 % and the base within 1 K of T_rigid; books to 10⁻¹² and 10⁻⁸).
+
+  Measured (2026-10-18, the four run side by side, each once): all four pass, and the implicit exchange moves no
+  judged number by more than 0.2 points from sub-plan 20's explicit exchange (B′ with the look-ahead, facts 145-146).
+  The table gives the centre's recession against the one-dimensional reference at 1.0, 1.5 and 2.0 s (negative is
+  late), with the explicit exchange's in brackets:
+
+| Plate, macro step | 1.0 s | 1.5 s | 2.0 s | Other criteria |
+|---|---|---|---|---|
+| Cold, 0.05 s | +3.7 % [+3.6] | +0.2 % [0.0] | −0.9 % [−0.9] | fine box +1.7, −0.5, −0.6 % [+1.6, −0.6, −0.6] |
+| Cold, 0.5 s | +3.2 % [+3.2] | +0.5 % [+0.4] | −0.9 % [−0.9] | fine box +1.2, −0.2, −0.7 % [+1.2, −0.2, −0.6] |
+| Hot, 0.05 s | −3.1 % (not judged) [−3.1] | −1.5 % [−1.5] | −0.8 % [−0.8] | flowing depth within 0.9 %, base at most 0.08 K above T_rigid |
+| Hot, 0.5 s | −9.0 % (not judged) [−9.0] | −3.0 % [−2.8] | −1.1 % [−1.1] | flowing depth within 1.1 %, base at most 0.09 K above T_rigid |
+
+  Mass closed to 4·10⁻¹⁶ and energy to 2.2·10⁻¹⁰ (the cold plate at 0.05 s) or better; no base faults; 84, 76, 12 and
+  12 interface repeats. The plates' heated region tapers along a half cosine from 32 to 45 mm, so the implicit exchange
+  carries heat at its rim, but the judged centre is one-dimensional: these runs show the change leaves level 2 where
+  it was, not that the exchange is more accurate. Their wall times (598–1 546 s) were taken four at a time and are not
+  comparable with sub-plan 20's, timed alone.
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add reentry_model/columns.py reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the sideways conduction is implicit, solved with each sub-step's depth conduction by conjugate gradients preconditioned by the columns' own solves (sub-plan 21 Task 1, design (a))"
+```
+
+---
+
+## Tasks still in outline (to be written in full)
+
+2. **What sub-plan 20 left to this stage** (its rulings 7 and 9, 2026-10-12): the cells' velocity, stored and carried
+   through `Skins`' split, merge, take and add operations with exact momentum; the surface gradient and curvature
+   operators on the corner graph (`columns.Columns`), tested against a sphere's exact curvature and a linear field's
+   gradient; and the interface rule Asha chooses from sub-plan 20's Task 10 measurements.
+3. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
+   fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
+   the law's tabulated values.
+4. **Momentum through the depth**: implicit tridiagonal viscous coupling per column, no slip at the base, the gas shear
+   on the top cell. Tests: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry the
+   joined profiles with the kink at the viscosity jump; Stokes' first problem.
+5. **The push**: −∇_s p_w − ρ_l a_t + ρ_l a_n ∇_s H − σ ∇_s κ on every layer, with the two thickness terms implicit
+   (linearised in the column heights). Tests: a bump on a flat layer under deceleration grows at the thin-film
+   Rayleigh–Taylor linear rate; bumps below the surface-tension cutoff decay.
+6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
+   fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
+   a rigid top otherwise); velocities projected between tangent planes. Tests: a translating pulse keeps its heat and
+   arrives where it should; books to round-off; runoff landing on a solid skin freezes from below and the 3D surface
+   moves out by the deposit's volume.
+7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
+8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
+   20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
+   behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve.
+
+## Inputs to settle before the remaining tasks are written
+
+- **The skins' interface** (sub-plan 20's Results; facts 118–125). Amended after the build (Asha, 2026-10-12): damped
+  repetition, the profile valuation and the parts make the coupling converge and level 2 pass at 0.5 s, but a melting
+  step on the 100 mm sphere costs up to 1 041 s (fact 125), and buried superheated cells remain at 6 MW/m² (fact 124).
+  The onset excess at 0.1–0.25 s steps was cured by the melting part cap (fact 132); levels 2 and 2b now verify with the
+  skins at the solid's density (`swell=False`), and compared like that the plates melt 2–6 % late on 2 mm elements, the
+  3D model's resolution in depth (facts 133–137), now resolved by the fine band, 0.7 mm elements to 4 mm under the
+  2 mm surface, which makes a melting step on the 100 mm sphere 45 % dearer (facts 138–140). To settle: whether flow's
+  level-2 run uses the same setting, since with it the flowing layer's thickness is that of solid metal, not liquid.
+- **The skins' 0.8 mm minimum** (option B′, Asha, 2026-10-16; facts 141–146): where the non-rigid layer is thinner than
+  0.8 mm a skin's bottom is rigid metal, so the column flow must hold rigid cells still and count only the cells above
+  T_rigid in the flowing depth; the finest cells stay in the top 0.4 mm (`SkinSettings.fine_zone`), and a column at its
+  minimum holds 59 cells rather than 40, which the flow's per-cell work will feel. Flow makes each pass dearer,
+  so the pass count is the first thing to settle: long parts during melting were rejected and needed many passes
+  (fact 126), and parts of at most 0.0625 s while melting now cut a melting step to 122–226 s (fact 129). Absorption
+  is limited only by the move allowance and the hot plate (level 2b) checks it; coarse surface meshes are not supported
+  under strong melting, so flow's verification should use 2 mm surfaces (facts 130–131).
+- Sub-plan 20's measured run time (fact 120 under the one-repeat rule; fact 125 under the amended default: 60–93 s a
+  macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which was to decide whether the
+  sideways solve can be implicit over every cell or needs sub-cycling. Decided (Asha, 2026-10-17): implicit, the
+  amendment above, from the level-3 flight's profile (facts 147 and 148); design (a) (Asha, 2026-10-18; fact 150).
+- Whether the implicit thickness pressures are enough to keep grid-scale growth out (level 1's growth test), given
+  that the capillary length (about 1.8 mm) is close to the column spacing.

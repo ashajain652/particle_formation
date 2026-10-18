@@ -837,3 +837,7 @@ Each stage is tested and measured before the next begins.
   conduction becomes implicit in stage 3, as sub-plan 21's first task (§6.3) (Asha).
 - 2026-10-17 (the Mac Studio's three flights in): level 3 passes and build stage 2 is complete (§11.1, §11.2); the skin
   body keeps the faceted mesh's mass, 0.06-0.24 % below the exact sphere's, noted as an approximation (§12) (Asha).
+- 2026-10-18: the implicit sideways conduction is design (a), coupled into each sub-step's Newton iteration and solved by
+  conjugate gradients preconditioned by the columns' own solves, rather than (b), split from the depth solve and 23 %
+  cheaper on the 100 mm sphere's first six steps: one backward-Euler sub-step with no splitting error (§6.3, fact 150)
+  (Asha).
