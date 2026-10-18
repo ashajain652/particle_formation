@@ -985,8 +985,25 @@ melting.
   Measured on the laptop: 4 macro steps on 2 367 columns in 60 s, 15 s a step at 115 km, the books to 3·10⁻¹², peak
   memory 1.1 GB. Then the flights, each alone or on a machine with cores to spare:
   `caffeinate -i "$PY" analysis/reentry_model_thermal_verification.py --cases d100 --modes sesam --surface-model skin`.
-  **Results: not yet measured.** The 100 mm reference reaches the ground at 366 s (732 macro steps), the 50 mm one at
-  559 s (1 118).
+  The 100 mm reference reaches the ground at 366 s (732 macro steps), the 50 mm one at 559 s (1 118). **Results**
+  (2026-10-16/17, from 97475f7, each flight once; fact 149): the 100 mm flight under SESAM-equivalent heating alone on
+  the laptop, the other three side by side on the Mac Studio, the element flights beside them on both machines (they
+  agree to every printed digit). The table shows that both judged flights pass every threshold and that the skins agree
+  with SESAM as closely as the element model does, better on the point-wise heating:
+
+| Flight (threshold) | Convective power, of SESAM's peak (3 %) | Point-wise, continuum (3 %) | Heat by the end of the hypersonic phase (3 %) | Energy-equivalent temperature (2 %) | Radiated power, of SESAM's peak (8 %) | Verdict |
+|---|---|---|---|---|---|---|
+| 100 mm, skins | 0.68 % | 0.96 % | +0.46 % | 24.5 K (1.21 %) | 6.61 % | pass |
+| 100 mm, elements | 0.46 % | 2.23 % | +0.31 % | 24.6 K (1.20 %) | 6.66 % | pass |
+| 50 mm, skins | 0.51 % | 0.83 % | +0.15 % | 31.1 K (1.38 %) | 3.07 % | pass |
+| 50 mm, elements | 0.37 % | 2.36 % | +0.03 % | 28.0 K (1.22 %) | 3.40 % | pass |
+
+  Under physics heating the skins take in 0.745 and 0.771 of SESAM's heat against the element model's 0.744 and 0.770.
+  No flight rebuilt or recorded a base fault, and the books closed to 1.2–4.8·10⁻¹². Before option A the flights took
+  52 720 s alone on the laptop (71.9 s a macro step) and 56 749–78 815 s side by side on the Mac Studio, against 8–39 s
+  for the element model. The skin body's mass is the faceted mesh's (0.06 and 0.24 % below the exact sphere the element
+  model uses), so its hypersonic speed differs from SESAM's by up to 5.2 and 6.1 m/s against 3.9 and 3.6 m/s; left as it
+  is (Asha, 2026-10-17). Results in `prototype/work-2026-10-12-skin-heat-plan/level3/`.
 
 ```bash
 git add analysis/reentry_model_thermal_verification.py tests/test_reentry_model_thermal_verification.py
@@ -1026,7 +1043,7 @@ the Step 2 verification script, and option A's exact savings (the mass measured 
 sub-cycles sharing their geometry). The unit tier went from 341 to 405 passed (1 skipped),
 the reference tier gained two tests, the FEniCSx
 tier from 17 to 19, and a melting element-model run is bit for bit the base's (Task 8 Step 6). Facts 115–120 record the
-build's measurements, 121–148 the amendments'.
+build's measurements, 121–149 the amendments'.
 
 **What is verified, and at what step.** Level 1's heat checks (the cells, the conduction, the sideways heat, the base
 law, the books, the profile valuation, the parts, the melting cap and its look-ahead, the heating in time, the
@@ -1040,7 +1057,8 @@ and on 2 mm elements throughout it failed at 0.05 s (6.2, 6.2, 6.4 % late). With
 swelling's head start cancelling the delay (fact 133). Earlier measurements: the production cells passed at 0.05 s and
 the two cell sizes differed by 1.4 % (1 % asked); the 0.1 and 0.25 s excesses at 1.0 s (+8.0 and +12.7 %) were cured
 by the melting part cap (fact 132). Mass closes to 1.4e-15 and energy
-to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened in skin runs). Level 3 against SESAM was not run (Task 10 Step 4).
+to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened in skin runs). Level 3 against SESAM passes on all four
+Step 2 flights (Task 10 Step 4, fact 149).
 
 ### The final review's findings, and what became of them
 
@@ -1073,7 +1091,9 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
 - **The fine band's cost** (facts 139–140): it resolved the delay on 2 mm elements (both plates within 3.3 % at 1.5
   and 2.0 s), but a melting step on the 100 mm sphere costs 45 % more (1 010 against 695 s for the strong-melting case),
   the extra in the 3D solves, the moves' remap of the larger mesh and the rebuild; the plates cost 50–80 % more.
-  Accepted, with the band in place of prism layers, until level 3 times real flights (Asha, 2026-10-15).
+  Accepted, with the band in place of prism layers, until level 3 times real flights (Asha, 2026-10-15). Level 3's
+  flights do not melt: on them the 3D solve and the moves, where the band's cost lies, were 2 % and 4 % of a step
+  (fact 147), so the melting flights of stage 4 are where the band's cost is timed.
 - **Thin elements at the plate's 90-degree edges** (fact 136): the fill misses its request at the box's edges, and on
   0.5 mm elements the corrections exceed the move allowance and grow until a skin runs empty; layers under the faces
   are crushed by the fill unless blended to uniform near the sides. The sphere has no such edges.
@@ -1089,7 +1109,8 @@ to 4e-9 throughout (to 2e-11 since the 3D solver's linear tolerance is tightened
   sub-plan 21.
 - **Agreement of the backends across a rebuild**: to round-off only up to the first rebuild, because the mesher answers
   round-off in the corner positions with a different mesh.
-- **Level 3** against SESAM (Task 10 Step 4).
+- **The body's mass is the faceted mesh's** (fact 149): 0.06 % (100 mm) and 0.24 % (50 mm) below the exact sphere the
+  element model's thermal body takes, worth up to 2.5 m/s of hypersonic speed; left as it is (Asha, 2026-10-17).
 
 ### Corrections made in the build, with the rulings that made them
 

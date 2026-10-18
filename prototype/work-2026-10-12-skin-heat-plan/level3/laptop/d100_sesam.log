@@ -1,0 +1,25 @@
+start 2026-10-16 18:07:09
+
+| case | mode | surface | Q_conv max (of peak) | Q_conv max (continuum, point-wise) | integrated heat (end of hypersonic) | integrated heat (end) | max |dT_eq| | radiated max (of peak) | peak surface T | runtime | verdict | skins |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| d100 | sesam | skin | 0.68% | 0.96% | +0.46% | +0.45% (ratio 1.004) | 24.5 K (1.21%) | 6.61% | 2091 K at 139 s | 52720 s, 733 steps, 2.2 it/step | pass | 9417 columns, 0 rebuilds, 318 repeats, 0 base faults; 42743 s in the skins, 930 s in the 3D solve, 71.9 s a step |
+    52740.78 real     45939.49 user      6758.64 sys
+          3322216448  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+           118612220  page reclaims
+                1598  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                1559  voluntary context switches
+              986370  involuntary context switches
+     810423462992852  instructions retired
+     198988840432767  cycles elapsed
+          2637172240  peak memory footprint
+exit 0
+end 2026-10-17 08:46:10

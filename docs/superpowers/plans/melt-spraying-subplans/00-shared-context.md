@@ -2161,6 +2161,27 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      of a profiled step and the depth conduction 18 %; sub-plan 21 makes the sideways conduction implicit. A test pins
      the sub-cycled heat to the build's routine to the last bit over 25 sub-cycles, another the mass to a fresh
      measurement after every move; unit tier 405 passed (1 skipped), FEniCSx 19.
+149. **Level 3 passes (2026-10-16/17).** The two no-melt SESAM reference flights with a skin on every corner
+     (`analysis/reentry_model_thermal_verification.py --surface-model skin`, from 97475f7, before option A), each flown
+     once: the 100 mm sphere under SESAM-equivalent heating on the laptop (Apple M3, alone) and the other three side by
+     side on the Mac Studio (Apple M5 Max, 6 performance cores, 64 GB), whose element flights reproduce the laptop's to
+     every printed digit. Judged, against Step 2's thresholds (3, 3, 3, 2 and 8 %): the 100 mm sphere 0.68 % (convective
+     power, of SESAM's peak), 0.96 % (point-wise, continuum), +0.46 % (heat by the end of the hypersonic phase), 24.5 K
+     or 1.21 % (energy-equivalent temperature) and 6.61 % (radiated power, of SESAM's peak), against the element model's
+     0.46, 2.23, +0.31, 24.6 K or 1.20 and 6.66 %; the 50 mm sphere 0.51, 0.83, +0.15, 31.1 K or 1.38 and 3.07 %, against
+     0.37, 2.36, +0.03, 28.0 K or 1.22 and 3.40 %. Reported, physics heating: heat taken in 0.745 and 0.771 of SESAM's
+     against the element model's 0.744 and 0.770; hottest surface 2 322 K at 118 s and 2 497 K at 240 s against 2 319 K
+     and 2 494 K at 239 s. Every flight reaches the ground; no rebuild, no base fault; books 1.2-4.8e-12 (the element
+     model's 3.3e-9 to 1.5e-8); the skins drew 0.66 g (100 mm) and 0.12 g (50 mm), topping up columns the starting fill
+     left short of their minimum (assumed, not checked); interface repeats 318 and 335 (733 steps), 792 and 835 (1 118).
+     The skin body's mass is the faceted mesh's, 1.47202 against 1.47288 kg (100 mm) and 0.183677 against 0.184110 kg
+     (50 mm) for the element model's exact sphere, so its hypersonic speed differs from SESAM by up to 5.2 and 6.1 m/s
+     against 3.9 and 3.6 m/s; left as it is (Asha, 2026-10-17). Cost, awake: 52 720 s (71.9 s a step, 3.3 GB) alone on
+     the laptop; on the Mac Studio side by side 78 815 s for the 100 mm physics flight (107.5 s a step, 7.1 GB), 56 749
+     and 57 206 s for the 50 mm flights (50.8 and 51.2 s a step, 2.8 GB); the element flights 8-39 s. The 50 mm flights
+     have a quarter of the columns (2 367) at about 70 % of the cost a step. The Mac Studio slept about 3.2 h mid-run
+     (11 390 s between each flight's elapsed and processor time), which pauses a flight and changes nothing. Results in
+     `prototype/work-2026-10-12-skin-heat-plan/level3/` (`laptop/`, `macstudio/`, the joint `summary_skin.md`).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

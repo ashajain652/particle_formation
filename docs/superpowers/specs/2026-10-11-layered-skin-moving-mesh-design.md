@@ -567,7 +567,16 @@ flow on and a push along the face: mass, momentum and energy close exactly and t
 exact reference exists).
 
 **Level 3 — flights.** The Step 2 verification against SESAM with skins on every corner, against Step 2's thresholds
-(it replaces the bit-for-bit match before melting that skins everywhere give up). The 100 mm flight to 120 s and the
+(it replaces the bit-for-bit match before melting that skins everywhere give up). Measured for stage 2 (2026-10-16/17,
+the four no-melt flights, each once; fact 149): **both judged flights pass** — the 100 mm sphere under SESAM-equivalent
+heating 0.68 % (convective power, of SESAM's peak), 0.96 % (point-wise, continuum), +0.46 % (heat by the end of the
+hypersonic phase), 1.21 % (energy-equivalent temperature) and 6.61 % (radiated power, of SESAM's peak) against the
+element model's 0.46, 2.23, +0.31, 1.20 and 6.66 %; the 50 mm sphere 0.51, 0.83, +0.15, 1.38 and 3.07 % against 0.37,
+2.36, +0.03, 1.22 and 3.40 % — and both physics-heating flights take in what the element model does (0.745 against
+0.744 and 0.771 against 0.770 of SESAM's heat), every surface's hottest point 2-3 K above the element model's; no
+rebuild, no base fault, the books to 1-5·10⁻¹², the skins drawing 0.66 g (100 mm) and 0.12 g (50 mm) to top up their
+minimum. The flights took 14.6-21.9 h each before option A (71.9 s a macro step alone on the laptop; 51-108 s side by
+side on the Mac Studio) against 8-39 s for the element model. The 100 mm flight to 120 s and the
 50 mm flight: convergence under halving of the macro step, 10 against 20 µm cells, and a skin surface at 2 against
 1 mm spacing; **acceptance**: the droplet count, the thick share of the sprayed mass, the medians by number and mass, the
 sprayed mass and the mass at 120 s each agree within the scatter between seeds under halving of the macro step and under
@@ -585,7 +594,7 @@ resolution is refined. Nothing tests the melting flight against an independent r
 
 1. **The moving 3D mesh alone**, with a prescribed surface motion: deforming zone, quality check, rebuild and transfer.
    Level 1's moving-mesh checks.
-2. **Skins on every corner, heat only**: layered cells, conduction through the depth and sideways, split and merge,
+2. **Skins on every corner, heat only** (complete 2026-10-17: levels 1, 2 and 3 pass): layered cells, conduction through the depth and sideways, split and merge,
    draw, absorb and hand-down moving the 3D nodes; liquid removed as it forms instead of flow and spray. Level 1's heat
    checks, level 2 with flow off, level 3's SESAM verification. The skins' run time is measured here: if it is too slow,
    it is found before the flow is built on it.
@@ -606,6 +615,14 @@ Each stage is tested and measured before the next begins.
   in the skins, three fifths of a step in their explicit sideways conduction (§6.3) and 12 % in measuring the body's
   mass at every trajectory evaluation (2026-10-17, facts 147 and 148); option A removed the repeated work, a third of
   a step on the flight's first six, without changing a result.
+- **The body's mass is the faceted mesh's.** A skin body's mass is the 3D model's volume times the density plus the
+  skins' metal, so it carries the volume the 2 mm surface triangulation cuts off the sphere: 0.06 % lighter than the
+  exact sphere for the 100 mm body and 0.24 % for the 50 mm, where the element model's thermal body takes the exact
+  sphere's mass. The lighter body slows marginally sooner: level 3's largest hypersonic speed difference from SESAM is
+  5.2 and 6.1 m/s with skins against 3.9 and 3.6 m/s for the element model, of 7 500 m/s, and the heat measures do not
+  notice it (fact 149). Left as it is (Asha, 2026-10-17): the mesh's own volume is the consistent choice for a body
+  whose metal moves between the skins and the 3D model, and matching the element model would change every skin result
+  for a difference of a few hundredths of a per cent.
 - **Capillary stiffness at the grid scale**: the capillary length (about 1.8 mm) is close to the column spacing, so the
   surface-tension cutoff is barely resolved and grid-scale Rayleigh–Taylor growth is possible if the implicit treatment
   is not adequate. Level 1's linear-growth test and the roughness history column watch for it.
@@ -818,3 +835,5 @@ Each stage is tested and measured before the next begins.
 - 2026-10-17 (after profiling the 100 mm level-3 flight): option A is built, the body measuring its 3D volume once per
   move and the sideways sub-cycles sharing their geometry, with every result unchanged to the last bit; the sideways
   conduction becomes implicit in stage 3, as sub-plan 21's first task (§6.3) (Asha).
+- 2026-10-17 (the Mac Studio's three flights in): level 3 passes and build stage 2 is complete (§11.1, §11.2); the skin
+  body keeps the faceted mesh's mass, 0.06-0.24 % below the exact sphere's, noted as an approximation (§12) (Asha).
