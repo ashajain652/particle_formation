@@ -2204,6 +2204,17 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      points from the explicit exchange's -- the cold plate +3.7, +0.2, -0.9 % at 0.05 s and +3.2, +0.5, -0.9 % at 0.5 s,
      the hot plate -1.5, -0.8 % and -3.0, -1.1 % at 1.5 and 2.0 s, flowing depth within 1.1 %, base at most 0.09 K above
      T_rigid, books to 2.2e-10.
+151. **The surface operators and the cells' velocity (sub-plan 21 Task 2, 2026-10-18).** On the 50 mm-radius sphere
+     (`prototype/work-2026-10-18-column-flow/measure/curvature.py`): the mean curvature from the cotangent Laplacian
+     over the barycentric dual area scatters 7.6 % (4 mm test sphere, 2 254 corners) and 3.9 % (2 mm, 9 417) from
+     corner to corner; over the mixed Voronoi area 4.8 % and 0.45 %, all of it at the corners touching an obtuse
+     triangle (33 and 48, off by up to 176 % and 23 %), every other corner within 1.1e-4 of 2/R. With those corners
+     taking their neighbours' mean, every corner is within 8.4e-5 (test sphere) and 1.3e-5 (2 mm) of 2/R. The
+     tangential gradient of a linear field (area-weighted triangle gradients, projected) is exact on a flat surface and
+     within 0.09 % on average of its tangential part on the test sphere (0.8 % at its one irregular corner), 0.02 % on
+     the 2 mm sphere. Every skin cell carries a velocity (`Skins.U`), its momentum exact through split, merge, take and
+     add; with every velocity zero the 100 mm sphere's first six steps give Task 1's history in every column, in 221 s
+     of processor time against 224 s.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

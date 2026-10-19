@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Task 1 (2026-10-18).** Tasks 2–8
-> are still the scoped outline at the end; each is written out with tested code in turn, the same way, and this
-> document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1 and 2 (2026-10-18).**
+> Tasks 3–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -32,8 +32,9 @@ curvature operators, and the base operations. Build stage 2 is complete: levels 
 `prototype/work-2026-10-18-column-flow-plan/code/`, made from sub-plan 20's tested copy,
 `prototype/work-2026-10-12-skin-heat-plan/code/`, as committed at 1d01be5 (identical to the skins build's f11e326,
 option A included). This document is generated from it by `prototype/work-2026-10-18-column-flow-plan/make_plan21.py`,
-which replays the tasks written so far on a copy of the base — every diff through `patch` — and checks that the result
-is the tested copy byte for byte. Never edit this document by hand: change `part_21.md` or the tested copy, and
+which replays the tasks written so far on a copy of the base — every diff through `patch`, each from the state the
+tasks before it left (kept, for files a later task changes again, in `states/task<N>/` as the build repository
+committed them) — and checks that the result is the tested copy byte for byte. Never edit this document by hand: change `part_21.md` or the tested copy, and
 regenerate.
 
 ## Global Constraints
@@ -800,12 +801,494 @@ git commit -m "Skins: the sideways conduction is implicit, solved with each sub-
 
 ---
 
+### Task 2: The cells' velocity and the surface operators
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`Skins.U`, `Skins.momentum_out`, `Skins.column_momentum`, `Skins.momentum`; every
+  cell operation carries the velocity), `reentry_model/columns.py` (`triangle_geometry`, `Columns.gradient`,
+  `Columns.curvature`)
+- Test: `tests/test_reentry_model_skin.py`, `tests/test_reentry_model_columns.py`
+
+**Interfaces:**
+- Consumes: Task 1's `skin.py` and `columns.py`.
+- Produces: `Skins.U` (n, K, 3) [m/s]; `Skins.momentum_out` (n, 3) [kg m/s], what the last `take_top` or
+  `take_bottom` took away; `Skins.column_momentum() -> (n, 3)`, `Skins.momentum() -> (3,)`;
+  `Skins.add_bottom(dm, h, s=1.0, u=None)` (u the arriving metal's velocity, at rest by default);
+  `Skins.state()` now six arrays, the velocity last; `columns.triangle_geometry(points, faces) -> (area, unit_normal,
+  cot)` with cot (nt, 3) the cotangent at each corner; `Columns.gradient(f, points=None) -> (n, 3)`;
+  `Columns.curvature(points=None) -> (n,)` [1/m].
+
+What sub-plan 20 left to this stage (its ruling 7): the velocity the flow will give each cell, and the two surface
+operators the push reads. (Its ruling 9's interface rule was settled after that build: damped repetition, Asha,
+2026-10-12.) Nothing here moves a cell yet — every velocity stays zero until Task 4 — so this task changes no result: the
+100 mm sphere's first six steps give Task 1's history in every column (processor time 221 s against 224 s).
+
+**The velocity** is a vector per cell, stored in three components so that Task 6 can project it between neighbouring
+columns' tangent planes. It is part of the cells' state, saved and restored with them, and every cell operation carries
+it so that each column's momentum is exact: a split's halves keep their cell's velocity, a merged cell takes the
+mass-weighted mean, a partly taken cell keeps its own, and metal drawn from the 3D model arrives at rest (it is rigid)
+unless a velocity is given. What leaves at the top or the bottom takes its momentum with it, recorded in
+`momentum_out` for the momentum books of Task 8.
+
+**The gradient** of a per-corner field averages the gradients of its linear interpolation on the corner's triangles, by
+area, and projects the result onto the corner's tangent plane: exact for a field linear on a flat surface, within
+0.09 % of a linear field's tangential part on average on the 4 mm test sphere (0.8 % at its one irregular corner) and
+0.02 % on the 2 mm sphere. **The curvature** is the mean curvature, the sum of the principal curvatures, from the
+cotangent Laplacian of the position. Sub-plan 20 measured it over the barycentric dual area, right on average but
+scattered 7.6 % from corner to corner on the test sphere, which the push's −σ ∇_s κ would turn into flow; over the
+mixed Voronoi area (Meyer et al. 2003) the scatter falls to 0.45 % on the 2 mm sphere, and what is left is at the
+corners touching an obtuse triangle, where that area is only approximate (33 of the test sphere's 2 254 corners, off by
+up to 176 %; 48 of the 2 mm sphere's 9 417, up to 23 %). Every other corner is within 1.1·10⁻⁴ of 2/R, so a corner
+touching an obtuse triangle takes the mean of its neighbours that touch none, or of those filled in the pass before:
+every corner of both spheres is then within 8.4·10⁻⁵ (test sphere) and 1.3·10⁻⁵ (2 mm) of 2/R (measured 2026-10-18,
+`prototype/work-2026-10-18-column-flow/measure/curvature.py`).
+
+- [ ] **Step 1: Append the velocity tests** to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -489,3 +489,58 @@
+     sk, col, _ = random_sphere_skins(coarse_sphere_mesh)
+     with pytest.raises(RuntimeError, match="coupled sideways solve did not converge"):
+         skin._conduct(sk, 0.01, np.zeros(sk.n), sk.area, 0.0, 0.0, np.full(sk.n, 700.0), skin.Sideways(sk, col))
++
++
++# -- the cells' velocity (sub-plan 21 Task 2) ---------------------------------------------------------------------------
++def moving_skins(seed=5):
++    """Five columns filled to two to four times their minimum in fine cells (so the first regrid merges the deep ones),
++    every cell at its own velocity in metres a second."""
++    mat = scheil()
++    s = skin.SkinSettings()
++    sk = skin.Skins(mat, np.full(5, 4e-6), s)
++    rng = np.random.default_rng(seed)
++    sk.fill(skin.minimum_mass(mat, sk.area, s) * rng.uniform(2.0, 4.0, 5), rng.uniform(600.0, 850.0, 5))
++    sk.U = np.where(sk.valid[..., None], rng.normal(0.0, 0.3, sk.m.shape + (3,)), 0.0)
++    return sk, rng
++
++
++def test_a_filled_skin_is_at_rest_and_its_velocity_is_part_of_its_state():
++    mat = scheil()
++    sk = filled(mat)
++    assert np.all(sk.U == 0.0) and sk.U.shape == sk.m.shape + (3,)
++    moving, _ = moving_skins()
++    saved = moving.state()
++    P = moving.column_momentum()
++    moving.U = np.zeros_like(moving.U)
++    moving.set_state(saved)
++    np.testing.assert_array_equal(moving.column_momentum(), P)
++
++
++def test_split_and_merge_keep_every_column_s_momentum():
++    sk, _ = moving_skins()
++    P0, count0 = sk.column_momentum(), sk.count.copy()
++    sk.regrid()                                                       # merges the deep fine cells
++    assert np.all(sk.count < count0)
++    np.testing.assert_allclose(sk.column_momentum(), P0, rtol=1e-12, atol=1e-18)
++    sk.add_bottom(np.full(sk.n, 0.5 * sk.column_mass().min()), np.full(sk.n, float(sk.material.enthalpy(700.0))))
++    P1, count1 = sk.column_momentum(), sk.count.copy()
++    sk.regrid()                                                       # splits the bottom cell the draw thickened
++    assert np.all(sk.count > count1)
++    np.testing.assert_allclose(sk.column_momentum(), P1, rtol=1e-12, atol=1e-18)
++    np.testing.assert_allclose(P1, P0, rtol=1e-12, atol=1e-18)        # the drawn metal arrived at rest
++
++
++def test_what_leaves_at_the_top_or_the_bottom_takes_its_momentum_and_what_arrives_brings_its_own():
++    sk, rng = moving_skins()
++    sk.regrid()
++    P = sk.column_momentum()
++    mass, _ = sk.take_top(np.array([0, 1, 2, 3, 1]))
++    np.testing.assert_allclose(sk.column_momentum() + sk.momentum_out, P, rtol=1e-12, atol=1e-18)
++    assert np.all((np.linalg.norm(sk.momentum_out, axis=1) > 0.0) == (mass > 0.0))
++    P = sk.column_momentum()
++    sk.take_bottom(0.3 * sk.column_mass())                            # whole cells and a part of one
++    np.testing.assert_allclose(sk.column_momentum() + sk.momentum_out, P, rtol=1e-12, atol=1e-18)
++    P = sk.column_momentum()
++    dm, u = np.full(sk.n, 1e-7), rng.normal(0.0, 0.2, (sk.n, 3))
++    sk.add_bottom(dm, np.full(sk.n, float(sk.material.enthalpy(700.0))), u=u)
++    np.testing.assert_allclose(sk.column_momentum(), P + dm[:, None] * u, rtol=1e-12, atol=1e-18)
+```
+
+- [ ] **Step 2: Append the surface operators' tests** to `tests/test_reentry_model_columns.py`:
+
+```diff
+--- a/tests/test_reentry_model_columns.py
++++ b/tests/test_reentry_model_columns.py
+@@ -87,3 +87,46 @@
+     v = np.array([-1.0, 0.0, 0.0])
+     assert top.angles_to(v)[top.patch_toward(v)] < np.radians(5.0)
+     assert top.projected_area(v) == pytest.approx(np.pi * (0.045 + 1e-3) ** 2, rel=0.01)
++
++
++# -- the surface operators (sub-plan 21 Task 2) -------------------------------------------------------------------------
++def obtuse_corners(col, points=None):
++    p = col.points if points is None else points
++    _, _, cot = columns.triangle_geometry(p, col.faces)
++    out = np.zeros(col.n, dtype=bool)
++    for v in range(3):
++        np.logical_or.at(out, col.faces[:, v], (cot < 0.0).any(axis=1))
++    return out
++
++
++def test_the_gradient_is_exact_for_a_field_linear_on_a_flat_surface():
++    pts, faces, inner = flat_grid()
++    col = columns.Columns(pts, faces)
++    g = col.gradient(2.0 + 300.0 * pts[:, 0] - 700.0 * pts[:, 1])
++    assert np.abs(g - np.array([300.0, -700.0, 0.0])).max() < 1e-9          # every corner, the edges' included
++
++
++def test_on_a_sphere_the_gradient_of_a_linear_field_is_its_tangential_part(coarse_sphere_mesh):
++    """On the 4 mm test sphere within 0.09 % of a linear field's tangential part on average and 0.8 % at worst, at the
++    irregular corner gmsh left (0.04 % at worst on the 2 mm sphere; measured 2026-10-18)."""
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    a = np.array([3.0, -1.0, 2.0])
++    exact = a - (col.normal @ a)[:, None] * col.normal
++    err = np.linalg.norm(col.gradient(col.points @ a) - exact, axis=1) / np.linalg.norm(a)
++    assert err.mean() < 0.002 and err.max() < 0.01
++
++
++def test_the_curvature_of_a_sphere_is_two_over_its_radius_at_every_corner(coarse_sphere_mesh):
++    """Every corner within 2e-4 of 2/R, those touching an obtuse triangle included (33 of the 2 254, which the mixed
++    Voronoi area alone left off by up to 176 %; 8.4e-5 measured at worst, 2026-10-18), and the same on a sphere 2 %
++    larger whose corners are given."""
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    assert obtuse_corners(col).sum() > 0                                     # the fallback is exercised
++    R = np.linalg.norm(col.points, axis=1)
++    assert np.abs(col.curvature() * R / 2.0 - 1.0).max() < 2e-4
++    assert np.abs(col.curvature(1.02 * col.points) * 1.02 * R / 2.0 - 1.0).max() < 2e-4
++
++
++def test_the_curvature_of_a_plane_is_zero():
++    pts, faces, inner = flat_grid()
++    assert np.abs(columns.Columns(pts, faces).curvature()[inner]).max() < 1e-9
+```
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py
+  tests/test_reentry_model_columns.py -q`. Expected: `AttributeError: 'Skins' object has no attribute 'U'` and
+  `AttributeError: module 'reentry_model.columns' has no attribute 'triangle_geometry'`.
+
+- [ ] **Step 4: The velocity in the cells** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -143,7 +143,10 @@
+ class Skins:
+     """The skins of every column, as padded arrays (module docstring). `area` [m2] is each column's area, the dual
+     area of its base corner; the body updates it when the corners move (the cells keep their mass). `S`, when not None,
+-    is an intensive per-cell field every cell operation carries (the trial pass's dT/dT_b)."""
++    is an intensive per-cell field every cell operation carries (the trial pass's dT/dT_b). `U` (n, K, 3) is every
++    cell's velocity [m/s] (sub-plan 21 Task 2): part of the cells' state, carried by every operation with its momentum
++    exact -- split halves keep it, merged cells take the mass-weighted mean, metal drawn from the 3D model arrives at
++    rest -- and `momentum_out` (n, 3) [kg m/s] is what the last `take_top` or `take_bottom` took away with the metal."""
+ 
+     def __init__(self, material, area, settings=None):
+         self.material = material
+@@ -153,6 +156,8 @@
+         self.m, self.H, self.T = np.zeros((n, 1)), np.zeros((n, 1)), np.full((n, 1), 300.0)
+         self.count = np.zeros(n, dtype=np.int64)
+         self.S = None
++        self.U = np.zeros((n, 1, 3))
++        self.momentum_out = np.zeros((n, 3))
+         self.rho_l = material.liquid.rho if material.liquid is not None and self.settings.swell else material.rho
+         self.props = PropertyTable(material)
+ 
+@@ -174,11 +179,18 @@
+     def column_mass(self):
+         return self.m.sum(axis=1)
+ 
++    def column_momentum(self):
++        """Each column's momentum [kg m/s], (n, 3)."""
++        return (self.m[..., None] * self.U).sum(axis=1)
++
++    def momentum(self):
++        return self.column_momentum().sum(axis=0)
++
+     def state(self):
+-        return tuple(a.copy() for a in (self.area, self.m, self.H, self.T, self.count))
++        return tuple(a.copy() for a in (self.area, self.m, self.H, self.T, self.count, self.U))
+ 
+     def set_state(self, state):
+-        self.area, self.m, self.H, self.T, self.count = (a.copy() for a in state)
++        self.area, self.m, self.H, self.T, self.count, self.U = (a.copy() for a in state)
+         self.S = None
+ 
+     # -- geometry of the cells --------------------------------------------------------------------------------------
+@@ -202,10 +214,10 @@
+         return s.cell + (s.growth - 1.0) * np.maximum(z - s.fine_zone, 0.0)
+ 
+     # -- installing cells -------------------------------------------------------------------------------------------
+-    def _install(self, m, H, count, S=None, T=None):
++    def _install(self, m, H, count, S=None, T=None, U=None):
+         """Install padded cell arrays. Temperatures follow from the enthalpies, except where `T` is given for cells
+         whose specific enthalpy the operation did not change (a shifted, split or partly taken cell); nan in T marks
+-        the cells to recompute."""
++        the cells to recompute. `U` is the cells' velocity (at rest if not given)."""
+         valid = np.arange(m.shape[1])[None, :] < count[:, None]
+         self.m, self.H, self.count = np.where(valid, m, 0.0), np.where(valid, H, 0.0), np.asarray(count, dtype=np.int64)
+         redo = valid if T is None else valid & np.isnan(T)
+@@ -214,6 +226,7 @@
+             self.T[redo] = self.material.temperature_from_enthalpy(self.H[redo] / self.m[redo])
+         if self.S is not None:
+             self.S = np.where(valid, S, 0.0)
++        self.U = np.zeros(self.m.shape + (3,)) if U is None else np.where(valid[..., None], U, 0.0)
+ 
+     def fill(self, mass, T):
+         """Every column filled with `mass` [kg] (per column) of metal at temperature T [K] (per column), in equal cells of
+@@ -235,6 +248,7 @@
+             self.m, self.H, self.T = pad(self.m, 0.0), pad(self.H, 0.0), pad(self.T, 300.0)
+             if self.S is not None:
+                 self.S = pad(self.S, 0.0)
++            self.U = np.concatenate([self.U, np.zeros((self.n, extra, 3))], axis=1)
+ 
+     # -- split and merge --------------------------------------------------------------------------------------------
+     def regrid(self):
+@@ -254,7 +268,7 @@
+                 self._split(np.flatnonzero(big.any(axis=1)), big)
+         raise RuntimeError("the skin cells did not settle in {} split-and-merge passes".format(REGRID_PASSES))
+ 
+-    def _put_rows(self, rows, m, H, T, S, count):
++    def _put_rows(self, rows, m, H, T, S, count, U):
+         """Write rebuilt cell arrays for `rows` back (temperatures of nan are recomputed from the enthalpies), padding
+         or trimming the arrays to the longest column."""
+         self._width(m.shape[1])
+@@ -270,11 +284,14 @@
+         self.count[rows] = count
+         if self.S is not None:
+             self.S[rows] = np.where(valid, pad(S), 0.0)
++        U = np.concatenate([U, np.zeros((len(rows), K - U.shape[1], 3))], axis=1) if U.shape[1] < K else U
++        self.U[rows] = np.where(valid[..., None], U, 0.0)
+         width = int(self.count.max()) if self.n else 1
+         if width < K:
+             self.m, self.H, self.T = self.m[:, :width], self.H[:, :width], self.T[:, :width]
+             if self.S is not None:
+                 self.S = self.S[:, :width]
++            self.U = self.U[:, :width]
+ 
+     def _merge(self, rows, small):
+         """Each run of small cells joins the cell beneath that ends it; a run at the bottom with no cell to end it joins
+@@ -303,10 +320,13 @@
+             mS = np.zeros(n * K)
+             np.add.at(mS, flat, (m0 * self.S[rows])[valid])
+             S = np.divide(mS, m, out=np.zeros_like(m), where=m > 0.0).reshape(n, K)
+-        self._put_rows(rows, m.reshape(n, K), H.reshape(n, K), T.reshape(n, K), S, groups)
++        mU = np.zeros((n * K, 3))
++        np.add.at(mU, flat, (m0[..., None] * self.U[rows])[valid])
++        U = np.divide(mU, m[:, None], out=np.zeros_like(mU), where=m[:, None] > 0.0).reshape(n, K, 3)
++        self._put_rows(rows, m.reshape(n, K), H.reshape(n, K), T.reshape(n, K), S, groups, U)
+ 
+     def _split(self, rows, big):
+-        """Every big cell in `rows` becomes two equal halves of its mass and enthalpy (and its T and S)."""
++        """Every big cell in `rows` becomes two equal halves of its mass and enthalpy (and its T, S and velocity)."""
+         valid = self.valid[rows]
+         reps = np.where(valid, 1 + big[rows], 0)
+         n, K = reps.shape
+@@ -316,6 +336,7 @@
+         r_all = np.repeat(np.arange(n)[:, None], K, axis=1)
+         m, H, T = np.zeros((n, K2)), np.zeros((n, K2)), np.zeros((n, K2))
+         S = np.zeros((n, K2)) if self.S is not None else None
++        U = np.zeros((n, K2, 3))
+         share = 1.0 / reps.clip(1)
+         for part in (0, 1):
+             sel = valid & (part < reps)
+@@ -325,27 +346,32 @@
+             T[r, c] = self.T[rows][sel]                                    # halves keep the specific enthalpy
+             if S is not None:
+                 S[r, c] = self.S[rows][sel]
+-        self._put_rows(rows, m, H, T, S, count)
++            U[r, c] = self.U[rows][sel]
++        self._put_rows(rows, m, H, T, S, count, U)
+ 
+     # -- the top and the bottom -------------------------------------------------------------------------------------
+     def take_top(self, k):
+-        """Remove the top k[i] cells of every column; returns (mass, enthalpy) removed per column."""
++        """Remove the top k[i] cells of every column; returns (mass, enthalpy) removed per column, and leaves the momentum
++        that went with them in `momentum_out`."""
+         k = np.asarray(k, dtype=np.int64)
+         n, K = self.m.shape
+         top = np.arange(K)[None, :] < k[:, None]
+         mass, H = (self.m * top).sum(axis=1), (self.H * top).sum(axis=1)
++        self.momentum_out = ((self.m * top)[..., None] * self.U).sum(axis=1)
+         if k.any():
+             src = np.minimum(np.arange(K)[None, :] + k[:, None], K - 1)
+             shift = lambda a: np.take_along_axis(a, src, axis=1)
+             S = shift(self.S) if self.S is not None else None
+-            self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T))
++            U = np.take_along_axis(self.U, src[..., None], axis=1)
++            self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T), U)
+         return mass, H
+ 
+-    def add_bottom(self, dm, h, s=1.0):
++    def add_bottom(self, dm, h, s=1.0, u=None):
+         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
+         a new cell); returns the enthalpy added. With S tracked, the metal carries the sensitivity s per column
+         (default 1: it is at the base temperature and follows it; 0 for metal whose enthalpy does not depend on the
+-        base temperature, such as rigid metal drawn at T_rigid's enthalpy from a base above T_rigid)."""
++        base temperature, such as rigid metal drawn at T_rigid's enthalpy from a base above T_rigid). It arrives with
++        the velocity u (n, 3) [m/s], at rest by default: metal from the 3D model is rigid."""
+         dm, h = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,)), np.broadcast_to(np.asarray(h, dtype=float), (self.n,))
+         s = np.broadcast_to(np.asarray(s, dtype=float), (self.n,))
+         some = dm > 0.0
+@@ -359,16 +385,20 @@
+         self.H[rows, b] += dm[rows] * h[rows]
+         if self.S is not None:
+             self.S[rows, b] = (m_old * self.S[rows, b] + dm[rows] * s[rows]) / self.m[rows, b]
++        u = np.zeros((self.n, 3)) if u is None else np.broadcast_to(np.asarray(u, dtype=float), (self.n, 3))
++        self.U[rows, b] = (m_old[:, None] * self.U[rows, b] + dm[rows, None] * u[rows]) / self.m[rows, b][:, None]
+         self.count[rows] = np.maximum(self.count[rows], 1)
+         self.T[rows, b] = self.material.temperature_from_enthalpy(self.H[rows, b] / self.m[rows, b])
+         return np.where(some, dm * h, 0.0)
+ 
+     def take_bottom(self, dm):
+-        """Remove dm >= 0 [kg] per column from the bottom up, each cell's metal at its own specific enthalpy (a partly
+-        taken cell keeps its specific enthalpy); returns the enthalpy removed per column."""
++        """Remove dm >= 0 [kg] per column from the bottom up, each cell's metal at its own specific enthalpy and velocity
++        (a partly taken cell keeps both); returns the enthalpy removed per column, and leaves the momentum that went in
++        `momentum_out`."""
+         dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
+         if np.any(dm > self.column_mass() * (1.0 + 1e-12) + 1e-300):
+             raise ValueError("cannot take more metal from a skin's bottom than the skin holds")
++        self.momentum_out = np.zeros((self.n, 3))
+         if not np.any(dm > 0.0):
+             return np.zeros(self.n)
+         n, K = self.m.shape
+@@ -377,10 +407,11 @@
+         taken = np.clip(dm[:, None] - below, 0.0, self.m)                 # how much of each cell goes
+         frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
+         H_taken = (self.H * frac).sum(axis=1)
++        self.momentum_out = (taken[..., None] * self.U).sum(axis=1)
+         m, H = self.m - taken, self.H * (1.0 - frac)
+         keep = valid & (m > 0.0)
+         count = keep.sum(axis=1)                                          # the kept cells are the top ones
+-        self._install(m, H, count, self.S, self.T)                        # a partly taken cell keeps its T
++        self._install(m, H, count, self.S, self.T, self.U)                # a partly taken cell keeps its T and velocity
+         return H_taken
+ 
+     def exchange_bottom(self, dm, dH):
+```
+
+- [ ] **Step 5: The surface operators** in `reentry_model/columns.py`:
+
+```diff
+--- a/reentry_model/columns.py
++++ b/reentry_model/columns.py
+@@ -13,7 +13,17 @@
+ to make it negative: a negative conductance would break the explicit step's positivity (and, since sub-plan 21 makes the
+ sideways conduction implicit, the definiteness its conjugate gradients need), and it is rare (3 of 6 756 edges on the
+ 4 mm test sphere, 4 of 28 245 on the default 2 mm sphere, measured 2026-10-12).
+-The surface gradient and curvature operators the flow needs are added in sub-plan 21, the first stage that uses them."""
++
++The flow (sub-plan 21) reads two surface operators on the same graph. `gradient` averages the gradients of a field's
++linear interpolation over each corner's triangles, by area, and projects the result onto the corner's tangent plane.
++`curvature` is the mean curvature (the sum of the principal curvatures) from the cotangent Laplacian of the position
++over each corner's mixed Voronoi area (Meyer et al. 2003). That area is exact only where no touching triangle is
++obtuse, so a corner touching one takes the mean of its neighbours that touch none (33 of the 4 mm test sphere's 2 254
++corners and 48 of the 2 mm sphere's 9 417, which the mixed area alone left off by 15 and 3 % on average and by up to 176
++and 23 %). On these 50 mm-radius spheres the curvature is then within 8.4·10^-5 of 2/R at every corner (1.3·10^-5 on
++the 2 mm sphere), where the barycentric area had scattered 7.6 and 3.9 %, and the gradient of a linear field within
++0.09 % of its tangential part on average (0.02 % on the 2 mm sphere), 0.8 % at the test sphere's one irregular corner
++(measured 2026-10-18)."""
+ from dataclasses import dataclass
+ 
+ import numpy as np
+@@ -69,6 +79,62 @@
+         self.conduct_weight = np.maximum(self.cot_weight, 0.0)
+         self.face_length = face
+ 
++    def gradient(self, f, points=None):
++        """The tangential gradient at every corner of a per-corner field f (n,) [f per m] on the surface through
++        `points` (default: the columns' own corners): the gradients of f's linear interpolation on the touching
++        triangles, averaged by area, projected onto the corner's tangent plane. Exact for a field linear on a flat
++        surface."""
++        p = self.points if points is None else np.asarray(points, dtype=float)
++        normal = self.normal if points is None else corner_frame(p, self.faces, np.arange(self.n))[0]
++        A, unit, _ = triangle_geometry(p, self.faces)
++        a, b, c = (p[self.faces[:, v]] for v in range(3))
++        fa, fb, fc = (np.asarray(f, dtype=float)[self.faces[:, v]] for v in range(3))
++        g = (fa[:, None] * np.cross(unit, c - b) + fb[:, None] * np.cross(unit, a - c)
++             + fc[:, None] * np.cross(unit, b - a)) / (2.0 * A[:, None])
++        G, W = np.zeros((self.n, 3)), np.zeros(self.n)
++        for v in range(3):
++            np.add.at(G, self.faces[:, v], g * A[:, None])
++            np.add.at(W, self.faces[:, v], A)
++        G /= W[:, None]
++        return G - np.einsum("ij,ij->i", G, normal)[:, None] * normal
++
++    def curvature(self, points=None):
++        """The mean curvature, the sum of the principal curvatures [1/m], at every corner of the surface through
++        `points` (default: the columns' own corners), positive where the surface bends away from its outward normal (2/R
++        on a sphere): the cotangent Laplacian of the position along the corner's normal over its mixed Voronoi area. A
++        corner touching an obtuse triangle takes the mean of its neighbours that touch none, or, where every neighbour
++        touches one, of those that took a value in the pass before (module docstring)."""
++        p = self.points if points is None else np.asarray(points, dtype=float)
++        normal = self.normal if points is None else corner_frame(p, self.faces, np.arange(self.n))[0]
++        A, _, cot = triangle_geometry(p, self.faces)
++        lap, area = np.zeros((self.n, 3)), np.zeros(self.n)
++        obtuse = np.zeros(self.n, dtype=bool)
++        blunt = (cot < 0.0).any(axis=1)
++        for v in range(3):
++            i, j, k = self.faces[:, v], self.faces[:, (v + 1) % 3], self.faces[:, (v + 2) % 3]
++            cj, ck = cot[:, (v + 1) % 3], cot[:, (v + 2) % 3]
++            dj, dk = p[j] - p[i], p[k] - p[i]
++            np.add.at(lap, i, 0.5 * (ck[:, None] * dj + cj[:, None] * dk))
++            voronoi = 0.125 * (np.einsum("ij,ij->i", dj, dj) * ck + np.einsum("ij,ij->i", dk, dk) * cj)
++            np.add.at(area, i, np.where(cot[:, v] < 0.0, 0.5 * A, np.where(blunt, 0.25 * A, voronoi)))
++            np.logical_or.at(obtuse, i, blunt)
++        kappa = -np.einsum("ij,ij->i", lap, normal) / area
++        i, j = self.edges[:, 0], self.edges[:, 1]
++        known = ~obtuse
++        while not known.all():                     # outward from the corners whose own value is exact, a ring a pass
++            good = known.astype(float)
++            total, count = np.zeros(self.n), np.zeros(self.n)
++            np.add.at(total, i, kappa[j] * good[j])
++            np.add.at(total, j, kappa[i] * good[i])
++            np.add.at(count, i, good[j])
++            np.add.at(count, j, good[i])
++            fill = ~known & (count > 0.0)
++            if not fill.any():
++                break
++            kappa[fill] = total[fill] / count[fill]
++            known = known | fill
++        return kappa
++
+     def top_points(self, thickness):
+         """The top surface: each corner moved out along its normal by its column's thickness [m]."""
+         return self.points + np.asarray(thickness, dtype=float)[:, None] * self.normal
+@@ -96,6 +162,17 @@
+         return self._incidence
+ 
+ 
++def triangle_geometry(points, faces):
++    """Per triangle: its area [m2], its unit normal (outward for outward-oriented faces) and the cotangent of the angle
++    at each of its three corners, (nt, 3)."""
++    a, b, c = (points[faces[:, v]] for v in range(3))
++    n2 = np.cross(b - a, c - a)
++    twice = np.linalg.norm(n2, axis=1)
++    legs = ((b - a, c - a), (c - b, a - b), (a - c, b - c))
++    cot = np.stack([np.einsum("ij,ij->i", u, w) / np.linalg.norm(np.cross(u, w), axis=1) for u, w in legs], axis=1)
++    return 0.5 * twice, n2 / twice[:, None], cot
++
++
+ @dataclass
+ class CornerSurface:
+     """The gas-facing surface of a corner-column body as the coupled run reads it: one 'patch' per corner (its top dual
+```
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 29 passed and
+  `tests/test_reentry_model_columns.py` 9 passed; the unit tier 416 passed, 1 skipped. The first six steps of the
+  100 mm level-3 flight (`--heating sesam --surface-model skin --t-max 3`) give Task 1's history in every column.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/columns.py tests/test_reentry_model_skin.py tests/test_reentry_model_columns.py
+git commit -m "Skins: every cell carries a velocity with its momentum exact through split, merge, take and add, and the corner graph gains the surface gradient and the mean curvature over mixed Voronoi areas (sub-plan 21 Task 2)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-2. **What sub-plan 20 left to this stage** (its rulings 7 and 9, 2026-10-12): the cells' velocity, stored and carried
-   through `Skins`' split, merge, take and add operations with exact momentum; the surface gradient and curvature
-   operators on the corner graph (`columns.Columns`), tested against a sphere's exact curvature and a linear field's
-   gradient; and the interface rule Asha chooses from sub-plan 20's Task 10 measurements.
 3. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
    fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
    the law's tabulated values.

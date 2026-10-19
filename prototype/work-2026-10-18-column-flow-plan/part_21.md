@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Task 1 (2026-10-18).** Tasks 2–8
-> are still the scoped outline at the end; each is written out with tested code in turn, the same way, and this
-> document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1 and 2 (2026-10-18).**
+> Tasks 3–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -32,8 +32,9 @@ curvature operators, and the base operations. Build stage 2 is complete: levels 
 `prototype/work-2026-10-18-column-flow-plan/code/`, made from sub-plan 20's tested copy,
 `prototype/work-2026-10-12-skin-heat-plan/code/`, as committed at 1d01be5 (identical to the skins build's f11e326,
 option A included). This document is generated from it by `prototype/work-2026-10-18-column-flow-plan/make_plan21.py`,
-which replays the tasks written so far on a copy of the base — every diff through `patch` — and checks that the result
-is the tested copy byte for byte. Never edit this document by hand: change `part_21.md` or the tested copy, and
+which replays the tasks written so far on a copy of the base — every diff through `patch`, each from the state the
+tasks before it left (kept, for files a later task changes again, in `states/task<N>/` as the build repository
+committed them) — and checks that the result is the tested copy byte for byte. Never edit this document by hand: change `part_21.md` or the tested copy, and
 regenerate.
 
 ## Global Constraints
@@ -232,12 +233,83 @@ git commit -m "Skins: the sideways conduction is implicit, solved with each sub-
 
 ---
 
+### Task 2: The cells' velocity and the surface operators
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`Skins.U`, `Skins.momentum_out`, `Skins.column_momentum`, `Skins.momentum`; every
+  cell operation carries the velocity), `reentry_model/columns.py` (`triangle_geometry`, `Columns.gradient`,
+  `Columns.curvature`)
+- Test: `tests/test_reentry_model_skin.py`, `tests/test_reentry_model_columns.py`
+
+**Interfaces:**
+- Consumes: Task 1's `skin.py` and `columns.py`.
+- Produces: `Skins.U` (n, K, 3) [m/s]; `Skins.momentum_out` (n, 3) [kg m/s], what the last `take_top` or
+  `take_bottom` took away; `Skins.column_momentum() -> (n, 3)`, `Skins.momentum() -> (3,)`;
+  `Skins.add_bottom(dm, h, s=1.0, u=None)` (u the arriving metal's velocity, at rest by default);
+  `Skins.state()` now six arrays, the velocity last; `columns.triangle_geometry(points, faces) -> (area, unit_normal,
+  cot)` with cot (nt, 3) the cotangent at each corner; `Columns.gradient(f, points=None) -> (n, 3)`;
+  `Columns.curvature(points=None) -> (n,)` [1/m].
+
+What sub-plan 20 left to this stage (its ruling 7): the velocity the flow will give each cell, and the two surface
+operators the push reads. (Its ruling 9's interface rule was settled after that build: damped repetition, Asha,
+2026-10-12.) Nothing here moves a cell yet — every velocity stays zero until Task 4 — so this task changes no result: the
+100 mm sphere's first six steps give Task 1's history in every column (processor time 221 s against 224 s).
+
+**The velocity** is a vector per cell, stored in three components so that Task 6 can project it between neighbouring
+columns' tangent planes. It is part of the cells' state, saved and restored with them, and every cell operation carries
+it so that each column's momentum is exact: a split's halves keep their cell's velocity, a merged cell takes the
+mass-weighted mean, a partly taken cell keeps its own, and metal drawn from the 3D model arrives at rest (it is rigid)
+unless a velocity is given. What leaves at the top or the bottom takes its momentum with it, recorded in
+`momentum_out` for the momentum books of Task 8.
+
+**The gradient** of a per-corner field averages the gradients of its linear interpolation on the corner's triangles, by
+area, and projects the result onto the corner's tangent plane: exact for a field linear on a flat surface, within
+0.09 % of a linear field's tangential part on average on the 4 mm test sphere (0.8 % at its one irregular corner) and
+0.02 % on the 2 mm sphere. **The curvature** is the mean curvature, the sum of the principal curvatures, from the
+cotangent Laplacian of the position. Sub-plan 20 measured it over the barycentric dual area, right on average but
+scattered 7.6 % from corner to corner on the test sphere, which the push's −σ ∇_s κ would turn into flow; over the
+mixed Voronoi area (Meyer et al. 2003) the scatter falls to 0.45 % on the 2 mm sphere, and what is left is at the
+corners touching an obtuse triangle, where that area is only approximate (33 of the test sphere's 2 254 corners, off by
+up to 176 %; 48 of the 2 mm sphere's 9 417, up to 23 %). Every other corner is within 1.1·10⁻⁴ of 2/R, so a corner
+touching an obtuse triangle takes the mean of its neighbours that touch none, or of those filled in the pass before:
+every corner of both spheres is then within 8.4·10⁻⁵ (test sphere) and 1.3·10⁻⁵ (2 mm) of 2/R (measured 2026-10-18,
+`prototype/work-2026-10-18-column-flow/measure/curvature.py`).
+
+- [ ] **Step 1: Append the velocity tests** to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T2}}
+
+- [ ] **Step 2: Append the surface operators' tests** to `tests/test_reentry_model_columns.py`:
+
+{{DIFF_TEST_COLUMNS_T2}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py
+  tests/test_reentry_model_columns.py -q`. Expected: `AttributeError: 'Skins' object has no attribute 'U'` and
+  `AttributeError: module 'reentry_model.columns' has no attribute 'triangle_geometry'`.
+
+- [ ] **Step 4: The velocity in the cells** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T2}}
+
+- [ ] **Step 5: The surface operators** in `reentry_model/columns.py`:
+
+{{DIFF_COLUMNS_T2}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 29 passed and
+  `tests/test_reentry_model_columns.py` 9 passed; the unit tier 416 passed, 1 skipped. The first six steps of the
+  100 mm level-3 flight (`--heating sesam --surface-model skin --t-max 3`) give Task 1's history in every column.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/columns.py tests/test_reentry_model_skin.py tests/test_reentry_model_columns.py
+git commit -m "Skins: every cell carries a velocity with its momentum exact through split, merge, take and add, and the corner graph gains the surface gradient and the mean curvature over mixed Voronoi areas (sub-plan 21 Task 2)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-2. **What sub-plan 20 left to this stage** (its rulings 7 and 9, 2026-10-12): the cells' velocity, stored and carried
-   through `Skins`' split, merge, take and add operations with exact momentum; the surface gradient and curvature
-   operators on the corner graph (`columns.Columns`), tested against a sphere's exact curvature and a linear field's
-   gradient; and the interface rule Asha chooses from sub-plan 20's Task 10 measurements.
 3. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
    fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
    the law's tabulated values.

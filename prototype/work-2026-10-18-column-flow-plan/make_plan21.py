@@ -2,10 +2,11 @@
 and the tested code in code/, and check that the blocks rebuild the tested files from the base exactly.
 
 The base is prototype/work-2026-10-12-skin-heat-plan/code, sub-plan 20's tested copy, as committed: its tracked files
-must be unchanged in the working tree. Every {{NAME}} in part_21.md becomes a fenced block cut from the tested files. The
-checks then replay the tasks in order on a copy of the base -- each diff applied with `patch`, each new file written as
-the plan writes it -- and compare every file that differs from the base byte for byte with code/. Tasks are added here as
-they are written at code level. Run:
+must be unchanged in the working tree. Every {{NAME}} in part_21.md becomes a fenced block cut from the tested files: a
+task's diff of a file runs from the state the tasks before it left (the base for the first) to its own end state, kept
+in states/task<N>/ for every file a later task changes again (the build repository's commit of that task) and read
+from code/ otherwise. The checks then replay the tasks in order on a copy of the base -- each diff applied with `patch`
+-- and compare every file byte for byte with code/. Tasks are added here as they are written at code level. Run:
 
     "$PY" make_plan21.py            # writes the sub-plan and prints the checks
 """
@@ -22,7 +23,15 @@ NEW = os.path.join(HERE, "code")
 BASE = os.path.join(os.path.dirname(HERE), "work-2026-10-12-skin-heat-plan", "code")
 OUT = os.path.join(os.path.dirname(os.path.dirname(HERE)), "docs", "superpowers", "plans", "melt-spraying-subplans",
                    "21-column-flow.md")
+STATES = os.path.join(HERE, "states")
 SKIP = ("__pycache__", ".pytest_cache", "reentry_model_output", ".git")
+# The tasks written at code level so far, in order, and the files each changes ({{key}} in part_21.md, path)
+TASKS = (
+    (1, (("DIFF_COLUMNS_T1", "reentry_model/columns.py"), ("DIFF_SKIN_T1", "reentry_model/skin.py"),
+         ("DIFF_SKINBODY_T1", "reentry_model/skinbody.py"), ("DIFF_TEST_SKIN_T1", "tests/test_reentry_model_skin.py"))),
+    (2, (("DIFF_COLUMNS_T2", "reentry_model/columns.py"), ("DIFF_TEST_COLUMNS_T2", "tests/test_reentry_model_columns.py"),
+         ("DIFF_SKIN_T2", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T2", "tests/test_reentry_model_skin.py"))),
+)
 
 
 def read(root, rel):
@@ -60,18 +69,22 @@ def main():
         raise SystemExit("the base must be as committed (dirty: {!r})".format(dirty))
     blocks, steps = {}, []                # steps: (kind, rel, payload) replayed on a copy of the base, in task order
 
-    def diff_step(key, rel):
-        d = unified(read(BASE, rel), read(NEW, rel), rel)
-        if not d:
-            raise SystemExit("empty diff for {}".format(key))
-        blocks[key] = fence(d, "diff")
-        steps.append(("patch", rel, d))
-
-    # -- Task 1: the implicit sideways conduction (design (a), Asha 2026-10-18) -----------------------------------------
-    for key, rel in (("DIFF_COLUMNS_T1", "reentry_model/columns.py"), ("DIFF_SKIN_T1", "reentry_model/skin.py"),
-                     ("DIFF_SKINBODY_T1", "reentry_model/skinbody.py"),
-                     ("DIFF_TEST_SKIN_T1", "tests/test_reentry_model_skin.py")):
-        diff_step(key, rel)
+    current = {}                          # each file's text as the tasks so far leave it
+    for task, changes in TASKS:
+        for key, rel in changes:
+            before = current[rel] if rel in current else read(BASE, rel)
+            snapshot = os.path.join(STATES, "task{}".format(task), rel)
+            after = read(STATES, os.path.join("task{}".format(task), rel)) if os.path.exists(snapshot) else read(NEW, rel)
+            d = unified(before, after, rel)
+            if not d:
+                raise SystemExit("empty diff for {}".format(key))
+            blocks[key] = fence(d, "diff")
+            steps.append(("patch", rel, d))
+            current[rel] = after
+    kept = files(STATES)
+    named = {os.path.join("task{}".format(task), rel) for task, changes in TASKS for _, rel in changes}
+    if kept - named:
+        raise SystemExit("states/ holds files no task changes: {}".format(sorted(kept - named)))
 
     # -- replay on a copy of the base and compare with code/ ------------------------------------------------------------
     tmp = tempfile.mkdtemp()
