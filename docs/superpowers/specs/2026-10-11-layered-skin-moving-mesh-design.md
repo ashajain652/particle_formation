@@ -308,10 +308,15 @@ Through the depth, neighbouring cells drag on each other with the viscosity at t
 1.3 mPa·s where both are fully liquid, Li et al.'s slurry law at the interface's solid fraction and shear rate with
 the existing bridge near the liquidus, and the cells' shear rate found by fixed-point iteration (at most five passes,
 held at no more than 367 1/s, as the Step 4 plan does). The interface's drag puts the two half-cells' viscosities in
-series, each at the interface's shear rate, as the stress's continuity requires (sub-plan 21 Task 3, 2026-10-19). The
+series, as the stress's continuity requires, each cell's at its own shear rate -- the stress on its faces over its
+viscosity -- since a rate taken across a jump from liquid to slurry would give the slurry the liquid's (sub-plan 21
+Tasks 3 and 4, 2026-10-19/20). The
 bottom cell is held still by the rigid front (no slip);
-the gas shear τ acts on the top cell. Rigid cells inside a skin — at or below half liquid, such as the skin's solid
-minimum or a crust — have zero velocity: they are anchored (an assumption, §14). The through-depth viscous coupling is
+the gas shear τ acts on the top cell. Rigid cells inside a skin — at or below half liquid — that are joined to the
+substrate, the run of rigid cells up from the column's bottom such as the skin's solid minimum, have zero velocity: they
+are anchored. A crust, rigid cells with flowing metal between them and the substrate, floats: it moves as one piece,
+dragged by the gas shear on its top, pushed like the rest and dragged by the slurry beneath (Asha, 2026-10-20, revising
+the 2026-10-11 assumption that a crust is anchored; an assumption, §14). The through-depth viscous coupling is
 an implicit tridiagonal solve per column per sub-step, of the same shape as the heat solve.
 
 Each cell also gains or loses momentum with the mass crossing to and from neighbouring columns (§6.5); velocities are
@@ -739,7 +744,10 @@ Each stage is tested and measured before the next begins.
 2. Velocities are carried between neighbouring columns' tangent planes by projection.
 3. Material crossing between columns is matched by fraction of the flowing depth; it lands on top where the receiving
    column's top is rigid.
-4. Rigid cells in a skin (half solid or more) do not move: a crust is anchored.
+4. Rigid cells in a skin (half solid or more) joined to the substrate do not move; a crust over flowing metal moves as
+   one piece in its column. The columns carry no sideways stress in a solid, so a crust over many columns moves as
+   column-sized plates — as a warm crust, barely solid near half liquid, would — and a crust held at its rim is not held
+   (revised 2026-10-20; it was "a crust is anchored").
 5. Slurry viscosity follows Li et al. (2014) with its bridge to the liquid.
 6. The kinetic energy lost when cells of different speeds merge is neglected.
 7. Between corners the surfaces are flat triangles.
@@ -843,3 +851,7 @@ Each stage is tested and measured before the next begins.
   conjugate gradients preconditioned by the columns' own solves, rather than (b), split from the depth solve and 23 %
   cheaper on the 100 mm sphere's first six steps: one backward-Euler sub-step with no splitting error (§6.3, fact 150)
   (Asha).
+- 2026-10-20 (writing sub-plan 21 Task 4): a crust over flowing metal floats and moves as one piece in its column,
+  dragged by the gas shear on its top, rather than being anchored; only the rigid metal joined to the substrate is held
+  (option B, over keeping every rigid cell anchored or anchoring a crust only where it touches rigid metal at the
+  surface; §6.4, §14 assumption 4) (Asha).

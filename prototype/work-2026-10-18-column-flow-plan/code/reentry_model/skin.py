@@ -793,23 +793,141 @@ def cell_viscosity(sk, gamma):
     return np.where(sk.valid, eta, np.inf)
 
 
-def interface_drag(sk, gamma):
-    """Per column, the viscous drag per unit area between neighbouring cells' centres [Pa s/m], (n, K-1):
-    1 / (dz_i / (2 eta_i) + dz_j / (2 eta_j)), both cells' viscosities taken at the interface's shear rate gamma [1/s]
-    (n, K-1) -- the two half-cells in series, as the shear stress's continuity across the interface requires, the way
-    `_conduct` combines conductivities. A rigid cell resists without limit and adds nothing to the sum, so a flowing cell
-    drags on the rigid cell beneath it over its own half-thickness alone: no slip at the rigid front. Zero between two
-    rigid cells and across a missing one."""
+def series_drag(sk, eta):
+    """Per column, the viscous drag per unit area between neighbouring cells' centres [Pa s/m], (n, K-1), from the
+    cells' viscosities eta [Pa s] (n, K): 1 / (dz_i / (2 eta_i) + dz_j / (2 eta_j)), the two half-cells in series, as
+    the shear stress's continuity across the interface requires, the way `_conduct` combines conductivities. A rigid
+    cell resists without limit and adds nothing to the sum, so a flowing cell drags on the rigid cell beneath it over
+    its own half-thickness alone: no slip at the rigid front. Zero between two rigid cells and across a missing one."""
     if sk.m.shape[1] < 2:
         return np.zeros((sk.n, 0))
-    g = np.asarray(gamma, dtype=float) * np.ones((sk.n, sk.m.shape[1] - 1))
-    eta_up = cell_viscosity(sk, np.pad(g, ((0, 0), (0, 1)), mode="edge"))[:, :-1]
-    eta_dn = cell_viscosity(sk, np.pad(g, ((0, 0), (1, 0)), mode="edge"))[:, 1:]
     dz = sk.dz()
-    resist = 0.5 * dz[:, :-1] / eta_up + 0.5 * dz[:, 1:] / eta_dn
-    link = sk.valid[:, 1:]
-    flows = np.isfinite(eta_up) | np.isfinite(eta_dn)
-    return np.where(link & flows, 1.0 / np.where(link & flows, resist, 1.0), 0.0)
+    resist = 0.5 * dz[:, :-1] / eta[:, :-1] + 0.5 * dz[:, 1:] / eta[:, 1:]
+    link = sk.valid[:, 1:] & (np.isfinite(eta[:, :-1]) | np.isfinite(eta[:, 1:]))
+    return np.where(link, 1.0 / np.where(link, resist, 1.0), 0.0)
+
+
+def interface_drag(sk, gamma):
+    """`series_drag` with every cell's viscosity at its own shear rate gamma [1/s] (per cell, or one for all). Each
+    cell, not each interface: across a jump from liquid to slurry the liquid shears some thousand times faster than the
+    slurry, and a rate taken from the velocity difference between the two centres would give the slurry's half-cell the
+    liquid's rate (found while writing Task 4)."""
+    return series_drag(sk, cell_viscosity(sk, gamma))
+
+
+# -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
+SHEAR_PASSES = 5                  # passes of the fixed point on the cells' shear rates at most (spec 6.4)
+SHEAR_TOL = 1.0e-3                # a pass that moves no flowing cell's viscosity by more than this, relatively, ends it
+CRUST_VISCOSITY = 1.0e9           # Pa s: a floating crust's, so that it moves as one piece (some 1e8 times the slurry's)
+
+
+@dataclass
+class MomentumBook:
+    """What a momentum sub-step did, per column: impulses [N s], (n, 3), which add up to the momentum change."""
+    push: np.ndarray         # of the push on the moving cells
+    shear: np.ndarray        # of the gas shear on the top cell, if it moves
+    wall: np.ndarray         # of the anchored rigid metal -- the skin's rigid cells joined to the substrate and the 3D
+                             # model beneath the base -- on the moving cells, and the momentum a cell loses on joining it
+    passes: int              # the fixed point's passes
+
+
+def anchored_cells(sk, flowing):
+    """The rigid cells joined to the substrate, (n, K): each column's run of rigid cells from its bottom cell up, which
+    rests on the rigid 3D model. A column whose bottom cell flows has none."""
+    n, K = sk.m.shape
+    j = np.arange(K)[None, :]
+    from_bottom = np.clip(sk.count[:, None] - 1 - j, 0, K - 1)                 # the j-th cell from the bottom
+    rigid_up = np.take_along_axis(sk.valid & ~flowing, from_bottom, axis=1) & (j < sk.count[:, None])
+    held = np.cumprod(rigid_up, axis=1).sum(axis=1)
+    return sk.valid & (j >= (sk.count - held)[:, None])
+
+
+def momentum_step(sk, dt, push, shear, A_top):
+    """One implicit sub-step dt [s] of every column's momentum through its depth (spec 6.4), each velocity component
+    apart:
+
+        m_i (u_i' - u_i) / dt = A [D_(i-1) (u'_(i-1) - u'_i) + D_i (u'_(i+1) - u'_i)] + G V_i + tau A_top [i the top],
+
+    A the column's area, D the drag between neighbouring cells (`series_drag`), G the push per unit volume [N/m3,
+    (n, 3)] -- every layer of a column feels the same (spec 6.4) -- V_i the cell's volume and tau the gas shear [Pa,
+    (n, 3)] on the top cell over its top area A_top [m2, (n,)]. The rigid metal joined to the substrate (`anchored_cells`)
+    is held at rest; a moving cell drags on it, and a flowing bottom cell on the rigid 3D metal beneath the base, with no
+    slip over its own half-thickness. A crust -- rigid cells with flowing metal between them and the substrate -- floats:
+    it moves as one piece (CRUST_VISCOSITY), dragged by the gas shear on its top, pushed like the rest and dragged by the
+    slurry beneath (Asha, 2026-10-20, option B; the column model has no sideways stress in a solid, so a crust over many
+    columns moves as column-sized plates, as a warm, barely solid crust would). Each flowing cell's viscosity is at its
+    own shear rate, the mean over its two faces of the stress there over its viscosity, found by fixed-point iteration
+    from the start-of-sub-step velocities: at most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by
+    more than SHEAR_TOL. Updates sk.U; returns a MomentumBook whose impulses add up to the columns' momentum change to
+    round-off."""
+    n, K = sk.m.shape
+    valid = sk.valid
+    rows = np.arange(n)
+    last = np.maximum(sk.count - 1, 0)
+    dz, A, m = sk.dz(), sk.area, sk.m
+    push = np.broadcast_to(np.asarray(push, dtype=float), (n, 3))
+    shear = np.broadcast_to(np.asarray(shear, dtype=float), (n, 3))
+    A_top = np.broadcast_to(np.asarray(A_top, dtype=float), (n,))
+    flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
+    anchored = anchored_cells(sk, flowing)
+    moving = valid & ~anchored                                            # the flowing cells and the floating crust
+    crust = moving & ~flowing
+    P0 = sk.column_momentum()
+    held = ((m * anchored)[..., None] * sk.U).sum(axis=1)                 # what anchored cells carried, now at rest
+    U_old = np.where(moving[..., None], sk.U, 0.0)
+    top_moves = moving[:, 0]
+    force = np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0)
+    force[:, 0] += np.where(top_moves[:, None], shear * A_top[:, None], 0.0)
+    bottom_flows = flowing[rows, last] & (sk.count > 0)
+
+    def viscosities(gamma):
+        return np.where(crust, CRUST_VISCOSITY, cell_viscosity(sk, gamma))
+
+    def drags(eta):
+        Db = np.where(bottom_flows, eta[rows, last] / (0.5 * np.maximum(dz[rows, last], DZ_FLOOR)), 0.0)
+        return series_drag(sk, eta), np.where(np.isfinite(Db), Db, 0.0)
+
+    def solve(eta):
+        D, Db = drags(eta)
+        diag = np.where(valid, m / dt, 1.0)
+        diag[:, :-1] += A[:, None] * D
+        diag[:, 1:] += A[:, None] * D
+        diag[rows, last] += A * Db
+        off = -A[:, None] * D
+        sub, sup = np.where(moving[:, 1:], off, 0.0), np.where(moving[:, :-1], off, 0.0)
+        diag = np.where(moving, diag, 1.0)
+        rhs = np.where(moving[..., None], (m / dt)[..., None] * U_old + force, 0.0)
+        U = np.stack([thomas(sub, diag, sup, rhs[..., c]) for c in range(3)], axis=-1)
+        return np.where(moving[..., None], U, 0.0), D, Db
+
+    def rates(U, D, Db, eta):
+        """Every flowing cell's shear rate: the mean over its faces of the stress there over its viscosity."""
+        stress = np.zeros((n, K + 1))                                     # at every face, the top face first
+        stress[:, 1:K] = D * np.linalg.norm(U[:, :-1] - U[:, 1:], axis=2)
+        stress[:, 0] = np.where(top_moves, np.linalg.norm(shear, axis=1), 0.0)
+        stress[rows, last + 1] = Db * np.linalg.norm(U[rows, last], axis=1)
+        face = 0.5 * (stress[:, :-1] + stress[:, 1:])
+        return np.where(flowing, np.divide(face, eta, out=np.zeros_like(face), where=np.isfinite(eta)), 0.0)
+
+    eta = viscosities(0.0)
+    eta = viscosities(rates(U_old, *drags(eta), eta))                       # at the start-of-sub-step rates
+    for passes in range(1, SHEAR_PASSES + 1):
+        U, D, Db = solve(eta)
+        eta_new = viscosities(rates(U, D, Db, eta))
+        change = np.abs(eta_new[flowing] - eta[flowing]) / eta[flowing]
+        if change.size == 0 or change.max() <= SHEAR_TOL:
+            break
+        eta = eta_new
+    wall = np.zeros((n, 3))
+    if K > 1:
+        down = moving[:, :-1] & anchored[:, 1:]                           # a moving cell on the anchored metal beneath
+        wall -= ((A[:, None] * D * down)[..., None] * U[:, :-1]).sum(axis=1)
+    wall -= (A * Db)[:, None] * U[rows, last]
+    book = MomentumBook(push=dt * np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0).sum(axis=1),
+                        shear=dt * np.where(top_moves[:, None], shear * A_top[:, None], 0.0),
+                        wall=dt * wall - held, passes=passes)
+    sk.U = U
+    return book
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------

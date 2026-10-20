@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–3 (2026-10-18/19).**
-> Tasks 4–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–4 (2026-10-18/20).**
+> Tasks 5–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
 > this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -1316,6 +1316,8 @@ spec's "viscosity at their interface" (§6.4) in the form the stress's continuit
 Task 4 builds on it has the exact kink; a rigid cell resists without limit and adds nothing to the sum, so a flowing
 cell drags on the rigid cell beneath over its own half-thickness alone — no slip at the rigid front. The fixed-point
 iteration on the shear rate (at most five passes) is Task 4's: the rate comes from the velocities it solves for.
+(Corrected in Task 4, 2026-10-20: each cell's viscosity is taken at its own shear rate, not the interface's, which
+would give a slurry half-cell under liquid the liquid's rate.)
 
 - [ ] **Step 1: Write the rheology tests**, `tests/test_reentry_model_rheology.py`:
 
@@ -1551,19 +1553,416 @@ git commit -m "Skins: the viscosity of every cell from Li et al.'s slurry law wi
 
 ---
 
+### Task 4: Momentum through the depth
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`series_drag`, and `interface_drag` at each cell's own shear rate; `SHEAR_PASSES`,
+  `SHEAR_TOL`, `CRUST_VISCOSITY`, `MomentumBook`, `anchored_cells`, `momentum_step`), `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `Skins.U` and `Skins.column_momentum`; Task 3's `cell_viscosity`; `thomas`.
+- Produces: `skin.series_drag(sk, eta) -> (n, K-1)` [Pa s/m] from the cells' viscosities; `skin.interface_drag(sk,
+  gamma)` now with gamma each cell's own shear rate; `skin.momentum_step(sk, dt, push, shear, A_top) -> MomentumBook`
+  with push (n, 3) [N/m3] the same on every layer of a column, shear (n, 3) [Pa] on the top cell and A_top (n,) [m2];
+  `MomentumBook(push, shear, wall, passes)`, the impulses [N s] (n, 3); `skin.anchored_cells(sk, flowing) -> (n, K)`
+  bool, the rigid cells joined to the substrate; `skin.SHEAR_PASSES` (5), `skin.SHEAR_TOL` (10⁻³) and
+  `skin.CRUST_VISCOSITY` (10⁹ Pa·s).
+
+Every column's momentum through its depth in one implicit sub-step (spec §6.4), each velocity component apart: the
+cells' mass over the sub-step, the drag between neighbours from Task 3, the push on every flowing cell's volume and the
+gas shear on the top cell's top area — a tridiagonal system per column and component, solved by `thomas` as the heat
+is. The rigid metal joined to the substrate — each column's run of rigid cells up from its bottom cell, which rests on
+the rigid 3D model — is held at rest (its momentum, if it had any, is booked to the wall); a moving cell drags on it,
+and a flowing bottom cell on the rigid 3D metal beneath the base, with no slip over its own half-thickness. **A crust
+floats** (Asha, 2026-10-20, option B, revising the spec's assumption that a crust is anchored): rigid cells with flowing
+metal between them and the substrate move as one piece, given a viscosity of 10⁹ Pa·s, dragged by the gas shear on
+their top, pushed like the rest and dragged by the slurry beneath. The columns carry no sideways stress in a solid, so
+a crust over many columns moves as column-sized plates — as a warm crust, barely solid near half liquid, would — and a
+crust held at its rim is not held; anchoring a crust only where it touches rigid metal at the surface (option C) is
+kept as a refinement should Task 8 find crusts over slurry common.
+The shear rates come from a fixed point started at the sub-step's velocities: each pass solves the system with the
+cells' viscosities, then takes every flowing cell's shear rate as the mean over its two faces of the stress there over
+its viscosity, and stops after five passes or when no viscosity moves by more than 10⁻³. **Each cell at its own rate**
+(found while writing this task): Task 3 took both half-cells at an interface at that interface's rate — the velocity
+difference over the distance between the centres — which at a jump from liquid to slurry mixes the liquid's
+770 1/s with the slurry's 0.3 1/s and gives the slurry's half-cell five times too low a viscosity; at its own rate the
+two-layer profile is exact. The impulses (push, shear, the wall's drag and held momentum) add up to the momentum
+change to round-off, for Task 8's momentum books. Nothing calls `momentum_step` yet: moving the metal is Task 6's, so
+no result changes.
+
+Measured against exact solutions (2026-10-19/20): shear alone, Couette's line to 1.1·10⁻¹⁰ in one pass; the push
+alone, the half-parabola to 2.8·10⁻⁴ of its top speed at 30 cells, 6.9·10⁻⁵ at 60 and 1.7·10⁻⁵ at 120 (second
+order); 1 Pa on liquid over slurry at 900 K (37 % solid), the slurry at 3.46 Pa·s shearing at 0.29 1/s, both
+profiles to 1.1·10⁻⁵ in two passes; Stokes' first problem (1 Pa suddenly on 0.9 mm of liquid, 18.5 ms, a diffusion
+length of 100 µm), the top cell to 1.3·10⁻³, 6.6·10⁻⁴ and 3.3·10⁻⁴ at 100, 200 and 400 steps (first order, backward
+Euler), the momentum the shear's impulse exactly; a crust of three rigid cells on 15 of slurry at 900 K under 1 Pa of
+gas shear rides the top of the slurry's Couette line as one piece, to 10⁻⁴.
+
+The layer's response develops over time, not at once (Asha's question, 2026-10-20): the push acts on every layer from
+the moment it is applied — the pressure crosses a millimetre of metal in about 10⁻⁷ s and the deceleration acts on all
+of it — but the velocity spreads from the anchored front, and the gas shear's from the top, over the viscous time
+h²/ν: 0.018 s for 0.1 mm of liquid, 0.46 s for 0.5 mm, 1.85 s for 1 mm, and 0.2 ms for 0.5 mm of slurry at 3.5 Pa·s,
+whose high viscosity carries momentum fastest. The momentum sub-step keeps the cells' inertia, so it follows that
+development. Started from rest and compared over 1 s with 0.1 ms sub-steps on the same cells, the 10 ms sub-steps were
+off by 15 % of the speed at 1 s in the first sub-step for 0.1 mm of liquid under 10 kPa/m, which settles within about
+two sub-steps, and by 0.04 % after 0.1 s; by at most 1.0 % for 0.5 mm of liquid under the same push and 1.9 % under
+10 Pa of gas shear; and 1.1 % in the first sub-step for 0.5 mm of slurry at 900 K. In flight the forcing changes over
+seconds, so only the thinnest liquid layers' first sub-step after a sudden onset lags.
+
+- [ ] **Step 1: Append the momentum tests** to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -4,7 +4,7 @@
+ import pytest
+ 
+ from reentry_model import material as material_mod
+-from reentry_model import skin
++from reentry_model import rheology, skin
+ 
+ 
+ def scheil():
+@@ -587,3 +587,145 @@
+     mat = material_mod.Material.from_drama_json("AA7075_nomelt")
+     sk = column_at([1500.0, 1400.0], mat)
+     assert np.all(np.isinf(skin.cell_viscosity(sk, 10.0))) and np.all(skin.interface_drag(sk, 10.0) == 0.0)
++
++
++# -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
++MU_L = 1.3e-3
++STEADY = 1e9                       # s: a backward-Euler step this long gives the steady profile
++
++
++def heights(sk, k):
++    """The first k cells' centres' height [m] above the rigid front beneath them."""
++    dz = sk.dz()[0][:k]
++    return dz.sum() - (np.cumsum(dz) - 0.5 * dz)
++
++
++def books_close(sk, P0, book):
++    """The impulses add up to the momentum change, to round-off of the largest of them (in a steady step they are
++    large and nearly cancel)."""
++    parts = (book.push, book.shear, book.wall, P0, sk.column_momentum())
++    scale = max(np.abs(x).max() for x in parts) or 1e-30
++    return np.abs(sk.column_momentum() - P0 - book.push - book.shear - book.wall).max() <= 1e-12 * scale
++
++
++def test_shear_alone_gives_a_linear_profile():
++    """Liquid sheared at its top by 1 Pa over rigid metal: u = tau s / mu at every cell centre, s the height above the
++    rigid front (Couette), exactly; the drag to the rigid front over the bottom liquid cell's half-thickness is no slip."""
++    sk = column_at([950.0] * 30 + [880.0] * 10)
++    P0 = sk.column_momentum()
++    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
++    np.testing.assert_allclose(sk.U[0, :30, 0], heights(sk, 30) / MU_L, rtol=1e-9)
++    assert np.all(sk.U[0, :, 1:] == 0.0) and np.all(sk.U[0, 30:] == 0.0) and book.passes == 1
++    assert books_close(sk, P0, book)
++
++
++def test_a_push_alone_gives_a_half_parabola_converging_at_second_order():
++    """A push of 10 kPa/m on a free liquid layer over rigid metal: u = (G / mu)(h s - s^2 / 2). Measured 2026-10-19:
++    2.8e-4 of the top's speed off at 30 cells, 6.9e-5 at 60."""
++    def error(N):
++        sk = column_at([950.0] * N + [880.0] * 10)
++        skin.momentum_step(sk, STEADY, np.array([1e4, 0.0, 0.0]), np.zeros(3), sk.area)
++        s, h = heights(sk, N), sk.dz()[0][:N].sum()
++        exact = 1e4 / MU_L * (h * s - 0.5 * s * s)
++        return np.abs(sk.U[0, :N, 0] - exact).max() / exact.max()
++    e30, e60 = error(30), error(60)
++    assert e30 < 5e-4 and e30 / e60 == pytest.approx(4.0, rel=0.1)
++
++
++def test_liquid_over_slurry_joins_two_linear_profiles_with_the_kink_at_the_viscosity_jump():
++    """1 Pa of gas shear on 15 liquid cells over 15 of slurry at 900 K (37 % solid) over rigid metal: the stress is 1 Pa
++    all through, so the slurry shears at 1 Pa over its own viscosity at that rate (3.46 Pa s, 0.29 1/s) and the liquid at
++    1 Pa / 1.3 mPa s, the profiles joining at the jump. Each cell at its own shear rate makes it exact; the fixed point
++    takes two passes."""
++    sk = column_at([950.0] * 15 + [900.0] * 15 + [880.0] * 10)
++    mat = sk.material
++    f_s = 1.0 - float(mat.liquid_fraction(np.array([900.0]))[0])
++    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
++    gamma = 0.0
++    for _ in range(50):
++        gamma = 1.0 / float(rheology.viscosity(900.0, f_s, gamma, MU_L, f_b))
++    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
++    s = heights(sk, 30)
++    h_s = sk.dz()[0][15:30].sum()
++    np.testing.assert_allclose(sk.U[0, 15:30, 0], gamma * s[15:], rtol=1e-4)
++    np.testing.assert_allclose(sk.U[0, :15, 0], gamma * h_s + (s[:15] - h_s) / MU_L, rtol=1e-6)
++    assert book.passes <= skin.SHEAR_PASSES
++
++
++def test_a_layer_spun_up_from_rest_by_a_sudden_shear_follows_stokes_first_problem():
++    """1 Pa suddenly applied at the top of 0.9 mm of liquid at rest, for 18.5 ms (a diffusion length sqrt(nu t) of
++    100 um): u(y, t) = (2 tau / mu) sqrt(nu t) ierfc(y / 2 sqrt(nu t)), y the depth. The top cell within 1e-3 at 200
++    steps, the error halving with the step (backward Euler; 1.3e-3, 6.6e-4, 3.3e-4 at 100, 200, 400 steps, measured
++    2026-10-19); the momentum is the shear's impulse exactly."""
++    from scipy.special import erfc
++    nu, T_end = MU_L / 2400.0, 0.0185
++    L = np.sqrt(nu * T_end)
++
++    def run(steps):
++        sk = column_at([950.0] * 80 + [880.0] * 5)
++        for _ in range(steps):
++            skin.momentum_step(sk, T_end / steps, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
++        dz = sk.dz()[0][:80]
++        y = np.cumsum(dz) - 0.5 * dz
++        exact = 2.0 / MU_L * L * (np.exp(-(y / (2 * L)) ** 2) / np.sqrt(np.pi) - y / (2 * L) * erfc(y / (2 * L)))
++        return sk, abs(sk.U[0, 0, 0] / exact[0] - 1.0), np.abs(sk.U[0, :80, 0] - exact).max() / exact[0]
++    sk, top200, profile = run(200)
++    assert top200 < 1e-3 and profile < 1e-3
++    assert run(100)[1] / top200 == pytest.approx(2.0, rel=0.1)
++    assert sk.column_momentum()[0, 0] == pytest.approx(1.0 * sk.area[0] * T_end, rel=1e-12)
++
++
++def slurry_rate(sk, T, tau):
++    """The steady shear rate [1/s] of slurry at temperature T under the stress tau [Pa]: tau over its own viscosity at
++    that rate, by fixed point."""
++    mat = sk.material
++    f_s = 1.0 - float(mat.liquid_fraction(np.array([T]))[0])
++    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
++    gamma = 0.0
++    for _ in range(50):
++        gamma = tau / float(rheology.viscosity(T, f_s, gamma, MU_L, f_b))
++    return gamma
++
++
++def test_a_floating_crust_slides_on_the_slurry_beneath_it_as_one_piece():
++    """Asha, 2026-10-20, option B: a crust (three rigid cells at 880 K) on 15 cells of slurry at 900 K over the rigid
++    metal joined to the substrate, 1 Pa of gas shear on its top: the stress is 1 Pa all through, the slurry shears in
++    Couette's line from the anchored front, and the crust rides its top as one piece, at the slurry's speed there."""
++    sk = column_at([880.0] * 3 + [900.0] * 15 + [880.0] * 5)
++    gamma = slurry_rate(sk, 900.0, 1.0)
++    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
++    s = heights(sk, 18)
++    h_s = sk.dz()[0][3:18].sum()
++    np.testing.assert_allclose(sk.U[0, 3:18, 0], gamma * s[3:], rtol=1e-4)
++    np.testing.assert_allclose(sk.U[0, :3, 0], gamma * h_s, rtol=1e-4)
++    assert np.ptp(sk.U[0, :3, 0]) < 1e-7 * sk.U[0, 0, 0]                    # one piece
++    assert np.all(sk.U[0, 18:] == 0.0) and np.all(book.shear[:, 0] > 0.0)
++
++
++def test_the_rigid_metal_joined_to_the_substrate_is_held_and_the_momentum_books_close():
++    """A crust over slurry and liquid over the anchored rigid metal, every cell moving at the start and pushed along the
++    surface: the anchored cells stop -- their momentum booked to the wall -- while the crust moves and takes the gas
++    shear, and the impulses add up to the momentum change."""
++    sk = column_at([880.0] + [920.0] * 10 + [902.0] * 10 + [880.0] * 5)
++    rng = np.random.default_rng(3)
++    sk.U = rng.normal(0.0, 0.05, sk.U.shape)
++    P0 = sk.column_momentum()
++    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
++    assert np.array_equal(skin.anchored_cells(sk, flowing)[0], np.arange(26) >= 21)
++    book = skin.momentum_step(sk, 1e-3, np.array([2e4, -1e4, 0.0]), np.array([3.0, 0.0, 0.0]), sk.area)
++    assert np.all(sk.U[0, 21:] == 0.0) and np.all(sk.U[0, :21] != 0.0)
++    assert book.shear[0, 0] == pytest.approx(3.0 * sk.area[0] * 1e-3)
++    assert books_close(sk, P0, book)
++
++
++def test_a_column_whose_bottom_cell_flows_anchors_nothing():
++    """Slurry down to the base under a crust: no rigid cell is joined to the substrate, so the crust floats and the
++    slurry's bottom cell meets the rigid 3D metal beneath the base with no slip."""
++    sk = column_at([880.0] * 2 + [900.0] * 10)
++    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
++    assert not skin.anchored_cells(sk, flowing).any()
++    gamma = slurry_rate(sk, 900.0, 1.0)
++    skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
++    dz = sk.dz()[0]
++    s = dz[:12].sum() - (np.cumsum(dz[:12]) - 0.5 * dz[:12])                # heights above the base
++    np.testing.assert_allclose(sk.U[0, 2:12, 0], gamma * s[2:], rtol=1e-4)
+```
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py -q`. Expected:
+  `AttributeError: module 'reentry_model.skin' has no attribute 'momentum_step'`.
+
+- [ ] **Step 3: The momentum sub-step, and the drag at each cell's own shear rate,** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -793,23 +793,141 @@
+     return np.where(sk.valid, eta, np.inf)
+ 
+ 
+-def interface_drag(sk, gamma):
+-    """Per column, the viscous drag per unit area between neighbouring cells' centres [Pa s/m], (n, K-1):
+-    1 / (dz_i / (2 eta_i) + dz_j / (2 eta_j)), both cells' viscosities taken at the interface's shear rate gamma [1/s]
+-    (n, K-1) -- the two half-cells in series, as the shear stress's continuity across the interface requires, the way
+-    `_conduct` combines conductivities. A rigid cell resists without limit and adds nothing to the sum, so a flowing cell
+-    drags on the rigid cell beneath it over its own half-thickness alone: no slip at the rigid front. Zero between two
+-    rigid cells and across a missing one."""
++def series_drag(sk, eta):
++    """Per column, the viscous drag per unit area between neighbouring cells' centres [Pa s/m], (n, K-1), from the
++    cells' viscosities eta [Pa s] (n, K): 1 / (dz_i / (2 eta_i) + dz_j / (2 eta_j)), the two half-cells in series, as
++    the shear stress's continuity across the interface requires, the way `_conduct` combines conductivities. A rigid
++    cell resists without limit and adds nothing to the sum, so a flowing cell drags on the rigid cell beneath it over
++    its own half-thickness alone: no slip at the rigid front. Zero between two rigid cells and across a missing one."""
+     if sk.m.shape[1] < 2:
+         return np.zeros((sk.n, 0))
+-    g = np.asarray(gamma, dtype=float) * np.ones((sk.n, sk.m.shape[1] - 1))
+-    eta_up = cell_viscosity(sk, np.pad(g, ((0, 0), (0, 1)), mode="edge"))[:, :-1]
+-    eta_dn = cell_viscosity(sk, np.pad(g, ((0, 0), (1, 0)), mode="edge"))[:, 1:]
+     dz = sk.dz()
+-    resist = 0.5 * dz[:, :-1] / eta_up + 0.5 * dz[:, 1:] / eta_dn
+-    link = sk.valid[:, 1:]
+-    flows = np.isfinite(eta_up) | np.isfinite(eta_dn)
+-    return np.where(link & flows, 1.0 / np.where(link & flows, resist, 1.0), 0.0)
++    resist = 0.5 * dz[:, :-1] / eta[:, :-1] + 0.5 * dz[:, 1:] / eta[:, 1:]
++    link = sk.valid[:, 1:] & (np.isfinite(eta[:, :-1]) | np.isfinite(eta[:, 1:]))
++    return np.where(link, 1.0 / np.where(link, resist, 1.0), 0.0)
++
++
++def interface_drag(sk, gamma):
++    """`series_drag` with every cell's viscosity at its own shear rate gamma [1/s] (per cell, or one for all). Each
++    cell, not each interface: across a jump from liquid to slurry the liquid shears some thousand times faster than the
++    slurry, and a rate taken from the velocity difference between the two centres would give the slurry's half-cell the
++    liquid's rate (found while writing Task 4)."""
++    return series_drag(sk, cell_viscosity(sk, gamma))
++
++
++# -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
++SHEAR_PASSES = 5                  # passes of the fixed point on the cells' shear rates at most (spec 6.4)
++SHEAR_TOL = 1.0e-3                # a pass that moves no flowing cell's viscosity by more than this, relatively, ends it
++CRUST_VISCOSITY = 1.0e9           # Pa s: a floating crust's, so that it moves as one piece (some 1e8 times the slurry's)
++
++
++@dataclass
++class MomentumBook:
++    """What a momentum sub-step did, per column: impulses [N s], (n, 3), which add up to the momentum change."""
++    push: np.ndarray         # of the push on the moving cells
++    shear: np.ndarray        # of the gas shear on the top cell, if it moves
++    wall: np.ndarray         # of the anchored rigid metal -- the skin's rigid cells joined to the substrate and the 3D
++                             # model beneath the base -- on the moving cells, and the momentum a cell loses on joining it
++    passes: int              # the fixed point's passes
++
++
++def anchored_cells(sk, flowing):
++    """The rigid cells joined to the substrate, (n, K): each column's run of rigid cells from its bottom cell up, which
++    rests on the rigid 3D model. A column whose bottom cell flows has none."""
++    n, K = sk.m.shape
++    j = np.arange(K)[None, :]
++    from_bottom = np.clip(sk.count[:, None] - 1 - j, 0, K - 1)                 # the j-th cell from the bottom
++    rigid_up = np.take_along_axis(sk.valid & ~flowing, from_bottom, axis=1) & (j < sk.count[:, None])
++    held = np.cumprod(rigid_up, axis=1).sum(axis=1)
++    return sk.valid & (j >= (sk.count - held)[:, None])
++
++
++def momentum_step(sk, dt, push, shear, A_top):
++    """One implicit sub-step dt [s] of every column's momentum through its depth (spec 6.4), each velocity component
++    apart:
++
++        m_i (u_i' - u_i) / dt = A [D_(i-1) (u'_(i-1) - u'_i) + D_i (u'_(i+1) - u'_i)] + G V_i + tau A_top [i the top],
++
++    A the column's area, D the drag between neighbouring cells (`series_drag`), G the push per unit volume [N/m3,
++    (n, 3)] -- every layer of a column feels the same (spec 6.4) -- V_i the cell's volume and tau the gas shear [Pa,
++    (n, 3)] on the top cell over its top area A_top [m2, (n,)]. The rigid metal joined to the substrate (`anchored_cells`)
++    is held at rest; a moving cell drags on it, and a flowing bottom cell on the rigid 3D metal beneath the base, with no
++    slip over its own half-thickness. A crust -- rigid cells with flowing metal between them and the substrate -- floats:
++    it moves as one piece (CRUST_VISCOSITY), dragged by the gas shear on its top, pushed like the rest and dragged by the
++    slurry beneath (Asha, 2026-10-20, option B; the column model has no sideways stress in a solid, so a crust over many
++    columns moves as column-sized plates, as a warm, barely solid crust would). Each flowing cell's viscosity is at its
++    own shear rate, the mean over its two faces of the stress there over its viscosity, found by fixed-point iteration
++    from the start-of-sub-step velocities: at most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by
++    more than SHEAR_TOL. Updates sk.U; returns a MomentumBook whose impulses add up to the columns' momentum change to
++    round-off."""
++    n, K = sk.m.shape
++    valid = sk.valid
++    rows = np.arange(n)
++    last = np.maximum(sk.count - 1, 0)
++    dz, A, m = sk.dz(), sk.area, sk.m
++    push = np.broadcast_to(np.asarray(push, dtype=float), (n, 3))
++    shear = np.broadcast_to(np.asarray(shear, dtype=float), (n, 3))
++    A_top = np.broadcast_to(np.asarray(A_top, dtype=float), (n,))
++    flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
++    anchored = anchored_cells(sk, flowing)
++    moving = valid & ~anchored                                            # the flowing cells and the floating crust
++    crust = moving & ~flowing
++    P0 = sk.column_momentum()
++    held = ((m * anchored)[..., None] * sk.U).sum(axis=1)                 # what anchored cells carried, now at rest
++    U_old = np.where(moving[..., None], sk.U, 0.0)
++    top_moves = moving[:, 0]
++    force = np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0)
++    force[:, 0] += np.where(top_moves[:, None], shear * A_top[:, None], 0.0)
++    bottom_flows = flowing[rows, last] & (sk.count > 0)
++
++    def viscosities(gamma):
++        return np.where(crust, CRUST_VISCOSITY, cell_viscosity(sk, gamma))
++
++    def drags(eta):
++        Db = np.where(bottom_flows, eta[rows, last] / (0.5 * np.maximum(dz[rows, last], DZ_FLOOR)), 0.0)
++        return series_drag(sk, eta), np.where(np.isfinite(Db), Db, 0.0)
++
++    def solve(eta):
++        D, Db = drags(eta)
++        diag = np.where(valid, m / dt, 1.0)
++        diag[:, :-1] += A[:, None] * D
++        diag[:, 1:] += A[:, None] * D
++        diag[rows, last] += A * Db
++        off = -A[:, None] * D
++        sub, sup = np.where(moving[:, 1:], off, 0.0), np.where(moving[:, :-1], off, 0.0)
++        diag = np.where(moving, diag, 1.0)
++        rhs = np.where(moving[..., None], (m / dt)[..., None] * U_old + force, 0.0)
++        U = np.stack([thomas(sub, diag, sup, rhs[..., c]) for c in range(3)], axis=-1)
++        return np.where(moving[..., None], U, 0.0), D, Db
++
++    def rates(U, D, Db, eta):
++        """Every flowing cell's shear rate: the mean over its faces of the stress there over its viscosity."""
++        stress = np.zeros((n, K + 1))                                     # at every face, the top face first
++        stress[:, 1:K] = D * np.linalg.norm(U[:, :-1] - U[:, 1:], axis=2)
++        stress[:, 0] = np.where(top_moves, np.linalg.norm(shear, axis=1), 0.0)
++        stress[rows, last + 1] = Db * np.linalg.norm(U[rows, last], axis=1)
++        face = 0.5 * (stress[:, :-1] + stress[:, 1:])
++        return np.where(flowing, np.divide(face, eta, out=np.zeros_like(face), where=np.isfinite(eta)), 0.0)
++
++    eta = viscosities(0.0)
++    eta = viscosities(rates(U_old, *drags(eta), eta))                       # at the start-of-sub-step rates
++    for passes in range(1, SHEAR_PASSES + 1):
++        U, D, Db = solve(eta)
++        eta_new = viscosities(rates(U, D, Db, eta))
++        change = np.abs(eta_new[flowing] - eta[flowing]) / eta[flowing]
++        if change.size == 0 or change.max() <= SHEAR_TOL:
++            break
++        eta = eta_new
++    wall = np.zeros((n, 3))
++    if K > 1:
++        down = moving[:, :-1] & anchored[:, 1:]                           # a moving cell on the anchored metal beneath
++        wall -= ((A[:, None] * D * down)[..., None] * U[:, :-1]).sum(axis=1)
++    wall -= (A * Db)[:, None] * U[rows, last]
++    book = MomentumBook(push=dt * np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0).sum(axis=1),
++                        shear=dt * np.where(top_moves[:, None], shear * A_top[:, None], 0.0),
++                        wall=dt * wall - held, passes=passes)
++    sk.U = U
++    return book
+ 
+ 
+ # -- the base (Task 7) -------------------------------------------------------------------------------------------------
+```
+
+- [ ] **Step 4: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 40 passed (with Task 3's
+  drag tests, which hold at one rate for all cells); the unit tier 432 passed, 1 skipped.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: every column's momentum through its depth in one implicit sub-step, each cell's viscosity at its own shear rate by fixed point, the rigid metal joined to the substrate held with no slip and a crust floating as one piece, the books exact (sub-plan 21 Task 4)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-4. **Momentum through the depth**: implicit tridiagonal viscous coupling per column, no slip at the base, the gas shear
-   on the top cell. Tests: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry the
-   joined profiles with the kink at the viscosity jump; Stokes' first problem.
 5. **The push**: −∇_s p_w − ρ_l a_t + ρ_l a_n ∇_s H − σ ∇_s κ on every layer, with the two thickness terms implicit
-   (linearised in the column heights). Tests: a bump on a flat layer under deceleration grows at the thin-film
-   Rayleigh–Taylor linear rate; bumps below the surface-tension cutoff decay.
+   (linearised in the column heights). Tests on each term: the gas pressure's gradient, the deceleration along the
+   surface, the thickness term and the curvature term against known fields. The Rayleigh–Taylor growth of a bump under
+   deceleration and the decay of bumps below the surface-tension cutoff need the thickness to evolve, so they run with
+   Task 6 (Asha, 2026-10-20).
 6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
    fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
-   a rigid top otherwise); velocities projected between tangent planes. Tests: a translating pulse keeps its heat and
-   arrives where it should; books to round-off; runoff landing on a solid skin freezes from below and the 3D surface
-   moves out by the deposit's volume.
+   a rigid top otherwise); velocities projected between tangent planes. A floating crust carried into a neighbouring
+   column (Task 4) lands on top of its top. Tests: a translating pulse keeps its heat and arrives where it should;
+   books to round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's
+   volume; and, from Task 5, a bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
+   rate while bumps below the surface-tension cutoff decay.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible

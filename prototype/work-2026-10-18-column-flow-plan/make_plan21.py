@@ -33,6 +33,7 @@ TASKS = (
          ("DIFF_SKIN_T2", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T2", "tests/test_reentry_model_skin.py"))),
     (3, (("RHEOLOGY_T3", "reentry_model/rheology.py"), ("TEST_RHEOLOGY_T3", "tests/test_reentry_model_rheology.py"),
          ("DIFF_SKIN_T3", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T3", "tests/test_reentry_model_skin.py"))),
+    (4, (("DIFF_SKIN_T4", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T4", "tests/test_reentry_model_skin.py"))),
 )
 
 

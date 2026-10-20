@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–3 (2026-10-18/19).**
-> Tasks 4–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–4 (2026-10-18/20).**
+> Tasks 5–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
 > this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -337,6 +337,8 @@ spec's "viscosity at their interface" (§6.4) in the form the stress's continuit
 Task 4 builds on it has the exact kink; a rigid cell resists without limit and adds nothing to the sum, so a flowing
 cell drags on the rigid cell beneath over its own half-thickness alone — no slip at the rigid front. The fixed-point
 iteration on the shear rate (at most five passes) is Task 4's: the rate comes from the velocities it solves for.
+(Corrected in Task 4, 2026-10-20: each cell's viscosity is taken at its own shear rate, not the interface's, which
+would give a slurry half-cell under liquid the liquid's rate.)
 
 - [ ] **Step 1: Write the rheology tests**, `tests/test_reentry_model_rheology.py`:
 
@@ -370,19 +372,99 @@ git commit -m "Skins: the viscosity of every cell from Li et al.'s slurry law wi
 
 ---
 
+### Task 4: Momentum through the depth
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`series_drag`, and `interface_drag` at each cell's own shear rate; `SHEAR_PASSES`,
+  `SHEAR_TOL`, `CRUST_VISCOSITY`, `MomentumBook`, `anchored_cells`, `momentum_step`), `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `Skins.U` and `Skins.column_momentum`; Task 3's `cell_viscosity`; `thomas`.
+- Produces: `skin.series_drag(sk, eta) -> (n, K-1)` [Pa s/m] from the cells' viscosities; `skin.interface_drag(sk,
+  gamma)` now with gamma each cell's own shear rate; `skin.momentum_step(sk, dt, push, shear, A_top) -> MomentumBook`
+  with push (n, 3) [N/m3] the same on every layer of a column, shear (n, 3) [Pa] on the top cell and A_top (n,) [m2];
+  `MomentumBook(push, shear, wall, passes)`, the impulses [N s] (n, 3); `skin.anchored_cells(sk, flowing) -> (n, K)`
+  bool, the rigid cells joined to the substrate; `skin.SHEAR_PASSES` (5), `skin.SHEAR_TOL` (10⁻³) and
+  `skin.CRUST_VISCOSITY` (10⁹ Pa·s).
+
+Every column's momentum through its depth in one implicit sub-step (spec §6.4), each velocity component apart: the
+cells' mass over the sub-step, the drag between neighbours from Task 3, the push on every flowing cell's volume and the
+gas shear on the top cell's top area — a tridiagonal system per column and component, solved by `thomas` as the heat
+is. The rigid metal joined to the substrate — each column's run of rigid cells up from its bottom cell, which rests on
+the rigid 3D model — is held at rest (its momentum, if it had any, is booked to the wall); a moving cell drags on it,
+and a flowing bottom cell on the rigid 3D metal beneath the base, with no slip over its own half-thickness. **A crust
+floats** (Asha, 2026-10-20, option B, revising the spec's assumption that a crust is anchored): rigid cells with flowing
+metal between them and the substrate move as one piece, given a viscosity of 10⁹ Pa·s, dragged by the gas shear on
+their top, pushed like the rest and dragged by the slurry beneath. The columns carry no sideways stress in a solid, so
+a crust over many columns moves as column-sized plates — as a warm crust, barely solid near half liquid, would — and a
+crust held at its rim is not held; anchoring a crust only where it touches rigid metal at the surface (option C) is
+kept as a refinement should Task 8 find crusts over slurry common.
+The shear rates come from a fixed point started at the sub-step's velocities: each pass solves the system with the
+cells' viscosities, then takes every flowing cell's shear rate as the mean over its two faces of the stress there over
+its viscosity, and stops after five passes or when no viscosity moves by more than 10⁻³. **Each cell at its own rate**
+(found while writing this task): Task 3 took both half-cells at an interface at that interface's rate — the velocity
+difference over the distance between the centres — which at a jump from liquid to slurry mixes the liquid's
+770 1/s with the slurry's 0.3 1/s and gives the slurry's half-cell five times too low a viscosity; at its own rate the
+two-layer profile is exact. The impulses (push, shear, the wall's drag and held momentum) add up to the momentum
+change to round-off, for Task 8's momentum books. Nothing calls `momentum_step` yet: moving the metal is Task 6's, so
+no result changes.
+
+Measured against exact solutions (2026-10-19/20): shear alone, Couette's line to 1.1·10⁻¹⁰ in one pass; the push
+alone, the half-parabola to 2.8·10⁻⁴ of its top speed at 30 cells, 6.9·10⁻⁵ at 60 and 1.7·10⁻⁵ at 120 (second
+order); 1 Pa on liquid over slurry at 900 K (37 % solid), the slurry at 3.46 Pa·s shearing at 0.29 1/s, both
+profiles to 1.1·10⁻⁵ in two passes; Stokes' first problem (1 Pa suddenly on 0.9 mm of liquid, 18.5 ms, a diffusion
+length of 100 µm), the top cell to 1.3·10⁻³, 6.6·10⁻⁴ and 3.3·10⁻⁴ at 100, 200 and 400 steps (first order, backward
+Euler), the momentum the shear's impulse exactly; a crust of three rigid cells on 15 of slurry at 900 K under 1 Pa of
+gas shear rides the top of the slurry's Couette line as one piece, to 10⁻⁴.
+
+The layer's response develops over time, not at once (Asha's question, 2026-10-20): the push acts on every layer from
+the moment it is applied — the pressure crosses a millimetre of metal in about 10⁻⁷ s and the deceleration acts on all
+of it — but the velocity spreads from the anchored front, and the gas shear's from the top, over the viscous time
+h²/ν: 0.018 s for 0.1 mm of liquid, 0.46 s for 0.5 mm, 1.85 s for 1 mm, and 0.2 ms for 0.5 mm of slurry at 3.5 Pa·s,
+whose high viscosity carries momentum fastest. The momentum sub-step keeps the cells' inertia, so it follows that
+development. Started from rest and compared over 1 s with 0.1 ms sub-steps on the same cells, the 10 ms sub-steps were
+off by 15 % of the speed at 1 s in the first sub-step for 0.1 mm of liquid under 10 kPa/m, which settles within about
+two sub-steps, and by 0.04 % after 0.1 s; by at most 1.0 % for 0.5 mm of liquid under the same push and 1.9 % under
+10 Pa of gas shear; and 1.1 % in the first sub-step for 0.5 mm of slurry at 900 K. In flight the forcing changes over
+seconds, so only the thinnest liquid layers' first sub-step after a sudden onset lags.
+
+- [ ] **Step 1: Append the momentum tests** to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T4}}
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py -q`. Expected:
+  `AttributeError: module 'reentry_model.skin' has no attribute 'momentum_step'`.
+
+- [ ] **Step 3: The momentum sub-step, and the drag at each cell's own shear rate,** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T4}}
+
+- [ ] **Step 4: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 40 passed (with Task 3's
+  drag tests, which hold at one rate for all cells); the unit tier 432 passed, 1 skipped.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: every column's momentum through its depth in one implicit sub-step, each cell's viscosity at its own shear rate by fixed point, the rigid metal joined to the substrate held with no slip and a crust floating as one piece, the books exact (sub-plan 21 Task 4)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-4. **Momentum through the depth**: implicit tridiagonal viscous coupling per column, no slip at the base, the gas shear
-   on the top cell. Tests: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry the
-   joined profiles with the kink at the viscosity jump; Stokes' first problem.
 5. **The push**: −∇_s p_w − ρ_l a_t + ρ_l a_n ∇_s H − σ ∇_s κ on every layer, with the two thickness terms implicit
-   (linearised in the column heights). Tests: a bump on a flat layer under deceleration grows at the thin-film
-   Rayleigh–Taylor linear rate; bumps below the surface-tension cutoff decay.
+   (linearised in the column heights). Tests on each term: the gas pressure's gradient, the deceleration along the
+   surface, the thickness term and the curvature term against known fields. The Rayleigh–Taylor growth of a bump under
+   deceleration and the decay of bumps below the surface-tension cutoff need the thickness to evolve, so they run with
+   Task 6 (Asha, 2026-10-20).
 6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
    fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
-   a rigid top otherwise); velocities projected between tangent planes. Tests: a translating pulse keeps its heat and
-   arrives where it should; books to round-off; runoff landing on a solid skin freezes from below and the 3D surface
-   moves out by the deposit's volume.
+   a rigid top otherwise); velocities projected between tangent planes. A floating crust carried into a neighbouring
+   column (Task 4) lands on top of its top. Tests: a translating pulse keeps its heat and arrives where it should;
+   books to round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's
+   volume; and, from Task 5, a bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
+   rate while bumps below the surface-tension cutoff decay.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible

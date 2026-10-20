@@ -2215,6 +2215,21 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      the 2 mm sphere. Every skin cell carries a velocity (`Skins.U`), its momentum exact through split, merge, take and
      add; with every velocity zero the 100 mm sphere's first six steps give Task 1's history in every column, in 221 s
      of processor time against 224 s.
+152. **Momentum through the depth (sub-plan 21 Task 4, 2026-10-19/20).** `skin.momentum_step` against exact solutions
+     on 10 um cells over rigid metal: shear alone gives Couette's line to 1.1e-10 in one pass; a push alone the
+     half-parabola to 2.8e-4 of its top speed at 30 cells, 6.9e-5 at 60, 1.7e-5 at 120 (second order); 1 Pa on 15
+     liquid cells over 15 of slurry at 900 K (37 % solid) the two joined lines, the slurry at 3.46 Pa s and 0.29 1/s,
+     to 1.1e-5 in two passes; Stokes' first problem (1 Pa suddenly on 0.9 mm of liquid for 18.5 ms, a diffusion
+     length of 100 um) the top cell to 1.3e-3, 6.6e-4 and 3.3e-4 at 100, 200 and 400 steps (first order), the
+     momentum the shear's impulse exactly. The viscosity is each cell's at its own shear rate (the stress on its faces
+     over its viscosity): Task 3's rate taken across an interface, the velocity difference over the centres' distance,
+     mixes the liquid's 770 1/s with the slurry's 0.3 1/s at a jump and gives the slurry's half-cell five times too low
+     a viscosity. A crust floats (Asha, 2026-10-20, option B): under 1 Pa of gas shear three rigid cells on 15 of slurry
+     at 900 K ride its Couette line's top as one piece, to 1e-4. The layer's spin-up from rest at 10 ms sub-steps, against
+     0.1 ms on the same cells over 1 s: 0.1 mm of liquid under 10 kPa/m (viscous time 0.018 s, 90 % of its speed at 1 s
+     reached by 0.020 s) 15 % off in the first sub-step and 0.04 % after 0.1 s; 0.5 mm of liquid under the same push
+     (0.46 s; 90 % by 0.44 s) and under 10 Pa of gas shear (90 % by 0.39 s) within 1.0 % and 1.9 %; 0.5 mm of slurry at
+     900 K under 100 kPa/m (viscous time 0.2 ms) 1.1 % off in the first sub-step, then exact.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
