@@ -31,6 +31,8 @@ TASKS = (
          ("DIFF_SKINBODY_T1", "reentry_model/skinbody.py"), ("DIFF_TEST_SKIN_T1", "tests/test_reentry_model_skin.py"))),
     (2, (("DIFF_COLUMNS_T2", "reentry_model/columns.py"), ("DIFF_TEST_COLUMNS_T2", "tests/test_reentry_model_columns.py"),
          ("DIFF_SKIN_T2", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T2", "tests/test_reentry_model_skin.py"))),
+    (3, (("RHEOLOGY_T3", "reentry_model/rheology.py"), ("TEST_RHEOLOGY_T3", "tests/test_reentry_model_rheology.py"),
+         ("DIFF_SKIN_T3", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T3", "tests/test_reentry_model_skin.py"))),
 )
 
 
@@ -72,9 +74,14 @@ def main():
     current = {}                          # each file's text as the tasks so far leave it
     for task, changes in TASKS:
         for key, rel in changes:
-            before = current[rel] if rel in current else read(BASE, rel)
             snapshot = os.path.join(STATES, "task{}".format(task), rel)
             after = read(STATES, os.path.join("task{}".format(task), rel)) if os.path.exists(snapshot) else read(NEW, rel)
+            if rel not in current and not os.path.exists(os.path.join(BASE, rel)):     # a new file: written whole
+                blocks[key] = fence(after)
+                steps.append(("write", rel, after))
+                current[rel] = after
+                continue
+            before = current[rel] if rel in current else read(BASE, rel)
             d = unified(before, after, rel)
             if not d:
                 raise SystemExit("empty diff for {}".format(key))
@@ -96,7 +103,7 @@ def main():
                 done = subprocess.run(["patch", "-p1", "-s", "-d", work], input=payload, text=True, capture_output=True)
                 if done.returncode:
                     raise SystemExit("a diff for {} does not apply: {}".format(rel, done.stderr or done.stdout))
-            elif kind == "write":
+            else:
                 write(work, rel, payload)
         differ = sorted(rel for rel in files(NEW) | files(work)
                         if not (os.path.exists(os.path.join(NEW, rel)) and os.path.exists(os.path.join(work, rel))

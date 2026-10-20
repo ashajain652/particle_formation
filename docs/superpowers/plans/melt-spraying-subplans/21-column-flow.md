@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1 and 2 (2026-10-18).**
-> Tasks 3–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–3 (2026-10-18/19).**
+> Tasks 4–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
 > this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -1287,11 +1287,272 @@ git commit -m "Skins: every cell carries a velocity with its momentum exact thro
 
 ---
 
+### Task 3: Viscosity per interface
+
+**Files:**
+- Create: `reentry_model/rheology.py`, `tests/test_reentry_model_rheology.py`
+- Modify: `reentry_model/skin.py` (`cell_viscosity`, `interface_drag`), `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `skin.py`; `material.Material.melts`, `.liquid.mu` and `.liquid_fraction`; `Skins.props`.
+- Produces: `rheology.li_viscosity(f_s, gamma)` and `rheology.viscosity(T, f_s, gamma, mu_liquid, f_s_bridge)` [Pa s],
+  with `rheology.GAMMA_MAX` (367 1/s), `BRIDGE_LOW` and `BRIDGE_HIGH` (906.4 and 908 K) and `RIGID_SOLID_FRACTION`
+  (0.5); `skin.cell_viscosity(sk, gamma) -> (n, K)` [Pa s], infinite in rigid and missing cells;
+  `skin.interface_drag(sk, gamma) -> (n, K-1)` [Pa s/m], gamma the interfaces' shear rates [1/s].
+
+The viscosity law is the Step 4 plan's (§4), as spec §2 records it: liquid aluminium's 1.3 mPa·s at and above the
+liquidus; a log-linear bridge over 906.4–908 K from Li et al.'s value where Scheil's curve stands at 10 % solid (9.75 %
+measured); Li Yageng et al. (2014), η = [0.871 − 0.00849 γ̇^0.74924] exp(3.7311 f_s) Pa·s, from there down to half
+solid, the shear rate held at no more than 367 1/s (its bracket would reach zero at 483 1/s); and infinite at and above
+half solid, where a cell is rigid and anchored. At rest that is 0.87 Pa·s at f_s = 0 and 5.6 Pa·s at f_s = 0.5, 670 to
+4 330 times the liquid. It lives in `rheology.py`, which imports neither architecture's modules, so that the later move
+into `reentry_model/shared/` stays mechanical (the 2026-10-12 amendment); the Step 4 plan's Chen branch above half
+solid is not needed where rigid cells are anchored, and is left to that plan.
+
+**Ruling (2026-10-19):** the drag between neighbouring cells puts their two half-cells in series,
+D = 1 / (dz_i / 2η_i + dz_j / 2η_j) per unit area, each cell's viscosity taken at the interface's shear rate — the
+spec's "viscosity at their interface" (§6.4) in the form the stress's continuity across the interface requires, the way
+`_conduct` combines conductivities. Across a jump from liquid to slurry the liquid's half dominates and the profile
+Task 4 builds on it has the exact kink; a rigid cell resists without limit and adds nothing to the sum, so a flowing
+cell drags on the rigid cell beneath over its own half-thickness alone — no slip at the rigid front. The fixed-point
+iteration on the shear rate (at most five passes) is Task 4's: the rate comes from the velocities it solves for.
+
+- [ ] **Step 1: Write the rheology tests**, `tests/test_reentry_model_rheology.py`:
+
+```python
+"""The viscosity of liquid and slurry AA7075 (sub-plan 21 Task 3; the Step 4 plan's section 4): Li et al.'s slurry law,
+its shear rate held at 367 1/s, the bridge to the liquid at the liquidus, and rigid metal at half solid."""
+import numpy as np
+import pytest
+
+from reentry_model import material, rheology
+
+MU_L = 1.3e-3
+
+
+def scheil():
+    return material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
+
+
+def test_at_rest_li_et_al_runs_from_0_87_to_5_6_pa_s_670_to_4300_times_the_liquid():
+    assert rheology.li_viscosity(0.0, 0.0) == pytest.approx(0.871)
+    assert rheology.li_viscosity(0.5, 0.0) == pytest.approx(0.871 * np.exp(0.5 * 3.7311))         # 5.63 Pa s
+    assert rheology.li_viscosity(0.0, 0.0) / MU_L == pytest.approx(670.0)
+    assert rheology.li_viscosity(0.5, 0.0) / MU_L == pytest.approx(4328.0, rel=1e-3)
+    # the published form at a measured point: f_s = 0.1, 61 1/s
+    assert rheology.li_viscosity(0.1, 61.0) == pytest.approx((0.871 - 0.00849 * 61.0 ** 0.74924) * np.exp(0.37311))
+
+
+def test_the_shear_rate_is_held_at_367_per_second_where_the_fit_still_holds():
+    f_s = np.linspace(0.1, 0.5, 5)
+    np.testing.assert_array_equal(rheology.li_viscosity(f_s, 450.0), rheology.li_viscosity(f_s, 367.0))
+    assert np.all(rheology.li_viscosity(f_s, 367.0) > 0.0)                    # the bracket's zero is at 483 1/s
+    rates = np.array([0.0, 61.0, 150.0, 367.0])
+    assert np.all(np.diff(rheology.li_viscosity(0.3, rates)) < 0.0)           # shear-thinning
+
+
+def test_the_bridge_runs_log_linearly_from_the_slurry_to_the_liquid_at_the_liquidus():
+    f_b = 0.0975
+    top = rheology.li_viscosity(f_b, 100.0)
+    eta = lambda T, f_s: float(rheology.viscosity(T, f_s, 100.0, MU_L, f_b))
+    assert eta(906.4, f_b) == pytest.approx(top)
+    assert eta(907.2, 0.05) == pytest.approx(np.sqrt(top * MU_L))             # half way: the geometric mean
+    assert eta(908.0, 0.0) == MU_L and eta(950.0, 0.0) == MU_L
+
+
+def test_metal_half_solid_or_more_is_rigid():
+    assert np.isinf(rheology.viscosity(895.0, 0.5, 50.0, MU_L, 0.0975))
+    assert np.isinf(rheology.viscosity(850.0, 0.9, 50.0, MU_L, 0.0975))
+    assert rheology.viscosity(895.2, 0.4999, 50.0, MU_L, 0.0975) == pytest.approx(rheology.li_viscosity(0.4999, 50.0))
+
+
+def test_on_aa7075_s_scheil_curve_the_viscosity_falls_without_a_break_from_the_rigid_front_to_the_liquid():
+    mat = scheil()
+    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
+    assert f_b == pytest.approx(0.0975, abs=1e-4)                              # Scheil's curve at 906.4 K
+    T = np.linspace(mat.T_rigid + 1e-3, 910.0, 4001)
+    eta = rheology.viscosity(T, 1.0 - mat.liquid_fraction(T), 100.0, mat.liquid.mu, f_b)
+    assert np.all(np.isfinite(eta)) and np.all(np.diff(eta) <= 1e-12 * eta[:-1])
+    for T_edge in (rheology.BRIDGE_LOW, rheology.BRIDGE_HIGH):                 # no jump where the bridge begins or ends
+        Ts = np.array([T_edge - 1e-9, T_edge + 1e-9])
+        lo, hi = rheology.viscosity(Ts, 1.0 - mat.liquid_fraction(Ts), 100.0, mat.liquid.mu, f_b)
+        assert hi == pytest.approx(lo, rel=1e-6)
+```
+
+- [ ] **Step 2: Append the drag tests** to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -544,3 +544,46 @@
+     dm, u = np.full(sk.n, 1e-7), rng.normal(0.0, 0.2, (sk.n, 3))
+     sk.add_bottom(dm, np.full(sk.n, float(sk.material.enthalpy(700.0))), u=u)
+     np.testing.assert_allclose(sk.column_momentum(), P + dm[:, None] * u, rtol=1e-12, atol=1e-18)
++
++
++# -- viscosity (sub-plan 21 Task 3) -------------------------------------------------------------------------------------
++def column_at(T_cells, mat=None):
++    """One column of 10 um cells at the given temperatures, top first."""
++    mat = mat or scheil()
++    T_cells = np.asarray(T_cells, dtype=float)
++    sk = skin.Skins(mat, np.array([4e-6]), skin.SkinSettings(**CELLS_04))
++    m = np.full((1, len(T_cells)), mat.rho * 4e-6 * 1e-5)
++    sk._install(m, m * mat.enthalpy(T_cells)[None, :], np.array([len(T_cells)]))
++    return sk
++
++
++def test_two_liquid_cells_drag_on_each_other_with_the_liquid_s_viscosity_over_their_spacing():
++    sk = column_at([950.0, 940.0, 930.0])
++    D = skin.interface_drag(sk, 200.0)
++    dz = sk.dz()[0]
++    np.testing.assert_allclose(D[0], 1.3e-3 / (0.5 * (dz[:-1] + dz[1:])), rtol=1e-12)
++
++
++def test_across_a_viscosity_jump_the_two_half_cells_act_in_series():
++    """Liquid over slurry: the drag is 1 / (dz_l / 2 mu_l + dz_s / 2 eta_s), which the liquid's half dominates -- the
++    stress is continuous through the jump, and the profile Task 4 builds on it has the exact kink."""
++    sk = column_at([920.0, 900.0])
++    eta = skin.cell_viscosity(sk, 150.0)[0]
++    dz = sk.dz()[0]
++    assert eta[0] == 1.3e-3 and eta[1] > 500 * eta[0]
++    assert skin.interface_drag(sk, 150.0)[0, 0] == pytest.approx(1.0 / (0.5 * dz[0] / eta[0] + 0.5 * dz[1] / eta[1]))
++
++
++def test_a_flowing_cell_drags_on_the_rigid_cell_beneath_over_its_own_half_thickness_alone():
++    sk = column_at([905.0, 890.0, 880.0])                         # slurry, then two rigid cells (T_rigid 895.1 K)
++    eta = skin.cell_viscosity(sk, 50.0)[0]
++    assert np.isfinite(eta[0]) and np.all(np.isinf(eta[1:]))
++    D = skin.interface_drag(sk, 50.0)[0]
++    assert D[0] == pytest.approx(eta[0] / (0.5 * sk.dz()[0, 0]))  # no slip at the rigid front
++    assert D[1] == 0.0                                            # rigid on rigid: nothing moves
++
++
++def test_metal_that_does_not_melt_never_flows():
++    mat = material_mod.Material.from_drama_json("AA7075_nomelt")
++    sk = column_at([1500.0, 1400.0], mat)
++    assert np.all(np.isinf(skin.cell_viscosity(sk, 10.0))) and np.all(skin.interface_drag(sk, 10.0) == 0.0)
+```
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_rheology.py
+  tests/test_reentry_model_skin.py -q`. Expected: `ModuleNotFoundError: No module named 'reentry_model.rheology'`.
+
+- [ ] **Step 4: Create `reentry_model/rheology.py`:**
+
+```python
+"""The viscosity of liquid and slurry AA7075 (the Step 4 plan's section 4, docs/superpowers/plans/2026-09-27-deformation-
+ring-shedding.md; the layered-skin design section 6.4). Shared physics: it imports neither architecture's modules, so
+that the later move into reentry_model/shared/ stays mechanical (sub-plan 21's amendment of 2026-10-12).
+
+- Liquid, at and above the liquidus: the material's own viscosity (1.3 mPa s for AA7075).
+- Bridge, BRIDGE_LOW to BRIDGE_HIGH (906.4-908 K): log-linear in the temperature from Li et al.'s value at BRIDGE_LOW,
+  where Scheil's curve stands at 10 % solid, to the liquid at the liquidus (labelled: no data).
+- Slurry, from the bridge down to half solid: Li Yageng et al. (2014, China Foundry 11, 79-84),
+  eta = [0.871 - 0.00849 gamma^0.74924] exp(3.7311 f_s) Pa s, measured at f_s = 0.1-0.5 and shear rates gamma of
+  61-490 1/s on continuously sheared slurry; gamma is held at no more than GAMMA_MAX = 367 1/s, the highest rate at
+  which the fit still matches the data (its bracket would reach zero at 483 1/s). Between zero and 61 1/s it is
+  extrapolated, and there it is the runny side of the data (1.4-1.9 times low at 61 1/s; the Step 4 plan's fact 10).
+  From 0.87 Pa s (f_s = 0) to 5.6 Pa s (f_s = 0.5) at rest, 670 to 4 300 times the liquid.
+- Rigid, at or above half solid: infinite. A rigid cell does not flow; it is anchored (spec 6.4)."""
+import numpy as np
+
+LI_A = 0.871                       # Pa s
+LI_B = 0.00849                     # Pa s^(1 + LI_N)
+LI_N = 0.74924
+LI_C = 3.7311
+GAMMA_MAX = 367.0                  # 1/s: Li et al.'s law is held at this shear rate
+BRIDGE_LOW, BRIDGE_HIGH = 906.4, 908.0     # K: the log-linear bridge from the slurry to the liquid
+RIGID_SOLID_FRACTION = 0.5         # at or above it a cell is rigid (material.RIGID_LIQUID_FRACTION's complement)
+
+
+def li_viscosity(f_s, gamma):
+    """Li et al.'s slurry viscosity [Pa s] at solid fraction f_s and shear rate gamma [1/s], the rate held within
+    [0, GAMMA_MAX]."""
+    g = np.clip(np.asarray(gamma, dtype=float), 0.0, GAMMA_MAX)
+    return (LI_A - LI_B * g ** LI_N) * np.exp(LI_C * np.asarray(f_s, dtype=float))
+
+
+def viscosity(T, f_s, gamma, mu_liquid, f_s_bridge):
+    """The viscosity [Pa s] of metal at temperature T [K] and solid fraction f_s, sheared at gamma [1/s] (module
+    docstring); `mu_liquid` [Pa s] is the liquid's and `f_s_bridge` the material's solid fraction at BRIDGE_LOW (0.098 on
+    AA7075's Scheil curve). Infinite where the metal is rigid."""
+    T, f_s = np.asarray(T, dtype=float), np.asarray(f_s, dtype=float)
+    top = li_viscosity(f_s_bridge, gamma)
+    w = np.clip((T - BRIDGE_LOW) / (BRIDGE_HIGH - BRIDGE_LOW), 0.0, 1.0)
+    bridge = np.exp((1.0 - w) * np.log(top) + w * np.log(mu_liquid))
+    eta = np.where(T >= BRIDGE_HIGH, mu_liquid, np.where(T > BRIDGE_LOW, bridge, li_viscosity(f_s, gamma)))
+    return np.where(f_s >= RIGID_SOLID_FRACTION, np.inf, eta)
+```
+
+- [ ] **Step 5: The cells' viscosity and the drag between them** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -32,6 +32,7 @@
+ 
+ import numpy as np
+ 
++from . import rheology
+ from .thermal import SIGMA_SB
+ 
+ SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (spec section 6.2)
+@@ -778,6 +779,39 @@
+         return np.where(self.valid, np.diff(_interp_apply(self.geometry["to_cells"], Qcum), axis=1), 0.0)
+ 
+ 
++# -- viscosity (sub-plan 21 Task 3) ------------------------------------------------------------------------------------
++def cell_viscosity(sk, gamma):
++    """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `rheology.viscosity` at
++    the cell's temperature and Scheil solid fraction; infinite in a rigid cell (half solid or more) and beyond each
++    column's cells, and everywhere for a material that does not melt."""
++    mat = sk.material
++    if not mat.melts or mat.liquid is None:
++        return np.full(sk.m.shape, np.inf)
++    f_s = 1.0 - sk.props.liquid_fraction(sk.T)
++    f_s_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
++    eta = rheology.viscosity(sk.T, f_s, gamma, mat.liquid.mu, f_s_bridge)
++    return np.where(sk.valid, eta, np.inf)
++
++
++def interface_drag(sk, gamma):
++    """Per column, the viscous drag per unit area between neighbouring cells' centres [Pa s/m], (n, K-1):
++    1 / (dz_i / (2 eta_i) + dz_j / (2 eta_j)), both cells' viscosities taken at the interface's shear rate gamma [1/s]
++    (n, K-1) -- the two half-cells in series, as the shear stress's continuity across the interface requires, the way
++    `_conduct` combines conductivities. A rigid cell resists without limit and adds nothing to the sum, so a flowing cell
++    drags on the rigid cell beneath it over its own half-thickness alone: no slip at the rigid front. Zero between two
++    rigid cells and across a missing one."""
++    if sk.m.shape[1] < 2:
++        return np.zeros((sk.n, 0))
++    g = np.asarray(gamma, dtype=float) * np.ones((sk.n, sk.m.shape[1] - 1))
++    eta_up = cell_viscosity(sk, np.pad(g, ((0, 0), (0, 1)), mode="edge"))[:, :-1]
++    eta_dn = cell_viscosity(sk, np.pad(g, ((0, 0), (1, 0)), mode="edge"))[:, 1:]
++    dz = sk.dz()
++    resist = 0.5 * dz[:, :-1] / eta_up + 0.5 * dz[:, 1:] / eta_dn
++    link = sk.valid[:, 1:]
++    flows = np.isfinite(eta_up) | np.isfinite(eta_dn)
++    return np.where(link & flows, 1.0 / np.where(link & flows, resist, 1.0), 0.0)
++
++
+ # -- the base (Task 7) -------------------------------------------------------------------------------------------------
+ def hand_down(sk, m_min, T_rigid):
+     """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
+```
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_rheology.py` 5 passed and
+  `tests/test_reentry_model_skin.py` 33 passed; the unit tier 425 passed, 1 skipped. No result changes: nothing reads
+  the viscosity until Task 4.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/rheology.py tests/test_reentry_model_rheology.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the viscosity of every cell from Li et al.'s slurry law with its bridge to the liquid, and the drag between neighbouring cells with their half-cells in series (sub-plan 21 Task 3)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-3. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
-   fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
-   the law's tabulated values.
 4. **Momentum through the depth**: implicit tridiagonal viscous coupling per column, no slip at the base, the gas shear
    on the top cell. Tests: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry the
    joined profiles with the kink at the viscosity jump; Stokes' first problem.

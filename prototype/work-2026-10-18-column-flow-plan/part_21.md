@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1 and 2 (2026-10-18).**
-> Tasks 3–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–3 (2026-10-18/19).**
+> Tasks 4–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
 > this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -308,11 +308,70 @@ git commit -m "Skins: every cell carries a velocity with its momentum exact thro
 
 ---
 
+### Task 3: Viscosity per interface
+
+**Files:**
+- Create: `reentry_model/rheology.py`, `tests/test_reentry_model_rheology.py`
+- Modify: `reentry_model/skin.py` (`cell_viscosity`, `interface_drag`), `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `skin.py`; `material.Material.melts`, `.liquid.mu` and `.liquid_fraction`; `Skins.props`.
+- Produces: `rheology.li_viscosity(f_s, gamma)` and `rheology.viscosity(T, f_s, gamma, mu_liquid, f_s_bridge)` [Pa s],
+  with `rheology.GAMMA_MAX` (367 1/s), `BRIDGE_LOW` and `BRIDGE_HIGH` (906.4 and 908 K) and `RIGID_SOLID_FRACTION`
+  (0.5); `skin.cell_viscosity(sk, gamma) -> (n, K)` [Pa s], infinite in rigid and missing cells;
+  `skin.interface_drag(sk, gamma) -> (n, K-1)` [Pa s/m], gamma the interfaces' shear rates [1/s].
+
+The viscosity law is the Step 4 plan's (§4), as spec §2 records it: liquid aluminium's 1.3 mPa·s at and above the
+liquidus; a log-linear bridge over 906.4–908 K from Li et al.'s value where Scheil's curve stands at 10 % solid (9.75 %
+measured); Li Yageng et al. (2014), η = [0.871 − 0.00849 γ̇^0.74924] exp(3.7311 f_s) Pa·s, from there down to half
+solid, the shear rate held at no more than 367 1/s (its bracket would reach zero at 483 1/s); and infinite at and above
+half solid, where a cell is rigid and anchored. At rest that is 0.87 Pa·s at f_s = 0 and 5.6 Pa·s at f_s = 0.5, 670 to
+4 330 times the liquid. It lives in `rheology.py`, which imports neither architecture's modules, so that the later move
+into `reentry_model/shared/` stays mechanical (the 2026-10-12 amendment); the Step 4 plan's Chen branch above half
+solid is not needed where rigid cells are anchored, and is left to that plan.
+
+**Ruling (2026-10-19):** the drag between neighbouring cells puts their two half-cells in series,
+D = 1 / (dz_i / 2η_i + dz_j / 2η_j) per unit area, each cell's viscosity taken at the interface's shear rate — the
+spec's "viscosity at their interface" (§6.4) in the form the stress's continuity across the interface requires, the way
+`_conduct` combines conductivities. Across a jump from liquid to slurry the liquid's half dominates and the profile
+Task 4 builds on it has the exact kink; a rigid cell resists without limit and adds nothing to the sum, so a flowing
+cell drags on the rigid cell beneath over its own half-thickness alone — no slip at the rigid front. The fixed-point
+iteration on the shear rate (at most five passes) is Task 4's: the rate comes from the velocities it solves for.
+
+- [ ] **Step 1: Write the rheology tests**, `tests/test_reentry_model_rheology.py`:
+
+{{TEST_RHEOLOGY_T3}}
+
+- [ ] **Step 2: Append the drag tests** to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T3}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_rheology.py
+  tests/test_reentry_model_skin.py -q`. Expected: `ModuleNotFoundError: No module named 'reentry_model.rheology'`.
+
+- [ ] **Step 4: Create `reentry_model/rheology.py`:**
+
+{{RHEOLOGY_T3}}
+
+- [ ] **Step 5: The cells' viscosity and the drag between them** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T3}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_rheology.py` 5 passed and
+  `tests/test_reentry_model_skin.py` 33 passed; the unit tier 425 passed, 1 skipped. No result changes: nothing reads
+  the viscosity until Task 4.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/rheology.py tests/test_reentry_model_rheology.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the viscosity of every cell from Li et al.'s slurry law with its bridge to the liquid, and the drag between neighbouring cells with their half-cells in series (sub-plan 21 Task 3)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-3. **Viscosity per interface**: liquid 1.3 mPa·s; Li et al. (2014) slurry law with the bridge near the liquidus;
-   fixed-point iteration on the shear rate (at most five passes, held at 367 1/s); rigid cells anchored. Tests against
-   the law's tabulated values.
 4. **Momentum through the depth**: implicit tridiagonal viscous coupling per column, no slip at the base, the gas shear
    on the top cell. Tests: shear alone gives a linear profile; the push alone a half-parabola; liquid over slurry the
    joined profiles with the kink at the viscosity jump; Stokes' first problem.

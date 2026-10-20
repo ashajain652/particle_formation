@@ -307,7 +307,9 @@ dominates below the capillary length (about 1.8 mm, §2). Both thickness terms w
 Through the depth, neighbouring cells drag on each other with the viscosity at their interface: liquid aluminium's
 1.3 mPa·s where both are fully liquid, Li et al.'s slurry law at the interface's solid fraction and shear rate with
 the existing bridge near the liquidus, and the cells' shear rate found by fixed-point iteration (at most five passes,
-held at no more than 367 1/s, as the Step 4 plan does). The bottom cell is held still by the rigid front (no slip);
+held at no more than 367 1/s, as the Step 4 plan does). The interface's drag puts the two half-cells' viscosities in
+series, each at the interface's shear rate, as the stress's continuity requires (sub-plan 21 Task 3, 2026-10-19). The
+bottom cell is held still by the rigid front (no slip);
 the gas shear τ acts on the top cell. Rigid cells inside a skin — at or below half liquid, such as the skin's solid
 minimum or a crust — have zero velocity: they are anchored (an assumption, §14). The through-depth viscous coupling is
 an implicit tridiagonal solve per column per sub-step, of the same shape as the heat solve.
