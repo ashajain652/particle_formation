@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from reentry_model import material as material_mod
-from reentry_model import skin
+from reentry_model import rheology, skin
 
 
 def scheil():
@@ -587,3 +587,145 @@ def test_metal_that_does_not_melt_never_flows():
     mat = material_mod.Material.from_drama_json("AA7075_nomelt")
     sk = column_at([1500.0, 1400.0], mat)
     assert np.all(np.isinf(skin.cell_viscosity(sk, 10.0))) and np.all(skin.interface_drag(sk, 10.0) == 0.0)
+
+
+# -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
+MU_L = 1.3e-3
+STEADY = 1e9                       # s: a backward-Euler step this long gives the steady profile
+
+
+def heights(sk, k):
+    """The first k cells' centres' height [m] above the rigid front beneath them."""
+    dz = sk.dz()[0][:k]
+    return dz.sum() - (np.cumsum(dz) - 0.5 * dz)
+
+
+def books_close(sk, P0, book):
+    """The impulses add up to the momentum change, to round-off of the largest of them (in a steady step they are
+    large and nearly cancel)."""
+    parts = (book.push, book.shear, book.wall, P0, sk.column_momentum())
+    scale = max(np.abs(x).max() for x in parts) or 1e-30
+    return np.abs(sk.column_momentum() - P0 - book.push - book.shear - book.wall).max() <= 1e-12 * scale
+
+
+def test_shear_alone_gives_a_linear_profile():
+    """Liquid sheared at its top by 1 Pa over rigid metal: u = tau s / mu at every cell centre, s the height above the
+    rigid front (Couette), exactly; the drag to the rigid front over the bottom liquid cell's half-thickness is no slip."""
+    sk = column_at([950.0] * 30 + [880.0] * 10)
+    P0 = sk.column_momentum()
+    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
+    np.testing.assert_allclose(sk.U[0, :30, 0], heights(sk, 30) / MU_L, rtol=1e-9)
+    assert np.all(sk.U[0, :, 1:] == 0.0) and np.all(sk.U[0, 30:] == 0.0) and book.passes == 1
+    assert books_close(sk, P0, book)
+
+
+def test_a_push_alone_gives_a_half_parabola_converging_at_second_order():
+    """A push of 10 kPa/m on a free liquid layer over rigid metal: u = (G / mu)(h s - s^2 / 2). Measured 2026-10-19:
+    2.8e-4 of the top's speed off at 30 cells, 6.9e-5 at 60."""
+    def error(N):
+        sk = column_at([950.0] * N + [880.0] * 10)
+        skin.momentum_step(sk, STEADY, np.array([1e4, 0.0, 0.0]), np.zeros(3), sk.area)
+        s, h = heights(sk, N), sk.dz()[0][:N].sum()
+        exact = 1e4 / MU_L * (h * s - 0.5 * s * s)
+        return np.abs(sk.U[0, :N, 0] - exact).max() / exact.max()
+    e30, e60 = error(30), error(60)
+    assert e30 < 5e-4 and e30 / e60 == pytest.approx(4.0, rel=0.1)
+
+
+def test_liquid_over_slurry_joins_two_linear_profiles_with_the_kink_at_the_viscosity_jump():
+    """1 Pa of gas shear on 15 liquid cells over 15 of slurry at 900 K (37 % solid) over rigid metal: the stress is 1 Pa
+    all through, so the slurry shears at 1 Pa over its own viscosity at that rate (3.46 Pa s, 0.29 1/s) and the liquid at
+    1 Pa / 1.3 mPa s, the profiles joining at the jump. Each cell at its own shear rate makes it exact; the fixed point
+    takes two passes."""
+    sk = column_at([950.0] * 15 + [900.0] * 15 + [880.0] * 10)
+    mat = sk.material
+    f_s = 1.0 - float(mat.liquid_fraction(np.array([900.0]))[0])
+    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
+    gamma = 0.0
+    for _ in range(50):
+        gamma = 1.0 / float(rheology.viscosity(900.0, f_s, gamma, MU_L, f_b))
+    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
+    s = heights(sk, 30)
+    h_s = sk.dz()[0][15:30].sum()
+    np.testing.assert_allclose(sk.U[0, 15:30, 0], gamma * s[15:], rtol=1e-4)
+    np.testing.assert_allclose(sk.U[0, :15, 0], gamma * h_s + (s[:15] - h_s) / MU_L, rtol=1e-6)
+    assert book.passes <= skin.SHEAR_PASSES
+
+
+def test_a_layer_spun_up_from_rest_by_a_sudden_shear_follows_stokes_first_problem():
+    """1 Pa suddenly applied at the top of 0.9 mm of liquid at rest, for 18.5 ms (a diffusion length sqrt(nu t) of
+    100 um): u(y, t) = (2 tau / mu) sqrt(nu t) ierfc(y / 2 sqrt(nu t)), y the depth. The top cell within 1e-3 at 200
+    steps, the error halving with the step (backward Euler; 1.3e-3, 6.6e-4, 3.3e-4 at 100, 200, 400 steps, measured
+    2026-10-19); the momentum is the shear's impulse exactly."""
+    from scipy.special import erfc
+    nu, T_end = MU_L / 2400.0, 0.0185
+    L = np.sqrt(nu * T_end)
+
+    def run(steps):
+        sk = column_at([950.0] * 80 + [880.0] * 5)
+        for _ in range(steps):
+            skin.momentum_step(sk, T_end / steps, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
+        dz = sk.dz()[0][:80]
+        y = np.cumsum(dz) - 0.5 * dz
+        exact = 2.0 / MU_L * L * (np.exp(-(y / (2 * L)) ** 2) / np.sqrt(np.pi) - y / (2 * L) * erfc(y / (2 * L)))
+        return sk, abs(sk.U[0, 0, 0] / exact[0] - 1.0), np.abs(sk.U[0, :80, 0] - exact).max() / exact[0]
+    sk, top200, profile = run(200)
+    assert top200 < 1e-3 and profile < 1e-3
+    assert run(100)[1] / top200 == pytest.approx(2.0, rel=0.1)
+    assert sk.column_momentum()[0, 0] == pytest.approx(1.0 * sk.area[0] * T_end, rel=1e-12)
+
+
+def slurry_rate(sk, T, tau):
+    """The steady shear rate [1/s] of slurry at temperature T under the stress tau [Pa]: tau over its own viscosity at
+    that rate, by fixed point."""
+    mat = sk.material
+    f_s = 1.0 - float(mat.liquid_fraction(np.array([T]))[0])
+    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
+    gamma = 0.0
+    for _ in range(50):
+        gamma = tau / float(rheology.viscosity(T, f_s, gamma, MU_L, f_b))
+    return gamma
+
+
+def test_a_floating_crust_slides_on_the_slurry_beneath_it_as_one_piece():
+    """Asha, 2026-10-20, option B: a crust (three rigid cells at 880 K) on 15 cells of slurry at 900 K over the rigid
+    metal joined to the substrate, 1 Pa of gas shear on its top: the stress is 1 Pa all through, the slurry shears in
+    Couette's line from the anchored front, and the crust rides its top as one piece, at the slurry's speed there."""
+    sk = column_at([880.0] * 3 + [900.0] * 15 + [880.0] * 5)
+    gamma = slurry_rate(sk, 900.0, 1.0)
+    book = skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
+    s = heights(sk, 18)
+    h_s = sk.dz()[0][3:18].sum()
+    np.testing.assert_allclose(sk.U[0, 3:18, 0], gamma * s[3:], rtol=1e-4)
+    np.testing.assert_allclose(sk.U[0, :3, 0], gamma * h_s, rtol=1e-4)
+    assert np.ptp(sk.U[0, :3, 0]) < 1e-7 * sk.U[0, 0, 0]                    # one piece
+    assert np.all(sk.U[0, 18:] == 0.0) and np.all(book.shear[:, 0] > 0.0)
+
+
+def test_the_rigid_metal_joined_to_the_substrate_is_held_and_the_momentum_books_close():
+    """A crust over slurry and liquid over the anchored rigid metal, every cell moving at the start and pushed along the
+    surface: the anchored cells stop -- their momentum booked to the wall -- while the crust moves and takes the gas
+    shear, and the impulses add up to the momentum change."""
+    sk = column_at([880.0] + [920.0] * 10 + [902.0] * 10 + [880.0] * 5)
+    rng = np.random.default_rng(3)
+    sk.U = rng.normal(0.0, 0.05, sk.U.shape)
+    P0 = sk.column_momentum()
+    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+    assert np.array_equal(skin.anchored_cells(sk, flowing)[0], np.arange(26) >= 21)
+    book = skin.momentum_step(sk, 1e-3, np.array([2e4, -1e4, 0.0]), np.array([3.0, 0.0, 0.0]), sk.area)
+    assert np.all(sk.U[0, 21:] == 0.0) and np.all(sk.U[0, :21] != 0.0)
+    assert book.shear[0, 0] == pytest.approx(3.0 * sk.area[0] * 1e-3)
+    assert books_close(sk, P0, book)
+
+
+def test_a_column_whose_bottom_cell_flows_anchors_nothing():
+    """Slurry down to the base under a crust: no rigid cell is joined to the substrate, so the crust floats and the
+    slurry's bottom cell meets the rigid 3D metal beneath the base with no slip."""
+    sk = column_at([880.0] * 2 + [900.0] * 10)
+    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+    assert not skin.anchored_cells(sk, flowing).any()
+    gamma = slurry_rate(sk, 900.0, 1.0)
+    skin.momentum_step(sk, STEADY, np.zeros(3), np.array([1.0, 0.0, 0.0]), sk.area)
+    dz = sk.dz()[0]
+    s = dz[:12].sum() - (np.cumsum(dz[:12]) - 0.5 * dz[:12])                # heights above the base
+    np.testing.assert_allclose(sk.U[0, 2:12, 0], gamma * s[2:], rtol=1e-4)
