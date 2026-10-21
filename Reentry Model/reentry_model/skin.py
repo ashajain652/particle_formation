@@ -930,6 +930,50 @@ def momentum_step(sk, dt, push, shear, A_top):
     return book
 
 
+# -- the push (sub-plan 21 Task 5) -------------------------------------------------------------------------------------
+def along_meridian(normals, v_hat, magnitude):
+    """Vectors of the given magnitudes (n,) in each corner's tangent plane, pointing along the meridian away from the
+    stagnation point -- the direction of minus the flight direction's tangential part, the way the gas flows and the
+    surface flow's s runs; zero where that part vanishes (the stagnation and rear points)."""
+    v = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
+    away = -(v[None, :] - (normals @ v)[:, None] * normals)
+    size = np.linalg.norm(away, axis=1)
+    unit = np.divide(away, size[:, None], out=np.zeros_like(away), where=size[:, None] > 1e-12)
+    return np.asarray(magnitude, dtype=float)[:, None] * unit
+
+
+def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma):
+    """The push along the surface on every layer of every column [N/m3], (n, 3), and its four terms (spec 6.4), each in
+    the column's own tangent plane -- the base's, where `momentum_step` solves for the velocities:
+
+        pressure      -dp_w/ds along the meridian away from the stagnation point, dp_ds [Pa/m, (n,)] the surface flow's
+                      (`SurfaceFlowResult.dp_ds`), differentiated on its own fine bins of the angle. The gradient of the
+                      corners' own p_w would carry the scatter of their normals' angles, amplified some 25 times (the
+                      radius over the spacing) by the differentiation: on the 2 mm sphere a Newtonian pressure's push
+                      came out 1.1 % off on average and 13 % at worst that way, from normals 0.06 deg off radial on
+                      average (measured 2026-10-20).
+        deceleration  rho_l g_t, g [m/s2, (3,) or (n, 3)] the acceleration the metal feels in the body's frame, minus the
+                      body's own -- for a body slowed by drag, the deceleration along the flight direction v_hat -- so
+                      that it pulls the metal forward, toward the nose along the surface and out of the front face;
+                      the spec's -rho_l a_t, and the element model's -rho_l W sin(theta) on the windward face.
+        thickness     rho_l (g . n) grad_s H, H [m, (n,)] the columns' thicknesses: a thicker column under a pull out
+                      of the surface has the lower pressure beneath it and draws metal in (the front face's
+                      Rayleigh-Taylor mechanism).
+        capillary     -sigma grad_s kappa, kappa the mean curvature (`Columns.curvature`) of the top surface the
+                      thicknesses make (`Columns.top_points`).
+
+    The two thickness terms are evaluated at the given H; Task 6 takes them implicitly in the column heights."""
+    H = np.asarray(thickness, dtype=float)
+    normals = columns.normal
+    g = np.broadcast_to(np.asarray(g, dtype=float), (columns.n, 3))
+    g_n = np.einsum("ij,ij->i", g, normals)
+    terms = {"pressure": -along_meridian(normals, v_hat, dp_ds),
+             "deceleration": rho_l * (g - g_n[:, None] * normals),
+             "thickness": rho_l * g_n[:, None] * columns.gradient(H),
+             "capillary": -sigma * columns.gradient(columns.curvature(columns.top_points(H)))}
+    return sum(terms.values()), terms
+
+
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------
 def hand_down(sk, m_min, T_rigid):
     """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
