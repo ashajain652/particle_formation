@@ -815,3 +815,296 @@ def test_a_sphere_s_own_mesh_drives_no_capillary_flow_to_speak_of(coarse_sphere_
     _, terms = skin.push(col, np.full(col.n, 8e-4), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA)
     size = np.linalg.norm(terms["capillary"], axis=1)
     assert size.max() < 20.0 and size.mean() < 0.5
+
+
+# -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
+LIQUID, SLURRY, RIGID = 950.0, 902.0, 880.0       # K: all liquid; 30 % solid, flowing; rigid (T_rigid 895.1 K)
+
+
+def strip_grid(nx, ny, h=1e-3):
+    """Columns on a flat regular grid of nx by ny corners, h apart (regular_grid's triangles), normals +z."""
+    from reentry_model import columns
+    x, y = np.meshgrid(np.arange(nx) * h, np.arange(ny) * h, indexing="ij")
+    pts = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)])
+    idx = np.arange(nx * ny).reshape(nx, ny)
+    a, b, c, d = idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()
+    return columns.Columns(pts, np.vstack([np.column_stack([a, b, c]), np.column_stack([a, c, d])])), pts
+
+
+def stacked(col, temps):
+    """Skins on the columns `col`, column i holding a cell of 10 um of solid metal's mass at each temperature of
+    temps[i], top first."""
+    mat = scheil()
+    sk = skin.Skins(mat, col.area, skin.SkinSettings(**CELLS_04))
+    count = np.array([len(t) for t in temps])
+    K = int(count.max())
+    T = np.array([list(t) + [300.0] * (K - len(t)) for t in temps])
+    m = np.where(np.arange(K)[None, :] < count[:, None], mat.rho * col.area[:, None] * 1e-5, 0.0)
+    sk._install(m, m * mat.enthalpy(T), count)
+    return sk
+
+
+def moving_from(sk, columns, donor, u, cells=None):
+    """The velocity u (3,) in the donor column's cells (all, or those listed), every other cell at rest; returns the
+    donor's outflow rate across each edge per unit mass [1/s] (E,) toward each of its neighbours, and the neighbours."""
+    sk.U = np.zeros_like(sk.U)
+    cells = np.arange(sk.count[donor]) if cells is None else np.asarray(cells)
+    sk.U[donor, cells] = u
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    flux = np.where(i == donor, columns.face_vector @ u, np.where(j == donor, -(columns.face_vector @ u), 0.0))
+    other = np.where(i == donor, j, i)
+    out = flux > 0.0
+    return np.maximum(flux[out], 0.0) / sk.area[donor], other[out]
+
+
+def test_with_every_velocity_zero_the_transport_changes_nothing(coarse_sphere_mesh):
+    sk, col, _ = random_sphere_skins(coarse_sphere_mesh)
+    before = sk.state()
+    book = skin.transport(sk, col, 0.01)
+    assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
+    assert not (book.mass.any() or book.enthalpy.any() or book.momentum.any() or book.wall.any()) and book.courant == 0.0
+
+
+def test_rigid_metal_joined_to_the_substrate_never_leaves_whatever_its_velocity():
+    """Anchored cells hold zero velocity after every momentum step (Task 4); given one anyway they do not move."""
+    col, _ = strip_grid(3, 3)
+    sk = stacked(col, [[RIGID] * 6] * col.n)
+    sk.U = np.where(sk.valid[..., None], np.array([0.3, -0.2, 0.0]), 0.0)
+    before = sk.state()
+    skin.transport(sk, col, 0.01)
+    assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
+
+
+def test_a_warm_thick_pulse_carried_by_a_uniform_flow_arrives_where_the_flow_takes_it():
+    """A pulse half again as thick as the layer around it and 50 K warmer (a Gaussian 3 mm wide) in liquid on 1 mm
+    columns, every cell moving at 0.1 m/s along x for 0.1 s, against the same grid without the pulse (whose open ends
+    drain and pile up alike): its mass and heat are kept and their centroids move by u t, 10 mm (to 6e-8, 1e-5 and
+    8.3e-4 mm at Courant numbers nu = u dt / h of 0.5, 1 and 2, measured 2026-10-21, as the scheme's long upwind tail
+    reaches the grid's edges), while the implicit upwind scheme spreads them as the one-dimensional scheme does, by
+    h^2 nu (1 + nu) of variance a sub-step -- the numerical diffusion u h (1 + nu) / 2 -- less 4.2, 3.2 and 2.4 %. The
+    books close to round-off and every velocity stays u."""
+    h, u, x0, w = 1e-3, 0.1, 20e-3, 3e-3
+
+    def run(dt, pulse):
+        col, pts = strip_grid(61, 9, h)
+        g = np.exp(-0.5 * ((pts[:, 0] - x0) / w) ** 2) if pulse else np.zeros(col.n)
+        s = skin.SkinSettings(cell=20e-6)
+        sk = skin.Skins(scheil(), col.area, s)
+        sk.fill(skin.minimum_mass(sk.material, sk.area, s) * (1.0 + 0.5 * g), LIQUID + 50.0 * g)
+        sk.regrid()
+        sk.U = np.where(sk.valid[..., None], np.array([u, 0.0, 0.0]), 0.0)
+        M0, E0 = sk.mass(), sk.energy()
+        start = (sk.column_mass(), sk.H.sum(axis=1))
+        for _ in range(int(round(0.1 / dt))):
+            skin.transport(sk, col, dt)
+        assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
+        assert np.abs(sk.U[sk.valid] - np.array([u, 0.0, 0.0])).max() < 1e-12
+        return start, (sk.column_mass(), sk.H.sum(axis=1)), pts
+
+    def moments(f, x):
+        mean = (x * f).sum() / f.sum()
+        return mean, ((x - mean) ** 2 * f).sum() / f.sum(), f.sum()
+
+    for dt in (0.005, 0.01, 0.02):
+        (m0, H0), (m1, H1), pts = run(dt, True)
+        (r0, R0), (r1, R1), _ = run(dt, False)
+        inner = (pts[:, 1] > 0.0) & (pts[:, 1] < pts[:, 1].max())
+        nu = u * dt / h
+        for before, after in (((m0 - r0), (m1 - r1)), ((H0 - R0), (H1 - R1))):
+            a, b = moments(before[inner], pts[inner, 0]), moments(after[inner], pts[inner, 0])
+            assert b[2] == pytest.approx(a[2], rel=1.5e-5)                          # 6.2e-6 at nu = 2
+            assert b[0] - a[0] == pytest.approx(u * 0.1, abs=2e-6)
+            assert b[1] - a[1] == pytest.approx(h * h * nu * (1.0 + nu) * 0.1 / dt, rel=0.09)
+
+
+def test_depth_is_matched_by_fraction_of_the_flowing_layer():
+    """Spec 6.5: metal leaving the donor between fractions s1 and s2 of its flowing depth joins each receiver between
+    the same fractions of the receiver's, which flows from its top down. The donor's ten liquid cells over rigid metal
+    move only in their first and third (fractions 0-0.1 and 0.2-0.3); a receiver of 20 liquid cells takes them in its
+    cells 0-1 and 4-5, a receiver of 4 in its cells 0 and 1 (0.2-0.3 straddles its 0.25), each in proportion to the
+    overlap; nothing reaches rigid metal."""
+    col, _ = strip_grid(3, 3)
+    temps = [[LIQUID] * 20 + [RIGID] * 5 if k % 2 else [LIQUID] * 4 + [RIGID] * 10 for k in range(col.n)]
+    temps[4] = [LIQUID] * 10 + [RIGID] * 5
+    sk = stacked(col, temps)
+    dt, u = 0.01, np.array([0.08, 0.05, 0.0])
+    rate, receivers = moving_from(sk, col, 4, u, cells=[0, 2])
+    before = sk.m.copy()
+    book = skin.transport(sk, col, dt, regrid=False)
+    m_left = before[4, [0, 2]] / (1.0 + dt * rate.sum())               # the donor's cells, implicitly
+    for r, c in zip(receivers, rate):
+        gain = sk.m[r] - before[r]
+        sent = dt * c * m_left                                        # its first and third cells' share
+        if sk.count[r] == 25:
+            np.testing.assert_allclose(gain[[0, 1, 4, 5]], [sent[0] / 2, sent[0] / 2, sent[1] / 2, sent[1] / 2],
+                                       rtol=1e-12)
+            assert np.all(gain[2:4] == 0.0) and np.all(gain[6:] == 0.0)
+        else:
+            np.testing.assert_allclose(gain[:2], [sent[0] + sent[1] / 2, sent[1] / 2], rtol=1e-12)
+            assert np.all(gain[2:] == 0.0)
+        assert book.mass[r] == pytest.approx(sent.sum(), rel=1e-12)
+    assert len(receivers) >= 2 and {25, 14} <= set(sk.count[receivers])
+
+
+def test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_are_untouched():
+    """Spec 6.5's arrival rule: where the receiver's top is rigid -- anchored solid, or a crust over flowing metal --
+    the arriving metal lands on top of its top cell, as a new cell holding exactly what arrived; nothing passes
+    through rigid metal."""
+    col, _ = strip_grid(3, 3)
+    temps = [[RIGID] * 12 if k % 2 else [RIGID] * 2 + [LIQUID] * 6 + [RIGID] * 4 for k in range(col.n)]
+    temps[4] = [LIQUID] * 8 + [RIGID] * 4
+    sk = stacked(col, temps)
+    rate, receivers = moving_from(sk, col, 4, np.array([0.1, 0.04, 0.0]), cells=np.arange(8))
+    before = sk.state()
+    book = skin.transport(sk, col, 0.01, regrid=False)
+    h_donor = sk.material.enthalpy(LIQUID)
+    for r in range(col.n):
+        if r == 4:
+            continue
+        if r in receivers:
+            assert sk.count[r] == before[4][r] + 1
+            assert sk.m[r, 0] == pytest.approx(book.mass[r], rel=1e-12)
+            assert sk.H[r, 0] == pytest.approx(book.mass[r] * h_donor, rel=1e-12)
+            np.testing.assert_allclose(sk.U[r, 0], [0.1, 0.04, 0.0], rtol=1e-12)
+            shifted = slice(1, sk.count[r])
+        else:
+            assert book.mass[r] == 0.0
+            shifted = slice(0, sk.count[r])
+        for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3]), (sk.U, before[5])):
+            assert np.array_equal(now[r, shifted], then[r, :before[4][r]])
+    assert any(r % 2 for r in receivers) and any(r % 2 == 0 for r in receivers)          # solid tops and crusts
+
+
+def test_a_floating_crust_carried_across_lands_on_top_and_the_slurry_beneath_it_joins_by_fraction():
+    """Asha, 2026-10-20 (Task 4): a crust over flowing metal floats and moves as one piece. Carried into a neighbour it
+    lands on top of the neighbour's top; the slurry beneath it, ten cells, joins each receiver's 20 liquid cells two by
+    two; the donor's anchored cells, given the same velocity, stay where they are."""
+    col, _ = strip_grid(3, 3)
+    temps = [[LIQUID] * 20 + [RIGID] * 5] * col.n
+    temps[4] = [RIGID] * 2 + [SLURRY] * 10 + [RIGID] * 5
+    sk = stacked(col, temps)
+    dt = 0.01
+    rate, receivers = moving_from(sk, col, 4, np.array([0.1, 0.04, 0.0]))       # every cell, the anchored too
+    before = sk.state()
+    book = skin.transport(sk, col, dt, regrid=False)
+    left = before[1][4, :12] / (1.0 + dt * rate.sum())
+    np.testing.assert_allclose(sk.m[4, :12], left, rtol=1e-12)
+    for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3]), (sk.U, before[5])):
+        assert np.array_equal(now[4, 12:17], then[4, 12:17])                    # the anchored cells
+    h_crust, h_slurry = sk.material.enthalpy(RIGID), sk.material.enthalpy(SLURRY)
+    for r, c in zip(receivers, rate):
+        assert sk.count[r] == 26
+        assert sk.m[r, 0] == pytest.approx(dt * c * left[:2].sum(), rel=1e-12)
+        assert sk.H[r, 0] == pytest.approx(sk.m[r, 0] * h_crust, rel=1e-12)
+        gain = sk.m[r, 1:21] - before[1][r, :20]
+        np.testing.assert_allclose(gain, np.repeat(dt * c * left[2:12] / 2.0, 2), rtol=1e-12)
+        H_gain = sk.H[r, 1:21] - before[2][r, :20]
+        np.testing.assert_allclose(H_gain, gain * h_slurry, rtol=1e-9)
+        assert np.array_equal(sk.m[r, 21:], before[1][r, 20:25])
+        assert book.mass[r] == pytest.approx(dt * c * left.sum(), rel=1e-12)
+
+
+def mixed_sphere_skins(coarse_sphere_mesh, seed=6, speed=0.05):
+    """Skins on the 4 mm test sphere, 1-3 times their minimum deep, every cell at its own temperature between 860 and
+    960 K -- liquid, slurry, crusts and anchored rigid metal in every arrangement -- and moving at its own velocity in
+    its column's tangent plane, about `speed` m/s."""
+    sk, col, rng = random_sphere_skins(coarse_sphere_mesh, seed)
+    sk.T = np.where(sk.valid, rng.uniform(860.0, 960.0, sk.T.shape), sk.T)
+    sk.H = sk.m * sk.material.enthalpy(sk.T)
+    U = rng.normal(0.0, speed, sk.U.shape)
+    U -= np.einsum("ikx,ix->ik", U, col.normal)[..., None] * col.normal[:, None, :]
+    sk.U = np.where(sk.valid[..., None], U, 0.0)
+    return sk, col, rng
+
+
+def test_the_books_close_on_skins_of_every_kind_on_the_sphere(coarse_sphere_mesh):
+    """Mass, enthalpy and the cells' carried sensitivity are conserved to round-off, each column's change is its book;
+    the momentum of each column changes by what was carried in less what was carried out plus the wall's impulse, the
+    normal parts the projection removed, which lie along the column's normal; every velocity ends in its column's
+    plane, and the anchored cells are untouched. Measured 2026-10-21 at Courant numbers up to 0.87: every book to
+    4e-15 of its scale, the wall's impulse 2.5 % of the largest column's momentum."""
+    sk, col, rng = mixed_sphere_skins(coarse_sphere_mesh)
+    sk.S = np.where(sk.valid, rng.uniform(0.0, 1.0, sk.m.shape), 0.0)
+    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+    anchored = skin.anchored_cells(sk, flowing)
+    assert flowing.sum() > 1000 and anchored.sum() > 1000 and (sk.valid & ~flowing & ~anchored).sum() > 100
+    before = sk.state()
+    mS0, P0, M0, E0 = (sk.m * sk.S).sum(), sk.column_momentum(), sk.column_mass(), sk.H.sum(axis=1)
+    book = skin.transport(sk, col, 0.01, regrid=False)
+    assert book.courant > 0.1
+    np.testing.assert_allclose(sk.column_mass() - M0, book.mass, rtol=0, atol=1e-13 * M0.max())
+    np.testing.assert_allclose(sk.H.sum(axis=1) - E0, book.enthalpy, rtol=0, atol=1e-13 * np.abs(E0).max())
+    assert abs(book.mass.sum()) < 1e-13 * M0.sum() and abs(book.enthalpy.sum()) < 1e-13 * np.abs(E0).sum()
+    assert (sk.m * sk.S).sum() == pytest.approx(mS0, rel=1e-13)
+    scale = np.abs(P0).max()
+    np.testing.assert_allclose(sk.column_momentum() - P0, book.momentum + book.wall, rtol=0, atol=1e-13 * scale)
+    assert np.abs(book.momentum.sum(axis=0)).max() < 1e-13 * scale
+    assert np.linalg.norm(np.cross(book.wall, col.normal), axis=1).max() < 1e-13 * scale
+    assert np.abs(book.wall).max() > 1e-6 * scale                                  # the planes differ: it is not idle
+    assert np.abs(np.einsum("ikx,ix->ik", sk.U, col.normal)).max() < 1e-12 * np.abs(sk.U).max()
+    top = (sk.count - before[4])[:, None]                                         # a new top cell shifts the rest
+    k = np.arange(anchored.shape[1])[None, :]
+    rows, cells = np.nonzero(anchored)
+    for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3])):
+        assert np.array_equal(now[rows, cells + top[rows, 0]], then[rows, cells])
+
+
+def test_courant_numbers_far_above_one_stay_positive_bounded_and_conservative(coarse_sphere_mesh):
+    """A 10 s sub-step on the mixed sphere skins (Courant numbers up to 875): every cell keeps a positive mass, every
+    specific enthalpy stays within the old ones' range and every speed below the old fastest (the scheme mixes, it
+    never overshoots), the books close and the cells end within their split and merge bounds."""
+    sk, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    v = sk.valid
+    h0, M0, E0 = sk.H[v] / sk.m[v], sk.mass(), sk.energy()
+    fastest = np.linalg.norm(sk.U, axis=2).max()
+    book = skin.transport(sk, col, 10.0)
+    v = sk.valid
+    assert book.courant > 100.0
+    assert np.all(sk.m[v] > 0.0)
+    h = sk.H[v] / sk.m[v]
+    assert h.min() >= h0.min() - 1e-9 * abs(h0.min()) and h.max() <= h0.max() + 1e-9 * abs(h0.max())
+    assert np.linalg.norm(sk.U, axis=2).max() <= fastest * (1.0 + 1e-12)
+    assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
+    dz, t = sk.dz(), sk.targets()
+    assert np.all(dz[v] >= skin.MERGE_BELOW * t[v]) and np.all(dz[v] <= skin.SPLIT_ABOVE * t[v])
+
+
+def test_a_velocity_carried_into_a_column_is_projected_onto_its_plane(coarse_sphere_mesh):
+    """One column on the 4 mm test sphere, liquid throughout, moving at 1 m/s in its plane into its neighbours, which are
+    liquid at rest: each neighbour gains the projection onto its own plane of the momentum that left toward it, and
+    the wall takes the normal part -- the planes of neighbouring 4 mm columns on a 50 mm sphere are 4.6 degrees apart
+    on average, the three receivers' 4.5-4.9 degrees from the donor's, and the normal parts 2.3-7.7 % of the momentum
+    carried (measured 2026-10-21)."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    sk = skin.Skins(scheil(), col.area, skin.SkinSettings())
+    sk.fill(skin.minimum_mass(sk.material, sk.area, sk.settings), LIQUID)
+    sk.regrid()
+    donor = int(np.argmin(np.abs(col.normal[:, 2])))                              # on the equator of z
+    u = np.cross(col.normal[donor], [0.0, 0.0, 1.0])
+    rate, receivers = moving_from(sk, col, donor, u / np.linalg.norm(u))
+    P0 = sk.column_momentum()
+    book = skin.transport(sk, col, 0.01, regrid=False)
+    n = col.normal[receivers]
+    carried = book.momentum[receivers]
+    inplane = carried - np.einsum("ij,ij->i", carried, n)[:, None] * n
+    np.testing.assert_allclose(sk.column_momentum()[receivers] - P0[receivers], inplane, rtol=0,
+                               atol=1e-12 * np.abs(carried).max())
+    np.testing.assert_allclose(book.wall[receivers], inplane - carried, rtol=0, atol=1e-12 * np.abs(carried).max())
+    normal_part = np.linalg.norm(carried - inplane, axis=1) / np.linalg.norm(carried, axis=1)
+    assert normal_part.max() > 0.02 and normal_part.max() < 0.16
+
+
+def test_the_upwind_order_changes_the_cost_never_the_answer(coarse_sphere_mesh, monkeypatch):
+    """The solve takes the cells in upwind order -- scipy's strong components, which come out in reverse topological
+    order -- so that its sparse LU has almost no fill; were that order ever not upwind, the LU falls back to its own
+    fill-reducing order and gives the same answer, more slowly."""
+    first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    second, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    a = skin.transport(first, col, 0.05, regrid=False)
+    rng = np.random.default_rng(0)
+    monkeypatch.setattr(skin, "_upwind_order", lambda src, dst, n: (rng.permutation(n), False))
+    b = skin.transport(second, col, 0.05, regrid=False)
+    for x, y in zip(first.state(), second.state()):
+        np.testing.assert_allclose(x, y, rtol=1e-11, atol=1e-11 * np.abs(y).max())
+    np.testing.assert_allclose(a.wall, b.wall, rtol=0, atol=1e-11 * np.abs(a.momentum).max())

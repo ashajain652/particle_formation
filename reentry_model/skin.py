@@ -31,6 +31,9 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.sparse as sp
+import scipy.sparse.linalg as spla
+from scipy.sparse.csgraph import connected_components
 
 from . import rheology
 from .thermal import SIGMA_SB
@@ -972,6 +975,227 @@ def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma):
              "thickness": rho_l * g_n[:, None] * columns.gradient(H),
              "capillary": -sigma * columns.gradient(columns.curvature(columns.top_points(H)))}
     return sum(terms.values()), terms
+
+
+# -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
+SLIVER = 1.0e-12                  # a piece of a donor cell shorter than this share of it is the round-off of a boundary
+                                  # the donor's and the receiver's partitions share, and is left out
+
+
+@dataclass
+class TransportBook:
+    """What a transport sub-step carried between the columns, per column: each column's gain from its neighbours less
+    what it gave them. The mass, the enthalpy and the momentum as it left the donors each sum to zero over the body to
+    round-off; every arrival's velocity is projected onto its receiver's plane, and the normal parts removed are the
+    wall's impulse, so that each column's momentum changes by momentum + wall."""
+    mass: np.ndarray         # kg (n,)
+    enthalpy: np.ndarray     # J (n,)
+    momentum: np.ndarray     # kg m/s (n, 3), as it left the donors, before the projection
+    wall: np.ndarray         # N s (n, 3), the normal parts removed, each along its own column's normal
+    courant: float           # the largest outflow rate of any cell [1/s] times the sub-step
+
+
+def tangent_frames(normals):
+    """Two orthonormal vectors (e1, e2), each (n, 3), spanning every column's tangent plane, e1 x e2 along the normal:
+    e1 the global x axis's part in the plane, or y's where the normal lies within 26 degrees of x."""
+    ref = np.where((np.abs(normals[:, 0]) < 0.9)[:, None], np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]))
+    e1 = ref - np.einsum("ij,ij->i", ref, normals)[:, None] * normals
+    e1 /= np.linalg.norm(e1, axis=1)[:, None]
+    return e1, np.cross(normals, e1)
+
+
+def _fractions(depth):
+    """Per column, its cells' boundaries (n, K+1) as fractions of the depth they hold (`depth` (n, K) each cell's share,
+    zero for a cell that does not count), from 0 at the top to 1 at the last that counts and held there; 1 throughout
+    where none counts."""
+    z = np.concatenate([np.zeros((depth.shape[0], 1)), np.cumsum(depth, axis=1)], axis=1)
+    total = z[:, -1:]
+    return np.where(total > 0.0, z / np.where(total > 0.0, total, 1.0), 1.0)
+
+
+def _pieces(sig, tau):
+    """The pieces two partitions of [0, 1] cut each other into, row by row: sig and tau (D, K+1) non-decreasing
+    boundaries. Returns, for every piece of positive length, its row, its cell of sig, its cell of tau and its length.
+    A rank merge: each boundary's place in the merged row is its own index plus the number of the other partition's
+    boundaries before it (tau's first where two are equal)."""
+    D, B = sig.shape
+    rows = np.arange(D)[:, None]
+    off = (np.arange(D) * 4.0)[:, None]                      # boundaries lie in [0, 1]: rows 4 apart never mix
+    before = lambda xp, x, side: (np.searchsorted((xp + off).ravel(), (x + off).ravel(), side=side).reshape(x.shape)
+                                  - rows * B)
+    at_s = np.arange(B)[None, :] + before(tau, sig, "right")
+    at_t = np.arange(B)[None, :] + before(sig, tau, "left")
+    merged = np.empty((D, 2 * B))
+    merged[rows, at_s], merged[rows, at_t] = sig, tau
+    from_sig = np.zeros((D, 2 * B), dtype=np.int64)
+    from_sig[rows, at_s] = 1
+    seen = np.cumsum(from_sig, axis=1)[:, :-1]                # sig's boundaries at or before each piece's start
+    length = np.diff(merged, axis=1)
+    r, p = np.nonzero(length > 0.0)
+    return r, seen[r, p] - 1, p - seen[r, p], length[r, p]
+
+
+def _upwind_order(src, dst, n):
+    """An order of n unknowns in which every donor (src) comes before its receivers (dst), except within a cycle of
+    transfers, which stays together; and whether it holds. The order is scipy's strong components, which its (Pearce's)
+    algorithm numbers in reverse topological order -- how scipy numbers them, not what it promises, so it is checked."""
+    graph = sp.csr_matrix((np.ones(len(src)), (src, dst)), shape=(n, n))
+    _, label = connected_components(graph, directed=True, connection="strong")
+    return np.argsort(-label, kind="stable"), bool(np.all(label[src] >= label[dst]))
+
+
+def _factor(A, upwind):
+    """A sparse LU of A, an M-matrix or one by blocks, in the given order with no pivoting where the order is upwind (the
+    matrix is then triangular but for its cycles: no fill, every sign kept), else in SuperLU's own fill-reducing order."""
+    if upwind:
+        return spla.splu(A, permc_spec="NATURAL", diag_pivot_thresh=0.0, options=dict(SymmetricMode=True))
+    return spla.splu(A)
+
+
+def transport(sk, columns, dt, regrid=True):
+    """One linearly implicit upwind sub-step dt [s] of the metal moving sideways between neighbouring columns at the
+    cells' velocities sk.U (spec 6.5; Asha, 2026-10-21: its own step, after the momentum step). Updates the cells and
+    returns a TransportBook.
+
+    Across each face, cell k of the donor column a sends c m_k' toward the receiver b, c = (u_k . f)+ / A_a [1/s], f the
+    face's vector (`Columns.face_vector`) and m_k' the cell's mass at the sub-step's end; it carries the cell's specific
+    enthalpy and velocity. Every cell is then m_k' (1 + dt sum c) = m_k + dt (what arrives): (I + dt C) m' = m, the
+    film's runoff scheme (`film.Runoff`) on the cells -- an M-matrix whose columns sum to one, so the masses stay
+    positive, the books close to round-off and nothing limits dt. The enthalpy, the carried sensitivity S and the
+    momentum solve the same system, the momentum with every arrival projected onto its receiver's tangent plane, in two
+    components per cell (`tangent_frames`), the normal part booked to the wall (spec 6.4, section 14 assumption 2).
+
+    Where metal joins the receiver (spec 6.5, section 14 assumption 3): a flowing donor cell's span of fractions of the
+    donor's flowing depth (its flowing cells, top down) joins the receiver's cells between the same fractions of its
+    flowing layer, the run of flowing cells from its top, each in proportion to the overlap. Where the receiver's top is
+    rigid -- anchored metal, or a crust -- everything lands on top of it, as a new top cell; so does a floating crust's
+    metal (Task 4, Asha 2026-10-20) wherever it goes, being no part of any flowing depth. Rigid metal joined to the
+    substrate (`anchored_cells`) neither leaves nor receives, whatever velocity it holds: nothing passes through rigid
+    metal. Only the cells that send or receive are solved for; with every velocity zero nothing changes.
+
+    The cells are taken in upwind order (`_upwind_order`), in which the system is triangular but for its cycles where
+    flows meet, so its sparse LU has almost no fill. With `regrid` the cells are then split and merged (spec 6.2); a
+    sub-step that regrids anyway passes False.
+
+    Measured 2026-10-21 on the 100 mm sphere's skins (9 417 columns, 10 um cells), flowing along the meridian away from
+    the stagnation point: 0.27 s a sub-step with the front hemisphere's top 0.3 mm flowing (124 000 of 553 000 cells
+    moving), the same at Courant numbers of 1 and 96, and 0.95 s with all 584 000 cells moving, against 0.6-0.8 s for a
+    coupled conduction sub-step on the sphere's skins at 700 K. With every cell moving, the mass's LU in the cells' own
+    order took 19.6 s and in SuperLU's fill-reducing order 0.66 s, against 0.06 s upwind. Projected once at the
+    sub-step's end instead of at every arrival, a
+    uniform meridian flow kept 90 % of its kinetic energy in one sub-step at Courant number 9.6 against 96 %, and 24 %
+    against 49 % at 96: metal crossing many columns in a sub-step would carry its velocity straight on, off the curved
+    surface."""
+    n, K = sk.m.shape
+    valid = sk.valid
+    flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
+    moving = valid & ~anchored_cells(sk, flowing) & (sk.U != 0.0).any(axis=2)
+    book = TransportBook(np.zeros(n), np.zeros(n), np.zeros((n, 3)), np.zeros((n, 3)), 0.0)
+    if not moving.any():
+        return book
+    # every face a moving column has, each way, and every cell's outflow rate across it [1/s]
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    a, b, f = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
+    keep = np.flatnonzero(moving.any(axis=1)[a])
+    a, b, f = a[keep], b[keep], f[keep]
+    c = np.where(moving[a], np.maximum(np.einsum("dkx,dx->dk", sk.U[a], f), 0.0), 0.0) / sk.area[a][:, None]
+    keep = np.flatnonzero((c > 0.0).any(axis=1))
+    if not len(keep):
+        return book
+    a, b, c = a[keep], b[keep], c[keep]
+    D = len(a)
+    # where it joins: by fraction of the flowing depth, or on top
+    dz = sk.dz()
+    run = np.cumprod(flowing, axis=1).sum(axis=1)             # the receiver's flowing layer: its top run of flowing cells
+    sig = _fractions(np.where(flowing, dz, 0.0))
+    tau = _fractions(np.where(np.arange(K)[None, :] < run[:, None], dz, 0.0))
+    joins = np.where(flowing[a] & (run[b] > 0)[:, None], c, 0.0)
+    rows = np.flatnonzero((joins > 0.0).any(axis=1))
+    r, kd, kr, length = _pieces(sig[a[rows]], tau[b[rows]])
+    some = joins[rows[r], kd] > 0.0
+    edge, kd, kr, length = rows[r[some]], kd[some], kr[some], length[some]
+    group = edge * K + kd
+    span = np.bincount(group, length, D * K)[group]
+    some = length > SLIVER * span                             # not the round-off of a boundary the two share
+    edge, kd, kr, length, group = edge[some], kd[some], kr[some], length[some], group[some]
+    share = length / np.bincount(group, length, D * K)[group]  # each donor cell's pieces sum to one
+    te, tk = np.nonzero((c > 0.0) & ~(flowing[a] & (run[b] > 0)[:, None]))
+    # every arrival: its face, the receiving cell (n K + b: a new top cell of column b), the sending cell, dt c share
+    e_edge = np.r_[edge, te]
+    e_row = np.r_[b[edge] * K + kr, n * K + b[te]]
+    e_col = np.r_[a[edge] * K + kd, a[te] * K + tk]
+    e_val = dt * np.r_[c[edge, kd] * share, c[te, tk]]
+    # the cells that send or receive, in upwind order; each sends what its arrivals take, so the books close exactly
+    active = np.zeros(n * K + n, dtype=bool)
+    active[e_row], active[e_col] = True, True
+    act = np.flatnonzero(active)
+    N = len(act)
+    local = np.full(n * K + n, -1, dtype=np.int64)
+    local[act] = np.arange(N)
+    order, upwind = _upwind_order(local[e_col], local[e_row], N)
+    at = np.empty(N, dtype=np.int64)
+    at[order] = np.arange(N)
+    to, frm = at[local[e_row]], at[local[e_col]]
+    diag = 1.0 + np.bincount(local[e_col], e_val, N)
+    # mass, enthalpy and the carried sensitivity
+    lu = _factor(sp.csc_matrix((np.r_[diag, -e_val], (np.r_[at, to], np.r_[at, frm])), shape=(N, N)), upwind)
+    cell = lambda v: np.r_[v.reshape((n * K,) + v.shape[2:]), np.zeros((n,) + v.shape[2:])][act]
+    rhs = [cell(sk.m), cell(sk.H)] + ([cell(sk.m * sk.S)] if sk.S is not None else [])
+    x = np.empty((N, len(rhs)))
+    x[order] = lu.solve(np.column_stack(rhs)[order])
+    # the momentum, each arrival projected onto its receiver's plane: two components per cell in its own plane's frame
+    owner = np.where(act < n * K, act // K, act - n * K)
+    e1, e2 = tangent_frames(columns.normal)
+    P = cell(sk.m[..., None] * sk.U)
+    p = np.column_stack([np.einsum("ij,ij->i", P, e1[owner]), np.einsum("ij,ij->i", P, e2[owner])])
+    held = P - p[:, :1] * e1[owner] - p[:, 1:] * e2[owner]   # any normal part a cell held: the wall's
+    R = np.stack([np.stack([np.einsum("ij,ij->i", e[b], g[a]) for g in (e1, e2)], axis=1) for e in (e1, e2)], axis=1)
+    Re = R[e_edge]                                            # [arrival, receiver's component, donor's component]
+    rows2 = [2 * at, 2 * at + 1] + [2 * to + q for q in (0, 0, 1, 1)]
+    cols2 = [2 * at, 2 * at + 1] + [2 * frm + q for q in (0, 1, 0, 1)]
+    vals2 = [diag, diag] + [-e_val * Re[:, q, s] for q, s in ((0, 0), (0, 1), (1, 0), (1, 1))]
+    lu2 = _factor(sp.csc_matrix((np.concatenate(vals2), (np.concatenate(rows2), np.concatenate(cols2))),
+                                shape=(2 * N, 2 * N)), upwind)
+    rhs2 = np.empty(2 * N)
+    rhs2[2 * at], rhs2[2 * at + 1] = p[:, 0], p[:, 1]
+    y = lu2.solve(rhs2)
+    p = np.column_stack([y[2 * at], y[2 * at + 1]])
+    P = p[:, :1] * e1[owner] + p[:, 1:] * e2[owner]
+    # the books, face by face: what every arrival took from its sending cell at the sub-step's end
+    moved = e_val[:, None] * np.column_stack([x[:, :2], p])[local[e_col]]
+    sent = np.stack([np.bincount(e_edge, moved[:, v], D) for v in range(4)], axis=1)
+    carried = sent[:, 2:3] * e1[a] + sent[:, 3:4] * e2[a]
+    lost = np.einsum("ij,ij->i", carried, columns.normal[b])[:, None] * columns.normal[b]
+    net = lambda v: np.bincount(b, v, n) - np.bincount(a, v, n)
+    book = TransportBook(net(sent[:, 0]), net(sent[:, 1]), np.stack([net(carried[:, v]) for v in range(3)], axis=1),
+                         -np.stack([np.bincount(b, lost[:, v], n) + np.bincount(owner, held[:, v], n)
+                                    for v in range(3)], axis=1), float((diag - 1.0).max()))
+    # install: new values for the cells solved for, a new top cell where metal landed on top
+    m, H, T, U = sk.m.copy(), sk.H.copy(), sk.T.copy(), sk.U.copy()
+    S = sk.S.copy() if sk.S is not None else None
+    old = act < n * K
+    m.ravel()[act[old]], H.ravel()[act[old]], T.ravel()[act[old]] = x[old, 0], x[old, 1], np.nan
+    U.reshape(-1, 3)[act[old]] = P[old] / x[old, :1]
+    if S is not None:
+        S.ravel()[act[old]] = x[old, 2] / x[old, 0]
+    count = sk.count.copy()
+    tops = act[~old] - n * K
+    if len(tops):
+        new = np.zeros(n, dtype=bool)
+        new[tops] = True
+        src = np.clip(np.arange(K + 1)[None, :] - new[:, None], 0, K)
+        down = lambda v: np.take_along_axis(np.concatenate([v, np.zeros((n, 1) + v.shape[2:])], axis=1),
+                                            src.reshape(src.shape + (1,) * (v.ndim - 2)), axis=1)
+        m, H, T, U = down(m), down(H), down(T), down(U)
+        m[tops, 0], H[tops, 0], T[tops, 0], U[tops, 0] = x[~old, 0], x[~old, 1], np.nan, P[~old] / x[~old, :1]
+        if S is not None:
+            S = down(S)
+            S[tops, 0] = x[~old, 2] / x[~old, 0]
+        count = count + new
+    sk._install(m, H, count, S, T, U)
+    if regrid:
+        sk.regrid()
+    return book
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------
