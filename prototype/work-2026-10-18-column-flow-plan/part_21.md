@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 (2026-10-18/20).**
-> Tasks 6–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
-> this document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 and 6a (2026-10-18/21).**
+> Tasks 6b, 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in turn, the same
+> way, and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -15,7 +15,8 @@ neighbouring columns layer by layer.
 coupled run are unchanged. Task 1 first makes the sideways conduction implicit: one coupled solve per Newton iteration
 of each sub-step, the columns' tridiagonal depth solves as its preconditioner. The flow tasks then give the cells a
 velocity, couple it through the depth by an implicit tridiagonal viscous solve per column, and carry mass, enthalpy and
-momentum between neighbouring columns in the same implicit sideways solve.
+momentum between neighbouring columns in an implicit upwind transport of their own, after the momentum step (Task 6a;
+ruling, 2026-10-21).
 
 **Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy (sparse matrices; the conjugate gradients are written out),
 scikit-fem for the 3D model, gmsh for its rebuilds.
@@ -71,6 +72,14 @@ regenerate.
    `test_the_sideways_map_is_symmetric_and_negative_semi_definite` (Task 1).
 5. **A sub-step far beyond the old explicit limit** (a finer surface, smaller columns) — bounded, the heat kept. Pinned
    by `test_a_sub_step_far_beyond_the_explicit_limit_stays_bounded_and_keeps_its_heat` (Task 1).
+6. **Metal crossing many columns in one sub-step** (Courant numbers near 100 in flight) — positive, never overshooting,
+   the books exact. Pinned by `test_courant_numbers_far_above_one_stay_positive_bounded_and_conservative` (Task 6a).
+7. **Metal arriving at rigid metal** — it lands on top, never inside, and rigid metal joined to the substrate never
+   moves. Pinned by `test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_are_untouched`,
+   `test_a_floating_crust_carried_across_lands_on_top_and_the_slurry_beneath_it_joins_by_fraction` and
+   `test_rigid_metal_joined_to_the_substrate_never_leaves_whatever_its_velocity` (Task 6a).
+8. **The transport's upwind order** comes from how scipy numbers strong components, checked every call — were it ever
+   wrong, the same answer, more slowly. Pinned by `test_the_upwind_order_changes_the_cost_never_the_answer` (Task 6a).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -532,17 +541,160 @@ git commit -m "Skins: the push along the surface on every layer -- the surface f
 
 ---
 
+### Task 6a: Sideways transport at given velocities
+
+**Files:**
+- Modify: `reentry_model/columns.py` (`Columns.face_vector`), `reentry_model/skin.py` (`SLIVER`, `TransportBook`,
+  `tangent_frames`, `_fractions`, `_pieces`, `_upwind_order`, `_factor`, `transport`)
+- Test: `tests/test_reentry_model_columns.py`, `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `Skins.U`, Task 3's `cell_viscosity`, Task 4's `anchored_cells`; `Columns.edges`, `.normal`,
+  `.area`; `Skins.dz`, `Skins._install` and `Skins.regrid`.
+- Produces: `Columns.face_vector` (E, 3) [m], each dual face's normal times its length, from the edge's first corner
+  to its second; `skin.transport(sk, columns, dt, regrid=True) -> TransportBook`, which moves the cells at their
+  velocities `sk.U` and, with `regrid`, splits and merges them; `TransportBook(mass, enthalpy, momentum, wall, courant)`,
+  per column what it gained from its neighbours less what it gave them — mass (n,) [kg], enthalpy (n,) [J], momentum
+  (n, 3) [kg m/s] as it left the donors — the wall's impulse (n, 3) [N s], the normal parts removed, and the largest
+  cell's outflow rate times dt; `skin.tangent_frames(normals) -> (e1, e2)`, each (n, 3); `skin.SLIVER` (10⁻¹²); and,
+  private, `_fractions(depth) -> (n, K+1)`, `_pieces(sig, tau) -> (row, cell of sig, cell of tau, length)`,
+  `_upwind_order(src, dst, n) -> (order, upwind)` and `_factor(A, upwind)`.
+
+The metal moves sideways at the velocities the cells already have (spec §6.5); in the tests they are prescribed, and
+the skin body drives them with Task 4's `momentum_step` in 6c. The transport is its own step in each sub-step, after
+the momentum step (ruling, 2026-10-21); the conduction stays in Task 1's solve. Across each face, cell k of the donor
+column a sends c m_k′ toward its neighbour b, with c = (u_k·f)⁺ / A_a [1/s] — the velocity's component across the face
+times the face's length, per unit of the column's area — and m_k′ the cell's mass at the sub-step's end; the metal
+carries the cell's specific enthalpy and its velocity. Every cell then satisfies m_k′ (1 + dt Σc) = m_k + dt (what
+arrives): (I + dt C) m′ = m, the film's runoff scheme (`film.Runoff`) on the cells. The matrix is an M-matrix whose
+columns sum to one, so the masses stay positive, the books close to round-off and nothing limits dt; the enthalpy and
+the trial pass's sensitivity S solve the same system, and so does the momentum, with every arrival projected onto its
+receiver's plane. Only the cells that send or receive are solved for: with every velocity zero, or only rigid metal
+joined to the substrate given one, nothing changes at all.
+
+**Where the metal goes** (spec §6.5, §14 assumptions 3 and 4). A flowing donor cell's span of fractions of the donor's
+flowing depth joins the receiver's cells between the same fractions of the receiver's flowing layer — the run of
+flowing cells from its top — each in proportion to the overlap. Where the receiver's top is rigid (anchored metal, or
+a crust over flowing metal) everything arriving lands on top of its top cell, as a new cell; so does a floating
+crust's metal, wherever it goes. Rigid metal joined to the substrate neither leaves nor receives, whatever velocity it
+holds. After the exchange the cells are split and merged as everywhere else (spec §6.2): a deposit thinner than half
+its target merges into the cell beneath it, as any thin cell does.
+
+**The faces.** A velocity crosses each dual face at the face's vector, its two segments' normals times their lengths
+(`Columns.face_vector`), not the edge's direction times the face's length: a column's faces close exactly on a plane,
+so a uniform flow carries as much into every column as out of it, where the edge's direction gathered or spread a
+column's metal at up to 539 1/s under 1 m/s on the columns' tests' jittered plane (2.9·10⁻¹³ with the faces' vectors).
+On the 4 mm test sphere the faces close in the tangent plane to 3.7 % of a face length at worst and 0.03 % on average;
+the rest is along the normal, the curvature, which a tangential velocity does not see.
+
+**The momentum is projected at every arrival.** Each cell's momentum is held in two components in its own plane
+(`tangent_frames`), and every arrival enters its receiver through the 2×2 projection between the two planes, so a
+second system of twice the size is solved with the same structure; any normal part a cell held is booked to the wall
+too. Projecting once at the sub-step's end instead — the Cartesian components carried by the scalar system, each cell
+then projected — costs nothing extra but carries metal that crosses several columns within a sub-step straight on, off
+the curved surface: on the 100 mm sphere a uniform meridian flow kept 99.7 % of its kinetic energy in one sub-step at a
+Courant number of 1 against 99.8 % projected at arrival, 90 % against 96 % at 9.6, and 24 % against 49 % at 96, where
+the two differed by up to 1.8 times the largest cell momentum. Courant numbers near 100 are what the flight will see:
+0.5 mm of liquid under the 2.2·10⁵ Pa/m of Task 5's pressure push moves at about 20 m/s at its top (G h²/2μ), 100 columns
+of 2 mm in a 10 ms sub-step.
+
+**The solve, measured** (2026-10-21, `prototype/work-2026-10-18-column-flow/measure/task6a/`, on the 100 mm sphere's
+skins, 9 417 columns of 10 µm cells, flowing at 0.1 m/s along the meridian, every cell liquid and moving: 584 000
+unknowns, 2.3 million arrivals). A sparse direct solve in the cells' own order took 19.6 s to factor; in SuperLU's
+fill-reducing order (COLAMD) 0.66 s; minimum-degree 54 s. Taken in upwind order, every donor before its receivers, the
+system is triangular but for its cycles where flows meet (here at most 7 cells, near the rear stagnation point), and
+SuperLU with no pivoting factors it in 0.06 s with no fill at all — and without pivoting an M-matrix's elimination keeps
+every sign, so the masses come out non-negative to the last bit. The order is scipy's strong components, 0.06 s, which
+its algorithm (Pearce's) numbers in reverse topological order; that is how scipy numbers them, not what it promises,
+so `_upwind_order` checks it every call and `_factor` falls back to COLAMD with pivoting, as exact and slower, should
+it fail. Not built (estimated): an upwind sweep written in numpy would need the levels of that order, a hundred or more
+relaxations over the 2.3 million arrivals; Gauss–Seidel or a Krylov iteration gains about ν/(1 + ν) a sweep, so far
+above a Courant number of one it needs many, and its books close only to its tolerance. The pieces where a donor's and
+a receiver's partitions cut each other come from a rank merge (`_pieces`, 0.13 s against 0.22 s for a row-wise sort).
+
+Whole transport sub-steps (without the regrid, which the sub-step does anyway): 0.95 s with all 584 000 cells moving,
+of which the momentum's system 0.30 s and the pieces 0.13 s; 0.27 s in a melting state — the front hemisphere's top
+0.3 mm liquid over rigid metal, 124 000 of 553 000 cells moving along a half-parabola in depth — the same at Courant
+numbers of 1, 9.6 and 96. On the same machine a coupled conduction sub-step on the sphere's skins at 700 K takes
+0.6–0.8 s and a momentum sub-step on the melting state 0.54 s; the regrid after the transport 0.09–0.25 s, more at high
+Courant numbers, where more cells change size.
+
+**Rulings** (2026-10-21, within spec §6.5 and the rulings of 2026-10-20/21):
+
+- *The face's vector, not the edge's direction times the face's length* — the face is two segments in two triangles,
+  and only their vectors close around a column — if wrong, nothing: on symmetric triangles the two are the same.
+- *The donor's flowing depth is all its flowing cells, top down; a moving rigid cell is no part of it and lands on top*
+  — the spec's "flowing layer"; where flowing metal lies under a floating rigid layer (melt beneath a refrozen deposit),
+  it is matched by its share of the flowing metal and the rigid layer lands on the receiver's top — if wrong, such a
+  layer arrives above metal that was above it; rare, and transient.
+- *A donor cell's pieces are normalised to sum to one, and pieces under 10⁻¹² of the cell are dropped* — the pieces'
+  lengths are differences of cumulative fractions, and their rounding left a cell's outflow distributed 5.5·10⁻¹⁴ short
+  or over, which grew to 7.6·10⁻¹³ of the mass over ten sub-steps; the slivers are the rounding of a boundary the two
+  partitions share — if wrong, a piece of 10⁻¹² of a cell is moved to its neighbour.
+- *The diagonal is the sum of the arrivals made* — every cell sends exactly what its arrivals take, so the books close
+  whatever the pieces — if wrong, nothing: it equals dt Σc to round-off.
+- *The momentum is projected at every arrival* (above) — the spec's text, and, at high Courant numbers, nearer the
+  parallel transport it stands for — if wrong, 0.30 s of the worst case's 0.95 s is spent for nothing.
+- *The regrid is optional* (`regrid=True` by default) — 6c calls the transport before the sub-step's own regrid and
+  passes False, so the cells are split and merged once — if wrong, a sub-step regrids twice.
+
+What the tests measure (2026-10-21): a pulse half again as thick as the liquid around it and 50 K warmer, 3 mm wide, on
+1 mm columns at 0.1 m/s for 0.1 s, keeps its mass and heat, its centroids move the 10 mm to 6·10⁻⁸, 10⁻⁵ and
+8.3·10⁻⁴ mm at Courant numbers 0.5, 1 and 2 (the scheme's long upwind tail reaching the grid's ends), and its variance
+grows by the one-dimensional implicit upwind scheme's h² ν (1 + ν) a sub-step, less 4.2, 3.2 and 2.4 % — the numerical
+diffusion u h (1 + ν)/2; depth fractions and both arrival rules exactly; on the 4 mm sphere's mixed skins every book to
+4·10⁻¹⁵ of its scale, the wall taking 2.5 % of the largest column's momentum; a 10 s sub-step (Courant numbers to
+875) positive, within the old enthalpies and speeds, conservative and regridded; on the sphere a velocity carried into
+three neighbours 4.5–4.9° away loses 2.3–7.7 % of its momentum to the wall.
+
+- [ ] **Step 1: The faces' test** — append to `tests/test_reentry_model_columns.py`:
+
+{{DIFF_TEST_COLUMNS_T6A}}
+
+- [ ] **Step 2: The transport's tests** — append to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T6A}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_columns.py
+  tests/test_reentry_model_skin.py -q`. Expected: 11 failed — `AttributeError: 'Columns' object has no attribute
+  'face_vector'` (5) and `AttributeError: module 'reentry_model.skin' has no attribute 'transport'` (6).
+
+- [ ] **Step 4: The faces' vectors** in `reentry_model/columns.py`:
+
+{{DIFF_COLUMNS_T6A}}
+
+- [ ] **Step 5: The transport** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T6A}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_columns.py` 10 passed and
+  `tests/test_reentry_model_skin.py` 56 passed; the unit tier 450 passed, 1 skipped. Nothing calls `transport` yet: the flow
+  joins the skin body's sub-steps in 6c, so no result changes.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/columns.py tests/test_reentry_model_columns.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the metal moves sideways between neighbouring columns at the cells' velocities, linearly implicit and upwind, by fraction of the flowing depth and on top of a rigid top, each arrival's velocity projected onto its receiver's plane (sub-plan 21 Task 6a)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
-   fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
-   a rigid top otherwise); velocities projected between tangent planes. A floating crust carried into a neighbouring
-   column (Task 4) lands on top of its top. Tests: a translating pulse keeps its heat and arrives where it should;
-   books to round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's
-   volume; and, from Task 5, a bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
-   rate while bumps below the surface-tension cutoff decay. The flow joins the skin body's sub-steps here: the surface
-   flow evaluated on the corner surface (its `dp_ds` and `tau`), `push` and `along_meridian(tau)` driving
-   `momentum_step`, then the transport.
+6. **Sideways exchange**, split in three (Asha, 2026-10-21), each with its own tests and commit; 6a, the transport at
+   given velocities, is written out above:
+   - **6b. The thickness terms implicit**: ρ_l (g·n) ∇_s H and −σ ∇_s κ (Task 5) linearised in the column heights
+     inside 6a's transport (spec §6.4's last paragraph). Tests: a bump on a flat layer under deceleration grows at the
+     thin-film Rayleigh–Taylor linear rate; bumps shorter than the surface-tension cutoff decay (from Task 5, Asha,
+     2026-10-20).
+   - **6c. The flow in the skin body**: the surface flow evaluated on the corner surface (its `dp_ds` and `tau`),
+     `push` and `along_meridian(tau)` driving `momentum_step`, then the transport, in every sub-step of `skin.advance`;
+     a setting to turn the flow off, which reproduces the heat-only skins; the momentum books in the run's history.
+     The flow's sub-step is chosen here (option c, Asha, 2026-10-21): measure the Courant numbers and the momentum lost
+     to 6a's smearing on the 100 mm sphere's melting state. Asha expects the flow to need a sub-step shorter than the
+     heat's 10 ms (about 100 columns a sub-step are estimated in flight, fact 154), so the momentum step and the
+     transport should be able to sub-cycle within a heat sub-step.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible

@@ -37,6 +37,9 @@ TASKS = (
     (5, (("DIFF_SURFACE_FLOW_T5", "reentry_model/surface_flow.py"),
          ("DIFF_TEST_SURFACE_FLOW_T5", "tests/test_reentry_model_surface_flow.py"),
          ("DIFF_SKIN_T5", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T5", "tests/test_reentry_model_skin.py"))),
+    ("6a", (("DIFF_TEST_COLUMNS_T6A", "tests/test_reentry_model_columns.py"),
+            ("DIFF_TEST_SKIN_T6A", "tests/test_reentry_model_skin.py"),
+            ("DIFF_COLUMNS_T6A", "reentry_model/columns.py"), ("DIFF_SKIN_T6A", "reentry_model/skin.py"))),
 )
 
 

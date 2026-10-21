@@ -23,7 +23,14 @@ corners and 48 of the 2 mm sphere's 9 417, which the mixed area alone left off b
 and 23 %). On these 50 mm-radius spheres the curvature is then within 8.4·10^-5 of 2/R at every corner (1.3·10^-5 on
 the 2 mm sphere), where the barycentric area had scattered 7.6 and 3.9 %, and the gradient of a linear field within
 0.09 % of its tangential part on average (0.02 % on the 2 mm sphere), 0.8 % at the test sphere's one irregular corner
-(measured 2026-10-18)."""
+(measured 2026-10-18).
+
+The flow's sideways transport (sub-plan 21 Task 6a) crosses each dual face at its `face_vector`: the face's two
+segments, each its normal in its own triangle times its length, summed and pointing from the edge's first corner to
+its second, so that a velocity u carries u . face_vector per unit depth across the face. A column's faces close
+exactly on a plane, so a uniform flow carries as much into every column as out of it; the edge's direction times the
+face's length closes only where the triangles are symmetric about their edges, and on the tests' jittered plane of 1 mm
+squares a uniform 1 m/s would gather or spread a column's metal at up to 539 1/s that way (measured 2026-10-21)."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -69,15 +76,21 @@ class Columns:
         mid = 0.5 * (p[i] + p[j])
         cot = np.zeros(len(self.edges))
         face = np.zeros(len(self.edges))
+        vector = np.zeros((len(self.edges), 3))
+        _, unit, _ = triangle_geometry(p, self.faces)
         for s in range(2):
             ok = self._tri[:, s] >= 0
             k = self._opp[ok, s]
             u, v = p[i[ok]] - p[k], p[j[ok]] - p[k]
             cot[ok] += np.einsum("ij,ij->i", u, v) / np.linalg.norm(np.cross(u, v), axis=1)
-            face[ok] += np.linalg.norm(mid[ok] - self.centroid[self._tri[ok, s]], axis=1)
+            segment = self.centroid[self._tri[ok, s]] - mid[ok]
+            face[ok] += np.linalg.norm(segment, axis=1)
+            across = np.cross(segment, unit[self._tri[ok, s]])             # the segment's normal times its length
+            vector[ok] += across * np.sign(np.einsum("ij,ij->i", across, p[j[ok]] - p[i[ok]]))[:, None]
         self.cot_weight = 0.5 * cot
         self.conduct_weight = np.maximum(self.cot_weight, 0.0)
         self.face_length = face
+        self.face_vector = vector
 
     def gradient(self, f, points=None):
         """The tangential gradient at every corner of a per-corner field f (n,) [f per m] on the surface through

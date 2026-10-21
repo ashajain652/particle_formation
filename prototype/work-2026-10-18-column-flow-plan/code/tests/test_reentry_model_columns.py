@@ -130,3 +130,31 @@ def test_the_curvature_of_a_sphere_is_two_over_its_radius_at_every_corner(coarse
 def test_the_curvature_of_a_plane_is_zero():
     pts, faces, inner = flat_grid()
     assert np.abs(columns.Columns(pts, faces).curvature()[inner]).max() < 1e-9
+
+
+# -- the dual faces as vectors (sub-plan 21 Task 6a) --------------------------------------------------------------------
+def test_the_dual_faces_close_every_column_so_a_uniform_flow_neither_gathers_nor_spreads_metal(coarse_sphere_mesh):
+    """`face_vector`: each dual face's two segments, each its normal in its triangle times its length, summed and
+    pointing from the edge's first corner to its second -- what a velocity crossing the face is dotted with. Around
+    every interior corner of a jittered plane the faces close to round-off, so a uniform flow carries as much into each
+    column as out of it; the edge's direction times the face's length does not close where the triangles are not
+    symmetric about their edges, and on this plane a uniform 1 m/s would gather or spread a column's metal at up to
+    539 1/s (measured 2026-10-21; 2.9e-13 with the faces' vectors). On the test sphere the faces close in each column's
+    tangent plane to 3.7 % of the mean face length at worst and 0.03 % on average; what is left is along the normal,
+    the surface's curvature (24 % of a face length on average)."""
+    pts, faces, inner = flat_grid()
+    col = columns.Columns(pts, faces)
+    i, j = col.edges[:, 0], col.edges[:, 1]
+    S = col.face_vector
+    assert np.all(np.einsum("ij,ij->i", S, pts[j] - pts[i]) > 0.0)                    # from the first corner out
+    assert np.all(np.linalg.norm(S, axis=1) <= col.face_length * (1.0 + 1e-12))
+    u = np.array([1.0, 0.3, 0.0])
+    assert np.abs((col.incidence @ (S @ u))[inner] / col.area[inner]).max() < 1e-9
+    e = pts[j] - pts[i]
+    naive = e / np.linalg.norm(e, axis=1)[:, None] * col.face_length[:, None]
+    assert np.abs((col.incidence @ (naive @ u))[inner] / col.area[inner]).max() > 100.0
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    closure = col.incidence @ col.face_vector
+    tangential = closure - np.einsum("ij,ij->i", closure, col.normal)[:, None] * col.normal
+    assert np.linalg.norm(tangential, axis=1).max() < 0.075 * col.face_length.mean()
+    assert np.linalg.norm(tangential, axis=1).mean() < 5e-4 * col.face_length.mean()

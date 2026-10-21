@@ -2241,6 +2241,28 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      100 mm sphere (93 s, 60 km, dynamic pressure 6.1 kPa, not run): the pressure push up to about 2.2e5 Pa/m, the
      deceleration (30 m/s2) up to 7.2e4 Pa/m the other way, their ratio 1.84 x 4 rho_s / (3 rho_l C_D) = 3.1 for a
      solid sphere at any size and moment; a 0.1 mm bump 4 mm long about 3e5 Pa/m of capillary push.
+154. **The sideways transport (sub-plan 21 Task 6a, 2026-10-21).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6a/`, on the 100 mm sphere's skins (9 417 columns, 10 um cells)
+     flowing along the meridian. The linearly implicit upwind scheme on the cells, (I + dt C) m' = m, with every cell
+     moving (584 000 unknowns, 2.3 million arrivals): its sparse LU took 19.6 s in the cells' own order, 0.66 s in
+     COLAMD's and 54 s in minimum degree, and 0.06 s with no fill in upwind order -- scipy's strong components, which
+     come out in reverse topological order (0.06 s; checked every call, COLAMD the fallback); the largest cycle 7 cells.
+     A whole transport sub-step: 0.95 s with every cell moving, 0.27 s with the front hemisphere's top 0.3 mm flowing
+     (124 000 of 553 000 cells), the same at Courant numbers of 1, 9.6 and 96, against 0.6-0.8 s for a coupled
+     conduction sub-step at 700 K and 0.54 s for a momentum sub-step on the same skins; the regrid after it 0.09-0.25 s.
+     The momentum projected at every arrival, by a second system in each column's tangent frame (0.30 s of the 0.95):
+     projected once at the sub-step's end instead, a uniform meridian flow kept 99.7, 90 and 24 % of its kinetic energy
+     in one sub-step at Courant numbers of 1, 9.6 and 96, against 99.8, 96 and 49 % at arrival. A dual face is crossed
+     at its vector (its segments' normals times their lengths, `Columns.face_vector`): the edge's direction times the
+     face's length gathered or spread a column's metal at up to 539 1/s under a uniform 1 m/s on a jittered plane, the
+     faces' vectors 2.9e-13. Each donor cell's pieces are normalised to sum to one: as differences of cumulative
+     fractions they had left a cell's outflow distributed 5.5e-14 short or over, 7.6e-13 of the mass after ten
+     sub-steps. A pulse 50 K warmer and half again as thick on 1 mm columns at 0.1 m/s keeps its mass and heat, moves
+     10 mm in 0.1 s to 8.3e-4 mm or better, and spreads by the one-dimensional implicit upwind scheme's h^2 nu (1 + nu) a
+     sub-step less 2.4-4.2 % (nu 0.5-2); on mixed sphere skins every book to 4e-15; a 10 s sub-step (Courant numbers to
+     875) positive, within the old enthalpies and speeds; a velocity carried 4.5-4.9 degrees round the 4 mm sphere loses
+     2.3-7.7 % of its momentum to the wall. Estimated: 0.5 mm of liquid under Task 5's peak pressure push moves at about
+     20 m/s at its top, a Courant number near 100 on 2 mm columns at 10 ms sub-steps.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

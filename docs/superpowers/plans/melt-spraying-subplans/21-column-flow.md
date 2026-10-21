@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 (2026-10-18/20).**
-> Tasks 6–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
-> this document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 and 6a (2026-10-18/21).**
+> Tasks 6b, 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in turn, the same
+> way, and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -15,7 +15,8 @@ neighbouring columns layer by layer.
 coupled run are unchanged. Task 1 first makes the sideways conduction implicit: one coupled solve per Newton iteration
 of each sub-step, the columns' tridiagonal depth solves as its preconditioner. The flow tasks then give the cells a
 velocity, couple it through the depth by an implicit tridiagonal viscous solve per column, and carry mass, enthalpy and
-momentum between neighbouring columns in the same implicit sideways solve.
+momentum between neighbouring columns in an implicit upwind transport of their own, after the momentum step (Task 6a;
+ruling, 2026-10-21).
 
 **Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy (sparse matrices; the conjugate gradients are written out),
 scikit-fem for the 3D model, gmsh for its rebuilds.
@@ -71,6 +72,14 @@ regenerate.
    `test_the_sideways_map_is_symmetric_and_negative_semi_definite` (Task 1).
 5. **A sub-step far beyond the old explicit limit** (a finer surface, smaller columns) — bounded, the heat kept. Pinned
    by `test_a_sub_step_far_beyond_the_explicit_limit_stays_bounded_and_keeps_its_heat` (Task 1).
+6. **Metal crossing many columns in one sub-step** (Courant numbers near 100 in flight) — positive, never overshooting,
+   the books exact. Pinned by `test_courant_numbers_far_above_one_stay_positive_bounded_and_conservative` (Task 6a).
+7. **Metal arriving at rigid metal** — it lands on top, never inside, and rigid metal joined to the substrate never
+   moves. Pinned by `test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_are_untouched`,
+   `test_a_floating_crust_carried_across_lands_on_top_and_the_slurry_beneath_it_joins_by_fraction` and
+   `test_rigid_metal_joined_to_the_substrate_never_leaves_whatever_its_velocity` (Task 6a).
+8. **The transport's upwind order** comes from how scipy numbers strong components, checked every call — were it ever
+   wrong, the same answer, more slowly. Pinned by `test_the_upwind_order_changes_the_cost_never_the_answer` (Task 6a).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -2238,17 +2247,778 @@ git commit -m "Skins: the push along the surface on every layer -- the surface f
 
 ---
 
+### Task 6a: Sideways transport at given velocities
+
+**Files:**
+- Modify: `reentry_model/columns.py` (`Columns.face_vector`), `reentry_model/skin.py` (`SLIVER`, `TransportBook`,
+  `tangent_frames`, `_fractions`, `_pieces`, `_upwind_order`, `_factor`, `transport`)
+- Test: `tests/test_reentry_model_columns.py`, `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `Skins.U`, Task 3's `cell_viscosity`, Task 4's `anchored_cells`; `Columns.edges`, `.normal`,
+  `.area`; `Skins.dz`, `Skins._install` and `Skins.regrid`.
+- Produces: `Columns.face_vector` (E, 3) [m], each dual face's normal times its length, from the edge's first corner
+  to its second; `skin.transport(sk, columns, dt, regrid=True) -> TransportBook`, which moves the cells at their
+  velocities `sk.U` and, with `regrid`, splits and merges them; `TransportBook(mass, enthalpy, momentum, wall, courant)`,
+  per column what it gained from its neighbours less what it gave them — mass (n,) [kg], enthalpy (n,) [J], momentum
+  (n, 3) [kg m/s] as it left the donors — the wall's impulse (n, 3) [N s], the normal parts removed, and the largest
+  cell's outflow rate times dt; `skin.tangent_frames(normals) -> (e1, e2)`, each (n, 3); `skin.SLIVER` (10⁻¹²); and,
+  private, `_fractions(depth) -> (n, K+1)`, `_pieces(sig, tau) -> (row, cell of sig, cell of tau, length)`,
+  `_upwind_order(src, dst, n) -> (order, upwind)` and `_factor(A, upwind)`.
+
+The metal moves sideways at the velocities the cells already have (spec §6.5); in the tests they are prescribed, and
+the skin body drives them with Task 4's `momentum_step` in 6c. The transport is its own step in each sub-step, after
+the momentum step (ruling, 2026-10-21); the conduction stays in Task 1's solve. Across each face, cell k of the donor
+column a sends c m_k′ toward its neighbour b, with c = (u_k·f)⁺ / A_a [1/s] — the velocity's component across the face
+times the face's length, per unit of the column's area — and m_k′ the cell's mass at the sub-step's end; the metal
+carries the cell's specific enthalpy and its velocity. Every cell then satisfies m_k′ (1 + dt Σc) = m_k + dt (what
+arrives): (I + dt C) m′ = m, the film's runoff scheme (`film.Runoff`) on the cells. The matrix is an M-matrix whose
+columns sum to one, so the masses stay positive, the books close to round-off and nothing limits dt; the enthalpy and
+the trial pass's sensitivity S solve the same system, and so does the momentum, with every arrival projected onto its
+receiver's plane. Only the cells that send or receive are solved for: with every velocity zero, or only rigid metal
+joined to the substrate given one, nothing changes at all.
+
+**Where the metal goes** (spec §6.5, §14 assumptions 3 and 4). A flowing donor cell's span of fractions of the donor's
+flowing depth joins the receiver's cells between the same fractions of the receiver's flowing layer — the run of
+flowing cells from its top — each in proportion to the overlap. Where the receiver's top is rigid (anchored metal, or
+a crust over flowing metal) everything arriving lands on top of its top cell, as a new cell; so does a floating
+crust's metal, wherever it goes. Rigid metal joined to the substrate neither leaves nor receives, whatever velocity it
+holds. After the exchange the cells are split and merged as everywhere else (spec §6.2): a deposit thinner than half
+its target merges into the cell beneath it, as any thin cell does.
+
+**The faces.** A velocity crosses each dual face at the face's vector, its two segments' normals times their lengths
+(`Columns.face_vector`), not the edge's direction times the face's length: a column's faces close exactly on a plane,
+so a uniform flow carries as much into every column as out of it, where the edge's direction gathered or spread a
+column's metal at up to 539 1/s under 1 m/s on the columns' tests' jittered plane (2.9·10⁻¹³ with the faces' vectors).
+On the 4 mm test sphere the faces close in the tangent plane to 3.7 % of a face length at worst and 0.03 % on average;
+the rest is along the normal, the curvature, which a tangential velocity does not see.
+
+**The momentum is projected at every arrival.** Each cell's momentum is held in two components in its own plane
+(`tangent_frames`), and every arrival enters its receiver through the 2×2 projection between the two planes, so a
+second system of twice the size is solved with the same structure; any normal part a cell held is booked to the wall
+too. Projecting once at the sub-step's end instead — the Cartesian components carried by the scalar system, each cell
+then projected — costs nothing extra but carries metal that crosses several columns within a sub-step straight on, off
+the curved surface: on the 100 mm sphere a uniform meridian flow kept 99.7 % of its kinetic energy in one sub-step at a
+Courant number of 1 against 99.8 % projected at arrival, 90 % against 96 % at 9.6, and 24 % against 49 % at 96, where
+the two differed by up to 1.8 times the largest cell momentum. Courant numbers near 100 are what the flight will see:
+0.5 mm of liquid under the 2.2·10⁵ Pa/m of Task 5's pressure push moves at about 20 m/s at its top (G h²/2μ), 100 columns
+of 2 mm in a 10 ms sub-step.
+
+**The solve, measured** (2026-10-21, `prototype/work-2026-10-18-column-flow/measure/task6a/`, on the 100 mm sphere's
+skins, 9 417 columns of 10 µm cells, flowing at 0.1 m/s along the meridian, every cell liquid and moving: 584 000
+unknowns, 2.3 million arrivals). A sparse direct solve in the cells' own order took 19.6 s to factor; in SuperLU's
+fill-reducing order (COLAMD) 0.66 s; minimum-degree 54 s. Taken in upwind order, every donor before its receivers, the
+system is triangular but for its cycles where flows meet (here at most 7 cells, near the rear stagnation point), and
+SuperLU with no pivoting factors it in 0.06 s with no fill at all — and without pivoting an M-matrix's elimination keeps
+every sign, so the masses come out non-negative to the last bit. The order is scipy's strong components, 0.06 s, which
+its algorithm (Pearce's) numbers in reverse topological order; that is how scipy numbers them, not what it promises,
+so `_upwind_order` checks it every call and `_factor` falls back to COLAMD with pivoting, as exact and slower, should
+it fail. Not built (estimated): an upwind sweep written in numpy would need the levels of that order, a hundred or more
+relaxations over the 2.3 million arrivals; Gauss–Seidel or a Krylov iteration gains about ν/(1 + ν) a sweep, so far
+above a Courant number of one it needs many, and its books close only to its tolerance. The pieces where a donor's and
+a receiver's partitions cut each other come from a rank merge (`_pieces`, 0.13 s against 0.22 s for a row-wise sort).
+
+Whole transport sub-steps (without the regrid, which the sub-step does anyway): 0.95 s with all 584 000 cells moving,
+of which the momentum's system 0.30 s and the pieces 0.13 s; 0.27 s in a melting state — the front hemisphere's top
+0.3 mm liquid over rigid metal, 124 000 of 553 000 cells moving along a half-parabola in depth — the same at Courant
+numbers of 1, 9.6 and 96. On the same machine a coupled conduction sub-step on the sphere's skins at 700 K takes
+0.6–0.8 s and a momentum sub-step on the melting state 0.54 s; the regrid after the transport 0.09–0.25 s, more at high
+Courant numbers, where more cells change size.
+
+**Rulings** (2026-10-21, within spec §6.5 and the rulings of 2026-10-20/21):
+
+- *The face's vector, not the edge's direction times the face's length* — the face is two segments in two triangles,
+  and only their vectors close around a column — if wrong, nothing: on symmetric triangles the two are the same.
+- *The donor's flowing depth is all its flowing cells, top down; a moving rigid cell is no part of it and lands on top*
+  — the spec's "flowing layer"; where flowing metal lies under a floating rigid layer (melt beneath a refrozen deposit),
+  it is matched by its share of the flowing metal and the rigid layer lands on the receiver's top — if wrong, such a
+  layer arrives above metal that was above it; rare, and transient.
+- *A donor cell's pieces are normalised to sum to one, and pieces under 10⁻¹² of the cell are dropped* — the pieces'
+  lengths are differences of cumulative fractions, and their rounding left a cell's outflow distributed 5.5·10⁻¹⁴ short
+  or over, which grew to 7.6·10⁻¹³ of the mass over ten sub-steps; the slivers are the rounding of a boundary the two
+  partitions share — if wrong, a piece of 10⁻¹² of a cell is moved to its neighbour.
+- *The diagonal is the sum of the arrivals made* — every cell sends exactly what its arrivals take, so the books close
+  whatever the pieces — if wrong, nothing: it equals dt Σc to round-off.
+- *The momentum is projected at every arrival* (above) — the spec's text, and, at high Courant numbers, nearer the
+  parallel transport it stands for — if wrong, 0.30 s of the worst case's 0.95 s is spent for nothing.
+- *The regrid is optional* (`regrid=True` by default) — 6c calls the transport before the sub-step's own regrid and
+  passes False, so the cells are split and merged once — if wrong, a sub-step regrids twice.
+
+What the tests measure (2026-10-21): a pulse half again as thick as the liquid around it and 50 K warmer, 3 mm wide, on
+1 mm columns at 0.1 m/s for 0.1 s, keeps its mass and heat, its centroids move the 10 mm to 6·10⁻⁸, 10⁻⁵ and
+8.3·10⁻⁴ mm at Courant numbers 0.5, 1 and 2 (the scheme's long upwind tail reaching the grid's ends), and its variance
+grows by the one-dimensional implicit upwind scheme's h² ν (1 + ν) a sub-step, less 4.2, 3.2 and 2.4 % — the numerical
+diffusion u h (1 + ν)/2; depth fractions and both arrival rules exactly; on the 4 mm sphere's mixed skins every book to
+4·10⁻¹⁵ of its scale, the wall taking 2.5 % of the largest column's momentum; a 10 s sub-step (Courant numbers to
+875) positive, within the old enthalpies and speeds, conservative and regridded; on the sphere a velocity carried into
+three neighbours 4.5–4.9° away loses 2.3–7.7 % of its momentum to the wall.
+
+- [ ] **Step 1: The faces' test** — append to `tests/test_reentry_model_columns.py`:
+
+```diff
+--- a/tests/test_reentry_model_columns.py
++++ b/tests/test_reentry_model_columns.py
+@@ -130,3 +130,31 @@
+ def test_the_curvature_of_a_plane_is_zero():
+     pts, faces, inner = flat_grid()
+     assert np.abs(columns.Columns(pts, faces).curvature()[inner]).max() < 1e-9
++
++
++# -- the dual faces as vectors (sub-plan 21 Task 6a) --------------------------------------------------------------------
++def test_the_dual_faces_close_every_column_so_a_uniform_flow_neither_gathers_nor_spreads_metal(coarse_sphere_mesh):
++    """`face_vector`: each dual face's two segments, each its normal in its triangle times its length, summed and
++    pointing from the edge's first corner to its second -- what a velocity crossing the face is dotted with. Around
++    every interior corner of a jittered plane the faces close to round-off, so a uniform flow carries as much into each
++    column as out of it; the edge's direction times the face's length does not close where the triangles are not
++    symmetric about their edges, and on this plane a uniform 1 m/s would gather or spread a column's metal at up to
++    539 1/s (measured 2026-10-21; 2.9e-13 with the faces' vectors). On the test sphere the faces close in each column's
++    tangent plane to 3.7 % of the mean face length at worst and 0.03 % on average; what is left is along the normal,
++    the surface's curvature (24 % of a face length on average)."""
++    pts, faces, inner = flat_grid()
++    col = columns.Columns(pts, faces)
++    i, j = col.edges[:, 0], col.edges[:, 1]
++    S = col.face_vector
++    assert np.all(np.einsum("ij,ij->i", S, pts[j] - pts[i]) > 0.0)                    # from the first corner out
++    assert np.all(np.linalg.norm(S, axis=1) <= col.face_length * (1.0 + 1e-12))
++    u = np.array([1.0, 0.3, 0.0])
++    assert np.abs((col.incidence @ (S @ u))[inner] / col.area[inner]).max() < 1e-9
++    e = pts[j] - pts[i]
++    naive = e / np.linalg.norm(e, axis=1)[:, None] * col.face_length[:, None]
++    assert np.abs((col.incidence @ (naive @ u))[inner] / col.area[inner]).max() > 100.0
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    closure = col.incidence @ col.face_vector
++    tangential = closure - np.einsum("ij,ij->i", closure, col.normal)[:, None] * col.normal
++    assert np.linalg.norm(tangential, axis=1).max() < 0.075 * col.face_length.mean()
++    assert np.linalg.norm(tangential, axis=1).mean() < 5e-4 * col.face_length.mean()
+```
+
+- [ ] **Step 2: The transport's tests** — append to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -815,3 +815,296 @@
+     _, terms = skin.push(col, np.full(col.n, 8e-4), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA)
+     size = np.linalg.norm(terms["capillary"], axis=1)
+     assert size.max() < 20.0 and size.mean() < 0.5
++
++
++# -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
++LIQUID, SLURRY, RIGID = 950.0, 902.0, 880.0       # K: all liquid; 30 % solid, flowing; rigid (T_rigid 895.1 K)
++
++
++def strip_grid(nx, ny, h=1e-3):
++    """Columns on a flat regular grid of nx by ny corners, h apart (regular_grid's triangles), normals +z."""
++    from reentry_model import columns
++    x, y = np.meshgrid(np.arange(nx) * h, np.arange(ny) * h, indexing="ij")
++    pts = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)])
++    idx = np.arange(nx * ny).reshape(nx, ny)
++    a, b, c, d = idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()
++    return columns.Columns(pts, np.vstack([np.column_stack([a, b, c]), np.column_stack([a, c, d])])), pts
++
++
++def stacked(col, temps):
++    """Skins on the columns `col`, column i holding a cell of 10 um of solid metal's mass at each temperature of
++    temps[i], top first."""
++    mat = scheil()
++    sk = skin.Skins(mat, col.area, skin.SkinSettings(**CELLS_04))
++    count = np.array([len(t) for t in temps])
++    K = int(count.max())
++    T = np.array([list(t) + [300.0] * (K - len(t)) for t in temps])
++    m = np.where(np.arange(K)[None, :] < count[:, None], mat.rho * col.area[:, None] * 1e-5, 0.0)
++    sk._install(m, m * mat.enthalpy(T), count)
++    return sk
++
++
++def moving_from(sk, columns, donor, u, cells=None):
++    """The velocity u (3,) in the donor column's cells (all, or those listed), every other cell at rest; returns the
++    donor's outflow rate across each edge per unit mass [1/s] (E,) toward each of its neighbours, and the neighbours."""
++    sk.U = np.zeros_like(sk.U)
++    cells = np.arange(sk.count[donor]) if cells is None else np.asarray(cells)
++    sk.U[donor, cells] = u
++    i, j = columns.edges[:, 0], columns.edges[:, 1]
++    flux = np.where(i == donor, columns.face_vector @ u, np.where(j == donor, -(columns.face_vector @ u), 0.0))
++    other = np.where(i == donor, j, i)
++    out = flux > 0.0
++    return np.maximum(flux[out], 0.0) / sk.area[donor], other[out]
++
++
++def test_with_every_velocity_zero_the_transport_changes_nothing(coarse_sphere_mesh):
++    sk, col, _ = random_sphere_skins(coarse_sphere_mesh)
++    before = sk.state()
++    book = skin.transport(sk, col, 0.01)
++    assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
++    assert not (book.mass.any() or book.enthalpy.any() or book.momentum.any() or book.wall.any()) and book.courant == 0.0
++
++
++def test_rigid_metal_joined_to_the_substrate_never_leaves_whatever_its_velocity():
++    """Anchored cells hold zero velocity after every momentum step (Task 4); given one anyway they do not move."""
++    col, _ = strip_grid(3, 3)
++    sk = stacked(col, [[RIGID] * 6] * col.n)
++    sk.U = np.where(sk.valid[..., None], np.array([0.3, -0.2, 0.0]), 0.0)
++    before = sk.state()
++    skin.transport(sk, col, 0.01)
++    assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
++
++
++def test_a_warm_thick_pulse_carried_by_a_uniform_flow_arrives_where_the_flow_takes_it():
++    """A pulse half again as thick as the layer around it and 50 K warmer (a Gaussian 3 mm wide) in liquid on 1 mm
++    columns, every cell moving at 0.1 m/s along x for 0.1 s, against the same grid without the pulse (whose open ends
++    drain and pile up alike): its mass and heat are kept and their centroids move by u t, 10 mm (to 6e-8, 1e-5 and
++    8.3e-4 mm at Courant numbers nu = u dt / h of 0.5, 1 and 2, measured 2026-10-21, as the scheme's long upwind tail
++    reaches the grid's edges), while the implicit upwind scheme spreads them as the one-dimensional scheme does, by
++    h^2 nu (1 + nu) of variance a sub-step -- the numerical diffusion u h (1 + nu) / 2 -- less 4.2, 3.2 and 2.4 %. The
++    books close to round-off and every velocity stays u."""
++    h, u, x0, w = 1e-3, 0.1, 20e-3, 3e-3
++
++    def run(dt, pulse):
++        col, pts = strip_grid(61, 9, h)
++        g = np.exp(-0.5 * ((pts[:, 0] - x0) / w) ** 2) if pulse else np.zeros(col.n)
++        s = skin.SkinSettings(cell=20e-6)
++        sk = skin.Skins(scheil(), col.area, s)
++        sk.fill(skin.minimum_mass(sk.material, sk.area, s) * (1.0 + 0.5 * g), LIQUID + 50.0 * g)
++        sk.regrid()
++        sk.U = np.where(sk.valid[..., None], np.array([u, 0.0, 0.0]), 0.0)
++        M0, E0 = sk.mass(), sk.energy()
++        start = (sk.column_mass(), sk.H.sum(axis=1))
++        for _ in range(int(round(0.1 / dt))):
++            skin.transport(sk, col, dt)
++        assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
++        assert np.abs(sk.U[sk.valid] - np.array([u, 0.0, 0.0])).max() < 1e-12
++        return start, (sk.column_mass(), sk.H.sum(axis=1)), pts
++
++    def moments(f, x):
++        mean = (x * f).sum() / f.sum()
++        return mean, ((x - mean) ** 2 * f).sum() / f.sum(), f.sum()
++
++    for dt in (0.005, 0.01, 0.02):
++        (m0, H0), (m1, H1), pts = run(dt, True)
++        (r0, R0), (r1, R1), _ = run(dt, False)
++        inner = (pts[:, 1] > 0.0) & (pts[:, 1] < pts[:, 1].max())
++        nu = u * dt / h
++        for before, after in (((m0 - r0), (m1 - r1)), ((H0 - R0), (H1 - R1))):
++            a, b = moments(before[inner], pts[inner, 0]), moments(after[inner], pts[inner, 0])
++            assert b[2] == pytest.approx(a[2], rel=1.5e-5)                          # 6.2e-6 at nu = 2
++            assert b[0] - a[0] == pytest.approx(u * 0.1, abs=2e-6)
++            assert b[1] - a[1] == pytest.approx(h * h * nu * (1.0 + nu) * 0.1 / dt, rel=0.09)
++
++
++def test_depth_is_matched_by_fraction_of_the_flowing_layer():
++    """Spec 6.5: metal leaving the donor between fractions s1 and s2 of its flowing depth joins each receiver between
++    the same fractions of the receiver's, which flows from its top down. The donor's ten liquid cells over rigid metal
++    move only in their first and third (fractions 0-0.1 and 0.2-0.3); a receiver of 20 liquid cells takes them in its
++    cells 0-1 and 4-5, a receiver of 4 in its cells 0 and 1 (0.2-0.3 straddles its 0.25), each in proportion to the
++    overlap; nothing reaches rigid metal."""
++    col, _ = strip_grid(3, 3)
++    temps = [[LIQUID] * 20 + [RIGID] * 5 if k % 2 else [LIQUID] * 4 + [RIGID] * 10 for k in range(col.n)]
++    temps[4] = [LIQUID] * 10 + [RIGID] * 5
++    sk = stacked(col, temps)
++    dt, u = 0.01, np.array([0.08, 0.05, 0.0])
++    rate, receivers = moving_from(sk, col, 4, u, cells=[0, 2])
++    before = sk.m.copy()
++    book = skin.transport(sk, col, dt, regrid=False)
++    m_left = before[4, [0, 2]] / (1.0 + dt * rate.sum())               # the donor's cells, implicitly
++    for r, c in zip(receivers, rate):
++        gain = sk.m[r] - before[r]
++        sent = dt * c * m_left                                        # its first and third cells' share
++        if sk.count[r] == 25:
++            np.testing.assert_allclose(gain[[0, 1, 4, 5]], [sent[0] / 2, sent[0] / 2, sent[1] / 2, sent[1] / 2],
++                                       rtol=1e-12)
++            assert np.all(gain[2:4] == 0.0) and np.all(gain[6:] == 0.0)
++        else:
++            np.testing.assert_allclose(gain[:2], [sent[0] + sent[1] / 2, sent[1] / 2], rtol=1e-12)
++            assert np.all(gain[2:] == 0.0)
++        assert book.mass[r] == pytest.approx(sent.sum(), rel=1e-12)
++    assert len(receivers) >= 2 and {25, 14} <= set(sk.count[receivers])
++
++
++def test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_are_untouched():
++    """Spec 6.5's arrival rule: where the receiver's top is rigid -- anchored solid, or a crust over flowing metal --
++    the arriving metal lands on top of its top cell, as a new cell holding exactly what arrived; nothing passes
++    through rigid metal."""
++    col, _ = strip_grid(3, 3)
++    temps = [[RIGID] * 12 if k % 2 else [RIGID] * 2 + [LIQUID] * 6 + [RIGID] * 4 for k in range(col.n)]
++    temps[4] = [LIQUID] * 8 + [RIGID] * 4
++    sk = stacked(col, temps)
++    rate, receivers = moving_from(sk, col, 4, np.array([0.1, 0.04, 0.0]), cells=np.arange(8))
++    before = sk.state()
++    book = skin.transport(sk, col, 0.01, regrid=False)
++    h_donor = sk.material.enthalpy(LIQUID)
++    for r in range(col.n):
++        if r == 4:
++            continue
++        if r in receivers:
++            assert sk.count[r] == before[4][r] + 1
++            assert sk.m[r, 0] == pytest.approx(book.mass[r], rel=1e-12)
++            assert sk.H[r, 0] == pytest.approx(book.mass[r] * h_donor, rel=1e-12)
++            np.testing.assert_allclose(sk.U[r, 0], [0.1, 0.04, 0.0], rtol=1e-12)
++            shifted = slice(1, sk.count[r])
++        else:
++            assert book.mass[r] == 0.0
++            shifted = slice(0, sk.count[r])
++        for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3]), (sk.U, before[5])):
++            assert np.array_equal(now[r, shifted], then[r, :before[4][r]])
++    assert any(r % 2 for r in receivers) and any(r % 2 == 0 for r in receivers)          # solid tops and crusts
++
++
++def test_a_floating_crust_carried_across_lands_on_top_and_the_slurry_beneath_it_joins_by_fraction():
++    """Asha, 2026-10-20 (Task 4): a crust over flowing metal floats and moves as one piece. Carried into a neighbour it
++    lands on top of the neighbour's top; the slurry beneath it, ten cells, joins each receiver's 20 liquid cells two by
++    two; the donor's anchored cells, given the same velocity, stay where they are."""
++    col, _ = strip_grid(3, 3)
++    temps = [[LIQUID] * 20 + [RIGID] * 5] * col.n
++    temps[4] = [RIGID] * 2 + [SLURRY] * 10 + [RIGID] * 5
++    sk = stacked(col, temps)
++    dt = 0.01
++    rate, receivers = moving_from(sk, col, 4, np.array([0.1, 0.04, 0.0]))       # every cell, the anchored too
++    before = sk.state()
++    book = skin.transport(sk, col, dt, regrid=False)
++    left = before[1][4, :12] / (1.0 + dt * rate.sum())
++    np.testing.assert_allclose(sk.m[4, :12], left, rtol=1e-12)
++    for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3]), (sk.U, before[5])):
++        assert np.array_equal(now[4, 12:17], then[4, 12:17])                    # the anchored cells
++    h_crust, h_slurry = sk.material.enthalpy(RIGID), sk.material.enthalpy(SLURRY)
++    for r, c in zip(receivers, rate):
++        assert sk.count[r] == 26
++        assert sk.m[r, 0] == pytest.approx(dt * c * left[:2].sum(), rel=1e-12)
++        assert sk.H[r, 0] == pytest.approx(sk.m[r, 0] * h_crust, rel=1e-12)
++        gain = sk.m[r, 1:21] - before[1][r, :20]
++        np.testing.assert_allclose(gain, np.repeat(dt * c * left[2:12] / 2.0, 2), rtol=1e-12)
++        H_gain = sk.H[r, 1:21] - before[2][r, :20]
++        np.testing.assert_allclose(H_gain, gain * h_slurry, rtol=1e-9)
++        assert np.array_equal(sk.m[r, 21:], before[1][r, 20:25])
++        assert book.mass[r] == pytest.approx(dt * c * left.sum(), rel=1e-12)
++
++
++def mixed_sphere_skins(coarse_sphere_mesh, seed=6, speed=0.05):
++    """Skins on the 4 mm test sphere, 1-3 times their minimum deep, every cell at its own temperature between 860 and
++    960 K -- liquid, slurry, crusts and anchored rigid metal in every arrangement -- and moving at its own velocity in
++    its column's tangent plane, about `speed` m/s."""
++    sk, col, rng = random_sphere_skins(coarse_sphere_mesh, seed)
++    sk.T = np.where(sk.valid, rng.uniform(860.0, 960.0, sk.T.shape), sk.T)
++    sk.H = sk.m * sk.material.enthalpy(sk.T)
++    U = rng.normal(0.0, speed, sk.U.shape)
++    U -= np.einsum("ikx,ix->ik", U, col.normal)[..., None] * col.normal[:, None, :]
++    sk.U = np.where(sk.valid[..., None], U, 0.0)
++    return sk, col, rng
++
++
++def test_the_books_close_on_skins_of_every_kind_on_the_sphere(coarse_sphere_mesh):
++    """Mass, enthalpy and the cells' carried sensitivity are conserved to round-off, each column's change is its book;
++    the momentum of each column changes by what was carried in less what was carried out plus the wall's impulse, the
++    normal parts the projection removed, which lie along the column's normal; every velocity ends in its column's
++    plane, and the anchored cells are untouched. Measured 2026-10-21 at Courant numbers up to 0.87: every book to
++    4e-15 of its scale, the wall's impulse 2.5 % of the largest column's momentum."""
++    sk, col, rng = mixed_sphere_skins(coarse_sphere_mesh)
++    sk.S = np.where(sk.valid, rng.uniform(0.0, 1.0, sk.m.shape), 0.0)
++    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
++    anchored = skin.anchored_cells(sk, flowing)
++    assert flowing.sum() > 1000 and anchored.sum() > 1000 and (sk.valid & ~flowing & ~anchored).sum() > 100
++    before = sk.state()
++    mS0, P0, M0, E0 = (sk.m * sk.S).sum(), sk.column_momentum(), sk.column_mass(), sk.H.sum(axis=1)
++    book = skin.transport(sk, col, 0.01, regrid=False)
++    assert book.courant > 0.1
++    np.testing.assert_allclose(sk.column_mass() - M0, book.mass, rtol=0, atol=1e-13 * M0.max())
++    np.testing.assert_allclose(sk.H.sum(axis=1) - E0, book.enthalpy, rtol=0, atol=1e-13 * np.abs(E0).max())
++    assert abs(book.mass.sum()) < 1e-13 * M0.sum() and abs(book.enthalpy.sum()) < 1e-13 * np.abs(E0).sum()
++    assert (sk.m * sk.S).sum() == pytest.approx(mS0, rel=1e-13)
++    scale = np.abs(P0).max()
++    np.testing.assert_allclose(sk.column_momentum() - P0, book.momentum + book.wall, rtol=0, atol=1e-13 * scale)
++    assert np.abs(book.momentum.sum(axis=0)).max() < 1e-13 * scale
++    assert np.linalg.norm(np.cross(book.wall, col.normal), axis=1).max() < 1e-13 * scale
++    assert np.abs(book.wall).max() > 1e-6 * scale                                  # the planes differ: it is not idle
++    assert np.abs(np.einsum("ikx,ix->ik", sk.U, col.normal)).max() < 1e-12 * np.abs(sk.U).max()
++    top = (sk.count - before[4])[:, None]                                         # a new top cell shifts the rest
++    k = np.arange(anchored.shape[1])[None, :]
++    rows, cells = np.nonzero(anchored)
++    for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3])):
++        assert np.array_equal(now[rows, cells + top[rows, 0]], then[rows, cells])
++
++
++def test_courant_numbers_far_above_one_stay_positive_bounded_and_conservative(coarse_sphere_mesh):
++    """A 10 s sub-step on the mixed sphere skins (Courant numbers up to 875): every cell keeps a positive mass, every
++    specific enthalpy stays within the old ones' range and every speed below the old fastest (the scheme mixes, it
++    never overshoots), the books close and the cells end within their split and merge bounds."""
++    sk, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
++    v = sk.valid
++    h0, M0, E0 = sk.H[v] / sk.m[v], sk.mass(), sk.energy()
++    fastest = np.linalg.norm(sk.U, axis=2).max()
++    book = skin.transport(sk, col, 10.0)
++    v = sk.valid
++    assert book.courant > 100.0
++    assert np.all(sk.m[v] > 0.0)
++    h = sk.H[v] / sk.m[v]
++    assert h.min() >= h0.min() - 1e-9 * abs(h0.min()) and h.max() <= h0.max() + 1e-9 * abs(h0.max())
++    assert np.linalg.norm(sk.U, axis=2).max() <= fastest * (1.0 + 1e-12)
++    assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
++    dz, t = sk.dz(), sk.targets()
++    assert np.all(dz[v] >= skin.MERGE_BELOW * t[v]) and np.all(dz[v] <= skin.SPLIT_ABOVE * t[v])
++
++
++def test_a_velocity_carried_into_a_column_is_projected_onto_its_plane(coarse_sphere_mesh):
++    """One column on the 4 mm test sphere, liquid throughout, moving at 1 m/s in its plane into its neighbours, which are
++    liquid at rest: each neighbour gains the projection onto its own plane of the momentum that left toward it, and
++    the wall takes the normal part -- the planes of neighbouring 4 mm columns on a 50 mm sphere are 4.6 degrees apart
++    on average, the three receivers' 4.5-4.9 degrees from the donor's, and the normal parts 2.3-7.7 % of the momentum
++    carried (measured 2026-10-21)."""
++    from test_reentry_model_columns import sphere_columns
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    sk = skin.Skins(scheil(), col.area, skin.SkinSettings())
++    sk.fill(skin.minimum_mass(sk.material, sk.area, sk.settings), LIQUID)
++    sk.regrid()
++    donor = int(np.argmin(np.abs(col.normal[:, 2])))                              # on the equator of z
++    u = np.cross(col.normal[donor], [0.0, 0.0, 1.0])
++    rate, receivers = moving_from(sk, col, donor, u / np.linalg.norm(u))
++    P0 = sk.column_momentum()
++    book = skin.transport(sk, col, 0.01, regrid=False)
++    n = col.normal[receivers]
++    carried = book.momentum[receivers]
++    inplane = carried - np.einsum("ij,ij->i", carried, n)[:, None] * n
++    np.testing.assert_allclose(sk.column_momentum()[receivers] - P0[receivers], inplane, rtol=0,
++                               atol=1e-12 * np.abs(carried).max())
++    np.testing.assert_allclose(book.wall[receivers], inplane - carried, rtol=0, atol=1e-12 * np.abs(carried).max())
++    normal_part = np.linalg.norm(carried - inplane, axis=1) / np.linalg.norm(carried, axis=1)
++    assert normal_part.max() > 0.02 and normal_part.max() < 0.16
++
++
++def test_the_upwind_order_changes_the_cost_never_the_answer(coarse_sphere_mesh, monkeypatch):
++    """The solve takes the cells in upwind order -- scipy's strong components, which come out in reverse topological
++    order -- so that its sparse LU has almost no fill; were that order ever not upwind, the LU falls back to its own
++    fill-reducing order and gives the same answer, more slowly."""
++    first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++    second, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
++    a = skin.transport(first, col, 0.05, regrid=False)
++    rng = np.random.default_rng(0)
++    monkeypatch.setattr(skin, "_upwind_order", lambda src, dst, n: (rng.permutation(n), False))
++    b = skin.transport(second, col, 0.05, regrid=False)
++    for x, y in zip(first.state(), second.state()):
++        np.testing.assert_allclose(x, y, rtol=1e-11, atol=1e-11 * np.abs(y).max())
++    np.testing.assert_allclose(a.wall, b.wall, rtol=0, atol=1e-11 * np.abs(a.momentum).max())
+```
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_columns.py
+  tests/test_reentry_model_skin.py -q`. Expected: 11 failed — `AttributeError: 'Columns' object has no attribute
+  'face_vector'` (5) and `AttributeError: module 'reentry_model.skin' has no attribute 'transport'` (6).
+
+- [ ] **Step 4: The faces' vectors** in `reentry_model/columns.py`:
+
+```diff
+--- a/reentry_model/columns.py
++++ b/reentry_model/columns.py
+@@ -23,7 +23,14 @@
+ and 23 %). On these 50 mm-radius spheres the curvature is then within 8.4·10^-5 of 2/R at every corner (1.3·10^-5 on
+ the 2 mm sphere), where the barycentric area had scattered 7.6 and 3.9 %, and the gradient of a linear field within
+ 0.09 % of its tangential part on average (0.02 % on the 2 mm sphere), 0.8 % at the test sphere's one irregular corner
+-(measured 2026-10-18)."""
++(measured 2026-10-18).
++
++The flow's sideways transport (sub-plan 21 Task 6a) crosses each dual face at its `face_vector`: the face's two
++segments, each its normal in its own triangle times its length, summed and pointing from the edge's first corner to
++its second, so that a velocity u carries u . face_vector per unit depth across the face. A column's faces close
++exactly on a plane, so a uniform flow carries as much into every column as out of it; the edge's direction times the
++face's length closes only where the triangles are symmetric about their edges, and on the tests' jittered plane of 1 mm
++squares a uniform 1 m/s would gather or spread a column's metal at up to 539 1/s that way (measured 2026-10-21)."""
+ from dataclasses import dataclass
+ 
+ import numpy as np
+@@ -69,15 +76,21 @@
+         mid = 0.5 * (p[i] + p[j])
+         cot = np.zeros(len(self.edges))
+         face = np.zeros(len(self.edges))
++        vector = np.zeros((len(self.edges), 3))
++        _, unit, _ = triangle_geometry(p, self.faces)
+         for s in range(2):
+             ok = self._tri[:, s] >= 0
+             k = self._opp[ok, s]
+             u, v = p[i[ok]] - p[k], p[j[ok]] - p[k]
+             cot[ok] += np.einsum("ij,ij->i", u, v) / np.linalg.norm(np.cross(u, v), axis=1)
+-            face[ok] += np.linalg.norm(mid[ok] - self.centroid[self._tri[ok, s]], axis=1)
++            segment = self.centroid[self._tri[ok, s]] - mid[ok]
++            face[ok] += np.linalg.norm(segment, axis=1)
++            across = np.cross(segment, unit[self._tri[ok, s]])             # the segment's normal times its length
++            vector[ok] += across * np.sign(np.einsum("ij,ij->i", across, p[j[ok]] - p[i[ok]]))[:, None]
+         self.cot_weight = 0.5 * cot
+         self.conduct_weight = np.maximum(self.cot_weight, 0.0)
+         self.face_length = face
++        self.face_vector = vector
+ 
+     def gradient(self, f, points=None):
+         """The tangential gradient at every corner of a per-corner field f (n,) [f per m] on the surface through
+```
+
+- [ ] **Step 5: The transport** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -31,6 +31,9 @@
+ from dataclasses import dataclass
+ 
+ import numpy as np
++import scipy.sparse as sp
++import scipy.sparse.linalg as spla
++from scipy.sparse.csgraph import connected_components
+ 
+ from . import rheology
+ from .thermal import SIGMA_SB
+@@ -974,6 +977,227 @@
+     return sum(terms.values()), terms
+ 
+ 
++# -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
++SLIVER = 1.0e-12                  # a piece of a donor cell shorter than this share of it is the round-off of a boundary
++                                  # the donor's and the receiver's partitions share, and is left out
++
++
++@dataclass
++class TransportBook:
++    """What a transport sub-step carried between the columns, per column: each column's gain from its neighbours less
++    what it gave them. The mass, the enthalpy and the momentum as it left the donors each sum to zero over the body to
++    round-off; every arrival's velocity is projected onto its receiver's plane, and the normal parts removed are the
++    wall's impulse, so that each column's momentum changes by momentum + wall."""
++    mass: np.ndarray         # kg (n,)
++    enthalpy: np.ndarray     # J (n,)
++    momentum: np.ndarray     # kg m/s (n, 3), as it left the donors, before the projection
++    wall: np.ndarray         # N s (n, 3), the normal parts removed, each along its own column's normal
++    courant: float           # the largest outflow rate of any cell [1/s] times the sub-step
++
++
++def tangent_frames(normals):
++    """Two orthonormal vectors (e1, e2), each (n, 3), spanning every column's tangent plane, e1 x e2 along the normal:
++    e1 the global x axis's part in the plane, or y's where the normal lies within 26 degrees of x."""
++    ref = np.where((np.abs(normals[:, 0]) < 0.9)[:, None], np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]))
++    e1 = ref - np.einsum("ij,ij->i", ref, normals)[:, None] * normals
++    e1 /= np.linalg.norm(e1, axis=1)[:, None]
++    return e1, np.cross(normals, e1)
++
++
++def _fractions(depth):
++    """Per column, its cells' boundaries (n, K+1) as fractions of the depth they hold (`depth` (n, K) each cell's share,
++    zero for a cell that does not count), from 0 at the top to 1 at the last that counts and held there; 1 throughout
++    where none counts."""
++    z = np.concatenate([np.zeros((depth.shape[0], 1)), np.cumsum(depth, axis=1)], axis=1)
++    total = z[:, -1:]
++    return np.where(total > 0.0, z / np.where(total > 0.0, total, 1.0), 1.0)
++
++
++def _pieces(sig, tau):
++    """The pieces two partitions of [0, 1] cut each other into, row by row: sig and tau (D, K+1) non-decreasing
++    boundaries. Returns, for every piece of positive length, its row, its cell of sig, its cell of tau and its length.
++    A rank merge: each boundary's place in the merged row is its own index plus the number of the other partition's
++    boundaries before it (tau's first where two are equal)."""
++    D, B = sig.shape
++    rows = np.arange(D)[:, None]
++    off = (np.arange(D) * 4.0)[:, None]                      # boundaries lie in [0, 1]: rows 4 apart never mix
++    before = lambda xp, x, side: (np.searchsorted((xp + off).ravel(), (x + off).ravel(), side=side).reshape(x.shape)
++                                  - rows * B)
++    at_s = np.arange(B)[None, :] + before(tau, sig, "right")
++    at_t = np.arange(B)[None, :] + before(sig, tau, "left")
++    merged = np.empty((D, 2 * B))
++    merged[rows, at_s], merged[rows, at_t] = sig, tau
++    from_sig = np.zeros((D, 2 * B), dtype=np.int64)
++    from_sig[rows, at_s] = 1
++    seen = np.cumsum(from_sig, axis=1)[:, :-1]                # sig's boundaries at or before each piece's start
++    length = np.diff(merged, axis=1)
++    r, p = np.nonzero(length > 0.0)
++    return r, seen[r, p] - 1, p - seen[r, p], length[r, p]
++
++
++def _upwind_order(src, dst, n):
++    """An order of n unknowns in which every donor (src) comes before its receivers (dst), except within a cycle of
++    transfers, which stays together; and whether it holds. The order is scipy's strong components, which its (Pearce's)
++    algorithm numbers in reverse topological order -- how scipy numbers them, not what it promises, so it is checked."""
++    graph = sp.csr_matrix((np.ones(len(src)), (src, dst)), shape=(n, n))
++    _, label = connected_components(graph, directed=True, connection="strong")
++    return np.argsort(-label, kind="stable"), bool(np.all(label[src] >= label[dst]))
++
++
++def _factor(A, upwind):
++    """A sparse LU of A, an M-matrix or one by blocks, in the given order with no pivoting where the order is upwind (the
++    matrix is then triangular but for its cycles: no fill, every sign kept), else in SuperLU's own fill-reducing order."""
++    if upwind:
++        return spla.splu(A, permc_spec="NATURAL", diag_pivot_thresh=0.0, options=dict(SymmetricMode=True))
++    return spla.splu(A)
++
++
++def transport(sk, columns, dt, regrid=True):
++    """One linearly implicit upwind sub-step dt [s] of the metal moving sideways between neighbouring columns at the
++    cells' velocities sk.U (spec 6.5; Asha, 2026-10-21: its own step, after the momentum step). Updates the cells and
++    returns a TransportBook.
++
++    Across each face, cell k of the donor column a sends c m_k' toward the receiver b, c = (u_k . f)+ / A_a [1/s], f the
++    face's vector (`Columns.face_vector`) and m_k' the cell's mass at the sub-step's end; it carries the cell's specific
++    enthalpy and velocity. Every cell is then m_k' (1 + dt sum c) = m_k + dt (what arrives): (I + dt C) m' = m, the
++    film's runoff scheme (`film.Runoff`) on the cells -- an M-matrix whose columns sum to one, so the masses stay
++    positive, the books close to round-off and nothing limits dt. The enthalpy, the carried sensitivity S and the
++    momentum solve the same system, the momentum with every arrival projected onto its receiver's tangent plane, in two
++    components per cell (`tangent_frames`), the normal part booked to the wall (spec 6.4, section 14 assumption 2).
++
++    Where metal joins the receiver (spec 6.5, section 14 assumption 3): a flowing donor cell's span of fractions of the
++    donor's flowing depth (its flowing cells, top down) joins the receiver's cells between the same fractions of its
++    flowing layer, the run of flowing cells from its top, each in proportion to the overlap. Where the receiver's top is
++    rigid -- anchored metal, or a crust -- everything lands on top of it, as a new top cell; so does a floating crust's
++    metal (Task 4, Asha 2026-10-20) wherever it goes, being no part of any flowing depth. Rigid metal joined to the
++    substrate (`anchored_cells`) neither leaves nor receives, whatever velocity it holds: nothing passes through rigid
++    metal. Only the cells that send or receive are solved for; with every velocity zero nothing changes.
++
++    The cells are taken in upwind order (`_upwind_order`), in which the system is triangular but for its cycles where
++    flows meet, so its sparse LU has almost no fill. With `regrid` the cells are then split and merged (spec 6.2); a
++    sub-step that regrids anyway passes False.
++
++    Measured 2026-10-21 on the 100 mm sphere's skins (9 417 columns, 10 um cells), flowing along the meridian away from
++    the stagnation point: 0.27 s a sub-step with the front hemisphere's top 0.3 mm flowing (124 000 of 553 000 cells
++    moving), the same at Courant numbers of 1 and 96, and 0.95 s with all 584 000 cells moving, against 0.6-0.8 s for a
++    coupled conduction sub-step on the sphere's skins at 700 K. With every cell moving, the mass's LU in the cells' own
++    order took 19.6 s and in SuperLU's fill-reducing order 0.66 s, against 0.06 s upwind. Projected once at the
++    sub-step's end instead of at every arrival, a
++    uniform meridian flow kept 90 % of its kinetic energy in one sub-step at Courant number 9.6 against 96 %, and 24 %
++    against 49 % at 96: metal crossing many columns in a sub-step would carry its velocity straight on, off the curved
++    surface."""
++    n, K = sk.m.shape
++    valid = sk.valid
++    flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
++    moving = valid & ~anchored_cells(sk, flowing) & (sk.U != 0.0).any(axis=2)
++    book = TransportBook(np.zeros(n), np.zeros(n), np.zeros((n, 3)), np.zeros((n, 3)), 0.0)
++    if not moving.any():
++        return book
++    # every face a moving column has, each way, and every cell's outflow rate across it [1/s]
++    i, j = columns.edges[:, 0], columns.edges[:, 1]
++    a, b, f = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
++    keep = np.flatnonzero(moving.any(axis=1)[a])
++    a, b, f = a[keep], b[keep], f[keep]
++    c = np.where(moving[a], np.maximum(np.einsum("dkx,dx->dk", sk.U[a], f), 0.0), 0.0) / sk.area[a][:, None]
++    keep = np.flatnonzero((c > 0.0).any(axis=1))
++    if not len(keep):
++        return book
++    a, b, c = a[keep], b[keep], c[keep]
++    D = len(a)
++    # where it joins: by fraction of the flowing depth, or on top
++    dz = sk.dz()
++    run = np.cumprod(flowing, axis=1).sum(axis=1)             # the receiver's flowing layer: its top run of flowing cells
++    sig = _fractions(np.where(flowing, dz, 0.0))
++    tau = _fractions(np.where(np.arange(K)[None, :] < run[:, None], dz, 0.0))
++    joins = np.where(flowing[a] & (run[b] > 0)[:, None], c, 0.0)
++    rows = np.flatnonzero((joins > 0.0).any(axis=1))
++    r, kd, kr, length = _pieces(sig[a[rows]], tau[b[rows]])
++    some = joins[rows[r], kd] > 0.0
++    edge, kd, kr, length = rows[r[some]], kd[some], kr[some], length[some]
++    group = edge * K + kd
++    span = np.bincount(group, length, D * K)[group]
++    some = length > SLIVER * span                             # not the round-off of a boundary the two share
++    edge, kd, kr, length, group = edge[some], kd[some], kr[some], length[some], group[some]
++    share = length / np.bincount(group, length, D * K)[group]  # each donor cell's pieces sum to one
++    te, tk = np.nonzero((c > 0.0) & ~(flowing[a] & (run[b] > 0)[:, None]))
++    # every arrival: its face, the receiving cell (n K + b: a new top cell of column b), the sending cell, dt c share
++    e_edge = np.r_[edge, te]
++    e_row = np.r_[b[edge] * K + kr, n * K + b[te]]
++    e_col = np.r_[a[edge] * K + kd, a[te] * K + tk]
++    e_val = dt * np.r_[c[edge, kd] * share, c[te, tk]]
++    # the cells that send or receive, in upwind order; each sends what its arrivals take, so the books close exactly
++    active = np.zeros(n * K + n, dtype=bool)
++    active[e_row], active[e_col] = True, True
++    act = np.flatnonzero(active)
++    N = len(act)
++    local = np.full(n * K + n, -1, dtype=np.int64)
++    local[act] = np.arange(N)
++    order, upwind = _upwind_order(local[e_col], local[e_row], N)
++    at = np.empty(N, dtype=np.int64)
++    at[order] = np.arange(N)
++    to, frm = at[local[e_row]], at[local[e_col]]
++    diag = 1.0 + np.bincount(local[e_col], e_val, N)
++    # mass, enthalpy and the carried sensitivity
++    lu = _factor(sp.csc_matrix((np.r_[diag, -e_val], (np.r_[at, to], np.r_[at, frm])), shape=(N, N)), upwind)
++    cell = lambda v: np.r_[v.reshape((n * K,) + v.shape[2:]), np.zeros((n,) + v.shape[2:])][act]
++    rhs = [cell(sk.m), cell(sk.H)] + ([cell(sk.m * sk.S)] if sk.S is not None else [])
++    x = np.empty((N, len(rhs)))
++    x[order] = lu.solve(np.column_stack(rhs)[order])
++    # the momentum, each arrival projected onto its receiver's plane: two components per cell in its own plane's frame
++    owner = np.where(act < n * K, act // K, act - n * K)
++    e1, e2 = tangent_frames(columns.normal)
++    P = cell(sk.m[..., None] * sk.U)
++    p = np.column_stack([np.einsum("ij,ij->i", P, e1[owner]), np.einsum("ij,ij->i", P, e2[owner])])
++    held = P - p[:, :1] * e1[owner] - p[:, 1:] * e2[owner]   # any normal part a cell held: the wall's
++    R = np.stack([np.stack([np.einsum("ij,ij->i", e[b], g[a]) for g in (e1, e2)], axis=1) for e in (e1, e2)], axis=1)
++    Re = R[e_edge]                                            # [arrival, receiver's component, donor's component]
++    rows2 = [2 * at, 2 * at + 1] + [2 * to + q for q in (0, 0, 1, 1)]
++    cols2 = [2 * at, 2 * at + 1] + [2 * frm + q for q in (0, 1, 0, 1)]
++    vals2 = [diag, diag] + [-e_val * Re[:, q, s] for q, s in ((0, 0), (0, 1), (1, 0), (1, 1))]
++    lu2 = _factor(sp.csc_matrix((np.concatenate(vals2), (np.concatenate(rows2), np.concatenate(cols2))),
++                                shape=(2 * N, 2 * N)), upwind)
++    rhs2 = np.empty(2 * N)
++    rhs2[2 * at], rhs2[2 * at + 1] = p[:, 0], p[:, 1]
++    y = lu2.solve(rhs2)
++    p = np.column_stack([y[2 * at], y[2 * at + 1]])
++    P = p[:, :1] * e1[owner] + p[:, 1:] * e2[owner]
++    # the books, face by face: what every arrival took from its sending cell at the sub-step's end
++    moved = e_val[:, None] * np.column_stack([x[:, :2], p])[local[e_col]]
++    sent = np.stack([np.bincount(e_edge, moved[:, v], D) for v in range(4)], axis=1)
++    carried = sent[:, 2:3] * e1[a] + sent[:, 3:4] * e2[a]
++    lost = np.einsum("ij,ij->i", carried, columns.normal[b])[:, None] * columns.normal[b]
++    net = lambda v: np.bincount(b, v, n) - np.bincount(a, v, n)
++    book = TransportBook(net(sent[:, 0]), net(sent[:, 1]), np.stack([net(carried[:, v]) for v in range(3)], axis=1),
++                         -np.stack([np.bincount(b, lost[:, v], n) + np.bincount(owner, held[:, v], n)
++                                    for v in range(3)], axis=1), float((diag - 1.0).max()))
++    # install: new values for the cells solved for, a new top cell where metal landed on top
++    m, H, T, U = sk.m.copy(), sk.H.copy(), sk.T.copy(), sk.U.copy()
++    S = sk.S.copy() if sk.S is not None else None
++    old = act < n * K
++    m.ravel()[act[old]], H.ravel()[act[old]], T.ravel()[act[old]] = x[old, 0], x[old, 1], np.nan
++    U.reshape(-1, 3)[act[old]] = P[old] / x[old, :1]
++    if S is not None:
++        S.ravel()[act[old]] = x[old, 2] / x[old, 0]
++    count = sk.count.copy()
++    tops = act[~old] - n * K
++    if len(tops):
++        new = np.zeros(n, dtype=bool)
++        new[tops] = True
++        src = np.clip(np.arange(K + 1)[None, :] - new[:, None], 0, K)
++        down = lambda v: np.take_along_axis(np.concatenate([v, np.zeros((n, 1) + v.shape[2:])], axis=1),
++                                            src.reshape(src.shape + (1,) * (v.ndim - 2)), axis=1)
++        m, H, T, U = down(m), down(H), down(T), down(U)
++        m[tops, 0], H[tops, 0], T[tops, 0], U[tops, 0] = x[~old, 0], x[~old, 1], np.nan, P[~old] / x[~old, :1]
++        if S is not None:
++            S = down(S)
++            S[tops, 0] = x[~old, 2] / x[~old, 0]
++        count = count + new
++    sk._install(m, H, count, S, T, U)
++    if regrid:
++        sk.regrid()
++    return book
++
++
+ # -- the base (Task 7) -------------------------------------------------------------------------------------------------
+ def hand_down(sk, m_min, T_rigid):
+     """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
+```
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_columns.py` 10 passed and
+  `tests/test_reentry_model_skin.py` 56 passed; the unit tier 450 passed, 1 skipped. Nothing calls `transport` yet: the flow
+  joins the skin body's sub-steps in 6c, so no result changes.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/columns.py tests/test_reentry_model_columns.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the metal moves sideways between neighbouring columns at the cells' velocities, linearly implicit and upwind, by fraction of the flowing depth and on top of a rigid top, each arrival's velocity projected onto its receiver's plane (sub-plan 21 Task 6a)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
-   fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
-   a rigid top otherwise); velocities projected between tangent planes. A floating crust carried into a neighbouring
-   column (Task 4) lands on top of its top. Tests: a translating pulse keeps its heat and arrives where it should;
-   books to round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's
-   volume; and, from Task 5, a bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
-   rate while bumps below the surface-tension cutoff decay. The flow joins the skin body's sub-steps here: the surface
-   flow evaluated on the corner surface (its `dp_ds` and `tau`), `push` and `along_meridian(tau)` driving
-   `momentum_step`, then the transport.
+6. **Sideways exchange**, split in three (Asha, 2026-10-21), each with its own tests and commit; 6a, the transport at
+   given velocities, is written out above:
+   - **6b. The thickness terms implicit**: ρ_l (g·n) ∇_s H and −σ ∇_s κ (Task 5) linearised in the column heights
+     inside 6a's transport (spec §6.4's last paragraph). Tests: a bump on a flat layer under deceleration grows at the
+     thin-film Rayleigh–Taylor linear rate; bumps shorter than the surface-tension cutoff decay (from Task 5, Asha,
+     2026-10-20).
+   - **6c. The flow in the skin body**: the surface flow evaluated on the corner surface (its `dp_ds` and `tau`),
+     `push` and `along_meridian(tau)` driving `momentum_step`, then the transport, in every sub-step of `skin.advance`;
+     a setting to turn the flow off, which reproduces the heat-only skins; the momentum books in the run's history.
+     The flow's sub-step is chosen here (option c, Asha, 2026-10-21): measure the Courant numbers and the momentum lost
+     to 6a's smearing on the 100 mm sphere's melting state. Asha expects the flow to need a sub-step shorter than the
+     heat's 10 ms (about 100 columns a sub-step are estimated in flight, fact 154), so the momentum step and the
+     transport should be able to sub-cycle within a heat sub-step.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible

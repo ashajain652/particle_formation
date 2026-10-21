@@ -859,3 +859,8 @@ Each stage is tested and measured before the next begins.
   dragged by the gas shear on its top, rather than being anchored; only the rigid metal joined to the substrate is held
   (option B, over keeping every rigid cell anchored or anchoring a crust only where it touches rigid metal at the
   surface; §6.4, §14 assumption 4) (Asha).
+- 2026-10-21 (sub-plan 21 Task 6a): the sideways transport is linearly implicit and upwind, so any sub-step is stable,
+  but in flight it may cross about 100 columns a 10 ms sub-step (estimated, fact 154) and smear the flow heavily; the
+  flow's sub-step is chosen in Task 6c from the Courant numbers and momentum loss measured on the 100 mm sphere's
+  melting state (option c, over accepting the smearing or sub-cycling now), Asha expecting it to be shorter than the
+  heat's (§6.5) (Asha).
