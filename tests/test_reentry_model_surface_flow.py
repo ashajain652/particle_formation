@@ -126,3 +126,15 @@ def test_shock_layer_branch_certifies_the_nose_lower_down():
     assert r.branch == sf.BRANCH_FREE_MOLECULAR and np.all(np.isnan(r.delta_a)) and np.all(r.u_e == 0.0)
     assert np.isnan(r.p_stag) and np.all(r.p_w == r.p_inf) and np.all(r.closure == sf.CLOSURE_COUETTE)
     assert r.tau[1] == pytest.approx(a.freestream.rho * a.V ** 2 * math.sin(theta[1]) * math.cos(theta[1])) and r.tau[3] == 0.0
+
+
+def test_g_is_the_pressure_gradient_along_the_meridian_and_the_deceleration():
+    """Sub-plan 21 Task 5: the surface flow hands the skins the pressure part of G on its own, dp_ds; on the windward
+    face G = -dp_ds - rho_l W sin(theta), with p_w falling from the stagnation point, and leeward both are zero."""
+    state = aero_state_at(80.0)
+    theta = np.radians(np.linspace(0.0, 150.0, 61))
+    r = sf.SurfaceFlow().evaluate(state, theta, 0.05, 2400.0)
+    windward = theta <= 0.5 * math.pi
+    np.testing.assert_allclose(r.G[windward], -r.dp_ds[windward] - 2400.0 * r.deceleration * np.sin(theta[windward]),
+                               rtol=1e-12, atol=1e-9)
+    assert np.all(r.dp_ds[windward][1:-1] < 0.0) and np.all(r.dp_ds[~windward] == 0.0) and np.all(r.G[~windward] == 0.0)
