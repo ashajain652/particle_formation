@@ -2230,6 +2230,17 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      reached by 0.020 s) 15 % off in the first sub-step and 0.04 % after 0.1 s; 0.5 mm of liquid under the same push
      (0.46 s; 90 % by 0.44 s) and under 10 Pa of gas shear (90 % by 0.39 s) within 1.0 % and 1.9 %; 0.5 mm of slurry at
      900 K under 100 kPa/m (viscous time 0.2 ms) 1.1 % off in the first sub-step, then exact.
+153. **The push (sub-plan 21 Task 5, 2026-10-20).** The pressure term from the corners' own p_w carries their normals'
+     scatter amplified some 25 times (the radius over the spacing): a Newtonian pressure's push on the 2 mm sphere was
+     1.1 % off on average and 13 % at worst (normals 0.06 deg off radial on average, 0.87 at worst; 1.5 and 10 % on the
+     4 mm test sphere), against 0.1 and 1.2 % from each corner's exact angle, and normals from the curvature vector or
+     averaged over neighbours did no better; so the push takes the surface flow's dp/ds along the meridian
+     (`SurfaceFlowResult.dp_ds`, every other field unchanged to the last bit). The capillary push of a cosine bump is
+     second order, 2.45 % off at 20 spacings a wavelength and 0.62 % at 40; uniform skins on the 4 mm sphere get at
+     most 11 Pa/m of spurious capillary push from its mesh (0.28 on average). Estimated sizes at peak heating on the
+     100 mm sphere (93 s, 60 km, dynamic pressure 6.1 kPa, not run): the pressure push up to about 2.2e5 Pa/m, the
+     deceleration (30 m/s2) up to 7.2e4 Pa/m the other way, their ratio 1.84 x 4 rho_s / (3 rho_l C_D) = 3.1 for a
+     solid sphere at any size and moment; a 0.1 mm bump 4 mm long about 3e5 Pa/m of capillary push.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

@@ -729,3 +729,89 @@ def test_a_column_whose_bottom_cell_flows_anchors_nothing():
     dz = sk.dz()[0]
     s = dz[:12].sum() - (np.cumsum(dz[:12]) - 0.5 * dz[:12])                # heights above the base
     np.testing.assert_allclose(sk.U[0, 2:12, 0], gamma * s[2:], rtol=1e-4)
+
+
+# -- the push (sub-plan 21 Task 5) --------------------------------------------------------------------------------------
+V_HAT = np.array([1.0, 0.0, 0.0])
+RHO_L, SIGMA = 2400.0, 0.8
+
+
+def regular_grid(n_side=81, h=1e-3):
+    """Columns on a regular flat square grid of n_side corners a side, h apart, in z = 0, normals +z."""
+    from reentry_model import columns
+    x, y = np.meshgrid(np.arange(n_side) * h, np.arange(n_side) * h, indexing="ij")
+    pts = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)])
+    idx = np.arange(n_side * n_side).reshape(n_side, n_side)
+    a, b, c, d = idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()
+    return columns.Columns(pts, np.vstack([np.column_stack([a, b, c]), np.column_stack([a, c, d])])), pts
+
+
+def test_along_the_meridian_is_in_the_tangent_plane_away_from_the_stagnation_point(coarse_sphere_mesh):
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    s = skin.along_meridian(col.normal, V_HAT, np.ones(col.n))
+    side = np.linalg.norm(V_HAT - (col.normal @ V_HAT)[:, None] * col.normal, axis=1) > 1e-6
+    assert np.abs(np.einsum("ij,ij->i", s, col.normal)).max() < 1e-12
+    np.testing.assert_allclose(np.linalg.norm(s[side], axis=1), 1.0, rtol=1e-12)
+    assert np.all(s[side] @ V_HAT < 0.0)                                       # away from the stagnation point
+    poles = skin.along_meridian(np.array([V_HAT, -V_HAT]), V_HAT, np.ones(2))
+    assert np.all(poles == 0.0)
+
+
+def test_the_deceleration_pulls_the_metal_toward_the_nose_everywhere(coarse_sphere_mesh):
+    """30 m/s2 along the flight direction on the 4 mm sphere: rho_l g sin(theta) toward the nose -- the element model's
+    -rho_l W sin(theta) on the windward face, and on the leeward face too, where it pulls the metal toward the equator."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    G, terms = skin.push(col, np.full(col.n, 8e-4), np.zeros(col.n), 30.0 * V_HAT, V_HAT, RHO_L, SIGMA)
+    sin = np.linalg.norm(V_HAT - (col.normal @ V_HAT)[:, None] * col.normal, axis=1)
+    away = skin.along_meridian(col.normal, V_HAT, np.ones(col.n))
+    np.testing.assert_allclose(np.einsum("ij,ij->i", terms["deceleration"], away), -RHO_L * 30.0 * sin, rtol=1e-9, atol=1e-9)
+    assert np.all(terms["pressure"] == 0.0) and np.abs(terms["thickness"]).max() < 1e-9          # uniform: round-off
+
+
+def test_the_pressure_term_is_the_surface_flow_s_gradient_away_from_the_stagnation_point(coarse_sphere_mesh):
+    """A Newtonian wall pressure falling from the stagnation point, dp/ds = -2 p0 sin cos / R: its push points away
+    from the stagnation point at the surface flow's magnitude -- the input's own, not re-differentiated."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    cos = np.clip(col.normal @ V_HAT, 0.0, 1.0)
+    dp_ds = -2.0 * 11e3 * np.sqrt(1.0 - cos ** 2) * cos / 0.05
+    _, terms = skin.push(col, np.full(col.n, 8e-4), dp_ds, np.zeros(3), V_HAT, RHO_L, SIGMA)
+    away = skin.along_meridian(col.normal, V_HAT, np.ones(col.n))
+    np.testing.assert_allclose(np.einsum("ij,ij->i", terms["pressure"], away), -dp_ds, rtol=1e-12, atol=1e-9)
+
+
+def test_a_thicker_column_under_a_pull_out_of_the_surface_draws_the_metal_toward_it():
+    """A flat layer thickening by 1 mm a metre under a pull of 100 m/s2 out of its surface: rho_l (g . n) grad H."""
+    col, pts = regular_grid(21)
+    H = 5e-4 + 1e-3 * pts[:, 0]
+    _, terms = skin.push(col, H, np.zeros(col.n), np.array([0.0, 0.0, 100.0]), V_HAT, RHO_L, SIGMA)
+    np.testing.assert_allclose(terms["thickness"], np.tile([RHO_L * 100.0 * 1e-3, 0.0, 0.0], (col.n, 1)), atol=1e-9)
+    assert np.abs(terms["deceleration"]).max() == 0.0                          # the pull lies along the normal
+
+
+def test_a_bump_s_surface_tension_pushes_the_metal_from_its_crest_converging_at_second_order():
+    """A cosine bump of 20 um on a 0.5 mm layer: kappa = -H'' for small slopes, so -sigma grad kappa = sigma H''' =
+    sigma eps k^3 sin(kx). Measured 2026-10-20: 2.45 % of its peak off at 20 spacings a wavelength, 0.62 % at 40."""
+    def error(lam):
+        col, pts = regular_grid()
+        k, eps = 2.0 * np.pi / lam, 2e-5
+        _, terms = skin.push(col, 5e-4 + eps * np.cos(k * pts[:, 0]), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA)
+        exact = SIGMA * eps * k ** 3 * np.sin(k * pts[:, 0])
+        inner = np.all((pts[:, :2] > 16e-3) & (pts[:, :2] < 64e-3), axis=1)
+        assert np.abs(terms["capillary"][inner, 1:]).max() < 1e-9 * np.abs(exact).max()
+        return np.abs(terms["capillary"][inner, 0] - exact[inner]).max() / np.abs(exact).max()
+    e20, e40 = error(20e-3), error(40e-3)
+    assert e40 < 0.01 and e20 / e40 == pytest.approx(4.0, rel=0.1)
+
+
+def test_a_sphere_s_own_mesh_drives_no_capillary_flow_to_speak_of(coarse_sphere_mesh):
+    """Uniform 0.8 mm skins on the 4 mm sphere: the curvature is uniform, so the capillary push is the mesh's error
+    alone -- 11 Pa/m at worst, 0.28 on average (measured 2026-10-20), against 2e5 Pa/m from the pressure at peak
+    heating (fact 153)."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    _, terms = skin.push(col, np.full(col.n, 8e-4), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA)
+    size = np.linalg.norm(terms["capillary"], axis=1)
+    assert size.max() < 20.0 and size.mean() < 0.5

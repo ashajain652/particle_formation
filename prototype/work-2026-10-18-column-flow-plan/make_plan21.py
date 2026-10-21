@@ -34,6 +34,9 @@ TASKS = (
     (3, (("RHEOLOGY_T3", "reentry_model/rheology.py"), ("TEST_RHEOLOGY_T3", "tests/test_reentry_model_rheology.py"),
          ("DIFF_SKIN_T3", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T3", "tests/test_reentry_model_skin.py"))),
     (4, (("DIFF_SKIN_T4", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T4", "tests/test_reentry_model_skin.py"))),
+    (5, (("DIFF_SURFACE_FLOW_T5", "reentry_model/surface_flow.py"),
+         ("DIFF_TEST_SURFACE_FLOW_T5", "tests/test_reentry_model_surface_flow.py"),
+         ("DIFF_SKIN_T5", "reentry_model/skin.py"), ("DIFF_TEST_SKIN_T5", "tests/test_reentry_model_skin.py"))),
 )
 
 

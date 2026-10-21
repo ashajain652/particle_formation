@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–4 (2026-10-18/20).**
-> Tasks 5–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 (2026-10-18/20).**
+> Tasks 6–8 are still the scoped outline at the end; each is written out with tested code in turn, the same way, and
 > this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -451,20 +451,98 @@ git commit -m "Skins: every column's momentum through its depth in one implicit 
 
 ---
 
+### Task 5: The push
+
+**Files:**
+- Modify: `reentry_model/surface_flow.py` (`SurfaceFlowResult.dp_ds`), `reentry_model/skin.py` (`along_meridian`,
+  `push`)
+- Test: `tests/test_reentry_model_surface_flow.py`, `tests/test_reentry_model_skin.py`
+
+**Interfaces:**
+- Consumes: Task 2's `Columns.gradient`, `Columns.curvature` and `Columns.top_points`; the surface flow's
+  `SurfaceFlowResult`.
+- Produces: `SurfaceFlowResult.dp_ds` (n,) [Pa/m], the wall pressure's gradient along the meridian on the windward
+  face, zero leeward; `skin.along_meridian(normals, v_hat, magnitude) -> (n, 3)`, vectors in each corner's tangent plane
+  away from the stagnation point (for the pressure term here and the gas shear, `SurfaceFlowResult.tau`, in Task 6);
+  `skin.push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma) -> (G (n, 3) [N/m3], terms)`, the terms a dict of
+  `pressure`, `deceleration`, `thickness` and `capillary`.
+
+The push on every layer of a column (spec §6.4), G = −∇_s p_w + ρ_l g_t + ρ_l (g·n) ∇_s H − σ ∇_s κ, each term in the
+column's own tangent plane, where Task 4 solves for the velocities. g is the acceleration the metal feels in the body's
+frame — minus the body's own; for a body slowed by drag, the deceleration along the flight direction — so it pulls the
+metal toward the nose along the surface and out of the front face: the spec's −ρ_l a_t and ρ_l a_n (it writes the
+first with the body's acceleration and the second with the deceleration's pull), and the element model's
+−ρ_l W sin θ on the windward face. Unlike the element model it acts on the leeward face too, where it pulls the metal
+toward the equator. H is each column's thickness and κ the mean curvature of the top surface the thicknesses make.
+
+**The pressure term takes the surface flow's gradient, not the corners'.** Differentiating each corner's own p_w would
+carry the scatter of the corners' normals — 0.06° off radial on average on the 2 mm sphere, 0.87° at worst — amplified
+some 25 times, the radius over the spacing: a Newtonian pressure's push came out 1.1 % off on average and 13 % at worst
+that way (1.5 % and 10 % on the 4 mm test sphere), against 0.1 % and 1.2 % with each corner's exact angle; normals
+taken from the curvature vector, or averaged over the neighbours, did no better (measured 2026-10-20,
+`prototype/work-2026-10-18-column-flow/measure/`). The surface flow already differentiates p_w(θ) on its own fine bins
+along the meridian for the element model's G; it now also returns that gradient, `dp_ds`, on its own, with every
+field it returned before unchanged to the last bit at 20, 80 and 200 s of the 100 mm flight, and the push takes
+−dp_ds along the meridian away from the stagnation point.
+
+**Sizes at peak heating** on the 100 mm sphere (estimated, not run: 93 s, 60 km, a dynamic pressure of 6.1 kPa from the
+level-3 physics flight, a stagnation pressure of 1.84 times it and a drag coefficient of 0.92): the pressure term peaks
+at p_stag / R, about 2.2·10⁵ Pa/m at 45° from the nose; the deceleration, 30 m/s², gives at most ρ_l g = 7.2·10⁴ Pa/m
+at 90°, pulling the other way. Their ratio, 1.84 × 4ρ_s / (3 ρ_l C_D) ≈ 3.1, is the same for a solid sphere of any size
+at any point of its flight, since both scale with the dynamic pressure. The thickness and capillary terms matter at
+short wavelengths: a 0.1 mm bump 4 mm long gives about 3·10⁵ Pa/m of capillary push, which is why Task 6 takes both
+implicitly; the sphere's own mesh, with the curvature exact to 10⁻⁴, gives at most 11 Pa/m of spurious capillary push
+(0.3 on average).
+
+The two thickness terms are evaluated at the thicknesses given; their implicit treatment, linearised in the column
+heights, belongs to Task 6's solve, and so do the Rayleigh–Taylor growth and the surface-tension cutoff's decay, which
+need the thickness to evolve (Asha, 2026-10-20). Nothing calls `push` yet: the skin body evaluates the surface flow on
+its corner surface and drives `momentum_step` with the push and the gas shear when the flow joins its sub-steps
+(Task 6), so no result changes.
+
+- [ ] **Step 1: The surface flow's test** — append to `tests/test_reentry_model_surface_flow.py`:
+
+{{DIFF_TEST_SURFACE_FLOW_T5}}
+
+- [ ] **Step 2: The push's tests** — append to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T5}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_surface_flow.py
+  tests/test_reentry_model_skin.py -q`. Expected: `AttributeError: 'SurfaceFlowResult' object has no attribute 'dp_ds'`
+  and `AttributeError: module 'reentry_model.skin' has no attribute 'along_meridian'`.
+
+- [ ] **Step 4: The pressure gradient on its own** in `reentry_model/surface_flow.py`:
+
+{{DIFF_SURFACE_FLOW_T5}}
+
+- [ ] **Step 5: The push** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T5}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_surface_flow.py` 8 passed and
+  `tests/test_reentry_model_skin.py` 46 passed; the unit tier 439 passed, 1 skipped.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/surface_flow.py tests/test_reentry_model_surface_flow.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the push along the surface on every layer -- the surface flow's pressure gradient along the meridian, the deceleration, the thickness and the capillary terms -- in each column's tangent plane (sub-plan 21 Task 5)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
-5. **The push**: −∇_s p_w − ρ_l a_t + ρ_l a_n ∇_s H − σ ∇_s κ on every layer, with the two thickness terms implicit
-   (linearised in the column heights). Tests on each term: the gas pressure's gradient, the deceleration along the
-   surface, the thickness term and the curvature term against known fields. The Rayleigh–Taylor growth of a bump under
-   deceleration and the decay of bumps below the surface-tension cutoff need the thickness to evolve, so they run with
-   Task 6 (Asha, 2026-10-20).
 6. **Sideways exchange** (in Task 1's coupled solve): implicit upwind transport of mass, enthalpy and momentum by
    fraction of the flowing depth; the arrival rule (same fraction where the receiver flows from its top down, on top of
    a rigid top otherwise); velocities projected between tangent planes. A floating crust carried into a neighbouring
    column (Task 4) lands on top of its top. Tests: a translating pulse keeps its heat and arrives where it should;
    books to round-off; runoff landing on a solid skin freezes from below and the 3D surface moves out by the deposit's
    volume; and, from Task 5, a bump on a flat layer under deceleration grows at the thin-film Rayleigh–Taylor linear
-   rate while bumps below the surface-tension cutoff decay.
+   rate while bumps below the surface-tension cutoff decay. The flow joins the skin body's sub-steps here: the surface
+   flow evaluated on the corner surface (its `dp_ds` and `tau`), `push` and `along_meridian(tau)` driving
+   `momentum_step`, then the transport.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible

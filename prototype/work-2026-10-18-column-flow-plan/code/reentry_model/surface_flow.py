@@ -213,6 +213,8 @@ class SurfaceFlowResult:
     tau_continuum: np.ndarray
     tau_fm: np.ndarray
     G: np.ndarray
+    dp_ds: np.ndarray = None      # the wall pressure's gradient along the meridian [Pa/m], from the fine bins (the
+                                  # pressure part of G; the skins' push takes it on its own, sub-plan 21 Task 5)
 
     @property
     def branch_name(self):
@@ -283,7 +285,7 @@ class SurfaceFlow:
             return SurfaceFlowResult(BRANCH_FREE_MOLECULAR, state.kn, float("nan"), state.ma, float("nan"), p_inf,
                                      float("nan"), decel, self.gamma_pm, np.full(n, p_inf), zero, zero, zero, zero, zero,
                                      zero, nan, nan, np.full(n, np.inf), np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool),
-                                     zero, zero, zero, zero)
+                                     zero, zero, zero, zero, zero)
         G_inertial = -rho_liquid * decel * sin
         if branch == BRANCH_FREE_MOLECULAR:
             # Schaaf-Chambre from the freestream directly: no compression model, no edge state, no boundary layer
@@ -292,7 +294,7 @@ class SurfaceFlow:
                                      self.gamma_pm, np.full(n, p_inf), zero, zero, np.full(n, fs.rho), np.full(n, fs.T),
                                      zero, zero, nan, np.full(n, lam_inf), np.full(n, lam_inf / radius),
                                      np.full(n, CLOSURE_COUETTE), np.ones(n, dtype=bool), tau_fm, zero, tau_fm,
-                                     np.where(windward, G_inertial, 0.0))
+                                     np.where(windward, G_inertial, 0.0), zero)
         # shock-layer construction: the reservoir (also the bridge's continuum endpoint in the merged branch)
         stag = self.air.stagnation(fs.rho, fs.T, V)
         re_shock = float(fs.rho * V * radius / stag.mu)
@@ -328,9 +330,10 @@ class SurfaceFlow:
         closure = np.where(windward, closure, CLOSURE_COUETTE)
         dp_ds = np.gradient(p_b, s_b)                              # from the actual p_w(theta), not a Newtonian formula
         G = np.where(windward, -at(dp_ds) + G_inertial, 0.0)
+        dp_ds_w = np.where(windward, at(dp_ds), 0.0)
         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)
         u_e, rho_e, mu_e = (np.where(np.isfinite(x), x, 0.0) for x in (u_e, rho_e, mu_e))
         return SurfaceFlowResult(branch, float(state.kn), re_shock, float(state.ma), float(stag.p), p_inf, float(phi_star),
                                  decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
                                  np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
-                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G)
+                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w)

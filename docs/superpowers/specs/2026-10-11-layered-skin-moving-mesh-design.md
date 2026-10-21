@@ -300,7 +300,11 @@ the deceleration's component into the surface, and every layer feels the same pu
 with p_w the wall pressure from the surface-flow evaluation, a_t and a_n the deceleration's components along and into
 the surface (a_n positive pointing out of the front face, as the deceleration pulls in the body's frame), H the
 column's top height (its total thickness) and κ the top surface's curvature from the column heights on the triangulated
-surface. The third term lowers the pressure under a thicker column on the front face, so pile-ups attract material at
+surface. (Sub-plan 21 Task 5, 2026-10-20: with g the acceleration the metal feels in the body's frame, minus the
+body's own, the second and third terms are ρ_l g_t and ρ_l (g·n) ∇_s H — the deceleration pulls the metal toward the
+nose along the surface and out of the front face, on the leeward face too; and −∇_s p_w is the surface flow's own
+gradient of p_w(θ) along the meridian, since differentiating the corners' values amplifies the scatter of their
+normals some 25 times.) The third term lowers the pressure under a thicker column on the front face, so pile-ups attract material at
 long wavelengths — the front-surface Rayleigh–Taylor mechanism, as a flow; the fourth, surface tension, resists them and
 dominates below the capillary length (about 1.8 mm, §2). Both thickness terms were added on 2026-10-11.
 
