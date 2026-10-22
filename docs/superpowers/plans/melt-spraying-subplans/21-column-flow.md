@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a and 6b
-> (2026-10-18/21).** Tasks 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a, 6b and 6c
+> (2026-10-18/22).** Tasks 7 and 8 are still the scoped outline at the end; each is written out with tested code in
 > turn, the same way, and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -86,14 +86,36 @@ regenerate.
    `test_the_faces_exchange_times_the_film_operator_has_no_growing_mode` (Task 6b).
 10. **The predicted heights against the transport's** — the thickness terms are implicit in the heights the thickness
     step predicts, which the transport makes to 0.62 % of the change on the test sphere but only to about 4 % at a
-    melting state's rim (6.5 µm of 0.15–0.17 mm, at a Courant number of 1.8; not pinned by a test). Watch it in 6c's
-    measurements; where it grows, a second linearisation at the transport's own heights would close it.
+    melting state's rim (6.5 µm of 0.15–0.17 mm, at a Courant number of 1.8; not pinned by a test). Measured in 6c on the
+    sphere's draining front: 11–16 % of the largest change at 1 ms, at a few columns of the pile at the shoulder
+    (90–91°, 1 mm deep: 3.7·10⁻⁵ m predicted, 1–6·10⁻⁶ m made), and no smaller at shorter sub-steps (0.26–0.60 of the
+    change over 50 ms at 2 to 0.25 ms), so it is the columns' linearisation, not the sub-step; at 10 ms, with the
+    linearisations at their cap, 13 times the change, and the correction then adds kinetic energy (Task 6c). Where it
+    matters, a second linearisation at the transport's own heights would close it.
 11. **Rayleigh–Taylor growth under-resolved in time** — at dt·s near or above one, backward Euler damps a growing mode
     spuriously instead of following it. `ThicknessBook.growth` reports it every sub-step; no test can pin what 6c's
-    choice of sub-step must avoid (Task 6b).
+    choice of sub-step must avoid (Task 6b). At 6c's 1 ms it is at most 0.0067 (3.4 mm of liquid at 48 m/s²); the
+    history's `flow_growth_max` reports each macro step's.
 12. **Quiescent layers ringing under surface tension** — two-way flows through the depth join most moving cells into
-    one cycle of the transport and its LU fills (4 s a sub-step on the test sphere); a cost, not an error, measured in
-    6c (Task 6b).
+    one cycle of the transport and its LU fills (4 s a sub-step on the test sphere); a cost, not an error. Measured in
+    6c on the 100 mm sphere: 10 315 of 141 000 moving cells in one cycle within 12 sub-steps of 1 ms, 4–5 s a transport,
+    and with every column melted flows meeting at the rear stagnation point make cycles of 18 000–57 000 cells, 35–651 s
+    a transport. The iteration from the upwind solve measured in 6c (2–9 corrections to 10⁻¹³, 80 times faster than the
+    LU with every column melted) is the remedy to build if a flight melts that widely (Task 6c).
+13. **A runoff front advances at most one column a flow sub-step** — metal landing on a rigid top becomes a new top
+    cell after the transport's solve and flows on only in the next flow sub-step (6a's arrival rule), so a front
+    crossing rigid metal moves at most the column spacing per flow sub-step: 2 m/s on 2 mm columns at 6c's 1 ms. 6c's
+    choice rests on it (the runoff over the sphere's rear converged at 1 ms, held back by 30–75° at 2–10 ms); a faster
+    front later in flight would be held back at 1 ms too, and no history column reports it. Letting the landed metal
+    flow on within the sub-step — its new top cell an unknown of the same solve — would lift the limit (Task 6c).
+14. **The flow's sub-step is fixed** — ten flow sub-steps a heat sub-step, chosen on one state at 93 s; the Courant
+    numbers grow with the layer's speed, its depth and the push late in flight. Watch `flow_courant_max`,
+    `flow_growth_max` and `flow_passes_max` (the thickness linearisations at their cap of 8 marked the unstable 10 ms
+    runs); an adaptive count from the last sub-step's Courant number is the remedy if they grow (Task 6c).
+15. **The flow's cost** — with the flow on, a heat sub-step costs ten flow sub-steps, each about as much as its
+    conduction (48 s against 4.5 s on the heated melting state, the transport's large cycles three fifths of it); the
+    momentum step's shear-rate fixed point ran to its cap of five passes in every melting state measured, slurry being
+    where liquid meets rigid metal (Task 6c's cost).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -4054,31 +4076,1225 @@ git commit -m "Skins: the push's thickness terms implicit in the column heights 
 
 ---
 
+### Task 6c: The flow in the skin body
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`FLOW_CYCLES`, `FLOW_SECONDS`, `Flow`, `FlowBook`, `flow_substeps`;
+  `SkinBook.momentum_out` and `.flow`; `advance(..., flow=None)`), `reentry_model/skinbody.py` (`FLOW_DEFAULT`,
+  `FlowForcing`; `SkinBody(..., flow, flow_cycles, surface_flow)`, `flow_forcing`, `advance(..., forcing=None)`, the
+  momentum books and `momentum_residual`, the flow's history columns), `reentry_model/coupled.py` (`SKINBODY_COLUMNS`,
+  `skin_results`, the frames' `top_speed`), `reentry_model/cli.py` (`--skin-flow`, `--skin-flow-cycles`,
+  `skin_name_suffix(..., flow, flow_cycles)`, their checks, `build_thermal`)
+- Test: `tests/test_reentry_model_skin.py`, `tests/test_reentry_model_skinbody.py`, `tests/test_reentry_model_cli.py`
+  (the skin run's settings gain the flow's two keys)
+
+**Interfaces:**
+- Consumes: Task 5's `push` and `along_meridian`, `SurfaceFlowResult.dp_ds` and `.tau`; Task 4's `momentum_step`; 6a's
+  `transport`; 6b's `flowing_tops`, `momentum_step(..., response=True)`, `thickness_step` and `FacePush`;
+  `Skins.momentum_out`; `SurfaceFlow.evaluate`.
+- Produces: `skin.Flow(columns, dp_ds, shear, g, v_hat, rho_l, sigma, A_top, cycles=FLOW_CYCLES)`, what drives the flow
+  over a part (dp_ds (n,) [Pa/m], shear (n, 3) [Pa], g (3,) [m/s2], A_top (n,) [m2]); `skin.flow_substeps(sk, flow,
+  dt) -> FlowBook`; `FlowBook(push, shear, wall, carried, courant, growth, passes, sub_steps)`, the impulses (n, 3)
+  [N s] and the carried momentum [kg m/s], with `.zero(n)` and `.add(other)`; `skin.FLOW_CYCLES` (10) and the
+  diagnostic `skin.FLOW_SECONDS`; `skin.advance(..., flow=None)`, its book gaining `momentum_out` (n, 3) [kg m/s], what
+  the removed liquid took, and `flow`, the sub-steps' FlowBook; `skinbody.FlowForcing(dp_ds, tau, g)` with
+  `.toward(other, frac)`; `SkinBody(..., flow=FLOW_DEFAULT, flow_cycles=None, surface_flow=None)` with `.flow_on`,
+  `.flow_cycles`, `.flow_forcing(state)`, `.advance(t, dt, loads, state=None, forcing=None)`, `.momentum_residual()`,
+  `.impulse`, `.momentum_lost`, `.impulse_size`, `.last_flow`; `skinbody.FLOW_DEFAULT` (False); history columns
+  `momentum_residual`, `speed_max_ms`, `roughness_max`, `flow_courant_max`, `flow_growth_max`, `flow_passes_max`,
+  `wall_flow_s`; results `momentum_residual`, `flow_courant_max`; the frames' `top_speed`; `run --skin-flow on|off`
+  (run-name suffix `_skinflow-on`) and `--skin-flow-cycles <n>` (`_flowcycles<n>` when not FLOW_CYCLES).
+
+The flow joins the skin body. Every macro step, the surface flow is evaluated on the corners where the heating is —
+from the step's aero state, the top surface's angles to the flight direction, the nose radius and the tops'
+temperatures at the step's start — for its pressure gradient along the meridian (Task 5's `dp_ds`) and its gas shear
+`tau`; with the deceleration, which the metal feels as g, the drag's deceleration along the flight direction (minus the
+body's own acceleration, Task 5), that is the step's `FlowForcing`. Each part takes it interpolated linearly in time
+between the last macro step's and this one's at the part's middle, as it takes the heating (spec 7.1), the shear laid
+along the meridian in each column's plane. Every sub-step of both passes then runs, after its conduction, `cycles` flow
+sub-steps of its length over `cycles`, each in 6b's order — `push` with surface tension where a top flows,
+`momentum_step` with its response, `thickness_step`, `transport` with the faces' push and no regrid — the cells split
+and merged between them; the removal (with `remove`), the draw and the sub-step's own regrid follow the last (spec 7.1:
+heat, flow, sideways exchange and spray). The trial pass runs the flow as the real pass does (spec 7.2's sub-steps are
+spec 7.1's), the sensitivity carried by the transport. Where no cell flows nothing is computed: a velocity left in rigid
+cells is booked to the wall and cleared, as the momentum step would.
+
+**The momentum books.** The flow's impulses — the momentum and thickness steps' push, the gas shear, the walls (the
+anchored metal's drag, the momentum cells held on joining it, the transport's projections) and what the transport
+carried, which sums to zero over the body — add up in each part's book; what leaves with removed liquid, handed-down
+cells or a reconciliation at the bottom is booked as lost; metal drawn arrives at rest. `momentum_residual` is the
+skins' momentum less its value at time zero, the impulses and the losses, over the impulses' total size: zero for exact
+books.
+
+**The flow's sub-step** (option c, Asha, 2026-10-21, chosen here from measurements;
+`prototype/work-2026-10-18-column-flow/measure/task6c/`, 2026-10-22, the laptop under a load average of 5 to 140 from
+other sessions, so the times are processor times and indicative). The 100 mm sphere's 9 417 columns of 10 µm cells, its
+front hemisphere's top 0.3 mm liquid at 950 K over rigid metal at 850 K (6b's destabilising face), at rest at t = 0 and
+driven by the surface flow of the 100 mm flight at 93 s — a stagnation pressure of 11.9 kPa, -dp/ds up to
+3.4·10⁵ Pa/m at 45°, gas shear up to 87 Pa at 49°, 29.8 m/s² of deceleration — with surface tension, for 50 ms of
+flow alone (no conduction), at flow sub-steps of 10 ms to 0.25 ms:
+
+| Flow sub-step | Courant, largest (median) | KE the transport destroys / KE made | KE at 50 ms / 0.25 ms run | Thickness change, L1 error / 0.25 ms run | Volume past 105° / 0.25 ms run | Linearisations, most |
+|---|---|---|---|---|---|---|
+| 10 ms | 1 266 (244) | 0.59 | 4.81 | 95 % | 0 | 8 (the cap) |
+| 5 ms | 26 (23) | 0.62 | 0.31 | 85 % | 0.11 | 7 |
+| 2.5 ms | 12.6 (11) | 0.52 | 0.36 | 59 % | 0.89 | 5 |
+| 2 ms | 9.9 (8.4) | 0.43 | 0.48 | 44 % | 0.96 | 3 |
+| 1 ms | 4.8 (4.1) | 0.27 | 1.04 | 3.9 % | 1.007 | 4 |
+| 0.5 ms | 2.4 (2.0) | 0.28 | 1.02 | 1.4 % | 1.005 | 2 |
+| 0.25 ms | 1.2 (1.0) | 0.27 | 1 | — | 1 | 2 |
+
+The table shows the result converging at 1 ms and not above it. In 50 ms the liquid drains off the front at a few metres
+a second and crosses the shoulder onto the rigid rear: the volume that crossed 85° is within 1.1 % of the 0.25 ms run's
+(4 589 mm³) at 5 ms and below (3 % short at 10 ms), but the runoff over the rear is not. At 1, 0.5 and 0.25 ms it
+reaches the rear stagnation point, every band of 15° from 90° to 180° within 7 % (1 ms) and 4 % (0.5 ms) of the finest
+run's; at 2, 2.5, 5 and 10 ms it stops at 150°, 135°, 120° and 105°. The cause is 6a's arrival rule, not the scheme's
+smearing: metal landing on a rigid top becomes a new top cell after the solve, so it flows on only in the next flow
+sub-step, and a front crossing rigid metal advances at most one column a flow sub-step — 0.2 m/s on 2 mm columns at 10
+ms, 2 m/s at 1 ms. That predicts the fronts seen: 25, 20, 10 and 5 columns of 2 mm in 50 ms are 57°, 46°, 23° and 11° of
+the 50 mm radius beyond the shoulder at 2, 2.5, 5 and 10 ms. Inside the flowing layer the scheme's own smearing at 1 ms
+is already at its floor: the transport destroys 27 % of the kinetic energy the push and the shear make, the same at 0.5
+and 0.25 ms, so that is the 2 mm grid's upwind diffusion and the projections between planes, not the time step's. At 10
+ms the thickness step's linearisations stop at their cap of 8 with the predicted heights 13 times the change off, and
+its correction adds kinetic energy: the fastest cell is at 22 m/s at 30 ms against 4.9 at 1 ms. With every column's top
+melted (no front; 9 417 columns, 282 000 cells moving), 10 ms flow sub-steps blow up — the fastest cell 72 m/s at the
+third sub-step, 2 563 m/s at the fourth, the predicted heights 16 and 91 times the change off — and 5 ms keeps the
+linearisations at their cap with the predictions about one change off; at 1 ms it is stable (Courant numbers to 4.7, two
+linearisations, the predictions within 0.24 of the change over 10 ms), but its transport took 35-114 s a sub-step, the
+flows meeting at the rear stagnation point joining 18 000-23 000 cells into one cycle (below).
+
+*Rayleigh-Taylor growth* (`ThicknessBook.growth`, dt s, one flow sub-step from rest on the sphere's front melted 0.3,
+1.0 and 3.4 mm deep, the flowing depths of the element model's flight at about 85, 105 and 120 s, under the forcing at
+93 s, 29.8 m/s², and 115 s, 48.4 m/s²):
+
+| Liquid depth, deceleration | 10 ms | 5 ms | 2 ms | 1 ms |
+|---|---|---|---|---|
+| 0.3 mm, 29.8 m/s² | 0.018 | 0.0048 | 8.3·10⁻⁴ | 2.1·10⁻⁴ |
+| 0.3 mm, 48.4 m/s² | 0.047 | 0.013 | 0.0022 | 5.6·10⁻⁴ |
+| 1.0 mm, 29.8 m/s² | 0.072 | 0.018 | 0.0030 | 7.6·10⁻⁴ |
+| 1.0 mm, 48.4 m/s² | 0.19 | 0.049 | 0.0079 | 0.0020 |
+| 3.4 mm, 29.8 m/s² | 0.25 | 0.063 | 0.010 | 0.0025 |
+| 3.4 mm, 48.4 m/s² | 0.67 | 0.17 | 0.027 | 0.0067 |
+
+The table shows the growth falling as the square of the sub-step — the layer's response in a sub-step is limited by
+its inertia — and well under one at 5 ms and below in every case; at 10 ms the deep layers late in flight reach 0.67,
+where backward Euler's growth in a sub-step, 1/(1 - dt s) = 3.0, is half again the exact e^(dt s) = 1.95.
+
+**Ruling: ten flow sub-steps a heat sub-step (`FLOW_CYCLES` = 10, 1 ms under the 10 ms heat sub-step)** — at 1 ms the
+measured state is within 3.9 % of the 0.25 ms run in where the metal went and 4 % in its kinetic energy, the runoff
+reaches where the finest run's does, the growth is at most 0.0067 even for 3.4 mm of liquid at 48 m/s², the Courant
+numbers are at most 4.8 and the kinetic energy the transport destroys is the grid's own 27 %; 2 ms holds the runoff back
+by up to 30° of the rear and loses half the kinetic energy by 50 ms, and 10 ms is unstable in a fully melted layer.
+Accepted: Courant numbers to about 5, where the implicit upwind scheme's time smearing no longer shows against the
+grid's, and the grid's 27 % (the 2 mm surface's; only finer columns reduce it) — if wrong, the flow costs ten times what
+one sub-step would: a 10 ms heat sub-step of the heated melting state takes 48 s with ten against 8 s with one and 4.5 s
+for its conduction alone (*Cost*, below). The sub-step is fixed, not adapted: the Courant numbers grow with the layer's
+speed, which grows with its depth and the push late in flight, and a front faster than 2 m/s on 2 mm columns is held
+back at 1 ms too (Review Focus 13 and 14).
+
+**Ruling: the flow is off by default (`FLOW_DEFAULT`, `--skin-flow off`), and with it on the liquid stays** — stage 2's
+skins remove the liquid as it forms "instead of flow and spray" (spec 11.2); with the flow on and no spraying until
+stage 4, the liquid stays and flows (`remove` False), and a flight would only pile it up — if wrong, a stage-3 flight
+must ask for the flow. Flow off is the heat-only skins: the skin body's tests pass unchanged, and the 3 MW/m² removal
+run of `test_heating_with_removal_keeps_mass_and_energy_exact` gives Task 6b's code's every array to the last bit
+(2026-10-22, numpy's generator seeded as a run seeds it; unseeded, pyamg's starting vectors make any two runs differ in
+round-off).
+
+**Ruling: on the command line the flow takes Girin's removal** — `--skin-flow on` needs `--surface-model skin` and
+`--melt on`, and `--removal girin` (the default): the liquid stays, and sub-plan 22's spraying will remove it on the
+same command line; `--removal instant` is refused with the flow on, being the heat-only skins' stand-in for flow and
+spray (spec 11.2), as `--removal girin` is refused with it off. `--skin-flow-cycles` needs the flow on and is an integer
+of at least 1; the run name gains `_skinflow-on`, and `_flowcycles<n>` only for other than ten (spec 10.1's convention)
+— if wrong, a stage-3 run with the flow on takes the girin removal's continuum step (`--dt-continuum`, 0.0125 s once
+the body's Knudsen number is below 0.01) and its name says `_melt-girin` although nothing sprays until sub-plan 22;
+`--dt-continuum off` keeps the 0.5 s step.
+
+**Ruling: the forcing interpolated in time as the heating is, the shear in each column's plane** — spec 7.1's
+treatment of the heating, at no cost; the push's density is the skins' liquid density (`Skins.rho_l`, the solid's
+with `--skin-swell off`, as the cells' masses have it) — if wrong, the push differs by the forcing's change over half a
+macro step.
+
+**Ruling: the trial pass runs the flow** (spec 7.1 and 7.2: a sub-step is heat, flow, sideways exchange and spray) — it
+changes the base law: on the 100 mm sphere's heated melting state (`heated_state`: the front's skins at the conduction
+profile of 3 MW/m², 0.30 mm of liquid over 0.55 mm of slurry, the base held at the profile's 874 K, the flow developed
+over 20 ms under the 93 s forcing), one part of 0.0625 s with the flow and without it gives base laws that differ, at
+the base temperature, by 6.0 % of the energy through the columns' tops and bases in total; 3 428 of the 9 417 columns
+differ by more than the interface tolerance of 10⁻³ of their own (the median of the flowing columns 7·10⁻⁴), and the
+slope by up to 46 %. A trial pass without the flow would leave the real pass's base heat that far from its law: repeated
+by the damped repetition, and what it leaves deferred to the nodes. The real pass's base heat meets the law made with
+the flow to 9·10⁻¹⁵. It costs what the flow costs: the trial pass took 1 216 s of processor time with ten flow sub-steps
+a heat sub-step against 17 s without the flow. If wrong, half the flow's cost is spent on the law.
+
+**Ruling: the momentum residual over the impulses' total size**, the push's, the shear's and the walls' summed in size
+over every column and part since time zero, as the energy residual is over the heat absorbed — if wrong, only the
+scale of a number that should be round-off.
+
+*Cost* (processor time, on `heated_state` with 310 000 cells flowing, the flow developed over 20 ms; each measured twice,
+under other sessions' load, so indicative). A 10 ms heat sub-step:
+
+| Flow sub-steps | Whole | Conduction | Push | Momentum | Thickness | Transport | Regrid | Rest (draw, regrid) |
+|---|---|---|---|---|---|---|---|---|
+| 1 (10 ms) | 7.9-8.5 s | 4.1-4.6 | 0.05 | 1.0 | 1.0 | 1.4 | — | 0.4 |
+| 10 (1 ms) | 47.8-48.3 s | 4.5 | 0.5 | 9.4 | 3.2-3.5 | 28-29 | 1.4-1.5 | 0.3 |
+
+The table shows the transport taking three fifths of a heat sub-step at ten flow sub-steps, 2.9 s each, against 1.4 s
+for the one 10 ms sub-step, whose Courant number of 490 and eight linearisations (the cap) mark it unresolved; the
+momentum step's shear-rate fixed point runs its five passes every sub-step, the slurry where liquid meets rigid metal. A
+macro step while melting is eight parts of seven sub-steps, each run by the trial and the real pass, 1.8 times on
+average (fact 126): about 200 heat sub-steps, which on this state is about 2.7 h with ten flow sub-steps, 27 minutes
+with one and 16 minutes with the flow off — the flow, not the heat, is now the skins' cost. (Fact 126 measured a melting
+skin pass at 0.65 s a 10 ms sub-step; these skins are deeper, 1.6 mm, and the laptop was loaded, so the ratios are the
+finding, not the seconds.) The remedy for the transport's large cycles below would take its share down; the momentum
+step's solve over every column, flowing or not, is the next.
+
+*A quiescent melted region* (Review Focus 12). The sphere's melting state at rest under surface tension alone, no gas
+forcing and no deceleration: the melt's rim at the shoulder rounds at 5-17 mm/s (Courant numbers 0.01-0.2), and the
+transport's cycles of meeting flows grow from 7 cells to 10 315 of the 141 000 moving within 12 flow sub-steps of 1 ms
+(to 7 022 within 6 of 10 ms), its time from 1.1 to 4.0-4.8 s a sub-step. Profiled, 2.3 s of a 3.35 s transport is
+SuperLU's factorisation of its two systems, whose lower triangles fill 5.3 and 5.8 times. Under the 93 s forcing the
+largest cycle was 1 700 cells after 20 sub-steps of 1 ms and the factorisations took 0.06 and 0.15 s, filling 1.1 times;
+with every column melted, flows meeting at the rear stagnation point joined 57 000 cells into one cycle within 9
+sub-steps of 5 ms, and a transport took 651 s. *A remedy measured, not built:* solve each system by the iteration x ← x
++ L⁻¹ (b − A x) started from the upwind solve, L its lower triangle in upwind order — the whole system but the cycles'
+back-couplings, which an upwind order makes triangular with no fill. On the quiescent state it took 2-3 corrections to
+reach 10⁻¹⁰-10⁻¹³ of the right-hand side, 0.05 s against the LU's 0.30 s for the mass and 0.16 s against 1.23 s for the
+momentum, the masses positive and the books missing 2·10⁻¹⁷ of the total at 10⁻¹³; under the forcing (small cycles) 4-5
+corrections, 0.10 s against the LU's 0.06 s; with every column melted (a cycle of 18 379 cells) 7-9 corrections, 0.19 s
+against 7.4 s and 0.41 s against 41.8 s. Installing each cell's mass from the iterate's fluxes, m + dt (arrivals −
+departures), would close the books exactly by construction. It changes 6a's solver, so it is reported, not built (Review
+Focus 12).
+
+**Measured against the tests** (2026-10-22): one flow sub-step is the push, the momentum step, the thickness step and the
+transport called by hand, to the last bit, at one cycle and three, the books to 2.1·10⁻¹² and 9.4·10⁻¹³ of the largest
+impulse (6b's on these skins); four flow sub-steps in each 10 ms heat sub-step give sixteen heat sub-steps of 2.5 ms
+with one each, to the last bit, with the conduction off; a pass with the conduction on, removal and the flow closes its
+momentum to 4.9·10⁻¹⁶; on the 4 mm test sphere under 3 MW/m² from 880 K for two 0.25 s steps with the flow on the mass
+is kept to 1.1·10⁻¹⁶, the energy to 9.8·10⁻¹³ and the momentum to 2.8·10⁻¹⁷, the fastest cell 1.6 m/s, Courant numbers
+to 6.9.
+
+- [ ] **Step 1: The flow sub-steps' tests** — append to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -1388,3 +1388,171 @@
+         worst = max(worst, np.abs(tb.heights - sk.thickness()).max() / np.abs(sk.thickness() - H0).max())
+         passes.append(tb.passes)
+     assert worst < 0.0125 and max(passes) <= 4 and np.std(sk.thickness()) < 0.5 * spread0
++
++
++# -- the flow in the sub-steps (sub-plan 21 Task 6c) --------------------------------------------------------------------
++def sphere_flow(col, cycles=1, tau=50.0, A_top=None):
++    """A Flow on the test sphere's columns: a Newtonian pressure falling away from the stagnation point (11 kPa of
++    stagnation pressure), `tau` Pa of gas shear along the meridian, 30 m/s2 of deceleration along V_HAT, surface
++    tension."""
++    cos = np.clip(col.normal @ V_HAT, 0.0, 1.0)
++    dp_ds = -2.0 * 11e3 * np.sqrt(1.0 - cos ** 2) * cos / 0.05
++    shear = skin.along_meridian(col.normal, V_HAT, np.where(cos > 0.0, tau, 0.0))
++    return skin.Flow(col, dp_ds, shear, 30.0 * V_HAT, V_HAT, RHO_L, SIGMA, col.area if A_top is None else A_top, cycles)
++
++
++def by_hand(sk, flow, dt):
++    """One flow sub-step called piece by piece, in 6b's order."""
++    G, terms = skin.push(flow.columns, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma,
++                         wet=skin.flowing_tops(sk))
++    mb = skin.momentum_step(sk, dt, G, flow.shear, flow.A_top, response=True)
++    tb = skin.thickness_step(sk, flow.columns, dt, mb, terms["thickness"] + terms["capillary"], flow.g, flow.rho_l,
++                             flow.sigma)
++    return mb, tb, skin.transport(sk, flow.columns, dt, regrid=False, faces=tb.faces)
++
++
++def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_transport_in_that_order(coarse_sphere_mesh):
++    """6b's ruling: every flow sub-step calls `push` with surface tension where a column's top flows, `momentum_step`
++    with its response, `thickness_step` and `transport` with the faces' push, in that order; `flow_substeps` does exactly
++    that, to the last bit, and books every impulse: the columns' momentum changes by the push's (the thickness step's
++    included), the gas shear's, the walls' (the anchored metal's, the thickness step's and the transport's projections)
++    and what the transport carried, to round-off (2.1e-12 of the largest impulse at one cycle and 9.4e-13 at three,
++    measured 2026-10-22, as 6b's books on these skins). With `cycles` the sub-step runs as that many flow sub-steps,
++    the cells split and merged between them; the heat sub-step's own regrid follows the last."""
++    from test_reentry_model_columns import sphere_columns
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    for cycles in (1, 3):
++        first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++        second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++        flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
++        P0 = first.column_momentum()
++        book = skin.flow_substeps(first, flow, 0.01)
++        parts = []
++        for k in range(cycles):
++            if k:
++                second.regrid()
++            parts.append(by_hand(second, flow, 0.01 / cycles))
++        assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
++        assert book.sub_steps == cycles and book.courant == max(tr.courant for _, _, tr in parts) > 0.0
++        assert book.growth == max(tb.growth for _, tb, _ in parts) and book.passes == max(tb.passes for _, tb, _ in parts)
++        total = lambda f: sum(f(*p) for p in parts)
++        np.testing.assert_allclose(book.push, total(lambda mb, tb, tr: mb.push + tb.push), rtol=1e-14, atol=0.0)
++        np.testing.assert_allclose(book.shear, total(lambda mb, tb, tr: mb.shear), rtol=1e-14, atol=0.0)
++        np.testing.assert_allclose(book.wall, total(lambda mb, tb, tr: mb.wall + tb.wall + tr.wall), rtol=1e-14, atol=1e-30)
++        np.testing.assert_allclose(book.carried, total(lambda mb, tb, tr: tr.momentum), rtol=1e-14, atol=1e-30)
++        impulse = book.push + book.shear + book.wall + book.carried
++        scale = max(np.abs(x).max() for x in (book.push, book.shear, book.wall, P0))
++        assert np.abs(first.column_momentum() - P0 - impulse).max() < 5e-12 * scale
++
++
++def test_where_nothing_flows_the_flow_changes_no_cell_and_books_what_the_cells_held(coarse_sphere_mesh):
++    """Skins all below T_rigid: nothing flows, so the flow sub-step changes no mass, enthalpy or temperature, to the
++    last bit; any velocity left in the rigid cells is booked to the wall, as `momentum_step` books an anchored cell's."""
++    from test_reentry_model_columns import sphere_columns
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    sk, _, rng = random_sphere_skins(coarse_sphere_mesh)
++    sk.T = np.minimum(sk.T, 850.0)
++    sk.H = sk.m * sk.material.enthalpy(sk.T)
++    sk.U = np.where(sk.valid[..., None], rng.normal(0.0, 0.01, sk.U.shape), 0.0)
++    before, P0 = sk.state(), sk.column_momentum()
++    book = skin.flow_substeps(sk, sphere_flow(col, 2), 0.01)
++    assert all(np.array_equal(x, y) for x, y in zip(before[:5], sk.state()[:5])) and not sk.U.any()
++    np.testing.assert_array_equal(book.wall, -P0)
++    assert not (book.push.any() or book.shear.any() or book.carried.any()) and book.sub_steps == 0
++
++
++def strip_layer(nx=24, h=1e-3, liquid=20, bump=0.0, T=LIQUID):
++    """Flat columns (`strip_grid`, two corners wide), each `liquid` cells of liquid aluminium at T over five of rigid
++    metal, the liquid's mass raised by `bump` (a fraction) on the columns 4-7 mm along x."""
++    col, pts = strip_grid(nx, 2, h)
++    sk = stacked(col, [[T] * liquid + [RIGID] * 5] * col.n)
++    if bump:
++        f = 1.0 + bump * ((pts[:, 0] > 3.5e-3) & (pts[:, 0] < 7.5e-3))
++        m, H = sk.m.copy(), sk.H.copy()
++        m[:, :liquid] *= f[:, None]
++        H[:, :liquid] *= f[:, None]
++        sk._install(m, H, sk.count, T=sk.T)
++    return sk, col, pts
++
++
++def strip_flow(col, dp_ds=-2e4, g=np.zeros(3), sigma=SIGMA, cycles=1, tau=0.0):
++    """A Flow on flat columns (normals +z), the flight direction tilted from -z toward -x so that the meridian runs
++    along +x: the pressure falling at `dp_ds` along it pushes the metal toward +x, the gas shear tau too."""
++    v_hat = np.array([-0.6, 0.0, -0.8])
++    shear = skin.along_meridian(col.normal, v_hat, np.full(col.n, tau))
++    return skin.Flow(col, np.full(col.n, dp_ds), shear, g, v_hat, RHO_L, sigma, col.area, cycles)
++
++
++def no_conduction(sk, dt, q_top, A_top, T_amb, eps, T_b, sideways=None):
++    z = np.zeros(sk.n)
++    return (z, z, z, z) + ((z,) if sk.S is not None else ())
++
++
++def test_n_flow_sub_steps_in_a_heat_sub_step_are_n_heat_sub_steps_of_their_length_with_the_conduction_off(monkeypatch):
++    """The flow sub-cycles within a heat sub-step (Asha, 2026-10-21, option c): with the conduction off, four flow
++    sub-steps in each 10 ms heat sub-step give exactly what sixteen heat sub-steps of 2.5 ms with one each give, to the
++    last bit -- a bump on liquid aluminium on a strip of 1 mm columns, pushed along it, pulled out of its surface and
++    smoothed by surface tension; the books agree to round-off. With the conduction on the two differ by the splitting
++    between heat and flow, of first order in the heat sub-step."""
++    monkeypatch.setattr(skin, "_conduct", no_conduction)
++    out = []
++    for substep, cycles in ((0.01, 4), (0.0025, 1)):
++        sk, col, _ = strip_layer(bump=0.2)
++        sk.settings = skin.SkinSettings(**CELLS_04, substep=substep)
++        T_b = np.full(sk.n, RIGID)
++        book = skin.advance(sk, 0.04, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b, remove=False,
++                            flow=strip_flow(col, g=np.array([0.0, 0.0, 30.0]), cycles=cycles))
++        out.append((sk, book))
++    (a, A), (b, B) = out
++    assert all(np.array_equal(x, y) for x, y in zip(a.state(), b.state()))
++    assert A.flow.sub_steps == B.flow.sub_steps == 16 and A.flow.courant == B.flow.courant > 0.0
++    for key in ("push", "shear", "wall", "carried"):
++        x, y = getattr(A.flow, key), getattr(B.flow, key)
++        np.testing.assert_allclose(x, y, rtol=0.0, atol=1e-13 * np.abs(A.flow.push).max())
++
++
++def test_a_uniform_push_moves_a_flat_layer_as_the_momentum_step_and_the_transport_alone(monkeypatch):
++    """With neither surface tension nor a pull out of the surface, a heat sub-step's flow is the momentum step and the
++    transport alone (6b), and so is `advance`'s with the conduction off: a uniform push of 20 kPa/m along a strip of
++    liquid aluminium 0.23 mm deep on 1 mm columns moves the metal along it as those two steps and the regrid do, to the
++    last bit; the mass is kept and the first columns drain into the last."""
++    monkeypatch.setattr(skin, "_conduct", no_conduction)
++    first, col, pts = strip_layer()
++    second, _, _ = strip_layer()
++    first.settings = second.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
++    T_b, M0, H0 = np.full(first.n, RIGID), first.mass(), first.thickness()
++    flow = strip_flow(col, sigma=0.0)
++    skin.advance(first, 0.04, np.zeros(first.n), first.area, 0.0, 0.0, T_b, np.zeros(first.n), T_b1=T_b, remove=False,
++                 flow=flow)
++    G, _ = skin.push(col, second.thickness(), flow.dp_ds, flow.g, flow.v_hat, RHO_L, 0.0)
++    np.testing.assert_allclose(G, np.tile([2e4, 0.0, 0.0], (col.n, 1)), rtol=1e-12, atol=1e-9)
++    for _ in range(4):
++        skin.momentum_step(second, 0.01, G, flow.shear, col.area)
++        skin.transport(second, col, 0.01, regrid=False)
++        second.regrid()
++    assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
++    x = pts[:, 0]
++    assert first.mass() == pytest.approx(M0, rel=1e-13)
++    assert first.thickness()[x < 1e-9].max() < H0.max() and first.thickness()[x > x.max() - 1e-9].min() > H0.max()
++
++
++def test_the_books_of_a_pass_with_flow_close_exactly():
++    """A pass of 0.1 s with the conduction on, liquid removed as it forms and the flow on: liquid aluminium at 909 K, just
++    below T_feed, on a strip heated at 30 MW/m2, pushed along it and sheared: the mass and the energy close as without
++    flow, and each column's momentum changes by the flow's impulses less what the removed liquid took with it, to
++    round-off (4.9e-16 of the largest impulse, measured 2026-10-22)."""
++    sk, col, _ = strip_layer(nx=12, T=909.0)
++    sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
++    T_b = np.full(sk.n, RIGID)
++    m_min = skin.minimum_mass(sk.material, sk.area, sk.settings)
++    E0, M0, P0 = sk.energy(), sk.mass(), sk.column_momentum()
++    q = np.full(sk.n, 3e7)
++    book = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, T_b, m_min, T_b1=T_b, flow=strip_flow(col, tau=50.0))
++    assert book.removed.sum() > 0.0 and np.abs(book.momentum_out).max() > 0.0 and book.flow.courant > 0.0
++    assert sk.mass() == pytest.approx(M0 - book.removed.sum() + book.drawn.sum(), rel=1e-13)
++    gained = book.E_top - book.E_rad - book.E_base + book.E_side - book.removed_H + book.drawn_H
++    assert sk.energy() == pytest.approx(E0 + gained.sum(), rel=1e-12)
++    f = book.flow
++    impulse = f.push + f.shear + f.wall + f.carried - book.momentum_out
++    scale = max(np.abs(x).max() for x in (f.push, f.shear, f.wall, book.momentum_out))
++    assert np.abs(sk.column_momentum() - P0 - impulse).max() < 1e-13 * scale
+```
+
+- [ ] **Step 2: The skin body's tests** — append to `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -361,3 +361,107 @@
+         b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
+         assert b.mass() == fresh()
+     assert b.mesh.volume() != V0                                     # the corners moved
++
++
++# -- the flow in the skin body (sub-plan 21 Task 6c) -------------------------------------------------------------------
++def newtonian(b, p_stag=11e3, tau=50.0, decel=30.0):
++    """A prescribed gas-side forcing on the body's corners: a Newtonian pressure falling away from the stagnation point,
++    `tau` Pa of gas shear on the windward face and the deceleration along the flight direction."""
++    cos = np.clip(b.columns.normal @ b.v_hat, 0.0, 1.0)
++    return skinbody.FlowForcing(-2.0 * p_stag * np.sqrt(1.0 - cos ** 2) * cos / 0.05, np.where(cos > 0.0, tau, 0.0),
++                                decel * b.v_hat)
++
++
++def same_body(a, b):
++    """Whether two skin bodies hold the same state, to the last bit."""
++    return (np.array_equal(a.solver.temperature(), b.solver.temperature()) and np.array_equal(a.mesh.points, b.mesh.points)
++            and all(np.array_equal(x, y) for x, y in zip(a.skins.state(), b.skins.state()))
++            and np.array_equal(a.pending, b.pending))
++
++
++def test_the_flow_is_off_by_default_and_turned_on_where_nothing_flows_it_changes_nothing(coarse_sphere_mesh):
++    """The flow is off by default (the ruling of 2026-10-22: until stage 4's spraying gives the liquid a sink), and the
++    heat-only skins are then unchanged: their tests above pass as they did, and the 3 MW/m2 removal run of
++    `test_heating_with_removal_keeps_mass_and_energy_exact` reproduces Task 6b's code to the last bit, every array of
++    the 3D model and the skins (measured 2026-10-22, numpy's generator seeded as a run seeds it: pyamg draws its
++    starting vectors from it, so two unseeded runs differ in round-off). Turned on in a body where nothing flows -- 1
++    MW/m2 on a body at 600 K for two 0.5 s steps -- the flow is driven and its books kept but no cell moves, and the
++    body is the flow-off body to the last bit."""
++    bodies = []
++    for flow in (False, True):
++        np.random.seed(12345)
++        b = make(coarse_sphere_mesh, T0=600.0, flow=flow, remove=not flow)
++        for k in range(2):
++            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 1e6), forcing=newtonian(b))
++        bodies.append(b)
++    off, on = bodies
++    assert off.flow_on is False and skinbody.FLOW_DEFAULT is False and on.flow_on is True
++    assert make(coarse_sphere_mesh, T0=600.0).flow_on is False
++    assert same_body(off, on) and np.all(on.skins.T[on.skins.valid] < on.material.T_rigid)
++    a, c = off.skin_stats(), on.skin_stats()
++    assert all(a[k] == c[k] for k in a if not k.startswith("wall_"))
++    assert c["speed_max_ms"] == 0.0 and c["momentum_residual"] == 0.0 and c["flow_courant_max"] == 0.0
++
++
++def test_a_skin_body_with_flow_keeps_its_mass_and_energy_closes_its_momentum_and_reports_the_flow(coarse_sphere_mesh):
++    """3 MW/m2 on the front of the 4 mm test sphere from 880 K for two 0.25 s steps, flow on with a Newtonian pressure
++    gradient, 50 Pa of gas shear and 30 m/s2 of deceleration, the liquid kept, one flow sub-step a heat sub-step (the
++    books, not the flow's accuracy, are tested; the default's ten cost ten times the flow): the mass is the starting
++    mass to 1e-13, the energy books close to 1e-8 of the heat absorbed, and the momentum balance -- the skins' momentum
++    against the impulses of the push, the shear and the walls, and what left with metal handed down -- closes to
++    round-off. The history's flow columns are the state's: the largest speed in any cell, the corner-to-corner roughness
++    of the top, the flow sub-steps' largest Courant number, Rayleigh-Taylor growth and linearisations. Measured
++    2026-10-22: mass to 1.1e-16, energy 9.8e-13, momentum 2.8e-17; the fastest cell 1.6 m/s, the flowing layer up to
++    1.38 mm deep, Courant numbers to 6.9, growth 2.1e-3, roughness 0.14."""
++    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1)
++    M0 = b.mass()
++    for k in range(2):
++        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
++    stats = b.skin_stats()
++    assert b.removed_mass == 0.0 and b.mass() == pytest.approx(M0, rel=1e-13)
++    assert abs(b.energy_balance_residual()) < 1e-8
++    assert stats["momentum_residual"] < 1e-12 and b.impulse_size > 0.0
++    sk = b.skins
++    speed = np.linalg.norm(sk.U, axis=2)
++    assert stats["speed_max_ms"] == float(speed.max()) > 0.0
++    i, j = b.columns.edges[:, 0], b.columns.edges[:, 1]
++    H = sk.thickness()
++    assert stats["roughness_max"] == float((np.abs(H[i] - H[j]) / b.columns.edge_length).max()) > 0.0
++    assert stats["flow_courant_max"] > 0.0 and 0.0 <= stats["flow_growth_max"] < 1.0 and stats["flow_passes_max"] >= 1
++    assert stats["wall_flow_s"] > 0.0 and stats["flowing_depth_max_mm"] > 0.0
++
++
++def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_part_s_middle(coarse_sphere_mesh, monkeypatch):
++    """Every macro step the skin body evaluates the surface flow on its corners, as the heating is, from the step's aero
++    state and the tops' temperatures: the pressure gradient along the meridian, the gas shear along it on the top cells,
++    and the deceleration, which the metal feels along the flight direction. Each part takes them interpolated linearly
++    between the last macro step's and this one's at its middle, as it takes the heating."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import surface_flow
++    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False)
++    seen = []
++    advance = skin.advance
++
++    def recorded(sk, dt, *a, **k):
++        seen.append((b.columns.normal.copy(), k["flow"]))              # the part's normals: the corners move after it
++        return advance(sk, dt, *a, **k)
++    monkeypatch.setattr(skinbody.skin_mod, "advance", recorded)
++    evaluate = lambda a: surface_flow.SurfaceFlow().evaluate(a, b.theta, b.nose_radius(), b.material.liquid.rho,
++                                                             b.surface_temperature())
++    states = (aero_state_at(90.0), aero_state_at(92.0))
++    first = evaluate(states[0])
++    b.advance(0.5, 0.5, front_loads(b, 1e6), state=states[0])
++    assert all(np.array_equal(f.dp_ds, first.dp_ds) for _, f in seen) and len(seen) >= 2
++    normal, f = seen[0]
++    np.testing.assert_allclose(f.shear, skin.along_meridian(normal, b.v_hat, first.tau), rtol=1e-12, atol=1e-12)
++    np.testing.assert_allclose(f.g, first.deceleration * b.v_hat, rtol=1e-12)
++    assert f.rho_l == b.skins.rho_l and f.sigma == b.material.liquid.sigma and f.cycles == skin.FLOW_CYCLES
++    second = evaluate(states[1])
++    seen.clear()
++    b._hint = 2                                                          # two parts, to see the interpolation
++    b.advance(1.0, 0.5, front_loads(b, 1e6), state=states[1])
++    assert b.step_parts == 2
++    for frac in (0.25, 0.75):                                           # the two parts' middles
++        dp = first.dp_ds + (second.dp_ds - first.dp_ds) * frac
++        assert any(np.allclose(f.dp_ds, dp, rtol=1e-12, atol=1e-9) for _, f in seen)
+```
+
+- [ ] **Step 3: The command line's tests** — in `tests/test_reentry_model_cli.py` (the skin run's settings gain the
+  flow's two keys):
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -379,7 +379,7 @@
+     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
+     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
+                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
+-                         "swell": True}
++                         "swell": True, "flow": "off", "flow_cycles": cli.skin.FLOW_CYCLES}
+     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+     assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS) and float(rows[-1]["skin_cells"]) > 0.0
+@@ -399,7 +399,7 @@
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
+-    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs flow and spraying
++    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs the flow (and spraying)
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
+     ["run", "--surface-model", "skin"],                                     # no thermal model
+@@ -422,3 +422,55 @@
+     assert "--prism-layers" in err and "rebuild cannot reproduce prism layers" in err
+     given = cli.build_parser().parse_args(FEM + ["--melt", "on", "--removal", "instant", "--surface-model", "skin"])
+     assert given.prism_layers is None                                           # not given: nothing to refuse
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Sub-plan 21 Task 6c: the flow in the skins, its setting and its sub-cycles
++
++def test_the_flow_settings_reach_the_run_name_only_when_not_default():
++    from reentry_model import skin
++    suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, **k)
++    assert suffix() == suffix(flow=False) == ""
++    assert suffix(flow=True) == suffix(flow=True, flow_cycles=skin.FLOW_CYCLES) == "_skinflow-on"
++    assert suffix(flow=True, flow_cycles=skin.FLOW_CYCLES + 1) == "_skinflow-on_flowcycles{}".format(skin.FLOW_CYCLES + 1)
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False, flow=True) == "_skin-dev_noswell_skinflow-on"
++    args = cli.build_parser().parse_args(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"])
++    assert args.skin_flow == "off" and args.skin_flow_cycles is None
++
++
++def test_a_skin_run_with_flow_keeps_its_liquid_and_writes_the_flow_s_columns_and_frames(tmp_path):
++    """0.5 s from 71 km with a warm body, the layered skins (dev preset) and the flow on at two flow sub-steps a skin
++    sub-step: the liquid stays and flows -- no removal, the spraying that will take it is stage 4's -- the run name ends
++    in _skinflow-on_flowcycles2 after the removal's _melt-girin, the settings record the flow and its sub-cycles, and the
++    history's flow columns and the frames' top speed are written."""
++    import glob
++    import pyvista as pv
++    argv = MELT + ["--altitude", "71", "--velocity", "7.24", "--temperature", "880", "--t-max", "0.5",
++                   "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1", "--fine-size", "2",
++                   "--skin-flow", "on", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
++    assert cli.main(argv) == 0
++    (path,) = glob.glob(str(tmp_path / "*.json"))
++    doc = json.load(open(path))
++    assert doc["run_name"].endswith("_melt-girin_surface-skin_skin-dev_fine4x2mm_skinflow-on_flowcycles2")
++    s, r = doc["settings"], doc["results"]
++    assert s["skin"]["flow"] == "on" and s["skin"]["flow_cycles"] == 2
++    assert r["removed_mass_kg"] == 0.0 and abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
++    rows = list(csv.DictReader(open(path[:-5] + ".csv")))
++    assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS)
++    surf = sorted(glob.glob(str(tmp_path / "**" / "surface_*.vtp"), recursive=True))
++    assert len(surf) == 2 and "top_speed" in pv.read(surf[-1]).point_data
++
++
++@pytest.mark.parametrize("argv", [
++    MELT + ["--surface-model", "skin", "--skin-flow", "maybe"],
++    MELT + ["--surface-model", "skin", "--skin-flow", "on", "--skin-flow-cycles", "0"],
++    MELT + ["--surface-model", "skin", "--skin-flow", "on", "--skin-flow-cycles", "2.5"],
++    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-flow-cycles", "4"],     # sub-cycles of no flow
++    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-flow", "on"],          # removal is instead of flow
++    MELT + ["--skin-flow", "on"],                                                             # the element model's runoff
++    FEM + ["--surface-model", "skin", "--skin-flow", "on"],                                   # nothing melts
++])
++def test_bad_flow_arguments_exit_2(argv, tmp_path):
++    with pytest.raises(SystemExit) as exc:
++        cli.main(argv + ["--outdir", str(tmp_path)])
++    assert exc.value.code == 2
+```
+
+- [ ] **Step 4: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py
+  tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py -q`. Expected: 11 failed, 143 passed —
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'Flow'` (4) and `... 'flow_substeps'` (1);
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'flow'` (3);
+  - `TypeError: skin_name_suffix() got an unexpected keyword argument 'flow'` (1);
+  - `SystemExit: 2`, `unrecognized arguments: --skin-flow on --skin-flow-cycles 2` (1);
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'FLOW_CYCLES'`, the skin run's settings (1).
+
+  The seven exit-code cases pass already, their flags being unknown to the parser.
+
+- [ ] **Step 5: The flow sub-steps and the pass's books** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -28,6 +28,7 @@
+ (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the corners' displacements and reconciles
+ each column with what the moving mesh actually swept."""
+ import math
++import time
+ from dataclasses import dataclass
+ 
+ import numpy as np
+@@ -495,6 +496,8 @@
+     removed_H: np.ndarray    # the enthalpy it took
+     drawn: np.ndarray        # rigid metal drawn from the 3D model in the sub-steps
+     drawn_H: np.ndarray      # the enthalpy it brought
++    momentum_out: np.ndarray = None   # kg m/s (n, 3): what the removed liquid took with it (sub-plan 21 Task 6c)
++    flow: "FlowBook" = None           # the flow sub-steps' books, with the flow on (sub-plan 21 Task 6c)
+ 
+ 
+ def _coupled_solve(G, diag, rhs, valid, sideways):
+@@ -627,16 +630,17 @@
+     return tuple(out)
+ 
+ 
+-def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None):
++def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None, flow=None):
+     """The macro step's sub-steps for every column (spec 7.2). Each sub-step: the implicit conduction, through the depth
+     and, with `side`, sideways (`side(sk, previous)` makes the sub-step's `Sideways` map from the last one, Task 5),
+-    then -- with `remove` and a
+-    melting material -- the contiguous top
+-    cells at or above T_feed leave, a column below its minimum mass m_min [kg] draws back to it, and the cells are split
+-    and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but never above T_rigid -- a 3D base
+-    node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it reached 930 K in one 0.5 s step, found
+-    while planning), and drawing at its temperature would draw liquid that the next sub-step removes, without limit;
+-    what the 3D model actually loses is reconciled by the body after the base moves. With `g_base` [K/m per column], the
++    then, with `flow` (a `Flow`), the flow's sub-steps (`flow_substeps`: heat, then flow, sideways exchange and -- in
++    stage 4 -- spray, spec 7.1; sub-plan 21 Task 6c), then -- with `remove` and a melting material -- the contiguous top
++    cells at or above T_feed leave, taking their momentum with them, a column below its minimum mass m_min [kg] draws
++    back to it, and the cells are split and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but
++    never above T_rigid -- a 3D base node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it
++    reached 930 K in one 0.5 s step, found while planning), and drawing at its temperature would draw liquid that the
++    next sub-step removes, without limit; what the 3D model actually loses is reconciled by the body after the base
++    moves. With `g_base` [K/m per column], the
+     3D model's temperature gradient along the outward normal below the base, each draw takes the next layer down: its
+     enthalpy is h(min(T, T_rigid)) averaged along T(s) = T_b - g_base s over the depth it takes (`profile_enthalpy`).
+ 
+@@ -644,14 +648,17 @@
+     (a, b) per column, E_base / dt = a + b T_b [W into the 3D model], from the pass's base energy and its derivative with
+     respect to the base temperature, the slope clipped at zero (stage 1's choice: a law rising with T_b would cost the 3D
+     matrix its diagonal dominance; what the clip misses is the interface mismatch's to book). Otherwise the real pass,
+-    base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook."""
++    base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook. The trial pass runs the flow too
++    (spec 7.2's sub-steps are spec 7.1's: heat, flow, sideways exchange and spray), the sensitivity S carried with the
++    metal the transport moves."""
+     mat = sk.material
+     N = max(1, int(math.ceil(dt / sk.settings.substep - 1e-9)))
+     h = dt / N
+     trial = T_b1 is None
+     saved = sk.state() if trial else None
+     T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(sk.n)
+-    book = SkinBook(*(np.zeros(sk.n) for _ in range(8)))
++    book = SkinBook(*(np.zeros(sk.n) for _ in range(8)), momentum_out=np.zeros((sk.n, 3)),
++                    flow=FlowBook.zero(sk.n) if flow is not None else None)
+     dEb = np.zeros(sk.n)
+     if trial:
+         sk.S = np.zeros_like(sk.m)
+@@ -669,11 +676,14 @@
+         book.E_side += res[3]
+         if trial:
+             dEb += res[4]
++        if flow is not None:
++            book.flow.add(flow_substeps(sk, flow, h))
+         if melting:
+             k = np.cumprod(sk.valid & (sk.T >= mat.T_feed), axis=1).sum(axis=1)
+             gone, gone_H = sk.take_top(k)
+             book.removed += gone
+             book.removed_H += gone_H
++            book.momentum_out += sk.momentum_out
+         short = np.maximum(m_min - sk.column_mass(), 0.0)
+         if g_base is not None and np.any(short > 0.0):
+             rows = np.flatnonzero(short > 0.0)
+@@ -1394,6 +1404,107 @@
+                          faces=FacePush(r, across), growth=float(max(dt * s.max(), 0.0)) if n else 0.0, passes=passes)
+ 
+ 
++# -- the flow in the sub-steps (sub-plan 21 Task 6c) --------------------------------------------------------------------
++FLOW_CYCLES = 10                  # flow sub-steps per heat sub-step: 1 ms under the 10 ms heat sub-step (Task 6c's
++                                  # ruling, 2026-10-22). On the 100 mm sphere's front melted 0.3 mm deep under the 93 s
++                                  # forcing, 50 ms of flow at 1 ms match 0.25 ms to 3.9 % in where the metal went and
++                                  # 4 % in kinetic energy, the Courant numbers at most 4.8 and the transport destroying
++                                  # 27 % of the kinetic energy made, as at 0.25 ms (the grid's own upwind smearing); at
++                                  # 2-10 ms 44-95 % and 0.3-4.8 times, because a runoff front crossing rigid metal
++                                  # advances at most one column a flow sub-step (metal landing on a rigid top joins the
++                                  # flow at the next), 2 m/s on 2 mm columns at 1 ms. The Rayleigh-Taylor growth dt s
++                                  # stays under 0.007 at 1 ms on 3.4 mm of liquid at 48 m/s2 (0.67 at 10 ms).
++FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0}   # wall time, for
++                                  # measuring the cost (as KRYLOV counts the coupled solves)
++
++
++@dataclass
++class Flow:
++    """What drives the skins' flow over a part of a macro step, held over it (spec 6.4): `dp_ds` [Pa/m, (n,)] the
++    surface flow's wall-pressure gradient along the meridian, `shear` [Pa, (n, 3)] the gas shear on the top cells in
++    each column's plane (`along_meridian` of the surface flow's tau), `g` [m/s2, (3,)] the acceleration the metal feels
++    in the body's frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
++    liquid's density and surface tension, `A_top` [m2, (n,)] the top areas the shear acts over, and `cycles`, the flow
++    sub-steps in each heat sub-step."""
++    columns: object
++    dp_ds: np.ndarray
++    shear: np.ndarray
++    g: np.ndarray
++    v_hat: np.ndarray
++    rho_l: float
++    sigma: float
++    A_top: np.ndarray
++    cycles: int = FLOW_CYCLES
++
++
++@dataclass
++class FlowBook:
++    """What the flow sub-steps did, per column: impulses [N s] and momentum [kg m/s], (n, 3), which add up to the
++    columns' momentum change, and the sub-steps' worst numbers."""
++    push: np.ndarray         # the push's impulse on the moving cells, its thickness terms' implicit change included
++    shear: np.ndarray        # the gas shear's on the top cells
++    wall: np.ndarray         # the anchored metal's drag (the momentum and thickness steps'), the momentum cells held on
++                             # joining it, and the normal parts the transport's projections removed
++    carried: np.ndarray      # what the transport carried in less what it sent, as it left the donors: zero over the body
++    courant: float = 0.0     # the transport's largest outflow rate of any cell times its sub-step
++    growth: float = 0.0      # the thickness step's largest Rayleigh-Taylor growth dt s
++    passes: int = 0          # the thickness step's most linearisations
++    sub_steps: int = 0       # the flow sub-steps taken (none where nothing flows)
++
++    @classmethod
++    def zero(cls, n):
++        return cls(*(np.zeros((n, 3)) for _ in range(4)))
++
++    def add(self, other):
++        """Add another book's impulses and keep the worst numbers of both."""
++        for key in ("push", "shear", "wall", "carried"):
++            setattr(self, key, getattr(self, key) + getattr(other, key))
++        self.courant, self.growth = max(self.courant, other.courant), max(self.growth, other.growth)
++        self.passes, self.sub_steps = max(self.passes, other.passes), self.sub_steps + other.sub_steps
++
++
++def flow_substeps(sk, flow, dt):
++    """`flow.cycles` flow sub-steps of dt / cycles [s] each, every one in the order of 6b's ruling: the push, surface
++    tension only where a column's top flows (`push`, `flowing_tops`); the momentum through the depth with its response
++    (`momentum_step`); the thickness terms implicit in the heights at the end of the transport (`thickness_step`); the
++    transport with the faces' own push (`transport`, regrid=False). The cells are split and merged between the flow
++    sub-steps, and the heat sub-step's own regrid follows the last (spec 6.2: once after each sub-step's exchanges).
++    Updates the cells; returns a FlowBook. Where nothing flows nothing moves and no sub-step is taken: any velocity left
++    in the rigid cells is booked to the wall and cleared, as `momentum_step` books an anchored cell's.
++
++    The flow's sub-step is chosen from measurements on the 100 mm sphere's melting state (sub-plan 21 Task 6c, Asha
++    2026-10-21, option c; FLOW_CYCLES)."""
++    n = sk.n
++    book = FlowBook.zero(n)
++    if not (sk.valid & np.isfinite(cell_viscosity(sk, 0.0))).any():
++        book.wall -= sk.column_momentum()
++        sk.U = np.zeros_like(sk.U)
++        return book
++    h = dt / flow.cycles
++    col = flow.columns
++    clock = lambda key, started: FLOW_SECONDS.__setitem__(key, FLOW_SECONDS[key] + time.perf_counter() - started)
++    for k in range(flow.cycles):
++        if k:
++            started = time.perf_counter()
++            sk.regrid()
++            clock("regrid", started)
++        started = time.perf_counter()
++        G, terms = push(col, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma, wet=flowing_tops(sk))
++        clock("push", started)
++        started = time.perf_counter()
++        mb = momentum_step(sk, h, G, flow.shear, flow.A_top, response=True)
++        clock("momentum", started)
++        started = time.perf_counter()
++        tb = thickness_step(sk, col, h, mb, terms["thickness"] + terms["capillary"], flow.g, flow.rho_l, flow.sigma)
++        clock("thickness", started)
++        started = time.perf_counter()
++        tr = transport(sk, col, h, regrid=False, faces=tb.faces)
++        clock("transport", started)
++        book.add(FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
++                          tb.passes, 1))
++    return book
++
++
+ # -- the base (Task 7) -------------------------------------------------------------------------------------------------
+ def hand_down(sk, m_min, T_rigid):
+     """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
+```
+
+- [ ] **Step 6: The flow in the skin body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -38,7 +38,15 @@
+ step receives the trapezoid of the two (Asha, 2026-10-12).
+ 
+ The body's surface for the coupled run is the top surface, one 'patch' per corner (`columns.CornerSurface`), so the
+-heating, the history and the trajectory's loop are unchanged."""
++heating, the history and the trajectory's loop are unchanged.
++
++The flow (sub-plan 21 Task 6c; `flow`, off by default): every macro step the surface flow is evaluated on the corners
++as the heating is, from the step's aero state and the tops' temperatures -- its wall-pressure gradient along the
++meridian and its gas shear -- with the deceleration, which the metal feels along the flight direction; each part takes
++them interpolated in time at its middle, as it takes the heating, and every sub-step of both passes runs the flow after
++its conduction (`skin.flow_substeps`), `flow_cycles` flow sub-steps to each. With the flow on the liquid stays and flows
++(`remove` False in a run; spraying is stage 4's). The momentum books: the skins' momentum changes by the flow's impulses
++less what leaves with removed or handed-down metal, and `momentum_residual` reports what they miss."""
+ import dataclasses
+ import math
+ import time
+@@ -50,6 +58,9 @@
+ from . import skin as skin_mod
+ from .body import ThermalBody
+ from .thermal import SIGMA_SB
++
++FLOW_DEFAULT = False              # the flow is off until stage 4's spraying gives the liquid a sink: with it on and nothing
++                                  # sprayed, a flight would only pile the liquid up (Task 6c's ruling, 2026-10-22)
+ 
+ GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
+                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
+@@ -88,6 +99,22 @@
+                                   # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
+ 
+ 
++@dataclasses.dataclass
++class FlowForcing:
++    """The gas side's push on the skins' metal at a macro step, per corner: `dp_ds` [Pa/m, (n,)] the wall pressure's
++    gradient along the meridian and `tau` [Pa, (n,)] the gas shear (the surface flow's), and `g` [m/s2, (3,)] the
++    acceleration the metal feels in the body's frame -- minus the body's own: the deceleration along the flight
++    direction."""
++    dp_ds: np.ndarray
++    tau: np.ndarray
++    g: np.ndarray
++
++    def toward(self, other, frac):
++        """This forcing moved the fraction `frac` of the way to `other`, linearly."""
++        return FlowForcing(*(a + (b - a) * frac for a, b in ((self.dp_ds, other.dp_ds), (self.tau, other.tau),
++                                                             (self.g, other.g))))
++
++
+ def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
+     """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
+     that crossed their base (spec 6.6): between the base node's and the 3D profile's at the depth swept, `T_deep` (equal
+@@ -101,13 +128,20 @@
+ 
+ class SkinBody(ThermalBody):
+     """A ThermalBody whose surface is resolved by corner columns with layered skins on a moving mesh (module docstring).
+-    `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass."""
++    `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass;
++    `flow`: the metal flows (sub-plan 21), `flow_cycles` flow sub-steps in each heat sub-step (None: skin.FLOW_CYCLES),
++    driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its defaults if None) from each macro step's aero state."""
+ 
+     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+-                 repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX):
++                 repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
++                 surface_flow=None):
+         if repeat_rule not in REPEAT_RULES:
+             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
++        self.flow_cycles = skin_mod.FLOW_CYCLES if flow_cycles is None else flow_cycles
++        if not (isinstance(self.flow_cycles, (int, np.integer)) and self.flow_cycles >= 1):
++            raise ValueError("flow_cycles must be an integer of at least 1, got {!r}".format(flow_cycles))
++        self.flow_on, self.surface_flow = bool(flow), surface_flow
+         self.repeat_rule = repeat_rule
+         self.part_max = part_max                             # s, or None: no cap on the parts while melting
+         self.material, self.solver, self.mass_kg = material, solver, mass_kg
+@@ -138,11 +172,18 @@
+         self._dt_last = None                                 # s, and its length: the look-ahead of the part cap
+         self.capped_ahead = 0                                # macro steps capped because a top was about to be non-rigid
+         self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
+-        self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
++        self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0, "flow": 0.0}
++        self.last_flow = None                                # the surface flow's last evaluation (SurfaceFlowResult)
++        self._forcing = self._forcing_prev = None            # this macro step's (start, end) FlowForcing; the last end
++        self.impulse, self.momentum_lost = np.zeros(3), np.zeros(3)   # the momentum books since time zero [N s, kg m/s]
++        self.impulse_size = 0.0                              # N s: the push's, shear's and walls' impulses, in size
++        self.flow_courant = self.flow_growth = 0.0           # this macro step's worst flow sub-step
++        self.flow_passes = 0
+         self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
+         self.iterations, self.last, self.last_move = [], None, None
+         self._fill(T0)
+         self.energy0 = self.energy()
++        self.momentum0 = self.skins.momentum()
+         self._top0, self._normal0 = self.surface.points.copy(), self.surface.normals.copy()
+ 
+     # -- set-up -----------------------------------------------------------------------------------------------------
+@@ -175,10 +216,18 @@
+         return self.moving.mesh
+ 
+     # -- the macro step ---------------------------------------------------------------------------------------------
+-    def advance(self, t, dt, loads, state=None):
++    def advance(self, t, dt, loads, state=None, forcing=None):
+         """The macro step from t - dt to t (module docstring) as equal parts, as many as the last macro step's largest
+-        move called for."""
++        move called for. With the flow on, the gas side's push is the surface flow's on the corners from the aero state
++        `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
+         n, self._ratio, self.step_parts = self._hint, 0.0, 0
++        if self.flow_on:
++            end = forcing if forcing is not None else self.flow_forcing(state)
++            last = self._forcing_prev
++            start = last if last is not None and last.dp_ds.shape == end.dp_ds.shape else end
++            self._forcing, self._forcing_prev = (start, end), end
++            self.flow_courant = self.flow_growth = 0.0
++            self.flow_passes = 0
+         sk, mat = self.skins, self.material
+         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+         if self.part_max is not None and mat.melts:
+@@ -199,13 +248,36 @@
+         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
+         self._q_prev = q_end.copy()
+ 
++    def flow_forcing(self, state):
++        """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
++        from the aero state, as the heating is -- the top surface's angles to the flight direction, the nose radius and
++        the tops' temperatures at the step's start -- and the deceleration along the flight direction."""
++        if state is None:
++            raise ValueError("a skin body with the flow on needs the macro step's aero state, or a forcing given")
++        if self.surface_flow is None:
++            from . import surface_flow
++            self.surface_flow = surface_flow.SurfaceFlow()
++        mat = self.material
++        rho_l = mat.liquid.rho if mat.liquid is not None else mat.rho
++        res = self.surface_flow.evaluate(state, self.theta, self.nose_radius(), rho_l, self.surface_temperature())
++        self.last_flow = res
++        return FlowForcing(np.asarray(res.dp_ds, dtype=float), np.asarray(res.tau, dtype=float),
++                           res.deceleration * self.v_hat)
++
+     def _advance_part(self, t, dt, dt_macro, loads, depth):
+         """One part of a macro step, ending at t: the passes, then -- if its draws and hand-downs would move a base more
+         than MOVE_MAX of the mean surface edge -- the part again as shorter parts, else the books and the move."""
+         mat, sk, mm = self.material, self.skins, self.moving
+         t0, dt_m, q_start, q_end = self._heating
+-        q = q_start + (q_end - q_start) * (((t - 0.5 * dt) - t0) / dt_m)     # the heating at the part's middle
++        frac = ((t - 0.5 * dt) - t0) / dt_m
++        q = q_start + (q_end - q_start) * frac                              # the heating at the part's middle
+         A_top = self.surface.areas
++        flow = None
++        if self.flow_on:                                                    # the gas side's push at the part's middle
++            f = self._forcing[0].toward(self._forcing[1], frac)
++            sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
++            flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
++                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles)
+         eps = np.full(sk.n, self.emissivity)
+         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
+         side = lambda s, previous: skin_mod.Sideways(s, self.columns, previous)   # implicit (sub-plan 21)
+@@ -218,10 +290,11 @@
+         T_lin = T_b0
+         damped = self.repeat_rule == "damped"
+         omega, r_prev = DAMPED_OMEGA0, None
++        flow_seconds = sum(skin_mod.FLOW_SECONDS.values())
+         for attempt in range(DAMPED_MAX_PASSES if damped else 2):
+             started = time.perf_counter()
+             a, b = skin_mod.advance(sk, dt, q, A_top, self.T_ambient, eps, T_lin, m_min, side=side, remove=self.remove,
+-                                    g_base=g0)
++                                    g_base=g0, flow=flow)
+             self.wall["skins"] += time.perf_counter() - started
+             started = time.perf_counter()
+             res = self.solver.step(dt, np.zeros(len(self.solver.areas)), self.T_ambient, nodal_load=load,
+@@ -230,7 +303,7 @@
+             T_b1 = self.solver.temperature()[nodes]
+             started = time.perf_counter()
+             book = skin_mod.advance(sk, dt, q, A_top, self.T_ambient, eps, T_b0, m_min, T_b1=T_b1, side=side,
+-                                    remove=self.remove, g_base=g0)
++                                    remove=self.remove, g_base=g0, flow=flow)
+             self.wall["skins"] += time.perf_counter() - started
+             mismatch = book.E_base - (a + b * T_b1) * dt
+             scale = np.abs(book.E_top) + np.abs(book.E_base) + 1e-30
+@@ -264,6 +337,7 @@
+                 self.interface_repeats += 1
+                 continue
+             break
++        self.wall["flow"] += sum(skin_mod.FLOW_SECONDS.values()) - flow_seconds
+         ratio = self._move_ratio(book, m_min)
+         if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:          # too far for one part: run it again as shorter parts
+             self.solver.set_state(solver_state)
+@@ -284,6 +358,13 @@
+         self.column_removed += book.removed
+         self.removed_enthalpy += float(book.removed_H.sum())
+         self.drawn_mass += float(book.drawn.sum())
++        self.momentum_lost += book.momentum_out.sum(axis=0)
++        if book.flow is not None:                            # the flow's impulses (the transport's carried sum to zero)
++            fb = book.flow
++            self.impulse += (fb.push + fb.shear + fb.wall + fb.carried).sum(axis=0)
++            self.impulse_size += float(sum(np.linalg.norm(x, axis=1).sum() for x in (fb.push, fb.shear, fb.wall)))
++            self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
++            self.flow_passes = max(self.flow_passes, fb.passes)
+         self.iterations.append(res.iterations)
+         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
+         self._move_base(book, m_min, g0)
+@@ -343,6 +424,8 @@
+         started = time.perf_counter()
+         T_node = self.solver.temperature()[mm.corners]
+         handed, handed_H = skin_mod.hand_down(sk, m_min, mat.T_rigid) if mat.melts else (np.zeros(sk.n), np.zeros(sk.n))
++        if mat.melts:
++            self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
+         moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
+         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
+         inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
+@@ -357,6 +440,7 @@
+         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+         self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed).sum())
+         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
++        self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
+         sk.regrid()
+         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
+         self.handed_mass += float(handed.sum())
+@@ -384,6 +468,13 @@
+             return 0.0
+         return (self.energy() - self.energy0 - self.absorbed_heat + self.removed_enthalpy) / self.absorbed_heat
+ 
++    def momentum_residual(self):
++        """|P - P0 - impulses + momentum lost| over the impulses' total size: zero for exact books (spec 10.2)."""
++        if self.impulse_size <= 0.0:
++            return 0.0
++        miss = self.skins.momentum() - self.momentum0 - self.impulse + self.momentum_lost
++        return float(np.linalg.norm(miss) / self.impulse_size)
++
+     def mean_temperature(self):
+         return float(self.material.temperature_from_enthalpy(self.energy() / self.mass()))
+ 
+@@ -420,6 +511,7 @@
+         flowing = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
+         liquid = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
+         r = self.last_move
++        i, j = self.columns.edges[:, 0], self.columns.edges[:, 1]
+         return {"skin_cells": int(sk.count.sum()), "skin_thickness_max_mm": float(th.max() * 1e3),
+                 "skin_above_min": int((sk.column_mass() > m_min * (1.0 + 1e-9)).sum()),
+                 "flowing_depth_mean_mm": float(flowing.mean() * 1e3), "flowing_depth_max_mm": float(flowing.max() * 1e3),
+@@ -437,7 +529,15 @@
+                 "removed_mass_kg": self.removed_mass, "removed_enthalpy_J": self.removed_enthalpy,
+                 "base_recession_max_mm": float(self._recession().max() * 1e3),
+                 "wall_skins_s": self.wall["skins"], "wall_3d_s": self.wall["3d"], "wall_move_s": self.wall["move"],
+-                "wall_rebuild_s": self.wall["rebuild"], "step_parts": self.step_parts}
++                "wall_rebuild_s": self.wall["rebuild"], "step_parts": self.step_parts,
++                # the flow (sub-plan 21 Task 6c): its momentum books, the fastest cell, the top's roughness -- the largest
++                # height difference between neighbours over their spacing -- and the flow sub-steps' worst Courant
++                # number, Rayleigh-Taylor growth and linearisations in this macro step
++                "momentum_residual": self.momentum_residual(),
++                "speed_max_ms": float(np.linalg.norm(sk.U, axis=2).max()) if sk.U.size else 0.0,
++                "roughness_max": float((np.abs(th[i] - th[j]) / self.columns.edge_length).max()),
++                "flow_courant_max": self.flow_courant, "flow_growth_max": self.flow_growth,
++                "flow_passes_max": self.flow_passes, "wall_flow_s": self.wall["flow"]}
+ 
+     def _recession(self):
+         """How far each corner's top has moved inward along its starting direction since time zero [m]."""
+```
+
+- [ ] **Step 7: The history's flow columns, the results and the frames' top speed** in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -44,7 +44,10 @@
+                     "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
+                     "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
+                     "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
+-                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts"]
++                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
++                    # the flow (sub-plan 21 Task 6c, spec 10.2)
++                    "momentum_residual", "speed_max_ms", "roughness_max", "flow_courant_max", "flow_growth_max",
++                    "flow_passes_max", "wall_flow_s"]
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -179,7 +182,9 @@
+                "demise_time_s": float(last["time_s"][-1]) if history.end_reason == "demise" else None,
+                "surface_fold_max_deg": float(np.max(last["surface_fold_deg"])),
+                "surface_quality_min": float(np.min(last["surface_quality_min"])),
+-               "zone_ratio_min": float(np.min(last["zone_ratio_min"]))}
++               "zone_ratio_min": float(np.min(last["zone_ratio_min"])),
++               "momentum_residual": float(last["momentum_residual"][-1]),
++               "flow_courant_max": float(np.max(last["flow_courant_max"]))}
+         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
+                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
+                                                   "wall_move_s", "wall_rebuild_s")})
+@@ -296,7 +301,8 @@
+ def write_skin_frame(output_dir, k, body, loads):
+     """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
+     (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
+-    liquid and flowing depths, skin thickness and cells, and the base's position (the corner on the 3D mesh)."""
++    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh) and the top
++    cell's speed (sub-plan 21 Task 6c)."""
+     import pyvista as pv
+     mesh, sk, mat = body.mesh, body.skins, body.material
+     cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
+@@ -312,6 +318,7 @@
+     poly.point_data["liquid_depth"] = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
+     poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
+     poly.point_data["base_position"] = body.columns.points
++    poly.point_data["top_speed"] = np.where(sk.count > 0, np.linalg.norm(sk.U[:, 0], axis=1), 0.0)
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 
+```
+
+- [ ] **Step 8: The settings** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -123,13 +123,14 @@
+ 
+ 
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+-                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4):
++                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=False, flow_cycles=None):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
+-    `_noswell` for skins held at the solid's density, and `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
+-    empty for the defaults."""
++    `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none), and,
++    with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` for other than skin.FLOW_CYCLES
++    flow sub-steps in each heat sub-step; empty for the defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -149,6 +150,10 @@
+         out += "_fine0"
+     elif (fine_band_mm, fine_size_mm) != (FINE_BAND_MM, FINE_SIZE_MM):
+         out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
++    if flow:
++        out += "_skinflow-on"
++        if flow_cycles is not None and flow_cycles != skin.FLOW_CYCLES:
++            out += "_flowcycles{}".format(flow_cycles)
+     return out
+ 
+ 
+@@ -302,6 +307,13 @@
+                     help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
+                          "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
+                          "one density")
++    me.add_argument("--skin-flow", choices=("on", "off"), default="off",
++                    help="with --surface-model skin and --melt on: on, the skins' liquid and slurry flow over the surface "
++                         "(sub-plan 21) and stay -- the spraying that will take them is sub-plan 22's, so give --removal "
++                         "girin, whose continuum step (--dt-continuum) follows; off: the heat-only skins, liquid removed "
++                         "as it forms with --removal instant (default)")
++    me.add_argument("--skin-flow-cycles", type=int, default=None,
++                    help="with --skin-flow on: flow sub-steps in each skin sub-step (default {})".format(skin.FLOW_CYCLES))
+     me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
+                     help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
+     me.add_argument("--deform-depth", type=float, default=15.0,
+@@ -366,9 +378,13 @@
+         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
+     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
+     if skins:
++        flow = args.skin_flow == "on"                       # the liquid stays and flows; instant removal is instead of it
++        flow_model = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm,
++                                              kn_body_shock=args.kn_body_shock) if flow else None
+         the_body = skinbody.SkinBody(the_mesh, mat, solver, mass, skin_settings(args), T0=args.temperature,
+                                      emissivity=args.emissivity, T_ambient=args.t_ambient, deform_depth=args.deform_depth * 1e-3,
+-                                     remove=melting, demise_fraction=args.demise_fraction)
++                                     remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
++                                     flow_cycles=args.skin_flow_cycles, surface_flow=flow_model)
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
+@@ -399,7 +415,7 @@
+                         "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
+                         "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
+                         "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
+-                        "swell": args.skin_swell == "on"}
++                        "swell": args.skin_swell == "on", "flow": args.skin_flow, "flow_cycles": the_body.flow_cycles}
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -477,8 +493,18 @@
+         parser.error("--skin-cell must be at most half of --skin-min-thickness and of --skin-fine-zone")
+     if args.surface_model == "skin" and args.thermal != "fem":
+         parser.error("--surface-model skin needs --thermal fem")
+-    if args.surface_model == "skin" and args.melt == "on" and args.removal != "instant":
+-        parser.error("--surface-model skin with --melt on needs --removal instant (sub-plan 20: no flow or spraying yet)")
++    if args.skin_flow == "on" and not (args.surface_model == "skin" and args.melt == "on"):
++        parser.error("--skin-flow on needs --surface-model skin and --melt on: it moves the skins' molten metal")
++    if args.skin_flow_cycles is not None and args.skin_flow != "on":
++        parser.error("--skin-flow-cycles needs --skin-flow on")
++    if args.skin_flow_cycles is not None and args.skin_flow_cycles < 1:
++        parser.error("--skin-flow-cycles must be at least 1")
++    if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "on" and args.removal != "girin":
++        parser.error("--skin-flow on keeps the liquid, which only spraying removes: it needs --removal girin, not instant "
++                     "removal, which stands in for flow and spraying in the heat-only skins (spec 11.2)")
++    if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "off" and args.removal != "instant":
++        parser.error("--surface-model skin with --melt on needs --removal instant, or --skin-flow on with Girin's removal "
++                     "(sub-plan 21: the skins' spraying is sub-plan 22's)")
+     if args.surface_model == "skin" and (args.animate or args.stills):
+         parser.error("--animate/--stills read the element model's frames; with --surface-model skin use --frames-every")
+     if args.surface_model == "skin" and args.prism_layers is not None and args.prism_layers > 0:
+@@ -501,7 +527,8 @@
+                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
+                                                                     args.skin_substep, args.skin_preset, args.deform_depth,
+                                                                     args.skin_swell == "on", args.fine_band, args.fine_size,
+-                                                                    args.skin_fine_zone))
++                                                                    args.skin_fine_zone, args.skin_flow == "on",
++                                                                    args.skin_flow_cycles))
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+```
+
+- [ ] **Step 9: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 72 passed,
+  `tests/test_reentry_model_skinbody.py` 16 passed (2 deselected, the reference tier's), `tests/test_reentry_model_cli.py`
+  66 passed, `tests/test_reentry_model_coupled.py` 9 and `tests/test_reentry_model_columns.py` 13 as before (176 in
+  860 s); the unit tier 481 passed, 1 skipped (1 015 s). The flow is off by default, so no flight's result changes:
+  the heat-only skins reproduce Task 6b's to the last bit.
+
+- [ ] **Step 10: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py
+git commit -m "Skins: the flow joins the skin body -- the surface flow's pressure gradient and shear on the corners and the deceleration drive ten flow sub-steps of push, momentum, thickness and transport in every 1 ms of each heat sub-step, in the trial and real passes, the momentum books in the history; off by default until spraying, the liquid kept with it on (sub-plan 21 Task 6c)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21), each with its own tests and commit; 6a, the transport at
-   given velocities, and 6b, the thickness terms implicit, are written out above:
-   - **6b. The thickness terms implicit**: written out above as Task 6b.
-   - **6c. The flow in the skin body**: the surface flow evaluated on the corner surface (its `dp_ds` and `tau`),
-     `push` and `along_meridian(tau)` driving `momentum_step`, then the transport, in every sub-step of `skin.advance`;
-     a setting to turn the flow off, which reproduces the heat-only skins; the momentum books in the run's history.
-     The flow's sub-step is chosen here (option c, Asha, 2026-10-21): measure the Courant numbers and the momentum lost
-     to 6a's smearing on the 100 mm sphere's melting state. Asha expects the flow to need a sub-step shorter than the
-     heat's 10 ms (about 100 columns a sub-step are estimated in flight, fact 154), so the momentum step and the
-     transport should be able to sub-cycle within a heat sub-step. From Task 6b:
-     - every flow sub-step calls `push` with `wet=flowing_tops(sk)`, `momentum_step(..., response=True)`,
-       `thickness_step` and `transport(..., regrid=False, faces=...)`, in that order, and books all three steps'
-       impulses;
-     - the flow's sub-step also keeps `ThicknessBook.growth` well under one, since backward Euler follows a
-       Rayleigh–Taylor growth only where the sub-step resolves it;
-     - the cost measurement includes a quiescent melted region as well as the runoff. Where surface tension rings a
-       layer without a mean flow, the transport's cycles of meeting flows grew to 23 000 of the test sphere's 34 000
-       moving cells within five 10 ms sub-steps, and its sub-step to 4 s; no ordering of its LU helped (fill 20–37
-       times).
+   given velocities, 6b, the thickness terms implicit, and 6c, the flow in the skin body, are written out above as
+   Tasks 6a, 6b and 6c.
+   - **6d. Making the flow affordable** (Asha, 2026-10-22, option a, before Tasks 7 and 8): 6c's flow cost about 48 s
+     of processor time a melting 10 ms skin sub-step against 4.5 s for the heat, three fifths of it in the transport's
+     solve, which slows sharply where flows meet. An iterative transport solve started from the upwind solve, its books
+     exact by construction; metal landing on a rigid top flowing on within the same solve, lifting the one-column-a-flow-
+     sub-step front limit, then the flow sub-step measured again; the number of flow sub-steps chosen each skin sub-step
+     from the Courant number and the growth; the momentum step on flowing columns only. Then the cost again, the trial
+     pass included.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
-   behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve; and
+   behaviour), the momentum-balance residual and the roughness that 6c's history columns report read on it, and the
+   plate's flow sub-step checked against 6c's choice; the cost of the sideways solve; and
    the share of the flight's flow at short wavelengths (kh not small) in flowing layers over about 1 mm, for the
    depth-uniform pressure's limitation (spec §14 assumption 1; Asha, 2026-10-21, option a). If that share is
    significant, a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells

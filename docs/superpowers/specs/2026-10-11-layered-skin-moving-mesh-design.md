@@ -494,6 +494,8 @@ size histograms accumulate each sub-step. Two source columns are added: `solid_f
 | `--skin-swell on\|off` (each cell at its phase's density, §5.2) | `on` | `_noswell` |
 | `--fine-band` (mm below the surface, §5.3; 0 none), `--fine-size` (mm asked) | 4, 0.7 | `_fine<depth>x<size>mm`, `_fine0` |
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
+| `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `off` | `_skinflow-on` |
+| `--skin-flow-cycles` (flow sub-steps in each skin sub-step) | 10 | `_flowcycles<value>` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
 (50 µm), the rebuild threshold (radius ratio 0.05) and gap (20 steps), the base temperature-jump tolerance (5 K), the
@@ -900,3 +902,10 @@ Each stage is tested and measured before the next begins.
   error it brings, about 2H/R, is stated (§14 assumption 10), over wedge columns; should the verification find the flow
   at short wavelengths in thick layers significant, the depth-uniform pressure gives way to a non-hydrostatic pressure on
   the cells, over a depth-averaged Boussinesq correction (§14 assumption 1) (Asha).
+- 2026-10-22 (sub-plan 21 Task 6c built): the flow is off by default until spraying exists (stage 4); with it on, ten
+  1 ms flow sub-steps run in each 10 ms skin sub-step, because Task 6a's arrival rule lets a front cross rigid metal at
+  one column a flow sub-step (within 3.9 % of a 0.25 ms reference at 1 ms, 44 % off at 2 ms); the trial pass includes
+  the flow (the base law differs by 6 % without it). The flow cost about 48 s of processor time a melting skin sub-step,
+  so a Task 6d makes it affordable before Tasks 7 and 8 (Asha, option a). A flow run takes Girin's removal and keeps its
+  continuum macro step (0.0125 s once the body's Knudsen number is below 0.01) for now; sub-plan 22 tests other options
+  (Asha).

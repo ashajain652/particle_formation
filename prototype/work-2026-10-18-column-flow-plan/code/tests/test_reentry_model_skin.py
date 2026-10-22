@@ -1388,3 +1388,171 @@ def test_the_predicted_heights_are_the_transport_s_and_the_linearisations_stop_o
         worst = max(worst, np.abs(tb.heights - sk.thickness()).max() / np.abs(sk.thickness() - H0).max())
         passes.append(tb.passes)
     assert worst < 0.0125 and max(passes) <= 4 and np.std(sk.thickness()) < 0.5 * spread0
+
+
+# -- the flow in the sub-steps (sub-plan 21 Task 6c) --------------------------------------------------------------------
+def sphere_flow(col, cycles=1, tau=50.0, A_top=None):
+    """A Flow on the test sphere's columns: a Newtonian pressure falling away from the stagnation point (11 kPa of
+    stagnation pressure), `tau` Pa of gas shear along the meridian, 30 m/s2 of deceleration along V_HAT, surface
+    tension."""
+    cos = np.clip(col.normal @ V_HAT, 0.0, 1.0)
+    dp_ds = -2.0 * 11e3 * np.sqrt(1.0 - cos ** 2) * cos / 0.05
+    shear = skin.along_meridian(col.normal, V_HAT, np.where(cos > 0.0, tau, 0.0))
+    return skin.Flow(col, dp_ds, shear, 30.0 * V_HAT, V_HAT, RHO_L, SIGMA, col.area if A_top is None else A_top, cycles)
+
+
+def by_hand(sk, flow, dt):
+    """One flow sub-step called piece by piece, in 6b's order."""
+    G, terms = skin.push(flow.columns, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma,
+                         wet=skin.flowing_tops(sk))
+    mb = skin.momentum_step(sk, dt, G, flow.shear, flow.A_top, response=True)
+    tb = skin.thickness_step(sk, flow.columns, dt, mb, terms["thickness"] + terms["capillary"], flow.g, flow.rho_l,
+                             flow.sigma)
+    return mb, tb, skin.transport(sk, flow.columns, dt, regrid=False, faces=tb.faces)
+
+
+def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_transport_in_that_order(coarse_sphere_mesh):
+    """6b's ruling: every flow sub-step calls `push` with surface tension where a column's top flows, `momentum_step`
+    with its response, `thickness_step` and `transport` with the faces' push, in that order; `flow_substeps` does exactly
+    that, to the last bit, and books every impulse: the columns' momentum changes by the push's (the thickness step's
+    included), the gas shear's, the walls' (the anchored metal's, the thickness step's and the transport's projections)
+    and what the transport carried, to round-off (2.1e-12 of the largest impulse at one cycle and 9.4e-13 at three,
+    measured 2026-10-22, as 6b's books on these skins). With `cycles` the sub-step runs as that many flow sub-steps,
+    the cells split and merged between them; the heat sub-step's own regrid follows the last."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    for cycles in (1, 3):
+        first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
+        P0 = first.column_momentum()
+        book = skin.flow_substeps(first, flow, 0.01)
+        parts = []
+        for k in range(cycles):
+            if k:
+                second.regrid()
+            parts.append(by_hand(second, flow, 0.01 / cycles))
+        assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
+        assert book.sub_steps == cycles and book.courant == max(tr.courant for _, _, tr in parts) > 0.0
+        assert book.growth == max(tb.growth for _, tb, _ in parts) and book.passes == max(tb.passes for _, tb, _ in parts)
+        total = lambda f: sum(f(*p) for p in parts)
+        np.testing.assert_allclose(book.push, total(lambda mb, tb, tr: mb.push + tb.push), rtol=1e-14, atol=0.0)
+        np.testing.assert_allclose(book.shear, total(lambda mb, tb, tr: mb.shear), rtol=1e-14, atol=0.0)
+        np.testing.assert_allclose(book.wall, total(lambda mb, tb, tr: mb.wall + tb.wall + tr.wall), rtol=1e-14, atol=1e-30)
+        np.testing.assert_allclose(book.carried, total(lambda mb, tb, tr: tr.momentum), rtol=1e-14, atol=1e-30)
+        impulse = book.push + book.shear + book.wall + book.carried
+        scale = max(np.abs(x).max() for x in (book.push, book.shear, book.wall, P0))
+        assert np.abs(first.column_momentum() - P0 - impulse).max() < 5e-12 * scale
+
+
+def test_where_nothing_flows_the_flow_changes_no_cell_and_books_what_the_cells_held(coarse_sphere_mesh):
+    """Skins all below T_rigid: nothing flows, so the flow sub-step changes no mass, enthalpy or temperature, to the
+    last bit; any velocity left in the rigid cells is booked to the wall, as `momentum_step` books an anchored cell's."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    sk, _, rng = random_sphere_skins(coarse_sphere_mesh)
+    sk.T = np.minimum(sk.T, 850.0)
+    sk.H = sk.m * sk.material.enthalpy(sk.T)
+    sk.U = np.where(sk.valid[..., None], rng.normal(0.0, 0.01, sk.U.shape), 0.0)
+    before, P0 = sk.state(), sk.column_momentum()
+    book = skin.flow_substeps(sk, sphere_flow(col, 2), 0.01)
+    assert all(np.array_equal(x, y) for x, y in zip(before[:5], sk.state()[:5])) and not sk.U.any()
+    np.testing.assert_array_equal(book.wall, -P0)
+    assert not (book.push.any() or book.shear.any() or book.carried.any()) and book.sub_steps == 0
+
+
+def strip_layer(nx=24, h=1e-3, liquid=20, bump=0.0, T=LIQUID):
+    """Flat columns (`strip_grid`, two corners wide), each `liquid` cells of liquid aluminium at T over five of rigid
+    metal, the liquid's mass raised by `bump` (a fraction) on the columns 4-7 mm along x."""
+    col, pts = strip_grid(nx, 2, h)
+    sk = stacked(col, [[T] * liquid + [RIGID] * 5] * col.n)
+    if bump:
+        f = 1.0 + bump * ((pts[:, 0] > 3.5e-3) & (pts[:, 0] < 7.5e-3))
+        m, H = sk.m.copy(), sk.H.copy()
+        m[:, :liquid] *= f[:, None]
+        H[:, :liquid] *= f[:, None]
+        sk._install(m, H, sk.count, T=sk.T)
+    return sk, col, pts
+
+
+def strip_flow(col, dp_ds=-2e4, g=np.zeros(3), sigma=SIGMA, cycles=1, tau=0.0):
+    """A Flow on flat columns (normals +z), the flight direction tilted from -z toward -x so that the meridian runs
+    along +x: the pressure falling at `dp_ds` along it pushes the metal toward +x, the gas shear tau too."""
+    v_hat = np.array([-0.6, 0.0, -0.8])
+    shear = skin.along_meridian(col.normal, v_hat, np.full(col.n, tau))
+    return skin.Flow(col, np.full(col.n, dp_ds), shear, g, v_hat, RHO_L, sigma, col.area, cycles)
+
+
+def no_conduction(sk, dt, q_top, A_top, T_amb, eps, T_b, sideways=None):
+    z = np.zeros(sk.n)
+    return (z, z, z, z) + ((z,) if sk.S is not None else ())
+
+
+def test_n_flow_sub_steps_in_a_heat_sub_step_are_n_heat_sub_steps_of_their_length_with_the_conduction_off(monkeypatch):
+    """The flow sub-cycles within a heat sub-step (Asha, 2026-10-21, option c): with the conduction off, four flow
+    sub-steps in each 10 ms heat sub-step give exactly what sixteen heat sub-steps of 2.5 ms with one each give, to the
+    last bit -- a bump on liquid aluminium on a strip of 1 mm columns, pushed along it, pulled out of its surface and
+    smoothed by surface tension; the books agree to round-off. With the conduction on the two differ by the splitting
+    between heat and flow, of first order in the heat sub-step."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    out = []
+    for substep, cycles in ((0.01, 4), (0.0025, 1)):
+        sk, col, _ = strip_layer(bump=0.2)
+        sk.settings = skin.SkinSettings(**CELLS_04, substep=substep)
+        T_b = np.full(sk.n, RIGID)
+        book = skin.advance(sk, 0.04, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b, remove=False,
+                            flow=strip_flow(col, g=np.array([0.0, 0.0, 30.0]), cycles=cycles))
+        out.append((sk, book))
+    (a, A), (b, B) = out
+    assert all(np.array_equal(x, y) for x, y in zip(a.state(), b.state()))
+    assert A.flow.sub_steps == B.flow.sub_steps == 16 and A.flow.courant == B.flow.courant > 0.0
+    for key in ("push", "shear", "wall", "carried"):
+        x, y = getattr(A.flow, key), getattr(B.flow, key)
+        np.testing.assert_allclose(x, y, rtol=0.0, atol=1e-13 * np.abs(A.flow.push).max())
+
+
+def test_a_uniform_push_moves_a_flat_layer_as_the_momentum_step_and_the_transport_alone(monkeypatch):
+    """With neither surface tension nor a pull out of the surface, a heat sub-step's flow is the momentum step and the
+    transport alone (6b), and so is `advance`'s with the conduction off: a uniform push of 20 kPa/m along a strip of
+    liquid aluminium 0.23 mm deep on 1 mm columns moves the metal along it as those two steps and the regrid do, to the
+    last bit; the mass is kept and the first columns drain into the last."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    first, col, pts = strip_layer()
+    second, _, _ = strip_layer()
+    first.settings = second.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+    T_b, M0, H0 = np.full(first.n, RIGID), first.mass(), first.thickness()
+    flow = strip_flow(col, sigma=0.0)
+    skin.advance(first, 0.04, np.zeros(first.n), first.area, 0.0, 0.0, T_b, np.zeros(first.n), T_b1=T_b, remove=False,
+                 flow=flow)
+    G, _ = skin.push(col, second.thickness(), flow.dp_ds, flow.g, flow.v_hat, RHO_L, 0.0)
+    np.testing.assert_allclose(G, np.tile([2e4, 0.0, 0.0], (col.n, 1)), rtol=1e-12, atol=1e-9)
+    for _ in range(4):
+        skin.momentum_step(second, 0.01, G, flow.shear, col.area)
+        skin.transport(second, col, 0.01, regrid=False)
+        second.regrid()
+    assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
+    x = pts[:, 0]
+    assert first.mass() == pytest.approx(M0, rel=1e-13)
+    assert first.thickness()[x < 1e-9].max() < H0.max() and first.thickness()[x > x.max() - 1e-9].min() > H0.max()
+
+
+def test_the_books_of_a_pass_with_flow_close_exactly():
+    """A pass of 0.1 s with the conduction on, liquid removed as it forms and the flow on: liquid aluminium at 909 K, just
+    below T_feed, on a strip heated at 30 MW/m2, pushed along it and sheared: the mass and the energy close as without
+    flow, and each column's momentum changes by the flow's impulses less what the removed liquid took with it, to
+    round-off (4.9e-16 of the largest impulse, measured 2026-10-22)."""
+    sk, col, _ = strip_layer(nx=12, T=909.0)
+    sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+    T_b = np.full(sk.n, RIGID)
+    m_min = skin.minimum_mass(sk.material, sk.area, sk.settings)
+    E0, M0, P0 = sk.energy(), sk.mass(), sk.column_momentum()
+    q = np.full(sk.n, 3e7)
+    book = skin.advance(sk, 0.1, q, sk.area, 300.0, 0.3, T_b, m_min, T_b1=T_b, flow=strip_flow(col, tau=50.0))
+    assert book.removed.sum() > 0.0 and np.abs(book.momentum_out).max() > 0.0 and book.flow.courant > 0.0
+    assert sk.mass() == pytest.approx(M0 - book.removed.sum() + book.drawn.sum(), rel=1e-13)
+    gained = book.E_top - book.E_rad - book.E_base + book.E_side - book.removed_H + book.drawn_H
+    assert sk.energy() == pytest.approx(E0 + gained.sum(), rel=1e-12)
+    f = book.flow
+    impulse = f.push + f.shear + f.wall + f.carried - book.momentum_out
+    scale = max(np.abs(x).max() for x in (f.push, f.shear, f.wall, book.momentum_out))
+    assert np.abs(sk.column_momentum() - P0 - impulse).max() < 1e-13 * scale

@@ -379,7 +379,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
-                         "swell": True}
+                         "swell": True, "flow": "off", "flow_cycles": cli.skin.FLOW_CYCLES}
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
     assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS) and float(rows[-1]["skin_cells"]) > 0.0
@@ -399,7 +399,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
-    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs flow and spraying
+    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs the flow (and spraying)
     MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
     ["run", "--surface-model", "skin"],                                     # no thermal model
@@ -422,3 +422,55 @@ def test_a_skin_run_refuses_prism_layers_and_says_why(tmp_path, capsys):
     assert "--prism-layers" in err and "rebuild cannot reproduce prism layers" in err
     given = cli.build_parser().parse_args(FEM + ["--melt", "on", "--removal", "instant", "--surface-model", "skin"])
     assert given.prism_layers is None                                           # not given: nothing to refuse
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Sub-plan 21 Task 6c: the flow in the skins, its setting and its sub-cycles
+
+def test_the_flow_settings_reach_the_run_name_only_when_not_default():
+    from reentry_model import skin
+    suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, **k)
+    assert suffix() == suffix(flow=False) == ""
+    assert suffix(flow=True) == suffix(flow=True, flow_cycles=skin.FLOW_CYCLES) == "_skinflow-on"
+    assert suffix(flow=True, flow_cycles=skin.FLOW_CYCLES + 1) == "_skinflow-on_flowcycles{}".format(skin.FLOW_CYCLES + 1)
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False, flow=True) == "_skin-dev_noswell_skinflow-on"
+    args = cli.build_parser().parse_args(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"])
+    assert args.skin_flow == "off" and args.skin_flow_cycles is None
+
+
+def test_a_skin_run_with_flow_keeps_its_liquid_and_writes_the_flow_s_columns_and_frames(tmp_path):
+    """0.5 s from 71 km with a warm body, the layered skins (dev preset) and the flow on at two flow sub-steps a skin
+    sub-step: the liquid stays and flows -- no removal, the spraying that will take it is stage 4's -- the run name ends
+    in _skinflow-on_flowcycles2 after the removal's _melt-girin, the settings record the flow and its sub-cycles, and the
+    history's flow columns and the frames' top speed are written."""
+    import glob
+    import pyvista as pv
+    argv = MELT + ["--altitude", "71", "--velocity", "7.24", "--temperature", "880", "--t-max", "0.5",
+                   "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1", "--fine-size", "2",
+                   "--skin-flow", "on", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+    assert cli.main(argv) == 0
+    (path,) = glob.glob(str(tmp_path / "*.json"))
+    doc = json.load(open(path))
+    assert doc["run_name"].endswith("_melt-girin_surface-skin_skin-dev_fine4x2mm_skinflow-on_flowcycles2")
+    s, r = doc["settings"], doc["results"]
+    assert s["skin"]["flow"] == "on" and s["skin"]["flow_cycles"] == 2
+    assert r["removed_mass_kg"] == 0.0 and abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
+    rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+    assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS)
+    surf = sorted(glob.glob(str(tmp_path / "**" / "surface_*.vtp"), recursive=True))
+    assert len(surf) == 2 and "top_speed" in pv.read(surf[-1]).point_data
+
+
+@pytest.mark.parametrize("argv", [
+    MELT + ["--surface-model", "skin", "--skin-flow", "maybe"],
+    MELT + ["--surface-model", "skin", "--skin-flow", "on", "--skin-flow-cycles", "0"],
+    MELT + ["--surface-model", "skin", "--skin-flow", "on", "--skin-flow-cycles", "2.5"],
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-flow-cycles", "4"],     # sub-cycles of no flow
+    MELT + ["--removal", "instant", "--surface-model", "skin", "--skin-flow", "on"],          # removal is instead of flow
+    MELT + ["--skin-flow", "on"],                                                             # the element model's runoff
+    FEM + ["--surface-model", "skin", "--skin-flow", "on"],                                   # nothing melts
+])
+def test_bad_flow_arguments_exit_2(argv, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--outdir", str(tmp_path)])
+    assert exc.value.code == 2

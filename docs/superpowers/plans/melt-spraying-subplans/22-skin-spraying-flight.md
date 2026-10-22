@@ -68,3 +68,6 @@ acceptance criterion; the comparison with the element model), §14 (the assumpti
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
+- The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
+  step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
+  sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step.

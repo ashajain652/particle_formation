@@ -361,3 +361,107 @@ def test_the_mass_is_measured_again_after_every_move(coarse_sphere_mesh):
         b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
         assert b.mass() == fresh()
     assert b.mesh.volume() != V0                                     # the corners moved
+
+
+# -- the flow in the skin body (sub-plan 21 Task 6c) -------------------------------------------------------------------
+def newtonian(b, p_stag=11e3, tau=50.0, decel=30.0):
+    """A prescribed gas-side forcing on the body's corners: a Newtonian pressure falling away from the stagnation point,
+    `tau` Pa of gas shear on the windward face and the deceleration along the flight direction."""
+    cos = np.clip(b.columns.normal @ b.v_hat, 0.0, 1.0)
+    return skinbody.FlowForcing(-2.0 * p_stag * np.sqrt(1.0 - cos ** 2) * cos / 0.05, np.where(cos > 0.0, tau, 0.0),
+                                decel * b.v_hat)
+
+
+def same_body(a, b):
+    """Whether two skin bodies hold the same state, to the last bit."""
+    return (np.array_equal(a.solver.temperature(), b.solver.temperature()) and np.array_equal(a.mesh.points, b.mesh.points)
+            and all(np.array_equal(x, y) for x, y in zip(a.skins.state(), b.skins.state()))
+            and np.array_equal(a.pending, b.pending))
+
+
+def test_the_flow_is_off_by_default_and_turned_on_where_nothing_flows_it_changes_nothing(coarse_sphere_mesh):
+    """The flow is off by default (the ruling of 2026-10-22: until stage 4's spraying gives the liquid a sink), and the
+    heat-only skins are then unchanged: their tests above pass as they did, and the 3 MW/m2 removal run of
+    `test_heating_with_removal_keeps_mass_and_energy_exact` reproduces Task 6b's code to the last bit, every array of
+    the 3D model and the skins (measured 2026-10-22, numpy's generator seeded as a run seeds it: pyamg draws its
+    starting vectors from it, so two unseeded runs differ in round-off). Turned on in a body where nothing flows -- 1
+    MW/m2 on a body at 600 K for two 0.5 s steps -- the flow is driven and its books kept but no cell moves, and the
+    body is the flow-off body to the last bit."""
+    bodies = []
+    for flow in (False, True):
+        np.random.seed(12345)
+        b = make(coarse_sphere_mesh, T0=600.0, flow=flow, remove=not flow)
+        for k in range(2):
+            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 1e6), forcing=newtonian(b))
+        bodies.append(b)
+    off, on = bodies
+    assert off.flow_on is False and skinbody.FLOW_DEFAULT is False and on.flow_on is True
+    assert make(coarse_sphere_mesh, T0=600.0).flow_on is False
+    assert same_body(off, on) and np.all(on.skins.T[on.skins.valid] < on.material.T_rigid)
+    a, c = off.skin_stats(), on.skin_stats()
+    assert all(a[k] == c[k] for k in a if not k.startswith("wall_"))
+    assert c["speed_max_ms"] == 0.0 and c["momentum_residual"] == 0.0 and c["flow_courant_max"] == 0.0
+
+
+def test_a_skin_body_with_flow_keeps_its_mass_and_energy_closes_its_momentum_and_reports_the_flow(coarse_sphere_mesh):
+    """3 MW/m2 on the front of the 4 mm test sphere from 880 K for two 0.25 s steps, flow on with a Newtonian pressure
+    gradient, 50 Pa of gas shear and 30 m/s2 of deceleration, the liquid kept, one flow sub-step a heat sub-step (the
+    books, not the flow's accuracy, are tested; the default's ten cost ten times the flow): the mass is the starting
+    mass to 1e-13, the energy books close to 1e-8 of the heat absorbed, and the momentum balance -- the skins' momentum
+    against the impulses of the push, the shear and the walls, and what left with metal handed down -- closes to
+    round-off. The history's flow columns are the state's: the largest speed in any cell, the corner-to-corner roughness
+    of the top, the flow sub-steps' largest Courant number, Rayleigh-Taylor growth and linearisations. Measured
+    2026-10-22: mass to 1.1e-16, energy 9.8e-13, momentum 2.8e-17; the fastest cell 1.6 m/s, the flowing layer up to
+    1.38 mm deep, Courant numbers to 6.9, growth 2.1e-3, roughness 0.14."""
+    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1)
+    M0 = b.mass()
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
+    stats = b.skin_stats()
+    assert b.removed_mass == 0.0 and b.mass() == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert stats["momentum_residual"] < 1e-12 and b.impulse_size > 0.0
+    sk = b.skins
+    speed = np.linalg.norm(sk.U, axis=2)
+    assert stats["speed_max_ms"] == float(speed.max()) > 0.0
+    i, j = b.columns.edges[:, 0], b.columns.edges[:, 1]
+    H = sk.thickness()
+    assert stats["roughness_max"] == float((np.abs(H[i] - H[j]) / b.columns.edge_length).max()) > 0.0
+    assert stats["flow_courant_max"] > 0.0 and 0.0 <= stats["flow_growth_max"] < 1.0 and stats["flow_passes_max"] >= 1
+    assert stats["wall_flow_s"] > 0.0 and stats["flowing_depth_max_mm"] > 0.0
+
+
+def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_part_s_middle(coarse_sphere_mesh, monkeypatch):
+    """Every macro step the skin body evaluates the surface flow on its corners, as the heating is, from the step's aero
+    state and the tops' temperatures: the pressure gradient along the meridian, the gas shear along it on the top cells,
+    and the deceleration, which the metal feels along the flight direction. Each part takes them interpolated linearly
+    between the last macro step's and this one's at its middle, as it takes the heating."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import surface_flow
+    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False)
+    seen = []
+    advance = skin.advance
+
+    def recorded(sk, dt, *a, **k):
+        seen.append((b.columns.normal.copy(), k["flow"]))              # the part's normals: the corners move after it
+        return advance(sk, dt, *a, **k)
+    monkeypatch.setattr(skinbody.skin_mod, "advance", recorded)
+    evaluate = lambda a: surface_flow.SurfaceFlow().evaluate(a, b.theta, b.nose_radius(), b.material.liquid.rho,
+                                                             b.surface_temperature())
+    states = (aero_state_at(90.0), aero_state_at(92.0))
+    first = evaluate(states[0])
+    b.advance(0.5, 0.5, front_loads(b, 1e6), state=states[0])
+    assert all(np.array_equal(f.dp_ds, first.dp_ds) for _, f in seen) and len(seen) >= 2
+    normal, f = seen[0]
+    np.testing.assert_allclose(f.shear, skin.along_meridian(normal, b.v_hat, first.tau), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(f.g, first.deceleration * b.v_hat, rtol=1e-12)
+    assert f.rho_l == b.skins.rho_l and f.sigma == b.material.liquid.sigma and f.cycles == skin.FLOW_CYCLES
+    second = evaluate(states[1])
+    seen.clear()
+    b._hint = 2                                                          # two parts, to see the interpolation
+    b.advance(1.0, 0.5, front_loads(b, 1e6), state=states[1])
+    assert b.step_parts == 2
+    for frac in (0.25, 0.75):                                           # the two parts' middles
+        dp = first.dp_ds + (second.dp_ds - first.dp_ds) * frac
+        assert any(np.allclose(f.dp_ds, dp, rtol=1e-12, atol=1e-9) for _, f in seen)

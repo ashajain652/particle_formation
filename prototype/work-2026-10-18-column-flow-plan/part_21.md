@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a and 6b
-> (2026-10-18/21).** Tasks 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a, 6b and 6c
+> (2026-10-18/22).** Tasks 7 and 8 are still the scoped outline at the end; each is written out with tested code in
 > turn, the same way, and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
@@ -86,14 +86,36 @@ regenerate.
    `test_the_faces_exchange_times_the_film_operator_has_no_growing_mode` (Task 6b).
 10. **The predicted heights against the transport's** — the thickness terms are implicit in the heights the thickness
     step predicts, which the transport makes to 0.62 % of the change on the test sphere but only to about 4 % at a
-    melting state's rim (6.5 µm of 0.15–0.17 mm, at a Courant number of 1.8; not pinned by a test). Watch it in 6c's
-    measurements; where it grows, a second linearisation at the transport's own heights would close it.
+    melting state's rim (6.5 µm of 0.15–0.17 mm, at a Courant number of 1.8; not pinned by a test). Measured in 6c on the
+    sphere's draining front: 11–16 % of the largest change at 1 ms, at a few columns of the pile at the shoulder
+    (90–91°, 1 mm deep: 3.7·10⁻⁵ m predicted, 1–6·10⁻⁶ m made), and no smaller at shorter sub-steps (0.26–0.60 of the
+    change over 50 ms at 2 to 0.25 ms), so it is the columns' linearisation, not the sub-step; at 10 ms, with the
+    linearisations at their cap, 13 times the change, and the correction then adds kinetic energy (Task 6c). Where it
+    matters, a second linearisation at the transport's own heights would close it.
 11. **Rayleigh–Taylor growth under-resolved in time** — at dt·s near or above one, backward Euler damps a growing mode
     spuriously instead of following it. `ThicknessBook.growth` reports it every sub-step; no test can pin what 6c's
-    choice of sub-step must avoid (Task 6b).
+    choice of sub-step must avoid (Task 6b). At 6c's 1 ms it is at most 0.0067 (3.4 mm of liquid at 48 m/s²); the
+    history's `flow_growth_max` reports each macro step's.
 12. **Quiescent layers ringing under surface tension** — two-way flows through the depth join most moving cells into
-    one cycle of the transport and its LU fills (4 s a sub-step on the test sphere); a cost, not an error, measured in
-    6c (Task 6b).
+    one cycle of the transport and its LU fills (4 s a sub-step on the test sphere); a cost, not an error. Measured in
+    6c on the 100 mm sphere: 10 315 of 141 000 moving cells in one cycle within 12 sub-steps of 1 ms, 4–5 s a transport,
+    and with every column melted flows meeting at the rear stagnation point make cycles of 18 000–57 000 cells, 35–651 s
+    a transport. The iteration from the upwind solve measured in 6c (2–9 corrections to 10⁻¹³, 80 times faster than the
+    LU with every column melted) is the remedy to build if a flight melts that widely (Task 6c).
+13. **A runoff front advances at most one column a flow sub-step** — metal landing on a rigid top becomes a new top
+    cell after the transport's solve and flows on only in the next flow sub-step (6a's arrival rule), so a front
+    crossing rigid metal moves at most the column spacing per flow sub-step: 2 m/s on 2 mm columns at 6c's 1 ms. 6c's
+    choice rests on it (the runoff over the sphere's rear converged at 1 ms, held back by 30–75° at 2–10 ms); a faster
+    front later in flight would be held back at 1 ms too, and no history column reports it. Letting the landed metal
+    flow on within the sub-step — its new top cell an unknown of the same solve — would lift the limit (Task 6c).
+14. **The flow's sub-step is fixed** — ten flow sub-steps a heat sub-step, chosen on one state at 93 s; the Courant
+    numbers grow with the layer's speed, its depth and the push late in flight. Watch `flow_courant_max`,
+    `flow_growth_max` and `flow_passes_max` (the thickness linearisations at their cap of 8 marked the unstable 10 ms
+    runs); an adaptive count from the last sub-step's Courant number is the remedy if they grow (Task 6c).
+15. **The flow's cost** — with the flow on, a heat sub-step costs ten flow sub-steps, each about as much as its
+    conduction (48 s against 4.5 s on the heated melting state, the transport's large cycles three fifths of it); the
+    momentum step's shear-rate fixed point ran to its cap of five passes in every melting state measured, slurry being
+    where liquid meets rigid metal (Task 6c's cost).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -929,31 +951,273 @@ git commit -m "Skins: the push's thickness terms implicit in the column heights 
 
 ---
 
+### Task 6c: The flow in the skin body
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`FLOW_CYCLES`, `FLOW_SECONDS`, `Flow`, `FlowBook`, `flow_substeps`;
+  `SkinBook.momentum_out` and `.flow`; `advance(..., flow=None)`), `reentry_model/skinbody.py` (`FLOW_DEFAULT`,
+  `FlowForcing`; `SkinBody(..., flow, flow_cycles, surface_flow)`, `flow_forcing`, `advance(..., forcing=None)`, the
+  momentum books and `momentum_residual`, the flow's history columns), `reentry_model/coupled.py` (`SKINBODY_COLUMNS`,
+  `skin_results`, the frames' `top_speed`), `reentry_model/cli.py` (`--skin-flow`, `--skin-flow-cycles`,
+  `skin_name_suffix(..., flow, flow_cycles)`, their checks, `build_thermal`)
+- Test: `tests/test_reentry_model_skin.py`, `tests/test_reentry_model_skinbody.py`, `tests/test_reentry_model_cli.py`
+  (the skin run's settings gain the flow's two keys)
+
+**Interfaces:**
+- Consumes: Task 5's `push` and `along_meridian`, `SurfaceFlowResult.dp_ds` and `.tau`; Task 4's `momentum_step`; 6a's
+  `transport`; 6b's `flowing_tops`, `momentum_step(..., response=True)`, `thickness_step` and `FacePush`;
+  `Skins.momentum_out`; `SurfaceFlow.evaluate`.
+- Produces: `skin.Flow(columns, dp_ds, shear, g, v_hat, rho_l, sigma, A_top, cycles=FLOW_CYCLES)`, what drives the flow
+  over a part (dp_ds (n,) [Pa/m], shear (n, 3) [Pa], g (3,) [m/s2], A_top (n,) [m2]); `skin.flow_substeps(sk, flow,
+  dt) -> FlowBook`; `FlowBook(push, shear, wall, carried, courant, growth, passes, sub_steps)`, the impulses (n, 3)
+  [N s] and the carried momentum [kg m/s], with `.zero(n)` and `.add(other)`; `skin.FLOW_CYCLES` (10) and the
+  diagnostic `skin.FLOW_SECONDS`; `skin.advance(..., flow=None)`, its book gaining `momentum_out` (n, 3) [kg m/s], what
+  the removed liquid took, and `flow`, the sub-steps' FlowBook; `skinbody.FlowForcing(dp_ds, tau, g)` with
+  `.toward(other, frac)`; `SkinBody(..., flow=FLOW_DEFAULT, flow_cycles=None, surface_flow=None)` with `.flow_on`,
+  `.flow_cycles`, `.flow_forcing(state)`, `.advance(t, dt, loads, state=None, forcing=None)`, `.momentum_residual()`,
+  `.impulse`, `.momentum_lost`, `.impulse_size`, `.last_flow`; `skinbody.FLOW_DEFAULT` (False); history columns
+  `momentum_residual`, `speed_max_ms`, `roughness_max`, `flow_courant_max`, `flow_growth_max`, `flow_passes_max`,
+  `wall_flow_s`; results `momentum_residual`, `flow_courant_max`; the frames' `top_speed`; `run --skin-flow on|off`
+  (run-name suffix `_skinflow-on`) and `--skin-flow-cycles <n>` (`_flowcycles<n>` when not FLOW_CYCLES).
+
+The flow joins the skin body. Every macro step, the surface flow is evaluated on the corners where the heating is —
+from the step's aero state, the top surface's angles to the flight direction, the nose radius and the tops'
+temperatures at the step's start — for its pressure gradient along the meridian (Task 5's `dp_ds`) and its gas shear
+`tau`; with the deceleration, which the metal feels as g, the drag's deceleration along the flight direction (minus the
+body's own acceleration, Task 5), that is the step's `FlowForcing`. Each part takes it interpolated linearly in time
+between the last macro step's and this one's at the part's middle, as it takes the heating (spec 7.1), the shear laid
+along the meridian in each column's plane. Every sub-step of both passes then runs, after its conduction, `cycles` flow
+sub-steps of its length over `cycles`, each in 6b's order — `push` with surface tension where a top flows,
+`momentum_step` with its response, `thickness_step`, `transport` with the faces' push and no regrid — the cells split
+and merged between them; the removal (with `remove`), the draw and the sub-step's own regrid follow the last (spec 7.1:
+heat, flow, sideways exchange and spray). The trial pass runs the flow as the real pass does (spec 7.2's sub-steps are
+spec 7.1's), the sensitivity carried by the transport. Where no cell flows nothing is computed: a velocity left in rigid
+cells is booked to the wall and cleared, as the momentum step would.
+
+**The momentum books.** The flow's impulses — the momentum and thickness steps' push, the gas shear, the walls (the
+anchored metal's drag, the momentum cells held on joining it, the transport's projections) and what the transport
+carried, which sums to zero over the body — add up in each part's book; what leaves with removed liquid, handed-down
+cells or a reconciliation at the bottom is booked as lost; metal drawn arrives at rest. `momentum_residual` is the
+skins' momentum less its value at time zero, the impulses and the losses, over the impulses' total size: zero for exact
+books.
+
+**The flow's sub-step** (option c, Asha, 2026-10-21, chosen here from measurements;
+`prototype/work-2026-10-18-column-flow/measure/task6c/`, 2026-10-22, the laptop under a load average of 5 to 140 from
+other sessions, so the times are processor times and indicative). The 100 mm sphere's 9 417 columns of 10 µm cells, its
+front hemisphere's top 0.3 mm liquid at 950 K over rigid metal at 850 K (6b's destabilising face), at rest at t = 0 and
+driven by the surface flow of the 100 mm flight at 93 s — a stagnation pressure of 11.9 kPa, -dp/ds up to
+3.4·10⁵ Pa/m at 45°, gas shear up to 87 Pa at 49°, 29.8 m/s² of deceleration — with surface tension, for 50 ms of
+flow alone (no conduction), at flow sub-steps of 10 ms to 0.25 ms:
+
+| Flow sub-step | Courant, largest (median) | KE the transport destroys / KE made | KE at 50 ms / 0.25 ms run | Thickness change, L1 error / 0.25 ms run | Volume past 105° / 0.25 ms run | Linearisations, most |
+|---|---|---|---|---|---|---|
+| 10 ms | 1 266 (244) | 0.59 | 4.81 | 95 % | 0 | 8 (the cap) |
+| 5 ms | 26 (23) | 0.62 | 0.31 | 85 % | 0.11 | 7 |
+| 2.5 ms | 12.6 (11) | 0.52 | 0.36 | 59 % | 0.89 | 5 |
+| 2 ms | 9.9 (8.4) | 0.43 | 0.48 | 44 % | 0.96 | 3 |
+| 1 ms | 4.8 (4.1) | 0.27 | 1.04 | 3.9 % | 1.007 | 4 |
+| 0.5 ms | 2.4 (2.0) | 0.28 | 1.02 | 1.4 % | 1.005 | 2 |
+| 0.25 ms | 1.2 (1.0) | 0.27 | 1 | — | 1 | 2 |
+
+The table shows the result converging at 1 ms and not above it. In 50 ms the liquid drains off the front at a few metres
+a second and crosses the shoulder onto the rigid rear: the volume that crossed 85° is within 1.1 % of the 0.25 ms run's
+(4 589 mm³) at 5 ms and below (3 % short at 10 ms), but the runoff over the rear is not. At 1, 0.5 and 0.25 ms it
+reaches the rear stagnation point, every band of 15° from 90° to 180° within 7 % (1 ms) and 4 % (0.5 ms) of the finest
+run's; at 2, 2.5, 5 and 10 ms it stops at 150°, 135°, 120° and 105°. The cause is 6a's arrival rule, not the scheme's
+smearing: metal landing on a rigid top becomes a new top cell after the solve, so it flows on only in the next flow
+sub-step, and a front crossing rigid metal advances at most one column a flow sub-step — 0.2 m/s on 2 mm columns at 10
+ms, 2 m/s at 1 ms. That predicts the fronts seen: 25, 20, 10 and 5 columns of 2 mm in 50 ms are 57°, 46°, 23° and 11° of
+the 50 mm radius beyond the shoulder at 2, 2.5, 5 and 10 ms. Inside the flowing layer the scheme's own smearing at 1 ms
+is already at its floor: the transport destroys 27 % of the kinetic energy the push and the shear make, the same at 0.5
+and 0.25 ms, so that is the 2 mm grid's upwind diffusion and the projections between planes, not the time step's. At 10
+ms the thickness step's linearisations stop at their cap of 8 with the predicted heights 13 times the change off, and
+its correction adds kinetic energy: the fastest cell is at 22 m/s at 30 ms against 4.9 at 1 ms. With every column's top
+melted (no front; 9 417 columns, 282 000 cells moving), 10 ms flow sub-steps blow up — the fastest cell 72 m/s at the
+third sub-step, 2 563 m/s at the fourth, the predicted heights 16 and 91 times the change off — and 5 ms keeps the
+linearisations at their cap with the predictions about one change off; at 1 ms it is stable (Courant numbers to 4.7, two
+linearisations, the predictions within 0.24 of the change over 10 ms), but its transport took 35-114 s a sub-step, the
+flows meeting at the rear stagnation point joining 18 000-23 000 cells into one cycle (below).
+
+*Rayleigh-Taylor growth* (`ThicknessBook.growth`, dt s, one flow sub-step from rest on the sphere's front melted 0.3,
+1.0 and 3.4 mm deep, the flowing depths of the element model's flight at about 85, 105 and 120 s, under the forcing at
+93 s, 29.8 m/s², and 115 s, 48.4 m/s²):
+
+| Liquid depth, deceleration | 10 ms | 5 ms | 2 ms | 1 ms |
+|---|---|---|---|---|
+| 0.3 mm, 29.8 m/s² | 0.018 | 0.0048 | 8.3·10⁻⁴ | 2.1·10⁻⁴ |
+| 0.3 mm, 48.4 m/s² | 0.047 | 0.013 | 0.0022 | 5.6·10⁻⁴ |
+| 1.0 mm, 29.8 m/s² | 0.072 | 0.018 | 0.0030 | 7.6·10⁻⁴ |
+| 1.0 mm, 48.4 m/s² | 0.19 | 0.049 | 0.0079 | 0.0020 |
+| 3.4 mm, 29.8 m/s² | 0.25 | 0.063 | 0.010 | 0.0025 |
+| 3.4 mm, 48.4 m/s² | 0.67 | 0.17 | 0.027 | 0.0067 |
+
+The table shows the growth falling as the square of the sub-step — the layer's response in a sub-step is limited by
+its inertia — and well under one at 5 ms and below in every case; at 10 ms the deep layers late in flight reach 0.67,
+where backward Euler's growth in a sub-step, 1/(1 - dt s) = 3.0, is half again the exact e^(dt s) = 1.95.
+
+**Ruling: ten flow sub-steps a heat sub-step (`FLOW_CYCLES` = 10, 1 ms under the 10 ms heat sub-step)** — at 1 ms the
+measured state is within 3.9 % of the 0.25 ms run in where the metal went and 4 % in its kinetic energy, the runoff
+reaches where the finest run's does, the growth is at most 0.0067 even for 3.4 mm of liquid at 48 m/s², the Courant
+numbers are at most 4.8 and the kinetic energy the transport destroys is the grid's own 27 %; 2 ms holds the runoff back
+by up to 30° of the rear and loses half the kinetic energy by 50 ms, and 10 ms is unstable in a fully melted layer.
+Accepted: Courant numbers to about 5, where the implicit upwind scheme's time smearing no longer shows against the
+grid's, and the grid's 27 % (the 2 mm surface's; only finer columns reduce it) — if wrong, the flow costs ten times what
+one sub-step would: a 10 ms heat sub-step of the heated melting state takes 48 s with ten against 8 s with one and 4.5 s
+for its conduction alone (*Cost*, below). The sub-step is fixed, not adapted: the Courant numbers grow with the layer's
+speed, which grows with its depth and the push late in flight, and a front faster than 2 m/s on 2 mm columns is held
+back at 1 ms too (Review Focus 13 and 14).
+
+**Ruling: the flow is off by default (`FLOW_DEFAULT`, `--skin-flow off`), and with it on the liquid stays** — stage 2's
+skins remove the liquid as it forms "instead of flow and spray" (spec 11.2); with the flow on and no spraying until
+stage 4, the liquid stays and flows (`remove` False), and a flight would only pile it up — if wrong, a stage-3 flight
+must ask for the flow. Flow off is the heat-only skins: the skin body's tests pass unchanged, and the 3 MW/m² removal
+run of `test_heating_with_removal_keeps_mass_and_energy_exact` gives Task 6b's code's every array to the last bit
+(2026-10-22, numpy's generator seeded as a run seeds it; unseeded, pyamg's starting vectors make any two runs differ in
+round-off).
+
+**Ruling: on the command line the flow takes Girin's removal** — `--skin-flow on` needs `--surface-model skin` and
+`--melt on`, and `--removal girin` (the default): the liquid stays, and sub-plan 22's spraying will remove it on the
+same command line; `--removal instant` is refused with the flow on, being the heat-only skins' stand-in for flow and
+spray (spec 11.2), as `--removal girin` is refused with it off. `--skin-flow-cycles` needs the flow on and is an integer
+of at least 1; the run name gains `_skinflow-on`, and `_flowcycles<n>` only for other than ten (spec 10.1's convention)
+— if wrong, a stage-3 run with the flow on takes the girin removal's continuum step (`--dt-continuum`, 0.0125 s once
+the body's Knudsen number is below 0.01) and its name says `_melt-girin` although nothing sprays until sub-plan 22;
+`--dt-continuum off` keeps the 0.5 s step.
+
+**Ruling: the forcing interpolated in time as the heating is, the shear in each column's plane** — spec 7.1's
+treatment of the heating, at no cost; the push's density is the skins' liquid density (`Skins.rho_l`, the solid's
+with `--skin-swell off`, as the cells' masses have it) — if wrong, the push differs by the forcing's change over half a
+macro step.
+
+**Ruling: the trial pass runs the flow** (spec 7.1 and 7.2: a sub-step is heat, flow, sideways exchange and spray) — it
+changes the base law: on the 100 mm sphere's heated melting state (`heated_state`: the front's skins at the conduction
+profile of 3 MW/m², 0.30 mm of liquid over 0.55 mm of slurry, the base held at the profile's 874 K, the flow developed
+over 20 ms under the 93 s forcing), one part of 0.0625 s with the flow and without it gives base laws that differ, at
+the base temperature, by 6.0 % of the energy through the columns' tops and bases in total; 3 428 of the 9 417 columns
+differ by more than the interface tolerance of 10⁻³ of their own (the median of the flowing columns 7·10⁻⁴), and the
+slope by up to 46 %. A trial pass without the flow would leave the real pass's base heat that far from its law: repeated
+by the damped repetition, and what it leaves deferred to the nodes. The real pass's base heat meets the law made with
+the flow to 9·10⁻¹⁵. It costs what the flow costs: the trial pass took 1 216 s of processor time with ten flow sub-steps
+a heat sub-step against 17 s without the flow. If wrong, half the flow's cost is spent on the law.
+
+**Ruling: the momentum residual over the impulses' total size**, the push's, the shear's and the walls' summed in size
+over every column and part since time zero, as the energy residual is over the heat absorbed — if wrong, only the
+scale of a number that should be round-off.
+
+*Cost* (processor time, on `heated_state` with 310 000 cells flowing, the flow developed over 20 ms; each measured twice,
+under other sessions' load, so indicative). A 10 ms heat sub-step:
+
+| Flow sub-steps | Whole | Conduction | Push | Momentum | Thickness | Transport | Regrid | Rest (draw, regrid) |
+|---|---|---|---|---|---|---|---|---|
+| 1 (10 ms) | 7.9-8.5 s | 4.1-4.6 | 0.05 | 1.0 | 1.0 | 1.4 | — | 0.4 |
+| 10 (1 ms) | 47.8-48.3 s | 4.5 | 0.5 | 9.4 | 3.2-3.5 | 28-29 | 1.4-1.5 | 0.3 |
+
+The table shows the transport taking three fifths of a heat sub-step at ten flow sub-steps, 2.9 s each, against 1.4 s
+for the one 10 ms sub-step, whose Courant number of 490 and eight linearisations (the cap) mark it unresolved; the
+momentum step's shear-rate fixed point runs its five passes every sub-step, the slurry where liquid meets rigid metal. A
+macro step while melting is eight parts of seven sub-steps, each run by the trial and the real pass, 1.8 times on
+average (fact 126): about 200 heat sub-steps, which on this state is about 2.7 h with ten flow sub-steps, 27 minutes
+with one and 16 minutes with the flow off — the flow, not the heat, is now the skins' cost. (Fact 126 measured a melting
+skin pass at 0.65 s a 10 ms sub-step; these skins are deeper, 1.6 mm, and the laptop was loaded, so the ratios are the
+finding, not the seconds.) The remedy for the transport's large cycles below would take its share down; the momentum
+step's solve over every column, flowing or not, is the next.
+
+*A quiescent melted region* (Review Focus 12). The sphere's melting state at rest under surface tension alone, no gas
+forcing and no deceleration: the melt's rim at the shoulder rounds at 5-17 mm/s (Courant numbers 0.01-0.2), and the
+transport's cycles of meeting flows grow from 7 cells to 10 315 of the 141 000 moving within 12 flow sub-steps of 1 ms
+(to 7 022 within 6 of 10 ms), its time from 1.1 to 4.0-4.8 s a sub-step. Profiled, 2.3 s of a 3.35 s transport is
+SuperLU's factorisation of its two systems, whose lower triangles fill 5.3 and 5.8 times. Under the 93 s forcing the
+largest cycle was 1 700 cells after 20 sub-steps of 1 ms and the factorisations took 0.06 and 0.15 s, filling 1.1 times;
+with every column melted, flows meeting at the rear stagnation point joined 57 000 cells into one cycle within 9
+sub-steps of 5 ms, and a transport took 651 s. *A remedy measured, not built:* solve each system by the iteration x ← x
++ L⁻¹ (b − A x) started from the upwind solve, L its lower triangle in upwind order — the whole system but the cycles'
+back-couplings, which an upwind order makes triangular with no fill. On the quiescent state it took 2-3 corrections to
+reach 10⁻¹⁰-10⁻¹³ of the right-hand side, 0.05 s against the LU's 0.30 s for the mass and 0.16 s against 1.23 s for the
+momentum, the masses positive and the books missing 2·10⁻¹⁷ of the total at 10⁻¹³; under the forcing (small cycles) 4-5
+corrections, 0.10 s against the LU's 0.06 s; with every column melted (a cycle of 18 379 cells) 7-9 corrections, 0.19 s
+against 7.4 s and 0.41 s against 41.8 s. Installing each cell's mass from the iterate's fluxes, m + dt (arrivals −
+departures), would close the books exactly by construction. It changes 6a's solver, so it is reported, not built (Review
+Focus 12).
+
+**Measured against the tests** (2026-10-22): one flow sub-step is the push, the momentum step, the thickness step and the
+transport called by hand, to the last bit, at one cycle and three, the books to 2.1·10⁻¹² and 9.4·10⁻¹³ of the largest
+impulse (6b's on these skins); four flow sub-steps in each 10 ms heat sub-step give sixteen heat sub-steps of 2.5 ms
+with one each, to the last bit, with the conduction off; a pass with the conduction on, removal and the flow closes its
+momentum to 4.9·10⁻¹⁶; on the 4 mm test sphere under 3 MW/m² from 880 K for two 0.25 s steps with the flow on the mass
+is kept to 1.1·10⁻¹⁶, the energy to 9.8·10⁻¹³ and the momentum to 2.8·10⁻¹⁷, the fastest cell 1.6 m/s, Courant numbers
+to 6.9.
+
+- [ ] **Step 1: The flow sub-steps' tests** — append to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T6C}}
+
+- [ ] **Step 2: The skin body's tests** — append to `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T6C}}
+
+- [ ] **Step 3: The command line's tests** — in `tests/test_reentry_model_cli.py` (the skin run's settings gain the
+  flow's two keys):
+
+{{DIFF_TEST_CLI_T6C}}
+
+- [ ] **Step 4: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py
+  tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py -q`. Expected: 11 failed, 143 passed —
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'Flow'` (4) and `... 'flow_substeps'` (1);
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'flow'` (3);
+  - `TypeError: skin_name_suffix() got an unexpected keyword argument 'flow'` (1);
+  - `SystemExit: 2`, `unrecognized arguments: --skin-flow on --skin-flow-cycles 2` (1);
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'FLOW_CYCLES'`, the skin run's settings (1).
+
+  The seven exit-code cases pass already, their flags being unknown to the parser.
+
+- [ ] **Step 5: The flow sub-steps and the pass's books** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T6C}}
+
+- [ ] **Step 6: The flow in the skin body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T6C}}
+
+- [ ] **Step 7: The history's flow columns, the results and the frames' top speed** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T6C}}
+
+- [ ] **Step 8: The settings** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T6C}}
+
+- [ ] **Step 9: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 72 passed,
+  `tests/test_reentry_model_skinbody.py` 16 passed (2 deselected, the reference tier's), `tests/test_reentry_model_cli.py`
+  66 passed, `tests/test_reentry_model_coupled.py` 9 and `tests/test_reentry_model_columns.py` 13 as before (176 in
+  860 s); the unit tier 481 passed, 1 skipped (1 015 s). The flow is off by default, so no flight's result changes:
+  the heat-only skins reproduce Task 6b's to the last bit.
+
+- [ ] **Step 10: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py
+git commit -m "Skins: the flow joins the skin body -- the surface flow's pressure gradient and shear on the corners and the deceleration drive ten flow sub-steps of push, momentum, thickness and transport in every 1 ms of each heat sub-step, in the trial and real passes, the momentum books in the history; off by default until spraying, the liquid kept with it on (sub-plan 21 Task 6c)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21), each with its own tests and commit; 6a, the transport at
-   given velocities, and 6b, the thickness terms implicit, are written out above:
-   - **6b. The thickness terms implicit**: written out above as Task 6b.
-   - **6c. The flow in the skin body**: the surface flow evaluated on the corner surface (its `dp_ds` and `tau`),
-     `push` and `along_meridian(tau)` driving `momentum_step`, then the transport, in every sub-step of `skin.advance`;
-     a setting to turn the flow off, which reproduces the heat-only skins; the momentum books in the run's history.
-     The flow's sub-step is chosen here (option c, Asha, 2026-10-21): measure the Courant numbers and the momentum lost
-     to 6a's smearing on the 100 mm sphere's melting state. Asha expects the flow to need a sub-step shorter than the
-     heat's 10 ms (about 100 columns a sub-step are estimated in flight, fact 154), so the momentum step and the
-     transport should be able to sub-cycle within a heat sub-step. From Task 6b:
-     - every flow sub-step calls `push` with `wet=flowing_tops(sk)`, `momentum_step(..., response=True)`,
-       `thickness_step` and `transport(..., regrid=False, faces=...)`, in that order, and books all three steps'
-       impulses;
-     - the flow's sub-step also keeps `ThicknessBook.growth` well under one, since backward Euler follows a
-       Rayleigh–Taylor growth only where the sub-step resolves it;
-     - the cost measurement includes a quiescent melted region as well as the runoff. Where surface tension rings a
-       layer without a mean flow, the transport's cycles of meeting flows grew to 23 000 of the test sphere's 34 000
-       moving cells within five 10 ms sub-steps, and its sub-step to 4 s; no ordering of its LU helped (fill 20–37
-       times).
+   given velocities, 6b, the thickness terms implicit, and 6c, the flow in the skin body, are written out above as
+   Tasks 6a, 6b and 6c.
+   - **6d. Making the flow affordable** (Asha, 2026-10-22, option a, before Tasks 7 and 8): 6c's flow cost about 48 s
+     of processor time a melting 10 ms skin sub-step against 4.5 s for the heat, three fifths of it in the transport's
+     solve, which slows sharply where flows meet. An iterative transport solve started from the upwind solve, its books
+     exact by construction; metal landing on a rigid top flowing on within the same solve, lifting the one-column-a-flow-
+     sub-step front limit, then the flow sub-step measured again; the number of flow sub-steps chosen each skin sub-step
+     from the Courant number and the growth; the momentum step on flowing columns only. Then the cost again, the trial
+     pass included.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
-   behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve; and
+   behaviour), the momentum-balance residual and the roughness that 6c's history columns report read on it, and the
+   plate's flow sub-step checked against 6c's choice; the cost of the sideways solve; and
    the share of the flight's flow at short wavelengths (kh not small) in flowing layers over about 1 mm, for the
    depth-uniform pressure's limitation (spec §14 assumption 1; Asha, 2026-10-21, option a). If that share is
    significant, a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells

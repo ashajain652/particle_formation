@@ -2291,6 +2291,37 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      the transport made the predicted heights to 6.5 um of a 0.15-0.17 mm change at the melt's rim. In a quiescent
      liquid layer ringing under surface tension the transport's cycles grew to 23 700 of its 33 810 cells in five 10 ms
      sub-steps and its LU to 4 s, whatever the ordering (fill 20-37 times).
+156. **The flow in the skin body (sub-plan 21 Task 6c, 2026-10-22).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6c/`, on the 100 mm sphere's 9 417 columns of 10 um cells under
+     the surface flow of the 100 mm flight at 93 s (stagnation pressure 11.9 kPa, -dp/ds up to 3.4e5 Pa/m at 45 deg, gas
+     shear up to 87 Pa, deceleration 29.8 m/s2; at 115 s 5.6e5 Pa/m and 48.4 m/s2), processor times under other
+     sessions' load. The front hemisphere's top 0.3 mm liquid over rigid metal, from rest, 50 ms of flow alone: at
+     flow sub-steps of 10, 5, 2.5, 2, 1, 0.5 and 0.25 ms the largest Courant numbers 1 266, 26, 12.6, 9.9, 4.8, 2.4 and
+     1.2; the transport destroys 0.59, 0.62, 0.52, 0.43, 0.27, 0.28 and 0.27 of the kinetic energy made; the kinetic
+     energy at 50 ms 4.81, 0.31, 0.36, 0.48, 1.04, 1.02 of the 0.25 ms run's, where the metal went 95, 85, 59, 44, 3.9
+     and 1.4 % off (L1). The drainage off the front agrees within 1.1 % at 5 ms and below; the runoff over the rigid rear
+     reaches 105, 120, 135, 150 and 180 deg at 10, 5, 2.5, 2 and 1 ms, because metal landing on a rigid top flows on only
+     in the next flow sub-step (6a's arrival rule): a front crossing rigid metal advances at most one column a flow
+     sub-step, 2 m/s on 2 mm columns at 1 ms. At 10 ms the thickness step's linearisations stop at their cap of 8 with
+     its predictions 13 times the change off, and with every column melted 10 ms blows up (the fastest cell 2 563 m/s
+     at the fourth sub-step); at 1 ms it is stable there (Courant to 4.7, 2 linearisations). Rayleigh-Taylor growth
+     dt s at 10, 5, 2 and 1 ms: 0.018, 0.0048, 8.3e-4, 2.1e-4 for 0.3 mm at 29.8 m/s2, up to 0.67, 0.17, 0.027, 0.0067
+     for 3.4 mm at 48.4 m/s2. Ruling: ten flow sub-steps a heat sub-step (1 ms); the flow off by default until stage 4's
+     spraying, the liquid kept with it on; on the command line `--skin-flow on` with `--removal girin`. Flow off
+     reproduces Task 6b's code to the last bit (the 3 MW/m2 removal run, numpy's generator seeded: unseeded, pyamg's
+     starting vectors make two runs differ in round-off). On a heating-sustained state (the front's skins 1.6 mm at the
+     conduction profile of 3 MW/m2: 0.30 mm liquid over 0.55 mm slurry, 310 000 cells flowing) the trial pass's base
+     law with the flow differs from the one without by 6.0 % of the throughput in total, 3 428 columns beyond the 1e-3
+     tolerance, so the trial pass runs the flow (1 216 s against 17 s for one 0.0625 s part); a 10 ms heat sub-step
+     costs 48 s with ten flow sub-steps (conduction 4.5, momentum 9.4, thickness 3.4, transport 29, regrid 1.5, push
+     0.5) against 8 s with one and 4.5 s of conduction alone. Quiescent melt under surface tension: the
+     transport's cycles grow to 10 315 of 141 000 cells in 12 sub-steps of 1 ms, 4-5 s a transport, 2.3 of 3.35 s in
+     SuperLU's factorisation; with every column melted the cycles at the rear stagnation point reach 18 000-57 000 cells
+     and 35-651 s a transport. The iteration x <- x + L^-1 (b - A x) from the upwind triangle reaches 1e-13 in 2-9
+     corrections: 0.05 against 0.30 s and 0.16 against 1.23 s (quiescent), 0.19 against 7.4 s and 0.41 against 41.8 s
+     (all melted), the books missing 2e-17; measured, not built. The thickness step's predicted heights miss the
+     transport's by 11-16 % of the change at the shoulder's pile at 1 ms, no less at shorter sub-steps. Tests: skin 72,
+     skin body 16, command line 66; unit tier 481 passed, 1 skipped.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
