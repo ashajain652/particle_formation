@@ -186,6 +186,7 @@ def test_flight_frames_reproduce_the_committed_rows(prepared_sample):
 def test_flight_synthetic_run_closes_its_accounts(tmp_path):
     """The hot-phase interval (frames 100-110, 50-55 s) prepared and run through fake_run and analyse, 3D, dx 2.2 mm."""
     import spheral_frag_synthetic as syn
+    from spheral_frag import naming
     run_dir = os.path.abspath(os.environ["SPHERAL_FRAG_FE_RUN"])
     package = os.path.abspath(os.environ["SPHERAL_FRAG_FE_PACKAGE"])
     p = subprocess.run([sys.executable, "-m", "spheral_frag", "prepare", "--fe-run", run_dir, "--fe-package",
@@ -197,7 +198,8 @@ def test_flight_synthetic_run_closes_its_accounts(tmp_path):
     p = subprocess.run([sys.executable, "-m", "spheral_frag", "analyse", "--run", run, "--prepared", prepared,
                         "--outdir", str(tmp_path / "analyse")], cwd=REPO_ROOT, capture_output=True, text=True)
     assert p.returncode == 0, p.stdout + p.stderr
-    with open(os.path.join(tmp_path, "analyse", os.path.basename(run), "analyse.json")) as fh:
+    with open(os.path.join(naming.analyse_dir(os.path.join(tmp_path, "analyse"), naming.run_name_from_dir(run)),
+                           "analyse.json")) as fh:
         a = json.load(fh)
     assert a["passed"] and a["max_abs_rel_residual"] <= THRESHOLDS["accounts"]
     assert a["counts"]["n_fragments"] == 1 and a["counts"]["n_debris_rows"] == syn.FAKE_N_DEBRIS

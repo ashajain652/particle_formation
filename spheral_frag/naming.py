@@ -7,7 +7,21 @@ default, in a fixed key order.
 
   prepared   prep_<fe run>_k<K0>-<K1>[_every<N>]                       spheral_output/prepare/<prepared>/
   run        <prepared>__<mode>_k<k0>-<k1>_<form>_dx<dx>mm_seed<n>[_<label>-<value>...]
-  analysis   the run's own name                                          spheral_output/analyse/<run>/
+                                                    spheral_output/runs/<prepared>/<mode>_k<k0>-<k1>_..._seed<n>[...]/
+  analysis   the run's own name                     spheral_output/analyse/<prepared>/<run suffix>/
+  body       body_<prepared>_k<k0>-<k1>_<form>_dx<dx>mm[_azimuth-<deg>deg][_synthetic-<sampler>][_geometry-<g>]
+                                                    spheral_output/body/<prepared>/k<k0>-<k1>_<form>_dx<dx>mm[...]/
+
+**Directories are nested** (Spheral M2 Task 7b): a run, analysis or body directory is `<out>/<prepared>/<suffix>/`,
+the suffix being the name after `<prepared>__` (runs, analyses) or after `body_<prepared>_` (bodies), because a whole
+name can exceed the 255 characters one path component allows (check 5's run names reached 246 with the MVP flight's
+140-character prepared name); a suffix that is itself longer than 255 characters continues in further levels, cut at
+a '_' (the layout notes at the end of this module). The full name is still the identity -- written in meta.json and
+body.json, parsed by `parse_run_name` -- and `run_dir`/`body_dir`/`analyse_dir` and their inverses
+`run_name_from_dir`/`body_name_from_dir` (end of this module) are the one place the layout is defined.
+
+Bracket values are numbers (written shortest-exact) or, for a string default (scheme, strength, sampler), lower-case
+words; the strength law "constant:<Pa>" is written "constant-<Pa>" with its number canonical (Spheral M2, Task 5).
 
 The double underscore separates the prepared name from the run's own parts; neither a finite-element run name nor
 any part written here contains one. Frame indices are zero-padded to five digits. Names never contain spaces or `/`.
@@ -16,6 +30,7 @@ Numpy-free: the standard library only."""
 from __future__ import annotations
 
 import math
+import os
 import re
 
 MODES = ("replay", "separation", "slurry", "detachment", "synthetic")
@@ -30,6 +45,33 @@ BRACKET_DEFAULTS: dict[str, object] = {
     "lee_shear": 0.5,            # §7.2 lee extension: shear as a fraction of the last windward bin's (Question 4)
     "min_particles": 30,         # §11.1: smallest group recorded as a fragment
     "link_h": 1.5,               # §11.1: dust within link_h smoothing lengths of an intact member attaches
+    # Spheral M2 (plan Task 5): the replay's devices
+    "crossings": 10,             # §9.1: sound crossings of the body per replay interval (sets the mass scale)
+    "damping": 0.05,             # D5: the damping ratio zeta at the lowest breathing frequency
+    "scheme": "sph",             # Task 9: the hydro scheme, sph (SolidSPH) or crksph (SolidCRKSPH)
+    "strength": "flight",        # spec §8.3: the flow-stress law, flight | elastic | constant:<Pa>
+    "rate_min": 1e-6,            # D6: the strain-rate floor of the flight law, 1/s
+    "sampler": "p1",             # the body's temperature sampler (body name's _synthetic-<sampler>; Task 6)
+    "azimuth_deg": 0.0,          # an RZ body's half-plane azimuth (body name's _azimuth-<deg>deg)
+    "loads": "on",               # Task 6: the surface loads and deceleration packages, on | off (check 4: off)
+    "mass_scaling": "on",        # Task 6: on (spec §9.1) | off (s = 1, each interval run in N_c D / c_l seconds)
+    # Spheral M2 decision 7 (Task 6b): the replay's crossings-error monitor
+    "monitor_every": 10,         # every this many intervals (and the first) rerun at 2 N_c to estimate the error; 0 off
+    "monitor_limit": 0.05,       # above this estimate the run continues at 2 N_c (Asha's limit over the flight)
+    # Spheral M2 Task 7 (check 5): the body's geometry, "frame" (the finite-element body's lattice) or a synthetic
+    # shape ("bar": check 5's bar held at both ends; body name's _geometry-<geometry>)
+    "geometry": "frame",
+    # Spheral M2 Task 8 (check 6): hold one frame's load tables at every interval (-1: each interval's own frames)
+    "loads_frame": -1,
+    # Spheral M2 Task 8 (check 6): the surface particles' area shares, "patch" (each finite-element surface patch's
+    # area to the nearest surface particle; packages/loads.py) or "volume" (V^(2/3), one calibration factor). The
+    # default is patch since decision 9 (2026-10-11); the runs made before with loads on and volume shares carry
+    # "_areashares-volume" explicitly. Only emitted with loads on (the runner refuses another value with loads off).
+    "area_shares": "patch",
+    # Spheral M2 Task 10b: the hourglass stiffness kappa against SolidSPH's tensile pairing (packages/hourglass.py),
+    # default 0.01 since Task 10b (2026-10-12); every replay run made before carries "_hourglass-0" explicitly. A
+    # replay device: other modes' names carry the default.
+    "hourglass": 0.01,
 }
 # key -> (label in the name, unit appended to the value)
 BRACKET_LABELS: dict[str, tuple[str, str]] = {
@@ -39,6 +81,21 @@ BRACKET_LABELS: dict[str, tuple[str, str]] = {
     "lee_shear": ("leeshear", ""),
     "min_particles": ("minparticles", ""),
     "link_h": ("linkh", ""),
+    "crossings": ("crossings", ""),
+    "damping": ("damping", ""),
+    "scheme": ("scheme", ""),
+    "strength": ("strength", ""),
+    "rate_min": ("ratemin", ""),
+    "sampler": ("sampler", ""),
+    "azimuth_deg": ("azimuth", "deg"),
+    "loads": ("loads", ""),
+    "mass_scaling": ("massscaling", ""),
+    "monitor_every": ("monitorevery", ""),
+    "monitor_limit": ("monitorlimit", ""),
+    "geometry": ("geometry", ""),
+    "loads_frame": ("loadsframe", ""),
+    "area_shares": ("areashares", ""),
+    "hourglass": ("hourglass", ""),
 }
 _KEY_OF_LABEL = {label: key for key, (label, _) in BRACKET_LABELS.items()}
 
@@ -46,6 +103,9 @@ _PREPARE_RE = re.compile(r"^prep_(?P<fe_run>.+)_k(?P<k0>\d{5,})-(?P<k1>\d{5,})(?
 _FRAMES_RE = re.compile(r"^k(?P<k0>\d{5,})-(?P<k1>\d{5,})$")
 _DX_RE = re.compile(r"^dx(?P<dx>.+)mm$")
 _SEED_RE = re.compile(r"^seed(?P<seed>\d+)$")
+_BODY_RE = re.compile(r"^body_(?P<prepared>.+)_k(?P<k0>\d{5,})-(?P<k1>\d{5,})_(?P<form>rz|3d)_dx(?P<dx>[^_]+)mm"
+                      r"(?:_azimuth-(?P<azimuth>[^_]+)deg)?(?:_synthetic-(?P<synthetic>[a-z0-9]+))?"
+                      r"(?:_geometry-(?P<geometry>[a-z0-9]+))?$")
 
 
 def _check_part(text, what):
@@ -83,6 +143,61 @@ def _format_number(value, integer):
     return str(int(v)) if v.is_integer() and abs(v) < 1e15 else repr(v)
 
 
+_TEXT_RE = re.compile(r"^[a-z0-9.+:-]+$")
+
+
+def _canonical_text(key, value):
+    """A string bracket's canonical value: lower-case letters, digits and . + - :; the strength law "constant:<Pa>"
+    with its number written as `_format_number` writes it."""
+    if not isinstance(value, str) or not _TEXT_RE.match(value):
+        raise ValueError("bracket {} must be a lower-case word, got {!r}".format(key, value))
+    if key == "strength" and value.startswith("constant:"):
+        try:
+            number = float(value[len("constant:"):])
+        except ValueError:
+            raise ValueError("bad strength law {!r}".format(value)) from None
+        if not (math.isfinite(number) and number > 0.0):
+            raise ValueError("a constant strength must be positive and finite, got {!r}".format(value))
+        return "constant:" + _format_number(number, False)
+    if ":" in value:
+        raise ValueError("bracket {} {!r} contains ':'".format(key, value))
+    return value
+
+
+def _text_to_name(text):
+    return text.replace(":", "-", 1)           # a name never holds ':' (constant:1e8 -> constant-1e8)
+
+
+def _text_from_name(text):
+    return text.replace("-", ":", 1) if text.startswith("constant-") else text
+
+
+def _bracket_text(key, value):
+    """The text of a bracket's value in a name."""
+    default = BRACKET_DEFAULTS[key]
+    if isinstance(default, str):
+        return _text_to_name(_canonical_text(key, value))
+    return _format_number(value, isinstance(default, int) and not isinstance(default, bool))
+
+
+def canonical_brackets(brackets: dict) -> dict:
+    """Every key of BRACKET_DEFAULTS, the given values in canonical form (as parse_run_name returns them)."""
+    unknown = sorted(set(brackets) - set(BRACKET_DEFAULTS))
+    if unknown:
+        raise ValueError("unknown bracket setting(s): {}".format(", ".join(unknown)))
+    out = dict(BRACKET_DEFAULTS)
+    for key, value in brackets.items():
+        default = BRACKET_DEFAULTS[key]
+        if isinstance(default, str):
+            out[key] = _canonical_text(key, value)
+        elif isinstance(default, int) and not isinstance(default, bool):
+            out[key] = int(_format_number(value, True))
+        else:
+            _format_number(value, False)
+            out[key] = float(value)
+    return out
+
+
 def _format_dx(dx_mm):
     v = float(dx_mm)
     if not (math.isfinite(v) and v > 0.0):
@@ -117,9 +232,8 @@ def bracket_suffix(brackets: dict) -> str:
     for key, default in BRACKET_DEFAULTS.items():
         if key not in brackets:
             continue
-        integer = isinstance(default, int) and not isinstance(default, bool)
-        text = _format_number(brackets[key], integer)
-        if text == _format_number(default, integer):
+        text = _bracket_text(key, brackets[key])
+        if text == _bracket_text(key, default):
             continue
         label, unit = BRACKET_LABELS[key]
         parts.append("_{}-{}{}".format(label, text, unit))
@@ -176,7 +290,15 @@ def parse_run_name(name) -> dict:
                 raise ValueError("bracket suffix {!r} lacks its unit {!r}".format(token, unit))
             text = text[:-len(unit)]
         default = BRACKET_DEFAULTS[key]
-        brackets[key] = int(text) if isinstance(default, int) and not isinstance(default, bool) else float(text)
+        try:
+            if isinstance(default, str):
+                brackets[key] = _canonical_text(key, _text_from_name(text))
+            elif isinstance(default, int) and not isinstance(default, bool):
+                brackets[key] = int(text)
+            else:
+                brackets[key] = float(text)
+        except ValueError:
+            raise ValueError("bad bracket suffix {!r} in {!r}".format(token, name)) from None
         seen.append(key)
     order = [k for k in BRACKET_DEFAULTS if k in seen]
     if seen != order:
@@ -190,3 +312,147 @@ def parse_run_name(name) -> dict:
     if run_name(prepared, mode, out["frames"], form, out["dx_mm"], brackets, out["seed"]) != name:
         raise ValueError("not a canonical run name: {!r}".format(name))
     return out
+
+
+def body_name(prepared: str, k0: int, k1: int, form: str, dx_mm: float, azimuth_deg: float = 0.0,
+              synthetic: str | None = None, geometry: str | None = None) -> str:
+    """'body_<prepared>_k00000-00047_rz_dx2.20mm' (M2 plan, Global constraints): the body stage's output directory.
+    The azimuth of an RZ body's half-plane (default 0), a synthetic temperature sampler (Task 6) and a synthetic
+    geometry (Task 7: "bar"; None or "frame" is the finite-element body's lattice) are suffixes when they differ from
+    their defaults."""
+    _check_part(prepared, "prepared-input name")
+    if form not in FORMS:
+        raise ValueError("form must be one of {}, got {!r}".format(FORMS, form))
+    name = "body_{}_{}_{}_dx{}mm".format(prepared, _frames(k0, k1), form, _format_dx(dx_mm))
+    az = _format_number(azimuth_deg, False)
+    if az != "0":
+        name += "_azimuth-{}deg".format(az)
+    if synthetic is not None:
+        if not isinstance(synthetic, str) or not re.fullmatch(r"[a-z0-9]+", synthetic):
+            raise ValueError("a synthetic sampler name is lower-case letters and digits, got {!r}".format(synthetic))
+        name += "_synthetic-{}".format(synthetic)
+    if geometry is not None and geometry != "frame":
+        if not isinstance(geometry, str) or not re.fullmatch(r"[a-z0-9]+", geometry):
+            raise ValueError("a geometry name is lower-case letters and digits, got {!r}".format(geometry))
+        name += "_geometry-{}".format(geometry)
+    return name
+
+
+def parse_body_name(name) -> dict:
+    """Inverse of body_name: {'prepared', 'frames', 'form', 'dx_mm', 'azimuth_deg', 'synthetic', 'geometry',
+    'prepare'} (geometry "frame" when the name has no suffix)."""
+    m = _BODY_RE.match(name) if isinstance(name, str) else None
+    if m is None or "__" in name:
+        raise ValueError("not a body name: {!r}".format(name))
+    try:
+        out = {"prepared": m["prepared"], "frames": (int(m["k0"]), int(m["k1"])), "form": m["form"],
+               "dx_mm": float(m["dx"]), "azimuth_deg": float(m["azimuth"]) if m["azimuth"] else 0.0,
+               "synthetic": m["synthetic"], "geometry": m["geometry"] or "frame"}
+        canonical = body_name(out["prepared"], *out["frames"], out["form"], out["dx_mm"], out["azimuth_deg"],
+                              out["synthetic"], out["geometry"])
+    except ValueError:
+        raise ValueError("not a body name: {!r}".format(name)) from None
+    if canonical != name:
+        raise ValueError("not a canonical body name: {!r}".format(name))
+    try:
+        out["prepare"] = parse_prepare_name(out["prepared"])
+    except ValueError:
+        out["prepare"] = None
+    return out
+
+
+# ------------------------------------------------------------------------------------------- directory layout
+# Spheral M2 Task 7b. A directory name is one path component, at most NAME_MAX characters (macOS APFS, Linux ext4 and
+# the container's overlay); the MVP flight's prepared name is 140-156 characters and a run's own part grows with every
+# bracket, so whole run names stopped fitting (check 5's was 246; one more bracket raised OSError 36). Every run,
+# analysis and body directory is therefore nested under its prepared input's name:
+#
+#   run        <out>/<prepared>/<run suffix>/       run suffix = the run name after '<prepared>__'
+#   analysis   <out>/<prepared>/<run suffix>/       the analysis name (the run's own name) split the same way
+#   body       <out>/<prepared>/<body suffix>/      body suffix = the body name after 'body_<prepared>_'
+#
+# A suffix longer than NAME_MAX (a run with most brackets set: every one non-default makes 356 characters) continues
+# in a further level: it is cut at the '_' before the first token that would not fit, as often as needed, so
+# '<out>/<prepared>/<first part>/<rest>/' joined with '_' is the suffix again. Below NAME_MAX nothing is cut, so the
+# layout of every run so far is the plain two-level one.
+#
+# The full names stay the identities (meta.json's run_name, body.json's name, the CSVs' run columns):
+# `run_name_from_dir` and `body_name_from_dir` rebuild them from the directory. Use these helpers wherever such a
+# directory is formed or found, never os.path.join(out, name).
+NAME_MAX = 255
+
+
+def _components(suffix: str) -> list[str]:
+    """The suffix cut at '_' into components of at most NAME_MAX characters, each as long as it can be."""
+    parts, current = [], None
+    for token in suffix.split("_"):
+        if len(token) > NAME_MAX:
+            raise ValueError("a name part of {} characters exceeds {}: {!r}".format(len(token), NAME_MAX, token))
+        if current is not None and len(current) + 1 + len(token) <= NAME_MAX:
+            current += "_" + token
+        else:
+            if current is not None:
+                parts.append(current)
+            current = token
+    parts.append(current)
+    return parts
+
+
+def _nested(out, prepared, suffix, what):
+    if len(prepared) > NAME_MAX:
+        raise ValueError("the prepared name of {} {!r} has {} characters, more than one directory holds ({})".format(
+            what, prepared, len(prepared), NAME_MAX))
+    return os.path.join(os.fspath(out), prepared, *_components(suffix))
+
+
+def _from_dir(path, join, split):
+    """The name whose nested directory `path` is: the shallowest split of its trailing components that is one."""
+    parts = os.path.normpath(os.fspath(path)).split(os.sep)
+    for depth in range(1, len(parts) - 1):
+        prepared, rest = parts[-depth - 1], parts[-depth:]
+        name = join(prepared, "_".join(rest))
+        try:
+            if split(name) == (prepared, "_".join(rest)) and _components("_".join(rest)) == rest:
+                return name
+        except ValueError:
+            pass
+    raise ValueError("not a nested name directory: {!r}".format(os.fspath(path)))
+
+
+def split_run_name(run: str) -> tuple[str, str]:
+    """(prepared, run suffix) of a run (or analysis) name, checked to be one."""
+    parse_run_name(run)
+    prepared, suffix = run.split("__")
+    return prepared, suffix
+
+
+def run_dir(out, run: str) -> str:
+    """The directory of run `run` under the runs directory `out`: <out>/<prepared>/<run suffix>, the suffix cut into
+    further levels only where it exceeds NAME_MAX (module layout notes above)."""
+    return _nested(out, *split_run_name(run), "run")
+
+
+def run_name_from_dir(path) -> str:
+    """Inverse of run_dir: the full run name of a run (or analysis) directory; ValueError if it is not one."""
+    return _from_dir(path, lambda prepared, suffix: "{}__{}".format(prepared, suffix), split_run_name)
+
+
+def analyse_dir(out, run: str) -> str:
+    """The analysis directory of run `run` under `out` (spheral_output/analyse): laid out as run_dir."""
+    return run_dir(out, analyse_name(run))
+
+
+def split_body_name(body: str) -> tuple[str, str]:
+    """(prepared, body suffix) of a body name, checked to be one; the suffix starts with 'k<k0>-<k1>_'."""
+    prepared = parse_body_name(body)["prepared"]
+    return prepared, body[len("body_{}_".format(prepared)):]
+
+
+def body_dir(out, body: str) -> str:
+    """The directory of body `body` under the bodies directory `out`: <out>/<prepared>/<body suffix>, cut as a run's."""
+    return _nested(out, *split_body_name(body), "body")
+
+
+def body_name_from_dir(path) -> str:
+    """Inverse of body_dir: the full body name of a body directory; ValueError if it is not one."""
+    return _from_dir(path, lambda prepared, suffix: "body_{}_{}".format(prepared, suffix), split_body_name)

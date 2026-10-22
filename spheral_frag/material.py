@@ -25,8 +25,27 @@ at the solidus); 2 = linear range, `clip((T - T_s)/(T_l - T_s), 0, 1)` written a
 eta = [0.871 - 0.00849 g^0.74924] exp(3.7311 f_s) Pa s for 0.1 <= f_s <= 0.5, the shear rate g held at no more than
 367 1/s; a log-linear bridge in T from its f_s = 0.1 value at `T_bridge` (where f_l = 0.9 on the table's own curve:
 906.37 K for AA7075_scheil, the spec's "906.4 K") to the liquid's viscosity at the liquidus (908 K); the liquid's
-1.3 mPa s above; inf below 50 % liquid (no viscous row: the solid and mush rows of §8.3 are M2's). The flow-stress and
-tearing laws of §8.3-8.4 are not in M1.
+1.3 mPa s above; inf below 50 % liquid (no viscous row: the solid and mush rows of §8.3 are M2's).
+
+**Flow stress** (spec §8.3; M2 plan Task 3, fact 10, decisions at review 1 and 4): `flow_stress(table, T, rate, law)`.
+Chen G. et al. (2016, J. Alloys Compd. 674, 26-36) Eq. 20, sigma in MPa inside the law and Pa outside, R = 8.314:
+plastic branch rate = 6.75872e11 sinh(0.014677 sigma)^6.85385 exp(-186163/RT); semi-solid branch
+(1 - 2 f_l)^15.81342 rate = 1.28926e8 sinh(0.03006 sigma)^6.521135 exp(-175131/RT). Both are inverted in logs,
+sigma = arcsinh(exp(z))/a with z = (ln rate + m ln(1 - 2 f_l) + Q/RT - ln A)/n, so exp(Q/RT) never overflows (at
+1 K it would) and arcsinh(e^z) is taken as z + ln 2 where e^-2z is below round-off. Law "flight": the plastic branch
+where f_l = 0 (decision 1: below 623 K it is Chen's branch extended, the labelled `provisional` placeholder of open
+input 1, `FLOW_STRESS_PROVISIONAL`; from 623 K to the solidus Chen's own range), the semi-solid branch for
+0 < f_l < 0.5, zero at and above 50 % liquid (the stiff replay carries no viscous rows; M4 adds them); the rate is
+floored at `rate_min` (D6: 1e-6 1/s, bracket 1e-7 and 1e-5), since the law gives zero stress at zero rate. Law
+"elastic": infinite. Law "constant:<Pa>": that value everywhere (checks 4-6). Measured (tests): Chen's own peak
+stresses at 600 C, 8.2 MPa at 1e-3 1/s and 22.2 MPa at 1 1/s, are the semi-solid branch at f_l = 0.191, his measured
+liquid fraction (his data reach f_l = 0.19); this table's Scheil curve has f_l = 0.233 there. The tearing law of §8.4
+is M3's.
+
+**Equation of state and shear modulus** (spec §8.2-8.3; M2 plan Task 3): `thermal_eos` (P = K(T)(rho/(s rho_free(T))
+- 1) with its derivatives, sound speed and bulk modulus; u is the enthalpy from 300 K) and `thermal_shear_modulus`
+(G(T), zero at 50 % liquid and above) and `thermal_sound_speed` (the longitudinal sqrt(c_f^2 + 4G/(3 rho)) the
+strength provides for Spheral's time step): the numpy core of the runner's PyThermalEOS and PyThermalStrength.
 
 **Mechanical columns** (decision 2: labelled M1 placeholders; decision 3: the liquid's free density is the finite
 element's liquid density), built by `mechanical_columns`:
@@ -56,6 +75,20 @@ T_REF_EXPANSION = 293.0            # K, where rho_solid is the room-temperature 
 
 FL_NONE, FL_INTERP, FL_LINEAR = 0, 1, 2
 
+# Chen G. et al. (2016) Eq. 20 (M2 plan fact 10; Step 4 plan §4): rate = A sinh(a sigma)^n exp(-Q/RT), sigma in MPa
+R_GAS = 8.314                                                # J/(mol K), as Chen's fit
+CHEN_PLASTIC = dict(A=6.75872e11, a=0.014677, n=6.85385, Q=186163.0)
+CHEN_SEMI_SOLID = dict(A=1.28926e8, a=0.03006, n=6.521135, Q=175131.0, m=15.81342)   # times (1 - 2 f_l)^m
+T_CHEN_MIN = 623.0          # K (350 C), the lowest temperature of Chen's tests; the plastic branch below it is
+                            # decision 1's provisional placeholder
+FL_FLOW_ZERO = 0.5          # liquid fraction at and above which the flight law's flow stress is zero
+RATE_MIN = 1.0e-6           # 1/s, the strain-rate floor (D6, decision 4); bracket RATE_MIN_BRACKET
+RATE_MIN_BRACKET = (1.0e-7, 1.0e-5)
+FLOW_LAWS = ("flight", "elastic", "constant:<Pa>")
+FLOW_STRESS_PROVISIONAL = ("yield strength below 623 K: Chen 2016's plastic branch extended (decision 1 of the M2 "
+                           "review, 2026-10-09); the handbook curve of 7075-T6 (open input 1) is owed before "
+                           "production")
+
 # Li Yageng et al. (2014), China Foundry 11, 79-84: semi-solid 7075 slurry viscosity (Step 4 plan §4; spec §2)
 LI_A, LI_B, LI_N, LI_C = 0.871, 0.00849, 0.74924, 3.7311    # eta = [A - B g^N] exp(C f_s) Pa s
 LI_FS_MIN, LI_FS_MAX = 0.1, 0.5                              # the fit's solid-fraction range
@@ -73,6 +106,122 @@ _FMA_PROBE = (float.fromhex("0x1.a278fee007243p+9"), (float.fromhex("0x1.a2p+9")
               (float.fromhex("0x1.ab897af86fe0cp-4"), float.fromhex("0x1.b2fc3c31416fdp-4")),
               float.fromhex("0x1.b293e4de5d9bdp-4"))        # x, xp, fp, the fused result (unfused: ...9bc)
 QUAD = np.finfo(np.longdouble).nmant >= 112
+
+
+def _sinh_law_inverse(log_rate, T, A, a, n, Q):
+    """Pa: sigma with rate = A sinh(a sigma[MPa])^n exp(-Q/RT), from ln(rate) (-inf gives 0), in logs (module
+    docstring)."""
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        z = (log_rate + Q/(R_GAS*T) - math.log(A))/n
+        big = z > 20.0                                       # e^-2z < 5e-18: arcsinh(e^z) = z + ln 2 to round-off
+        asinh = np.where(big, z + math.log(2.0), np.arcsinh(np.exp(np.where(big, 0.0, z))))
+        return 1.0e6*asinh/a                                 # MPa -> Pa (inf only as T -> 0)
+
+
+def _log_rate(rate):
+    rate = np.asarray(rate, dtype=float)
+    with np.errstate(divide="ignore"):
+        return np.log(np.maximum(rate, 0.0))
+
+
+def chen_plastic(T, rate) -> np.ndarray:
+    """Pa, Chen et al. (2016) Eq. 20's plastic branch at temperature T (K) and strain rate (1/s); zero at zero rate."""
+    T, lr = np.broadcast_arrays(np.asarray(T, dtype=float), _log_rate(rate))
+    c = CHEN_PLASTIC
+    return _sinh_law_inverse(lr, T, c["A"], c["a"], c["n"], c["Q"])
+
+
+def chen_semi_solid(T, f_l, rate) -> np.ndarray:
+    """Pa, Chen et al. (2016) Eq. 20's semi-solid branch at T (K), liquid fraction f_l and strain rate (1/s); zero at
+    f_l >= 0.5 (where (1 - 2 f_l)^m vanishes) and at zero rate."""
+    T, f_l, rate = np.broadcast_arrays(np.asarray(T, dtype=float), np.asarray(f_l, dtype=float),
+                                       np.asarray(rate, dtype=float))
+    c = CHEN_SEMI_SOLID
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lr = _log_rate(rate) + c["m"]*np.log(np.maximum(1.0 - 2.0*f_l, 0.0))
+    s = _sinh_law_inverse(lr, T, c["A"], c["a"], c["n"], c["Q"])
+    return np.where(f_l >= FL_FLOW_ZERO, 0.0, s)
+
+
+def parse_flow_law(law):
+    """("flight" | "elastic" | "constant", value in Pa or None); ValueError for anything else."""
+    if law in ("flight", "elastic"):
+        return law, None
+    if isinstance(law, str) and law.startswith("constant:"):
+        try:
+            v = float(law.split(":", 1)[1])
+        except ValueError:
+            v = float("nan")
+        if math.isfinite(v) and v >= 0.0:
+            return "constant", v
+    raise ValueError("flow-stress law must be one of {}, got {!r}".format(FLOW_LAWS, law))
+
+
+def flow_stress_provisional(law) -> tuple:
+    """The provisional labels a law carries (for prepare and run to print): the flight law's solid yield below 623 K."""
+    return (FLOW_STRESS_PROVISIONAL,) if parse_flow_law(law)[0] == "flight" else ()
+
+
+def flow_stress(table, T, rate, law="flight", rate_min=RATE_MIN) -> np.ndarray:
+    """Pa, the flow (yield) stress of spec §8.3 at temperature T and strain rate (module docstring): law "flight"
+    (Chen's plastic branch where f_l = 0, provisional below 623 K; the semi-solid branch for 0 < f_l < 0.5; zero
+    above), "elastic" (inf) or "constant:<Pa>". The rate is floored at rate_min (D6) for the flight law."""
+    kind, value = parse_flow_law(law)
+    T = np.asarray(T, dtype=float)
+    T, rate = np.broadcast_arrays(T, np.asarray(rate, dtype=float))
+    if kind == "elastic":
+        return np.full(T.shape, np.inf)
+    if kind == "constant":
+        return np.full(T.shape, value)
+    r = np.maximum(rate, rate_min)
+    f_l = table.liquid_fraction(T)
+    plastic = chen_plastic(T, r)
+    semi = chen_semi_solid(T, f_l, r)
+    return np.where(f_l <= 0.0, plastic, np.where(f_l < FL_FLOW_ZERO, semi, 0.0))
+
+
+def thermal_eos(table, rho, u, scale=1.0) -> dict:
+    """The equation of state of spec §8.2 on whole arrays (numpy only; the runner's PyThermalEOS writes these values
+    into Spheral's fields). u is the specific thermal energy, J/kg from 300 K: the table's enthalpy, latent heat
+    included, so T = table.temperature(u) (the table's own zero is 300 K: enthalpy(300 K) = 0 exactly). With the mass
+    scale factor s, eta = rho / (s rho_free(T)):
+
+      P       = K(T) (eta - 1)
+      dP/drho = K(T) / (s rho_free(T)),  c = sqrt(dP/drho),  bulk modulus rho dP/drho = K(T) eta
+      dP/du   = (dP/dT)_rho / (dh/dT), dP/dT = K'(T)(eta - 1) - K(T) eta rho_free'(T)/rho_free(T): exact for the
+                table's piecewise-linear K and rho_free and piecewise-quadratic h (one-sided at their nodes)
+      gamma   = 1 + (s/rho) dP/du, the Grueneisen form 1 + (1/rho) dP/du with the physical density rho/s
+      c_p     = table.cp(T) (no latent part)
+
+    Returns a dict of arrays: T, P, dPdrho, dPdu, cs, K (the bulk modulus rho dP/drho), cp, gamma. P, s dPdrho,
+    sqrt(s) cs, K, dPdu and gamma depend on (rho, s) only through rho/s: the stresses are invariant under mass
+    scaling."""
+    rho = np.asarray(rho, dtype=float)
+    u = np.asarray(u, dtype=float)
+    T = table.temperature(u)
+    K = table.bulk_modulus(T)
+    rf = table.rho_free(T)
+    srf = scale*rf
+    eta = rho/srf
+    dPdrho = K/srf
+    dPdT = table.grid_slope("K", T)*(eta - 1.0) - K*eta*table.grid_slope("rho_free", T)/rf
+    dPdu = dPdT/table.dh_dT(T)
+    return dict(T=T, P=K*(eta - 1.0), dPdrho=dPdrho, dPdu=dPdu, cs=np.sqrt(dPdrho), K=rho*dPdrho,
+                cp=table.cp(T), gamma=1.0 + scale*dPdu/rho)
+
+
+def thermal_shear_modulus(table, T) -> np.ndarray:
+    """Pa, the shear modulus of spec §8.3 at T: the table's G(T), zero at and above 50 % liquid."""
+    T = np.asarray(T, dtype=float)
+    return np.where(table.liquid_fraction(T) >= FL_FLOW_ZERO, 0.0, table.shear_modulus(T))
+
+
+def thermal_sound_speed(table, T, rho, fluid_sound_speed) -> np.ndarray:
+    """m/s, the longitudinal sound speed the strength provides (as Spheral's SteinbergGuinan does):
+    sqrt(c_f^2 + 4 G(T) / (3 rho)), c_f the equation of state's sound speed and rho the density Spheral holds (scaled
+    by s, so that c scales as 1/sqrt(s) like c_f); G is `thermal_shear_modulus`, zero at 50 % liquid and above."""
+    cf = np.asarray(fluid_sound_speed, dtype=float)
+    return np.sqrt(cf*cf + (4.0/3.0)*thermal_shear_modulus(table, T)/np.asarray(rho, dtype=float))
 
 
 def interp_fuses() -> bool:
@@ -327,6 +476,28 @@ class MaterialTable:
 
     def poisson(self, T) -> np.ndarray:
         return self._grid("nu", T)
+
+    def grid_slope(self, key, T) -> np.ndarray:
+        """d(column)/dT of the 1 K column `key` as np.interp evaluates it: the slope of the interval holding T (the
+        upper one at a node, as np.interp's search), zero outside the grid (np.interp holds the end values)."""
+        T = np.asarray(T, dtype=float)
+        xp, fp = self.T_grid, self.grid[key]
+        j = np.clip(np.searchsorted(xp, T, side="right") - 1, 0, len(xp) - 2)
+        slope = (fp[j + 1] - fp[j])/(xp[j + 1] - xp[j])
+        return np.where((T < xp[0]) | (T >= xp[-1]), 0.0, slope)
+
+    def dh_dT(self, T) -> np.ndarray:
+        """J/(kg K), the derivative of `enthalpy`, latent heat included (c_p plus L df_l/dT), exactly as the
+        piecewise quadratic gives it (the upper interval at a node, cp_end outside the nodes)."""
+        T = np.asarray(T, dtype=float)
+        hT = self.h_T
+        i = np.clip(np.searchsorted(hT, T, side="right") - 1, 0, len(hT) - 2)
+        T0, T1 = hT[i], hT[i + 1]
+        cp0, cp1 = self.h_cp0[i], self.h_cp1[i]
+        x = np.clip(T, T0, T1) - T0
+        d = cp0 + self.h_slope[i] + (cp1 - cp0)/(T1 - T0)*x
+        d = np.where(T < hT[0], self.cp_end[0], d)
+        return np.where(T > hT[-1], self.cp_end[1], d)
 
     def implied_melting_volume_change(self) -> float:
         """rho_free just below the liquidus' solid branch over the liquid density, minus 1: the volume change on

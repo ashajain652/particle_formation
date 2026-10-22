@@ -38,7 +38,7 @@ for p in (REPO_ROOT, os.path.join(REPO_ROOT, "analysis"), os.path.join(REPO_ROOT
         sys.path.insert(0, p)
 
 import plot_style  # noqa: E402
-from spheral_frag import frames  # noqa: E402
+from spheral_frag import frames, naming  # noqa: E402
 
 DEFAULT_FE_RUN = os.path.join(
     REPO_ROOT, "reentry_model_output",
@@ -238,12 +238,12 @@ def fake_runs(prepared, out_root):
         cmd = [sys.executable, "-m", "spheral_frag", "analyse", "--run", run_dir, "--prepared", prepared,
                "--outdir", os.path.join(out_root, "analyse"), "--force"]
         p = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-        entry = {"interval": [k0, k1], "run": os.path.basename(run_dir), "exit": p.returncode,
+        entry = {"interval": [k0, k1], "run": naming.run_name_from_dir(run_dir), "exit": p.returncode,
                  "n_debris_planted": n_debris, "n_particles": answers["n_particles"], "ring_mass_kg": answers["ring_mass_kg"],
                  "ring_count": len(answers["ring_ids"]),
                  "stdout_tail": p.stdout.strip().splitlines()[-3:], "stderr_tail": p.stderr.strip().splitlines()[-3:]}
         if p.returncode == 0:
-            adir = os.path.join(out_root, "analyse", os.path.basename(run_dir))
+            adir = naming.analyse_dir(os.path.join(out_root, "analyse"), naming.run_name_from_dir(run_dir))
             with open(os.path.join(adir, "analyse.json")) as fh:
                 a = json.load(fh)
             entry.update({k: a[k] for k in ("counts", "max_abs_rel_residual", "max_abs_residual_kg", "passed")})

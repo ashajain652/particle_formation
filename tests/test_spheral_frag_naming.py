@@ -47,7 +47,8 @@ def test_non_default_bracket_adds_exactly_its_suffix():
 
 
 NON_DEFAULT = {"film_limit_mm": 3.0, "base_pressure_pct": 1.5, "separation_deg": 120.0, "lee_shear": 0.25,
-               "min_particles": 50, "link_h": 2.0}
+               "min_particles": 50, "link_h": 2.0, "crossings": 20, "damping": 0.2, "scheme": "crksph",
+               "strength": "constant:100000000", "rate_min": 1e-07, "sampler": "radial", "azimuth_deg": 90.0}
 
 
 def configurations():
@@ -103,6 +104,9 @@ def test_names_differ_when_any_setting_differs():
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_linkh-2_filmlimit-3mm",   # out of order
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_filmlimit-3",     # unit missing
     PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_colour-3",        # unknown bracket
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_strength-constant-1e8",   # strength not canonical
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_scheme-SPH",      # upper case
+    PREP + "__replay_k00051-00450_rz_dx1.10mm_seed1_crossings-2.5",   # not an integer
 ])
 def test_parse_rejects(bad):
     with pytest.raises(ValueError):
@@ -114,6 +118,70 @@ def test_parse_rejects(bad):
 def test_bad_arguments():
     for over in [dict(mode="walk"), dict(form="2d"), dict(dx_mm=0.0), dict(dx_mm=float("nan")), dict(seed=-1),
                  dict(seed=1.0), dict(frames=(5, 4)), dict(prepared="a__b"), dict(prepared="a b"),
-                 dict(brackets={"min_particles": 2.5}), dict(brackets={"lee_shear": float("inf")})]:
+                 dict(brackets={"min_particles": 2.5}), dict(brackets={"lee_shear": float("inf")}),
+                 dict(brackets={"strength": "constant:-5"}), dict(brackets={"scheme": "a_b"}),
+                 dict(brackets={"scheme": 3})]:
         with pytest.raises(ValueError):
             naming.run_name(**base(**over))
+
+
+# ------------------------------------------------------------------------------------- directory layout (Task 7b)
+LONG_PREP = naming.prepare_name("model_" + "x" * 181, 0, 1254)          # 205 characters
+EVERY_BRACKET = dict(film_limit_mm=3.0, base_pressure_pct=4.0, separation_deg=170.0, lee_shear=0.25, min_particles=50,
+                     link_h=2.0, crossings=20, damping=0.2, scheme="crksph", strength="constant:1.5e8", rate_min=1e-5,
+                     sampler="radialdt20r2", azimuth_deg=22.5, loads="off", mass_scaling="off", monitor_every=5,
+                     monitor_limit=0.025, geometry="barl50w10h1", loads_frame=182,
+                     area_shares="volume", hourglass=0.0)
+
+
+def test_long_run_name_nests_and_parses_back(tmp_path):
+    import os
+    assert len(LONG_PREP) == 205 and set(EVERY_BRACKET) == set(naming.BRACKET_DEFAULTS)
+    name = naming.run_name(LONG_PREP, "replay", (0, 1254), "3d", 1.1, EVERY_BRACKET, 1)
+    assert len(name) > 2 * naming.NAME_MAX                     # whole: far beyond one component
+    d = naming.run_dir(str(tmp_path / "runs"), name)
+    rel = os.path.relpath(d, str(tmp_path / "runs")).split(os.sep)
+    assert rel[0] == LONG_PREP and len(rel) == 3                # the 369-character suffix cut once
+    assert all(len(p) <= naming.NAME_MAX for p in rel) and "_".join(rel[1:]) == name.split("__")[1]
+    os.makedirs(d)
+    assert naming.run_name_from_dir(d) == name
+    assert naming.parse_run_name(naming.run_name_from_dir(d))["brackets"] == naming.canonical_brackets(EVERY_BRACKET)
+    a = naming.analyse_dir(str(tmp_path / "analyse"), name)
+    os.makedirs(a)
+    assert naming.run_name_from_dir(a) == name
+    # the usual case: two levels, the suffix whole
+    short = naming.run_name(**base(brackets={"crossings": 20}))
+    assert naming.run_dir("out", short) == os.path.join("out", PREP, short.split("__")[1])
+    assert naming.run_name_from_dir(naming.run_dir("out", short)) == short
+
+
+def test_long_body_name_nests_and_parses_back(tmp_path):
+    import os
+    name = naming.body_name(LONG_PREP, 0, 1254, "rz", 0.55, -22.5, "radialdt20r2", "barl50w10h1")
+    assert len(name) > naming.NAME_MAX
+    d = naming.body_dir(str(tmp_path), name)
+    assert d == os.path.join(str(tmp_path), LONG_PREP, "k00000-01254_rz_dx0.55mm_azimuth--22.5deg"
+                             "_synthetic-radialdt20r2_geometry-barl50w10h1")
+    os.makedirs(d)
+    assert naming.body_name_from_dir(d) == name and naming.parse_body_name(name)["prepared"] == LONG_PREP
+
+
+def test_directory_names_reject():
+    with pytest.raises(ValueError):
+        naming.run_dir("out", "not_a_run")
+    with pytest.raises(ValueError):
+        naming.run_dir("out", naming.run_name("p" * 256, "replay", (0, 1), "rz", 1.1, {}, 1))   # prepared too long
+    with pytest.raises(ValueError):
+        naming.run_name_from_dir("out/prep_x/not_a_suffix")
+    with pytest.raises(ValueError):
+        naming.body_name_from_dir("out/prep_x/k00000-00001_xx_dx1.10mm")
+
+
+def test_hourglass_bracket():
+    """Task 10b: the hourglass stiffness defaults to 0.01; the runs made before carry _hourglass-0 (decision 10)."""
+    assert naming.BRACKET_DEFAULTS["hourglass"] == 0.01
+    assert naming.run_name(**base()).endswith("_seed1")
+    off = naming.run_name(**base(brackets={"hourglass": 0.0}))
+    assert off.endswith("_seed1_hourglass-0")
+    assert naming.parse_run_name(off)["brackets"]["hourglass"] == 0.0
+    assert naming.parse_run_name(naming.run_name(**base()))["brackets"]["hourglass"] == 0.01
