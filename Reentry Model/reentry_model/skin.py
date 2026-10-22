@@ -28,6 +28,7 @@ leave the body with their enthalpy (`removed`), and a column below its minimum d
 (`skinbody.SkinBody`) turns the drawn, absorbed and handed-down metal into the corners' displacements and reconciles
 each column with what the moving mesh actually swept."""
 import math
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -495,6 +496,8 @@ class SkinBook:
     removed_H: np.ndarray    # the enthalpy it took
     drawn: np.ndarray        # rigid metal drawn from the 3D model in the sub-steps
     drawn_H: np.ndarray      # the enthalpy it brought
+    momentum_out: np.ndarray = None   # kg m/s (n, 3): what the removed liquid took with it (sub-plan 21 Task 6c)
+    flow: "FlowBook" = None           # the flow sub-steps' books, with the flow on (sub-plan 21 Task 6c)
 
 
 def _coupled_solve(G, diag, rhs, valid, sideways):
@@ -627,16 +630,17 @@ def _conduct(sk, dt, q_top, A_top, T_amb, eps, T_b, sideways=None):
     return tuple(out)
 
 
-def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None):
+def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None, flow=None):
     """The macro step's sub-steps for every column (spec 7.2). Each sub-step: the implicit conduction, through the depth
     and, with `side`, sideways (`side(sk, previous)` makes the sub-step's `Sideways` map from the last one, Task 5),
-    then -- with `remove` and a
-    melting material -- the contiguous top
-    cells at or above T_feed leave, a column below its minimum mass m_min [kg] draws back to it, and the cells are split
-    and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but never above T_rigid -- a 3D base
-    node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it reached 930 K in one 0.5 s step, found
-    while planning), and drawing at its temperature would draw liquid that the next sub-step removes, without limit;
-    what the 3D model actually loses is reconciled by the body after the base moves. With `g_base` [K/m per column], the
+    then, with `flow` (a `Flow`), the flow's sub-steps (`flow_substeps`: heat, then flow, sideways exchange and -- in
+    stage 4 -- spray, spec 7.1; sub-plan 21 Task 6c), then -- with `remove` and a melting material -- the contiguous top
+    cells at or above T_feed leave, taking their momentum with them, a column below its minimum mass m_min [kg] draws
+    back to it, and the cells are split and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but
+    never above T_rigid -- a 3D base node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it
+    reached 930 K in one 0.5 s step, found while planning), and drawing at its temperature would draw liquid that the
+    next sub-step removes, without limit; what the 3D model actually loses is reconciled by the body after the base
+    moves. With `g_base` [K/m per column], the
     3D model's temperature gradient along the outward normal below the base, each draw takes the next layer down: its
     enthalpy is h(min(T, T_rigid)) averaged along T(s) = T_b - g_base s over the depth it takes (`profile_enthalpy`).
 
@@ -644,14 +648,17 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     (a, b) per column, E_base / dt = a + b T_b [W into the 3D model], from the pass's base energy and its derivative with
     respect to the base temperature, the slope clipped at zero (stage 1's choice: a law rising with T_b would cost the 3D
     matrix its diagonal dominance; what the clip misses is the interface mismatch's to book). Otherwise the real pass,
-    base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook."""
+    base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook. The trial pass runs the flow too
+    (spec 7.2's sub-steps are spec 7.1's: heat, flow, sideways exchange and spray), the sensitivity S carried with the
+    metal the transport moves."""
     mat = sk.material
     N = max(1, int(math.ceil(dt / sk.settings.substep - 1e-9)))
     h = dt / N
     trial = T_b1 is None
     saved = sk.state() if trial else None
     T_b = np.asarray(T_b0 if trial else T_b1, dtype=float) * np.ones(sk.n)
-    book = SkinBook(*(np.zeros(sk.n) for _ in range(8)))
+    book = SkinBook(*(np.zeros(sk.n) for _ in range(8)), momentum_out=np.zeros((sk.n, 3)),
+                    flow=FlowBook.zero(sk.n) if flow is not None else None)
     dEb = np.zeros(sk.n)
     if trial:
         sk.S = np.zeros_like(sk.m)
@@ -669,11 +676,14 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
         book.E_side += res[3]
         if trial:
             dEb += res[4]
+        if flow is not None:
+            book.flow.add(flow_substeps(sk, flow, h))
         if melting:
             k = np.cumprod(sk.valid & (sk.T >= mat.T_feed), axis=1).sum(axis=1)
             gone, gone_H = sk.take_top(k)
             book.removed += gone
             book.removed_H += gone_H
+            book.momentum_out += sk.momentum_out
         short = np.maximum(m_min - sk.column_mass(), 0.0)
         if g_base is not None and np.any(short > 0.0):
             rows = np.flatnonzero(short > 0.0)
@@ -1392,6 +1402,107 @@ def thickness_step(sk, columns, dt, book, applied, g, rho_l, sigma):
     s = (r * np.where(moving, dz, 0.0)).sum(axis=1) * k2 * (rho_l * g_n - s_tension * k2)
     return ThicknessBook(push=dt * V[:, None] * dG, wall=-dt * book.wall_response[:, None] * dG, heights=H + dH,
                          faces=FacePush(r, across), growth=float(max(dt * s.max(), 0.0)) if n else 0.0, passes=passes)
+
+
+# -- the flow in the sub-steps (sub-plan 21 Task 6c) --------------------------------------------------------------------
+FLOW_CYCLES = 10                  # flow sub-steps per heat sub-step: 1 ms under the 10 ms heat sub-step (Task 6c's
+                                  # ruling, 2026-10-22). On the 100 mm sphere's front melted 0.3 mm deep under the 93 s
+                                  # forcing, 50 ms of flow at 1 ms match 0.25 ms to 3.9 % in where the metal went and
+                                  # 4 % in kinetic energy, the Courant numbers at most 4.8 and the transport destroying
+                                  # 27 % of the kinetic energy made, as at 0.25 ms (the grid's own upwind smearing); at
+                                  # 2-10 ms 44-95 % and 0.3-4.8 times, because a runoff front crossing rigid metal
+                                  # advances at most one column a flow sub-step (metal landing on a rigid top joins the
+                                  # flow at the next), 2 m/s on 2 mm columns at 1 ms. The Rayleigh-Taylor growth dt s
+                                  # stays under 0.007 at 1 ms on 3.4 mm of liquid at 48 m/s2 (0.67 at 10 ms).
+FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0}   # wall time, for
+                                  # measuring the cost (as KRYLOV counts the coupled solves)
+
+
+@dataclass
+class Flow:
+    """What drives the skins' flow over a part of a macro step, held over it (spec 6.4): `dp_ds` [Pa/m, (n,)] the
+    surface flow's wall-pressure gradient along the meridian, `shear` [Pa, (n, 3)] the gas shear on the top cells in
+    each column's plane (`along_meridian` of the surface flow's tau), `g` [m/s2, (3,)] the acceleration the metal feels
+    in the body's frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
+    liquid's density and surface tension, `A_top` [m2, (n,)] the top areas the shear acts over, and `cycles`, the flow
+    sub-steps in each heat sub-step."""
+    columns: object
+    dp_ds: np.ndarray
+    shear: np.ndarray
+    g: np.ndarray
+    v_hat: np.ndarray
+    rho_l: float
+    sigma: float
+    A_top: np.ndarray
+    cycles: int = FLOW_CYCLES
+
+
+@dataclass
+class FlowBook:
+    """What the flow sub-steps did, per column: impulses [N s] and momentum [kg m/s], (n, 3), which add up to the
+    columns' momentum change, and the sub-steps' worst numbers."""
+    push: np.ndarray         # the push's impulse on the moving cells, its thickness terms' implicit change included
+    shear: np.ndarray        # the gas shear's on the top cells
+    wall: np.ndarray         # the anchored metal's drag (the momentum and thickness steps'), the momentum cells held on
+                             # joining it, and the normal parts the transport's projections removed
+    carried: np.ndarray      # what the transport carried in less what it sent, as it left the donors: zero over the body
+    courant: float = 0.0     # the transport's largest outflow rate of any cell times its sub-step
+    growth: float = 0.0      # the thickness step's largest Rayleigh-Taylor growth dt s
+    passes: int = 0          # the thickness step's most linearisations
+    sub_steps: int = 0       # the flow sub-steps taken (none where nothing flows)
+
+    @classmethod
+    def zero(cls, n):
+        return cls(*(np.zeros((n, 3)) for _ in range(4)))
+
+    def add(self, other):
+        """Add another book's impulses and keep the worst numbers of both."""
+        for key in ("push", "shear", "wall", "carried"):
+            setattr(self, key, getattr(self, key) + getattr(other, key))
+        self.courant, self.growth = max(self.courant, other.courant), max(self.growth, other.growth)
+        self.passes, self.sub_steps = max(self.passes, other.passes), self.sub_steps + other.sub_steps
+
+
+def flow_substeps(sk, flow, dt):
+    """`flow.cycles` flow sub-steps of dt / cycles [s] each, every one in the order of 6b's ruling: the push, surface
+    tension only where a column's top flows (`push`, `flowing_tops`); the momentum through the depth with its response
+    (`momentum_step`); the thickness terms implicit in the heights at the end of the transport (`thickness_step`); the
+    transport with the faces' own push (`transport`, regrid=False). The cells are split and merged between the flow
+    sub-steps, and the heat sub-step's own regrid follows the last (spec 6.2: once after each sub-step's exchanges).
+    Updates the cells; returns a FlowBook. Where nothing flows nothing moves and no sub-step is taken: any velocity left
+    in the rigid cells is booked to the wall and cleared, as `momentum_step` books an anchored cell's.
+
+    The flow's sub-step is chosen from measurements on the 100 mm sphere's melting state (sub-plan 21 Task 6c, Asha
+    2026-10-21, option c; FLOW_CYCLES)."""
+    n = sk.n
+    book = FlowBook.zero(n)
+    if not (sk.valid & np.isfinite(cell_viscosity(sk, 0.0))).any():
+        book.wall -= sk.column_momentum()
+        sk.U = np.zeros_like(sk.U)
+        return book
+    h = dt / flow.cycles
+    col = flow.columns
+    clock = lambda key, started: FLOW_SECONDS.__setitem__(key, FLOW_SECONDS[key] + time.perf_counter() - started)
+    for k in range(flow.cycles):
+        if k:
+            started = time.perf_counter()
+            sk.regrid()
+            clock("regrid", started)
+        started = time.perf_counter()
+        G, terms = push(col, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma, wet=flowing_tops(sk))
+        clock("push", started)
+        started = time.perf_counter()
+        mb = momentum_step(sk, h, G, flow.shear, flow.A_top, response=True)
+        clock("momentum", started)
+        started = time.perf_counter()
+        tb = thickness_step(sk, col, h, mb, terms["thickness"] + terms["capillary"], flow.g, flow.rho_l, flow.sigma)
+        clock("thickness", started)
+        started = time.perf_counter()
+        tr = transport(sk, col, h, regrid=False, faces=tb.faces)
+        clock("transport", started)
+        book.add(FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
+                          tb.passes, 1))
+    return book
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------
