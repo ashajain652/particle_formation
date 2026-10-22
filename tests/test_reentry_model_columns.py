@@ -158,3 +158,65 @@ def test_the_dual_faces_close_every_column_so_a_uniform_flow_neither_gathers_nor
     tangential = closure - np.einsum("ij,ij->i", closure, col.normal)[:, None] * col.normal
     assert np.linalg.norm(tangential, axis=1).max() < 0.075 * col.face_length.mean()
     assert np.linalg.norm(tangential, axis=1).mean() < 5e-4 * col.face_length.mean()
+
+
+# -- the thin film's curvature (sub-plan 21 Task 6b) --------------------------------------------------------------------
+def test_the_film_curvature_is_the_base_s_plus_the_top_s_cotangent_laplacian_of_the_heights(coarse_sphere_mesh):
+    """On a plane a cosine's curvature is the compact second difference of the heights (to 4e-7, the cotangents of its
+    own tilted top), and on the test sphere a uniform layer's is the base's, Task 2's, exactly. The cotangents are the
+    top surface's, but a cotangent depends on angles alone: on a sphere a uniform layer's top has the base's angles but
+    for the corners' normals not being quite radial (the two operators on a smooth bump differ by 0.35 % on average at
+    3.4 mm, measured 2026-10-21), and the area is the column's, the base's, which the energy argument requires."""
+    pts, faces, inner = flat_grid(n=24, jitter=0.0)
+    col = columns.Columns(pts, faces)
+    H = 1e-6 * np.cos(2.0 * np.pi * pts[:, 0] / 8e-3)
+    k2 = (2.0 * np.sin(np.pi * 1e-3 / 8e-3) / 1e-3) ** 2
+    np.testing.assert_allclose(col.film_curvature(H)[inner], k2 * H[inner], rtol=0, atol=1e-6 * k2 * 1e-6)
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    uniform = np.full(col.n, 3.4e-3)
+    np.testing.assert_allclose(col.film_curvature(uniform), col.curvature(), rtol=0, atol=1e-9)
+    bump = 1e-6 * np.cos(col.points[:, 0] / 0.02)
+    top, base = col.film_operator(uniform) @ bump, col.film_operator(np.zeros(col.n)) @ bump
+    big = np.abs(base) > 0.5 * np.abs(base).max()
+    assert np.mean(top[big] / base[big]) == pytest.approx(1.0, abs=0.01)
+
+
+def test_a_pile_up_lowers_its_own_curvature_at_an_obtuse_corner_of_the_top_but_raises_the_film_s(coarse_sphere_mesh):
+    """Why surface tension takes the thin film's curvature (Task 6b; Asha, 2026-10-21): a corner touching an obtuse
+    triangle takes its neighbours' mean curvature (Task 2), so raising it makes its neighbours concave and lowers its
+    own -- a pile-up there would draw metal in, surface tension running backwards: raising each of the test sphere's 33
+    such corners by 1 um lowers its own curvature at 32 and leaves it unchanged at the other, by up to 0.083 1/m, where
+    every other corner's rises by at least 0.21 1/m. The film's curvature rises at every one of them, by 0.19-0.75 1/m
+    (measured 2026-10-21)."""
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    H = np.full(col.n, 3e-4)
+    _, _, cot = columns.triangle_geometry(col.top_points(H), col.faces)
+    obtuse = np.zeros(col.n, dtype=bool)
+    for v in range(3):
+        np.logical_or.at(obtuse, col.faces[:, v], (cot < 0.0).any(axis=1))
+    corners = np.flatnonzero(obtuse)
+    assert len(corners) > 20
+    own_top, own_film = [], []
+    for c in corners:
+        bumped = H.copy()
+        bumped[c] += 1e-6
+        own_top.append(col.curvature(col.top_points(bumped))[c] - col.curvature(col.top_points(H))[c])
+        own_film.append(col.film_curvature(bumped)[c] - col.film_curvature(H)[c])
+    own_top, own_film = np.array(own_top), np.array(own_film)
+    assert np.all(own_top <= 0.0) and (own_top < 0.0).sum() >= 30 and np.all(own_film > 0.0)
+
+
+def test_the_faces_exchange_times_the_film_operator_has_no_growing_mode(coarse_sphere_mesh):
+    """The film's curvature is (1 / A_i) dE / dH_i for the thin film's surface energy E, A_i the column's area that turns
+    its volume into its height (Asha, 2026-10-21): the faces' exchange B diag(w) B^T / A times the film operator is a
+    product of two symmetric non-negative matrices once scaled by the areas, so no pattern of heights grows by itself --
+    on the test sphere with a rough top (0-3.4 mm) every eigenvalue is real and at least -1e-14 of the largest (measured
+    3.3e-5 against 7.7e11 for a uniform top, 2026-10-21; Task 2's curvature of the top gave -1.5e10, a growth of about
+    80 1/s for 0.3 mm of liquid)."""
+    import scipy.linalg as la
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    H = np.random.default_rng(3).uniform(0.0, 3.4e-3, col.n)
+    B = col.incidence.toarray()
+    K = (B * col.conduct_weight[None, :]) @ B.T / col.area[:, None]
+    ev = la.eigvals(K @ col.film_operator(H).toarray())
+    assert np.abs(ev.imag).max() <= 1e-9 * ev.real.max() and ev.real.min() > -1e-14 * ev.real.max()
