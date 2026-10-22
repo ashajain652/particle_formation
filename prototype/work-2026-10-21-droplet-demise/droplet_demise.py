@@ -6,10 +6,15 @@ What is reused, and what is new
 * Trajectory: reentry_model.trajectory.Simulator, the rotating-Earth 3-DOF integrator verified against DRAMA/SESAM
   (ECEF state, J2 gravity, Coriolis and centrifugal terms, geodetic conversions, ground/escape events).
   `DropletSimulator` subclasses it and extends the state with the droplet temperature and the masses of the
-  volatile elements; only the drag coefficient is replaced, by the composed drag law of
-  prototype/work-2026-10-14-particle-settling/particle_trajectory.py (Schaaf & Chambre free-molecule sphere bridged
-  to the continuum sphere, blended on the speed ratio into Stokes-Cunningham), because the validated SESAM drag
-  table is hypersonic-only and wrong at low speed (factor 1.94 at Kn 0.1, measured 2026-10-14).
+  volatile elements; only the drag coefficient is replaced, because the validated SESAM drag table is
+  hypersonic-only and wrong at low speed (factor 1.94 at Kn 0.1, measured 2026-10-14). The default (drag_law="singh",
+  from 2026-10-22) is the general sphere correlation of Singh et al., AIAA Journal 2021 (singh_drag.py), fitted across
+  continuum, transitional and free-molecule flow at all Mach numbers. drag_law="blend" keeps the earlier composed law
+  of prototype/work-2026-10-14-particle-settling/particle_trajectory.py (Schaaf & Chambre bridged to the continuum
+  sphere, blended on the speed ratio into Stokes-Cunningham) for comparison. The two are identical in fast
+  free-molecule flow; Singh gives 5-13 % more drag at low speed with the droplet at air temperature (its Epstein
+  limit assumes fully diffuse reflection, where Millikan's Cunningham fit reflects real surfaces) and differs by up
+  to about 35 % either way in the fast transitional corner.
 
 * Heating: reentry_model.heating.PhysicsHeating (Fay-Riddell continuum + Matting bridging + Lees/cosine
   distribution), the model verified against SESAM, is used where it adds physics the free-molecule formula lacks:
@@ -62,6 +67,8 @@ import sphere_sweep
 from reentry_model import aero, earth, heating
 from reentry_model.atmosphere import US76TableAtmosphere
 from reentry_model.trajectory import InitialState, Settings, Simulator
+
+import singh_drag                                                 # Singh et al. (2021) general sphere drag
 
 R_GAS = 8.314462618
 SIGMA_SB = 5.670374419e-8
@@ -182,7 +189,7 @@ class DropletSimulator(Simulator):
     KN_FM = (1.0, 10.0)        # Knudsen window (lambda / D, PhysicsHeating's convention) over which it hands back
 
     def __init__(self, initial, d0_um, atmosphere=None, epsilon=EPSILON, alpha_heat=ALPHA_HEAT,
-                 alpha_evap=ALPHA_EVAP, physics_heating=None, heating_mode="regime"):
+                 alpha_evap=ALPHA_EVAP, physics_heating=None, heating_mode="regime", drag_law="singh"):
         d0 = d0_um * 1e-6
         m0 = RHO_LIQUID * math.pi * d0 ** 3 / 6.0
         self.d0, self.m0 = d0, m0                 # before the parent constructor, which builds the state vector
@@ -194,6 +201,9 @@ class DropletSimulator(Simulator):
         if heating_mode not in ("regime", "mach"):
             raise ValueError("heating_mode must be 'regime' or 'mach'")
         self.heating_mode = heating_mode
+        if drag_law not in ("blend", "singh"):
+            raise ValueError("drag_law must be 'blend' or 'singh'")
+        self.drag_law = drag_law
 
     # -- state layout: 0-2 r, 3-5 v, 6 T, 7.. volatile masses
     def initial_state_vector(self):
@@ -289,8 +299,17 @@ class DropletSimulator(Simulator):
         q_evap = float(sum(md * e.H_vap / e.M for md, e in zip(mdot, VOLATILE)))
         return q_conv, q_rad, q_evap, mdot, y, w
 
-    def drag(self, fs, V, T, d, m):
+    def cd(self, V, fs, d, T):
+        """Drag coefficient of the selected law, with particle_trajectory's regime diagnostics (Kn = 2 lambda/D,
+        Re, Ma, s, blend weight) for the history either way."""
         cd, dg = pt.drag_coefficient(max(V, 1e-30), fs.rho, fs.T, fs.p, d, T / fs.T, "blend")
+        if self.drag_law == "singh":
+            M = max(V, 1e-30) / math.sqrt(pt.GAMMA * pt.R_AIR * fs.T)
+            cd, _ = singh_drag.drag_coefficient(M, fs.rho * max(V, 1e-30) * d / pt.viscosity(fs.T), T / fs.T)
+        return cd, dg
+
+    def drag(self, fs, V, T, d, m):
+        cd, dg = self.cd(V, fs, d, T)
         return cd, dg, 0.5 * fs.rho * V * cd * (math.pi * d * d / 4.0) / m
 
     def rhs(self, t, y):
@@ -315,7 +334,7 @@ class DropletSimulator(Simulator):
 
         def res(lv):
             v = math.exp(lv)
-            cd, _ = pt.drag_coefficient(v, fs.rho, fs.T, fs.p, d, T / fs.T, "blend")
+            cd, _ = self.cd(v, fs, d, T)
             return 0.5 * fs.rho * v * v * cd * area - w
         return math.exp(brentq(res, math.log(1e-12), math.log(1e4), xtol=1e-12, rtol=1e-12))
 
@@ -350,7 +369,7 @@ class DropletSimulator(Simulator):
         s = self.settings
         atol = [s.atol_position] * 3 + [s.atol_velocity] * 3 + [1e-6] + [1e-9 * self.m0] * len(VOLATILE)
         t, y = 0.0, self.initial_state_vector()
-        dt = 1e-6 * max(self.d0 / 1e-6, 0.1)
+        dt = 1e-6 * max(self.d0 / 1e-6, 1e-4)   # every time scale shrinks with the diameter in free-molecule flow
         rows = [self.diagnostics(t, y)[0]]
         end = None
 
@@ -418,11 +437,96 @@ def final_state(rows, sim, release, d0_um, h0_km, We0):
     return out
 
 
-def run_case(d0_um, h0_km, parent=None, **kw):
-    """Weber pre-check, then the flight. Returns (final_state dict, history rows or None)."""
+# ---------------------------------------------------------------- vertical wind and the settling phase
+
+class MeanVerticalWind:
+    """Mean (residual-circulation) vertical wind [m/s, + up] in the middle atmosphere, as bounding cases:
+
+      above 100 km      0
+      90-100 km         w_meso tapered linearly to 0
+      70-90 km          w_meso (mesospheric upwelling/downwelling, a few cm/s; Vincent 2019, Chau et al. 2019)
+      50-70 km          linear from w_strat at 50 km to w_meso at 70 km (the mesospheric flow weakens downward)
+      15-50 km          w_strat (Brewer-Dobson circulation, about 0.1-0.5 mm/s; ACP 26, 3743, 2026; CMIP6 study)
+      13-15 km          w_strat tapered to 0
+      below 13 km       0 (troposphere; particles there are removed mainly by precipitation, not settling)
+
+    The layer shape is an assumption; see citations/vertical_winds_middle_atmosphere.md and VERTICAL_WINDS.md."""
+
+    H_TROPOPAUSE = 15e3
+
+    def __init__(self, w_meso, w_strat=0.0):
+        self.w0, self.w_strat = float(w_meso), float(w_strat)
+
+    def w(self, h):
+        km = h / 1e3
+        if km >= 100.0 or km <= 13.0:
+            return 0.0
+        if km > 90.0:
+            return self.w0 * (100.0 - km) / 10.0
+        if km >= 70.0:
+            return self.w0
+        if km > 50.0:
+            return self.w_strat + (self.w0 - self.w_strat) * (km - 50.0) / 20.0
+        if km >= 15.0:
+            return self.w_strat
+        return self.w_strat * (km - 13.0) / 2.0
+
+    def wind_enu(self, h):
+        return np.array([0.0, 0.0, self.w(h)])
+
+
+def settle(sim, rows, wind, dh=50.0, h_top=100e3):
+    """From the final state to the ground. Quasi-steady: the droplet sinks at its terminal velocity (Singh or blend
+    drag, at the local air temperature, with its final mass) minus the local updraft, dh/dt = -(v_t(h) - w(h)),
+    exact while the response time v_t/g is short against the time to fall a scale height. Evaporation after the
+    final state is neglected (the droplet is at the air temperature). If v_t falls below w the droplet is held at
+    the altitude where they balance ('suspended'). Returns a dict of settling results."""
+    last = rows[-1]
+    lat, lon = math.radians(last["lat_deg"]), math.radians(last["lon_deg"])
+    m, d, h1 = last["mass_kg"], last["d_um"] * 1e-6, last["h_km"] * 1e3
+    atm = sim.atmosphere
+
+    def net(h):        # sinking speed over the ground [m/s], positive downward
+        fs = atm.state(0.0, h, lat, lon)
+        r = earth.geodetic_to_ecef(h, lat, lon)
+        return sim.terminal_velocity(fs, r, fs.T, d, m) - wind.w(h)
+
+    hs = np.arange(0.0, h_top + dh, dh)
+    hs = np.unique(np.concatenate((hs, [h1])))
+    f = np.array([net(h) for h in hs])
+    k1 = int(np.searchsorted(hs, h1))
+    out = dict(settle_start_km=h1 / 1e3, v_sink_start_ms=float(f[k1]),
+               updraft_at_start_ms=wind.w(h1), min_net_sink_ms=float(f[:k1 + 1].min()))
+    if f[k1] <= 0.0:                                   # updraft exceeds the terminal velocity: carried upward
+        above = np.nonzero(f[k1:] > 0.0)[0]
+        if above.size == 0:
+            return dict(out, end_settle="lofted above {:.0f} km".format(h_top / 1e3), h_suspended_km=float("nan"),
+                        t_ground_s=float("inf"), t_tropopause_s=float("inf"))
+        j = k1 + int(above[0])
+        h_eq = hs[j - 1] + (hs[j] - hs[j - 1]) * (0.0 - f[j - 1]) / (f[j] - f[j - 1])
+        return dict(out, end_settle="suspended", h_suspended_km=h_eq / 1e3, t_ground_s=float("inf"),
+                    t_tropopause_s=float("inf"))
+    below = np.nonzero(f[:k1] <= 0.0)[0]
+    if below.size:                                     # sinks until the updraft balances it, then hovers
+        j = int(below[-1])
+        h_eq = hs[j] + (hs[j + 1] - hs[j]) * (0.0 - f[j]) / (f[j + 1] - f[j])
+        return dict(out, end_settle="suspended", h_suspended_km=h_eq / 1e3, t_ground_s=float("inf"),
+                    t_tropopause_s=float("inf") if h_eq > MeanVerticalWind.H_TROPOPAUSE else float("nan"))
+    t_fall = float(np.trapezoid(1.0 / f[:k1 + 1], hs[:k1 + 1]))
+    kt = int(np.searchsorted(hs, MeanVerticalWind.H_TROPOPAUSE))
+    t_trop = last["t_s"] + (float(np.trapezoid(1.0 / f[kt:k1 + 1], hs[kt:k1 + 1])) if k1 > kt else 0.0)
+    return dict(out, end_settle="ground", h_suspended_km=float("nan"), t_fall_s=t_fall,
+                t_ground_s=last["t_s"] + t_fall, t_tropopause_s=t_trop)
+
+
+def run_case(d0_um, h0_km, parent=None, w_meso=None, w_strat=0.0, **kw):
+    """Weber pre-check, then the flight. With w_meso [m/s] set, the mesosphere carries that mean vertical wind
+    (MeanVerticalWind) and the droplet is followed past its final state to the ground (settle). Returns
+    (final_state dict, history rows or None)."""
     parent = parent or sphere_sweep.load_parent(PARENT_JSON, PARENT_OBJECT)
     rel = parent_release(parent, h0_km)
-    atm = US76TableAtmosphere()
+    wind = MeanVerticalWind(w_meso, w_strat) if w_meso is not None else None
+    atm = US76TableAtmosphere(wind=wind)
     fs = atm.state(0.0, rel.altitude, rel.lat, rel.lon)
     We0 = weber(fs.rho, rel.velocity, d0_um * 1e-6, T_RELEASE)
     if We0 >= WE_CRIT:
@@ -430,4 +534,7 @@ def run_case(d0_um, h0_km, parent=None, **kw):
                     end_reason="skipped: release Weber number above {:g}".format(WE_CRIT)), None
     sim = DropletSimulator(rel, d0_um, atm, **kw)
     rows = sim.run()
-    return final_state(rows, sim, rel, d0_um, h0_km, We0), rows
+    out = final_state(rows, sim, rel, d0_um, h0_km, We0)
+    if wind is not None:
+        out.update(w_meso_ms=wind.w0, w_strat_ms=wind.w_strat, **settle(sim, rows, wind))
+    return out, rows

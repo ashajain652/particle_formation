@@ -98,6 +98,28 @@ energy flux, and that difference is the physics of the transition.
 To show what the choice costs, I re-ran three diameters with the validated heating applied everywhere above
 Mach 6. The mass lost changes by at most 4.6 percentage points (lower), for 200 micrometres near 75 km.
 
+## Drag law: Singh et al. (2021) is the default from 2026-10-22
+
+The model now uses the general sphere drag correlation of Singh et al. (*AIAA Journal*, 2021, DOI
+10.2514/1.J060648; `singh_drag.py`), fitted across continuum, transitional and free-molecule flow at all Mach numbers.
+It replaces the earlier composed law, which is kept as `drag_law="blend"` for comparison. `check_singh_drag.py` confirms
+that it reproduces Stokes drag, the exact free-molecule drag, and the hypersonic continuum value of 0.9, and is
+continuous at Mach 1. The paper defines the post-shock state only above Mach 1; below it the free-stream values are
+used, which makes every term continuous at Mach 1.
+
+Re-running both sweeps with it changes the results as follows:
+- **Mass lost:** by at most 0.6 percentage points, and by less than 0.1 in all but the largest droplets released at
+  66 km and below. During vaporisation the droplets are in fast free-molecule flow, where the two laws are identical.
+- **Terminal speeds:** fall by 5 to 11 %, because Singh assumes fully diffuse reflection at low speed (Epstein's
+  limit), which gives about 5 % more drag than Millikan's Cunningham fit. The difference grows to 11 % for large
+  droplets at 50 km, where the flow is only partly rarefied.
+- **The final state** is reached up to 41 % sooner and up to 0.4 km higher.
+- **Peak temperatures** rise by at most 44 K.
+
+The numbers in the sections above were produced with the earlier law. The mass-loss and temperature figures in them
+stand; the terminal speeds should be read as 5 to 11 % high. The current figures and `final_states.csv` use Singh; the
+earlier results are kept with a `_blend` suffix.
+
 ## What is assumed and not known
 
 - **Well-mixed droplet.** The model treats the droplet as uniformly mixed. For the larger droplets, liquid

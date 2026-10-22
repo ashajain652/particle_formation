@@ -50,7 +50,7 @@ dd.WE_CRIT = we_save
 report("Weber pre-check with a critical value of 0.001 skips the case", s["end_reason"][:7], s["skipped"] and rows is None)
 
 # 4. evaporation off: peak temperature against the 2026-10-14 free-molecule sweep at accommodation 0.8
-s, rows = dd.run_case(10.0, 80.0, parent, alpha_evap=0.0)
+s, rows = dd.run_case(10.0, 80.0, parent, alpha_evap=0.0, drag_law="blend")   # same drag as that sweep
 old = pd.read_csv(dd.SETTLING + "/runs/droplet_sweep/summary_eps0.1_alpha0.8.csv")
 o = old[(old.d_um == 10)]
 t_old = float(np.interp(80.0, o.h0_km.values[::-1], o.T_peak_K.values[::-1]))
@@ -81,6 +81,38 @@ report("final state: speed within 1 % of terminal, T within 1 K of equilibrium",
 lost = sum(s["lost_{}_kg".format(e.name)] for e in dd.VOLATILE)
 report("element losses add up to the total mass lost", "{:.1e}".format(abs(lost / s["mass_lost_kg"] - 1)),
        abs(lost / s["mass_lost_kg"] - 1) < 1e-9)
+
+# 6. settling phase: the quadrature of dh/dt = -(v_t - w) against a direct ODE integration of the same equation
+from scipy.integrate import solve_ivp
+s6, rows6 = dd.run_case(20.6, 70.0, parent, w_meso=0.05)
+sim6 = dd.DropletSimulator(dd.parent_release(parent, 70.0), 20.6, dd.US76TableAtmosphere(wind=dd.MeanVerticalWind(0.05)))
+last = rows6[-1]
+lat, lon = math.radians(last["lat_deg"]), math.radians(last["lon_deg"])
+def sink(t, y):
+    h = max(y[0], 0.0)
+    fs = sim6.atmosphere.state(0.0, h, lat, lon)
+    return [-(sim6.terminal_velocity(fs, dd.earth.geodetic_to_ecef(h, lat, lon), fs.T, last["d_um"] * 1e-6, last["mass_kg"])
+              - sim6.atmosphere.wind.w(h))]
+ground = lambda t, y: y[0]
+ground.terminal, ground.direction = True, -1
+ode = solve_ivp(sink, (0.0, 1e9), [last["h_km"] * 1e3], method="LSODA", rtol=1e-8, atol=1e-3, events=ground)
+report("settling to the ground, 20.6 um from 70 km, +5 cm/s: quadrature / ODE time", "{:.5f}".format(
+    s6["t_fall_s"] / ode.t_events[0][0]), abs(s6["t_fall_s"] / ode.t_events[0][0] - 1) < 1e-3)
+# 7. with the earlier drag law, no evaporation and no wind, the time to the ground matches the 2026-10-14 sweep
+s7, _ = dd.run_case(10.0, 80.0, parent, w_meso=0.0, drag_law="blend", alpha_evap=0.0)
+o = old[(old.d_um == 10)]
+t_old = float(np.interp(80.0, o.h0_km.values[::-1], o.t_ground_s.values[::-1]))
+report("no wind/evaporation, earlier drag, 10 um from 80 km: days to ground vs 2026-10-14 sweep", "{:.2f}/{:.2f}".format(
+    s7["t_ground_s"] / 86400, t_old / 86400), abs(s7["t_ground_s"] / t_old - 1) < 0.01)
+# 8. a droplet whose terminal velocity is below the updraft is held where the two balance
+s8, _ = dd.run_case(1.0, 80.0, parent, w_meso=0.05, w_strat=3e-4)
+fs8 = dd.US76TableAtmosphere().state(0.0, s8["h_suspended_km"] * 1e3, 0.0, 0.0)
+sim8 = dd.DropletSimulator(dd.parent_release(parent, 80.0), 1.0)
+vt8 = sim8.terminal_velocity(fs8, dd.earth.geodetic_to_ecef(s8["h_suspended_km"] * 1e3, 0.0, 0.0), fs8.T,
+                             s8["d_final_um"] * 1e-6, s8["mass_final_kg"])
+w8 = dd.MeanVerticalWind(0.05, 3e-4).w(s8["h_suspended_km"] * 1e3)
+report("1 um from 80 km, +5 cm/s & +0.3 mm/s: held at {:.1f} km; terminal velocity / updraft there".format(s8["h_suspended_km"]), "{:.4f}".format(vt8 / w8),
+       s8["end_settle"] == "suspended" and abs(vt8 / w8 - 1) < 0.02)
 
 print("\nALL PASS" if ok else "\nSOME CHECKS FAILED")
 sys.exit(0 if ok else 1)
