@@ -2263,6 +2263,34 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      875) positive, within the old enthalpies and speeds; a velocity carried 4.5-4.9 degrees round the 4 mm sphere loses
      2.3-7.7 % of its momentum to the wall. Estimated: 0.5 mm of liquid under Task 5's peak pressure push moves at about
      20 m/s at its top, a Courant number near 100 on 2 mm columns at 10 ms sub-steps.
+155. **The thickness terms implicit (sub-plan 21 Task 6b, 2026-10-21).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6b/`. Task 5's capillary term, from Task 2's curvature of the top
+     surface, ran backwards at corners touching an obtuse triangle, which take their neighbours' mean curvature: raising
+     each of the test sphere's 33 such corners by 1 um lowered its own curvature at 32 (by up to 0.083 1/m) and left the
+     other unchanged; the faces' exchange times its linearisation had eigenvalues down to -1.48e10 1/m4 (test sphere)
+     and -2.40e11 (2 mm sphere, 48 such corners), about 80 and 1 300 1/s of growth for 0.3 mm of liquid, and a uniform
+     0.3 mm layer's 1 um of noise grew to 4.0 um in 30 sub-steps of 10 ms. Asha chose (option A) the thin film's
+     curvature: Task 2's of the base plus minus the cotangent Laplacian of the top over each column's area
+     (`Columns.film_curvature`, `film_operator`), whose product with the exchange has no negative eigenvalue on a rough
+     top; surface tension only where a column's top flows. The cotangents are angle-only, so for a uniform layer they
+     are the base's (0.35 % apart at 3.4 mm), and with the column's area a thick layer's bump curvature stays about
+     2 H / R above the top's own. The scheme: the momentum step's response to a unit push (one more tridiagonal solve);
+     the heights at the end of the transport predicted by the transport linearised on the columns, Newton's method on the
+     crossing cells stopped on the flux it misses (1-3 solves on the test sphere, 3 on the melting state); the cells'
+     velocities corrected by the column push's change; each face's own two-point push in the transport (with the
+     columns' centred pushes alone a one-column bump stayed at 99.8 % of its height, with the faces' it fell to 12.5 % in
+     a 10 ms sub-step). On 1 mm of slurry at 902 K pulled out at 100 m/s2 a 24 mm cosine grows at the thin-film rate
+     within 0.42 % at 1-10 ms and an 8 mm one decays within 1.2 % at 1 ms (0.10-0.26 % of backward Euler's own rate);
+     0.3 mm of liquid alternating from column to column on 2 mm columns falls to at most 0.12 of itself in one sub-step
+     of 10 ms to 1 s; a uniform layer on the test sphere stays within 26 nm over 0.2 s; books to 9e-13; with sigma = 0
+     and g = 0 the step is the momentum step and the transport to the last bit. Each floating crust is now one unknown of
+     the momentum step: its books closed to 1.2e-5 of the largest impulse with 1e9 Pa s, now to 6e-13, and the
+     velocities moved by 1.1e-3, the coupled crust's own round-off (1.1e-5 at 1e7 Pa s); crust-free columns unchanged
+     to the last bit. On the 100 mm sphere's melting state (the g . n > 0 face melted 0.3 mm deep, 141 000 cells moving)
+     the thickness step costs 0.29-0.30 s and the response 0.03-0.05 s a sub-step, against 0.31-0.37 s for the transport;
+     the transport made the predicted heights to 6.5 um of a 0.15-0.17 mm change at the melt's rim. In a quiescent
+     liquid layer ringing under surface tension the transport's cycles grew to 23 700 of its 33 810 cells in five 10 ms
+     sub-steps and its LU to 4 s, whatever the ordering (fill 20-37 times).
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

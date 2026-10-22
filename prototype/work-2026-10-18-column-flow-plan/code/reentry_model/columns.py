@@ -30,7 +30,21 @@ segments, each its normal in its own triangle times its length, summed and point
 its second, so that a velocity u carries u . face_vector per unit depth across the face. A column's faces close
 exactly on a plane, so a uniform flow carries as much into every column as out of it; the edge's direction times the
 face's length closes only where the triangles are symmetric about their edges, and on the tests' jittered plane of 1 mm
-squares a uniform 1 m/s would gather or spread a column's metal at up to 539 1/s that way (measured 2026-10-21)."""
+squares a uniform 1 m/s would gather or spread a column's metal at up to 539 1/s that way (measured 2026-10-21).
+
+Surface tension's pressure (sub-plan 21 Task 6b; Asha, 2026-10-21, option A) takes the curvature in its thin-film form,
+`film_curvature`: the base's own curvature (`curvature`, its obtuse-corner rule acting on the fixed base alone) plus
+`film_operator` times the thicknesses, minus the cotangent Laplacian of the top surface over each column's area. That
+is (1/A_i) dE/dH_i for the thin film's surface energy E measured on the top surface, A_i the column's area, which turns
+its volume into its height in the skins: the operator times the areas is symmetric and non-negative, as the faces'
+exchange is, so their product has no growing mode (on the test sphere with a rough top every eigenvalue is real and
+non-negative to round-off). The top's own curvature has one: a corner touching an obtuse triangle takes its neighbours'
+mean, cannot see its own height, and a pile-up on it lowers its pressure and draws metal in -- the faces' exchange times
+its linearisation has eigenvalues down to -1.5e10 1/m4 on the test sphere and -2.4e11 on the 2 mm sphere, a growth of
+about 1 300 1/s for 0.3 mm of liquid on the latter (measured 2026-10-21). A cotangent depends on angles alone, so the
+top's differ from the base's only where the thickness varies; with the base's area, a thick layer's bump curvature stays
+about 2 H / R above the top surface's own (14 % at 3.4 mm on the 50 mm sphere), as the columns hold their volume over the
+base's area."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -151,6 +165,27 @@ class Columns:
     def top_points(self, thickness):
         """The top surface: each corner moved out along its normal by its column's thickness [m]."""
         return self.points + np.asarray(thickness, dtype=float)[:, None] * self.normal
+
+    def film_operator(self, thickness):
+        """Minus the cotangent Laplacian of the top surface the thicknesses [m] make, over each column's area: a sparse
+        (n, n) matrix [1/m2], symmetric and non-negative once multiplied by the areas, whose product with the
+        thicknesses is the thin film's curvature less the base's (module docstring). The cotangents are the top's."""
+        _, _, cot = triangle_geometry(self.top_points(thickness), self.faces)
+        rows, cols, vals = [], [], []
+        for v in range(3):
+            i, j, k = self.faces[:, v], self.faces[:, (v + 1) % 3], self.faces[:, (v + 2) % 3]
+            cj, ck = cot[:, (v + 1) % 3], cot[:, (v + 2) % 3]
+            rows += [i, i, i]
+            cols += [j, k, i]
+            vals += [-0.5 * ck, -0.5 * cj, 0.5 * (ck + cj)]
+        L = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(self.n, self.n))
+        return sp.diags(1.0 / self.area) @ L
+
+    def film_curvature(self, thickness):
+        """The thin film's mean curvature [1/m] at every column: the base's (`curvature`, whose obtuse-corner rule acts
+        on the base alone) plus `film_operator` times the thicknesses (module docstring)."""
+        H = np.asarray(thickness, dtype=float)
+        return self.curvature() + self.film_operator(H) @ H
 
     def laplacian(self, f, weights=None):
         """sum over neighbours j of w_ij (f_j - f_i) per corner (f per corner, any trailing shape)."""

@@ -821,7 +821,8 @@ def interface_drag(sk, gamma):
 # -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
 SHEAR_PASSES = 5                  # passes of the fixed point on the cells' shear rates at most (spec 6.4)
 SHEAR_TOL = 1.0e-3                # a pass that moves no flowing cell's viscosity by more than this, relatively, ends it
-CRUST_VISCOSITY = 1.0e9           # Pa s: a floating crust's, so that it moves as one piece (some 1e8 times the slurry's)
+CRUST_VISCOSITY = 1.0e9           # Pa s: a floating crust's half-cell at its interface with flowing metal (some 1e8 times
+                                  # the slurry's, adding nothing to the drag); the crust itself is one unknown (Task 6b)
 
 
 @dataclass
@@ -832,6 +833,10 @@ class MomentumBook:
     wall: np.ndarray         # of the anchored rigid metal -- the skin's rigid cells joined to the substrate and the 3D
                              # model beneath the base -- on the moving cells, and the momentum a cell loses on joining it
     passes: int              # the fixed point's passes
+    response: np.ndarray = None       # with response=True, (n, K) [m/s per N/m3]: every cell's velocity per unit push,
+                                      # the last pass's system solved for the push alone (zero where a cell is held)
+    wall_response: np.ndarray = None  # with response=True, (n,) [m3]: the anchored metal's drag on that response, so
+                                      # that a change dG of the push over the sub-step gives the wall -dt wall_response dG
 
 
 def anchored_cells(sk, flowing):
@@ -845,7 +850,7 @@ def anchored_cells(sk, flowing):
     return sk.valid & (j >= (sk.count - held)[:, None])
 
 
-def momentum_step(sk, dt, push, shear, A_top):
+def momentum_step(sk, dt, push, shear, A_top, response=False):
     """One implicit sub-step dt [s] of every column's momentum through its depth (spec 6.4), each velocity component
     apart:
 
@@ -856,13 +861,21 @@ def momentum_step(sk, dt, push, shear, A_top):
     (n, 3)] on the top cell over its top area A_top [m2, (n,)]. The rigid metal joined to the substrate (`anchored_cells`)
     is held at rest; a moving cell drags on it, and a flowing bottom cell on the rigid 3D metal beneath the base, with no
     slip over its own half-thickness. A crust -- rigid cells with flowing metal between them and the substrate -- floats:
-    it moves as one piece (CRUST_VISCOSITY), dragged by the gas shear on its top, pushed like the rest and dragged by the
-    slurry beneath (Asha, 2026-10-20, option B; the column model has no sideways stress in a solid, so a crust over many
-    columns moves as column-sized plates, as a warm, barely solid crust would). Each flowing cell's viscosity is at its
-    own shear rate, the mean over its two faces of the stress there over its viscosity, found by fixed-point iteration
-    from the start-of-sub-step velocities: at most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by
-    more than SHEAR_TOL. Updates sk.U; returns a MomentumBook whose impulses add up to the columns' momentum change to
-    round-off."""
+    it moves as one piece, one unknown of the system (its mass the cells', its drags those at its top and bottom faces),
+    dragged by the gas shear on its top, pushed like the rest and dragged by the slurry beneath (Asha, 2026-10-20,
+    option B; the column model has no sideways stress in a solid, so a crust over many columns moves as column-sized
+    plates, as a warm, barely solid crust would). Task 4 coupled the crust's cells by a viscosity of 1e9 Pa s, whose rows,
+    some 1e12 times the cells' inertia, amplified the solver's round-off: on mixed sphere skins the books closed to
+    1.2e-5 of the largest impulse, now to 6e-14 (1 ms) and 6e-13 (10 ms), and the velocities moved by up to 1.1e-3 of the
+    largest -- the coupled crust's own round-off, which fell as 1.1e-4, 1.1e-5 and 9.6e-7 at 1e8, 1e7 and 1e6 Pa s;
+    columns without a crust are unchanged to the last bit (sub-plan 21 Task 6b, measured 2026-10-21). Each flowing
+    cell's viscosity is at its own shear rate, the mean over its two faces of the stress there over its viscosity, found
+    by fixed-point iteration from the start-of-sub-step velocities: at most SHEAR_PASSES passes, ending when no flowing
+    cell's viscosity moves by more than SHEAR_TOL. Updates sk.U; returns a MomentumBook whose impulses add up to the
+    columns' momentum change to round-off. With `response`, the book also carries the velocities a unit push alone
+    gives through the last pass's system and the wall's drag on them: with the viscosities held, the sub-step is linear
+    in the push, so a change of the push changes every velocity by its response times the change (sub-plan 21 Task
+    6b)."""
     n, K = sk.m.shape
     valid = sk.valid
     rows = np.arange(n)
@@ -875,13 +888,20 @@ def momentum_step(sk, dt, push, shear, A_top):
     anchored = anchored_cells(sk, flowing)
     moving = valid & ~anchored                                            # the flowing cells and the floating crust
     crust = moving & ~flowing
-    P0 = sk.column_momentum()
     held = ((m * anchored)[..., None] * sk.U).sum(axis=1)                 # what anchored cells carried, now at rest
     U_old = np.where(moving[..., None], sk.U, 0.0)
     top_moves = moving[:, 0]
     force = np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0)
     force[:, 0] += np.where(top_moves[:, None], shear * A_top[:, None], 0.0)
     bottom_flows = flowing[rows, last] & (sk.count > 0)
+    # the unknowns: every cell, but a crust's cells one unknown together (sub-plan 21 Task 6b)
+    same = np.zeros((n, K), dtype=bool)
+    same[:, 1:] = crust[:, 1:] & crust[:, :-1]
+    unit = np.cumsum(~same, axis=1) - 1
+    Kr = int(unit.max()) + 1
+    lump = lambda x: np.bincount((rows[:, None] * Kr + unit).ravel(), x.ravel(), n * Kr).reshape(n, Kr)
+    moving_r, valid_r, last_r = lump(moving.astype(float)) > 0.0, lump(valid.astype(float)) > 0.0, unit[rows, last]
+    cross_r, cross_k = np.nonzero(~same[:, 1:])                          # the interfaces between unknowns
 
     def viscosities(gamma):
         return np.where(crust, CRUST_VISCOSITY, cell_viscosity(sk, gamma))
@@ -890,18 +910,26 @@ def momentum_step(sk, dt, push, shear, A_top):
         Db = np.where(bottom_flows, eta[rows, last] / (0.5 * np.maximum(dz[rows, last], DZ_FLOOR)), 0.0)
         return series_drag(sk, eta), np.where(np.isfinite(Db), Db, 0.0)
 
+    def system(D, Db):
+        Dr = np.zeros((n, Kr - 1))
+        Dr[cross_r, unit[cross_r, cross_k]] = D[cross_r, cross_k]
+        diag = np.where(valid_r, lump(m) / dt, 1.0)
+        diag[:, :-1] += A[:, None] * Dr
+        diag[:, 1:] += A[:, None] * Dr
+        diag[rows, last_r] += A * Db
+        off = -A[:, None] * Dr
+        sub, sup = np.where(moving_r[:, 1:], off, 0.0), np.where(moving_r[:, :-1], off, 0.0)
+        return sub, np.where(moving_r, diag, 1.0), sup
+
+    def unknowns(sub, diag, sup, rhs):
+        """Each cell's value from the system on the unknowns, its right-hand side summed over each unknown's cells."""
+        return np.where(moving, thomas(sub, diag, sup, lump(np.where(moving, rhs, 0.0)))[rows[:, None], unit], 0.0)
+
     def solve(eta):
         D, Db = drags(eta)
-        diag = np.where(valid, m / dt, 1.0)
-        diag[:, :-1] += A[:, None] * D
-        diag[:, 1:] += A[:, None] * D
-        diag[rows, last] += A * Db
-        off = -A[:, None] * D
-        sub, sup = np.where(moving[:, 1:], off, 0.0), np.where(moving[:, :-1], off, 0.0)
-        diag = np.where(moving, diag, 1.0)
-        rhs = np.where(moving[..., None], (m / dt)[..., None] * U_old + force, 0.0)
-        U = np.stack([thomas(sub, diag, sup, rhs[..., c]) for c in range(3)], axis=-1)
-        return np.where(moving[..., None], U, 0.0), D, Db
+        sub, diag, sup = system(D, Db)
+        rhs = (m / dt)[..., None] * U_old + force
+        return np.stack([unknowns(sub, diag, sup, rhs[..., c]) for c in range(3)], axis=-1), D, Db
 
     def rates(U, D, Db, eta):
         """Every flowing cell's shear rate: the mean over its faces of the stress there over its viscosity."""
@@ -929,6 +957,12 @@ def momentum_step(sk, dt, push, shear, A_top):
     book = MomentumBook(push=dt * np.where(moving[..., None], push[:, None, :] * (dz * A[:, None])[..., None], 0.0).sum(axis=1),
                         shear=dt * np.where(top_moves[:, None], shear * A_top[:, None], 0.0),
                         wall=dt * wall - held, passes=passes)
+    if response:                                                          # the last pass's system, for a unit push alone
+        r = unknowns(*system(D, Db), dz * A[:, None])
+        book.response = r
+        book.wall_response = A * Db * r[rows, last]
+        if K > 1:
+            book.wall_response += (A[:, None] * D * (moving[:, :-1] & anchored[:, 1:]) * r[:, :-1]).sum(axis=1)
     sk.U = U
     return book
 
@@ -945,7 +979,7 @@ def along_meridian(normals, v_hat, magnitude):
     return np.asarray(magnitude, dtype=float)[:, None] * unit
 
 
-def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma):
+def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None):
     """The push along the surface on every layer of every column [N/m3], (n, 3), and its four terms (spec 6.4), each in
     the column's own tangent plane -- the base's, where `momentum_step` solves for the velocities:
 
@@ -962,10 +996,16 @@ def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma):
         thickness     rho_l (g . n) grad_s H, H [m, (n,)] the columns' thicknesses: a thicker column under a pull out
                       of the surface has the lower pressure beneath it and draws metal in (the front face's
                       Rayleigh-Taylor mechanism).
-        capillary     -sigma grad_s kappa, kappa the mean curvature (`Columns.curvature`) of the top surface the
-                      thicknesses make (`Columns.top_points`).
+        capillary     -sigma grad_s kappa, kappa the thin film's mean curvature (`Columns.film_curvature`): the base's
+                      plus minus the cotangent Laplacian of the thicknesses on the top surface over each column's area
+                      (sub-plan 21 Task 6b; Asha, 2026-10-21, option A) -- not the top surface's own curvature, whose
+                      corners touching an obtuse triangle take their neighbours' mean, cannot see their own height, and
+                      make surface tension draw metal onto a pile-up there. It acts only where a column's top flows
+                      (`wet`, (n,) bool, `flowing_tops`; None for everywhere): not on an anchored rigid top nor on a
+                      floating crust; a rigid neighbour's height enters a flowing column's curvature as a wall's would,
+                      and in the gradient a wall takes its flowing neighbours' mean curvature (`_walled`).
 
-    The two thickness terms are evaluated at the given H; Task 6 takes them implicitly in the column heights."""
+    The two thickness terms are evaluated at the given H; `thickness_step` takes them implicitly in the column heights."""
     H = np.asarray(thickness, dtype=float)
     normals = columns.normal
     g = np.broadcast_to(np.asarray(g, dtype=float), (columns.n, 3))
@@ -973,7 +1013,7 @@ def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma):
     terms = {"pressure": -along_meridian(normals, v_hat, dp_ds),
              "deceleration": rho_l * (g - g_n[:, None] * normals),
              "thickness": rho_l * g_n[:, None] * columns.gradient(H),
-             "capillary": -sigma * columns.gradient(columns.curvature(columns.top_points(H)))}
+             "capillary": _capillary(columns, columns.film_curvature(H), wet, sigma)}
     return sum(terms.values()), terms
 
 
@@ -1052,10 +1092,12 @@ def _factor(A, upwind):
     return spla.splu(A)
 
 
-def transport(sk, columns, dt, regrid=True):
+def transport(sk, columns, dt, regrid=True, faces=None):
     """One linearly implicit upwind sub-step dt [s] of the metal moving sideways between neighbouring columns at the
     cells' velocities sk.U (spec 6.5; Asha, 2026-10-21: its own step, after the momentum step). Updates the cells and
-    returns a TransportBook.
+    returns a TransportBook. `faces`, a FacePush from `thickness_step` (sub-plan 21 Task 6b), adds to every moving cell's
+    velocity across each face its response times the face's own thickness push, less its column's; None leaves the
+    velocities as they are.
 
     Across each face, cell k of the donor column a sends c m_k' toward the receiver b, c = (u_k . f)+ / A_a [1/s], f the
     face's vector (`Columns.face_vector`) and m_k' the cell's mass at the sub-step's end; it carries the cell's specific
@@ -1090,6 +1132,8 @@ def transport(sk, columns, dt, regrid=True):
     valid = sk.valid
     flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
     moving = valid & ~anchored_cells(sk, flowing) & (sk.U != 0.0).any(axis=2)
+    if faces is not None:
+        moving |= valid & ~anchored_cells(sk, flowing) & (faces.response != 0.0)
     book = TransportBook(np.zeros(n), np.zeros(n), np.zeros((n, 3)), np.zeros((n, 3)), 0.0)
     if not moving.any():
         return book
@@ -1098,7 +1142,10 @@ def transport(sk, columns, dt, regrid=True):
     a, b, f = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
     keep = np.flatnonzero(moving.any(axis=1)[a])
     a, b, f = a[keep], b[keep], f[keep]
-    c = np.where(moving[a], np.maximum(np.einsum("dkx,dx->dk", sk.U[a], f), 0.0), 0.0) / sk.area[a][:, None]
+    across = np.einsum("dkx,dx->dk", sk.U[a], f)
+    if faces is not None:
+        across = across + faces.response[a] * faces.across[keep][:, None]
+    c = np.where(moving[a], np.maximum(across, 0.0), 0.0) / sk.area[a][:, None]
     keep = np.flatnonzero((c > 0.0).any(axis=1))
     if not len(keep):
         return book
@@ -1196,6 +1243,155 @@ def transport(sk, columns, dt, regrid=True):
     if regrid:
         sk.regrid()
     return book
+
+
+# -- the thickness terms, implicit (sub-plan 21 Task 6b) ----------------------------------------------------------------
+THICKNESS_PASSES = 8              # linearisations of the transport's fluxes at most
+THICKNESS_TOL = 1.0e-3            # the linearisations stop once the flux the last one missed would move no column by
+                                  # more than this share of the largest height change it predicts
+
+
+def flowing_tops(sk):
+    """Whether each column's top cell flows, (n,) bool: where surface tension acts (Asha, 2026-10-21), not on an
+    anchored rigid top nor on a floating crust."""
+    return (sk.count > 0) & np.isfinite(cell_viscosity(sk, 0.0)[:, 0])
+
+
+def _walled(columns, kappa, wet):
+    """The curvatures `kappa` (n,) where a column's top flows; at a column whose top does not -- a wall -- the mean of
+    its flowing neighbours', so that the gradient beside a wall carries no capillary push of the wall's own."""
+    if wet is None or wet.all():
+        return kappa
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    total = np.bincount(i, kappa[j] * wet[j], columns.n) + np.bincount(j, kappa[i] * wet[i], columns.n)
+    count = np.bincount(i, wet[j], columns.n) + np.bincount(j, wet[i], columns.n)
+    return np.where(wet, kappa, np.where(count > 0.0, total / np.maximum(count, 1.0), kappa))
+
+
+def _capillary(columns, kappa, wet, sigma):
+    """-sigma grad_s kappa where a column's top flows, zero elsewhere (`push`'s capillary term)."""
+    G = -sigma * columns.gradient(_walled(columns, kappa, wet))
+    return G if wet is None else np.where(wet[:, None], G, 0.0)
+
+
+@dataclass
+class FacePush:
+    """What `transport` adds to the cells' velocities across the faces."""
+    response: np.ndarray     # (n, K) [m/s per N/m3]: every cell's velocity per unit push (MomentumBook.response)
+    across: np.ndarray       # (2E,) [Pa]: for each face, from its edge's first column to its second and then the other
+                             # way (the order `transport` builds), the face's own thickness push times the face, less
+                             # the sending column's push dotted with the face's vector
+
+
+@dataclass
+class ThicknessBook:
+    """What the implicit thickness terms did in a sub-step, per column."""
+    push: np.ndarray         # N s (n, 3): the impulse of their change on the moving cells
+    wall: np.ndarray         # N s (n, 3): the anchored metal's drag on the velocities that change gave
+    heights: np.ndarray      # m (n,): the thicknesses predicted at the end of the transport
+    faces: FacePush          # for `transport`
+    growth: float            # the largest Rayleigh-Taylor growth in a sub-step, dt s, over the columns
+    passes: int              # the linearisations made
+
+
+def thickness_step(sk, columns, dt, book, applied, g, rho_l, sigma):
+    """The push's thickness terms, rho_l (g . n) grad_s H and -sigma grad_s kappa, implicit in the column heights at
+    the end of the sub-step's transport (spec 6.4's last paragraph; Asha, 2026-10-21: the transport is its own step
+    after the momentum step). Called between `momentum_step`, given `push`'s G with `wet=flowing_tops(sk)` and
+    response=True (its book is `book`), and `transport`, given the returned book's `faces`; `applied` (n, 3) [N/m3] is the
+    part of that push the two terms made, terms['thickness'] + terms['capillary']. Corrects sk.U; returns a
+    ThicknessBook.
+
+    The two terms are the gradient of P = sigma kappa - rho_l (g . n) H, kappa the thin film's curvature
+    (`Columns.film_curvature`), surface tension only where a column's top flows (`flowing_tops`). Across each dual face
+    P pushes by its two-point difference, phi = w (P_a - P_b) [Pa] with w the face's clipped cotangent weight
+    (`Columns.conduct_weight`; the capillary part only between two flowing tops, the deceleration's with the mean of the
+    two columns' g . n), linear in the heights through `Columns.film_operator`. Each sub-step:
+
+      1. predicts the heights at the end of the transport, H + dH, from the transport linearised on the columns: a column
+         sends across a face what its cells carry at their velocity without the thickness push plus their response
+         times the face's push -- implicitly in its moving metal, as the transport does -- linearised in the face's push
+         through the mobility of the cells that cross, sum r dz. Newton's method on that piecewise linear flux: the
+         system is solved again at the new face pushes until the flux the last solve missed would move no column by more
+         than THICKNESS_TOL of the largest change (1-3 solves on the test sphere and 3 on the 100 mm sphere's melting
+         state, measured 2026-10-21);
+      2. corrects every moving cell's velocity by its response times the change of the column's push -- `push`'s terms at
+         the predicted heights, less `applied` -- so that the cells' momentum follows the push of Task 5's form, and books
+         the impulse of that change and the anchored metal's drag on it (`MomentumBook.wall_response`);
+      3. hands `transport` each face's own push (ruling, 2026-10-21; the column form of Rhie-Chow interpolation): a
+         cell's velocity across a face becomes its velocity without the thickness push plus its response times that
+         face's push. The two-point difference sees a disturbance one column wide; the columns' pushes are centred
+         differences, blind to it, and with them alone a bump 1 um high on one column of 1.1 mm of slurry stayed at
+         99.8 % of its height while the faces' push took it to 12.5 % in one 10 ms sub-step.
+
+    Measured 2026-10-21. A cosine 24 mm long on 1 mm of slurry at 902 K pulled out of its surface at 100 m/s2 grows at
+    the thin-film rate h^3 k^2 (rho g - sigma k^2) / 3 mu within 0.42 % at sub-steps of 1-10 ms; one of 8 mm, below the
+    11.5 mm cutoff, decays at it within 1.2 % at 1 ms and within 0.26 % of backward Euler's own rate at 1-10 ms; a mode
+    alternating from column to column on 0.3 mm of liquid on 2 mm columns falls to at most 0.12 of itself in one sub-step
+    of 10 ms to 1 s. On the 100 mm sphere's melting state (the face where g . n > 0 melted 0.3 mm deep, 141 000 cells
+    moving) the step takes 0.30 s and the response 0.03-0.05 s more in the momentum step, against 0.31-0.37 s for the
+    transport. The growth reported is the largest dt M k^2 (rho_l g . n - sigma k^2) over the columns, M = sum r dz their
+    mobility and k at its fastest up to the columns' pi / sqrt(A): backward Euler follows the Rayleigh-Taylor growth only
+    where it is well under one."""
+    n, K = sk.m.shape
+    r = book.response
+    dz, A = sk.dz(), sk.area
+    H = dz.sum(axis=1)
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    moving = sk.valid & ~anchored_cells(sk, flowing)
+    wet = flowing_tops(sk)
+    normals = columns.normal
+    g = np.broadcast_to(np.asarray(g, dtype=float), (n, 3))
+    g_n = np.einsum("ij,ij->i", g, normals)
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    w, g_e, both = columns.conduct_weight, 0.5 * (g_n[i] + g_n[j]), (wet[i] & wet[j]).astype(float)
+    kappa, J = columns.film_curvature(H), columns.film_operator(H)
+    phi0 = w * (sigma * both * (kappa[i] - kappa[j]) - rho_l * g_e * (H[i] - H[j]))      # each face's, first to second
+    Bt = columns.incidence.T.tocsr()
+    dphi = sp.diags(w) @ (sp.diags(sigma * both) @ (Bt @ J) - sp.diags(rho_l * g_e) @ Bt)  # its change per change of H
+    # every face each way whose sender moves; its cells' velocity across it without the thickness push [m2/s]
+    a, b, f = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
+    keep = np.flatnonzero(moving.any(axis=1)[a])
+    a, b, f, phi_d = a[keep], b[keep], f[keep], np.r_[phi0, -phi0][keep]
+    dphi_d = sp.vstack([dphi, -dphi]).tocsr()[keep]
+    un = np.where(moving[a], np.einsum("dkx,dx->dk", (sk.U - r[..., None] * applied[:, None, :])[a], f), 0.0)
+    ra, da = r[a], np.where(moving[a], dz[a], 0.0)
+    flux = lambda phi: (np.maximum(un + ra * phi[:, None], 0.0) * da).sum(axis=1)       # m3/s
+    thick = np.where(moving, dz, 0.0).sum(axis=1)
+    D = len(a)
+    C = sp.csr_matrix((np.r_[np.ones(D), -np.ones(D)], (np.r_[a, b], np.r_[np.arange(D), np.arange(D)])), shape=(n, D))
+    active = np.zeros(n, dtype=bool)
+    active[a], active[b] = True, True
+    act = np.flatnonzero(active)
+    dH, phi, passes = np.zeros(n), phi_d, 0
+    F = flux(phi)
+    for passes in range(1, (THICKNESS_PASSES if D else 0) + 1):
+        M = (ra * da * (un + ra * phi[:, None] > 0.0)).sum(axis=1)                       # m5/(N s): the crossing cells'
+        Pa = sp.csr_matrix((F / np.where(thick[a] > 0.0, thick[a], 1.0), (np.arange(D), a)), shape=(D, n))
+        N = (sp.diags(A) + dt * C @ (Pa + sp.diags(M) @ dphi_d)).tocsr()[act][:, act]
+        dH = np.zeros(n)
+        dH[act] = spla.splu(N.tocsc()).solve(-dt * (C @ (F + M * (phi_d - phi)))[act])
+        new = phi_d + dphi_d @ dH
+        F_new = flux(new)
+        missed = dt * np.abs(C @ (F_new - F - M * (new - phi))) / A
+        phi, F = new, F_new
+        if missed.max() <= THICKNESS_TOL * np.abs(dH).max():
+            break
+    # the cells' velocities by the change of the columns' push; the faces' own push for the transport
+    G = rho_l * g_n[:, None] * columns.gradient(H + dH) + _capillary(columns, kappa + J @ dH, wet, sigma)
+    dG = G - applied
+    sk.U = np.where(moving[..., None], sk.U + r[..., None] * dG[:, None, :], sk.U)
+    across = np.zeros(2 * len(i))
+    across[keep] = phi - np.einsum("dx,dx->d", G[a], f)
+    # the books, and the fastest Rayleigh-Taylor growth in a sub-step
+    V = np.where(moving, dz, 0.0).sum(axis=1) * A
+    s_tension = sigma * wet
+    k2 = np.pi ** 2 / A
+    fastest = np.maximum(rho_l * g_n, 0.0) / (2.0 * np.maximum(s_tension, 1e-300))         # k^2 of the fastest growth
+    k2 = np.where(s_tension > 0.0, np.minimum(k2, fastest), k2)
+    s = (r * np.where(moving, dz, 0.0)).sum(axis=1) * k2 * (rho_l * g_n - s_tension * k2)
+    return ThicknessBook(push=dt * V[:, None] * dG, wall=-dt * book.wall_response[:, None] * dG, heights=H + dH,
+                         faces=FacePush(r, across), growth=float(max(dt * s.max(), 0.0)) if n else 0.0, passes=passes)
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------

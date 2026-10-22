@@ -793,7 +793,8 @@ def test_a_thicker_column_under_a_pull_out_of_the_surface_draws_the_metal_toward
 
 def test_a_bump_s_surface_tension_pushes_the_metal_from_its_crest_converging_at_second_order():
     """A cosine bump of 20 um on a 0.5 mm layer: kappa = -H'' for small slopes, so -sigma grad kappa = sigma H''' =
-    sigma eps k^3 sin(kx). Measured 2026-10-20: 2.45 % of its peak off at 20 spacings a wavelength, 0.62 % at 40."""
+    sigma eps k^3 sin(kx). Measured 2026-10-20: 2.45 % of its peak off at 20 spacings a wavelength, 0.62 % at 40; the
+    same to three digits with the thin film's curvature (Task 6b, 2026-10-21)."""
     def error(lam):
         col, pts = regular_grid()
         k, eps = 2.0 * np.pi / lam, 2e-5
@@ -808,13 +809,14 @@ def test_a_bump_s_surface_tension_pushes_the_metal_from_its_crest_converging_at_
 
 def test_a_sphere_s_own_mesh_drives_no_capillary_flow_to_speak_of(coarse_sphere_mesh):
     """Uniform 0.8 mm skins on the 4 mm sphere: the curvature is uniform, so the capillary push is the mesh's error
-    alone -- 11 Pa/m at worst, 0.28 on average (measured 2026-10-20), against 2e5 Pa/m from the pressure at peak
-    heating (fact 153)."""
+    alone -- with the thin film's curvature (Task 6b) the base's, Task 2's operator: 0.32 Pa/m at worst, 0.031 on
+    average (measured 2026-10-21; 11 and 0.28 from the top surface's own curvature, 2026-10-20), against 2e5 Pa/m from
+    the pressure at peak heating (fact 153)."""
     from test_reentry_model_columns import sphere_columns
     col, _ = sphere_columns(coarse_sphere_mesh)
     _, terms = skin.push(col, np.full(col.n, 8e-4), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA)
     size = np.linalg.norm(terms["capillary"], axis=1)
-    assert size.max() < 20.0 and size.mean() < 0.5
+    assert size.max() < 0.7 and size.mean() < 0.07
 
 
 # -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
@@ -1108,3 +1110,281 @@ def test_the_upwind_order_changes_the_cost_never_the_answer(coarse_sphere_mesh, 
     for x, y in zip(first.state(), second.state()):
         np.testing.assert_allclose(x, y, rtol=1e-11, atol=1e-11 * np.abs(y).max())
     np.testing.assert_allclose(a.wall, b.wall, rtol=0, atol=1e-11 * np.abs(a.momentum).max())
+
+
+# -- the thickness terms, implicit (sub-plan 21 Task 6b) ----------------------------------------------------------------
+def film_strip(nx, h, h0, T, ncells, eps=0.0, lam=None):
+    """Columns on a strip two corners wide (`strip_grid`), each column ncells cells at T holding h0 of thickness --
+    perturbed by eps cos(2 pi x / lam) -- over five 10 um cells of rigid metal, which the cells' cosine leaves flat."""
+    col, pts = strip_grid(nx, 2, h)
+    mat = scheil()
+    sk = skin.Skins(mat, col.area, skin.SkinSettings(**CELLS_04))
+    top = h0 + (eps * np.cos(2.0 * np.pi * pts[:, 0] / lam) if eps else 0.0)
+    m = np.zeros((col.n, ncells + 5))
+    m[:, :ncells] = (top * float(sk.density(np.array([T]))[0]) * col.area / ncells)[:, None]
+    m[:, ncells:] = (mat.rho * col.area * 1e-5)[:, None]
+    sk._install(m, m * mat.enthalpy(np.r_[np.full(ncells, T), np.full(5, RIGID)])[None, :], np.full(col.n, ncells + 5))
+    return sk, col, pts
+
+
+def flow_step(sk, col, dt, g, sigma=SIGMA, dp_ds=None):
+    """One flow sub-step in the order the skin body is to call it (6c): the push, surface tension where a column's top
+    flows; the momentum step with its response; the thickness step; the transport with the faces' own push."""
+    G, terms = skin.push(col, sk.thickness(), np.zeros(col.n) if dp_ds is None else dp_ds, g, V_HAT, RHO_L, sigma,
+                         wet=skin.flowing_tops(sk))
+    mb = skin.momentum_step(sk, dt, G, np.zeros(3), sk.area, response=True)
+    tb = skin.thickness_step(sk, col, dt, mb, terms["thickness"] + terms["capillary"], g, RHO_L, sigma)
+    return mb, tb, skin.transport(sk, col, dt, regrid=False, faces=tb.faces)
+
+
+def thin_film_rate(T, h0, k, g_out):
+    """The thin-film linear rate s(k) = h0^3 k^2 (rho g - sigma k^2) / (3 mu) [1/s], mu the slurry's at rest."""
+    mat = scheil()
+    mu = float(rheology.li_viscosity(1.0 - float(mat.liquid_fraction(np.array([T]))[0]), 0.0))
+    return h0 ** 3 * k ** 2 * (RHO_L * g_out - SIGMA * k ** 2) / (3.0 * mu)
+
+
+def cosine_rate(nx, h, lam, g_out, dt, span, waves):
+    """The rate [1/s] at which a cosine 1 um high on 1 mm of slurry at 902 K grows or decays on a strip, measured over
+    the second half of `span` seconds on the middle wave."""
+    sk, col, pts = film_strip(nx, h, 1e-3, SLURRY, 25, eps=1e-6, lam=lam)
+    x = pts[:, 0]
+    mid = (x > lam - 1e-9) & (x < (waves - 1) * lam + 1e-9)
+    c = np.cos(2.0 * np.pi * x / lam)[mid]
+    amplitude = lambda: float(((sk.thickness()[mid] - sk.thickness()[mid].mean()) * c).sum() / (c * c).sum())
+    N = int(round(span / dt))
+    a = []
+    for k in range(N):
+        flow_step(sk, col, dt, np.array([0.0, 0.0, g_out]))
+        if k + 1 in (N // 2, N):
+            a.append(amplitude())
+    return np.log(a[1] / a[0]) / ((N - N // 2) * dt)
+
+
+def test_a_cosine_on_a_slurry_layer_pulled_out_of_its_surface_grows_at_the_thin_film_rayleigh_taylor_rate():
+    """Spec 11.1 level 1. 1 mm of slurry at 902 K (30 % solid, 2.68 Pa s at rest) on a strip of 1 mm columns, pulled out
+    of its surface at 100 m/s2 (a capillary cutoff 2 pi sqrt(sigma / rho g) of 11.5 mm), a cosine 24 mm long and 1 um
+    high: the lubrication regime the formula assumes, the layer's viscous time rho h0^2 / mu 0.9 ms against a growth time
+    of 0.63 s. s(k) = h0^3 k^2 (rho g - sigma k^2) / (3 mu) = 1.578 1/s, met within -0.41, -0.22 and +0.42 % at sub-steps
+    of 1, 2.5 and 10 ms (measured 2026-10-21): the grid's own -0.40 % (its compact second difference) and backward
+    Euler's growth, +dt s / 2."""
+    s = thin_film_rate(SLURRY, 1e-3, 2.0 * np.pi / 24e-3, 100.0)
+    for dt in (1e-3, 2.5e-3, 1e-2):
+        assert cosine_rate(73, 1e-3, 24e-3, 100.0, dt, 0.63, 3) == pytest.approx(s, rel=0.01)
+
+
+def test_a_cosine_shorter_than_the_cutoff_decays_at_the_thin_film_rate():
+    """The same layer and pull, a cosine 8 mm long, below the 11.5 mm cutoff, on 0.25 mm columns: s = -19.44 1/s, met
+    within 1.2 % at 1 ms sub-steps; at 10 ms the rate is 8.7 % slower, backward Euler's own damping, -ln(1 + dt |s|) / dt,
+    which it meets within 0.10 % (0.26 % at 1 ms; measured 2026-10-21)."""
+    s = thin_film_rate(SLURRY, 1e-3, 2.0 * np.pi / 8e-3, 100.0)
+    rates = {dt: cosine_rate(97, 0.25e-3, 8e-3, 100.0, dt, 0.06, 3) for dt in (1e-3, 1e-2)}
+    assert rates[1e-3] == pytest.approx(s, rel=0.025)
+    for dt, rate in rates.items():
+        assert rate == pytest.approx(-np.log(1.0 - dt * s) / dt, rel=0.006)
+
+
+def test_the_two_column_mode_of_liquid_on_2_mm_columns_decays_at_any_sub_step():
+    """0.3 mm of liquid aluminium (viscous time 0.17 s: inertial at every sub-step here) on 2 mm columns, pulled out of
+    its surface at 30 m/s2 (the 100 mm sphere's peak deceleration) or not at all, its thickness alternating by 1 um from
+    column to column: surface tension relaxes it within each sub-step of 10 ms to 1 s -- to 0.112, 5.5e-4 and -0.051 of
+    itself in one sub-step of 10 ms, 100 ms and 1 s under the pull (0.117, -6.3e-5 and -0.056 without), never above
+    0.009 of itself after that (measured 2026-10-21)."""
+    for g_out in (30.0, 0.0):
+        for dt in (1e-2, 1e-1, 1.0):
+            sk, col, pts = film_strip(33, 2e-3, 0.3e-3, LIQUID, 15)
+            i = np.rint(pts[:, 0] / 2e-3).astype(int)
+            sign = np.where(i % 2 == 0, 1.0, -1.0)
+            m, H = sk.m.copy(), sk.H.copy()
+            m[:, :15] *= (1.0 + 1e-6 / 0.3e-3 * sign)[:, None]
+            H[:, :15] *= (1.0 + 1e-6 / 0.3e-3 * sign)[:, None]
+            sk._install(m, H, sk.count, T=sk.T)
+            inner = (i > 3) & (i < 29)
+            mode = lambda: float(((sk.thickness() - sk.thickness()[inner].mean()) * sign)[inner].mean())
+            a = [mode()]
+            for _ in range(3 if g_out else 6):
+                flow_step(sk, col, dt, np.array([0.0, 0.0, g_out]))
+                a.append(mode())
+            assert abs(a[1]) < 0.25 * a[0] and max(abs(x) for x in a[2:]) < 0.02 * a[0]
+
+
+def test_with_neither_surface_tension_nor_a_pull_into_the_surface_the_step_is_the_momentum_step_and_the_transport(
+        coarse_sphere_mesh):
+    """Spec 6.4's thickness terms vanish with sigma = 0 and g = 0: the momentum step with its response, the thickness
+    step and the transport with the faces' push leave exactly what the momentum step and the transport leave, to the last
+    bit, on mixed sphere skins pushed by a Newtonian pressure gradient."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    cos = np.clip(col.normal @ V_HAT, 0.0, 1.0)
+    dp_ds = -2.0 * 11e3 * np.sqrt(1.0 - cos ** 2) * cos / 0.05
+    first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    G, _ = skin.push(col, first.thickness(), dp_ds, np.zeros(3), V_HAT, RHO_L, 0.0)
+    a = skin.momentum_step(first, 0.01, G, np.zeros(3), first.area)
+    ta = skin.transport(first, col, 0.01, regrid=False)
+    b, tb, tr = flow_step(second, col, 0.01, np.zeros(3), sigma=0.0, dp_ds=dp_ds)
+    assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
+    assert all(np.array_equal(getattr(a, k), getattr(b, k)) for k in ("push", "shear", "wall"))
+    assert all(np.array_equal(getattr(ta, k), getattr(tr, k)) for k in ("mass", "enthalpy", "momentum", "wall"))
+    assert not (tb.push.any() or tb.wall.any())
+
+
+def test_the_books_close_with_the_thickness_impulse_and_the_masses_stay_positive(coarse_sphere_mesh):
+    """Mixed sphere skins -- liquid, slurry, crusts and anchored metal, each column 1-3 times its minimum deep -- under a
+    Newtonian pressure gradient, 30 m/s2 of deceleration and surface tension: mass and enthalpy are kept, and the
+    momentum changes by the push's, the shear's and the wall's impulses of the momentum step, the thickness step's push
+    and wall, and the transport's carried momentum and wall, to round-off (7.8e-14 and 8.8e-13 of the largest impulse at
+    1 and 10 ms, measured 2026-10-21); every cell keeps a positive mass."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    cos = np.clip(col.normal @ V_HAT, 0.0, 1.0)
+    dp_ds = -2.0 * 11e3 * np.sqrt(1.0 - cos ** 2) * cos / 0.05
+    for dt in (1e-3, 1e-2):
+        sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        P0, M0, E0 = sk.column_momentum(), sk.mass(), sk.energy()
+        mb, tb, tr = flow_step(sk, col, dt, 30.0 * V_HAT, dp_ds=dp_ds)
+        parts = (mb.push, mb.shear, mb.wall, tb.push, tb.wall, tr.momentum, tr.wall)
+        scale = max(np.abs(x).max() for x in parts + (P0,))
+        miss = np.abs(sk.column_momentum() - P0 - sum(parts)).max() / scale
+        assert miss < 2e-12
+        assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
+        assert np.all(sk.m[sk.valid] > 0.0) and np.abs(tb.push).max() > 1e-3 * np.abs(mb.push).max()
+
+
+def test_surface_tension_acts_only_where_a_column_s_top_flows():
+    """Asha, 2026-10-21: liquid 0.29 mm deep on a strip beside a wall of rigid metal 0.4 mm high, and a crust over
+    slurry in the middle. The wall's height enters the curvature of the liquid beside it, as a wall's would; neither the
+    wall nor the crust feels a capillary push, and surface tension moves no metal into either (what lands there is the
+    round-off of a velocity the faces' push cancels, 1.5e-15 of what moves); the wall's cells stay as they were and
+    the crust and the slurry beneath it, pushed by nothing, stay at rest."""
+    col, pts = strip_grid(21, 2)
+    x = np.rint(pts[:, 0] / 1e-3).astype(int)
+    temps = [[RIGID] * 40 if k >= 15 else [RIGID] * 2 + [SLURRY] * 20 + [RIGID] * 5 if k == 7
+             else [LIQUID] * 25 + [RIGID] * 5 for k in x]
+    sk = stacked(col, temps)
+    wet = skin.flowing_tops(sk)
+    assert np.array_equal(wet, (x < 15) & (x != 7))
+    H = sk.thickness()
+    kappa = col.film_curvature(H)
+    beside = np.flatnonzero(x == 14)
+    np.testing.assert_allclose(kappa[beside], (col.film_operator(H) @ H)[beside], rtol=1e-12)
+    assert np.all(kappa[beside] < -50.0)                                    # a wall higher than the liquid: concave
+    G, terms = skin.push(col, H, np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA, wet=wet)
+    assert np.all(terms["capillary"][~wet] == 0.0) and np.abs(terms["capillary"][wet]).max() > 1e3
+    before = sk.state()
+    mb, tb, tr = flow_step(sk, col, 0.01, np.zeros(3))
+    assert np.abs(tr.mass[~wet]).max() < 1e-14 * np.abs(tr.mass).max()
+    top = sk.count - before[4]                                              # round-off slivers landed on rigid tops
+    for c in np.flatnonzero(~wet):
+        for now, then in ((sk.m, before[1]), (sk.H, before[2])):
+            assert np.array_equal(now[c, top[c]:sk.count[c]], then[c, :before[4][c]])
+    for c in np.flatnonzero(x == 7):
+        assert np.all(sk.U[c, top[c]:sk.count[c]] == 0.0)
+
+
+def test_a_uniform_layer_on_the_test_sphere_stays_uniform(coarse_sphere_mesh):
+    """0.3 mm of liquid over rigid metal on every column of the 4 mm test sphere, surface tension only: a sphere's
+    curvature is the same everywhere, so the layer stays uniform but for the base curvature's error (Task 2's, within
+    8.4e-5 of 2 / R): 26 nm and 2.2 um/s at most after 20 sub-steps of 10 ms (measured 2026-10-21)."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    sk = stacked(col, [[LIQUID] * 30 + [RIGID] * 5] * col.n)
+    H0 = sk.thickness()
+    for _ in range(20):
+        flow_step(sk, col, 0.01, np.zeros(3))
+    assert np.abs(sk.thickness() - H0).max() < 6e-8 and np.abs(sk.U).max() < 5e-6
+
+
+def test_a_one_column_bump_relaxes_through_the_faces_own_push():
+    """A bump 1 um high on one column of 1.1 mm of slurry on 1 mm columns, surface tension only: the faces' own push --
+    a two-point difference across each face, which sees a disturbance one column wide -- relaxes it, to 12.5 % of itself
+    in one 10 ms sub-step and 3.0 % in five (measured 2026-10-21). The columns' pushes are centred differences, zero on
+    the bump's own column by symmetry, and with them alone (no faces' push) the transport, which takes metal out of a
+    column only at its own velocity, leaves the bump at 99.8 % of its height (the column form of Rhie-Chow
+    interpolation)."""
+    out = {}
+    for faces in (True, False):
+        col, pts = strip_grid(21, 21)
+        sk = stacked(col, [[SLURRY] * 100 + [RIGID] * 5] * col.n)
+        c = int(np.argmin(np.linalg.norm(pts - pts.mean(axis=0), axis=1)))
+        base = sk.thickness()[c]
+        m, H = sk.m.copy(), sk.H.copy()
+        m[c, :100] *= 1.0 + 1e-6 / (base - 5e-5)
+        H[c, :100] *= 1.0 + 1e-6 / (base - 5e-5)
+        sk._install(m, H, sk.count, T=sk.T)
+        heights = []
+        for _ in range(5):
+            G, terms = skin.push(col, sk.thickness(), np.zeros(col.n), np.zeros(3), V_HAT, RHO_L, SIGMA,
+                                 wet=skin.flowing_tops(sk))
+            mb = skin.momentum_step(sk, 0.01, G, np.zeros(3), sk.area, response=True)
+            applied = terms["thickness"] + terms["capillary"]
+            tb = skin.thickness_step(sk, col, 0.01, mb, applied, np.zeros(3), RHO_L, SIGMA)
+            skin.transport(sk, col, 0.01, regrid=False, faces=tb.faces if faces else None)
+            heights.append(sk.thickness()[c] - base)
+        out[faces] = np.array(heights) / 1e-6
+    assert out[True][0] < 0.25 and out[True][-1] < 0.06 and np.all(out[False] > 0.99)
+
+
+def test_a_floating_crust_is_one_unknown_and_the_momentum_books_close_on_mixed_skins(coarse_sphere_mesh):
+    """Each floating crust is one unknown in the momentum step's system, a rigid body, where 6a's coupled its cells by
+    a viscosity of 1e9 Pa s, whose rows some 1e12 times the cells' inertia amplified the solver's round-off: on mixed
+    sphere skins the books closed to 1.2e-5 of the largest impulse and now to round-off; the velocities moved by 1.1e-3
+    of the largest at 10 ms, as the coupled crust's moved by 1.1e-5 at 1e7 Pa s and 4.2e-7 at 1e5 (measured
+    2026-10-21), so the change is that round-off, and columns without a crust are unchanged to the last bit. The books
+    close to 6.6e-14 and 6.2e-13 of the largest impulse at 1 and 10 ms."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    for dt in (1e-3, 1e-2):
+        sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+        crust = sk.valid & ~flowing & ~skin.anchored_cells(sk, flowing)
+        assert crust.sum() > 1000
+        P0 = sk.column_momentum()
+        book = skin.momentum_step(sk, dt, np.array([3e4, -1e4, 2e3]), np.zeros(3), sk.area)
+        parts = (book.push, book.shear, book.wall, P0, sk.column_momentum())
+        miss = (np.abs(sk.column_momentum() - P0 - book.push - book.shear - book.wall).max()
+                / max(np.abs(x).max() for x in parts))
+        assert miss < 1.5e-12
+        same = crust[:, 1:] & crust[:, :-1]
+        assert np.array_equal(sk.U[:, 1:][same], sk.U[:, :-1][same])
+
+
+def test_the_momentum_response_is_what_a_change_of_the_push_gives():
+    """With the viscosities held -- liquid aluminium's here -- the momentum step is linear in the push: a change dG of
+    the push changes every cell's velocity by its response times dG, and the wall's impulse by -dt wall_response dG."""
+    sk = column_at([950.0] * 30 + [880.0] * 10)
+    U0 = np.random.default_rng(2).normal(0.0, 0.01, sk.U.shape) * sk.valid[..., None]
+    G, dG = np.array([2e4, -1e4, 0.0]), np.array([300.0, 500.0, 0.0])
+    sk.U = U0.copy()
+    a = skin.momentum_step(sk, 0.01, G, np.zeros(3), sk.area, response=True)
+    Ua = sk.U.copy()
+    sk.U = U0.copy()
+    b = skin.momentum_step(sk, 0.01, G + dG, np.zeros(3), sk.area)
+    np.testing.assert_allclose(sk.U - Ua, a.response[..., None] * dG, rtol=0, atol=1e-12 * np.abs(Ua).max())
+    np.testing.assert_allclose(b.wall - a.wall, -0.01 * a.wall_response[:, None] * dG, rtol=1e-9, atol=1e-20)
+    assert np.all(a.response[0, :30] > 0.0) and np.all(a.response[0, 30:] == 0.0)
+
+
+def test_the_predicted_heights_are_the_transport_s_and_the_linearisations_stop_on_the_flux(coarse_sphere_mesh):
+    """Liquid aluminium 0.29 mm deep with 1 um of random roughness on the test sphere, surface tension only: the
+    roughness decays, the heights the thickness step predicts are those the transport makes, and the linearisations of
+    the crossing cells stop within a few passes, on the flux they miss: over four sub-steps of 10 ms the roughness falls
+    to 34 % of itself, the transport makes the predicted heights to 0.62 % of the largest change, and the passes are
+    1, 3, 3 and 3 (measured 2026-10-21)."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    sk = stacked(col, [[LIQUID] * 25 + [RIGID] * 5] * col.n)
+    rng = np.random.default_rng(1)
+    f = (1.0 + 1e-6 / 2.9e-4 * rng.normal(size=col.n))[:, None]
+    m, H = sk.m.copy(), sk.H.copy()
+    m[:, :25] *= f
+    H[:, :25] *= f
+    sk._install(m, H, sk.count, T=sk.T)
+    spread0 = np.std(sk.thickness())
+    worst, passes = 0.0, []
+    for _ in range(4):
+        H0 = sk.thickness()
+        mb, tb, tr = flow_step(sk, col, 0.01, np.zeros(3))
+        worst = max(worst, np.abs(tb.heights - sk.thickness()).max() / np.abs(sk.thickness() - H0).max())
+        passes.append(tb.passes)
+    assert worst < 0.0125 and max(passes) <= 4 and np.std(sk.thickness()) < 0.5 * spread0

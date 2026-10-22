@@ -306,7 +306,15 @@ nose along the surface and out of the front face, on the leeward face too; and �
 gradient of p_w(θ) along the meridian, since differentiating the corners' values amplifies the scatter of their
 normals some 25 times.) The third term lowers the pressure under a thicker column on the front face, so pile-ups attract material at
 long wavelengths — the front-surface Rayleigh–Taylor mechanism, as a flow; the fourth, surface tension, resists them and
-dominates below the capillary length (about 1.8 mm, §2). Both thickness terms were added on 2026-10-11.
+dominates below the capillary length (about 1.8 mm, §2). Both thickness terms were added on 2026-10-11. (Sub-plan 21
+Task 6b, Asha, 2026-10-21: κ is taken in its thin-film form, the base surface's curvature plus the linear response of the
+curvature to the column heights -- minus the top surface's cotangent Laplacian of the heights over each column's
+area, the area that turns its volume into its height, as stability requires; a thick layer's bump curvature therefore
+stays about 2H/R high, the prism columns of §14 assumption 10 (Asha, 2026-10-22) -- and surface tension acts only where
+a column's top cell flows. Task 5's curvature of the top surface itself, built on Task 2's operator, made
+surface tension run backwards at corners touching an obtuse triangle, which copy their neighbours' curvature and so
+cannot see their own height: unstable at any sub-step, about 1 300 1/s for 0.3 mm of liquid on the 2 mm sphere. The
+thin-film form drops the slope's nonlinear part, about 1.5 times the slope squared, within assumption 1 of §14.)
 
 Through the depth, neighbouring cells drag on each other with the viscosity at their interface: liquid aluminium's
 1.3 mPa·s where both are fully liquid, Li et al.'s slurry law at the interface's solid fraction and shear rate with
@@ -744,7 +752,19 @@ Each stage is tested and measured before the next begins.
 ## 14. Assumptions to state in the thesis
 
 1. The flowing layer is thin against its extent along the surface: pressure varies with depth only through the
-   deceleration's component into the surface, and every layer feels the same push along it.
+   deceleration's component into the surface, and every layer feels the same push along it. For a disturbance of
+   wavelength λ in a layer h thick this needs kh small (k = 2π/λ): a deep layer's ripples really stir only its top
+   λ/2π or so, so the columns make them grow or oscillate too fast, by √(kh / tanh kh) in an inertial layer. At the
+   capillary cutoff (about 11 mm at peak deceleration) that is about 7 % at 1.2 mm and 40 % at 3.4 mm, the flowing
+   depths the element model reaches at 105 and 120 s; about 2.3 times at the columns' shortest wavelength (4 mm) and
+   3.4 mm; a few per cent at most for the runoff along the meridian, which varies over tens of millimetres. Surface
+   tension is taken in its thin-film form (§6.4). Stated as a limitation, with the share of the flight's flow at short
+   wavelengths in layers over about 1 mm measured in sub-plan 21's verification (Asha, 2026-10-21, option a, over
+   making the push fade with depth for short wavelengths). If that share proves significant, the remedy is a
+   non-hydrostatic pressure solved on the cells, a vertical velocity per cell and a Poisson equation for the pressure
+   over the flowing cells each sub-step, as non-hydrostatic coastal models do (SWASH; Stelling and Zijlema 2003): exact
+   for any kh the columns resolve, for liquid and slurry alike; not a depth-averaged Boussinesq correction, derived for
+   inviscid flow (Asha, 2026-10-22).
 2. Velocities are carried between neighbouring columns' tangent planes by projection.
 3. Material crossing between columns is matched by fraction of the flowing depth; it lands on top where the receiving
    column's top is rigid.
@@ -757,6 +777,13 @@ Each stage is tested and measured before the next begins.
 7. Between corners the surfaces are flat triangles.
 8. Girin's δ_m is kept for spraying although the resolved profile has its own sheared depth; both are reported.
 9. (Cascade on only.) The 2026-10-07 design's cascade assumptions.
+10. Each column holds its metal as a prism over its base area, its dual cell's: volume turns into height over that area
+    at every depth, while the top surface drawn at height H over a body of local radius R spans about 2H/R more. A
+    column's thickness is therefore about H/R above a wedge column's for the same metal (estimated: 7 % at 3.4 mm), and
+    surface tension's pressure, which must use the same area to stay stable (§6.4), overstates a bump's curvature by
+    about 2H/R: about 1 % at 0.3 mm, 5 % at 1.2 mm and 14 % at 3.4 mm on the 50 mm sphere, more where the receding body's
+    radius is smaller (Asha, 2026-10-22, over wedge columns whose area grows with height, which would reopen sub-plan
+    20's verified skins).
 
 ## 15. Alternatives considered
 
@@ -864,3 +891,12 @@ Each stage is tested and measured before the next begins.
   flow's sub-step is chosen in Task 6c from the Courant numbers and momentum loss measured on the 100 mm sphere's
   melting state (option c, over accepting the smearing or sub-cycling now), Asha expecting it to be shorter than the
   heat's (§6.5) (Asha).
+- 2026-10-21 (sub-plan 21 Task 6b stopped on a finding): surface tension's pressure takes the thin-film form on the top
+  surface's geometry, acting only where a column's top flows (option A, over the top's full curvature without the
+  obtuse-corner rule, which leaves a mesh-made ripple of 7.7 µm on the test sphere, and two forms keeping Task 5's term,
+  both unstable); the depth-uniform pressure stays and is stated as a limitation with its numbers, the verification
+  measuring the flow at short wavelengths in thick layers (§6.4, §14 assumption 1) (Asha).
+- 2026-10-22 (sub-plan 21 Task 6b built): the columns stay prisms over their base area and the thick-layer curvature
+  error it brings, about 2H/R, is stated (§14 assumption 10), over wedge columns; should the verification find the flow
+  at short wavelengths in thick layers significant, the depth-uniform pressure gives way to a non-hydrostatic pressure on
+  the cells, over a depth-averaged Boussinesq correction (§14 assumption 1) (Asha).

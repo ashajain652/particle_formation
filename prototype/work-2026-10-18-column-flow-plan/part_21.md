@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5 and 6a (2026-10-18/21).**
-> Tasks 6b, 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in turn, the same
-> way, and this document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a and 6b
+> (2026-10-18/21).** Tasks 6c, 7 and 8 are still the scoped outline at the end; each is written out with tested code in
+> turn, the same way, and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -80,6 +80,20 @@ regenerate.
    `test_rigid_metal_joined_to_the_substrate_never_leaves_whatever_its_velocity` (Task 6a).
 8. **The transport's upwind order** comes from how scipy numbers strong components, checked every call — were it ever
    wrong, the same answer, more slowly. Pinned by `test_the_upwind_order_changes_the_cost_never_the_answer` (Task 6a).
+9. **Surface tension at obtuse corners** — the top surface's own curvature ran backwards there; the thin film's must
+   rise with each corner's own height and its product with the faces' exchange have no growing mode. Pinned by
+   `test_a_pile_up_lowers_its_own_curvature_at_an_obtuse_corner_of_the_top_but_raises_the_film_s` and
+   `test_the_faces_exchange_times_the_film_operator_has_no_growing_mode` (Task 6b).
+10. **The predicted heights against the transport's** — the thickness terms are implicit in the heights the thickness
+    step predicts, which the transport makes to 0.62 % of the change on the test sphere but only to about 4 % at a
+    melting state's rim (6.5 µm of 0.15–0.17 mm, at a Courant number of 1.8; not pinned by a test). Watch it in 6c's
+    measurements; where it grows, a second linearisation at the transport's own heights would close it.
+11. **Rayleigh–Taylor growth under-resolved in time** — at dt·s near or above one, backward Euler damps a growing mode
+    spuriously instead of following it. `ThicknessBook.growth` reports it every sub-step; no test can pin what 6c's
+    choice of sub-step must avoid (Task 6b).
+12. **Quiescent layers ringing under surface tension** — two-way flows through the depth join most moving cells into
+    one cycle of the transport and its LU fills (4 s a sub-step on the test sphere); a cost, not an error, measured in
+    6c (Task 6b).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -483,6 +497,8 @@ metal toward the nose along the surface and out of the front face: the spec's �
 first with the body's acceleration and the second with the deceleration's pull), and the element model's
 −ρ_l W sin θ on the windward face. Unlike the element model it acts on the leeward face too, where it pulls the metal
 toward the equator. H is each column's thickness and κ the mean curvature of the top surface the thicknesses make.
+(Task 6b replaces this κ by its thin-film form, on the top surface's cotangents, and applies surface tension only where a
+column's top flows: Task 2's obtuse-corner rule made this term run backwards at those corners, Asha, 2026-10-21.)
 
 **The pressure term takes the surface flow's gradient, not the corners'.** Differentiating each corner's own p_w would
 carry the scatter of the corners' normals — 0.06° off radial on average on the 2 mm sphere, 0.87° at worst — amplified
@@ -680,25 +696,268 @@ git commit -m "Skins: the metal moves sideways between neighbouring columns at t
 
 ---
 
+### Task 6b: The thickness terms implicit in the column heights
+
+**Files:**
+- Modify: `reentry_model/columns.py` (`Columns.film_operator`, `Columns.film_curvature`), `reentry_model/skin.py`
+  (`MomentumBook.response` and `.wall_response`; `momentum_step(..., response=False)`, each floating crust one unknown,
+  the unused `P0` removed; `push(..., wet=None)` with the capillary term in its thin-film form; `transport(...,
+  faces=None)`; `THICKNESS_PASSES`, `THICKNESS_TOL`, `flowing_tops`, `_walled`, `_capillary`, `FacePush`,
+  `ThicknessBook`, `thickness_step`)
+- Test: `tests/test_reentry_model_columns.py`, `tests/test_reentry_model_skin.py` (and Task 5's two capillary tests,
+  re-measured)
+
+**Interfaces:**
+- Consumes: Task 2's `Columns.gradient`, `.curvature` (on the base alone now), `.top_points`, `.incidence`,
+  `.conduct_weight`; Task 4's `momentum_step`, `anchored_cells`, `cell_viscosity`; Task 5's `push`; 6a's `transport` and
+  `Columns.face_vector`.
+- Produces: `Columns.film_operator(thickness) -> (n, n)` sparse [1/m2], minus the cotangent Laplacian of the top surface
+  over each column's area; `Columns.film_curvature(thickness) -> (n,)` [1/m], the base's curvature plus that operator
+  times the thicknesses; `skin.flowing_tops(sk) -> (n,)` bool, where a column's top cell flows; `push(columns,
+  thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None)`, its capillary term −σ ∇_s κ with κ the film's curvature, zero
+  where `wet` is False; `momentum_step(sk, dt, push, shear, A_top, response=False)`, with `response` its book carrying
+  `response` (n, K) [m/s per N/m3], each cell's velocity per unit push, and `wall_response` (n,) [m3], the anchored
+  metal's drag on it; `transport(sk, columns, dt, regrid=True, faces=None)`, `faces` a `FacePush`;
+  `skin.thickness_step(sk, columns, dt, book, applied, g, rho_l, sigma) -> ThicknessBook(push, wall, heights, faces,
+  growth, passes)`, push and wall (n, 3) [N s], heights (n,) [m] the thicknesses predicted at the end of the transport,
+  faces a `FacePush(response (n, K), across (2E,) [Pa])` for the transport, growth the largest dt·s of the
+  Rayleigh–Taylor growth over the columns, passes the linearisations made; `skin.THICKNESS_PASSES` (8),
+  `skin.THICKNESS_TOL` (10⁻³).
+- **What 6c calls, in this order, every flow sub-step:**
+  1. `wet = flowing_tops(sk)`; `G, terms = push(columns, sk.thickness(), dp_ds, g, v_hat, rho_l, sigma, wet=wet)`;
+  2. `mbook = momentum_step(sk, dt, G, shear, A_top, response=True)`;
+  3. `tbook = thickness_step(sk, columns, dt, mbook, terms['thickness'] + terms['capillary'], g, rho_l, sigma)`;
+  4. `trbook = transport(sk, columns, dt, regrid=False, faces=tbook.faces)`;
+  5. the sub-step's own regrid.
+  The column's momentum changes by `mbook.push + mbook.shear + mbook.wall + tbook.push + tbook.wall + trbook.momentum +
+  trbook.wall`. `tbook.growth` must stay well under one: backward Euler follows a Rayleigh–Taylor growth only where the
+  sub-step resolves it.
+
+**Decided before this task was written (Asha, 2026-10-21; spec §6.4, §14 assumption 1, §16).** A first attempt stopped
+on a finding: Task 5's capillary term made surface tension run backwards. It took κ as Task 2's curvature of the top
+surface, and Task 2 gives a corner touching an obtuse triangle its neighbours' mean curvature. Such a corner cannot see
+its own height: raising it makes its neighbours concave and lowers its own curvature, so a pile-up lowers its pressure
+and draws metal in. Raising each of the test sphere's 33 such corners by 1 µm lowered its own curvature at 32 (by up to
+0.083 1/m) and left it unchanged at the other, where every other corner's rose by at least 0.21 1/m.
+
+The faces' exchange times that term's linearisation has eigenvalues down to −1.48·10¹⁰ 1/m⁴ on the test sphere and
+−2.40·10¹¹ 1/m⁴ on the 2 mm sphere (48 such corners). That is a growth of about 80 and 1 300 1/s for 0.3 mm of liquid,
+unstable at any sub-step and in any time scheme. A uniform 0.3 mm liquid layer with 1 µm of noise on the test sphere,
+its velocities reset after each 10 ms sub-step, roughened from 0.48 to 4.0 µm in 30 sub-steps.
+
+Asha's decisions:
+- **(option A)** Surface tension's pressure takes the thin-film form on the top surface's geometry. The pressure is
+  (1/A_i) dE/dH_i, where E is the thin film's surface energy on the top surface and A_i is the column's area, the one
+  that turns the column's volume into its height in the skins.
+- Surface tension acts only where a column's top cell flows.
+- The depth-uniform pressure stays, stated as a limitation.
+
+Option B, the top's full curvature over each column's own area with no obtuse rule, was also stable but left a uniform
+layer rippled by the mesh: 7.7 µm on the test sphere. Keeping Task 5's term, explicitly or with the energy-consistent
+increment, stayed unstable.
+
+**The thin film's curvature.** κ_i = κ_base,i + (J H)_i, where:
+- κ_base is Task 2's curvature of the base, its obtuse-corner rule acting on the fixed base alone;
+- J = −L_top / A is minus the cotangent Laplacian of the top surface over each column's area (`Columns.film_operator`).
+
+A·J is symmetric and non-negative, and so is the faces' exchange B diag(w) Bᵀ. Their product therefore has no growing
+mode: on the test sphere with a rough top (0–3.4 mm) every eigenvalue is real and non-negative to round-off. A cosine's
+curvature on a plane is the compact second difference of the heights (to 4·10⁻⁷, from its own top's cotangents). A
+uniform layer's on the sphere is the base's exactly, so a uniform 0.8 mm skin on the test sphere now gets at most
+0.32 Pa/m of capillary push (0.031 on average) from the mesh, where the top's own curvature gave 11 Pa/m (0.28).
+
+A cotangent depends on angles alone, so the top's cotangents differ from the base's only where the thickness varies:
+the two operators on a smooth bump at 3.4 mm differ by 0.35 % on average on the test sphere. With the base's area, which
+the energy argument requires, a thick layer's bump curvature stays about 2H/R above the top surface's own (14 % at
+3.4 mm on the 50 mm sphere): the columns hold their volume over the base's area. Asha kept the prism columns and
+stated the error (spec §14 assumption 10, 2026-10-22), over wedge columns whose area grows with height.
+
+**Where surface tension acts.** Surface tension acts only where a column's top cell flows (`flowing_tops`). An anchored
+rigid top and a floating crust feel no capillary push, and no capillary push crosses a face with a non-flowing top on
+either side. A rigid neighbour's height enters a flowing column's curvature through the top's Laplacian, as a wall's
+would. In the column push's gradient, a wall takes its flowing neighbours' mean curvature (`_walled`), so it pushes
+nothing of its own. The energy argument holds with the wall's heights as data: the capillary flux runs only between
+flowing tops.
+
+**The scheme** (spec §6.4's last paragraph: "inside the transport solve", read since 2026-10-21 as within the sub-step's
+transport step, so the thickness terms see the heights at the end of the transport). The momentum step is linear in
+the push for fixed viscosities. With `response` it also solves its last pass's system for a unit push alone: one more
+tridiagonal solve, giving each cell's response r and the anchored metal's drag on it.
+
+The two terms are the gradient of P = σκ − ρ_l (g·n) H. Across each dual face P pushes by its two-point difference,
+φ = w (P_a − P_b), where:
+- w is the face's clipped cotangent weight (Task 1's);
+- the capillary part acts only between flowing tops;
+- the deceleration's part uses the mean of the two columns' g·n.
+
+φ is linear in the heights through J. Each sub-step then does three things.
+
+1. **It predicts the heights at the end of the transport, H + dH**, from the transport linearised on the columns. A
+   column sends across a face what its cells carry, at their velocity without the thickness push plus their response
+   times the face's push. This is implicit in its moving metal, as the transport is, and linearised in the face's push
+   through the mobility Σ r dz of the cells that cross. Newton's method on that piecewise linear flux re-solves at the
+   new face pushes until the flux the last solve missed would move no column by more than THICKNESS_TOL of the largest
+   change. It took 1–3 solves on the test sphere and 3 on the melting state.
+2. **It corrects every moving cell's velocity** by its response times the change of `push`'s two terms at the predicted
+   heights. The cells' momentum follows the push of Task 5's form, and the impulse and the wall's share are booked.
+3. **It hands `transport` each face's own push** (`FacePush`). A cell's velocity across a face becomes its velocity
+   without the thickness push plus its response times that face's push.
+
+Positivity is 6a's: every rate stays clipped at zero, so the masses stay positive at any velocity.
+
+**A floating crust is one unknown.** In `momentum_step` each run of crust cells is now one unknown of the tridiagonal
+system, a rigid body: its mass is the cells', and its drags are those at its top and bottom faces.
+- Task 4 coupled the crust's cells by 10⁹ Pa s. Those rows, some 10¹² times the cells' inertia, amplified the solver's
+  round-off: on mixed sphere skins the books closed to 1.2·10⁻⁵ of the largest impulse. They now close to
+  6.6·10⁻¹⁴ (1 ms) and 6.2·10⁻¹³ (10 ms).
+- The velocities moved by up to 1.1·10⁻³ of the largest at 10 ms. This is the coupled crust's own round-off: it moved
+  by 1.1·10⁻⁴, 1.1·10⁻⁵ and 9.6·10⁻⁷ at 10⁸, 10⁷ and 10⁶ Pa s, and by 4.2·10⁻⁷ and 4.2·10⁻⁶ at 10⁵ and 10⁴, where the
+  crust's flexibility shows.
+- On Task 4's own crust column the change is 9.8·10⁻⁸ of the top speed, and its books close to 8.9·10⁻¹⁵ instead of
+  9.9·10⁻⁸.
+- Columns without a crust are unchanged to the last bit.
+
+**Measured** (2026-10-21, `prototype/work-2026-10-18-column-flow/measure/task6b/`; the tests' numbers).
+
+*Rayleigh–Taylor growth* (spec §11.1 level 1). The layer is 1 mm of slurry at 902 K (30 % solid, 2.68 Pa s at rest)
+on a strip of 1 mm columns two corners wide, pulled out of its surface at 100 m/s²: a capillary cutoff of 11.5 mm. This
+is the lubrication regime the formula assumes, the viscous time ρh²/μ being 0.9 ms against a growth time of 0.63 s.
+- A cosine 24 mm long grows at the thin-film rate h³k²(ρg − σk²)/(3μ) = 1.578 1/s to within −0.41, −0.22 and +0.42 % at
+  sub-steps of 1, 2.5 and 10 ms. The grid's compact difference accounts for −0.40 %, and backward Euler adds +dt·s/2.
+- A cosine 8 mm long, below the cutoff, decays at −19.44 1/s to within 1.2 % at 1 ms. At 10 ms it decays 8.7 % slower,
+  backward Euler's own damping, whose rate it meets within 0.10 % (0.26 % at 1 ms).
+
+*The two-column mode.* 0.3 mm of liquid on 2 mm columns, alternating by 1 µm, falls to the following fraction of itself
+in one sub-step, and never above 0.009 of itself after that:
+
+| Sub-step | Under 30 m/s² | Without the pull |
+|---|---|---|
+| 10 ms | 0.112 | 0.117 |
+| 100 ms | 5.5·10⁻⁴ | −6.3·10⁻⁵ |
+| 1 s | −0.051 | −0.056 |
+
+The table shows the grid-scale mode damped within one sub-step at every sub-step from 10 ms to 1 s, with or without the
+pull.
+
+*The faces' own push against the columns' alone.* A bump 1 µm high on one column of 1.1 mm of slurry relaxes to
+12.5 % in one 10 ms sub-step and 3.0 % in five. With the columns' pushes alone it stays at 99.8 %: they are centred
+differences, zero on the bump's column by symmetry, and the upwind transport takes metal out of a column only at its
+own velocity.
+
+*A uniform layer.* 0.3 mm of liquid on the test sphere stays uniform to 26 nm, with speeds of at most 2.2 µm/s, over 20
+sub-steps of 10 ms.
+
+*Prediction and Newton passes.* With 1 µm of roughness on 0.3 mm of liquid on the test sphere:
+- the transport makes the predicted heights to 0.62 % of the largest change;
+- the Newton passes were 1, 3, 3 and 3;
+- the roughness falls to 34 % in four sub-steps.
+
+*Books.* On mixed sphere skins, every momentum book closes to 7.8·10⁻¹⁴ (1 ms) and 8.8·10⁻¹³ (10 ms) of the largest
+impulse, and mass and enthalpy are exact. With σ = 0 and g = 0 the whole step equals the momentum step followed by the
+transport, to the last bit.
+
+*Cost* on the 100 mm sphere's melting state. The melted face is the one where g·n > 0 under the flight direction given
+to `push`: its top 0.3 mm is liquid, with 141 000 cells moving at 0.1 m/s along the meridian, under 30 m/s² and
+σ = 0.8 N/m. Each figure was measured three times.
+- The thickness step takes 0.29–0.30 s at 3 passes.
+- The response adds 0.03–0.05 s to the momentum step's 0.24–0.25 s.
+- The faces' push adds nothing measurable to the transport's 0.31–0.37 s.
+- Together 6b adds about 0.33 s a sub-step.
+- At the melt's rim, the transport made the predicted heights to 6.5 µm of a change of 0.15–0.17 mm.
+
+**Rulings** (2026-10-21; each is what, then why, then the cost if wrong):
+- *Correction form.* The momentum step is given `push`'s whole G, and the thickness step adds the change. Why: the
+  slurry's shear-rate fixed point then sees the whole push, and the curvature's own nonlinearity enters at the start of
+  the sub-step. Cost if wrong: none for fixed viscosities, as both forms give the same velocities.
+- *The faces' own push in the transport, the stored momentum from the column push* (the coordinator's ruling, the
+  column form of Rhie–Chow interpolation). Why: the bump above. Cost if wrong: the mass and the momentum are carried at
+  slightly different velocities at the grid scale.
+- *The heights predicted from the transport linearised on the columns, by Newton's method on the crossing cells, stopped
+  on the flux missed* (the coordinator's ruling). Why: the transport is implicit in the cells' masses, which a column
+  model of it can follow but not reproduce. Cost if wrong: where the cells of a column carry very different shares, the
+  prediction differs from the transport by a few per cent of the change, and the thickness terms are that much
+  explicit.
+- *The face's push by Task 1's clipped cotangent weights, the deceleration's term with the two columns' mean g·n.* Why:
+  the energy argument needs a non-negative exchange, and the spec's form is ρ_l (g·n) ∇H. Cost if wrong: 4 of the
+  28 245 faces on the 2 mm sphere are clipped.
+- *A wall takes its flowing neighbours' mean curvature in the column push's gradient.* Why: the face carries no
+  capillary push into the wall, and the column's mean of its face velocities is then about half the push from its
+  liquid side. Cost if wrong: through the cells' inertia, a velocity toward a wall carries metal onto its top a sub-step
+  later.
+- *A crust as one unknown* (the coordinator's ruling). Why: section above. Cost if wrong: none, as it is the rigid limit
+  of Task 4's coupling.
+- *The tests on strips two corners wide* (the coordinator's ruling). Why: with the film's curvature an open edge is a
+  mirror for surface tension. Cost if wrong: the strips' ends disturb the cosines, so the tests measure the middle wave.
+
+- [ ] **Step 1: The film curvature's tests** — append to `tests/test_reentry_model_columns.py`:
+
+{{DIFF_TEST_COLUMNS_T6B}}
+
+- [ ] **Step 2: The thickness terms' tests**, and Task 5's two capillary tests re-measured, in
+  `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T6B}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_columns.py
+  tests/test_reentry_model_skin.py -q`. Expected: 15 failed:
+  - `AttributeError: 'Columns' object has no attribute 'film_curvature'` (2);
+  - `AttributeError: 'Columns' object has no attribute 'film_operator'` (1);
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'flowing_tops'` (9);
+  - `TypeError: momentum_step() got an unexpected keyword argument 'response'` (1);
+  - the crust's books, `assert ... 1.32e-05 < 1.5e-12` (1);
+  - Task 5's sphere test, `assert (... 10.99 < 0.7)` (1).
+
+- [ ] **Step 4: The thin film's curvature** in `reentry_model/columns.py`:
+
+{{DIFF_COLUMNS_T6B}}
+
+- [ ] **Step 5: The momentum's response, each crust one unknown, the push's thin-film capillary term, the faces' push in
+  the transport and the thickness step** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T6B}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: `tests/test_reentry_model_columns.py` 13 passed and
+  `tests/test_reentry_model_skin.py` 67 passed; the unit tier 464 passed, 1 skipped. Nothing calls `thickness_step`
+  yet: the flow joins the skin body's sub-steps in 6c, so no flight's result changes.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/columns.py tests/test_reentry_model_columns.py reentry_model/skin.py tests/test_reentry_model_skin.py
+git commit -m "Skins: the push's thickness terms implicit in the column heights at the end of the transport -- surface tension in its thin-film form, only where a column's top flows, each face's own push in the transport and the cells' velocities corrected by their response -- and each floating crust one unknown of the momentum step (sub-plan 21 Task 6b)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21), each with its own tests and commit; 6a, the transport at
-   given velocities, is written out above:
-   - **6b. The thickness terms implicit**: ρ_l (g·n) ∇_s H and −σ ∇_s κ (Task 5) linearised in the column heights
-     inside 6a's transport (spec §6.4's last paragraph). Tests: a bump on a flat layer under deceleration grows at the
-     thin-film Rayleigh–Taylor linear rate; bumps shorter than the surface-tension cutoff decay (from Task 5, Asha,
-     2026-10-20).
+   given velocities, and 6b, the thickness terms implicit, are written out above:
+   - **6b. The thickness terms implicit**: written out above as Task 6b.
    - **6c. The flow in the skin body**: the surface flow evaluated on the corner surface (its `dp_ds` and `tau`),
      `push` and `along_meridian(tau)` driving `momentum_step`, then the transport, in every sub-step of `skin.advance`;
      a setting to turn the flow off, which reproduces the heat-only skins; the momentum books in the run's history.
      The flow's sub-step is chosen here (option c, Asha, 2026-10-21): measure the Courant numbers and the momentum lost
      to 6a's smearing on the 100 mm sphere's melting state. Asha expects the flow to need a sub-step shorter than the
      heat's 10 ms (about 100 columns a sub-step are estimated in flight, fact 154), so the momentum step and the
-     transport should be able to sub-cycle within a heat sub-step.
+     transport should be able to sub-cycle within a heat sub-step. From Task 6b:
+     - every flow sub-step calls `push` with `wet=flowing_tops(sk)`, `momentum_step(..., response=True)`,
+       `thickness_step` and `transport(..., regrid=False, faces=...)`, in that order, and books all three steps'
+       impulses;
+     - the flow's sub-step also keeps `ThicknessBook.growth` well under one, since backward Euler follows a
+       Rayleigh–Taylor growth only where the sub-step resolves it;
+     - the cost measurement includes a quiescent melted region as well as the runoff. Where surface tension rings a
+       layer without a mean flow, the transport's cycles of meeting flows grew to 23 000 of the test sphere's 34 000
+       moving cells within five 10 ms sub-steps, and its sub-step to 4 s; no ordering of its LU helped (fill 20–37
+       times).
 7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
-   behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve.
+   behaviour); the momentum-balance residual and the roughness history columns; the cost of the sideways solve; and
+   the share of the flight's flow at short wavelengths (kh not small) in flowing layers over about 1 mm, for the
+   depth-uniform pressure's limitation (spec §14 assumption 1; Asha, 2026-10-21, option a). If that share is
+   significant, a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells
+   (Asha, 2026-10-22).
 
 ## Inputs to settle before the remaining tasks are written
 

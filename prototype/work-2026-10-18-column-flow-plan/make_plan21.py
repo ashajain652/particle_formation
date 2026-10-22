@@ -40,6 +40,9 @@ TASKS = (
     ("6a", (("DIFF_TEST_COLUMNS_T6A", "tests/test_reentry_model_columns.py"),
             ("DIFF_TEST_SKIN_T6A", "tests/test_reentry_model_skin.py"),
             ("DIFF_COLUMNS_T6A", "reentry_model/columns.py"), ("DIFF_SKIN_T6A", "reentry_model/skin.py"))),
+    ("6b", (("DIFF_TEST_COLUMNS_T6B", "tests/test_reentry_model_columns.py"),
+            ("DIFF_TEST_SKIN_T6B", "tests/test_reentry_model_skin.py"),
+            ("DIFF_COLUMNS_T6B", "reentry_model/columns.py"), ("DIFF_SKIN_T6B", "reentry_model/skin.py"))),
 )
 
 
