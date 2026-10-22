@@ -44,7 +44,10 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
                     "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
                     "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
-                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts"]
+                    "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
+                    # the flow (sub-plan 21 Task 6c, spec 10.2)
+                    "momentum_residual", "speed_max_ms", "roughness_max", "flow_courant_max", "flow_growth_max",
+                    "flow_passes_max", "wall_flow_s"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -179,7 +182,9 @@ class CoupledRun:
                "demise_time_s": float(last["time_s"][-1]) if history.end_reason == "demise" else None,
                "surface_fold_max_deg": float(np.max(last["surface_fold_deg"])),
                "surface_quality_min": float(np.min(last["surface_quality_min"])),
-               "zone_ratio_min": float(np.min(last["zone_ratio_min"]))}
+               "zone_ratio_min": float(np.min(last["zone_ratio_min"])),
+               "momentum_residual": float(last["momentum_residual"][-1]),
+               "flow_courant_max": float(np.max(last["flow_courant_max"]))}
         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s")})
@@ -296,7 +301,8 @@ def write_vtk_frame(output_dir, k, body, loads):
 def write_skin_frame(output_dir, k, body, loads):
     """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
     (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
-    liquid and flowing depths, skin thickness and cells, and the base's position (the corner on the 3D mesh)."""
+    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh) and the top
+    cell's speed (sub-plan 21 Task 6c)."""
     import pyvista as pv
     mesh, sk, mat = body.mesh, body.skins, body.material
     cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
@@ -312,6 +318,7 @@ def write_skin_frame(output_dir, k, body, loads):
     poly.point_data["liquid_depth"] = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
     poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
     poly.point_data["base_position"] = body.columns.points
+    poly.point_data["top_speed"] = np.where(sk.count > 0, np.linalg.norm(sk.U[:, 0], axis=1), 0.0)
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
 
 

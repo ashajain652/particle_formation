@@ -38,7 +38,15 @@ the heating is interpolated in time between the last macro step's and this one's
 step receives the trapezoid of the two (Asha, 2026-10-12).
 
 The body's surface for the coupled run is the top surface, one 'patch' per corner (`columns.CornerSurface`), so the
-heating, the history and the trajectory's loop are unchanged."""
+heating, the history and the trajectory's loop are unchanged.
+
+The flow (sub-plan 21 Task 6c; `flow`, off by default): every macro step the surface flow is evaluated on the corners
+as the heating is, from the step's aero state and the tops' temperatures -- its wall-pressure gradient along the
+meridian and its gas shear -- with the deceleration, which the metal feels along the flight direction; each part takes
+them interpolated in time at its middle, as it takes the heating, and every sub-step of both passes runs the flow after
+its conduction (`skin.flow_substeps`), `flow_cycles` flow sub-steps to each. With the flow on the liquid stays and flows
+(`remove` False in a run; spraying is stage 4's). The momentum books: the skins' momentum changes by the flow's impulses
+less what leaves with removed or handed-down metal, and `momentum_residual` reports what they miss."""
 import dataclasses
 import math
 import time
@@ -50,6 +58,9 @@ from . import movemesh
 from . import skin as skin_mod
 from .body import ThermalBody
 from .thermal import SIGMA_SB
+
+FLOW_DEFAULT = False              # the flow is off until stage 4's spraying gives the liquid a sink: with it on and nothing
+                                  # sprayed, a flight would only pile the liquid up (Task 6c's ruling, 2026-10-22)
 
 GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
@@ -88,6 +99,22 @@ SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin r
                                   # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
 
 
+@dataclasses.dataclass
+class FlowForcing:
+    """The gas side's push on the skins' metal at a macro step, per corner: `dp_ds` [Pa/m, (n,)] the wall pressure's
+    gradient along the meridian and `tau` [Pa, (n,)] the gas shear (the surface flow's), and `g` [m/s2, (3,)] the
+    acceleration the metal feels in the body's frame -- minus the body's own: the deceleration along the flight
+    direction."""
+    dp_ds: np.ndarray
+    tau: np.ndarray
+    g: np.ndarray
+
+    def toward(self, other, frac):
+        """This forcing moved the fraction `frac` of the way to `other`, linearly."""
+        return FlowForcing(*(a + (b - a) * frac for a, b in ((self.dp_ds, other.dp_ds), (self.tau, other.tau),
+                                                             (self.g, other.g))))
+
+
 def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
     """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
     that crossed their base (spec 6.6): between the base node's and the 3D profile's at the depth swept, `T_deep` (equal
@@ -101,13 +128,20 @@ def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
 
 class SkinBody(ThermalBody):
     """A ThermalBody whose surface is resolved by corner columns with layered skins on a moving mesh (module docstring).
-    `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass."""
+    `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass;
+    `flow`: the metal flows (sub-plan 21), `flow_cycles` flow sub-steps in each heat sub-step (None: skin.FLOW_CYCLES),
+    driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its defaults if None) from each macro step's aero state."""
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
-                 repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX):
+                 repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+                 surface_flow=None):
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
+        self.flow_cycles = skin_mod.FLOW_CYCLES if flow_cycles is None else flow_cycles
+        if not (isinstance(self.flow_cycles, (int, np.integer)) and self.flow_cycles >= 1):
+            raise ValueError("flow_cycles must be an integer of at least 1, got {!r}".format(flow_cycles))
+        self.flow_on, self.surface_flow = bool(flow), surface_flow
         self.repeat_rule = repeat_rule
         self.part_max = part_max                             # s, or None: no cap on the parts while melting
         self.material, self.solver, self.mass_kg = material, solver, mass_kg
@@ -138,11 +172,18 @@ class SkinBody(ThermalBody):
         self._dt_last = None                                 # s, and its length: the look-ahead of the part cap
         self.capped_ahead = 0                                # macro steps capped because a top was about to be non-rigid
         self._heating = None                                 # this macro step's (t0, dt, q at its start, q at its end)
-        self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0}
+        self.wall = {"skins": 0.0, "3d": 0.0, "move": 0.0, "rebuild": 0.0, "flow": 0.0}
+        self.last_flow = None                                # the surface flow's last evaluation (SurfaceFlowResult)
+        self._forcing = self._forcing_prev = None            # this macro step's (start, end) FlowForcing; the last end
+        self.impulse, self.momentum_lost = np.zeros(3), np.zeros(3)   # the momentum books since time zero [N s, kg m/s]
+        self.impulse_size = 0.0                              # N s: the push's, shear's and walls' impulses, in size
+        self.flow_courant = self.flow_growth = 0.0           # this macro step's worst flow sub-step
+        self.flow_passes = 0
         self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
         self.energy0 = self.energy()
+        self.momentum0 = self.skins.momentum()
         self._top0, self._normal0 = self.surface.points.copy(), self.surface.normals.copy()
 
     # -- set-up -----------------------------------------------------------------------------------------------------
@@ -175,10 +216,18 @@ class SkinBody(ThermalBody):
         return self.moving.mesh
 
     # -- the macro step ---------------------------------------------------------------------------------------------
-    def advance(self, t, dt, loads, state=None):
+    def advance(self, t, dt, loads, state=None, forcing=None):
         """The macro step from t - dt to t (module docstring) as equal parts, as many as the last macro step's largest
-        move called for."""
+        move called for. With the flow on, the gas side's push is the surface flow's on the corners from the aero state
+        `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
         n, self._ratio, self.step_parts = self._hint, 0.0, 0
+        if self.flow_on:
+            end = forcing if forcing is not None else self.flow_forcing(state)
+            last = self._forcing_prev
+            start = last if last is not None and last.dp_ds.shape == end.dp_ds.shape else end
+            self._forcing, self._forcing_prev = (start, end), end
+            self.flow_courant = self.flow_growth = 0.0
+            self.flow_passes = 0
         sk, mat = self.skins, self.material
         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
         if self.part_max is not None and mat.melts:
@@ -199,13 +248,36 @@ class SkinBody(ThermalBody):
         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
         self._q_prev = q_end.copy()
 
+    def flow_forcing(self, state):
+        """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
+        from the aero state, as the heating is -- the top surface's angles to the flight direction, the nose radius and
+        the tops' temperatures at the step's start -- and the deceleration along the flight direction."""
+        if state is None:
+            raise ValueError("a skin body with the flow on needs the macro step's aero state, or a forcing given")
+        if self.surface_flow is None:
+            from . import surface_flow
+            self.surface_flow = surface_flow.SurfaceFlow()
+        mat = self.material
+        rho_l = mat.liquid.rho if mat.liquid is not None else mat.rho
+        res = self.surface_flow.evaluate(state, self.theta, self.nose_radius(), rho_l, self.surface_temperature())
+        self.last_flow = res
+        return FlowForcing(np.asarray(res.dp_ds, dtype=float), np.asarray(res.tau, dtype=float),
+                           res.deceleration * self.v_hat)
+
     def _advance_part(self, t, dt, dt_macro, loads, depth):
         """One part of a macro step, ending at t: the passes, then -- if its draws and hand-downs would move a base more
         than MOVE_MAX of the mean surface edge -- the part again as shorter parts, else the books and the move."""
         mat, sk, mm = self.material, self.skins, self.moving
         t0, dt_m, q_start, q_end = self._heating
-        q = q_start + (q_end - q_start) * (((t - 0.5 * dt) - t0) / dt_m)     # the heating at the part's middle
+        frac = ((t - 0.5 * dt) - t0) / dt_m
+        q = q_start + (q_end - q_start) * frac                              # the heating at the part's middle
         A_top = self.surface.areas
+        flow = None
+        if self.flow_on:                                                    # the gas side's push at the part's middle
+            f = self._forcing[0].toward(self._forcing[1], frac)
+            sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
+            flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
+                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles)
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
         side = lambda s, previous: skin_mod.Sideways(s, self.columns, previous)   # implicit (sub-plan 21)
@@ -218,10 +290,11 @@ class SkinBody(ThermalBody):
         T_lin = T_b0
         damped = self.repeat_rule == "damped"
         omega, r_prev = DAMPED_OMEGA0, None
+        flow_seconds = sum(skin_mod.FLOW_SECONDS.values())
         for attempt in range(DAMPED_MAX_PASSES if damped else 2):
             started = time.perf_counter()
             a, b = skin_mod.advance(sk, dt, q, A_top, self.T_ambient, eps, T_lin, m_min, side=side, remove=self.remove,
-                                    g_base=g0)
+                                    g_base=g0, flow=flow)
             self.wall["skins"] += time.perf_counter() - started
             started = time.perf_counter()
             res = self.solver.step(dt, np.zeros(len(self.solver.areas)), self.T_ambient, nodal_load=load,
@@ -230,7 +303,7 @@ class SkinBody(ThermalBody):
             T_b1 = self.solver.temperature()[nodes]
             started = time.perf_counter()
             book = skin_mod.advance(sk, dt, q, A_top, self.T_ambient, eps, T_b0, m_min, T_b1=T_b1, side=side,
-                                    remove=self.remove, g_base=g0)
+                                    remove=self.remove, g_base=g0, flow=flow)
             self.wall["skins"] += time.perf_counter() - started
             mismatch = book.E_base - (a + b * T_b1) * dt
             scale = np.abs(book.E_top) + np.abs(book.E_base) + 1e-30
@@ -264,6 +337,7 @@ class SkinBody(ThermalBody):
                 self.interface_repeats += 1
                 continue
             break
+        self.wall["flow"] += sum(skin_mod.FLOW_SECONDS.values()) - flow_seconds
         ratio = self._move_ratio(book, m_min)
         if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:          # too far for one part: run it again as shorter parts
             self.solver.set_state(solver_state)
@@ -284,6 +358,13 @@ class SkinBody(ThermalBody):
         self.column_removed += book.removed
         self.removed_enthalpy += float(book.removed_H.sum())
         self.drawn_mass += float(book.drawn.sum())
+        self.momentum_lost += book.momentum_out.sum(axis=0)
+        if book.flow is not None:                            # the flow's impulses (the transport's carried sum to zero)
+            fb = book.flow
+            self.impulse += (fb.push + fb.shear + fb.wall + fb.carried).sum(axis=0)
+            self.impulse_size += float(sum(np.linalg.norm(x, axis=1).sum() for x in (fb.push, fb.shear, fb.wall)))
+            self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
+            self.flow_passes = max(self.flow_passes, fb.passes)
         self.iterations.append(res.iterations)
         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
         self._move_base(book, m_min, g0)
@@ -343,6 +424,8 @@ class SkinBody(ThermalBody):
         started = time.perf_counter()
         T_node = self.solver.temperature()[mm.corners]
         handed, handed_H = skin_mod.hand_down(sk, m_min, mat.T_rigid) if mat.melts else (np.zeros(sk.n), np.zeros(sk.n))
+        if mat.melts:
+            self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
         moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
         inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
@@ -357,6 +440,7 @@ class SkinBody(ThermalBody):
         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
         self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed).sum())
         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
+        self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
         sk.regrid()
         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
         self.handed_mass += float(handed.sum())
@@ -383,6 +467,13 @@ class SkinBody(ThermalBody):
         if not self.absorbed_heat:
             return 0.0
         return (self.energy() - self.energy0 - self.absorbed_heat + self.removed_enthalpy) / self.absorbed_heat
+
+    def momentum_residual(self):
+        """|P - P0 - impulses + momentum lost| over the impulses' total size: zero for exact books (spec 10.2)."""
+        if self.impulse_size <= 0.0:
+            return 0.0
+        miss = self.skins.momentum() - self.momentum0 - self.impulse + self.momentum_lost
+        return float(np.linalg.norm(miss) / self.impulse_size)
 
     def mean_temperature(self):
         return float(self.material.temperature_from_enthalpy(self.energy() / self.mass()))
@@ -420,6 +511,7 @@ class SkinBody(ThermalBody):
         flowing = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
         liquid = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
         r = self.last_move
+        i, j = self.columns.edges[:, 0], self.columns.edges[:, 1]
         return {"skin_cells": int(sk.count.sum()), "skin_thickness_max_mm": float(th.max() * 1e3),
                 "skin_above_min": int((sk.column_mass() > m_min * (1.0 + 1e-9)).sum()),
                 "flowing_depth_mean_mm": float(flowing.mean() * 1e3), "flowing_depth_max_mm": float(flowing.max() * 1e3),
@@ -437,7 +529,15 @@ class SkinBody(ThermalBody):
                 "removed_mass_kg": self.removed_mass, "removed_enthalpy_J": self.removed_enthalpy,
                 "base_recession_max_mm": float(self._recession().max() * 1e3),
                 "wall_skins_s": self.wall["skins"], "wall_3d_s": self.wall["3d"], "wall_move_s": self.wall["move"],
-                "wall_rebuild_s": self.wall["rebuild"], "step_parts": self.step_parts}
+                "wall_rebuild_s": self.wall["rebuild"], "step_parts": self.step_parts,
+                # the flow (sub-plan 21 Task 6c): its momentum books, the fastest cell, the top's roughness -- the largest
+                # height difference between neighbours over their spacing -- and the flow sub-steps' worst Courant
+                # number, Rayleigh-Taylor growth and linearisations in this macro step
+                "momentum_residual": self.momentum_residual(),
+                "speed_max_ms": float(np.linalg.norm(sk.U, axis=2).max()) if sk.U.size else 0.0,
+                "roughness_max": float((np.abs(th[i] - th[j]) / self.columns.edge_length).max()),
+                "flow_courant_max": self.flow_courant, "flow_growth_max": self.flow_growth,
+                "flow_passes_max": self.flow_passes, "wall_flow_s": self.wall["flow"]}
 
     def _recession(self):
         """How far each corner's top has moved inward along its starting direction since time zero [m]."""

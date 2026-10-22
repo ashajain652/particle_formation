@@ -123,13 +123,14 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 
 
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
-                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4):
+                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=False, flow_cycles=None):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
-    `_noswell` for skins held at the solid's density, and `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
-    empty for the defaults."""
+    `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none), and,
+    with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` for other than skin.FLOW_CYCLES
+    flow sub-steps in each heat sub-step; empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -149,6 +150,10 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_fine0"
     elif (fine_band_mm, fine_size_mm) != (FINE_BAND_MM, FINE_SIZE_MM):
         out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
+    if flow:
+        out += "_skinflow-on"
+        if flow_cycles is not None and flow_cycles != skin.FLOW_CYCLES:
+            out += "_flowcycles{}".format(flow_cycles)
     return out
 
 
@@ -302,6 +307,13 @@ def build_parser():
                     help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
                          "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
                          "one density")
+    me.add_argument("--skin-flow", choices=("on", "off"), default="off",
+                    help="with --surface-model skin and --melt on: on, the skins' liquid and slurry flow over the surface "
+                         "(sub-plan 21) and stay -- the spraying that will take them is sub-plan 22's, so give --removal "
+                         "girin, whose continuum step (--dt-continuum) follows; off: the heat-only skins, liquid removed "
+                         "as it forms with --removal instant (default)")
+    me.add_argument("--skin-flow-cycles", type=int, default=None,
+                    help="with --skin-flow on: flow sub-steps in each skin sub-step (default {})".format(skin.FLOW_CYCLES))
     me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
                     help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
     me.add_argument("--deform-depth", type=float, default=15.0,
@@ -366,9 +378,13 @@ def build_thermal(args, settings, mass):
         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
     if skins:
+        flow = args.skin_flow == "on"                       # the liquid stays and flows; instant removal is instead of it
+        flow_model = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm,
+                                              kn_body_shock=args.kn_body_shock) if flow else None
         the_body = skinbody.SkinBody(the_mesh, mat, solver, mass, skin_settings(args), T0=args.temperature,
                                      emissivity=args.emissivity, T_ambient=args.t_ambient, deform_depth=args.deform_depth * 1e-3,
-                                     remove=melting, demise_fraction=args.demise_fraction)
+                                     remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
+                                     flow_cycles=args.skin_flow_cycles, surface_flow=flow_model)
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
@@ -399,7 +415,7 @@ def build_thermal(args, settings, mass):
                         "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
                         "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
                         "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
-                        "swell": args.skin_swell == "on"}
+                        "swell": args.skin_swell == "on", "flow": args.skin_flow, "flow_cycles": the_body.flow_cycles}
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -477,8 +493,18 @@ def cmd_run(args, parser):
         parser.error("--skin-cell must be at most half of --skin-min-thickness and of --skin-fine-zone")
     if args.surface_model == "skin" and args.thermal != "fem":
         parser.error("--surface-model skin needs --thermal fem")
-    if args.surface_model == "skin" and args.melt == "on" and args.removal != "instant":
-        parser.error("--surface-model skin with --melt on needs --removal instant (sub-plan 20: no flow or spraying yet)")
+    if args.skin_flow == "on" and not (args.surface_model == "skin" and args.melt == "on"):
+        parser.error("--skin-flow on needs --surface-model skin and --melt on: it moves the skins' molten metal")
+    if args.skin_flow_cycles is not None and args.skin_flow != "on":
+        parser.error("--skin-flow-cycles needs --skin-flow on")
+    if args.skin_flow_cycles is not None and args.skin_flow_cycles < 1:
+        parser.error("--skin-flow-cycles must be at least 1")
+    if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "on" and args.removal != "girin":
+        parser.error("--skin-flow on keeps the liquid, which only spraying removes: it needs --removal girin, not instant "
+                     "removal, which stands in for flow and spraying in the heat-only skins (spec 11.2)")
+    if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "off" and args.removal != "instant":
+        parser.error("--surface-model skin with --melt on needs --removal instant, or --skin-flow on with Girin's removal "
+                     "(sub-plan 21: the skins' spraying is sub-plan 22's)")
     if args.surface_model == "skin" and (args.animate or args.stills):
         parser.error("--animate/--stills read the element model's frames; with --surface-model skin use --frames-every")
     if args.surface_model == "skin" and args.prism_layers is not None and args.prism_layers > 0:
@@ -501,7 +527,8 @@ def cmd_run(args, parser):
                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
                                                                     args.skin_substep, args.skin_preset, args.deform_depth,
                                                                     args.skin_swell == "on", args.fine_band, args.fine_size,
-                                                                    args.skin_fine_zone))
+                                                                    args.skin_fine_zone, args.skin_flow == "on",
+                                                                    args.skin_flow_cycles))
     run_dir = os.path.join(args.outdir, name)
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
