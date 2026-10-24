@@ -151,7 +151,8 @@ class Skins:
     is an intensive per-cell field every cell operation carries (the trial pass's dT/dT_b). `U` (n, K, 3) is every
     cell's velocity [m/s] (sub-plan 21 Task 2): part of the cells' state, carried by every operation with its momentum
     exact -- split halves keep it, merged cells take the mass-weighted mean, metal drawn from the 3D model arrives at
-    rest -- and `momentum_out` (n, 3) [kg m/s] is what the last `take_top` or `take_bottom` took away with the metal.
+    rest -- and `momentum_out` (n, 3) [kg m/s] is what the last `take_top`, `take_top_mass` or `take_bottom` took away
+    with the metal.
     `flow_memory` (3,) is what the adaptive count of flow sub-steps remembers of the last heat sub-step's flow (sub-plan
     21 Task 6d, `flow_cycles`): its largest Courant number and Rayleigh-Taylor growth and its flow sub-step's length [s],
     zero before any flow; part of the state, so that a trial pass, a repeated or a shortened part starts from it."""
@@ -387,6 +388,30 @@ class Skins:
             U = np.take_along_axis(self.U, src[..., None], axis=1)
             self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T), U)
         return mass, H
+
+    def take_top_mass(self, dm, admit):
+        """Remove dm >= 0 [kg] per column from its top down through the run of admissible cells from its top (`admit`,
+        (n, K) bool), at most what that run holds, each cell's metal at its own specific enthalpy and velocity: a partly
+        taken cell keeps both, its temperature and its sensitivity, and the cells beneath are untouched (sub-plan 21 Task
+        7: the release of spec 8, which thins the top cell until it merges). Returns (mass, enthalpy, solid) taken per
+        column, solid the mass of solid in it by the cells' liquid fractions, and leaves the momentum that went in
+        `momentum_out`."""
+        dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
+        if not np.all(np.isfinite(dm) & (dm >= 0.0)):
+            raise ValueError("a release from a skin's top must be a finite, non-negative mass")
+        run = np.cumprod(self.valid & admit, axis=1).astype(bool)
+        above = np.concatenate([np.zeros((self.n, 1)), np.cumsum(self.m, axis=1)[:, :-1]], axis=1)   # mass above each
+        taken = np.where(run, np.clip(dm[:, None] - above, 0.0, self.m), 0.0)
+        frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
+        mass, H = taken.sum(axis=1), (self.H * frac).sum(axis=1)
+        solid = (taken * (1.0 - self.props.liquid_fraction(self.T))).sum(axis=1)
+        momentum = (taken[..., None] * self.U).sum(axis=1)
+        whole = np.cumprod(run & (taken >= self.m), axis=1).sum(axis=1)        # the cells wholly taken, from the top
+        part = (taken > 0.0) & (np.arange(self.m.shape[1])[None, :] >= whole[:, None])
+        self.m, self.H = np.where(part, self.m - taken, self.m), np.where(part, self.H * (1.0 - frac), self.H)
+        self.take_top(whole)
+        self.momentum_out = momentum
+        return mass, H, solid
 
     def add_bottom(self, dm, h, s=1.0, u=None):
         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
@@ -650,9 +675,10 @@ def _conduct(sk, dt, q_top, A_top, T_amb, eps, T_b, sideways=None):
 def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None, remove=True, g_base=None, flow=None):
     """The macro step's sub-steps for every column (spec 7.2). Each sub-step: the implicit conduction, through the depth
     and, with `side`, sideways (`side(sk, previous)` makes the sub-step's `Sideways` map from the last one, Task 5),
-    then, with `flow` (a `Flow`), the flow's sub-steps (`flow_substeps`: heat, then flow, sideways exchange and -- in
-    stage 4 -- spray, spec 7.1; sub-plan 21 Task 6c), then -- with `remove` and a melting material -- the contiguous top
-    cells at or above T_feed leave, taking their momentum with them, a column below its minimum mass m_min [kg] draws
+    then, with `flow` (a `Flow`), the flow's sub-steps (`flow_substeps`: heat, then flow, sideways exchange and spray,
+    spec 7.1; sub-plan 21 Task 6c, the spray a release from the top cells with `flow.release` since Task 7), then --
+    with `remove` and a melting material -- the contiguous top cells at or above T_feed leave, taking their momentum
+    with them, a column below its minimum mass m_min [kg] draws
     back to it, and the cells are split and merged. The draw takes rigid metal (spec 6.6): at the base temperature, but
     never above T_rigid -- a 3D base node can overshoot it within a macro step (on 4 mm elements under 6 MW/m2 it
     reached 930 K in one 0.5 s step, found while planning), and drawing at its temperature would draw liquid that the
@@ -1618,8 +1644,8 @@ FLOW_COURANT = 6.0                # the adaptive count's target: the largest Cou
 FLOW_GROWTH = 0.02                # and the largest Rayleigh-Taylor growth dt s of one: backward Euler's growth rate is
                                   # then within about dt s / 2 = 1 % (6b's cosine met it within 0.42 % at 0.016)
 FLOW_RELAX = 2.0                  # a flow sub-step at most this many times the last heat sub-step's
-FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0}   # wall time, for
-                                  # measuring the cost (as KRYLOV counts the coupled solves)
+FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0, "release": 0.0}
+                                  # wall time, for measuring the cost (as KRYLOV counts the coupled solves)
 
 
 def flow_cycles(memory, dt):
@@ -1650,7 +1676,15 @@ class Flow:
     in the body's frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
     liquid's density and surface tension, `A_top` [m2, (n,)] the top areas the shear acts over, and `cycles`, the flow
     sub-steps in each heat sub-step: None (the default since Task 6d) chooses them each heat sub-step (`flow_cycles`),
-    a number fixes them. `plan` is what a trial pass chose, for its real pass (`advance`)."""
+    a number fixes them. `plan` is what a trial pass chose, for its real pass (`advance`).
+
+    `release` is the spray's placeholder (sub-plan 21 Task 7), what sub-plan 22's spraying supplies: None releases
+    nothing; otherwise a callable `release(sk) -> (n,)` [kg/(m2 s)], the release rate per unit of each column's top area
+    A_top at the skins' present state, evaluated in every flow sub-step after the transport and taken from the top cells
+    by `release_top` -- liquid first, the exposed slurry too where `slurry` (spec 8's `--slurry-spray on`, a setting of
+    sub-plan 22's). It is called in the trial pass, in every repeat of a part and in parts run again, so it keeps no
+    records of its own: what was released is in the pass's FlowBook (`released`, `released_H`, `released_p`,
+    `released_solid`)."""
     columns: object
     dp_ds: np.ndarray
     shear: np.ndarray
@@ -1661,12 +1695,15 @@ class Flow:
     A_top: np.ndarray
     cycles: int = None
     plan: list = None
+    release: object = None
+    slurry: bool = False
 
 
 @dataclass
 class FlowBook:
     """What the flow sub-steps did, per column: impulses [N s] and momentum [kg m/s], (n, 3), which add up to the
-    columns' momentum change, and the sub-steps' worst numbers."""
+    columns' momentum change less what the release took (`released_p`), the sub-steps' worst numbers, and the metal
+    released from the top cells (Task 7; None in a single sub-step's book that released nothing)."""
     push: np.ndarray         # the push's impulse on the moving cells, its thickness terms' implicit change included
     shear: np.ndarray        # the gas shear's on the top cells
     wall: np.ndarray         # the anchored metal's drag (the momentum and thickness steps'), the momentum cells held on
@@ -1677,15 +1714,24 @@ class FlowBook:
     passes: int = 0          # the thickness step's most linearisations
     sub_steps: int = 0       # the flow sub-steps taken (none where nothing flows)
     cycles: int = 0          # the most flow sub-steps in one heat sub-step (Task 6d)
+    released: np.ndarray = None        # kg (n,): the metal released from the top cells (Task 7)
+    released_H: np.ndarray = None      # J (n,): its enthalpy, at its cells' own specific enthalpies
+    released_p: np.ndarray = None      # kg m/s (n, 3): its momentum, at its cells' own velocities -- fact 29's sink
+    released_solid: np.ndarray = None  # kg (n,): the solid in it, by its cells' liquid fractions
 
     @classmethod
     def zero(cls, n):
-        return cls(*(np.zeros((n, 3)) for _ in range(4)))
+        return cls(*(np.zeros((n, 3)) for _ in range(4)), released=np.zeros(n), released_H=np.zeros(n),
+                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n))
 
     def add(self, other):
-        """Add another book's impulses and keep the worst numbers of both."""
+        """Add another book's impulses and releases and keep the worst numbers of both."""
         for key in ("push", "shear", "wall", "carried"):
             setattr(self, key, getattr(self, key) + getattr(other, key))
+        for key in ("released", "released_H", "released_p", "released_solid"):
+            mine, theirs = getattr(self, key), getattr(other, key)
+            if theirs is not None:
+                setattr(self, key, theirs.copy() if mine is None else mine + theirs)
         self.courant, self.growth = max(self.courant, other.courant), max(self.growth, other.growth)
         self.passes, self.sub_steps = max(self.passes, other.passes), self.sub_steps + other.sub_steps
         self.cycles = max(self.cycles, other.cycles)
@@ -1696,15 +1742,25 @@ def flow_substeps(sk, flow, dt, cycles=None):
     `flow_cycles` chooses from the skins' `flow_memory`, which they then update (sub-plan 21 Task 6d) -- every one in the
     order of 6b's ruling: the push, surface tension only where a column's top flows (`push`, `flowing_tops`); the
     momentum through the depth with its response (`momentum_step`); the thickness terms implicit in the heights at the
-    end of the transport (`thickness_step`); the transport with the faces' own push (`transport`, regrid=False). The
-    cells are split and merged between the flow sub-steps, and the heat sub-step's own regrid follows the last (spec
-    6.2: once after each sub-step's exchanges). Updates the cells; returns a FlowBook. Where nothing flows nothing moves
-    and no sub-step is taken: any velocity left in the rigid cells is booked to the wall and cleared, as `momentum_step`
-    books an anchored cell's, and the skins forget the flow.
+    end of the transport (`thickness_step`); the transport with the faces' own push (`transport`, regrid=False); then,
+    with `flow.release`, the spray's placeholder (sub-plan 21 Task 7): the release the rate gives at that moment over
+    the flow sub-step, rate A_top h, from the top cells (`release_top`) -- spec 7.1's heat, flow, sideways exchange and
+    spray, the last three in every flow sub-step. The cells are split and merged between the flow sub-steps, and the
+    heat sub-step's own regrid follows the last (spec 6.2: once after each sub-step's exchanges). Updates the cells;
+    returns a FlowBook. Where nothing flows nothing moves, nothing can be released and no sub-step is taken: any
+    velocity left in the rigid cells is booked to the wall and cleared, as `momentum_step` books an anchored cell's, and
+    the skins forget the flow.
 
     The flow's sub-step was fixed in 6c at 1 ms (FLOW_CYCLES) and is chosen since 6d from the last heat sub-step's
     Courant number and growth, against targets set from the sub-step study on the 100 mm sphere (FLOW_COURANT,
-    FLOW_GROWTH)."""
+    FLOW_GROWTH). The release runs in every flow sub-step, not once a heat sub-step (Task 7's ruling): the top cells
+    cross a column for each unit of their Courant number, which the count keeps near 6 a flow sub-step, so they cross
+    some 25 columns of 2 mm in a heat sub-step at the 100 mm sphere's 5 m/s and up to 240 at the count's cap; a release
+    once a heat sub-step would spray metal from where the runoff has taken it rather than from where its rate was
+    found, and fact 29's split between the runoff and the stripping would be first order in the heat sub-step rather
+    than in the flow's. Its cost: 0.05 s of processor time a release on the 100 mm
+    sphere's 9 417 columns, against about 2 s for a 1 ms flow sub-step of its driven melting state (measured
+    2026-10-24)."""
     n = sk.n
     book = FlowBook.zero(n)
     adaptive = flow.cycles is None
@@ -1736,12 +1792,90 @@ def flow_substeps(sk, flow, dt, cycles=None):
         started = time.perf_counter()
         tr = transport(sk, col, h, regrid=False, faces=tb.faces)
         clock("transport", started)
-        book.add(FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
-                          tb.passes, 1))
+        step = FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
+                        tb.passes, 1)
+        if flow.release is not None:
+            started = time.perf_counter()
+            rate = np.broadcast_to(np.asarray(flow.release(sk), dtype=float), (n,))
+            if not np.all(np.isfinite(rate) & (rate >= 0.0)):
+                raise ValueError("a release rate must be finite and non-negative")
+            rb = release_top(sk, rate * flow.A_top * h, flow.slurry)
+            step.released, step.released_H = rb.mass, rb.enthalpy
+            step.released_p, step.released_solid = rb.momentum, rb.solid
+            clock("release", started)
+        book.add(step)
     book.cycles = cycles
     if adaptive:
         sk.flow_memory = np.array([book.courant, book.growth, h])
     return book
+
+
+# -- the droplet momentum sink at the top cells (sub-plan 21 Task 7) ----------------------------------------------------
+PI_FLAG = 0.2                     # fact 29: above this the droplets' momentum is no longer small against the gas shear
+                                  # that drives the film, and the sink must be solved with the profile (as here it is)
+
+
+@dataclass
+class ReleaseBook:
+    """What a release took from the top cells, per column."""
+    mass: np.ndarray         # kg (n,)
+    enthalpy: np.ndarray     # J (n,), at the cells' own specific enthalpies
+    momentum: np.ndarray     # kg m/s (n, 3), at the cells' own velocities: the droplets' momentum, fact 29's sink
+    solid: np.ndarray        # kg (n,): the solid in it, by the cells' liquid fractions (the droplets' solid fraction)
+
+
+def release_top(sk, dm, slurry=False):
+    """Release dm [kg, (n,)] per column from its top cells (spec 8; sub-plan 21 Task 7, the placeholder for stage 4's
+    spraying, whose rate sub-plan 22 supplies): liquid first -- the run of fully liquid cells from the top, at or above
+    the liquidus -- and, with `slurry` (spec 8's `--slurry-spray on`), the exposed slurry too, every flowing cell down
+    to the first rigid one; never rigid metal (spec 6.5: nothing passes through it), so a top that is slurry without
+    the flag, a floating crust or anchored metal releases nothing. At most what those cells hold leaves; the order
+    within them, and each one's rate, is the cascade rule's (sub-plan 22). The metal leaves at its cells' own specific
+    enthalpy and velocity (`Skins.take_top_mass`): the droplets carry momentum away from the top cells at their release
+    speed (spec 6.4), the speed of the metal they are made of, the top of the resolved profile -- fact 29's sink
+    mdot V_s with V_s the sheared layer's surface speed -- so each column's mass, enthalpy and momentum fall by exactly
+    what the book says left. Updates the cells; returns a ReleaseBook."""
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    admit = flowing if slurry else flowing & (sk.T >= sk.material.T_liquidus)
+    mass, H, solid = sk.take_top_mass(dm, admit)
+    return ReleaseBook(mass, H, sk.momentum_out.copy(), solid)
+
+
+def prescribed_release(rate):
+    """A release (`Flow.release`) at the rate given [kg/(m2 s), per column or one for all] whatever the skins' state:
+    the tests' device, and any prescribed spraying's, which sub-plan 22 replaces with Girin's rate per column."""
+    rate = np.array(rate, dtype=float)
+    return lambda sk: np.broadcast_to(rate, (sk.n,))
+
+
+def droplet_momentum_ratio(released, shear):
+    """Fact 29's droplet-momentum ratio Pi = mdot V_s / tau_gas: the momentum the droplets take from the film against the
+    gas shear that drives it, from the books of a time (a macro step in the history): released (n, 3) [kg m/s] the
+    momentum the release took from each column's top cells (`FlowBook.released_p`), shear (n, 3) [N s] the gas shear's
+    impulse on its top over the same time (`FlowBook.shear`), both integrated over the column's top and the time.
+    Returns (Pi, each, flagged): each column's Pi_i = |released_i| / |shear_i|, zero where nothing was released and
+    infinite where metal left a top the gas did not shear; Pi = sum |released_i| / sum |shear_i| over the sheared
+    columns, the share of the gas shear's momentum that left with droplets -- each column's ratio weighted by its shear,
+    so that columns barely sheared do not dominate it -- zero without a release; and flagged, the number of sheared
+    columns above PI_FLAG, where fact 29 calls the stripping and the runoff no longer separable. Pi is defined against
+    the shear, so a top the gas does not shear has none and is neither in Pi nor flagged: Girin's modes release only on
+    the windward face, where the gas shears, but a prescribed release on the leeward runoff (moving at metres a second
+    on the 100 mm sphere's rigid rear, under no shear) would otherwise make Pi infinite. On a layer at its steady
+    Couette profile released at the top, Pi_i = mdot (H - dz_0 / 2) / mu: fact 29's v_melt delta_m / nu with delta_m the
+    top cell's height above the rigid front.
+
+    Measured 2026-10-24 on the 100 mm sphere's driven melting state (the front's top 0.3 mm liquid, driven from rest by
+    the flight's forcing at 93 s for 20 ms), released at rho_l v_melt over the windward face for 10 ms more: Pi = 0.145
+    at v_melt = 1 mm/s, 1 146 of the 4 705 sheared columns above 0.2 (the largest 0.26), and 0.015 at 0.1 mm/s, none.
+    Fact 29 estimated 0.48 and 0.048, taking the film at its steady Couette speed tau delta_m / mu; the 0.3 mm layer,
+    whose viscous time h^2 / nu is 0.17 s, has not reached it in 30 ms (its top at about 4.3 m/s under 64 Pa, against
+    15 m/s)."""
+    p, J = np.linalg.norm(released, axis=1), np.linalg.norm(shear, axis=1)
+    sheared = J > 0.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        each = np.where(p > 0.0, p / J, 0.0)
+    Pi = float(p[sheared].sum() / J.sum()) if sheared.any() else 0.0
+    return Pi, each, int((each[sheared] > PI_FLAG).sum())
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------

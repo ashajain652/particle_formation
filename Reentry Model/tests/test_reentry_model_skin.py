@@ -1738,3 +1738,253 @@ def test_the_momentum_step_on_the_moving_columns_alone_is_the_solve_over_every_c
     solved = (sk.valid & ~skin.anchored_cells(sk, flowing)).any(axis=1)
     assert 0 < solved.sum() < col.n and np.array_equal(sk.U, other.U) and a.passes == b.passes
     assert all(np.array_equal(getattr(a, k), getattr(b, k)) for k in ("push", "shear", "wall", "response", "wall_response"))
+
+
+# -- the droplet momentum sink at the top cells (sub-plan 21 Task 7) ----------------------------------------------------
+def test_a_release_takes_liquid_first_from_the_top_cells_slurry_only_with_the_flag_and_never_rigid_metal():
+    """Spec 8: the release leaves from the top cells, liquid first; exposed slurry only under --slurry-spray on (here
+    `slurry`); nothing passes through rigid metal (spec 6.5). Six columns of 10 um cells, every cell moving: liquid over
+    slurry over rigid metal; slurry exposed over liquid; a floating crust over liquid; rigid metal alone; two liquid cells
+    over rigid metal; and liquid to the bottom. Asked for two and a half cells each, the release takes them from the top
+    of the liquid, at most the liquid there is, and with the flag the exposed slurry and the liquid it covers; asked for
+    everything, it takes the run of liquid cells from the top, or with the flag every flowing cell down to the first
+    rigid one, and a column liquid to its bottom is emptied. The metal leaves at its own cells' specific enthalpy and
+    velocity, with its solid by their liquid fractions; a partly taken cell keeps its temperature, specific enthalpy and
+    velocity, and every cell beneath is untouched (the books to 1.9e-16 and the cells to 2.2e-16, measured
+    2026-10-24)."""
+    col, _ = strip_grid(3, 2)
+    temps = [[LIQUID] * 3 + [SLURRY] * 3 + [RIGID] * 4, [SLURRY] * 2 + [LIQUID] * 3 + [RIGID] * 4,
+             [RIGID] * 2 + [LIQUID] * 4 + [RIGID] * 4, [RIGID] * 8, [LIQUID] * 2 + [RIGID] * 6, [LIQUID] * 7]
+    taken = {(False, 2.5): [2.5, 0, 0, 0, 2, 2.5], (True, 2.5): [2.5, 2.5, 0, 0, 2, 2.5],
+             (False, 1e3): [3, 0, 0, 0, 2, 7], (True, 1e3): [6, 5, 0, 0, 2, 7]}       # cells taken from each column's top
+    rng = np.random.default_rng(7)
+    for (slurry, ask), cells in taken.items():
+        sk = stacked(col, temps)
+        sk.U = np.where(sk.valid[..., None], rng.normal(0.0, 0.2, sk.U.shape), 0.0)
+        area, m, H, T, count, U, _ = sk.state()
+        P0, f_l = sk.column_momentum(), sk.props.liquid_fraction(T)
+        book = skin.release_top(sk, ask * m[:, 0], slurry=slurry)
+        for c, e in enumerate(cells):
+            whole, part = int(e), e - int(e)
+            t = np.zeros(count[c])
+            t[:whole] = m[c, :whole]
+            t[whole:whole + 1] = part * m[c, whole:whole + 1]
+            assert book.mass[c] == pytest.approx(t.sum(), rel=4e-16, abs=0.0)
+            assert book.enthalpy[c] == pytest.approx((t * H[c, :count[c]] / m[c, :count[c]]).sum(), rel=4e-16, abs=0.0)
+            assert book.solid[c] == pytest.approx((t * (1.0 - f_l[c, :count[c]])).sum(), rel=4e-16, abs=0.0)
+            tU = t[:, None] * U[c, :count[c]]
+            np.testing.assert_allclose(book.momentum[c], tU.sum(axis=0), rtol=0.0, atol=4e-16 * np.abs(tU).sum())
+            assert sk.count[c] == count[c] - whole
+            left = slice(whole, count[c])
+            assert np.array_equal(sk.T[c, :sk.count[c]], T[c, left]) and np.array_equal(sk.U[c, :sk.count[c]], U[c, left])
+            np.testing.assert_allclose(sk.m[c, :sk.count[c]], m[c, left] - t[left], rtol=4e-16, atol=0.0)
+            np.testing.assert_allclose(sk.H[c, :sk.count[c]], H[c, left] * (1.0 - t[left] / m[c, left]), rtol=5e-16,
+                                       atol=0.0)
+        assert np.all(book.solid[[0, 4, 5]] == 0.0) if not slurry else book.solid[1] > 0.0
+        np.testing.assert_array_equal(book.momentum, sk.momentum_out)
+        np.testing.assert_allclose(sk.column_momentum() + book.momentum, P0, rtol=1e-13, atol=1e-30)
+    assert sk.count[5] == 0                                                         # liquid to its bottom: emptied
+
+
+def test_what_a_release_takes_leaves_each_column_short_of_exactly_its_book(coarse_sphere_mesh):
+    """On the test sphere's mixed skins -- liquid, slurry, crusts and anchored rigid metal in every arrangement, every
+    cell moving and carrying a sensitivity -- a release of up to four top cells' mass per column, without and with the
+    slurry: each column's mass, enthalpy and momentum fall by exactly what the book says left (to 1.6e-16, 2.3e-16 and
+    2.0e-16 of the largest column's, measured 2026-10-24), the cells left keep their sensitivity, and no rigid cell is
+    touched -- the rigid metal in every column is as it was, to 2.2e-16 of the largest; liquid alone has no solid, and
+    with the slurry 6.4 % of the released mass is solid."""
+    for slurry in (False, True):
+        sk, col, rng = mixed_sphere_skins(coarse_sphere_mesh)
+        sk.S = np.where(sk.valid, rng.uniform(0.0, 1.0, sk.m.shape), 0.0)
+        M0, H0, P0 = sk.column_mass(), sk.H.sum(axis=1), sk.column_momentum()
+        rigid = lambda s: np.where(s.valid & ~np.isfinite(skin.cell_viscosity(s, 0.0)), s.m, 0.0).sum(axis=1)
+        R0, S0 = rigid(sk), [sk.S[c, :sk.count[c]].copy() for c in range(col.n)]
+        count0 = sk.count.copy()
+        dm = rng.uniform(0.0, 4.0, col.n) * sk.m[:, 0]
+        book = skin.release_top(sk, dm, slurry=slurry)
+        assert book.mass.sum() > 0.0 and np.all(book.mass <= dm * (1.0 + 1e-15))
+        np.testing.assert_allclose(sk.column_mass(), M0 - book.mass, rtol=0.0, atol=4e-16 * M0.max())
+        np.testing.assert_allclose(sk.H.sum(axis=1), H0 - book.enthalpy, rtol=0.0, atol=5e-16 * np.abs(H0).max())
+        np.testing.assert_allclose(sk.column_momentum(), P0 - book.momentum, rtol=0.0, atol=4e-16 * np.abs(P0).max())
+        np.testing.assert_allclose(rigid(sk), R0, rtol=0.0, atol=5e-16 * R0.max())
+        for c in range(col.n):
+            assert np.array_equal(sk.S[c, :sk.count[c]], S0[c][count0[c] - sk.count[c]:])
+        assert (book.solid > 0.0).any() == slurry and np.all(book.solid <= book.mass)
+
+
+def released(skins, rate, A_top, dt, slurry=False):
+    """A release of `rate` [kg/(m2 s)] from the top cells over dt, by hand."""
+    return skin.release_top(skins, rate * A_top * dt, slurry=slurry)
+
+
+def test_a_flow_sub_step_releases_after_the_transport_and_its_books_close_with_the_droplets_momentum(coarse_sphere_mesh):
+    """Spec 7.1's order within each flow sub-step -- the flow, the sideways exchange, the spray: `flow_substeps` with a
+    release calls `push`, `momentum_step`, `thickness_step`, `transport` and then `release_top` with the rate the
+    release gives at that moment times the top area and the flow sub-step, to the last bit, at one cycle and three, and
+    books what left: the columns' momentum changes by the push's, the shear's, the walls' and what the transport carried,
+    less the momentum the droplets took at their cells' own velocities (fact 29's sink), to 2.1e-12 and 1.1e-12 of the
+    largest impulse; the mass and the enthalpy fall by what was released, to 1.2e-16 and 4.1e-16 (measured 2026-10-24,
+    the books of 6c's test on these skins). The slurry is released too: the transport mixes these skins' random cells,
+    at a Courant number of 4.4, into slurry at their tops (3 of the 1 177 liquid tops are left after one flow sub-step),
+    so that a release of liquid alone would take almost nothing here."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    rate = np.random.default_rng(9).uniform(0.0, 8.0, col.n)
+    for cycles, slurry in ((1, True), (3, True)):
+        first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
+        flow.release, flow.slurry = skin.prescribed_release(rate), slurry
+        P0, M0, E0 = first.column_momentum(), first.mass(), first.energy()
+        book = skin.flow_substeps(first, flow, 0.01)
+        parts = []
+        for k in range(cycles):
+            if k:
+                second.regrid()
+            parts.append(by_hand(second, flow, 0.01 / cycles)
+                         + (released(second, rate, flow.A_top, 0.01 / cycles, slurry),))
+        assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
+        for key, part in (("released", "mass"), ("released_H", "enthalpy"), ("released_p", "momentum"),
+                          ("released_solid", "solid")):
+            np.testing.assert_allclose(getattr(book, key), sum(getattr(p[3], part) for p in parts), rtol=1e-14, atol=0.0)
+        assert book.released.sum() > 0.0 and book.released_solid.sum() > 0.0
+        assert first.mass() == pytest.approx(M0 - book.released.sum(), rel=3e-16)
+        assert first.energy() == pytest.approx(E0 - book.released_H.sum(), rel=8e-16)
+        impulse = book.push + book.shear + book.wall + book.carried - book.released_p
+        scale = max(np.abs(x).max() for x in (book.push, book.shear, book.wall, book.released_p, P0))
+        assert np.abs(first.column_momentum() - P0 - impulse).max() < 5e-12 * scale
+
+
+def test_a_release_that_empties_columns_leaves_the_flow_and_the_draw_working_and_the_books_closed(monkeypatch):
+    """Columns liquid to their bottom, asked for far more than they hold, are emptied in the first of four flow
+    sub-steps; the flow sub-steps after it land the runoff on them as on any rigid top, the heat sub-step's draw restores
+    their minimum, and the pass's mass, energy and momentum close with the release, to 4.1e-16, 2.2e-16 and 4.1e-16
+    (measured 2026-10-24; the conduction off, so that the layer stays liquid). A negative rate is refused."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    col, pts = strip_grid(12, 2)
+    x = np.rint(pts[:, 0] / 1e-3).astype(int)
+    deep = (x == 3) | (x == 4)
+    sk = stacked(col, [[LIQUID] * 6 if d else [LIQUID] * 10 + [RIGID] * 5 for d in deep])
+    sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+    T_b, m_min = np.full(sk.n, RIGID), skin.minimum_mass(sk.material, sk.area, sk.settings)
+    flow = strip_flow(col, tau=50.0, cycles=4)
+    emptied = []
+    take = skin.release_top
+
+    def recorded(skins, dm, slurry=False):
+        book = take(skins, dm, slurry)
+        emptied.append(skins.count[deep].copy())
+        return book
+    monkeypatch.setattr(skin, "release_top", recorded)
+    flow.release = skin.prescribed_release(np.where(deep, 1e3, 0.5))
+    E0, M0, P0 = sk.energy(), sk.mass(), sk.column_momentum()
+    book = skin.advance(sk, 0.03, np.full(sk.n, 3e6), sk.area, 300.0, 0.3, T_b, m_min, T_b1=T_b, remove=False, flow=flow)
+    f = book.flow
+    assert np.all(emptied[0] == 0) and np.all(book.drawn[deep] > 0.0) and np.all(sk.column_mass() >= m_min * (1 - 1e-12))
+    assert sk.mass() == pytest.approx(M0 - f.released.sum() + book.drawn.sum(), rel=1e-15)
+    gained = book.E_top - book.E_rad - book.E_base + book.E_side - f.released_H + book.drawn_H
+    assert sk.energy() == pytest.approx(E0 + gained.sum(), rel=5e-16)
+    scale = max(np.abs(v).max() for v in (f.push, f.shear, f.wall, f.released_p))
+    assert np.abs(sk.column_momentum() - P0 - (f.push + f.shear + f.wall + f.carried - f.released_p)).max() < 1e-15 * scale
+    flow.release = lambda skins: np.full(skins.n, -1.0)
+    with pytest.raises(ValueError):
+        skin.flow_substeps(sk, flow, 0.01)
+
+
+def test_with_no_release_or_nothing_it_may_take_the_flow_is_unchanged_to_the_last_bit(coarse_sphere_mesh):
+    """With no release (the default) the flow sub-steps are Task 6d's; a release of nothing -- a zero rate, or a rate
+    only where a column's top cell is not liquid at the moment it is asked, without the slurry -- gives the same cells
+    and the same books to the last bit, the released metal zero. (Asked once from the starting tops instead, the second
+    rate releases metal: the transport lands liquid on some of those tops within the flow sub-step.)"""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    dry = lambda s: np.where(s.T[:, 0] < s.material.T_liquidus, 5.0, 0.0)              # no liquid at the top
+    probe, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    assert 0.0 < (dry(probe) > 0.0).mean() < 1.0
+    out = []
+    for release in (None, skin.prescribed_release(0.0), dry):
+        sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        flow = sphere_flow(col, 2)
+        flow.release = release
+        out.append((sk, skin.flow_substeps(sk, flow, 0.01)))
+    (a, A) = out[0]
+    for b, B in out[1:]:
+        assert all(np.array_equal(x, y) for x, y in zip(a.state(), b.state()))
+        for key in ("push", "shear", "wall", "carried", "courant", "growth", "passes", "sub_steps", "cycles"):
+            assert np.array_equal(getattr(A, key), getattr(B, key))
+        assert not (B.released.any() or B.released_H.any() or B.released_p.any() or B.released_solid.any())
+    assert not A.released.any() and A.released_p.shape == (col.n, 3)
+
+
+def test_the_droplet_momentum_ratio_is_fact_29_s_v_melt_delta_over_nu_on_a_sheared_layer():
+    """Fact 29: Pi = mdot V_s / tau_gas, the droplets' momentum flux against the gas shear driving the film. By hand:
+    liquid aluminium 0.234 mm deep on a strip of 1 mm columns, sheared at 20 Pa along it at its steady Couette profile
+    (u = tau s / mu at every cell's centre, s its height above the rigid front: the momentum step keeps it and the
+    transport carries it along the strip unchanged), released at mdot = rho_l v_melt from the top in one 1 ms flow
+    sub-step. The top cell leaves at u_0 = tau (H - dz_0 / 2) / mu, so every column's Pi_i = mdot u_0 / tau =
+    mdot (H - dz_0 / 2) / mu, fact 29's v_melt delta_m / nu with delta_m the top cell's height: 0.42 at v_melt = 1 mm/s,
+    flagged above 0.2, and 0.042 at 0.1 mm/s, to 2.2e-15 (measured 2026-10-24); the body's Pi, the shear-weighted mean,
+    is the same; without a release Pi is zero; a top the gas does not shear has no Pi of its own (infinite) and is
+    neither in the body's Pi nor flagged."""
+    for v_melt, flagged in ((1e-3, True), (1e-4, False)):
+        sk, col, _ = strip_layer(nx=12)
+        flow = strip_flow(col, dp_ds=0.0, sigma=0.0, tau=20.0)
+        dz = sk.dz()[:, :20]
+        H, dz0 = dz[0].sum(), dz[0, 0]
+        sk.U[:, :20, 0] = 20.0 * (H - (np.cumsum(dz, axis=1) - 0.5 * dz)) / MU_L       # the steady Couette profile
+        mdot = RHO_L * v_melt
+        flow.release = skin.prescribed_release(mdot)
+        book = skin.flow_substeps(sk, flow, 1e-3, cycles=1)
+        Pi, each, count = skin.droplet_momentum_ratio(book.released_p, book.shear)
+        expected = mdot * (H - 0.5 * dz0) / MU_L
+        np.testing.assert_allclose(each, expected, rtol=5e-15)
+        assert Pi == pytest.approx(expected, rel=5e-15)
+        assert expected == pytest.approx(v_melt * (H - 0.5 * dz0) / (MU_L / RHO_L))              # v_melt delta_m / nu
+        assert count == (col.n if flagged else 0) and (expected > skin.PI_FLAG) == flagged
+    Pi, each, count = skin.droplet_momentum_ratio(np.zeros((3, 3)), np.ones((3, 3)))
+    assert Pi == 0.0 and not each.any() and count == 0                                 # nothing released
+    Pi, each, count = skin.droplet_momentum_ratio(np.array([[1e-9, 0, 0], [0, 0, 0], [1e-9, 0, 0]]),
+                                                  np.array([[0, 0, 0], [0, 0, 0], [0, 1e-8, 0]]))
+    assert Pi == pytest.approx(0.1) and each[0] == np.inf and each[1] == 0.0 and count == 0   # an unsheared top: no Pi
+
+
+def test_the_trial_pass_releases_what_its_real_pass_releases_and_its_base_law_includes_the_release(monkeypatch):
+    """The trial pass runs the flow's sub-steps as the real pass does (6c), the release in them: liquid aluminium on a
+    strip of 1 mm columns heated at 30 MW/m2 (its top stays liquid over the base at 880 K), pushed and sheared, released
+    at 3 kg/(m2 s), the conduction on. A real pass at the trial pass's base temperature releases the same metal in
+    every flow sub-step, to the last bit, and its base heat meets the trial pass's law to 4.0e-17 of the throughput;
+    the trial pass leaves the skins as they were; and the law with the release differs from the law without by 0.20 %
+    of the throughput (measured 2026-10-24)."""
+    seen = []
+    take = skin.release_top
+
+    def recorded(sk, dm, slurry=False):
+        book = take(sk, dm, slurry)
+        seen.append((np.copy(dm), book))
+        return book
+    monkeypatch.setattr(skin, "release_top", recorded)
+    laws = {}
+    for rate in (None, 3.0):
+        sk, col, _ = strip_layer(nx=12)
+        sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+        T_b, m_min, q = np.full(sk.n, RIGID), np.zeros(sk.n), np.full(sk.n, 3e7)
+        flow = strip_flow(col, tau=50.0, cycles=2)
+        flow.release = None if rate is None else skin.prescribed_release(rate)
+        before = sk.state()
+        seen.clear()
+        laws[rate] = skin.advance(sk, 0.05, q, sk.area, 300.0, 0.3, T_b, m_min, remove=False, flow=flow)
+        trial = list(seen)
+        assert all(np.array_equal(x, y) for x, y in zip(sk.state(), before))
+        seen.clear()
+        book = skin.advance(sk, 0.05, q, sk.area, 300.0, 0.3, T_b, m_min, T_b1=T_b, remove=False, flow=flow)
+        assert len(seen) == len(trial) == (10 if rate else 0)
+        for (dm, b), (dm_t, b_t) in zip(seen, trial):
+            assert np.array_equal(dm, dm_t) and all(np.array_equal(getattr(b, k), getattr(b_t, k))
+                                                    for k in ("mass", "enthalpy", "momentum", "solid"))
+        a, s = laws[rate]
+        throughput = np.abs(book.E_top).sum() + np.abs(book.E_base).sum()
+        assert np.abs(book.E_base / 0.05 - (a + s * T_b)).sum() * 0.05 < 1e-16 * throughput
+        assert rate is None or book.flow.released.sum() > 0.0
+    (a0, s0), (a1, s1) = laws[None], laws[3.0]
+    change = np.abs((a1 + s1 * T_b) - (a0 + s0 * T_b)).sum() * 0.05 / throughput
+    assert 1e-3 < change < 4e-3
