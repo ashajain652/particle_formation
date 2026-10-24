@@ -47,7 +47,7 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
                     # the flow (sub-plan 21 Task 6c, spec 10.2)
                     "momentum_residual", "speed_max_ms", "roughness_max", "flow_courant_max", "flow_growth_max",
-                    "flow_passes_max", "wall_flow_s"]
+                    "flow_passes_max", "flow_cycles_max", "wall_flow_s"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 

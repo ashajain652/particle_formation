@@ -428,6 +428,7 @@ def test_a_skin_body_with_flow_keeps_its_mass_and_energy_closes_its_momentum_and
     H = sk.thickness()
     assert stats["roughness_max"] == float((np.abs(H[i] - H[j]) / b.columns.edge_length).max()) > 0.0
     assert stats["flow_courant_max"] > 0.0 and 0.0 <= stats["flow_growth_max"] < 1.0 and stats["flow_passes_max"] >= 1
+    assert stats["flow_cycles_max"] == 1
     assert stats["wall_flow_s"] > 0.0 and stats["flowing_depth_max_mm"] > 0.0
 
 
@@ -456,7 +457,7 @@ def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_par
     normal, f = seen[0]
     np.testing.assert_allclose(f.shear, skin.along_meridian(normal, b.v_hat, first.tau), rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(f.g, first.deceleration * b.v_hat, rtol=1e-12)
-    assert f.rho_l == b.skins.rho_l and f.sigma == b.material.liquid.sigma and f.cycles == skin.FLOW_CYCLES
+    assert f.rho_l == b.skins.rho_l and f.sigma == b.material.liquid.sigma and f.cycles is None    # chosen (Task 6d)
     second = evaluate(states[1])
     seen.clear()
     b._hint = 2                                                          # two parts, to see the interpolation
@@ -465,3 +466,37 @@ def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_par
     for frac in (0.25, 0.75):                                           # the two parts' middles
         dp = first.dp_ds + (second.dp_ds - first.dp_ds) * frac
         assert any(np.allclose(f.dp_ds, dp, rtol=1e-12, atol=1e-9) for _, f in seen)
+
+
+def test_a_skin_body_s_flow_takes_the_counts_each_trial_pass_chose_in_its_real_pass(coarse_sphere_mesh, monkeypatch):
+    """Sub-plan 21 Task 6d: with the flow on, the flow sub-steps in each heat sub-step are chosen from the last one's
+    Courant number and growth (the default), and the real pass of every part takes the counts its trial pass chose, so
+    that the base law is made by the pass it predicts; the history reports the most a heat sub-step took. 3 MW/m2 on the
+    front of the 4 mm test sphere from 880 K for a 0.25 s step, as above: the books close as with a fixed count."""
+    calls = []
+    advance, substeps = skin.advance, skin.flow_substeps
+
+    def recorded_advance(sk, dt, *a, **k):
+        calls.append(("trial" if k.get("T_b1") is None else "real", []))
+        return advance(sk, dt, *a, **k)
+
+    def recorded_substeps(sk, flow, dt, cycles=None):
+        book = substeps(sk, flow, dt, cycles)
+        calls[-1][1].append((cycles, book.cycles))                    # the count handed down, and the one used
+        return book
+    monkeypatch.setattr(skin, "advance", recorded_advance)
+    monkeypatch.setattr(skin, "flow_substeps", recorded_substeps)
+    b = make(coarse_sphere_mesh, flow=True, remove=False)
+    assert b.flow_cycles is None
+    M0 = b.mass()
+    b.advance(0.25, 0.25, front_loads(b, 3e6), forcing=newtonian(b))
+    kinds = [k for k, _ in calls]
+    assert kinds == ["trial", "real"] * (len(calls) // 2) and len(calls) >= 2
+    chosen = [[c for c, _ in cs] for _, cs in calls]
+    assert all(chosen[i] == chosen[i + 1] for i in range(0, len(calls), 2))
+    used = [u for _, cs in calls for _, u in cs if u]                 # where something flowed
+    assert used and max(used) <= skin.FLOW_CYCLES_MAX and min(used) >= skin.FLOW_CYCLES_MIN
+    stats = b.skin_stats()
+    assert max(u for _, u in calls[-1][1]) <= stats["flow_cycles_max"] <= max(used) and stats["flow_courant_max"] > 0.0
+    assert b.mass() == pytest.approx(M0, rel=1e-13) and abs(b.energy_balance_residual()) < 1e-8
+    assert stats["momentum_residual"] < 1e-12

@@ -48,6 +48,11 @@ TASKS = (
             ("DIFF_TEST_CLI_T6C", "tests/test_reentry_model_cli.py"),
             ("DIFF_SKIN_T6C", "reentry_model/skin.py"), ("DIFF_SKINBODY_T6C", "reentry_model/skinbody.py"),
             ("DIFF_COUPLED_T6C", "reentry_model/coupled.py"), ("DIFF_CLI_T6C", "reentry_model/cli.py"))),
+    ("6d", (("DIFF_TEST_SKIN_T6D", "tests/test_reentry_model_skin.py"),
+            ("DIFF_TEST_SKINBODY_T6D", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_TEST_CLI_T6D", "tests/test_reentry_model_cli.py"),
+            ("DIFF_SKIN_T6D", "reentry_model/skin.py"), ("DIFF_SKINBODY_T6D", "reentry_model/skinbody.py"),
+            ("DIFF_COUPLED_T6D", "reentry_model/coupled.py"), ("DIFF_CLI_T6D", "reentry_model/cli.py"))),
 )
 
 

@@ -2322,6 +2322,40 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      (all melted), the books missing 2e-17; measured, not built. The thickness step's predicted heights miss the
      transport's by 11-16 % of the change at the shoulder's pile at 1 ms, no less at shorter sub-steps. Tests: skin 72,
      skin body 16, command line 66; unit tier 481 passed, 1 skipped.
+157. **Making the flow affordable (sub-plan 21 Task 6d, 2026-10-22).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6d/`, on 6c's states of the 100 mm sphere (made once with 6c's
+     code: heated, driven at 93 s, quiescent, every column melted), processor times under other sessions' load (4 to
+     80). The transport's systems are solved by the iteration x <- M^-1 (b - U x) from the upwind solve, U the
+     back-couplings of cycles over 500 cells, the smaller cycles factored: 0.16 and 0.25 s against 6c's LU's 4.65 and
+     25.3 s with every column melted (one cycle of 18 379 cells, 9 corrections), 0.10 and 0.28 s against 0.20 and 0.76 s
+     quiescent, 0.14 and 0.21 s against 0.43 and 2.04 s heated, within 1.5e-13 of the LU; every cell installed from the
+     solve's fluxes, so the books are exact by construction (the masses 1.9e-4 off the LU at a tolerance of 1e-3, the
+     books still to 4e-16 and every mass positive: a regular splitting rises to the masses from below). Metal landing on
+     a rigid top now flows on in the same solve, coasting at the velocity it arrived with until the next momentum step:
+     on a strip it crosses 15 rigid columns in one sub-step at a Courant number of 5, each holding 5/6 of the last as
+     implicit upwind does; a sheared runoff onto rigid metal is 0.435, 0.209, 0.135 and 0.068 off the 0.25 ms run at 5,
+     2, 1 and 0.5 ms (6a's rule 1.25, 0.28, 0.195, 0.10; a one-cell momentum estimate for the landed metal 0.36, 0.25,
+     0.174, 0.104). 6c's sub-step study repeated: where the metal went 0.665, 0.432, 0.159, 0.081, 0.036, 0.025, 0.022
+     and 0.014 off at 10, 5, 2.5, 2, 1.5, 1.25, 1 and 0.5 ms (6c 0.953, 0.854, 0.586, 0.439, -, -, 0.039, 0.014), the
+     kinetic energy at 50 ms 2.98, 0.90, 0.95, 1.06, 1.12, 1.05, 1.03 and 1.01 of the finest run's, the largest Courant
+     numbers 4 143, 26.4, 12.6, 9.9, 7.3, 6.1, 4.8 and 2.4, the thickness step's linearisations at their cap at 10, 5, 2
+     and 1.5 ms; 10 ms still unstable through 6b's thickness step. The flow sub-steps are chosen each heat sub-step from
+     the last one's largest Courant number and growth against 6 and 0.02 (Courant in proportion to the sub-step, growth
+     to its square), at most doubling, between 1 and 40, starting at 6c's 10; the real pass takes its trial pass's
+     counts, the memory part of the skins' state. The momentum step solves the moving columns alone, to the last bit:
+     1.34-1.39 s against 1.90-1.96 s on the heated state (6 450 of 9 417 columns). Task 4's shear-rate fixed point
+     reaches its five-pass cap where bridge and slurry cells sit on the falling branch of Li et al.'s flow curve
+     (228-367 1/s): an unstable root the iteration drifts from at 1.1-1.8 a pass, not an unreachable tolerance or an
+     oscillation; the cap costs 5.3e-4 of the fastest speed at worst (1 571 of 35 419 bridge cells still moving after
+     five passes on the heated state). 6b's predicted heights at the shoulder's pile miss because the transport puts
+     arriving metal at the same fraction of the receiver's flowing depth, so fast top layers pass it on within the
+     sub-step, while the column model spreads a gain over the moving thickness: 0.16, 0.22 and 0.08 of the largest
+     change at 1, 0.25 and 0.05 ms. A heat sub-step on the heated state: 54-59 s with 6c's code, 43 s with 6d's at ten
+     flow sub-steps, 30-33 s at the nine chosen. One melting part (0.0625 s) with its trial pass: 1 113 s and 924 s
+     (trial, real) with 6c's code, 124 s and 115 s with 6d's (counts 8, 7, 5, 3, 2, 2, 2), 14-17 s without the flow, so
+     a melting macro step is about an hour against about eight; a trial pass at a fixed two flow sub-steps (64 s) would
+     make a base law 0.97 % of the throughput off. Tests: skin 80, skin body 17, command line 66; unit tier 490 passed,
+     1 skipped.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

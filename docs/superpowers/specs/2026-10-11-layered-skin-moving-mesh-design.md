@@ -351,6 +351,9 @@ Depth positions are matched by fraction of the **flowing layer**: material leavi
 σ₂ of its flowing depth joins the receiver between the same fractions of its flowing depth, where the receiver flows
 continuously from its top downward. Where the receiver's top is rigid — a solid skin, as on the leeward side, or a crust
 on slurry — arriving material lands on top of its top cell. Nothing passes through rigid metal (decided 2026-10-11).
+(Sub-plan 21 Task 6d, 2026-10-22: landed metal flows on within the same sub-step's solve, coasting at the mass-weighted
+velocity it arrived with, projected onto the column's plane; the drag of the rigid metal beneath reaches it at the next
+momentum step. Before, it waited a flow sub-step, so a front crossed rigid metal at one column a flow sub-step.)
 
 Runoff reaching the cold leeward skins lands on top and freezes from below in the skin's own heat equation; the skin is
 then above its minimum, and its oldest rigid metal at the bottom passes to the 3D model (§6.6), so the skin keeps
@@ -495,7 +498,7 @@ size histograms accumulate each sub-step. Two source columns are added: `solid_f
 | `--fine-band` (mm below the surface, §5.3; 0 none), `--fine-size` (mm asked) | 4, 0.7 | `_fine<depth>x<size>mm`, `_fine0` |
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
 | `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `off` | `_skinflow-on` |
-| `--skin-flow-cycles` (flow sub-steps in each skin sub-step) | 10 | `_flowcycles<value>` |
+| `--skin-flow-cycles` (flow sub-steps in each skin sub-step, fixed) | chosen each skin sub-step (Task 6d) | `_flowcycles<value>` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
 (50 µm), the rebuild threshold (radius ratio 0.05) and gap (20 steps), the base temperature-jump tolerance (5 K), the
@@ -769,12 +772,16 @@ Each stage is tested and measured before the next begins.
    inviscid flow (Asha, 2026-10-22).
 2. Velocities are carried between neighbouring columns' tangent planes by projection.
 3. Material crossing between columns is matched by fraction of the flowing depth; it lands on top where the receiving
-   column's top is rigid.
+   column's top is rigid, and flows on within the sub-step at the velocity it arrived with (§6.5).
 4. Rigid cells in a skin (half solid or more) joined to the substrate do not move; a crust over flowing metal moves as
    one piece in its column. The columns carry no sideways stress in a solid, so a crust over many columns moves as
    column-sized plates — as a warm crust, barely solid near half liquid, would — and a crust held at its rim is not held
    (revised 2026-10-20; it was "a crust is anchored").
-5. Slurry viscosity follows Li et al. (2014) with its bridge to the liquid.
+5. Slurry viscosity follows Li et al. (2014) with its bridge to the liquid. Li's fit makes the stress fall as the shear
+   rate rises between about 229 and 367 1/s (its maximum, d(ηγ̇)/dγ̇ = 0, at about 229 1/s), so there the cells'
+   shear-rate fixed point has an unstable root and stops at its five passes; it costs at most 5.3·10⁻⁴ of the fastest
+   speed on the heated melting state (sub-plan 21 Task 6d, measured 2026-10-22). Kept as fitted rather than held at the
+   stress maximum (2026-10-24).
 6. The kinetic energy lost when cells of different speeds merge is neglected.
 7. Between corners the surfaces are flat triangles.
 8. Girin's δ_m is kept for spraying although the resolved profile has its own sheared depth; both are reported.
@@ -909,3 +916,10 @@ Each stage is tested and measured before the next begins.
   so a Task 6d makes it affordable before Tasks 7 and 8 (Asha, option a). A flow run takes Girin's removal and keeps its
   continuum macro step (0.0125 s once the body's Knudsen number is below 0.01) for now; sub-plan 22 tests other options
   (Asha).
+- 2026-10-22 (sub-plan 21 Task 6d built): the flow is made affordable without changing its books -- an iterative
+  transport solve inside cycles of more than 500 cells, each cell's mass installed from the solve's own fluxes; landed
+  metal flowing on within the sub-step (§6.5); the momentum step on moving columns only; and the number of flow
+  sub-steps chosen each skin sub-step from the last one's largest Courant number (target 6) and Rayleigh–Taylor growth
+  (target 0.02), between 1 and 40, the real pass taking its trial pass's counts. This supersedes the fixed ten 1 ms flow
+  sub-steps above: the runoff now converges from about 2 ms (8 % off at 2 ms, 2.2 % at 1 ms against a 0.25 ms
+  reference), and a melting macro step costs about an hour of processor time against about eight (fact 157).
