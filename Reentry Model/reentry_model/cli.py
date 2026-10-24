@@ -129,8 +129,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
     `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none), and,
-    with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` for other than skin.FLOW_CYCLES
-    flow sub-steps in each heat sub-step; empty for the defaults."""
+    with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` where the flow sub-steps in each
+    heat sub-step are fixed at n rather than chosen each heat sub-step (Task 6d); empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -152,7 +152,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
     if flow:
         out += "_skinflow-on"
-        if flow_cycles is not None and flow_cycles != skin.FLOW_CYCLES:
+        if flow_cycles is not None:
             out += "_flowcycles{}".format(flow_cycles)
     return out
 
@@ -313,7 +313,9 @@ def build_parser():
                          "girin, whose continuum step (--dt-continuum) follows; off: the heat-only skins, liquid removed "
                          "as it forms with --removal instant (default)")
     me.add_argument("--skin-flow-cycles", type=int, default=None,
-                    help="with --skin-flow on: flow sub-steps in each skin sub-step (default {})".format(skin.FLOW_CYCLES))
+                    help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                         "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+                                                                                            skin.FLOW_CYCLES_MAX))
     me.add_argument("--skin-preset", choices=tuple(skin.SKIN_PRESETS), default="production",
                     help="skin cell-size preset: production 10 um, dev 20 um (default %(default)s)")
     me.add_argument("--deform-depth", type=float, default=15.0,
@@ -415,7 +417,8 @@ def build_thermal(args, settings, mass):
                         "growth": args.skin_growth, "substep_ms": args.skin_substep, "preset": args.skin_preset,
                         "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
                         "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
-                        "swell": args.skin_swell == "on", "flow": args.skin_flow, "flow_cycles": the_body.flow_cycles}
+                        "swell": args.skin_swell == "on", "flow": args.skin_flow,
+                        "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles}
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
