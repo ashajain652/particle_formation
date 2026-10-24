@@ -950,8 +950,10 @@ def test_depth_is_matched_by_fraction_of_the_flowing_layer():
 
 def test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_are_untouched():
     """Spec 6.5's arrival rule: where the receiver's top is rigid -- anchored solid, or a crust over flowing metal --
-    the arriving metal lands on top of its top cell, as a new cell holding exactly what arrived; nothing passes
-    through rigid metal."""
+    the arriving metal lands on top of its top cell, as a new cell holding exactly what stayed there; nothing passes
+    through rigid metal. Since Task 6d the landed metal flows on within the same sub-step, at the velocity it arrived
+    with, onto the rigid tops beyond: columns the donor does not touch gain a new top cell too, and every new top cell
+    holds the donor's metal at its specific enthalpy and velocity."""
     col, _ = strip_grid(3, 3)
     temps = [[RIGID] * 12 if k % 2 else [RIGID] * 2 + [LIQUID] * 6 + [RIGID] * 4 for k in range(col.n)]
     temps[4] = [LIQUID] * 8 + [RIGID] * 4
@@ -963,18 +965,21 @@ def test_metal_arriving_on_a_rigid_top_lands_on_it_and_the_receiver_s_own_cells_
     for r in range(col.n):
         if r == 4:
             continue
-        if r in receivers:
+        if book.mass[r] > 0.0:
             assert sk.count[r] == before[4][r] + 1
             assert sk.m[r, 0] == pytest.approx(book.mass[r], rel=1e-12)
             assert sk.H[r, 0] == pytest.approx(book.mass[r] * h_donor, rel=1e-12)
             np.testing.assert_allclose(sk.U[r, 0], [0.1, 0.04, 0.0], rtol=1e-12)
             shifted = slice(1, sk.count[r])
         else:
-            assert book.mass[r] == 0.0
+            assert book.mass[r] == 0.0 and sk.count[r] == before[4][r]
             shifted = slice(0, sk.count[r])
         for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3]), (sk.U, before[5])):
             assert np.array_equal(now[r, shifted], then[r, :before[4][r]])
+    assert all(book.mass[r] > 0.0 for r in receivers)
     assert any(r % 2 for r in receivers) and any(r % 2 == 0 for r in receivers)          # solid tops and crusts
+    beyond = [r for r in range(col.n) if r != 4 and r not in receivers and book.mass[r] > 0.0]
+    assert beyond                                                                     # it flowed on (Task 6d)
 
 
 def test_a_floating_crust_carried_across_lands_on_top_and_the_slurry_beneath_it_joins_by_fraction():
@@ -1105,7 +1110,7 @@ def test_the_upwind_order_changes_the_cost_never_the_answer(coarse_sphere_mesh, 
     second, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
     a = skin.transport(first, col, 0.05, regrid=False)
     rng = np.random.default_rng(0)
-    monkeypatch.setattr(skin, "_upwind_order", lambda src, dst, n: (rng.permutation(n), False))
+    monkeypatch.setattr(skin, "_upwind_order", lambda src, dst, n: (rng.permutation(n), False, np.ones(n)))
     b = skin.transport(second, col, 0.05, regrid=False)
     for x, y in zip(first.state(), second.state()):
         np.testing.assert_allclose(x, y, rtol=1e-11, atol=1e-11 * np.abs(y).max())
@@ -1255,8 +1260,8 @@ def test_surface_tension_acts_only_where_a_column_s_top_flows():
     """Asha, 2026-10-21: liquid 0.29 mm deep on a strip beside a wall of rigid metal 0.4 mm high, and a crust over
     slurry in the middle. The wall's height enters the curvature of the liquid beside it, as a wall's would; neither the
     wall nor the crust feels a capillary push, and surface tension moves no metal into either (what lands there is the
-    round-off of a velocity the faces' push cancels, 1.5e-15 of what moves); the wall's cells stay as they were and
-    the crust and the slurry beneath it, pushed by nothing, stay at rest."""
+    round-off of a velocity the faces' push cancels, 1.5e-15 of what moves; 1.4e-15 with Task 6d's transport); the
+    wall's cells stay as they were and the crust and the slurry beneath it, pushed by nothing, stay at rest."""
     col, pts = strip_grid(21, 2)
     x = np.rint(pts[:, 0] / 1e-3).astype(int)
     temps = [[RIGID] * 40 if k >= 15 else [RIGID] * 2 + [SLURRY] * 20 + [RIGID] * 5 if k == 7
@@ -1417,7 +1422,7 @@ def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_tra
     that, to the last bit, and books every impulse: the columns' momentum changes by the push's (the thickness step's
     included), the gas shear's, the walls' (the anchored metal's, the thickness step's and the transport's projections)
     and what the transport carried, to round-off (2.1e-12 of the largest impulse at one cycle and 9.4e-13 at three,
-    measured 2026-10-22, as 6b's books on these skins). With `cycles` the sub-step runs as that many flow sub-steps,
+    measured 2026-10-22, as 6b's books on these skins; 9.6e-13 at three with Task 6d's transport). With `cycles` the sub-step runs as that many flow sub-steps,
     the cells split and merged between them; the heat sub-step's own regrid follows the last."""
     from test_reentry_model_columns import sphere_columns
     col, _ = sphere_columns(coarse_sphere_mesh)
@@ -1540,7 +1545,7 @@ def test_the_books_of_a_pass_with_flow_close_exactly():
     """A pass of 0.1 s with the conduction on, liquid removed as it forms and the flow on: liquid aluminium at 909 K, just
     below T_feed, on a strip heated at 30 MW/m2, pushed along it and sheared: the mass and the energy close as without
     flow, and each column's momentum changes by the flow's impulses less what the removed liquid took with it, to
-    round-off (4.9e-16 of the largest impulse, measured 2026-10-22)."""
+    round-off (4.9e-16 of the largest impulse, measured 2026-10-22; 1.9e-16 with Task 6d's transport)."""
     sk, col, _ = strip_layer(nx=12, T=909.0)
     sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
     T_b = np.full(sk.n, RIGID)
@@ -1556,3 +1561,180 @@ def test_the_books_of_a_pass_with_flow_close_exactly():
     impulse = f.push + f.shear + f.wall + f.carried - book.momentum_out
     scale = max(np.abs(x).max() for x in (f.push, f.shear, f.wall, book.momentum_out))
     assert np.abs(sk.column_momentum() - P0 - impulse).max() < 1e-13 * scale
+
+
+# -- making the flow affordable (sub-plan 21 Task 6d) ------------------------------------------------------------------
+def transported(coarse_sphere_mesh, monkeypatch, dt=0.05, **settings):
+    """The mixed sphere skins after one transport sub-step of dt at the given module settings, with the column masses
+    before it, the book and the solves' counts."""
+    for key, value in settings.items():
+        monkeypatch.setattr(skin, key, value)
+    sk, col, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    M0, counts = sk.column_mass(), dict(skin.TRANSPORT)
+    book = skin.transport(sk, col, dt, regrid=False)
+    return sk, M0, book, {k: skin.TRANSPORT[k] - counts[k] for k in counts}
+
+
+def test_the_iterative_transport_solve_gives_the_direct_solve_s_answer_where_flows_meet(coarse_sphere_mesh, monkeypatch):
+    """The mixed sphere skins' random velocities make flows meet in cycles (of up to 35 cells here) at a Courant number of
+    4.4. Iterating every cycle (TRANSPORT_CYCLE 1) gives what factoring them all gives to 4.5e-14 of each array's largest
+    value, in 44 corrections over the two systems (measured 2026-10-22); the books close exactly by construction -- each
+    column's mass changes by its book to 4e-16 of the largest column, the books sum to 2e-18 of the mass -- and every
+    mass is positive."""
+    direct, M0, _, d = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=10 ** 9)
+    monkeypatch.undo()
+    sk, M0, book, c = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=1)
+    assert d["corrections"] == 0 and c["corrections"] > 2 and c["fallbacks"] == 0 and book.courant > 4.0
+    for x, y in zip(sk.state(), direct.state()):
+        np.testing.assert_allclose(x, y, rtol=0, atol=1e-13 * np.abs(y).max())
+    np.testing.assert_allclose(sk.column_mass() - M0, book.mass, rtol=0, atol=1e-15 * M0.max())
+    assert abs(book.mass.sum()) < 1e-16 * M0.sum() and np.all(sk.m[sk.valid] > 0.0)
+
+
+def test_the_books_close_exactly_and_the_masses_stay_positive_however_loosely_the_iteration_stops(coarse_sphere_mesh,
+                                                                                                monkeypatch):
+    """Each cell is installed from the solve's fluxes -- what it had, less what it sent, plus what arrived -- so the
+    books close whatever the iteration's error, and the iteration rises to the masses from below (a regular splitting of
+    an M-matrix), so they stay positive: stopped at 1e-3 of the right-hand side, the masses are 1.9e-4 of the largest
+    off the direct solve's, while the books close to 4e-16 and every mass is positive (measured 2026-10-22)."""
+    direct, _, _, _ = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=10 ** 9)
+    monkeypatch.undo()
+    sk, M0, book, c = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=1, TRANSPORT_TOL=1e-3)
+    off = np.abs(sk.m - direct.m).max() / direct.m.max()
+    assert 1e-6 < off < 2e-3 and c["fallbacks"] == 0
+    np.testing.assert_allclose(sk.column_mass() - M0, book.mass, rtol=0, atol=1e-15 * M0.max())
+    assert abs(book.mass.sum()) < 1e-16 * M0.sum() and np.all(sk.m[sk.valid] > 0.0)
+
+
+def test_an_iteration_that_cannot_finish_falls_back_to_the_direct_solve(coarse_sphere_mesh, monkeypatch):
+    """With no corrections allowed the iteration cannot reach its tolerance where cycles are iterated, and both systems
+    fall back to the LU, which gives what factoring every cycle gives, to the last bit."""
+    direct, _, _, _ = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=10 ** 9)
+    monkeypatch.undo()
+    sk, _, _, c = transported(coarse_sphere_mesh, monkeypatch, TRANSPORT_CYCLE=1, TRANSPORT_CORRECTIONS=0)
+    assert c["fallbacks"] == 2 and all(np.array_equal(x, y) for x, y in zip(sk.state(), direct.state()))
+
+
+def test_metal_landing_on_rigid_tops_flows_on_within_the_sub_step_at_the_velocity_it_arrived_with():
+    """Liquid on the first five columns of a strip of 1 mm columns moving at 0.5 m/s toward rigid metal, one 10 ms
+    sub-step (a Courant number of 5 along the strip): the metal landing on the first rigid top flows on in the same
+    solve (Task 6d; 6a's rule held it there until the next sub-step), over every rigid column to the strip's end, each
+    holding 0.831-0.836 of the last -- the one-dimensional implicit upwind scheme's nu / (1 + nu) = 5/6 for a pulse
+    entering columns at rest -- at the velocity it arrived with, to 2e-16; the books close and no rigid cell changes
+    (measured 2026-10-22)."""
+    col, pts = strip_grid(20, 2)
+    x = np.rint(pts[:, 0] / 1e-3).astype(int)
+    sk = stacked(col, [[LIQUID] * 10 + [RIGID] * 5 if xi < 5 else [RIGID] * 15 for xi in x])
+    u = np.array([0.5, 0.0, 0.0])
+    sk.U = np.where((sk.valid & (sk.T > 900.0))[..., None], u, 0.0)
+    before, M0 = sk.state(), sk.column_mass()
+    book = skin.transport(sk, col, 0.01, regrid=False)
+    per = np.array([book.mass[x == k].sum() for k in range(20)])
+    assert np.all(per[5:] > 0.0)                                         # 15 columns in one sub-step
+    np.testing.assert_allclose(per[6:13] / per[5:12], 5.0 / 6.0, rtol=0.01)
+    new = sk.count > before[4]
+    assert np.array_equal(new, x >= 5) and np.abs(sk.U[new, 0] - u).max() < 1e-12
+    assert abs(book.mass.sum()) < 1e-16 * M0.sum()
+    for c in np.flatnonzero(new):
+        for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3])):
+            assert np.array_equal(now[c, 1:sk.count[c]], then[c, :before[4][c]])
+
+
+def strip_runoff(cycles, span=0.02, tau=20.0, edge=10):
+    """Liquid aluminium 0.2 mm deep (20 cells at 950 K over five rigid ones) on the first `edge` columns of a strip of
+    1 mm columns two corners wide, rigid metal (25 cells) beyond, sheared along it by tau Pa for `span` s, the
+    conduction off, `cycles` flow sub-steps in each 10 ms heat sub-step: the volume [m3] each column beyond the edge
+    gained."""
+    col, pts = strip_grid(40, 2)
+    x = np.rint(pts[:, 0] / 1e-3).astype(int)
+    sk = stacked(col, [[LIQUID] * 20 + [RIGID] * 5 if xi < edge else [RIGID] * 25 for xi in x])
+    sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+    T_b, H0 = np.full(sk.n, RIGID), sk.thickness()
+    skin.advance(sk, span, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b, remove=False,
+                 flow=strip_flow(col, dp_ds=0.0, tau=tau, cycles=cycles))
+    dV = (sk.thickness() - H0) * col.area
+    return np.array([dV[x == k].sum() for k in range(edge, 40)])
+
+
+def test_a_runoff_front_crosses_rigid_metal_faster_than_a_column_a_flow_sub_step_and_converges_to_a_fine_one(monkeypatch):
+    """The front of a sheared liquid layer running onto rigid metal (`strip_runoff`, 20 ms, the fastest cell about
+    1.4 m/s): with 6a's arrival rule the front advanced at most one column a flow sub-step, and with flow sub-steps of
+    5 ms reached 3 of the 10 columns the 0.25 ms run's covers; now metal flows on over the rigid tops within the
+    sub-step. Against the 0.25 ms run, where the metal went beyond the edge (L1) is 0.435, 0.135 and 0.068 off at 5, 1
+    and 0.5 ms (1.25, 0.195 and 0.10 with 6a's rule), first order in the sub-step, and the share beyond four columns
+    from the edge -- out of reach in four flow sub-steps of 5 ms under 6a's rule -- is there at 5 ms (measured
+    2026-10-22)."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    ref = strip_runoff(40)
+    err = {c: np.abs(strip_runoff(c) - ref).sum() / np.abs(ref).sum() for c in (2, 10, 20)}
+    coarse = strip_runoff(2)
+    assert coarse[5:].sum() > 0.5 * ref[5:].sum() > 0.0
+    assert err[2] < 0.6 and err[10] < 0.2 and err[20] < 0.6 * err[10]
+
+
+def test_the_adaptive_count_meets_its_targets_within_its_floor_and_cap():
+    """`flow_cycles` (Task 6d): from no memory, FLOW_CYCLES; the next flow sub-step meets the Courant target in
+    proportion to the sub-step and the growth target in proportion to its square, grows by at most FLOW_RELAX, and the
+    count stays within its floor and cap; the same memory gives the same count."""
+    dt, C, g = 0.01, skin.FLOW_COURANT, skin.FLOW_GROWTH
+    assert skin.flow_cycles(np.zeros(3), dt) == skin.FLOW_CYCLES
+    assert skin.flow_cycles([2.0 * C, 0.0, 1e-3], dt) == 20                  # twice the target: half the sub-step
+    assert skin.flow_cycles([0.5 * C, 0.0, 1e-3], dt) == 5                   # half: twice it, the most it may grow
+    assert skin.flow_cycles([0.1 * C, 0.0, 1e-3], dt) == 5
+    assert skin.flow_cycles([0.0, 4.0 * g, 1e-3], dt) == 20                  # four times the growth: half the sub-step
+    assert skin.flow_cycles([0.0, 0.0, 1e-2], dt) == skin.FLOW_CYCLES_MIN == 1
+    assert skin.flow_cycles([1e4 * C, 0.0, 1e-3], dt) == skin.FLOW_CYCLES_MAX
+    assert skin.flow_cycles([1.3 * C, 0.3 * g, 2e-3], dt) == skin.flow_cycles([1.3 * C, 0.3 * g, 2e-3], dt) == 7
+
+
+def test_the_real_pass_takes_the_trial_pass_s_counts_and_the_memory_is_part_of_the_skins_state(monkeypatch):
+    """A bump on liquid aluminium on flat columns, its flow's count chosen each heat sub-step: a still layer under
+    surface tension relaxes from FLOW_CYCLES to the floor (10, 5, 3, 2, 1, ...), one sheared at 50 Pa and pushed at
+    20 kPa/m settles at 6 (10, 7, 9, 8, 7, 6, ..., measured 2026-10-22). The trial pass leaves the skins and their memory
+    as they were and its counts in the flow's plan; the real pass after it, at a base 5 K warmer, takes the same and
+    then forgets the plan, and the skins remember its last heat sub-step."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    seen = []
+    substeps = skin.flow_substeps
+
+    def recorded(sk, flow, dt, cycles=None):
+        book = substeps(sk, flow, dt, cycles)
+        seen.append(book.cycles)
+        return book
+    monkeypatch.setattr(skin, "flow_substeps", recorded)
+    for tau, dp_ds, settled in ((0.0, 0.0, 1), (50.0, -2e4, 6)):
+        sk, col, _ = strip_layer(bump=0.2)
+        sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+        T_b = np.full(sk.n, RIGID)
+        flow = strip_flow(col, dp_ds=dp_ds, tau=tau, cycles=None)
+        before = sk.state()
+        seen.clear()
+        skin.advance(sk, 0.1, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), remove=False, flow=flow)
+        trial = list(seen)
+        assert all(np.array_equal(x, y) for x, y in zip(sk.state(), before)) and flow.plan == trial
+        assert trial[0] == skin.FLOW_CYCLES and trial[-1] == settled and len(trial) == 10
+        seen.clear()
+        skin.advance(sk, 0.1, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b + 5.0, remove=False,
+                     flow=flow)
+        assert seen == trial and flow.plan is None
+        assert sk.flow_memory[2] == pytest.approx(0.01 / settled) and sk.flow_memory[0] > 0.0
+
+
+def test_the_momentum_step_on_the_moving_columns_alone_is_the_solve_over_every_column_to_the_last_bit(
+        coarse_sphere_mesh):
+    """Task 6d: the momentum step solves only the columns where something moves (6c's solved every column). On mixed
+    sphere skins with two fifths of the columns cold, 1 354 of 2 254 columns solved, every velocity, impulse and
+    response is the solve over every column's, to the last bit, in the same five passes."""
+    sk, col, rng = mixed_sphere_skins(coarse_sphere_mesh)
+    cold = rng.uniform(size=col.n) < 0.4
+    sk.T = np.where(cold[:, None] & sk.valid, 870.0, sk.T)
+    sk.H = sk.m * sk.material.enthalpy(sk.T)
+    other = skin.Skins(sk.material, sk.area, sk.settings)
+    other.set_state(sk.state())
+    G = np.array([3e4, -1e4, 2e3])
+    a = skin.momentum_step(sk, 0.01, G, np.zeros(3), sk.area, response=True)
+    b = skin._momentum_columns(other, 0.01, np.broadcast_to(G, (col.n, 3)), np.zeros((col.n, 3)), other.area, True)
+    flowing = sk.valid & np.isfinite(skin.cell_viscosity(sk, 0.0))
+    solved = (sk.valid & ~skin.anchored_cells(sk, flowing)).any(axis=1)
+    assert 0 < solved.sum() < col.n and np.array_equal(sk.U, other.U) and a.passes == b.passes
+    assert all(np.array_equal(getattr(a, k), getattr(b, k)) for k in ("push", "shear", "wall", "response", "wall_response"))

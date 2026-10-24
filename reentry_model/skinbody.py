@@ -44,7 +44,9 @@ The flow (sub-plan 21 Task 6c; `flow`, off by default): every macro step the sur
 as the heating is, from the step's aero state and the tops' temperatures -- its wall-pressure gradient along the
 meridian and its gas shear -- with the deceleration, which the metal feels along the flight direction; each part takes
 them interpolated in time at its middle, as it takes the heating, and every sub-step of both passes runs the flow after
-its conduction (`skin.flow_substeps`), `flow_cycles` flow sub-steps to each. With the flow on the liquid stays and flows
+its conduction (`skin.flow_substeps`), as many flow sub-steps to each as `skin.flow_cycles` chooses from the last
+heat sub-step's Courant number and growth (sub-plan 21 Task 6d; `flow_cycles` fixes them). With the flow on the liquid
+stays and flows
 (`remove` False in a run; spraying is stage 4's). The momentum books: the skins' momentum changes by the flow's impulses
 less what leaves with removed or handed-down metal, and `momentum_residual` reports what they miss."""
 import dataclasses
@@ -129,8 +131,9 @@ def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
 class SkinBody(ThermalBody):
     """A ThermalBody whose surface is resolved by corner columns with layered skins on a moving mesh (module docstring).
     `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass;
-    `flow`: the metal flows (sub-plan 21), `flow_cycles` flow sub-steps in each heat sub-step (None: skin.FLOW_CYCLES),
-    driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its defaults if None) from each macro step's aero state."""
+    `flow`: the metal flows (sub-plan 21), `flow_cycles` flow sub-steps in each heat sub-step (None: as many as
+    `skin.flow_cycles` chooses each heat sub-step, Task 6d), driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its
+    defaults if None) from each macro step's aero state."""
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
@@ -138,9 +141,9 @@ class SkinBody(ThermalBody):
                  surface_flow=None):
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
-        self.flow_cycles = skin_mod.FLOW_CYCLES if flow_cycles is None else flow_cycles
-        if not (isinstance(self.flow_cycles, (int, np.integer)) and self.flow_cycles >= 1):
-            raise ValueError("flow_cycles must be an integer of at least 1, got {!r}".format(flow_cycles))
+        self.flow_cycles = flow_cycles
+        if not (flow_cycles is None or isinstance(flow_cycles, (int, np.integer)) and flow_cycles >= 1):
+            raise ValueError("flow_cycles must be None or an integer of at least 1, got {!r}".format(flow_cycles))
         self.flow_on, self.surface_flow = bool(flow), surface_flow
         self.repeat_rule = repeat_rule
         self.part_max = part_max                             # s, or None: no cap on the parts while melting
@@ -178,7 +181,7 @@ class SkinBody(ThermalBody):
         self.impulse, self.momentum_lost = np.zeros(3), np.zeros(3)   # the momentum books since time zero [N s, kg m/s]
         self.impulse_size = 0.0                              # N s: the push's, shear's and walls' impulses, in size
         self.flow_courant = self.flow_growth = 0.0           # this macro step's worst flow sub-step
-        self.flow_passes = 0
+        self.flow_passes = self.flow_cycles_max = 0          # and the most flow sub-steps in a heat sub-step
         self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
         self.iterations, self.last, self.last_move = [], None, None
         self._fill(T0)
@@ -227,7 +230,7 @@ class SkinBody(ThermalBody):
             start = last if last is not None and last.dp_ds.shape == end.dp_ds.shape else end
             self._forcing, self._forcing_prev = (start, end), end
             self.flow_courant = self.flow_growth = 0.0
-            self.flow_passes = 0
+            self.flow_passes = self.flow_cycles_max = 0
         sk, mat = self.skins, self.material
         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
         if self.part_max is not None and mat.melts:
@@ -364,7 +367,7 @@ class SkinBody(ThermalBody):
             self.impulse += (fb.push + fb.shear + fb.wall + fb.carried).sum(axis=0)
             self.impulse_size += float(sum(np.linalg.norm(x, axis=1).sum() for x in (fb.push, fb.shear, fb.wall)))
             self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
-            self.flow_passes = max(self.flow_passes, fb.passes)
+            self.flow_passes, self.flow_cycles_max = max(self.flow_passes, fb.passes), max(self.flow_cycles_max, fb.cycles)
         self.iterations.append(res.iterations)
         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
         self._move_base(book, m_min, g0)
@@ -532,12 +535,14 @@ class SkinBody(ThermalBody):
                 "wall_rebuild_s": self.wall["rebuild"], "step_parts": self.step_parts,
                 # the flow (sub-plan 21 Task 6c): its momentum books, the fastest cell, the top's roughness -- the largest
                 # height difference between neighbours over their spacing -- and the flow sub-steps' worst Courant
-                # number, Rayleigh-Taylor growth and linearisations in this macro step
+                # number, Rayleigh-Taylor growth and linearisations in this macro step, and the most of them a heat
+                # sub-step took (Task 6d)
                 "momentum_residual": self.momentum_residual(),
                 "speed_max_ms": float(np.linalg.norm(sk.U, axis=2).max()) if sk.U.size else 0.0,
                 "roughness_max": float((np.abs(th[i] - th[j]) / self.columns.edge_length).max()),
                 "flow_courant_max": self.flow_courant, "flow_growth_max": self.flow_growth,
-                "flow_passes_max": self.flow_passes, "wall_flow_s": self.wall["flow"]}
+                "flow_passes_max": self.flow_passes, "flow_cycles_max": self.flow_cycles_max,
+                "wall_flow_s": self.wall["flow"]}
 
     def _recession(self):
         """How far each corner's top has moved inward along its starting direction since time zero [m]."""

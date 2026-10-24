@@ -379,7 +379,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
-                         "swell": True, "flow": "off", "flow_cycles": cli.skin.FLOW_CYCLES}
+                         "swell": True, "flow": "off", "flow_cycles": "adaptive"}
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
     assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS) and float(rows[-1]["skin_cells"]) > 0.0
@@ -428,11 +428,13 @@ def test_a_skin_run_refuses_prism_layers_and_says_why(tmp_path, capsys):
 # Sub-plan 21 Task 6c: the flow in the skins, its setting and its sub-cycles
 
 def test_the_flow_settings_reach_the_run_name_only_when_not_default():
+    """Task 6d: the flow sub-steps are chosen each skin sub-step by default, so any fixed count is named."""
     from reentry_model import skin
     suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, **k)
     assert suffix() == suffix(flow=False) == ""
-    assert suffix(flow=True) == suffix(flow=True, flow_cycles=skin.FLOW_CYCLES) == "_skinflow-on"
-    assert suffix(flow=True, flow_cycles=skin.FLOW_CYCLES + 1) == "_skinflow-on_flowcycles{}".format(skin.FLOW_CYCLES + 1)
+    assert suffix(flow=True) == suffix(flow=True, flow_cycles=None) == "_skinflow-on"
+    assert suffix(flow=True, flow_cycles=skin.FLOW_CYCLES) == "_skinflow-on_flowcycles{}".format(skin.FLOW_CYCLES)
+    assert suffix(flow=True, flow_cycles=2) == "_skinflow-on_flowcycles2"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False, flow=True) == "_skin-dev_noswell_skinflow-on"
     args = cli.build_parser().parse_args(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"])
     assert args.skin_flow == "off" and args.skin_flow_cycles is None

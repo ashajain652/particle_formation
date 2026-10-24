@@ -151,7 +151,10 @@ class Skins:
     is an intensive per-cell field every cell operation carries (the trial pass's dT/dT_b). `U` (n, K, 3) is every
     cell's velocity [m/s] (sub-plan 21 Task 2): part of the cells' state, carried by every operation with its momentum
     exact -- split halves keep it, merged cells take the mass-weighted mean, metal drawn from the 3D model arrives at
-    rest -- and `momentum_out` (n, 3) [kg m/s] is what the last `take_top` or `take_bottom` took away with the metal."""
+    rest -- and `momentum_out` (n, 3) [kg m/s] is what the last `take_top` or `take_bottom` took away with the metal.
+    `flow_memory` (3,) is what the adaptive count of flow sub-steps remembers of the last heat sub-step's flow (sub-plan
+    21 Task 6d, `flow_cycles`): its largest Courant number and Rayleigh-Taylor growth and its flow sub-step's length [s],
+    zero before any flow; part of the state, so that a trial pass, a repeated or a shortened part starts from it."""
 
     def __init__(self, material, area, settings=None):
         self.material = material
@@ -163,6 +166,7 @@ class Skins:
         self.S = None
         self.U = np.zeros((n, 1, 3))
         self.momentum_out = np.zeros((n, 3))
+        self.flow_memory = np.zeros(3)
         self.rho_l = material.liquid.rho if material.liquid is not None and self.settings.swell else material.rho
         self.props = PropertyTable(material)
 
@@ -192,10 +196,23 @@ class Skins:
         return self.column_momentum().sum(axis=0)
 
     def state(self):
-        return tuple(a.copy() for a in (self.area, self.m, self.H, self.T, self.count, self.U))
+        return tuple(a.copy() for a in (self.area, self.m, self.H, self.T, self.count, self.U, self.flow_memory))
+
+    def rows(self, idx):
+        """Skins holding copies of the columns idx alone, with this one's material, settings and property tables: for
+        a solve that needs only some columns (sub-plan 21 Task 6d)."""
+        sub = object.__new__(Skins)
+        sub.material, sub.settings, sub.rho_l, sub.props = self.material, self.settings, self.rho_l, self.props
+        sub.area, sub.m, sub.H, sub.T, sub.count, sub.U = (a[idx] for a in (self.area, self.m, self.H, self.T, self.count,
+                                                                           self.U))
+        sub.S = None if self.S is None else self.S[idx]
+        sub.momentum_out, sub.flow_memory = np.zeros((len(sub.area), 3)), self.flow_memory.copy()
+        return sub
 
     def set_state(self, state):
-        self.area, self.m, self.H, self.T, self.count, self.U = (a.copy() for a in state)
+        """Restore a `state()`; one of the six arrays before Task 6d's memory starts the flow with none."""
+        self.area, self.m, self.H, self.T, self.count, self.U = (a.copy() for a in state[:6])
+        self.flow_memory = np.array(state[6], dtype=float) if len(state) > 6 else np.zeros(3)
         self.S = None
 
     # -- geometry of the cells --------------------------------------------------------------------------------------
@@ -650,7 +667,9 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     matrix its diagonal dominance; what the clip misses is the interface mismatch's to book). Otherwise the real pass,
     base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook. The trial pass runs the flow too
     (spec 7.2's sub-steps are spec 7.1's: heat, flow, sideways exchange and spray), the sensitivity S carried with the
-    metal the transport moves."""
+    metal the transport moves. Where the flow's count is chosen (`flow.cycles` None, Task 6d), the trial pass leaves the
+    counts it chose in `flow.plan`, and the real pass after it takes the same, so that the base law is made by the pass
+    it predicts; a real pass with no trial before it chooses its own."""
     mat = sk.material
     N = max(1, int(math.ceil(dt / sk.settings.substep - 1e-9)))
     h = dt / N
@@ -667,7 +686,11 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     drawn_depth = np.zeros(sk.n)                      # m, how far down the 3D profile this pass has drawn
     melting = remove and mat.melts
     sideways = None
-    for _ in range(N):
+    plan = replay = None
+    if flow is not None and flow.cycles is None:                  # the trial pass's counts, for its real pass
+        replay = not trial and flow.plan is not None and len(flow.plan) == N
+        plan = list(flow.plan) if replay else []
+    for i in range(N):
         sideways = side(sk, sideways) if side is not None else None
         res = _conduct(sk, h, q_top, A_top, T_amb, eps, T_b, sideways)
         book.E_top += res[0]
@@ -677,7 +700,9 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
         if trial:
             dEb += res[4]
         if flow is not None:
-            book.flow.add(flow_substeps(sk, flow, h))
+            if plan is not None and not replay:
+                plan.append(flow_cycles(sk.flow_memory, h))
+            book.flow.add(flow_substeps(sk, flow, h, cycles=plan[i] if plan is not None else None))
         if melting:
             k = np.cumprod(sk.valid & (sk.T >= mat.T_feed), axis=1).sum(axis=1)
             gone, gone_H = sk.take_top(k)
@@ -696,6 +721,8 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
         book.drawn += short
         book.drawn_H += sk.add_bottom(short, h_b, s_b)
         sk.regrid()
+    if plan is not None:
+        flow.plan = plan if trial else None
     if trial:
         sk.set_state(saved)
         b = np.minimum(dEb / dt, 0.0)
@@ -885,15 +912,40 @@ def momentum_step(sk, dt, push, shear, A_top, response=False):
     columns' momentum change to round-off. With `response`, the book also carries the velocities a unit push alone
     gives through the last pass's system and the wall's drag on them: with the viscosities held, the sub-step is linear
     in the push, so a change of the push changes every velocity by its response times the change (sub-plan 21 Task
-    6b)."""
+    6b).
+
+    Only the columns where something moves are solved (sub-plan 21 Task 6d): in the others every cell is anchored, so it
+    ends at rest and the momentum it held is the wall's, as the solve over every column gave -- to the last bit, each
+    column's system being its own (6c's step solved all 9 417 columns of the 100 mm sphere where half of them flowed)."""
+    n = sk.n
+    push = np.broadcast_to(np.asarray(push, dtype=float), (n, 3))
+    shear = np.broadcast_to(np.asarray(shear, dtype=float), (n, 3))
+    A_top = np.broadcast_to(np.asarray(A_top, dtype=float), (n,))
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    live = np.flatnonzero((sk.valid & ~anchored_cells(sk, flowing)).any(axis=1))
+    if len(live) == n:
+        return _momentum_columns(sk, dt, push, shear, A_top, response)
+    book = MomentumBook(np.zeros((n, 3)), np.zeros((n, 3)), -sk.column_momentum(), 0,
+                        np.zeros(sk.m.shape) if response else None, np.zeros(n) if response else None)
+    U = np.zeros_like(sk.U)
+    if len(live):
+        sub = sk.rows(live)
+        part = _momentum_columns(sub, dt, push[live], shear[live], A_top[live], response)
+        U[live] = sub.U
+        book.push[live], book.shear[live], book.wall[live], book.passes = part.push, part.shear, part.wall, part.passes
+        if response:
+            book.response[live], book.wall_response[live] = part.response, part.wall_response
+    sk.U = U
+    return book
+
+
+def _momentum_columns(sk, dt, push, shear, A_top, response):
+    """`momentum_step` on every column of sk, push (n, 3), shear (n, 3) and A_top (n,) given whole."""
     n, K = sk.m.shape
     valid = sk.valid
     rows = np.arange(n)
     last = np.maximum(sk.count - 1, 0)
     dz, A, m = sk.dz(), sk.area, sk.m
-    push = np.broadcast_to(np.asarray(push, dtype=float), (n, 3))
-    shear = np.broadcast_to(np.asarray(shear, dtype=float), (n, 3))
-    A_top = np.broadcast_to(np.asarray(A_top, dtype=float), (n,))
     flowing = valid & np.isfinite(cell_viscosity(sk, 0.0))
     anchored = anchored_cells(sk, flowing)
     moving = valid & ~anchored                                            # the flowing cells and the floating crust
@@ -1030,6 +1082,15 @@ def push(columns, thickness, dp_ds, g, v_hat, rho_l, sigma, wet=None):
 # -- sideways transport (sub-plan 21 Task 6a) ---------------------------------------------------------------------------
 SLIVER = 1.0e-12                  # a piece of a donor cell shorter than this share of it is the round-off of a boundary
                                   # the donor's and the receiver's partitions share, and is left out
+TRANSPORT_TOL = 1.0e-13           # the iterative solve stops once no row's residual exceeds this share of the largest
+                                  # |b| + |A| |x| of its right-hand side's column (a normwise backward error; Task 6d)
+TRANSPORT_CORRECTIONS = 40        # corrections of the iterative solve at most, before the direct LU takes over
+TRANSPORT_CYCLE = 500             # cells: a cycle of meeting flows larger than this is iterated, not factored (Task 6d;
+                                  # one of 1 700 cells filled its triangles 1.1 times, one of 10 000 5-6 times)
+TRANSPORT = {"solves": 0, "corrections": 0, "fallbacks": 0}   # the transport's systems solved, the iteration's
+                                  # corrections and the solves the direct LU finished, for measuring the cost
+LANDED_PASSES = 200               # passes at most of the estimate of the landed metal's velocities over the columns
+LANDED_TOL = 1.0e-6               # it stops once no estimated velocity moves by more than this share of the fastest
 
 
 @dataclass
@@ -1087,11 +1148,12 @@ def _pieces(sig, tau):
 
 def _upwind_order(src, dst, n):
     """An order of n unknowns in which every donor (src) comes before its receivers (dst), except within a cycle of
-    transfers, which stays together; and whether it holds. The order is scipy's strong components, which its (Pearce's)
-    algorithm numbers in reverse topological order -- how scipy numbers them, not what it promises, so it is checked."""
+    transfers, which stays together; whether it holds; and the size of every unknown's cycle (its strong component; 1
+    outside any cycle). The order is scipy's strong components, which its (Pearce's) algorithm numbers in reverse
+    topological order -- how scipy numbers them, not what it promises, so it is checked."""
     graph = sp.csr_matrix((np.ones(len(src)), (src, dst)), shape=(n, n))
     _, label = connected_components(graph, directed=True, connection="strong")
-    return np.argsort(-label, kind="stable"), bool(np.all(label[src] >= label[dst]))
+    return np.argsort(-label, kind="stable"), bool(np.all(label[src] >= label[dst])), np.bincount(label)[label]
 
 
 def _factor(A, upwind):
@@ -1100,6 +1162,91 @@ def _factor(A, upwind):
     if upwind:
         return spla.splu(A, permc_spec="NATURAL", diag_pivot_thresh=0.0, options=dict(SymmetricMode=True))
     return spla.splu(A)
+
+
+def _solve(A, rhs, upwind, big=None):
+    """x with A x = rhs, rhs (N,) or (N, p), for the transport's systems (sub-plan 21 Task 6d). In upwind order A is
+    lower triangular but for the back-couplings of its cycles, where flows meet, and its LU fills only within them:
+    a cycle of a few cells costs nothing, but one where meeting flows join thousands of cells filled the triangles 5-6
+    times, and the LU then took most of a flow sub-step (6c). `big` (N,) marks the unknowns in such cycles, of more than
+    TRANSPORT_CYCLE cells: the back-couplings among them, U, are left out of the factored matrix M = A - U, which fills
+    only within the small cycles, and x_(k+1) = M^-1 (b - U x_k) from x_0 = M^-1 b, whose residual b - A x_(k+1) is
+    U (x_k - x_(k+1)), until no row's residual exceeds TRANSPORT_TOL of the largest |b| + |A| |x| in its column, at most
+    TRANSPORT_CORRECTIONS corrections; then the LU of A itself. Where no cycle is large, or `big` is None, M is A and x
+    its solve, as 6a's; where the order is not upwind, the LU in SuperLU's own order (`_factor`).
+
+    For the masses M is an M-matrix and N = -U >= 0 (a regular splitting), so M^-1 >= 0 and from x_0 >= 0 the iterates
+    rise monotonically to the solution, every residual b - A x being non-negative: the masses installed from an
+    iterate's fluxes, x + (b - A x), are positive (`transport`).
+
+    Measured 2026-10-22 on 6c's states of the 100 mm sphere, one flow sub-step of 1 ms, the mass's system and the
+    momentum's: with every column melted (one cycle of 18 379 cells) 6c's LU took 4.65 and 25.3 s, filling its
+    triangles 6.0 and 6.3 times, and this solve 0.16 and 0.25 s in 9 corrections each; on a quiescent melt (10 190
+    cells) 0.20 and 0.76 s against 0.10 and 0.28 s (3); on the heated melting state (11 109) 0.43 and 2.04 s against
+    0.14 and 0.21 s (5); driven at 93 s (1 700 cells, filling 1.1 times) 0.03 and 0.07 s against 0.07 and 0.10 s (4).
+    Each within 2e-13 of the LU's answer, the masses non-negative."""
+    TRANSPORT["solves"] += 1
+    if not upwind:
+        return _factor(A, upwind).solve(rhs)
+    U = sp.triu(A, k=1, format="coo")
+    keep = np.zeros(U.nnz, dtype=bool) if big is None else big[U.row] & big[U.col]
+    U = sp.csr_matrix((U.data[keep], (U.row[keep], U.col[keep])), shape=A.shape)
+    if U.nnz == 0:
+        return _factor(A, upwind).solve(rhs)
+    lu = _factor((A - U).tocsc(), upwind)
+    x = lu.solve(rhs)
+    Ux = U @ x
+    limit = TRANSPORT_TOL * (np.abs(rhs) + abs(A) @ np.abs(x)).max(axis=0)
+    r = -Ux
+    for k in range(TRANSPORT_CORRECTIONS + 1):
+        if np.all(np.abs(r).max(axis=0) <= limit):
+            TRANSPORT["corrections"] += k
+            return x
+        if k == TRANSPORT_CORRECTIONS:
+            break
+        x = lu.solve(rhs - Ux)
+        Ux, r = U @ x, Ux
+        r = r - Ux
+    TRANSPORT["fallbacks"] += 1
+    return _factor(A, upwind).solve(rhs)
+
+
+def _landed_velocity(columns, area, run, dt, base_m, base_p, stay):
+    """The velocity [m/s, (n, 3)] at which the metal landing on each column's rigid top flows on within the transport's
+    sub-step (sub-plan 21 Task 6d): the mass-weighted mean of what lands there, each arrival's velocity projected onto
+    the column's plane -- the landed metal coasts at the velocity it arrived with until the next momentum step drags it
+    on the rigid top -- zero where nothing lands, where the top flows (`run` > 0: the metal joins it by fraction) or
+    where a crust landed too (`stay`: rigid metal on a rigid top is anchored). What lands from the cells, base_m [kg,
+    (n,)] and base_p [kg m/s, (n, 3)] with its velocities projected, is known before the solve; what the landed metal
+    carries on onto further rigid tops is estimated column by column -- a column sends dt c m / (1 + dt sum c) of what
+    landed, c = (u . f)+ / A at its estimated velocity u -- pass by pass, a pass reaching one column further, until no
+    velocity moves by more than LANDED_TOL of the fastest, at most LANDED_PASSES passes; metal estimated at less than
+    SLIVER of the largest landing stays where it lands (the far end of the implicit scheme's geometric tail). These are
+    estimates for the rates alone: the solve carries the masses, the enthalpy and the momentum exactly."""
+    n = len(area)
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    src, dst, f = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
+    normal = columns.normal
+    can = (run == 0) & ~stay
+    onto = run[dst] == 0
+    u = np.zeros((n, 3))
+    m_est, p_est = base_m, base_p
+    for _ in range(LANDED_PASSES):
+        on = can & (m_est > SLIVER * m_est.max())
+        u_new = np.where(on[:, None], p_est / np.where(on, m_est, 1.0)[:, None], 0.0)
+        change = np.abs(u_new - u).max()
+        u = u_new
+        if change <= LANDED_TOL * np.abs(u).max():
+            break
+        d = np.flatnonzero(on[src])
+        rate = np.maximum(np.einsum("dx,dx->d", u[src[d]], f[d]), 0.0) / area[src[d]]
+        out = np.bincount(src[d], rate, n)
+        sent = dt * rate * m_est[src[d]] / (1.0 + dt * out[src[d]])
+        d, sent = d[onto[d]], sent[onto[d]]
+        v = u[src[d]] - np.einsum("dx,dx->d", u[src[d]], normal[dst[d]])[:, None] * normal[dst[d]]
+        m_est = base_m + np.bincount(dst[d], sent, n)
+        p_est = base_p + np.stack([np.bincount(dst[d], sent * v[:, x], n) for x in range(3)], axis=1)
+    return u
 
 
 def transport(sk, columns, dt, regrid=True, faces=None):
@@ -1113,9 +1260,11 @@ def transport(sk, columns, dt, regrid=True, faces=None):
     face's vector (`Columns.face_vector`) and m_k' the cell's mass at the sub-step's end; it carries the cell's specific
     enthalpy and velocity. Every cell is then m_k' (1 + dt sum c) = m_k + dt (what arrives): (I + dt C) m' = m, the
     film's runoff scheme (`film.Runoff`) on the cells -- an M-matrix whose columns sum to one, so the masses stay
-    positive, the books close to round-off and nothing limits dt. The enthalpy, the carried sensitivity S and the
-    momentum solve the same system, the momentum with every arrival projected onto its receiver's tangent plane, in two
-    components per cell (`tangent_frames`), the normal part booked to the wall (spec 6.4, section 14 assumption 2).
+    positive and nothing limits dt. The enthalpy, the carried sensitivity S and the momentum solve the same system, the
+    momentum with every arrival projected onto its receiver's tangent plane, in two components per cell
+    (`tangent_frames`), the normal part booked to the wall (spec 6.4, section 14 assumption 2). Every cell is installed
+    from the solve's fluxes -- what it had, less what it sent, plus what arrived, each arrival taking dt c times its
+    donor's solved value -- so the books close exactly whatever the solve's own error (Task 6d).
 
     Where metal joins the receiver (spec 6.5, section 14 assumption 3): a flowing donor cell's span of fractions of the
     donor's flowing depth (its flowing cells, top down) joins the receiver's cells between the same fractions of its
@@ -1125,9 +1274,18 @@ def transport(sk, columns, dt, regrid=True, faces=None):
     substrate (`anchored_cells`) neither leaves nor receives, whatever velocity it holds: nothing passes through rigid
     metal. Only the cells that send or receive are solved for; with every velocity zero nothing changes.
 
+    Flowing metal that lands on a rigid top flows on in the same solve (Task 6d): its new top cell is a flowing donor
+    of the same system, sending across its column's faces at the velocity it arrived with (`_landed_velocity`: the
+    arrivals' mean, projected onto the column's plane, fixed before the solve so that the step stays linear), by
+    fraction into a flowing receiver's whole flowing layer and on top of a rigid one, whose new cell flows on in turn.
+    6a's rule held it there until the next sub-step, so a front crossing rigid metal advanced at most one column a
+    sub-step: 2 m/s on 2 mm columns at 1 ms, which set 6c's flow sub-step. Its momentum is the solve's, the arrivals'
+    projected; the drag of the rigid top beneath reaches it at the next momentum step. A new top cell that crust metal
+    reached stays where it lands (rigid metal on a rigid top is anchored).
+
     The cells are taken in upwind order (`_upwind_order`), in which the system is triangular but for its cycles where
-    flows meet, so its sparse LU has almost no fill. With `regrid` the cells are then split and merged (spec 6.2); a
-    sub-step that regrids anyway passes False.
+    flows meet, and solved by `_solve`: the small cycles factored, those of more than TRANSPORT_CYCLE cells iterated.
+    With `regrid` the cells are then split and merged (spec 6.2); a sub-step that regrids anyway passes False.
 
     Measured 2026-10-21 on the 100 mm sphere's skins (9 417 columns, 10 um cells), flowing along the meridian away from
     the stagnation point: 0.27 s a sub-step with the front hemisphere's top 0.3 mm flowing (124 000 of 553 000 cells
@@ -1182,6 +1340,42 @@ def transport(sk, columns, dt, regrid=True, faces=None):
     e_row = np.r_[b[edge] * K + kr, n * K + b[te]]
     e_col = np.r_[a[edge] * K + kd, a[te] * K + tk]
     e_val = dt * np.r_[c[edge, kd] * share, c[te, tk]]
+    # metal landing on a rigid top flows on in the same solve (Task 6d): the new top cell sends across its column's
+    # faces at the velocity of what lands there, by fraction into a flowing receiver and on top of a rigid one
+    lands = flowing[a[te], tk] & (run[b[te]] == 0)
+    stay = np.zeros(n, dtype=bool)
+    stay[b[te[~flowing[a[te], tk]]]] = True                  # a crust landed: rigid metal on a rigid top stays
+    out = np.bincount(e_col, e_val, n * K)[a[te] * K + tk]
+    w = (e_val[len(edge):] * sk.m[a[te], tk] / (1.0 + out))[lands]   # what lands from each cell, estimated
+    rec = b[te[lands]]
+    v = sk.U[a[te], tk][lands]
+    v = v - np.einsum("dx,dx->d", v, columns.normal[rec])[:, None] * columns.normal[rec]
+    u_on = _landed_velocity(columns, sk.area, run, dt, np.bincount(rec, w, n),
+                            np.stack([np.bincount(rec, w * v[:, x], n) for x in range(3)], axis=1), stay)
+    s_all, r_all, f_all = np.r_[i, j], np.r_[j, i], np.r_[columns.face_vector, -columns.face_vector]
+    on = np.flatnonzero((u_on != 0.0).any(axis=1)[s_all])
+    c_on = np.maximum(np.einsum("dx,dx->d", u_on[s_all[on]], f_all[on]), 0.0) / sk.area[s_all[on]]
+    on, c_on = on[c_on > 0.0], c_on[c_on > 0.0]
+    reach = np.zeros(n, dtype=bool)                           # the new top cells metal reaches: only those send
+    reach[rec] = True
+    while len(on):
+        more = reach[s_all[on]] & (run[r_all[on]] == 0) & ~reach[r_all[on]]
+        if not more.any():
+            break
+        reach[r_all[on][more]] = True
+    on, c_on = on[reach[s_all[on]]], c_on[reach[s_all[on]]]
+    if len(on):
+        s, r = s_all[on], r_all[on]
+        into = np.flatnonzero(run[r] > 0)                     # by fraction of the receiver's flowing layer, whole
+        piece = np.diff(tau[r[into]], axis=1) * (np.arange(K)[None, :] < run[r[into]][:, None])
+        q, kq = np.nonzero(piece > 0.0)
+        onto = np.flatnonzero(run[r] == 0)                    # on top of a rigid receiver, its new top cell
+        e_edge = np.r_[e_edge, D + into[q], D + onto]
+        e_row = np.r_[e_row, r[into[q]] * K + kq, n * K + r[onto]]
+        e_col = np.r_[e_col, n * K + s[into[q]], n * K + s[onto]]
+        e_val = np.r_[e_val, dt * c_on[into[q]] * piece[q, kq], dt * c_on[onto]]
+        a, b = np.r_[a, s], np.r_[b, r]
+        D = len(a)
     # the cells that send or receive, in upwind order; each sends what its arrivals take, so the books close exactly
     active = np.zeros(n * K + n, dtype=bool)
     active[e_row], active[e_col] = True, True
@@ -1189,38 +1383,44 @@ def transport(sk, columns, dt, regrid=True, faces=None):
     N = len(act)
     local = np.full(n * K + n, -1, dtype=np.int64)
     local[act] = np.arange(N)
-    order, upwind = _upwind_order(local[e_col], local[e_row], N)
+    order, upwind, size = _upwind_order(local[e_col], local[e_row], N)
+    big = size[order] > TRANSPORT_CYCLE                       # the unknowns in large cycles, in the solve's order
     at = np.empty(N, dtype=np.int64)
     at[order] = np.arange(N)
     to, frm = at[local[e_row]], at[local[e_col]]
-    diag = 1.0 + np.bincount(local[e_col], e_val, N)
-    # mass, enthalpy and the carried sensitivity
-    lu = _factor(sp.csc_matrix((np.r_[diag, -e_val], (np.r_[at, to], np.r_[at, frm])), shape=(N, N)), upwind)
+    lr, lc = local[e_row], local[e_col]
+    diag = 1.0 + np.bincount(lc, e_val, N)
+    # mass, enthalpy and the carried sensitivity, installed from the solve's fluxes: each cell keeps what it had, less
+    # what it sent, plus what arrived, so the books close exactly whatever the solve's own error (Task 6d)
     cell = lambda v: np.r_[v.reshape((n * K,) + v.shape[2:]), np.zeros((n,) + v.shape[2:])][act]
-    rhs = [cell(sk.m), cell(sk.H)] + ([cell(sk.m * sk.S)] if sk.S is not None else [])
-    x = np.empty((N, len(rhs)))
-    x[order] = lu.solve(np.column_stack(rhs)[order])
+    b0 = np.column_stack([cell(sk.m), cell(sk.H)] + ([cell(sk.m * sk.S)] if sk.S is not None else []))
+    x = np.empty_like(b0)
+    x[order] = _solve(sp.csc_matrix((np.r_[diag, -e_val], (np.r_[at, to], np.r_[at, frm])), shape=(N, N)), b0[order],
+                      upwind, big)
+    moved = e_val[:, None] * x[lc]
+    x = b0 + np.stack([np.bincount(lr, moved[:, v], N) - np.bincount(lc, moved[:, v], N) for v in range(x.shape[1])],
+                      axis=1)
     # the momentum, each arrival projected onto its receiver's plane: two components per cell in its own plane's frame
     owner = np.where(act < n * K, act // K, act - n * K)
     e1, e2 = tangent_frames(columns.normal)
     P = cell(sk.m[..., None] * sk.U)
-    p = np.column_stack([np.einsum("ij,ij->i", P, e1[owner]), np.einsum("ij,ij->i", P, e2[owner])])
-    held = P - p[:, :1] * e1[owner] - p[:, 1:] * e2[owner]   # any normal part a cell held: the wall's
+    p0 = np.column_stack([np.einsum("ij,ij->i", P, e1[owner]), np.einsum("ij,ij->i", P, e2[owner])])
+    held = P - p0[:, :1] * e1[owner] - p0[:, 1:] * e2[owner]  # any normal part a cell held: the wall's
     R = np.stack([np.stack([np.einsum("ij,ij->i", e[b], g[a]) for g in (e1, e2)], axis=1) for e in (e1, e2)], axis=1)
     Re = R[e_edge]                                            # [arrival, receiver's component, donor's component]
     rows2 = [2 * at, 2 * at + 1] + [2 * to + q for q in (0, 0, 1, 1)]
     cols2 = [2 * at, 2 * at + 1] + [2 * frm + q for q in (0, 1, 0, 1)]
     vals2 = [diag, diag] + [-e_val * Re[:, q, s] for q, s in ((0, 0), (0, 1), (1, 0), (1, 1))]
-    lu2 = _factor(sp.csc_matrix((np.concatenate(vals2), (np.concatenate(rows2), np.concatenate(cols2))),
-                                shape=(2 * N, 2 * N)), upwind)
     rhs2 = np.empty(2 * N)
-    rhs2[2 * at], rhs2[2 * at + 1] = p[:, 0], p[:, 1]
-    y = lu2.solve(rhs2)
-    p = np.column_stack([y[2 * at], y[2 * at + 1]])
+    rhs2[2 * at], rhs2[2 * at + 1] = p0[:, 0], p0[:, 1]
+    y = _solve(sp.csc_matrix((np.concatenate(vals2), (np.concatenate(rows2), np.concatenate(cols2))),
+                             shape=(2 * N, 2 * N)), rhs2, upwind, np.repeat(big, 2))
+    sent_p = e_val[:, None] * np.column_stack([y[2 * at], y[2 * at + 1]])[lc]
+    got = np.einsum("eqs,es->eq", Re, sent_p)
+    p = p0 + np.stack([np.bincount(lr, got[:, v], N) - np.bincount(lc, sent_p[:, v], N) for v in range(2)], axis=1)
     P = p[:, :1] * e1[owner] + p[:, 1:] * e2[owner]
     # the books, face by face: what every arrival took from its sending cell at the sub-step's end
-    moved = e_val[:, None] * np.column_stack([x[:, :2], p])[local[e_col]]
-    sent = np.stack([np.bincount(e_edge, moved[:, v], D) for v in range(4)], axis=1)
+    sent = np.stack([np.bincount(e_edge, v, D) for v in (moved[:, 0], moved[:, 1], sent_p[:, 0], sent_p[:, 1])], axis=1)
     carried = sent[:, 2:3] * e1[a] + sent[:, 3:4] * e2[a]
     lost = np.einsum("ij,ij->i", carried, columns.normal[b])[:, None] * columns.normal[b]
     net = lambda v: np.bincount(b, v, n) - np.bincount(a, v, n)
@@ -1405,17 +1605,41 @@ def thickness_step(sk, columns, dt, book, applied, g, rho_l, sigma):
 
 
 # -- the flow in the sub-steps (sub-plan 21 Task 6c) --------------------------------------------------------------------
-FLOW_CYCLES = 10                  # flow sub-steps per heat sub-step: 1 ms under the 10 ms heat sub-step (Task 6c's
-                                  # ruling, 2026-10-22). On the 100 mm sphere's front melted 0.3 mm deep under the 93 s
-                                  # forcing, 50 ms of flow at 1 ms match 0.25 ms to 3.9 % in where the metal went and
-                                  # 4 % in kinetic energy, the Courant numbers at most 4.8 and the transport destroying
-                                  # 27 % of the kinetic energy made, as at 0.25 ms (the grid's own upwind smearing); at
-                                  # 2-10 ms 44-95 % and 0.3-4.8 times, because a runoff front crossing rigid metal
-                                  # advances at most one column a flow sub-step (metal landing on a rigid top joins the
-                                  # flow at the next), 2 m/s on 2 mm columns at 1 ms. The Rayleigh-Taylor growth dt s
-                                  # stays under 0.007 at 1 ms on 3.4 mm of liquid at 48 m/s2 (0.67 at 10 ms).
+FLOW_CYCLES = 10                  # flow sub-steps in a heat sub-step where the skins remember no flow (6c's fixed count,
+                                  # 1 ms under the 10 ms heat sub-step, chosen on the 100 mm sphere's runoff when a front
+                                  # crossing rigid metal advanced one column a flow sub-step; sub-plan 21 Task 6c)
+FLOW_CYCLES_MIN, FLOW_CYCLES_MAX = 1, 40   # the adaptive count's floor and cap (Task 6d): 10 ms and 0.25 ms flow
+                                  # sub-steps under the 10 ms heat sub-step
+FLOW_COURANT = 6.0                # the adaptive count's target: the largest Courant number of a flow sub-step (Task 6d).
+                                  # On the 100 mm sphere's runoff at 93 s, with the front limit lifted, 50 ms of flow at
+                                  # 1.25 ms (Courant 6.1) put the metal within 2.5 % of the 0.25 ms run's places and
+                                  # its kinetic energy within 5 %, the thickness step's linearisations at 4 at most; at
+                                  # 1.5 ms (7.3) 3.6 % and 12 %, the linearisations at their cap of 8; at 1 ms 2.2 %
+FLOW_GROWTH = 0.02                # and the largest Rayleigh-Taylor growth dt s of one: backward Euler's growth rate is
+                                  # then within about dt s / 2 = 1 % (6b's cosine met it within 0.42 % at 0.016)
+FLOW_RELAX = 2.0                  # a flow sub-step at most this many times the last heat sub-step's
 FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0}   # wall time, for
                                   # measuring the cost (as KRYLOV counts the coupled solves)
+
+
+def flow_cycles(memory, dt):
+    """The number of flow sub-steps in a heat sub-step dt [s] (sub-plan 21 Task 6d), from the skins' `flow_memory` --
+    the last heat sub-step's largest Courant number C and Rayleigh-Taylor growth g over its flow sub-steps, and their
+    length h_0 -- by the scalings measured on the 100 mm sphere: the Courant number in proportion to the flow sub-step,
+    the growth to its square. The flow sub-step is the longest of FLOW_RELAX h_0, h_0 FLOW_COURANT / C and
+    h_0 (FLOW_GROWTH / g)^(1/2), so that the next one meets both targets and grows by at most FLOW_RELAX a heat
+    sub-step, and the count dt over it, rounded up, within FLOW_CYCLES_MIN and FLOW_CYCLES_MAX; FLOW_CYCLES where the
+    skins remember no flow (at the start, or when nothing flowed in the last heat sub-step). Deterministic: the same
+    memory and dt give the same count."""
+    courant, growth, length = (float(x) for x in memory)
+    if length <= 0.0:
+        return FLOW_CYCLES
+    h = FLOW_RELAX * length
+    if courant > 0.0:
+        h = min(h, length * FLOW_COURANT / courant)
+    if growth > 0.0:
+        h = min(h, length * math.sqrt(FLOW_GROWTH / growth))
+    return int(min(max(math.ceil(dt / h - 1e-9), FLOW_CYCLES_MIN), FLOW_CYCLES_MAX))
 
 
 @dataclass
@@ -1425,7 +1649,8 @@ class Flow:
     each column's plane (`along_meridian` of the surface flow's tau), `g` [m/s2, (3,)] the acceleration the metal feels
     in the body's frame, minus the body's own, `v_hat` the flight direction, `rho_l` [kg/m3] and `sigma` [N/m] the
     liquid's density and surface tension, `A_top` [m2, (n,)] the top areas the shear acts over, and `cycles`, the flow
-    sub-steps in each heat sub-step."""
+    sub-steps in each heat sub-step: None (the default since Task 6d) chooses them each heat sub-step (`flow_cycles`),
+    a number fixes them. `plan` is what a trial pass chose, for its real pass (`advance`)."""
     columns: object
     dp_ds: np.ndarray
     shear: np.ndarray
@@ -1434,7 +1659,8 @@ class Flow:
     rho_l: float
     sigma: float
     A_top: np.ndarray
-    cycles: int = FLOW_CYCLES
+    cycles: int = None
+    plan: list = None
 
 
 @dataclass
@@ -1450,6 +1676,7 @@ class FlowBook:
     growth: float = 0.0      # the thickness step's largest Rayleigh-Taylor growth dt s
     passes: int = 0          # the thickness step's most linearisations
     sub_steps: int = 0       # the flow sub-steps taken (none where nothing flows)
+    cycles: int = 0          # the most flow sub-steps in one heat sub-step (Task 6d)
 
     @classmethod
     def zero(cls, n):
@@ -1461,29 +1688,38 @@ class FlowBook:
             setattr(self, key, getattr(self, key) + getattr(other, key))
         self.courant, self.growth = max(self.courant, other.courant), max(self.growth, other.growth)
         self.passes, self.sub_steps = max(self.passes, other.passes), self.sub_steps + other.sub_steps
+        self.cycles = max(self.cycles, other.cycles)
 
 
-def flow_substeps(sk, flow, dt):
-    """`flow.cycles` flow sub-steps of dt / cycles [s] each, every one in the order of 6b's ruling: the push, surface
-    tension only where a column's top flows (`push`, `flowing_tops`); the momentum through the depth with its response
-    (`momentum_step`); the thickness terms implicit in the heights at the end of the transport (`thickness_step`); the
-    transport with the faces' own push (`transport`, regrid=False). The cells are split and merged between the flow
-    sub-steps, and the heat sub-step's own regrid follows the last (spec 6.2: once after each sub-step's exchanges).
-    Updates the cells; returns a FlowBook. Where nothing flows nothing moves and no sub-step is taken: any velocity left
-    in the rigid cells is booked to the wall and cleared, as `momentum_step` books an anchored cell's.
+def flow_substeps(sk, flow, dt, cycles=None):
+    """`cycles` flow sub-steps of dt / cycles [s] each -- by default `flow.cycles`, or, where that is None, as many as
+    `flow_cycles` chooses from the skins' `flow_memory`, which they then update (sub-plan 21 Task 6d) -- every one in the
+    order of 6b's ruling: the push, surface tension only where a column's top flows (`push`, `flowing_tops`); the
+    momentum through the depth with its response (`momentum_step`); the thickness terms implicit in the heights at the
+    end of the transport (`thickness_step`); the transport with the faces' own push (`transport`, regrid=False). The
+    cells are split and merged between the flow sub-steps, and the heat sub-step's own regrid follows the last (spec
+    6.2: once after each sub-step's exchanges). Updates the cells; returns a FlowBook. Where nothing flows nothing moves
+    and no sub-step is taken: any velocity left in the rigid cells is booked to the wall and cleared, as `momentum_step`
+    books an anchored cell's, and the skins forget the flow.
 
-    The flow's sub-step is chosen from measurements on the 100 mm sphere's melting state (sub-plan 21 Task 6c, Asha
-    2026-10-21, option c; FLOW_CYCLES)."""
+    The flow's sub-step was fixed in 6c at 1 ms (FLOW_CYCLES) and is chosen since 6d from the last heat sub-step's
+    Courant number and growth, against targets set from the sub-step study on the 100 mm sphere (FLOW_COURANT,
+    FLOW_GROWTH)."""
     n = sk.n
     book = FlowBook.zero(n)
+    adaptive = flow.cycles is None
     if not (sk.valid & np.isfinite(cell_viscosity(sk, 0.0))).any():
         book.wall -= sk.column_momentum()
         sk.U = np.zeros_like(sk.U)
+        if adaptive:
+            sk.flow_memory = np.zeros(3)
         return book
-    h = dt / flow.cycles
+    if cycles is None:
+        cycles = flow_cycles(sk.flow_memory, dt) if adaptive else flow.cycles
+    h = dt / cycles
     col = flow.columns
     clock = lambda key, started: FLOW_SECONDS.__setitem__(key, FLOW_SECONDS[key] + time.perf_counter() - started)
-    for k in range(flow.cycles):
+    for k in range(cycles):
         if k:
             started = time.perf_counter()
             sk.regrid()
@@ -1502,6 +1738,9 @@ def flow_substeps(sk, flow, dt):
         clock("transport", started)
         book.add(FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
                           tb.passes, 1))
+    book.cycles = cycles
+    if adaptive:
+        sk.flow_memory = np.array([book.courant, book.growth, h])
     return book
 
 
