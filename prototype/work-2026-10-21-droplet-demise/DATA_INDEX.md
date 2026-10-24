@@ -28,6 +28,7 @@ the droplet to the ground (`settle`).
 | `demise_sweep_w+0cms_s+0mms/` | current | 1-200 um, no wind, followed to the ground | `--wind 0 --wind-strat 0` |
 | `demise_sweep_w-5cms_s-0.3mms/` | current | 1-200 um, downward bounding wind, followed to the ground | `--wind -5 --wind-strat -0.3` |
 | `demise_sweep_nano_w...mms/` (3) | current | the same three wind cases for 1-500 nm | add `--nano` |
+| `terminal_profile_sweep/` | current | 15 chosen diameters (0.01, 0.1, 2, 6, 10, 14, 18, 25, 35, 45, 50, 100, 150, 200, 250 um) x 21 altitudes, no wind, Singh drag. `final_states.csv`: d0_um, h0_km, V_final_ms, h_final_km, r_final_um (final radius, sphere). `terminal_velocity_profile.csv`: d0_um, h0_km, d_final_um, then `v_t_<h>m` [m/s] for h = 0-100,000 m every 50 m, the local terminal velocity of the final droplet (final mass and diameter, droplet at the air temperature, at the final state's latitude and longitude); columns above h_final_km are hypothetical | `$PY run_terminal_profile_sweep.py` (about 3.5 min) |
 | `*_meso-only/` (6) | superseded | first wind runs: mesospheric wind only, full strength 55-90 km, no stratospheric wind | not regenerable with current code |
 
 Inside the two no-wind folders, files with a `_blend` suffix are the same runs with the earlier composed drag law
