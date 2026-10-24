@@ -11,6 +11,50 @@ acceptance criterion; the comparison with the element model), §14 (the assumpti
 
 **Builds on:** sub-plan 21 — the flowing layer, the droplet momentum sink, the resolved sheared depth.
 
+## Amendment of 2026-10-24 — the droplet-size cap is per crest, on the depth the release can take (Asha's decision)
+
+> Decided by Asha on 2026-10-24, after the element model's flights on branch `we-critical-308` (its facts 108–115) showed
+> how often the old cap set droplet sizes. This changes Task 1 and the shared spray physics; it is not yet code.
+
+**The old cap.** `SprayModel.evaluate` limits every branch's droplet radius by the film on the patch,
+r ≤ (3 m_f / (4π ρ_l))^⅓, and by a quarter of the body radius. In skyscrapers there is no film account (spec §6.1), and
+the patch's film depends on the mesh facet's area, not on the flow. Measured on the element model's 100 mm flight with
+the thin-gate amendment: it bound on 67 % of the thick branch's release rows (24 % of its mass), 16 % of the thin
+branch's (4.4 %), and set essentially every Rayleigh–Taylor droplet.
+
+**The new cap (decided).**
+
+- **Per crest.** A droplet holds no more liquid than one crest of its own wave can give: (4/3)π r³ ≤ λ² h, so
+  r ≤ (3 λ² h / (4π))^⅓, where λ is the wavelength of the mode that sprays the column (the thick branch's
+  2π δ_m / Δ_f, Girin & Kopyt's λ* on the thin, rarefied and regime-2 branches, the Rayleigh–Taylor λ*) and h is the
+  depth below. λ² because a crest repeats every wavelength in both surface directions. The column's area, a mesh
+  corner's dual area, no longer enters.
+- **On the depth the release can take.** h is the depth of the run of cells the release is allowed to remove, the same
+  `admit` run `Skins.take_top_mass` is given (spec §8):
+  - `--slurry-spray off` (the default): the liquid run from the top, the skin's **liquid depth** of spec §6.7 (the
+    fully liquid cells contiguous from the top, interpolated within the boundary cell), which is shallower than the
+    non-rigid layer wherever slurry lies beneath the liquid;
+  - `--slurry-spray on`: the whole **flowing (non-rigid) depth**, from the top to the first point at T_rigid.
+- **Once per macro step.** The cap is evaluated at the start of the macro step, from that step's gas state, δ_m and the
+  column's depth at the start, and holds for every sub-step of it, so spec §8's statement that a column's radius is
+  fixed within a macro step (and that combining the sub-steps' records changes no radius) still holds. The release in
+  each sub-step still takes at most what the admitted run then holds.
+- **Unchanged:** the quarter-body-radius cap.
+
+**Where it goes.** The cap leaves `m_f`: the shared spray physics takes the cap's depth as its own argument (for
+example `cap_depth`), and with it absent keeps the film-mass cap, so `--surface-model elements` keeps the current model
+bit for bit (Task 3). The skyscrapers call passes the admitted run's depth from the start of the macro step.
+
+**To check when Task 1 is written at code level:** the Rayleigh–Taylor droplets, whose radius is their wavelength
+(centimetres) and which the film cap held to about 2 mm on the element model's flight, will be larger under a
+per-crest cap on a millimetre-deep layer (about 4.6 mm at λ = 2 cm, h = 1 mm); and the tests of Task 1 gain the cap's
+two depths, its independence of the column's area, and its constancy over a macro step's sub-steps.
+
+**Related, not part of this decision:** the element model's two amendments of 2026-10-22 on `we-critical-308` (Girin's
+critical surface Weber number 3.08 by default; Girin & Kopyt's branches gated by the wave fit and a viscous film on the
+rigid floor, whose floor depth maps onto the skin's flowing depth) change the same spray module and reach this line
+only when `main` is merged into it.
+
 ## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
 
 > Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
