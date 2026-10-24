@@ -47,7 +47,9 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
                     # the flow (sub-plan 21 Task 6c, spec 10.2)
                     "momentum_residual", "speed_max_ms", "roughness_max", "flow_courant_max", "flow_growth_max",
-                    "flow_passes_max", "flow_cycles_max", "wall_flow_s"]
+                    "flow_passes_max", "flow_cycles_max", "wall_flow_s",
+                    # the droplet momentum sink (sub-plan 21 Task 7, spec 10.2): fact 29's Pi and its flag
+                    "released_mass_kg", "droplet_momentum_ratio", "droplet_momentum_flagged"]
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -184,7 +186,10 @@ class CoupledRun:
                "surface_quality_min": float(np.min(last["surface_quality_min"])),
                "zone_ratio_min": float(np.min(last["zone_ratio_min"])),
                "momentum_residual": float(last["momentum_residual"][-1]),
-               "flow_courant_max": float(np.max(last["flow_courant_max"]))}
+               "flow_courant_max": float(np.max(last["flow_courant_max"])),
+               "released_mass_kg": float(last["released_mass_kg"][-1]),
+               "droplet_momentum_ratio_max": float(np.max(last["droplet_momentum_ratio"])),
+               "droplet_momentum_flagged_steps": int((last["droplet_momentum_flagged"] > 0).sum())}
         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s")})

@@ -48,7 +48,13 @@ its conduction (`skin.flow_substeps`), as many flow sub-steps to each as `skin.f
 heat sub-step's Courant number and growth (sub-plan 21 Task 6d; `flow_cycles` fixes them). With the flow on the liquid
 stays and flows
 (`remove` False in a run; spraying is stage 4's). The momentum books: the skins' momentum changes by the flow's impulses
-less what leaves with removed or handed-down metal, and `momentum_residual` reports what they miss."""
+less what leaves with removed or handed-down metal, and `momentum_residual` reports what they miss.
+
+The droplet momentum sink (sub-plan 21 Task 7; `release`, None by default): the placeholder for stage 4's spraying, a
+release rate per column (`skin.Flow.release`, what sub-plan 22 supplies from Girin's model) taken in every flow
+sub-step from the top cells, liquid first, the exposed slurry too with `slurry_spray`. The released metal leaves the
+body with its cells' enthalpy and momentum, booked as the removed liquid is, and the history reports the released mass
+and fact 29's droplet-momentum ratio Pi over each macro step (`skin.droplet_momentum_ratio`)."""
 import dataclasses
 import math
 import time
@@ -133,18 +139,24 @@ class SkinBody(ThermalBody):
     `remove`: liquid leaves as it forms (stage 2); `demise_fraction`: the run ends below this share of the initial mass;
     `flow`: the metal flows (sub-plan 21), `flow_cycles` flow sub-steps in each heat sub-step (None: as many as
     `skin.flow_cycles` chooses each heat sub-step, Task 6d), driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its
-    defaults if None) from each macro step's aero state."""
+    defaults if None) from each macro step's aero state; `release`, with the flow on, a release from the top cells in
+    every flow sub-step (`skin.Flow.release`: a callable of the skins giving a rate [kg/(m2 s)] per unit top area per
+    column; sub-plan 21 Task 7), the exposed slurry released too where `slurry_spray`."""
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
-                 surface_flow=None):
+                 surface_flow=None, release=None, slurry_spray=False):
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
         self.flow_cycles = flow_cycles
         if not (flow_cycles is None or isinstance(flow_cycles, (int, np.integer)) and flow_cycles >= 1):
             raise ValueError("flow_cycles must be None or an integer of at least 1, got {!r}".format(flow_cycles))
         self.flow_on, self.surface_flow = bool(flow), surface_flow
+        if release is not None and not self.flow_on:
+            raise ValueError("a release from the top cells needs the flow on: without it the heat-only skins remove the "
+                             "liquid as it forms (stage 2's stand-in for flow and spray)")
+        self.release, self.slurry_spray = release, bool(slurry_spray)
         self.repeat_rule = repeat_rule
         self.part_max = part_max                             # s, or None: no cap on the parts while melting
         self.material, self.solver, self.mass_kg = material, solver, mass_kg
@@ -180,6 +192,9 @@ class SkinBody(ThermalBody):
         self._forcing = self._forcing_prev = None            # this macro step's (start, end) FlowForcing; the last end
         self.impulse, self.momentum_lost = np.zeros(3), np.zeros(3)   # the momentum books since time zero [N s, kg m/s]
         self.impulse_size = 0.0                              # N s: the push's, shear's and walls' impulses, in size
+        self.released_mass = self.released_enthalpy = 0.0    # kg, J: released from the top cells since time zero (Task 7)
+        self.droplet_momentum = np.zeros((self.columns.n, 3))   # kg m/s: what the droplets took from each column, and
+        self.droplet_shear = np.zeros((self.columns.n, 3))      # N s: the gas shear's impulse on its top, this macro step
         self.flow_courant = self.flow_growth = 0.0           # this macro step's worst flow sub-step
         self.flow_passes = self.flow_cycles_max = 0          # and the most flow sub-steps in a heat sub-step
         self._volume = None                                  # m3, the 3D model's volume since the last move (mass)
@@ -231,6 +246,7 @@ class SkinBody(ThermalBody):
             self._forcing, self._forcing_prev = (start, end), end
             self.flow_courant = self.flow_growth = 0.0
             self.flow_passes = self.flow_cycles_max = 0
+            self.droplet_momentum, self.droplet_shear = np.zeros((self.columns.n, 3)), np.zeros((self.columns.n, 3))
         sk, mat = self.skins, self.material
         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
         if self.part_max is not None and mat.melts:
@@ -280,7 +296,8 @@ class SkinBody(ThermalBody):
             f = self._forcing[0].toward(self._forcing[1], frac)
             sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
             flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
-                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles)
+                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles, release=self.release,
+                                 slurry=self.slurry_spray)
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
         side = lambda s, previous: skin_mod.Sideways(s, self.columns, previous)   # implicit (sub-plan 21)
@@ -368,6 +385,11 @@ class SkinBody(ThermalBody):
             self.impulse_size += float(sum(np.linalg.norm(x, axis=1).sum() for x in (fb.push, fb.shear, fb.wall)))
             self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
             self.flow_passes, self.flow_cycles_max = max(self.flow_passes, fb.passes), max(self.flow_cycles_max, fb.cycles)
+            self.released_mass += float(fb.released.sum())   # the release from the top cells (Task 7): it leaves the body
+            self.released_enthalpy += float(fb.released_H.sum())
+            self.momentum_lost += fb.released_p.sum(axis=0)  # the droplets' momentum, at their cells' own velocities
+            self.droplet_momentum += fb.released_p
+            self.droplet_shear += fb.shear
         self.iterations.append(res.iterations)
         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
         self._move_base(book, m_min, g0)
@@ -466,10 +488,11 @@ class SkinBody(ThermalBody):
         return self.solver.energy() + self.skins.energy() + float(self.pending.sum())
 
     def energy_balance_residual(self):
-        """(E - E0 - absorbed heat + removed enthalpy) / absorbed heat: zero for exact books."""
+        """(E - E0 - absorbed heat + removed and released enthalpy) / absorbed heat: zero for exact books."""
         if not self.absorbed_heat:
             return 0.0
-        return (self.energy() - self.energy0 - self.absorbed_heat + self.removed_enthalpy) / self.absorbed_heat
+        return ((self.energy() - self.energy0 - self.absorbed_heat + self.removed_enthalpy + self.released_enthalpy)
+                / self.absorbed_heat)
 
     def momentum_residual(self):
         """|P - P0 - impulses + momentum lost| over the impulses' total size: zero for exact books (spec 10.2)."""
@@ -515,6 +538,7 @@ class SkinBody(ThermalBody):
         liquid = sk.depth_above(mat.T_liquidus) if mat.melts else np.zeros(sk.n)
         r = self.last_move
         i, j = self.columns.edges[:, 0], self.columns.edges[:, 1]
+        Pi, _, flagged = skin_mod.droplet_momentum_ratio(self.droplet_momentum, self.droplet_shear)
         return {"skin_cells": int(sk.count.sum()), "skin_thickness_max_mm": float(th.max() * 1e3),
                 "skin_above_min": int((sk.column_mass() > m_min * (1.0 + 1e-9)).sum()),
                 "flowing_depth_mean_mm": float(flowing.mean() * 1e3), "flowing_depth_max_mm": float(flowing.max() * 1e3),
@@ -542,7 +566,11 @@ class SkinBody(ThermalBody):
                 "roughness_max": float((np.abs(th[i] - th[j]) / self.columns.edge_length).max()),
                 "flow_courant_max": self.flow_courant, "flow_growth_max": self.flow_growth,
                 "flow_passes_max": self.flow_passes, "flow_cycles_max": self.flow_cycles_max,
-                "wall_flow_s": self.wall["flow"]}
+                "wall_flow_s": self.wall["flow"],
+                # the droplet momentum sink (Task 7): the mass released from the top cells since time zero, fact 29's
+                # droplet-momentum ratio Pi over this macro step and the columns whose own Pi exceeds skin.PI_FLAG
+                "released_mass_kg": self.released_mass, "droplet_momentum_ratio": Pi,
+                "droplet_momentum_flagged": flagged}
 
     def _recession(self):
         """How far each corner's top has moved inward along its starting direction since time zero [m]."""
