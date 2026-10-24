@@ -2356,6 +2356,27 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      a melting macro step is about an hour against about eight; a trial pass at a fixed two flow sub-steps (64 s) would
      make a base law 0.97 % of the throughput off. Tests: skin 80, skin body 17, command line 66; unit tier 490 passed,
      1 skipped.
+158. **The droplet momentum sink (sub-plan 21 Task 7, 2026-10-24).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task7/`. The placeholder for stage 4's spraying: a release rate per
+     column [kg/(m2 s) of top area], which sub-plan 22 supplies from Girin's model, is taken in every flow sub-step
+     after the transport from the top cells (`skin.release_top`): the run of liquid cells (at or above the liquidus)
+     from the top and, with the slurry flag, every flowing cell down to the first rigid one; never rigid metal; at most
+     what those hold. Each cell's metal leaves at its own specific enthalpy and velocity, so the droplets' momentum is
+     the top cells' -- fact 29's mdot V_s with V_s the resolved surface speed -- and the books close with nothing new:
+     each column to 2e-16, the flow sub-steps' momentum to 2e-12 of the largest impulse, a skin body releasing 0.53 g
+     over two 0.25 s steps its mass to the last bit, energy to 9.8e-13 and momentum to 2.3e-17. Released once a heat
+     sub-step instead, metal the runoff had carried some 25 columns (5 m/s on 2 mm columns), up to 240 at the count's
+     cap, would spray. The trial pass releases what its real pass does, to the last bit; the release moves a heated
+     strip's base law by 0.20 % of the throughput. Fact 29's Pi per column per macro step is |released momentum| / |gas
+     shear's impulse|; the history's is the shear-weighted mean over the sheared tops and its flag counts the sheared
+     columns above 0.2, unsheared tops left out because 6d's runoff crosses the 100 mm sphere's rigid rear at 2.5-4.7
+     m/s under no gas shear (2 403 liquid tops on the driven state). By hand, on a Couette layer released at its top,
+     Pi_i = mdot (H - dz_0 / 2) / mu, 0.42 at 1 mm/s, to 2.2e-15. On the driven state at 93 s a windward release of
+     rho_l v_melt gives Pi 0.145 at 1 mm/s (1 146 of the 4 705 sheared columns flagged, the largest 0.26) and 0.015 at
+     0.1 mm/s, a third of fact 29's 0.48 and 0.048: the 0.3 mm layer, its viscous time 0.17 s, is far from its steady
+     Couette speed after 30 ms (4.3 against 15 m/s). The release costs 0.054 s a call on 9 417 columns against about 2 s
+     a flow sub-step. With no release every result is 6d's to the last bit (109 arrays: flow off, flow on, the flow
+     sub-steps). Tests: skin 87, skin body 18; unit tier 498 passed, 1 skipped.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

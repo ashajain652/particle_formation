@@ -500,3 +500,31 @@ def test_a_skin_body_s_flow_takes_the_counts_each_trial_pass_chose_in_its_real_p
     assert max(u for _, u in calls[-1][1]) <= stats["flow_cycles_max"] <= max(used) and stats["flow_courant_max"] > 0.0
     assert b.mass() == pytest.approx(M0, rel=1e-13) and abs(b.energy_balance_residual()) < 1e-8
     assert stats["momentum_residual"] < 1e-12
+
+
+# -- the droplet momentum sink (sub-plan 21 Task 7) ---------------------------------------------------------------------
+def test_a_skin_body_with_a_prescribed_release_keeps_its_books_and_reports_the_droplet_momentum_ratio(coarse_sphere_mesh):
+    """Sub-plan 21 Task 7, the placeholder for stage 4's spraying: a release of 2 kg/(m2 s) from every column's top, liquid
+    first, as sub-plan 22's Girin rate will be given, on the 4 mm test sphere heated at 3 MW/m2 from 880 K with the flow on
+    (as above: two 0.25 s steps, one flow sub-step a heat sub-step). The tops melt in the second step and the release
+    takes the liquid as it forms, 0.53 g. It leaves the body: the mass left and the mass released are the starting mass
+    to the last bit, the energy books close with the released enthalpy to 9.8e-13 of the heat absorbed, and the
+    momentum balance, the droplets' momentum lost with the metal, to 2.3e-17. The history reports the released mass,
+    fact 29's droplet-momentum ratio Pi over the macro step, which is its definition on the step's books (0.0048 here,
+    with the tops barely liquid and slow), and the columns flagged above 0.2, none (measured 2026-10-24). A release
+    needs the flow: with it off the heat-only skins remove the liquid as it forms."""
+    with pytest.raises(ValueError):
+        make(coarse_sphere_mesh, release=skin.prescribed_release(2.0))
+    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0))
+    M0 = b.mass()
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
+    stats = b.skin_stats()
+    assert b.removed_mass == 0.0 and b.released_mass > 0.0 and stats["released_mass_kg"] == b.released_mass
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-13)
+    assert abs(b.energy_balance_residual()) < 1e-8 and b.released_enthalpy > 0.0
+    assert stats["momentum_residual"] < 1e-12 and np.abs(b.droplet_momentum).max() > 0.0
+    Pi, _, flagged = skin.droplet_momentum_ratio(b.droplet_momentum, b.droplet_shear)
+    assert stats["droplet_momentum_ratio"] == Pi > 0.0 and stats["droplet_momentum_flagged"] == flagged
+    off = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1)
+    assert off.skin_stats()["droplet_momentum_ratio"] == 0.0 and off.skin_stats()["released_mass_kg"] == 0.0

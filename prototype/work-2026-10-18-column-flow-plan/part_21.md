@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a, 6b, 6c and 6d
-> (2026-10-18/22).** Tasks 7 and 8 are still the scoped outline at the end; each is written out with tested code in
-> turn, the same way, and this document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a, 6b, 6c, 6d and 7
+> (2026-10-18/24).** Task 8 is still the scoped outline at the end; it is written out with tested code the same way,
+> and this document regenerated.
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -155,6 +155,15 @@ regenerate.
     1.4·10⁻⁶ on average on the heated state; a liquid layer ends in 1–4 passes. Stopping on the velocities rather than
     the viscosities (Task 4's design), or holding Li's rate at the curve's maximum (spec 6.4's rheology), would end it
     sooner, each pass about 0.14 s of a heated flow sub-step: for Asha to decide (Task 6d).
+19. **What a release may take** — liquid first, the exposed slurry only with the flag, never rigid metal, at most what
+    the cells hold; a column it empties leaves the flow sub-steps after it and the draw working. Pinned by
+    `test_a_release_takes_liquid_first_from_the_top_cells_slurry_only_with_the_flag_and_never_rigid_metal` and
+    `test_a_release_that_empties_columns_leaves_the_flow_and_the_draw_working_and_the_books_closed` (Task 7).
+20. **The droplet-momentum ratio on unsheared tops** — fact 29's Pi is against the gas shear, which the surface flow
+    makes zero on the leeward face, where 6d's runoff runs over the rigid rear at metres a second: Pi and its flag are
+    taken over the sheared tops, so a release there (Girin's modes release only windward) is in neither, and the
+    history's Pi measures a developing layer below its steady speed early in melting. Pinned by
+    `test_the_droplet_momentum_ratio_is_fact_29_s_v_melt_delta_over_nu_on_a_sheared_layer` (Task 7).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -1557,6 +1566,196 @@ git commit -m "Skins: the flow made affordable -- the transport's large cycles i
 
 ---
 
+### Task 7: The droplet momentum sink at the top cells (a placeholder for stage 4's spraying)
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`Skins.take_top_mass`; `PI_FLAG`, `ReleaseBook`, `release_top`,
+  `prescribed_release`, `droplet_momentum_ratio`; `Flow.release` and `Flow.slurry`; `FlowBook.released`,
+  `.released_H`, `.released_p` and `.released_solid`, with `.zero` and `.add`; `flow_substeps` releasing in every flow
+  sub-step; `FLOW_SECONDS["release"]`), `reentry_model/skinbody.py` (`SkinBody(..., release=None,
+  slurry_spray=False)`, `.released_mass`, `.released_enthalpy`, `.droplet_momentum`, `.droplet_shear`, the books, the
+  history's three columns), `reentry_model/coupled.py` (`SKINBODY_COLUMNS`, `skin_results`)
+- Test: `tests/test_reentry_model_skin.py` (seven tests), `tests/test_reentry_model_skinbody.py` (one test)
+
+**Interfaces:**
+- Consumes: Task 2's `Skins.U`, `Skins.take_top` and `momentum_out`; Task 3's `cell_viscosity`; 6c's `Flow`,
+  `FlowBook`, `flow_substeps`, `advance(..., flow)` and the skin body's momentum books (`momentum_lost`,
+  `momentum_residual`); 6d's chosen counts, which the real pass takes from its trial pass.
+- Produces: `Skins.take_top_mass(dm, admit) -> (mass, enthalpy, solid)` [kg, J, kg per column], `momentum_out` set;
+  `skin.release_top(sk, dm, slurry=False) -> ReleaseBook(mass, enthalpy, momentum, solid)` ((n,) [kg], (n,) [J],
+  (n, 3) [kg m/s], (n,) [kg]); `skin.prescribed_release(rate)`, a release at a given rate [kg/(m2 s)];
+  `skin.droplet_momentum_ratio(released, shear) -> (Pi, each (n,), flagged)` and `skin.PI_FLAG` (0.2);
+  `Flow(..., release=None, slurry=False)`; `FlowBook.released` (n,) [kg], `.released_H` (n,) [J], `.released_p`
+  (n, 3) [kg m/s] and `.released_solid` (n,) [kg]; `SkinBody(..., release=None, slurry_spray=False)` with
+  `.released_mass` [kg] and `.released_enthalpy` [J] since time zero and `.droplet_momentum` (n, 3) [kg m/s] and
+  `.droplet_shear` (n, 3) [N s] over the last macro step; history columns `released_mass_kg`,
+  `droplet_momentum_ratio` and `droplet_momentum_flagged`; results `released_mass_kg`, `droplet_momentum_ratio_max`
+  and `droplet_momentum_flagged_steps`.
+- **What sub-plan 22 supplies and calls:**
+  1. *A release*, the one thing it adds: a callable `release(sk) -> (n,)` [kg/(m2 s)], Girin's stripping rate per unit
+     of each column's top area (`SprayResult.mdot`, per unit wetted area), from the skins as they are when it is asked
+     -- b the flowing depth `sk.depth_above(T_rigid)` and the liquid depth `sk.depth_above(T_liquidus)` (spec 6.7) --
+     and the part's gas state, which it holds; given as `SkinBody(..., flow=True, release=..., slurry_spray=...)`, which
+     hands it to every part's `Flow`. It is asked in every flow sub-step of the trial pass, of every damped repeat and
+     of parts run again, so it keeps no records of its own.
+  2. *Its cap and its cascade*: `release_top` takes rate A_top h from the top cells and never more than they may give
+     (fact 29's inventory cap). The cascade rule's own rates, cell by cell (the 2026-10-07 design 8.1), are sub-plan
+     22's: `release_top(sk, dm, slurry)` takes whatever dm that rule computes.
+  3. *Its records*: the pass's FlowBook carries what left each column, summed over the flow sub-steps -- spec 8's
+     `h_kg` is `released_H / released` and `solid_fraction` `released_solid / released` -- and the skin body adds the
+     accepted passes' only. Records per mode need the mode, which the book does not carry yet: sub-plan 22 extends it.
+
+Stage 4's spraying (spec 8; sub-plan 22) takes Girin's release from each column's top cells. This task builds what
+the release does to the cells and the flow, so that sub-plan 22 only has to supply the rate: the release from the top
+cells, the momentum it carries away (fact 29's sink), and the droplet-momentum ratio Pi that spec 10.2 puts in the
+history.
+
+**The release.** `release_top` takes the mass asked from each column's top down through the cells it may take: the run
+of fully liquid cells from the top, at or above the liquidus, and, with `slurry` (spec 8's `--slurry-spray on`), every
+flowing cell down to the first rigid one. At most what they hold leaves. A slurry top without the flag, a floating crust
+and anchored metal release nothing: nothing passes through rigid metal (spec 6.5). Each cell's metal leaves at its own
+specific enthalpy and velocity; a partly taken cell keeps both, its temperature and its sensitivity, and the cells
+beneath are untouched, so the thinned top cell merges at the next regrid, as spec 6.2 has spray do. A column whose
+cells are all taken is emptied: the flow sub-steps after it land the runoff on it as on any rigid top, and the heat
+sub-step's draw restores its minimum.
+
+**The release speed** (spec 6.4: "The droplets carry momentum away from the top cells at their release speed (fact
+29's sink)"). Fact 29's sink is mdot_strip V_s, V_s the sheared layer's surface speed: its Pi = v_melt delta_m / nu is
+mdot V_s / tau_gas with V_s = tau delta_m / mu, the top of a Couette layer delta_m deep. The columns resolve that
+profile, so V_s is the top cells' own velocity, and the droplets, made of the top cells' metal, leave with it. Removing
+the cells with their momentum is then the sink, with nothing to add to the books. A droplet speed other than the cells'
+-- Girin's closure V_s, say -- would leave the difference times the released mass to be booked on the metal left
+behind or supplied by the gas, which neither the spec nor fact 29 asks for (ruling 1).
+
+**Where it runs: in every flow sub-step, after the transport.** Spec 7.1's sub-step is heat, flow, sideways exchange
+and spray, and since 6c the last three run in every flow sub-step: the rate is asked of the skins as the transport left
+them, and rate A_top h is released. Not once a heat sub-step: the top cells cross a column for each unit of their
+Courant number, which 6d's count keeps near 6 a flow sub-step, so they cross some 25 columns of 2 mm in a 10 ms heat
+sub-step at the 5 m/s of the 100 mm sphere's driven state, and up to 240 at the count's cap of 40. A release made once
+would spray metal from where the runoff had taken it rather than where its rate was found, and fact 29's operator split
+between the runoff and the stripping would be first order in the heat sub-step rather than in the flow's. The
+trial pass runs the real pass's flow sub-steps (6c) at the real pass's counts (6d), so both release at the same
+moments, and the base law includes the release: on a heated strip it moves the law by 0.20 % of the throughput. With the
+flow off nothing asks for a release: the heat-only skins' instant removal stays as it is, and a skin body refuses a
+release without the flow.
+
+**Pi** (spec 10.2; fact 29). For each column over a macro step, Pi_i = |p_i| / |J_i|: p_i the momentum the release
+took from its top cells (`FlowBook.released_p`) and J_i the gas shear's impulse on its top (`FlowBook.shear`), both
+integrated over the top and the step, so Pi_i is mdot V_s / tau_gas. The history's Pi is the sum of |p_i| over the sum
+of |J_i| over the sheared columns: the share of the gas shear's momentum that left with droplets, each column's ratio
+weighted by its shear. `droplet_momentum_flagged` counts the sheared columns whose own Pi_i exceeds fact 29's 0.2. A top
+the gas does not shear has no Pi: on the 100 mm sphere's driven state 2 403 liquid tops run over the rigid rear at
+2.5-4.7 m/s (10th to 90th percentile) under no gas shear, and a release prescribed there made Pi_i infinite on all 4 712
+unsheared columns; Girin's modes release only on the windward face (`SprayModel.evaluate`'s `windward`). By hand, on
+liquid aluminium 0.234 mm deep at its steady Couette profile under 20 Pa, released at the top: Pi_i =
+mdot (H - dz_0 / 2) / mu, fact 29's v_melt delta_m / nu, 0.42 at 1 mm/s and 0.042 at 0.1 mm/s.
+
+**Measured on the 100 mm sphere** (2026-10-24, `prototype/work-2026-10-18-column-flow/measure/task7/sphere_pi.py`;
+processor times under other sessions' load). 6d's driven state -- the front's top 0.3 mm liquid, driven from rest for
+20 ms by the forcing of the flight at 93 s; 160 000 cells flowing, 7 108 liquid tops -- released at rho_l v_melt over the
+windward face for ten more flow sub-steps of 1 ms:
+
+| v_melt | Released | Pi | Flagged, of 4 705 sheared columns | Pi_i median, 90th percentile, largest |
+|---|---|---|---|---|
+| 1 mm/s | 0.376 g | 0.145 | 1 146 | 0.136, 0.235, 0.263 |
+| 0.1 mm/s | 0.038 g | 0.015 | 0 | 0.014, 0.024, 0.027 |
+
+The table shows Pi at a third of fact 29's estimates, 0.48 and 0.048, which took the film at its steady Couette speed
+tau delta_m / mu. The 0.3 mm layer, its viscous time h^2 / nu 0.17 s, is far from steady after 30 ms -- its top at a
+median 4.3 m/s under 64 Pa, against 15 m/s for the steady profile -- so these numbers measure the developing flow, and a
+flight's steadier layers will carry more. At 1 mm/s a quarter of the sheared columns already pass fact 29's flag. The
+release costs 0.054 s of processor time a call on the 9 417 columns, against about 2 s for a 1 ms flow sub-step of this
+state (20.0 s for ten without the release, 21.0 s with it).
+
+**No release, no change.** With no release (the default) every flow sub-step is 6d's, and so is every result:
+against 6d's code, the flow-off removal run of `test_heating_with_removal_keeps_mass_and_energy_exact` (numpy's
+generator seeded), a skin body with the flow on over two 0.25 s steps under 3 MW/m2 and two heat sub-steps' flow on the
+mixed sphere skins give the same 109 arrays -- the 3D field, the mesh, the skins' state, every history column but the
+wall times and the three new ones, and the flow's books -- to the last bit (`measure/task7/bitid.py`). A release of
+nothing, a zero rate or a rate only where a top is not liquid, does the same.
+
+**Rulings** (2026-10-24, within spec 6.4, 6.5, 7.1, 8 and 10.2 and fact 29; each is what, then why, then the cost if
+wrong):
+1. *The droplets leave at their cells' own velocity.* Why: fact 29's V_s is the sheared layer's surface speed, which
+   the columns resolve, and the spec has the droplets' momentum leave the top cells (6.4, 8); removing the cells with
+   their momentum is then the sink, and the books close with nothing new. Cost if wrong (the droplets leaving at
+   Girin's closure speed instead): the difference times the released mass is an impulse on the metal left behind or
+   the gas's, and Pi is off by the ratio of the two speeds; sub-plan 22 computes both.
+2. *The release in every flow sub-step, after the transport.* Why: above. Cost if wrong: the rate is asked up to 40
+   times a heat sub-step instead of once, 0.05 s each against a 2 s flow sub-step.
+3. *Liquid is a cell at or above the liquidus.* Why: it is fully liquid by the material's own law, the history's liquid
+   depth (spec 6.7) and the viscosity's liquid branch; not stage 2's T_feed, 2 K higher, the element model's film ramp.
+   Cost if wrong: cells within those 2 K wait for the slurry flag.
+4. *The run from the top, cell by cell as the cells lie: liquid without the flag, every flowing cell with it, stopping
+   at the first rigid cell.* Why: spec 8's "liquid first" and "exposed slurry", the 2026-10-07 design's cascade, which
+   works down to the first cell at or below T_rigid, and spec 6.5's rigid metal. Cost if wrong: with the flag, a slurry
+   cell over liquid goes before the liquid it covers, which sub-plan 22's cascade may order otherwise through its dm.
+5. *The rate per unit of the top area, capped by what the cells may give.* Why: Girin's mdot is per unit wetted area
+   (`SprayModel.evaluate` releases min(mdot A dt, m_f)), the heating's q is per top area, and fact 29's checklist caps
+   each removal by the mass present. Cost if wrong: the release differs by the top area's excess over the base area,
+   about 2H/R (spec 14 assumption 10).
+6. *Pi over the sheared tops, weighted by their shear; the flag per sheared column.* Why: above. Cost if wrong: a
+   column's large Pi_i is hidden in the mean, but counted by the flag, and a release from an unsheared top is in
+   neither.
+7. *The release a callable of the skins that keeps no records; a release needs the flow.* Why: the trial pass, the
+   damped repeats and parts run again all ask for it, and with the flow off the heat-only skins' removal is stage 2's
+   stand-in for flow and spray (spec 11.2). Cost if wrong: nothing for this task.
+8. *The droplets' momentum is booked as lost with the metal, as the removed liquid's is.* Why: it leaves with the
+   metal; `momentum_residual`'s scale stays the impulses' size. Cost if wrong: only that scale.
+
+**Measured against the tests** (2026-10-24): what the release takes from six columns of every arrangement, to 1.9e-16
+(the books) and 2.2e-16 (the cells left); on the mixed sphere skins each column short of exactly its book, to 1.6e-16,
+2.3e-16 and 2.0e-16 of the largest column's mass, enthalpy and momentum, the rigid metal untouched to 2.2e-16, and 6.4 %
+of the released mass solid with the flag; the flow sub-steps with a release equal to the four steps and `release_top`
+by hand to the last bit, the momentum books to 2.1e-12 and 1.1e-12 of the largest impulse at one and three cycles;
+columns emptied in the first of four flow sub-steps, the pass's books to 4.1e-16; no release, or nothing to release, to
+the last bit; Pi by hand to 2.2e-15; the trial and real passes releasing the same to the last bit, the law met to
+4.0e-17 of the throughput; the skin body over two 0.25 s steps releasing 0.53 g, its mass to the last bit, its energy
+to 9.8e-13 and its momentum to 2.3e-17, Pi 0.0048.
+
+- [ ] **Step 1: The release's tests** — append to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T7}}
+
+- [ ] **Step 2: The skin body's test** — append to `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T7}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skin.py
+  tests/test_reentry_model_skinbody.py -q -k "release or droplet or nothing_it_may_take or empties"`. Expected: 8
+  failed, 99 deselected --
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'release_top'` (4: the take, the books, the emptied
+    columns and the trial pass);
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'prescribed_release'` (4: the flow sub-steps, no
+    release, Pi and the skin body).
+
+- [ ] **Step 4: The release from the top cells, its books in the flow and Pi** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T7}}
+
+- [ ] **Step 5: The release in the skin body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T7}}
+
+- [ ] **Step 6: The history's columns and the results** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T7}}
+
+- [ ] **Step 7: Run them to see them pass.** Expected: `tests/test_reentry_model_skin.py` 87 passed,
+  `tests/test_reentry_model_skinbody.py` 18 passed (2 deselected, the reference tier's), `tests/test_reentry_model_cli.py`
+  66 passed, `tests/test_reentry_model_coupled.py` 9 and `tests/test_reentry_model_columns.py` 13 as before (193, 803 s
+  within the unit tier, the skin body's 595 s of it); the unit tier 498 passed, 1 skipped (1 040 s). Without a release
+  nothing changes: the flow's results are 6d's to the last bit.
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/skinbody.py reentry_model/coupled.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py
+git commit -m "Skins: the droplet momentum sink at the top cells, the placeholder for stage 4's spraying -- a release rate per column taken in every flow sub-step after the transport from the top cells, liquid first and the exposed slurry with the flag, never rigid metal, the metal leaving at its cells' own enthalpy and velocity so that every book closes; fact 29's droplet-momentum ratio and its flag in the history (sub-plan 21 Task 7)"
+```
+
+---
+
 ## Tasks still in outline (to be written in full)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21) and a fourth (2026-10-22), each with its own tests and
@@ -1564,7 +1763,7 @@ git commit -m "Skins: the flow made affordable -- the transport's large cycles i
    6d, making it affordable, are written out above as Tasks 6a, 6b, 6c and 6d.
    - **6d. Making the flow affordable** (Asha, 2026-10-22, option a, before Tasks 7 and 8) is written out above as Task
      6d.
-7. **The droplet momentum sink** placeholder at the top cells for stage 4, tested with a prescribed release.
+7. **The droplet momentum sink** placeholder at the top cells for stage 4 is written out above as Task 7.
 8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
    20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
    behaviour), the momentum-balance residual and the roughness that 6c's history columns report read on it, and the
