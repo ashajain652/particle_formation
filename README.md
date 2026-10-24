@@ -5,11 +5,28 @@ re-entering satellite, using SESAM (the re-entry module of ESA DRAMA's SARA)
 through the pyDRAMA package.
 
 - `sphere_reentry.py` — one sphere from a given initial state → `runs/<run_name>.csv` (full history) + `runs/<run_name>.json` (statistics: maximum temperature, final mass, time at melting temperature, final velocity, final radius, and more).
-- `sphere_sweep.py` — runs `sphere_reentry.py` over diameters 5–100 mm, initial temperatures 300–750 K and 100 velocities from 7.5 km/s down to the parent satellite's impact velocity. Altitude, latitude, longitude, flight-path angle, heading and epoch are inherited from the parent run (`Generic_Satellite Reentry/output/dmf_output.json`) at the point where the parent reached that velocity.
+- `sphere_sweep.py` — runs `sphere_reentry.py` over diameters 5–100 mm, initial temperatures 300–750 K and 100 velocities from 7.5 km/s down to the parent satellite's impact velocity. Altitude, latitude, longitude, flight-path angle, heading and epoch are inherited from the parent run (`../Generic_Satellite Reentry/output/dmf_output.json`) at the point where the parent reached that velocity.
 
-Design: `docs/superpowers/specs/2026-09-13-sphere-reentry-sweep-design.md`.
+Design: `docs/specs/2026-09-13-sphere-reentry-sweep-design.md`; plan: `docs/plans/2026-09-14-sphere-reentry-sweep.md`.
+
+## Repository layout
+
+The repository holds three projects, each in its own folder with its own `tests/`, `pytest.ini`, `docs/`
+and outputs. **Every command in a section runs from inside the project folder that section names.**
+
+| folder | what it is | sections below |
+|---|---|---|
+| `DRAMA Sphere Experiments/` | the SESAM wrapper and sweep (`sphere_reentry.py`, `sphere_sweep.py`, `analysis/`), the SESAM reference runs and DRAMA inputs in `data/`, outputs in `sphere_sweep_output/` | Environment through Analysis / plotting |
+| `Reentry Model/` | the first-principles model: the `reentry_model` package, `analysis/`, `data/`, `docs/` (incl. `model_assumptions.md`), outputs in `output/`, throwaway work copies in `prototype/` | Physics model (Steps 1 and 2) |
+| `Spheral/` | the `spheral_frag` large-fragment package, `analysis/`, `data/`, `docs/`, outputs in `spheral_output/` | Large fragments |
+
+`Generic_Satellite Reentry/` is the DRAMA GUI project of the parent satellite (git-ignored); `citations/` holds source
+notes shared by the projects. Outputs are git-ignored by folder; inputs (reference runs, materials, space-weather
+files, data tables, test fixtures) are committed.
 
 ## Environment
+
+Run from `DRAMA Sphere Experiments/` (through "Analysis / plotting").
 
 ```bash
 # pyDRAMA lives in the conda env drama_env (Python 3.12); DRAMA 4.1.4 is at /Applications/DRAMA-4.1.4
@@ -99,7 +116,7 @@ pair of mutually exclusive flags:
 
 ```bash
 "$PY" sphere_reentry.py ... --material drama-TiAl6v4                       # another DRAMA metal
-"$PY" sphere_reentry.py ... --material-file examples/material_al_li_2195.json   # a custom metal
+"$PY" sphere_reentry.py ... --material-file data/user_materials/material_al_li_2195.json   # a custom metal
 "$PY" sphere_sweep.py --material drama-TiAl6v4 --yes --cores 6              # whole sweep in titanium
 ```
 
@@ -113,7 +130,7 @@ drama-Inconel718, drama-Inermet, drama-Invar, drama-Iron, drama-SiC, drama-Solar
 drama-TiAl6v4, drama-Tungsten.
 
 `--material-file PATH` supplies a custom metal as JSON in DRAMA's material format — see
-[examples/material_al_li_2195.json](examples/material_al_li_2195.json) (the Al-Li alloy of the
+[data/user_materials/material_al_li_2195.json](data/user_materials/material_al_li_2195.json) (the Al-Li alloy of the
 Falcon 9 study) for a complete template. Required fields: `name, density, specificHeatCapacity,
 meltingHeat, meltingTemperature, emissivity, heatConductivity, oxideActivationTemperature,
 oxideEmissivity, oxideHeatOfFormation, oxideReactionProbability`; curves are `[temperature K, value]`
@@ -173,6 +190,9 @@ holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 
 ## Physics model — `reentry_model` (Step 1: trajectory)
 
+Run from `Reentry Model/`. The SESAM references live in the DRAMA project, so the commands below set
+`REF="../DRAMA Sphere Experiments/data/reference_runs"`.
+
 A first-principles re-entry model of a solid sphere, built to be verified against SESAM. Step 1 integrates the
 trajectory only (constant mass; Step 2, coupled 3D heat transfer, follows below): rotating-Earth 3-DOF in ECEF coordinates with J2 gravity, NRLMSISE-00 (pymsis)
 with the fap-file solar activity or the US76 table SESAM ships, SESAM's sphere drag tables blended by a Knudsen
@@ -182,12 +202,13 @@ bridging function measured from SESAM's own output, DOP853 integration. Design:
 
 ```bash
 "$PY" -m pip install "pymsis==0.13.0" scipy     # once, in drama_env
+REF="../DRAMA Sphere Experiments/data/reference_runs"
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
-    --reference data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind.csv
+    --reference "$REF"/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis_nowind.csv
 "$PY" -m reentry_model run --diameter 50 --velocity 7.5 --altitude 115 --flight-path-angle -0.959331 \
-    --atmosphere replay:data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv \
-    --reference data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv
-"$PY" -m reentry_model compare --model reentry_model_output/<run>.csv --reference data/reference_runs/<sesam run>.csv
+    --atmosphere replay:"$REF"/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv \
+    --reference "$REF"/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_msis_nowind.csv
+"$PY" -m reentry_model compare --model output/<run>.csv --reference "$REF"/<sesam run>.csv
 ```
 
 Heading, latitude, longitude and epoch default to the reference cases' break-off state. `--atmosphere` is
@@ -196,9 +217,9 @@ Heading, latitude, longitude and epoch default to the reference cases' break-off
 implemented — selecting it exits 1); `--gravity point|j2|j2j4`. Both SESAM bridgings were fitted to
 SESAM's own output, which includes these four reference runs, so the C_D agreement in the verification
 is in-sample by design; the trajectory comparison is the independent check. Outputs go to
-`reentry_model_output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
+`output/` (git-ignored): `<run>.csv` with the same columns as the SESAM histories, `<run>.json`
 (inputs, settings, results, comparison metrics, provenance), and with `--reference` a folder of six plots
-(V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `data/reference_runs/` holds the
+(V(t) and h(t) overlays with residuals, h(V), angles, ground track, Knudsen/C_D). `DRAMA Sphere Experiments/data/reference_runs/` holds the
 four committed NRLMSISE-00 SESAM references (100 mm from 77.5 km, 50 mm from 115 km, winds on/off, `_msis`) and the
 same two spheres run on SESAM's static US76 table (winds off, no `_msis` in the name). The US76 pairs give the
 like-for-like check — SESAM and the model on the identical atmosphere table (`--atmosphere us76`) — and agree over
@@ -207,7 +228,7 @@ impact times within 0.2 s and 0.8 s:
 
 ```bash
 "$PY" -m reentry_model run --diameter 50 --velocity 7.5 --altitude 115 --flight-path-angle -0.959331 --atmosphere us76 \
-    --reference data/reference_runs/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_nowind.csv
+    --reference "$REF"/sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_mAA7075_nomelt_nowind.csv
 ```
 
 ### Verification (Task 10, `analysis/reentry_model_verification.py`)
@@ -251,14 +272,15 @@ Newton on the ε σ T⁴ radiation term, energy-exact secant heat capacity) adva
 `docs/superpowers/specs/2026-09-18-thermal-fem-design.md`; plan: `docs/superpowers/plans/2026-09-18-thermal-fem.md`.
 
 ```bash
-"$PY" -m pip install -r requirements-step2.txt          # once, in drama_env (scikit-fem, gmsh, pyamg, pyvista, imageio-ffmpeg, cantera)
+"$PY" -m pip install scikit-fem gmsh pyamg pyvista imageio-ffmpeg cantera   # once, in drama_env
+REF="../DRAMA Sphere Experiments/data/reference_runs"            # run from Reentry Model/
 # verification mode: SESAM's own heat input, uniform over the surface (NOT physical, see below), vs the US76 SESAM reference
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
-    --thermal fem --heating sesam --reference data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
+    --thermal fem --heating sesam --reference "$REF"/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
 # physics mode: Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution, with the surface-temperature animation
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --heating physics --animate
-"$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> reentry_model_output/verification_thermal/summary.md
+"$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> output/verification_thermal/summary.md
 ```
 
 Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
@@ -354,9 +376,11 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 
 ## Large fragments — `spheral_frag` core (M1)
 
-The Spheral large-fragment model (spec `docs/superpowers/specs/2026-10-02-spheral-large-fragments-design.md`) replays
+Run from `Spheral/`.
+
+The Spheral large-fragment model (spec `docs/specs/2026-10-02-spheral-large-fragments-design.md`) replays
 the finite-element flight in Spheral's particle model to find what tears, drips or detaches as whole fragments. M1 is
-its core without Spheral (plan `docs/superpowers/plans/2026-10-07-spheral-m1.md`):
+its core without Spheral (plan `docs/plans/2026-10-07-spheral-m1.md`):
 - frame import through one contract table;
 - material tables shared with the finite element;
 - thickness, layer depths and the three zones;
@@ -368,18 +392,18 @@ Everything runs in drama_env with numpy; nothing here imports Spheral. Assumptio
 measured or assumed, are in `docs/spheral_frag_assumptions.md`.
 
 `reentry_model` does not melt yet, so the frames come from the reconstructed Step 3 prototype,
-`prototype/work-2026-10-08-spheral-mvp/code` (an MVP input, plan decision 13). The flight below is its 100 mm
+`Reentry Model/prototype/work-2026-10-08-spheral-mvp/code` (an MVP input, plan decision 13). The flight below is its 100 mm
 `AA7075_scheil` physics run: 0.5 s step, seed 12345, 1,255 frames, 5.0 GB, git-ignored.
 
 ```bash
-FE=reentry_model_output/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off
-PKG=prototype/work-2026-10-08-spheral-mvp/code
+FE="../Reentry Model/output/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_material-AA7075_scheil_deeprunoff-off"
+PKG="../Reentry Model/prototype/work-2026-10-08-spheral-mvp/code"
 
 # frames -> compact prepared frames, material table, load tables, flight table and prepare.json (26 min, 791 MB)
 "$PY" -m spheral_frag prepare --fe-run "$FE" --fe-package "$PKG" [--frames K0:K1] [--every N] [--force]
 # a Spheral run's checks -> fragments.csv, debris.csv, analyse.json (accounts must close to 1e-12 m0, else exit 1)
 "$PY" -m spheral_frag analyse --run spheral_output/runs/<run> [--prepared <dir>] [--min-particles 30]
-# per-frame measurements -> data/spheral/m1_frames.csv (committed) and plots + summary.json in spheral_output/m1/
+# per-frame measurements -> data/m1_frames.csv (committed) and plots + summary.json in spheral_output/m1/
 "$PY" analysis/spheral_m1_flight.py [--fake-runs]
 # the thresholds on the real flight (marker fe_flight; skipped unless both variables are set)
 SPHERAL_FRAG_FE_RUN="$FE" SPHERAL_FRAG_FE_PACKAGE="$PKG" "$PY" -m pytest tests/test_spheral_frag_flight.py -q
@@ -449,16 +473,24 @@ These are 0.5 s-step frames, so part of the deep layers is spec §2's molten bac
 
 ## Tests
 
+Each project is tested from inside its own folder (the three `tests/` folders cannot share one pytest session).
+
 ```bash
-"$PY" -m pytest -m "not drama and not reference" -q   # unit tests (~4 min; the thermal solver and coupled tests dominate)
-"$PY" -m pytest -m "not drama"     # unit tests, no DRAMA needed (real SESAM outputs in tests/fixtures/)
-"$PY" -m pytest                    # also the integration tests that run SESAM
-"$PY" -m pytest -m reference -q   # the Step 1 reference flights (~15 min) and the Step 2 coupled runs (~35 min)
+cd "Reentry Model"
+"$PY" -m pytest -m "not reference" -q   # unit tests (~2 min; the thermal solver and coupled tests dominate)
+"$PY" -m pytest -m reference -q         # the Step 1 reference flights (~15 min) and the Step 2 coupled runs (~35 min)
+
+cd "DRAMA Sphere Experiments"
+"$PY" -m pytest -m "not drama" -q       # the wrapper and sweep, no DRAMA needed (real SESAM outputs in tests/fixtures/)
+"$PY" -m pytest -q                      # also the integration tests that run SESAM
+
+cd Spheral
+"$PY" -m pytest -q                      # spheral_frag; the container tests skip without Docker
 ```
 
-`tests/test_reentry_model_fenicsx.py` runs only with an interpreter that can import `dolfinx` (the `fenicsx_env`
-environment, see above; the whole unit tier also passes there apart from the sweep wrapper's `tqdm` dependency);
-elsewhere it is skipped. To refresh a fixture see `tests/fixtures/README.md`.
+`Reentry Model/tests/test_reentry_model_fenicsx.py` runs only with an interpreter that can import `dolfinx` (the
+`fenicsx_env` environment, see above); elsewhere it is skipped. To refresh a SESAM fixture see
+`DRAMA Sphere Experiments/tests/fixtures/README.md`.
 
 The `spheral_frag` tests marked `fe_flight` run only when `SPHERAL_FRAG_FE_RUN` and `SPHERAL_FRAG_FE_PACKAGE` name the
 M1 flight and its package (see "Large fragments" above); those marked `spheral` only when the Spheral container

@@ -19,8 +19,8 @@ objects.xml
 # harness-managed git worktrees
 .claude/worktrees/
 
-# physics-model outputs (histories, comparison plots)
-reentry_model_output/
+# physics-model outputs (histories, comparison plots, cached meshes, verification runs)
+Reentry Model/output/
 
 # one-off ground-track plot for NORAD 62878 (scratch, unrelated to the re-entry model)
 plot_groundtrack_62878.py
@@ -29,24 +29,28 @@ groundtrack_norad62878.png
 # Step 3 prototype, the plan generator it feeds and the throwaway work copy of each amendment (moved in from
 # the session scratchpad on 2026-09-26, which had pruned them twice). Their code is version-controlled since
 # 2026-10-08; their run outputs are not -- tens to hundreds of MB per work copy, every one re-made from the
-# tracked code and the command lines in its logs and in the sub-plans. See prototype/README.md.
-# (reentry_model_output/ and __pycache__/ above already cover the cached meshes and bytecode in each copy.)
-prototype/**/runs/
-prototype/**/runs_*/
-prototype/**/recheck/
-prototype/**/vtk/
-prototype/**/*.npz
-prototype/**/*.vtu
-prototype/**/*.vtp
-prototype/**/*.pvd
-prototype/**/*.png
-prototype/**/*.mp4
-prototype/**/*.gif
-prototype/work-2026-10-07-scheil-default/debug/run00625/
-prototype/work-2026-10-08-skin/bitid/d*/
-prototype/work-2026-10-08-skin/probe_freeze/run_dt05/
+# tracked code and the command lines in its logs and in the sub-plans. See Reentry Model/prototype/README.md.
+# (reentry_model_output/ and __pycache__/ below cover the cached meshes and bytecode in each copy.)
+Reentry Model/prototype/**/runs/
+Reentry Model/prototype/**/runs_*/
+Reentry Model/prototype/**/recheck/
+Reentry Model/prototype/**/vtk/
+Reentry Model/prototype/**/*.npz
+Reentry Model/prototype/**/*.vtu
+Reentry Model/prototype/**/*.vtp
+Reentry Model/prototype/**/*.pvd
+Reentry Model/prototype/**/*.png
+Reentry Model/prototype/**/*.mp4
+Reentry Model/prototype/**/*.gif
+Reentry Model/prototype/work-2026-10-07-scheil-default/debug/run00625/
+Reentry Model/prototype/work-2026-10-08-skin/bitid/d*/
+Reentry Model/prototype/work-2026-10-08-skin/probe_freeze/run_*/
 # a git repository of its own (a session's working copy): git cannot track the files inside it
-prototype/work-2026-10-08-skin/code/
+Reentry Model/prototype/work-2026-10-08-skin/code/
+Reentry Model/prototype/work-2026-10-12-moving-mesh/code/
 
 # Spheral container outputs (build logs, regression and benchmark runs)
 spheral_output/
+
+# a prototype work copy's own outputs, whatever their folder name, re-made from its tracked code
+Reentry Model/**/reentry_model_output/
