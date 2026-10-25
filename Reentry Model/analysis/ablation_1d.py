@@ -13,8 +13,15 @@ its own density), so heat crosses the swollen thickness as it does in a skin -- 
 swelling; `nonrigid` swells only the cells at or above T_rigid, the metal the skins hold above a 3D model of one
 density. Lengths are reported as solid metal (cells times `cell`).
 
+`--remove-at liquidus` (sub-plan 21 Task 8, 2026-10-24): the front cells leave at or above the liquidus (908 K) instead
+of T_feed (910 K), as sub-plan 21 Task 7's release from the top cells takes the liquid. Stage 2's T_feed keeps a liquid
+layer on the front across which the last 2 K fall, about 2 K k_l / q thick (0.03 mm at 6 MW/m2, 0.09 mm at 2 MW/m2),
+and the slab's melting starts that much later: at the liquidus the cold plate's slab recedes 0.048, 0.060 and 0.079 mm
+further by 1.0, 1.5 and 2.0 s (6.1, 2.2 and 1.5 %) and the hot plate's 0.139, 0.149 and 0.158 mm (17.6, 8.2 and 5.4 %),
+its non-rigid depth 0.13-0.14 mm (9 %) thinner (1 um, 0.5 ms).
+
     python analysis/ablation_1d.py [--cell-um 1] [--dt-ms 0.5] [--q 6e6] [--t0 700] [--length-mm 8] [--t-end 2]
-                                   [--swell off|all|nonrigid] [--out PATH]
+                                   [--swell off|all|nonrigid] [--remove-at feed|liquidus] [--out PATH]
 """
 import argparse
 import json
@@ -29,6 +36,7 @@ from reentry_model import material  # noqa: E402
 
 
 SWELL_MODES = ("off", "all", "nonrigid")
+REMOVE_AT = ("feed", "liquidus")      # the front cells leave at or above T_feed (stage 2's) or the liquidus (Task 7's)
 
 
 def thickness(mat, T, cell, swell):
@@ -40,11 +48,16 @@ def thickness(mat, T, cell, swell):
     return dz if swell == "all" else np.where(T >= mat.T_rigid, dz, cell)
 
 
-def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05, swell="off"):
+def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0, every=0.05, swell="off",
+        remove_at="feed"):
     """Recession [m] of the slab's front and its non-rigid depth [m] (front to T_rigid), both as solid metal, at
-    multiples of `every` [s], as (times, recession, non-rigid depth) arrays."""
+    multiples of `every` [s], as (times, recession, non-rigid depth) arrays; the front cells leave at or above T_feed or,
+    with `remove_at` "liquidus", the liquidus."""
     if swell not in SWELL_MODES:
         raise ValueError("swell must be one of {}, got {!r}".format(SWELL_MODES, swell))
+    if remove_at not in REMOVE_AT:
+        raise ValueError("remove_at must be one of {}, got {!r}".format(REMOVE_AT, remove_at))
+    T_remove = mat.T_feed if remove_at == "feed" else mat.T_liquidus
     n = int(round(length / cell))
     T = np.full(n, T0)
     front = 0                                            # index of the first cell still in the slab
@@ -80,7 +93,7 @@ def run(mat, q=6.0e6, T0=700.0, length=8.0e-3, cell=1.0e-6, dt=5.0e-4, t_end=2.0
         else:
             raise RuntimeError("the 1D reference did not converge at step {}".format(step))
         T[front:] = Tk
-        liquid = np.cumprod(Tk >= mat.T_feed)
+        liquid = np.cumprod(Tk >= T_remove)
         front += int(liquid.sum())
         if step % record == 0:
             times.append(step * dt)
@@ -99,12 +112,14 @@ def main():
     p.add_argument("--length-mm", type=float, default=8.0)
     p.add_argument("--t-end", type=float, default=2.0)
     p.add_argument("--swell", choices=SWELL_MODES, default="off")
+    p.add_argument("--remove-at", choices=REMOVE_AT, default="feed")
     p.add_argument("--out", default="ablation_1d.json")
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
-    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end, swell=a.swell)
+    t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end, swell=a.swell,
+                   remove_at=a.remove_at)
     doc = {"q_Wm2": a.q, "T0_K": a.t0, "length_mm": a.length_mm, "cell_um": a.cell_um, "dt_ms": a.dt_ms, "swell": a.swell,
-           "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
+           "remove_at": a.remove_at, "material": mat.name, "t_s": [round(x, 6) for x in t.tolist()],
            "recession_mm": [round(x, 6) for x in (r * 1e3).tolist()], "nonrigid_mm": [round(x, 6) for x in (nr * 1e3).tolist()]}
     json.dump(doc, open(a.out, "w"), indent=0)
     for t_ in (1.0, 1.5, 2.0):

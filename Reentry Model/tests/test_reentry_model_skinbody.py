@@ -528,3 +528,95 @@ def test_a_skin_body_with_a_prescribed_release_keeps_its_books_and_reports_the_d
     assert stats["droplet_momentum_ratio"] == Pi > 0.0 and stats["droplet_momentum_flagged"] == flagged
     off = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1)
     assert off.skin_stats()["droplet_momentum_ratio"] == 0.0 and off.skin_stats()["released_mass_kg"] == 0.0
+
+
+# -- level 2 with the flow on: the plate (sub-plan 21 Task 8) -----------------------------------------------------------
+def skin_plate_module():
+    import os
+    import sys
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "analysis")
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import skin_plate
+    return skin_plate
+
+
+# a reduced plate for the unit tier: 24 mm across, heated within 7 mm of its centre, the flux gone at 10 mm; 2 mm
+# elements and no fine band (box_mesh is structured: no meshing), the skins' development cells
+SMALL_PLATE = dict(verbose=False, width=24e-3, r_flat=7e-3, r_zero=10e-3, fine=None)
+
+
+def test_the_plate_with_the_flow_off_is_sub_plan_20_s_plate():
+    """`analysis/skin_plate.py` with the flow off builds and steps the plate as sub-plan 20's script did, so its level-2
+    results stand: a reduced plate from 880 K under 6 MW/m2 for two 0.1 s steps, which melts, removes liquid and hands
+    metal down, is the body built and advanced by hand to the last bit (numpy's generator seeded: pyamg draws from it).
+    Sub-plan 20's script itself, run on the planning copy's package, gives Task 8's every array and history column to the
+    last bit on such a plate over three steps (measured 2026-10-24, measure/task8/bitid_flowoff.py). A push, a release or
+    a flow sub-step count with the flow off is refused."""
+    sp_ = skin_plate_module()
+    np.random.seed(12345)
+    body, rows, _, failure = sp_.run(dt=0.1, t_end=0.2, T_start=880.0, q0=6e6, **SMALL_PLATE)
+    np.random.seed(12345)
+    mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
+    m = mesh.box_mesh(sp_.LENGTH, 24e-3, 24e-3, 2e-3)
+    m.points[:, 1:] -= 12e-3
+    hand = skinbody.SkinBody(m, mat, thermal_solver("skfem"), mat.rho * m.volume(),
+                             skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], swell=False), T0=880.0, emissivity=0.0,
+                             v_hat=(-1.0, 0.0, 0.0), deform_depth=4e-3, repeat_rule=skinbody.DEFAULT_REPEAT_RULE)
+    p = hand._top0
+    radius = np.where(np.abs(p[:, 0]) < 0.05e-3, np.hypot(p[:, 1], p[:, 2]), np.inf)
+    for k in range(2):
+        q = sp_.projected_flux(hand, radius, 7e-3, 10e-3, 6e6)
+        hand.advance(0.1 * (k + 1), 0.1, heating.HeatingResult(q, 6e6, 0.0, 0.0, 0.0))
+    assert failure is None and body.removed_mass > 0.0 and same_body(body, hand)
+    for kw in ({"push": sp_.PUSHES["flight"]}, {"release": 1.0}, {"flow_cycles": 2}):
+        with pytest.raises(ValueError):
+            sp_.run(t_end=0.0, **SMALL_PLATE, **kw)
+
+
+def test_a_plate_pushed_along_its_face_closes_its_books_and_its_metal_runs_the_way_the_push_points():
+    """Spec 11.1's level 2 with the flow on: the reduced plate from 880 K under 6 MW/m2 for two 0.1 s steps, its face a
+    patch of the 100 mm sphere's shoulder 45 degrees from the stagnation point at 93 s (`skin_plate.PUSHES['flight']`:
+    dp/ds -3.42e5 Pa/m and 80 Pa of shear down the face's meridian, -y, and 29.8 m/s2 of deceleration along the tilted
+    flight direction), the flow sub-steps chosen, the liquid kept. The books close to round-off -- the mass to 1e-13, the
+    energy to 1e-8 of the heat absorbed, the momentum to 1e-12 of the impulses -- and the metal runs down the face: on the
+    face the columns downstream of the heat (y < 0) gain more than a hundred times what those upstream do, and the face's
+    volume flux points within 10 degrees of -y. Measured 2026-10-24 (measure/task8/measure_tests.py): mass 2.2e-16,
+    energy 1.3e-12, momentum 3.1e-17 (4.7e-17 in a second run: pyamg's starting vectors are not seeded here); gained
+    downstream 3.3e-5 kg, upstream 7.2e-8 kg (464 times); the face's flux 5.0 degrees from -y (on the plate's crater
+    wall the face's columns tilt), the fastest cell 2.4 m/s, 10 and 4 flow sub-steps a heat sub-step at most. On this
+    plate the runoff reaches the edge 2 mm beyond the heat within the first step and runs over it: with the side's
+    columns the whole flux is 19 degrees from -y."""
+    sp_ = skin_plate_module()
+    body, rows, _, failure, records = sp_.run(dt=0.1, t_end=0.2, T_start=880.0, q0=6e6, flow=True,
+                                              push=sp_.PUSHES["flight"], record=True, **SMALL_PLATE)
+    assert failure is None and body.flow_on and body.removed_mass == 0.0 and body.released_mass == 0.0
+    assert max(abs(x["mass_error"]) for x in rows) < 1e-13
+    assert max(abs(x["energy_residual"]) for x in rows) < 1e-8
+    assert max(x["momentum_residual"] for x in rows) < 1e-12 and body.impulse_size > 0.0
+    face = sp_.face_columns(body)
+    y = body._top0[:, 1]
+    gained = np.maximum(records[-1]["mass"] - records[0]["mass"], 0.0)
+    assert gained[face & (y < 0.0)].sum() > 100.0 * gained[face & (y > 0.0)].sum() > 0.0
+    flux = records[-1]["flux"][face].sum(axis=0)
+    assert -flux[1] / np.linalg.norm(flux) > np.cos(np.radians(10.0))
+    assert rows[-1]["speed_max_ms"] > 0.0 and rows[-1]["flow_cycles_max"] >= 1
+
+
+def test_a_plate_with_the_flow_on_and_nothing_flowing_is_the_flow_off_plate():
+    """With no push and no metal above T_rigid -- the reduced plate from 700 K under 1 MW/m2 for two 0.1 s steps -- the
+    flow-on plate is the flow-off plate to the last bit (numpy's generator seeded): no cell flows, so no flow sub-step
+    is taken, nothing moves and nothing is released. Once the top turns to slurry the two part, even with no push and
+    nothing liquid: surface tension acts where a top flows (6b's ruling) and moves the slurry wherever the tops' heights
+    differ -- on the plate where the draws and hand-downs have left neighbouring columns a little apart -- so that
+    starting at 880 K under 2 MW/m2, 45 tops of slurry and none liquid, the flow-on plate's skins differ from the
+    flow-off plate's by 6.8e-7 of their largest thickness after 0.2 s and its 3D field by 6.3e-4 K, at speeds of at most
+    1.6e-5 m/s (measured 2026-10-24, measure/task8/measure_tests.py)."""
+    sp_ = skin_plate_module()
+    bodies = []
+    for flow in (False, True):
+        np.random.seed(12345)
+        bodies.append(sp_.run(dt=0.1, t_end=0.2, T_start=700.0, q0=1e6, flow=flow, **SMALL_PLATE)[0])
+    off, on = bodies
+    assert on.flow_on and same_body(off, on) and np.all(on.skins.T[on.skins.valid] < on.material.T_rigid)
+    assert on.skin_stats()["speed_max_ms"] == 0.0 and on.momentum_residual() == 0.0
