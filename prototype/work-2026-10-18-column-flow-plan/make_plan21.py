@@ -57,6 +57,10 @@ TASKS = (
          ("DIFF_TEST_SKINBODY_T7", "tests/test_reentry_model_skinbody.py"),
          ("DIFF_SKIN_T7", "reentry_model/skin.py"), ("DIFF_SKINBODY_T7", "reentry_model/skinbody.py"),
          ("DIFF_COUPLED_T7", "reentry_model/coupled.py"))),
+    (8, (("DIFF_TEST_SKINBODY_T8", "tests/test_reentry_model_skinbody.py"),
+         ("TEST_FLOW_WAVELENGTHS_T8", "tests/test_flow_wavelengths.py"),
+         ("DIFF_SKIN_PLATE_T8", "analysis/skin_plate.py"), ("DIFF_ABLATION_1D_T8", "analysis/ablation_1d.py"),
+         ("FLOW_WAVELENGTHS_T8", "analysis/flow_wavelengths.py"))),
 )
 
 

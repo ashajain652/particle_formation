@@ -2,9 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level so far: Tasks 1–5, 6a, 6b, 6c, 6d and 7
-> (2026-10-18/24).** Task 8 is still the scoped outline at the end; it is written out with tested code the same way,
-> and this document regenerated.
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1–5, 6a, 6b, 6c, 6d, 7 and 8
+> (2026-10-18/24).** Task 9, the base where runoff lands (Asha, 2026-10-25), is outlined at the end and not yet
+> written. The outline points to the tasks, and the inputs it listed are settled, each where it says.
+> Task 8's coupled pushed plate ran to 1.0 s, not 2.0 s (its ruling 8: about 6.5 hours alone to 2.0 s).
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -126,7 +127,10 @@ regenerate.
     6d). Watch `flow_cycles_max` at 40 (the Courant number then above its target: `flow_courant_max`) and
     `flow_passes_max` at 8: the thickness step's linearisations at their cap marked the unstable 10 ms runs and reached
     it at 1.5 and 2 ms. A flow that speeds up within a heat sub-step takes one heat sub-step beyond the target before
-    the count follows; the first from rest takes 6c's ten.
+    the count follows; the first from rest takes 6c's ten. On Task 8's pushed plate (45 um of liquid at 3-4 m/s running
+    onto cold metal) the chosen count, at Courant 5.9, leaves where the metal went in 50 ms 25 % (L1) off the 0.25 ms
+    run's and its kinetic energy 9 % high, against 2.5 % and 5 % on 6d's sphere: two thirds of it the deposit's coasting
+    front (Review Focus 13), 13.7 of 338 mg landing 10-35 mm further; 11 % at 0.5 ms flow sub-steps.
 15. **The flow's cost** — 6c: a heat sub-step on the heated melting state cost 48 s (54–59 s re-measured beside 6d under
     load), ten flow sub-steps each about as much as its conduction, the transport three fifths. 6d: 43 s at ten flow
     sub-steps and 30–33 s at the nine the adaptive count chose, the transport under half; one flow sub-step 3.7 s
@@ -134,7 +138,12 @@ regenerate.
     and the iteration of a 1 700-cell cycle cancelling the momentum step's saving. A melting part's trial and real
     passes took 124 and 115 s against 6c's 1 113 and 924 s on the heated state, 14 s without the flow: the flow, not the
     trial pass, is the cost, about an hour a melting macro step. The momentum step still runs Task 4's five shear-rate
-    passes in a heated state (Review Focus 18).
+    passes in a heated state (Review Focus 18). Task 8, on the level-2 plate 170 mm across (16 500 columns) alone: a
+    10 ms skin sub-step of the pushed skins 6.7 s with the flow (five flow sub-steps) against 3.5 s without, the
+    transport a third of the flow; the trial pass the same. A flow sub-step costs about 0.25 s there however few cells
+    flow. The regression's melting macro steps, the liquid released as it forms, cost a quarter to two thirds more than
+    the flow-off plate's (under load); the pushed plate's first melting macro step took 5 229 s alone, for Review Focus
+    17 and 24.
 16. **The transport's iterative solve** — stops at a normwise backward error of 1e-13 or after 40 corrections, then
     takes the LU; every cell is installed from the solve's fluxes, so the books do not depend on the tolerance and the
     masses stay positive at any (the iterates rise to the masses from below). Pinned by
@@ -147,7 +156,13 @@ regenerate.
     the skins' memory of the flow is part of their state (`Skins.state()` has seven arrays since 6d; code that unpacks
     six must take the first six). Pinned by
     `test_the_real_pass_takes_the_trial_pass_s_counts_and_the_memory_is_part_of_the_skins_state` and
-    `test_a_skin_body_s_flow_takes_the_counts_each_trial_pass_chose_in_its_real_pass` (Task 6d).
+    `test_a_skin_body_s_flow_takes_the_counts_each_trial_pass_chose_in_its_real_pass` (Task 6d). Found in Task 8: the
+    trial pass holds its base at the start-of-step temperature, so at a melting onset it can melt less and flow slower
+    than its real pass, which then runs at the trial's counts above the Courant target -- one flow sub-step a skin
+    sub-step at Courant 18.8 on the pushed plate's third melting part, where 12.6 put the runoff 16 % off on 6d's
+    sphere; and a real pass whose cells flow only because its base was held at the 3D model's first answer replays the
+    ten its trial pass chose with no memory, 380 flow sub-steps in which nothing moved, 96 s of a 124 s pass. Counts
+    taken from the real pass's own memory where it exceeds the target would end both; Task 9 (Asha, 2026-10-25).
 18. **Task 4's shear-rate fixed point** — five passes wherever bridge or slurry cells carry a stress on the falling
     branch of Li et al.'s flow curve (between its maximum at about 228 1/s and the 367 1/s at which the law is held):
     there the fixed point has an unstable middle root and drifts away from it, 1.1–1.8 times a pass, to the held rate or
@@ -164,6 +179,41 @@ regenerate.
     taken over the sheared tops, so a release there (Girin's modes release only windward) is in neither, and the
     history's Pi measures a developing layer below its steady speed early in melting. Pinned by
     `test_the_droplet_momentum_ratio_is_fact_29_s_v_melt_delta_over_nu_on_a_sheared_layer` (Task 7).
+21. **Runoff over cold metal freezes only at the skin sub-step's conduction** — the flow sub-steps conduct no heat, so
+    liquid landing on cold rigid metal stays liquid and flows on until the next conduction. On Task 8's pushed plate a
+    film of 10-20 um moves at 0.6-1.2 m/s on a rigid top, 6-12 mm in a 10 ms skin sub-step, where it would really freeze
+    within some 0.03 ms: with 10 ms skin sub-steps 11 % of the deposit lands 5-10 mm further than with 5 or 2.5 ms, which
+    agree. Not pinned by a test; on the sphere's rigid rear the deposits would spread that much further than physics does.
+    Task 9 (Asha, 2026-10-25).
+22. **The release's threshold against stage 2's** — Task 7's release takes liquid at the liquidus, 908 K, stage 2's
+    removal at T_feed, 910 K, which keeps a liquid layer about 2 K k_l / q thick on the front: the plates' exact recession
+    moves by 1.5-6.1 % (cold) and 5.4-17.6 % (hot), the hot plate's non-rigid depth by 9 %. Level 2's regression with
+    the flow on is therefore judged against references with the liquid leaving at the liquidus (`skin_plate.references`,
+    `ablation_1d.py --remove-at liquidus`), and meets them as the flow-off plate meets stage 2's (Task 8, item 3).
+    Pinned by the references' values in `analysis/skin_plate.py`; the regression itself is an analysis run.
+23. **The depth-uniform pressure at short wavelengths** (spec 14 assumption 1) — measured in Task 8
+    (`analysis/flow_wavelengths.py`): the share of the flowing layers' volume flux at kh > 0.56 is about 1 % or less on
+    the element model's 1.2 mm layers at 105 s and of order a quarter (5-36 % over the first 0.1 s, 78 % at 0.4 s of a
+    flux six times smaller) on its 3.4 mm slurry layers at 120 s, where the columns' rates are on average 5-8 % too fast
+    at 0.1 s by the spec's inertial factor and 94-201 % by the viscous factor the slurry obeys; on states built from the
+    element model's mean depths, moved by flow alone. Whether that is significant, and so whether a further task replaces
+    the depth-uniform pressure by a non-hydrostatic one on the cells (Asha, 2026-10-22), is decided once sub-plan 22 has
+    measured the share again on the flow-on flight's own states (Asha, 2026-10-25, option a). The measure's definition is pinned by
+    `test_a_single_sinusoid_on_a_flat_layer_has_the_share_and_excess_of_its_own_wavenumber` and
+    `test_the_share_of_two_waves_is_the_short_one_s_power_over_both_and_a_vector_field_counts_every_component`.
+24. **Runoff deposits and the part cap** — deposits make skins thicker than their minimum, their rigid bottoms are
+    handed down and the bases move, so a melting part of 0.0625 s can be rejected for its moves after its damped passes
+    (fact 126's cost, which the part cap removed): on the coupled pushed plate every part from the fifth was rejected
+    after 5-7 passes, run again as three, each of those rejected and run again as two of 0.0104 s, 880-950 s of processor
+    time for each 0.0625 s of melting against about 90 s, and its first melting macro step took 5 229 s alone (Task 8,
+    item 6). Not pinned; the history's `step_parts` and the interface repeats show it. Task 9 (Asha, 2026-10-25).
+25. **Base faults where runoff deposits** — on the coupled pushed plate 1 761 base faults in its first melting macro
+    step and 90 columns around the heat's downstream rim and the deposit with a bottom cell 5-400 K above its base node,
+    up to 1 253 K, none on the flow-off or released plates and none on the pushed skins alone: the base's reconciliation
+    (spec 6.6) putting the move's sweep less the skins' exchange into small bottom cells of columns handing deposits down
+    beside columns drawing -- spec 12's buried superheated cells back (assumed from the books, not traced). The energy
+    books still close (6.5e-11). Not pinned; for the base's own design to answer before a flow-on flight: Task 9 (Asha,
+    2026-10-25, option a, over leaving it to sub-plan 22).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -1756,7 +1806,420 @@ git commit -m "Skins: the droplet momentum sink at the top cells, the placeholde
 
 ---
 
-## Tasks still in outline (to be written in full)
+### Task 8: Verification — level 2's plate with the flow on, the flow's cost, and the share of the flow at short wavelengths
+
+**Files:**
+- Modify: `analysis/skin_plate.py` (`PUSH_ALPHA`, `PUSHES`, `RELEASES`, `FACE_TILT`, `REFERENCE_1D_LIQUIDUS`,
+  `HOT_LIQUIDUS`; `references`, `inclined`, `face_columns`, `plate_forcing`, `column_record`, `save_state`;
+  `run(..., flow, push, release, flow_cycles, record, save_at, save_path)`; `--flow`, `--push`, `--release`,
+  `--flow-cycles`, `--columns`, `--save-state`; the history's flow columns), `analysis/ablation_1d.py` (`REMOVE_AT`,
+  `run(..., remove_at)`, `--remove-at`)
+- Create: `analysis/flow_wavelengths.py`
+- Test: `tests/test_reentry_model_skinbody.py` (three tests), `tests/test_flow_wavelengths.py` (new, five tests)
+
+**Interfaces:**
+- Consumes: 6c's `SkinBody(..., flow, flow_cycles)`, `FlowForcing`, `advance(..., forcing)`, `momentum_residual` and the
+  history's flow columns; 6d's chosen counts; Task 7's `prescribed_release` and `SkinBody(..., release)`; Task 5's
+  `along_meridian`; sub-plan 20's plate (`run`, `projected_flux`, `solid_top`, its references); `Columns.edges`,
+  `.conduct_weight`, `.area`.
+- Produces: `skin_plate.run(..., flow=False, push=None, release=None, flow_cycles=None, record=False, save_at=None,
+  save_path=None)` -> (body, rows, centre columns, failure[, records]), refusing a push, a release or a count with the
+  flow off; `skin_plate.PUSHES` ({"none": None, "flight": (45.0, -3.424e5, 80.29, 29.77)}: deg, Pa/m, Pa, m/s2),
+  `RELEASES` ({"none": None, "all": 1e9} kg/(m2 s)), `PUSH_ALPHA` (45), `FACE_TILT` (5 deg); `inclined(alpha_deg) ->
+  (3,)`, `face_columns(body) -> (n,) bool`, `plate_forcing(body, face, push) -> FlowForcing`, `column_record(body) ->
+  dict` (mass, thickness, top, T_top, flowing, liquid, top_speed, flux), `save_state(path, body, q)`, `references(case,
+  at_liquidus=False)`, `REFERENCE_1D_LIQUIDUS`, `HOT_LIQUIDUS`; `ablation_1d.run(..., remove_at="feed")`, `REMOVE_AT`;
+  `flow_wavelengths.wavelength_share(columns, field, depth, region=None, kh_short=KH_SHORT, basis=None) -> dict` (share,
+  inertial, viscous, and per mode k, h, kh, power), `modes(columns, region=None) -> (k, phi, idx)`,
+  `inertial_factor(kh)`, `viscous_factor(kh)`, `column_flux(sk)`, `kh_at(factor, target)`, `KH_SHORT` (0.56), `THICK`
+  (1 mm).
+
+Spec 11.1's level 2 ends: "With flow on and a push along the face: mass, momentum and energy close exactly and the
+result is physically sensible (no exact reference exists)." This task runs sub-plan 20's plate with the flow on
+(`analysis/skin_plate.py --flow on`), measures the flow's cost there, and measures the share of the flight's flow at
+wavelengths where the depth-uniform pressure is not exact (spec 14 assumption 1; Asha, 2026-10-21, option a). Nothing in
+`reentry_model/` changes. Measured 2026-10-24 in `prototype/work-2026-10-18-column-flow/measure/task8/`, each run under
+`caffeinate -i` with its power source logged. Until 18:29 the laptop was on mains power and the plates ran three to five
+side by side with the short-wave segments (load averages 5-9 on its eight cores: their wall times are under load); from
+18:29 to about 20:10 it was on battery power, when the first coupled run of the pushed plate was stopped and the pushed
+plate was measured on its skins alone, each run under 30 minutes and alone (item 2; the cost split, item 6); back on mains
+power the coupled pushed plate ran alone to 1.0 s (22:11-23:48, detached from the session after a session's exit had
+killed an earlier attempt 1 h 33 min in).
+
+**1. The push along the face.** On the plate the flight direction is the face's normal, (-1, 0, 0), so
+`along_meridian` gives no direction on the face: neither the wall pressure's gradient nor the gas shear can push along
+it, and the deceleration pulls straight out of it. What the flight direction feeds in the skin body was checked: the
+surface flow's angles (`theta`, read only by `flow_forcing`, which a given forcing bypasses), the stagnation and rear
+patches of the surface statistics (not read by the plate), the shear's and the pressure term's directions in every
+column's plane and the deceleration (`FlowForcing.g`); the plate's heating is its own projected flux. So the push tilts
+the flight direction: the face becomes a patch of the 100 mm sphere's shoulder `PUSH_ALPHA` = 45 degrees from the
+stagnation point (`inclined`: v_hat = (-cos 45, sin 45, 0), the stagnation point off the plate toward +y, the face's
+meridian running to -y), and every column of the face (`face_columns`: corner at x = 0, normal within 5 degrees of the
+face's; the edges' columns, leaning 45 degrees, are no part of a shoulder) takes the surface flow of that point at 93 s
+of the 100 mm flight (`measure/task8/forcing45.py`): dp/ds = -3.42e5 Pa/m and 80.3 Pa of gas shear down the meridian,
+and the deceleration of 29.8 m/s2 along the tilted flight direction -- 21.1 m/s2 out of the face (the front face's
+Rayleigh-Taylor pull, the thickness term) and 21.1 m/s2 along it toward the nose, which with the liquid's 2 400 kg/m3
+takes 5.1e4 Pa/m off the gas's push: a net 2.9e5 Pa/m down the face. Flight-like by construction: 45 degrees is where
+6c's forcing has its largest pressure gradient (3.4e5 Pa/m between 44 and 46.5 degrees; the shear is largest, 87 Pa, at
+49 degrees); at 115 s the same point has 5.5e5 Pa/m and 95 Pa. A forcing built directly -- g laid along the face, say --
+would have exercised none of the meridian's geometry the flight uses.
+
+**2. The plate pushed along its face.** The pushed level-2 plate (cold, 6 MW/m2, the skins' own density law) runs on a
+plate 170 mm across instead of 110 (`--width-mm 170`; ruling): runoff leaving the heat freezes only where the next
+conduction catches it, and the 110 mm plate has 10 mm of cold face beyond the heat -- on a reduced plate with 2 mm the
+runoff reached the edge in the first step and ran over it (the unit test's plate). The coupled run, every pass logged
+(`measure/task8/run_logged.py`; `runs/push_w170_to1`, 15 812 columns), ran to 1.0 s alone in 5 747 s (ruling 8: to 2.0 s
+it would take about 6.5 hours, item 6), so it covers the first 0.3-0.4 s of melting. Its books close: mass to 4.4e-16,
+energy to 6.5e-11 of the heat absorbed (two rebuilds), momentum to 1.2e-17 of the impulses. At 1.0 s, against the flow-off
+plate of the same width at 1.0 s (`runs/off_w170_to1`), the face's columns downstream of the heat gained 0.22 g more and
+those upstream 0.02 g (12 times less); the face's flux, 0.16 m3/s, points 2.2 degrees from -y; the liquid on 437 face
+columns (33-83 um deep, median 54 um, viscous time 5.5 ms) has its top cell at 0.75 of the Couette-Poiseuille speed
+above its base cell (10th-90th percentile 0.65-0.83); a deposit 60, 54 and 27 um thick on average 0-5, 5-10 and 10-15 mm
+past the heat (within 20 mm of the centre line), none 15-35 mm past it, 136 of its 550 tops still above T_rigid; the
+fastest cell 4.8 m/s, Courant numbers to 9.2 (the real passes at their trial passes' counts, item 6), growth at most
+3.2e-4; the roughness 0.061, at the deposit; the grid scale's share of the face's thickness variance 7.4e-4; off the face
+nothing moves and nothing is above T_rigid -- the columns there differ from the flow-off plate's only by their base
+exchange (0.58 g, mostly at the box's far corners, 24 um on the face's own edge row 40 mm past the heat with no deposit
+between). The centre recedes 0.795 mm (0.857 mm with the flow off; the push carries the liquid off). *One check fails*:
+the history counts 1 761 base faults in the macro step from 0.5 to 1.0 s, none before and none on the flow-off and
+regression plates: at 1.0 s 90 columns of the face around the heat's downstream rim and the deposit (39-61 mm from the
+centre, y = -21 to -61 mm) have a bottom cell 5 to 400 K above its base node -- up to 1 253 K, which no heat reaches --
+their masses from 6 % below to 5 % above their minimum. The
+skins alone (below) have no cell above 910 K, so it is the coupling: the reconciliation at the base, which puts what the
+move swept less what the skins exchanged into the bottom cell (spec 6.6), here into the small bottom cells of columns
+whose deposits are being handed down while their neighbours draw -- the buried superheated cells of spec 12, which
+absorption keeping up had removed, back where runoff deposits (assumed from the books, not traced cell by cell; Review
+Focus 25). The pushed plate's physics over a longer push were measured on the plate's own skins
+(`measure/task8/plate_skins.py`): the 170 mm plate with the flow off to 1.0 s (19 min alone; its centre
+0.857 mm receded, 0.39 mm of slurry under the heat), its skins, columns, heating, base temperatures and the 3D gradient
+kept (`--save-state 1.0`), then pushed for 0.2 s by `skin.advance`'s real pass in 10 ms parts with the base held at its
+temperatures, the conduction on, the flow sub-steps chosen. Over those 0.2 s the books of the skins alone close to
+round-off: mass to 3.5e-16 of the skins' (4.47 g drawn from below as the melted metal ran off), energy to 1.4e-15 of
+the heat taken in, momentum to 4.4e-18 of the impulses' size. On the coupled body the books with the flow on are the
+regression's (item 3: mass to 2.2e-16, energy 5.2e-13, momentum 1.3e-16 over 2 s), the reduced pushed plate's (the
+unit test: 2.2e-16, 1.3e-12, 3.1e-17) and the pushed plate's above.
+
+*Physically sensible* (`measure/task8/analyse_states.py`, `grid_roughness.py`; thresholds a ruling). After 0.2 s of
+push:
+- *the runoff goes the way the push points*: the face's columns downstream of the heat (y < 0) gained 4.37 g, those
+  upstream 0.04 g (108 times less), and the face's volume flux, 9.3e-2 m3/s, points 0.8 degrees from -y (thresholds:
+  ten times, 10 degrees);
+- *the liquid's speed is the Couette-Poiseuille profile's*: on the 115 face columns holding at least three liquid
+  cells (liquid 32-60 um deep, median 45 um, its viscous time h^2 / nu 3.7 ms, so near steady within a 10 ms heat
+  sub-step), the top cell's speed over the liquid's base cell's, along the push, is 0.78 of tau h / mu + G h^2 / (2 mu)
+  between their centres (10th-90th percentile 0.70-0.84; G = 2.93e5 Pa/m) -- the top at a median 3.4 m/s against 3.8.
+  The 22 % short of steady is the transport's own loss of the kinetic energy it carries, 27-30 % at Courant numbers near
+  6 (6c, 6d) (threshold: within 30 %);
+- *metal leaving the heat freezes where it lands on cold metal*: the liquid reaches 2 mm past the heat's end (y = -47
+  mm), and the deposit beyond it is a ridge 1.5 mm thick on average 0-5 mm past the heat, 0.7 mm at 5-10 mm, 0.14 mm at
+  10-15 mm and 20 um at 15-20 mm, ending 18 mm past the heat (gain above 1 % of its largest), 108 of its 2 560 tops still
+  above T_rigid (the bands within 20 mm of the centre line). Where the speed and the freezing time say: the deposit's
+  thin leading edge, some 10-20 um of liquid on a rigid top, moves at about tau h / mu, 0.6-1.2 m/s, until the next
+  conduction freezes it -- 6-12 mm in a 10 ms heat sub-step -- while such a film on 700 K metal would freeze in some
+  0.03 ms (estimated, d^2 / alpha (L / c dT)^2). The heat sub-step sets it (item 4):
+  halving it to 5 ms moves 11 % of the deposit 5-10 mm back toward the heat, and 2.5 ms changes nothing more;
+- *no growth of grid-scale roughness*: the roughness history column rises from 0.018 to 0.63 at y = -49 mm -- the
+  ridge's flank, a thickness of 2.5 mm over a few columns -- while the share of the face's thickness variance at the
+  grid's shortest wavelengths (k above 0.8 of the largest, under about 5 mm) stays 0.14-0.16 % between 0.2 and 0.25 s
+  as the whole field's rms grows from 0.39 to 0.50 mm: the grid scale grows with the ridge, not by itself (threshold:
+  that share below 1 % and not growing against the rest);
+- *nothing at the plate's edges*: the columns off the face gained 0.06 g in all, the largest 0.4 mg at a far corner of
+  the box, 119 mm from the face's centre (a column there drawing toward its minimum), their fastest top 3.6e-7 m/s, none above
+  T_rigid (threshold: no metal arriving, nothing moving).
+
+**3. The regression against the exact references.** With no push and a release taking the liquid as it forms
+(`--release all`: Task 7's `prescribed_release` at 1e9 kg/(m2 s), some 1e5 times what a column holds in a 1 ms flow
+sub-step), the flow-on plate is the flow-off plate's physics with the flow running: surface tension still acts where a
+top flows, and the release takes the liquid. It cannot take it as instant removal does: the release takes a cell at or
+above the liquidus, 908 K (Task 7's ruling 3), instant removal at T_feed, 910 K. Stage 2's T_feed keeps a liquid layer
+on the front across which the last 2 K fall, about 2 K k_l / q thick, and the melting starts that much later: the
+one-dimensional reference with its front cells removed at the liquidus (`ablation_1d.py --remove-at liquidus`, 1 um,
+0.5 ms) recedes further by 0.048, 0.060 and 0.079 mm at 1.0, 1.5 and 2.0 s on the cold plate (6.1, 2.2 and 1.5 %) and by
+0.139, 0.149 and 0.158 mm on the hot plate (17.6, 8.2 and 5.4 %), its non-rigid depth 0.13-0.14 mm (9 %) thinner --
+beyond level 2's 5 % on the hot plate at 1.5 and 2.0 s. So the regression is judged against the references with the
+liquid leaving at the liquidus (`references(case, at_liquidus=True)`): the one-dimensional reference so computed, and
+the fine box moved by the one-dimensional difference (it has no liquidus run of its own). Both plates at the flight's
+0.5 s macro step (where both pass with the flow off), the skins at the solid's density, development cells, the fine
+band, to 2.0 s:
+
+| Plate | 1.0 s (hot: onset, not judged) | 1.5 s | 2.0 s | Hot: flowing depth, base above T_rigid |
+|---|---|---|---|---|
+| cold, flow off, against T_feed's: 1D; fine box | +3.2 %; +1.2 % | +0.5 %; -0.2 % | -0.9 %; -0.6 % | |
+| cold, flow on and released, against the liquidus's: 1D; fine box | +2.4 %; +0.6 % | +0.3 %; -0.3 % | -0.8 %; -0.6 % | |
+| hot, flow off, against T_feed's | -9.0 % | -3.0 % | -1.1 % | within 1.1 %; at most 0.09 K |
+| hot, flow on and released, against the liquidus's | -6.4 % | -1.6 % | -1.1 % | within 1.2 %; at most 0.10 K |
+
+The table shows the flow-on plates meeting level 2 against the liquidus's references as closely as the flow-off
+plates meet it against stage 2's: every judged recession within 1.6 % (5 % allowed), the hot plate's flowing depth
+within 1.2 % of the exact non-rigid depth (10 %) and its base within 0.10 K of T_rigid (1 K); against stage 2's
+references the flow-on plates are 6.5 % ahead at 1.5 s (hot) and 8.7 % at 1.0 s (cold), the threshold's effect, not the
+flow's. The flow-off plates reproduce Task 1's level-2 numbers (fact 150) to the printed digit. Books with the flow on:
+mass to 2.2e-16, energy to 5.2e-13 (cold) and 2.5e-13 (hot), momentum to 1.4e-17 and 1.3e-16; no base fault; 49.5 g
+(cold) and 32.7 g (hot) released; the fastest cell 9 mm/s (cold) and 4.8 cm/s (hot, the slurry at the melt's rim,
+where the crater's curved top gives surface tension some 5 000 Pa/m, estimated). The momentum residual and the
+roughness are the history's: the roughness of the hot plate's rim, where the 1.5-2.0 mm skins end over the heat's
+taper, is 0.25, 0.38 and 0.45 at 1.0, 1.5 and 2.0 s with the flow on against 0.35, 0.47 and 0.60 with it off (measured
+from the column records over the grid's sides and diagonals, `measure/task8/roughness.py`): surface tension smooths the
+rim; on the cold plate both are the box corners' 0.007-0.013.
+
+**4. The flow sub-step and the heat sub-step** (6c's and 6d's study on the plate, `plate_skins.py substep`: 50 ms more
+from the pushed skins at 0.2 s, the conduction on, against the 0.25 ms run):
+
+| Flow sub-step | Largest Courant | Where the metal went, L1 / the finest run's change | Of it beyond the heat | KE at 50 ms / finest | Processor time |
+|---|---|---|---|---|---|
+| 0.25 ms (40) | 0.71 | -- | -- | 1 | 134 s |
+| 0.5 ms (20) | 1.43 | 0.112 | 0.087 | 0.997 | 77 s |
+| 1 ms (10) | 2.90 | 0.196 | 0.153 | 1.028 | 51 s |
+| chosen: 2 ms (5) | 5.91 | 0.254 | 0.171 | 1.090 | 35 s |
+
+The table shows the plate's runoff at the count the skins choose (Courant 5.9, at the target of 6; the growth at most
+3.7e-4 and one linearisation, so the Courant number sets the count) 25 % off the finest run's places in L1 and its
+kinetic energy 9 % high, against 2.5 % and 5 % on 6d's sphere: two thirds of the difference
+is in the deposit beyond the heat, where coasting landed metal runs ahead by the drag it would have felt in one flow
+sub-step (6d's ruling; Review Focus 13): at the chosen count 13.7 mg of the 338 mg deposited in 50 ms within 20 mm of
+the centre line lies 10-35 mm past the heat, against 0.5 mg in the finest run. The metal drawn from below as the melt
+ran off agrees within 0.6 % (1.054 against 1.060 g). *The heat sub-step*, at 0.5 ms flow sub-steps: of about 345 mg
+deposited within 20 mm of the centre line in 50 ms, 39 mg lies 5-10 mm past the heat with 10 ms heat sub-steps, 2.1 mg
+with 5 ms and 1.8 mg with 2.5 ms, and 81, 55 and 52 deposit tops are still above T_rigid at the end: the flow sub-steps conduct
+no heat, so liquid landing on cold metal stays liquid until the next conduction; at the 10 ms heat sub-step 11 % of
+the deposit lands 5-10 mm further than it does once the heat sub-step is 5 ms or less (Review Focus 21).
+
+**5. The swelling setting** ("Inputs to settle"). Ruling: the regression keeps the skins at the solid's density
+(`--swell off`) -- it is judged against references that hold one density (spec 11.1, Asha, 2026-10-14) -- and the pushed
+plate runs with the skins' own law (`--swell on`), the flight's. Measured on the pushed skins over 50 ms at the chosen
+count, the same state read at both densities: at the solid's density the liquid is 45 um deep where it is 58 um
+swollen, the face's volume flux 0.63 of the swollen layer's (Couette's h^2 and Poiseuille's h^3 at 0.85 of the depth
+give 0.72 and 0.61), its kinetic energy 0.56, its fastest top 3.0 m/s against 3.9, and the metal deposited beyond the
+heat in 50 ms 80 mg against 338 mg -- if wrong, a push case at one density moves a third less metal.
+
+**6. The cost of the flow on the plate.** *Per skin sub-step, alone* (`plate_skins.py cost`, the pushed skins at 0.2 s,
+16 500 columns, two repetitions each, processor time):
+
+| One 10 ms skin sub-step | Whole | Conduction (with the implicit sideways solve) | Push | Momentum | Thickness | Transport | Release | Regrid | Rest |
+|---|---|---|---|---|---|---|---|---|---|
+| flow off (removal) | 3.48-3.55 s | 3.27-3.35 | -- | -- | -- | -- | -- | -- | 0.20 |
+| flow on, real pass, 5 flow sub-steps | 6.66-6.77 s | 3.30-3.33 | 0.35-0.37 | 0.52 | 0.77 | 1.09-1.11 | 0 | 0.40-0.43 | 0.24-0.25 |
+| flow on, trial pass | 6.46-6.55 s | 3.17-3.20 | 0.32-0.33 | 0.51 | 0.75-0.76 | 1.10-1.13 | 0 | 0.35-0.39 | 0.23-0.27 |
+
+The table shows the flow doubling a skin sub-step on the pushed plate (1.9 times), the transport the largest part of
+it, a third; the trial pass costs what the real pass does (6d). The push case releases nothing; in the cold
+regression's last macro step the release took 30 s of the flow's 277 s (Task 7: 0.054 s a call on the sphere).
+
+*Per macro step*, from the runs (wall time under load, so indicative; the flow's split from `skin.FLOW_SECONDS`):
+
+| 0.5 s macro step | cold, flow off | cold, flow on and released | hot, flow off | hot, flow on and released |
+|---|---|---|---|---|
+| 0.5-1.0 s | 547 s | 741 s (flow 177) | 216 s | 292 s (flow 120) |
+| 1.0-1.5 s | 625 s | 1 008 s (flow 262) | 204 s | 262 s (flow 97) |
+| 1.5-2.0 s | 796 s | 1 019 s (flow 277) | 187 s | 349 s (flow 135) |
+
+The table shows the regression's flow -- slurry at millimetres to centimetres a second, one flow sub-step a skin
+sub-step after the first -- adding a quarter to two thirds to a melting macro step; of the flow's 277 s in the cold
+plate's last step, transport 106, thickness 64, momentum 52, release 30, push 26. *The pushed plate* (alone, every pass
+logged, `measure/task8/push_cost.py`): its first macro step 518 s, its second, where melting starts, 5 229 s -- skins
+4 172 s (of it flow 1 888: transport 706, thickness 495, momentum 287, push 231, regrid 170), 3D solves 785 s, moves 261 s
+-- in 312 passes, against 547 s for the flow-off 110 mm plate's second step under load. Three reasons: (a) the parts are
+rejected for their moves -- the runoff's deposits are handed down to the 3D model and move bases, so the 0.0625 s parts
+the melting cap makes are rejected after their damped passes as long parts were before the cap (fact 126): the first
+three parts took 4 passes each, the fourth 9 and was run again as two; from the fifth every part was rejected after 5-7
+passes, run again as three parts of 0.0208 s, each of those rejected after 3 passes and run again as two of 0.0104 s --
+880-950 s of processor time for each 0.0625 s of melting against about 90 s for a part's trial and real pass that is not
+rejected; (b) a real pass whose trial pass, its base held at the start-of-step temperature, melted less runs
+at the trial's counts: one flow sub-step a skin sub-step at a Courant number of 18.8 on the third part, three times the
+target (6d's ruling; Review Focus 17); (c) in the first macro step, before any metal flowed in an accepted pass, the
+first real pass held a few cells above T_rigid at the 3D model's first answer for the base and ran 380 flow sub-steps
+in which nothing moved (Courant 0), 96 s of its 124 s: a flow sub-step costs about 0.25 s on this plate however few
+cells flow, and the real pass replayed the ten its trial pass chose with no memory. 13 of the run's 156 real passes ran
+above the Courant target, the largest at 18.8. Estimated alone from these parts: a melting macro step of the pushed plate
+about 8 x 1 000 s, 2.2-2.5 hours, and the plate to 2.0 s about 6.5 hours (ruling 8).
+
+**7. The share of the flight's flow at short wavelengths** (spec 14 assumption 1; Asha, 2026-10-21, option a). The
+columns push every layer of a column alike, so a disturbance whose wavelength is not long against the flowing depth,
+kh not small, responds too fast: by sqrt(kh / tanh kh) in an inertial layer (spec 14.1), and in a viscous one by the
+lubrication rate h^3 k^2 (rho g + sigma k^2) / (3 mu) -- what columns with a resolved viscous profile and a depth-uniform
+pressure give -- over the Stokes rate of a viscous layer on a rigid base, (rho g + sigma k^2)(sinh 2kh - 2kh) / (2 mu k
+(cosh 2kh + 2 (kh)^2 + 1)): 1.04 and 1.45 at kh = 0.5, 1.15 and 2.77 at kh = 1. Which applies is set by the layer's
+viscous time h^2 / nu: 2.7 s for 1.2 mm of liquid (inertial against any disturbance the flight drives), 0.01-0.04 s
+for 1-3.4 mm of slurry at 1-5 Pa s (viscous). The element model's thick layers late in flight are slurry under a thin
+film (its mean film 0.05 mm at 105 and 120 s, `slurry_thick_fraction` 0.41 and 0.54), so the viscous factor is the one
+that applies there, and it is not the spec's.
+
+*The measure* (`analysis/flow_wavelengths.py`; ruling): the share of the flowing layers' volume flux q -- each column's
+sum of its cells' thicknesses times their velocities [m2/s] -- carried at kh above KH_SHORT = 0.56 (where the inertial
+factor reaches 1.05; the viscous one does at 0.17), over the columns whose flowing depth is at least 1 mm, and the
+flux-weighted mean excess of either factor, sum P_n (F(k_n h_n) - 1) / sum P_n. Wavelengths are the modes of the
+columns' cotangent Laplacian over that region (free at its border, the columns' areas the mass), each at its own mean
+depth h_n = sum_j A_j phi_nj^2 h_j; a field's power in mode n is (phi_n^T A f)^2, summed over its Cartesian components.
+On a flat grid of squares a sampled cosine is one mode exactly, of wavenumber (2 / dx) sin(kappa dx / 2) (the test's
+cylinder). Why the flux: the columns' error is in how fast they move metal in response to disturbances along the
+surface, and the flux is what moves it -- where the runoff takes it and how deep the flowing layer is that Girin's
+spraying reads (spec 6.7, 8); a share s means that at most s of where the metal goes is subject to the overstated
+rates, and the mean excess says by how much. The top's height is measured the same way (its variance), for the layer's
+shape.
+
+*The states* (`measure/task8/short_waves.py`). A full flow-on flight is out of reach (item 6), so the 100 mm sphere's
+9 417 columns of production cells are given the flowing depth the element model's 0.0125 s flight had on its wet
+windward patches -- a mean of 1.225 mm at 105 s and 3.384 mm at 120 s -- in two shapes over the angle from the
+stagnation point (uniform tapering as cos^2 to nothing between 70 and 90 degrees, `flat`, or h0 cos theta, `cos`),
+scaled to that mean; as `slurry`, the element model's mean film (0.056 and 0.045 mm) liquid at T_feed over slurry
+falling linearly from the liquidus to T_rigid, or as `liquid`, all of it at 950 K (the inertial case); at rest. A segment
+of 0.1 s of flow alone under the flight's forcing at that time (the surface flow's dp/ds and shear, the deceleration of
+39.3 and 53.2 m/s2, surface tension; the flow sub-steps chosen) moves it, and the measure is read after 10, 50 and
+100 ms (processor time 216-372 s a segment, 749 s for the liquid):
+
+| State | Columns over 1 mm at 100 ms (mean depth) | Flux at kh > 0.56 at 10, 50, 100 ms | Mean excess at 100 ms, inertial; viscous | Flux at kh > 0.17 at 100 ms |
+|---|---|---|---|---|
+| 105 s, flat, slurry | 2 300 (1.44 mm) | 0.2 %, 0.1 %, 0.1 % | 0.1 %; 1.4 % | 5.6 % |
+| 105 s, cos, slurry | 3 252 (1.36 mm) | 1.0 %, 1.2 %, 0.4 % | 0.2 %; 1.7 % | 4.4 % |
+| 120 s, flat, slurry | 4 108 (3.73 mm) | 5.3 %, 26 %, 26 % | 7.8 %; 201 % | 75 % |
+| 120 s, cos, slurry | 4 424 (3.37 mm) | 6.6 %, 8.9 %, 36 % | 5.0 %; 94 % | 71 % |
+| 120 s, flat, liquid | 6 649 (2.48 mm) | 4.3 %, 2.9 %, 5.1 % | 0.9 %; 15 % | 14 % |
+
+The table shows the share negligible at the element model's depth at 105 s and not at 120 s. At 1.2 mm at most 1.2 %
+of the flux is at kh > 0.56 within 0.1 s, and the columns' rates are on average 0.2 % too fast if the layer is inertial
+and 1.7 % if viscous. At 3.4 mm a quarter to a third of the slurry's flux is at kh > 0.56 after 50-100 ms, and on
+average the columns' rates are 5-8 % too fast if it were inertial and 94-201 % if viscous -- the slurry is. Where it is
+(`measure/task8/sw_where.py`, the 100 ms states): the slurry drains off the stagnation region at up to 5 m/s in the
+first 10 ms (its liquid film first) and piles at the shoulder, 8.6 mm deep on average between 75 and 90 degrees (`flat`)
+and 7.7 mm (`cos`), the stagnation region left at 1.2-1.5 mm; the short-wave flux lies on that pile's fronts, between
+45 and 75 degrees and past 90, at wavelengths of 18-36 mm (kh 0.6-1.5), smooth from column to column (the short part's
+correlation between neighbours 0.85-0.90: a front, not a column-scale ripple). Where the 3.4 mm layer is liquid it runs
+off faster and spreads (6 649 columns over 1 mm at 100 ms) and 5 % of its flux is short. Run on to 0.4 s (the `cos`
+slurry state, back on mains power), the slurry settles into the pile, 9.6 mm deep on average between 75 and 90 degrees,
+its fastest cell slowing from 0.76 to 0.16 m/s and the flux's rms falling six times (from 4.5e-4 to 7e-5 m2/s): the share
+at kh > 0.56 rises to 57, 70 and 78 % at 0.2, 0.3 and 0.4 s, the inertial excess to 51-75 % and the viscous one to factors
+of 45-87, carried by the deep pile's creep at kh of 3-5, now less smooth from column to column (correlation 0.23). A
+rerun of the `flat` slurry segment gave every number to the last bit.
+
+*Uncertainty and what the states leave out.* Each state was measured once; the two shapes of the same mean depth give
+26 and 36 % at 100 ms and 26 and 9 % at 50 ms, and the share grows with time without settling: at 3.4 mm it is "of order
+a quarter, between 5 and 36 % over the first 0.1 s", rising to three quarters by 0.4 s of a flux six times smaller as
+the slurry comes to rest in a pile; at 1.2 mm "about 1 % or less". The states leave out the melting
+that feeds the layer and the heating (flow alone, no conduction: the slurry crossing the shoulder onto the rear does not
+freeze, so the pile builds where in flight it would partly freeze); spraying (Girin's release would take the film and,
+with the slurry flag, slurry); the flow's history before 105 and 120 s (the states start at rest from the element
+model's mean depth; its distribution over the surface is not in its outputs and is assumed here); and the receding
+body's shape. Above all the depths are the element model's, whose runoff is not the columns': the columns drained the
+3.4 mm slurry at metres a second within tens of milliseconds, so a flow-on flight may not hold layers that deep where the
+push is strong, and may hold deeper piles where it is weak. *What it would change*: a non-hydrostatic pressure (spec
+14.1's remedy; Asha, 2026-10-22) would slow exactly this short-wave part -- the advance of steep fronts and piles, and
+Rayleigh-Taylor growth at kh near 1 -- by the factors above at each wavelength, and leave the long-wave runoff, three
+quarters of the flux at 120 s and 99 % at 105 s, unchanged; on the 3.4 mm slurry states the flux-weighted overstatement
+is a factor of about 2-3, on the 1.2 mm ones about 1.02. **Decided (Asha, 2026-10-25, option a, over building the
+non-hydrostatic pressure now):** the share is measured again on the flow-on flight's own states in sub-plan 22 before
+deciding whether it is significant (Review Focus 23).
+
+**Rulings** (2026-10-24, within spec 6.4-6.7, 7.1, 11.1 and 14 and the rulings of Tasks 1-7; each is what, then why,
+then the cost if wrong):
+1. *The push: the face as a patch of the 100 mm sphere's shoulder at 45 degrees at 93 s, the flight direction tilted,
+   the forcing on the face's columns only.* Why: item 1; it drives every term of the push through the code the flight
+   uses, at the flight's largest pressure gradient of that moment; the edges' columns lean 45 degrees and belong to no
+   shoulder. Cost if wrong: a push not met in flight is not exercised -- the late flight's are 1.6 times larger -- and
+   runoff reaching an edge piles where the gas stops pushing.
+2. *The pushed plate 170 mm across.* Why: item 2, so that the runoff's deposit is not cut off by the edge. Cost if wrong:
+   2.2 times the columns of the flow-off part of a skin sub-step (the conduction's 3.3 s of the 6.7 s).
+3. *The regression judged against references with the liquid leaving at the liquidus.* Why: item 3; Task 7's release
+   takes liquid at the liquidus, and the references' T_feed moves the hot plate's exact recession by 5-18 %. Cost if
+   wrong: none for the flow; the comparison then measures the threshold.
+4. *The release that takes the liquid as it forms is 1e9 kg/(m2 s).* Why: some 1e5 times what a column holds in a 1 ms
+   flow sub-step, so `release_top` takes every liquid cell. Cost if wrong: nothing, the take being capped.
+5. *The swelling: the regression at the solid's density, the pushed plate at the skins' own law.* Why: item 5. Cost if
+   wrong: a third of the runoff.
+6. *The sensibility checks and thresholds* as listed in item 2. Why: each is what an exact solution would fix if one
+   existed -- the direction, the steady profile, the freezing, a mode the grid cannot hold, the boundary. Cost if wrong:
+   a check passed loosely; every measured value is in item 2.
+7. *The short-wave measure: the flux's share at kh > 0.56 over flowing depths of at least 1 mm, the surface Laplacian's
+   modes, both factors' mean excess.* Why: item 7. Cost if wrong: the height's share, the other candidate, is 0.20-0.65
+   at 120 s and 0.05-0.38 at 105 s, but much of it is the states' own shape (0.42 before any flow in the 120 s `flat`
+   state); the kinetic energy's share weighs the fast thin film, which drained within 10 ms.
+8. *The coupled pushed plate to 1.0 s, its longer push on its skins alone.* Why: from the passes of the run a
+   session's exit killed (its first seven melting parts, 5 030 s of wall time alone; 880-950 s of processor time for each
+   0.0625 s once deposits split the parts), a melting macro step costs 2.2-2.5 hours alone and the plate to 2.0 s about
+   6.5 hours, over the six the controller set; to 1.0 s it took 1 h 36 min. The skins carry the flow's physics, the
+   coupled run its books and the coupling's response. Cost if wrong: the coupled plate's last second -- the deposit
+   growing, the base faults' course -- is not measured; the skins alone cover 0.2 s of push after 1.0 s.
+
+**What this task found in earlier tasks.**
+- *Task 7's threshold* (ruling 3, "cells within those 2 K wait for the slurry flag"): releasing at the liquidus instead
+  of T_feed takes away the liquid layer stage 2's removal keeps, about 2 K k_l / q thick, and the plates' exact recession
+  moves by 1.5-6.1 % (cold) and 5.4-17.6 % (hot) at 1.0-2.0 s, the non-rigid depth by 9 % (item 3). Not changed: the
+  liquidus is the material's own (Task 7's reason); the references with it are now in `skin_plate.py`.
+- *6d's counts and the coupling*: a real pass runs at the counts its trial pass chose, which with its base held at the
+  start-of-step temperature can melt less and flow slower, so at the onset the real pass ran at a Courant number of 18.8,
+  three times the target; and a real pass whose cells flow only because of its base runs the trial's no-memory ten
+  flow sub-steps at 0.25 s each on the 170 mm plate however little flows (item 6).
+- *The parts and the deposits*: runoff landing beyond the heat makes skins thicker than their minimum, the bottoms are
+  handed down to the 3D model and bases move, so melting parts of 0.0625 s are rejected for their moves after their
+  damped passes and run again as parts of 0.0104 s (item 6): the cost the part cap removed (fact 126) returns where runoff
+  deposits, ten times a part's cost.
+- *The base's reconciliation and the deposits*: in the same columns 1 761 base faults and bottom cells up to 1 253 K
+  in one macro step (item 2), the buried superheated cells of spec 12 back; the books stay exact.
+- *6d's coasting*: on the plate two thirds of the chosen count's difference from the finest run is the deposit's front
+  running ahead (item 4), as 6d's ruling said it would.
+
+**Measured against the tests** (2026-10-24): the flow-off plate through Task 8's `run` is the body built and stepped
+by hand as sub-plan 20's script did, to the last bit, and sub-plan 20's script on the planning copy's package gives
+Task 8's every array and history column to the last bit over three steps (`measure/task8/bitid_flowoff.py`); the
+reduced pushed plate's books to 2.2e-16 (mass), 1.3e-12 (energy) and 3.1-4.7e-17 (momentum), 464 times more metal
+gained downstream than upstream, the face's flux 5.0 degrees from -y; with nothing flowing the flow-on plate is the
+flow-off plate to the last bit, and with slurry tops and no push it differs by 6.8e-7 of the largest thickness and
+6.3e-4 K after 0.2 s, at 1.6e-5 m/s (`measure/task8/measure_tests.py`); the measure on the cylinder's sinusoids to
+1e-15 and 3e-15 of its definition.
+
+- [ ] **Step 1: The plate's tests** -- append to `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T8}}
+
+- [ ] **Step 2: The short-wave measure's tests** -- create `tests/test_flow_wavelengths.py`:
+
+{{TEST_FLOW_WAVELENGTHS_T8}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_skinbody.py
+  tests/test_flow_wavelengths.py -q -k "plate and not hot_plate or wavelength or overstatement or sinusoid or two_waves"`.
+  Expected: `ModuleNotFoundError: No module named 'flow_wavelengths'` collecting `tests/test_flow_wavelengths.py`; and,
+  `tests/test_reentry_model_skinbody.py` alone, 3 failed, 20 deselected --
+  - `AttributeError: module 'skin_plate' has no attribute 'PUSHES'` (2: the flow-off plate's refusals, after its
+    comparison with the hand-built body has passed on sub-plan 20's script, and the pushed plate);
+  - `TypeError: run() got an unexpected keyword argument 'flow'` (the plate with nothing flowing).
+
+- [ ] **Step 4: The flow on the plate** in `analysis/skin_plate.py`:
+
+{{DIFF_SKIN_PLATE_T8}}
+
+- [ ] **Step 5: The one-dimensional reference with the liquid leaving at the liquidus** in `analysis/ablation_1d.py`:
+
+{{DIFF_ABLATION_1D_T8}}
+
+- [ ] **Step 6: The short-wave measure** -- create `analysis/flow_wavelengths.py`:
+
+{{FLOW_WAVELENGTHS_T8}}
+
+- [ ] **Step 7: Run them to see them pass.** Expected: `tests/test_reentry_model_skinbody.py` 21 passed (2 deselected,
+  the reference tier's; the three new plates 69 s), `tests/test_flow_wavelengths.py` 5 passed (0.4 s),
+  `tests/test_reentry_model_skin.py` 87 as before; the unit tier 506 passed, 1 skipped (2 205 s under the plates' load;
+  498 before). Nothing in `reentry_model/` changes, so every flight is Task 7's.
+
+- [ ] **Step 8: The analysis runs** (`PLATE="analysis/skin_plate.py"`, each on mains power under `caffeinate -i`):
+  - the regression: `"$PY" "$PLATE" --case cold --dt 0.5 --flow on --release all --swell off --out reg_cold.json`
+    and `--case hot` likewise (item 3; 50 and 25 minutes under load), against `--case cold --dt 0.5` and `--case hot
+    --dt 0.5` with the flow off;
+  - the pushed plate: `"$PY" "$PLATE" --case cold --dt 0.5 --flow on --push flight --swell on --width-mm 170 --t-end 1.0
+    --save-state 1.0 --columns push.npz --out push.json` (item 2: 1 h 36 min alone; its coupled books, sensibility and
+    per-macro-step cost), the flow-off plate of that width to 1.0 s with its state kept (`--swell on --width-mm 170
+    --t-end 1.0 --save-state 1.0`, 19 min), and the skins-alone studies from that state as in
+    `measure/task8/plate_skins.py` (items 2, 4, 5, 6);
+  - the short-wave segments: `measure/task8/short_waves.py 105|120 flat|cos slurry|liquid 0.1` (item 7).
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add analysis/skin_plate.py analysis/ablation_1d.py analysis/flow_wavelengths.py tests/test_reentry_model_skinbody.py tests/test_flow_wavelengths.py
+git commit -m "Skins: level 2 with the flow on -- the plate pushed along its face as a patch of the 100 mm sphere's shoulder at 45 degrees at 93 s, its books exact and its runoff, Couette-Poiseuille speed, freezing deposit, roughness and edges sensible; the release regression against references with the liquid leaving at the liquidus; the flow's cost on the plate; the share of the flow at short wavelengths, analysis/flow_wavelengths.py, about 1 % at 1.2 mm and a quarter at 3.4 mm of slurry (sub-plan 21 Task 8)"
+```
+
+---
+
+## The outline (every item written out above)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21) and a fourth (2026-10-22), each with its own tests and
    commit; 6a, the transport at given velocities, 6b, the thickness terms implicit, 6c, the flow in the skin body, and
@@ -1764,16 +2227,19 @@ git commit -m "Skins: the droplet momentum sink at the top cells, the placeholde
    - **6d. Making the flow affordable** (Asha, 2026-10-22, option a, before Tasks 7 and 8) is written out above as Task
      6d.
 7. **The droplet momentum sink** placeholder at the top cells for stage 4 is written out above as Task 7.
-8. **Verification**: level 2's plate (spec §11.1, amended 2026-10-12: the box's 90-degree edges fold the surface; sub-plan
-   20's `analysis/skin_plate.py`) with flow on and a push along the face (mass, momentum and energy exact; sensible
-   behaviour), the momentum-balance residual and the roughness that 6c's history columns report read on it, and the
-   plate's flow sub-step checked against 6c's choice; the cost of the sideways solve; and
-   the share of the flight's flow at short wavelengths (kh not small) in flowing layers over about 1 mm, for the
-   depth-uniform pressure's limitation (spec §14 assumption 1; Asha, 2026-10-21, option a). If that share is
-   significant, a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells
-   (Asha, 2026-10-22).
+8. **Verification** — level 2's plate with the flow on and a push along the face, the flow's cost, and the share of the
+   flight's flow at short wavelengths — is written out above as Task 8. Whether that share is significant, and so
+   whether a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells (Asha,
+   2026-10-22), is decided once sub-plan 22 has measured it again on the flow-on flight's own states (Asha, 2026-10-25,
+   option a; Review Focus 23).
+9. **The base where runoff lands** (Asha, 2026-10-25, option a, over leaving it to sub-plan 22): on Task 8's coupled
+   pushed plate, where runoff deposits on cold metal and is handed down, the base's reconciliation leaves faulted bottom
+   cells up to 1 253 K and the part cap rejects parts down to 0.0104 s (Review Focus 24 and 25). Task 9 finds the cause
+   and fixes it before any flow-on flight, and with it the heat the runoff loses to cold metal within the flow sub-steps
+   (Review Focus 21) and the real pass's flow counts above the Courant target at a melting onset (Review Focus 17). Not
+   yet written.
 
-## Inputs to settle before the remaining tasks are written
+## Inputs that were to be settled (all settled)
 
 - **The skins' interface** (sub-plan 20's Results; facts 118–125). Amended after the build (Asha, 2026-10-12): damped
   repetition, the profile valuation and the parts make the coupling converge and level 2 pass at 0.5 s, but a melting
@@ -1783,6 +2249,8 @@ git commit -m "Skins: the droplet momentum sink at the top cells, the placeholde
   3D model's resolution in depth (facts 133–137), now resolved by the fine band, 0.7 mm elements to 4 mm under the
   2 mm surface, which makes a melting step on the 100 mm sphere 45 % dearer (facts 138–140). To settle: whether flow's
   level-2 run uses the same setting, since with it the flowing layer's thickness is that of solid metal, not liquid.
+  **Settled in Task 8 (item 5, ruling 5):** the regression against the references keeps the solid's density, the pushed
+  plate runs with the skins' own law; at the solid's density the pushed plate's runoff is a third smaller.
 - **The skins' 0.8 mm minimum** (option B′, Asha, 2026-10-16; facts 141–146): where the non-rigid layer is thinner than
   0.8 mm a skin's bottom is rigid metal, so the column flow must hold rigid cells still and count only the cells above
   T_rigid in the flowing depth; the finest cells stay in the top 0.4 mm (`SkinSettings.fine_zone`), and a column at its
@@ -1790,10 +2258,17 @@ git commit -m "Skins: the droplet momentum sink at the top cells, the placeholde
   so the pass count is the first thing to settle: long parts during melting were rejected and needed many passes
   (fact 126), and parts of at most 0.0625 s while melting now cut a melting step to 122–226 s (fact 129). Absorption
   is limited only by the move allowance and the hot plate (level 2b) checks it; coarse surface meshes are not supported
-  under strong melting, so flow's verification should use 2 mm surfaces (facts 130–131).
+  under strong melting, so flow's verification should use 2 mm surfaces (facts 130–131). **Settled:** rigid cells are
+  held and only cells above T_rigid flow (Task 4's anchored cells, Task 6a's flowing depth); the pass count stays the
+  part cap's with the flow in the trial pass (Task 6c's ruling; the real pass takes its trial pass's counts, 6d); the
+  per-cell work was made affordable in 6d; Task 8's plates use 2 mm surfaces, and its pushed plate shows the parts
+  rejected for their moves again where runoff deposits are handed down (Task 8, item 6).
 - Sub-plan 20's measured run time (fact 120 under the one-repeat rule; fact 125 under the amended default: 60–93 s a
   macro step solid, 123–1 041 s melting on the 100 mm sphere, almost all in the skins), which was to decide whether the
   sideways solve can be implicit over every cell or needs sub-cycling. Decided (Asha, 2026-10-17): implicit, the
   amendment above, from the level-3 flight's profile (facts 147 and 148); design (a) (Asha, 2026-10-18; fact 150).
 - Whether the implicit thickness pressures are enough to keep grid-scale growth out (level 1's growth test), given
-  that the capillary length (about 1.8 mm) is close to the column spacing.
+  that the capillary length (about 1.8 mm) is close to the column spacing. **Settled:** in Task 6b, with surface
+  tension in its thin-film form (Asha, 2026-10-21), the faces' exchange times the film operator has no growing mode and
+  a mode alternating from column to column falls to at most 0.12 of itself in a sub-step of 10 ms to 1 s; on Task 8's
+  pushed plate the grid scale's share of the face's thickness variance stays at 0.14-0.16 % while a deposit ridge grows.

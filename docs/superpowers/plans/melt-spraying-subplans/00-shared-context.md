@@ -2377,6 +2377,44 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      Couette speed after 30 ms (4.3 against 15 m/s). The release costs 0.054 s a call on 9 417 columns against about 2 s
      a flow sub-step. With no release every result is 6d's to the last bit (109 arrays: flow off, flow on, the flow
      sub-steps). Tests: skin 87, skin body 18; unit tier 498 passed, 1 skipped.
+159. **Level 2 with the flow on, the flow's cost on the plate, and the share at short wavelengths (sub-plan 21 Task 8,
+     2026-10-24).** Spikes in `prototype/work-2026-10-18-column-flow/measure/task8/`. `analysis/skin_plate.py --flow on`:
+     flow off the plate is sub-plan 20's to the last bit. The push: on the plate the flight direction is the face's
+     normal, so `along_meridian` gives no direction along it; the flight direction is tilted 45 degrees (the face a patch
+     of the 100 mm sphere's shoulder at 93 s) and the face's columns take that point's surface flow, dp/ds -3.42e5 Pa/m
+     and 80.3 Pa down the meridian, with 29.8 m/s2 of deceleration along the tilted direction (net 2.9e5 Pa/m down the
+     face), on a plate 170 mm across so that the runoff stays off the edges. Regression (no push, the liquid released as
+     it forms, swelling off): the release takes liquid at the liquidus (908 K), instant removal at T_feed (910 K), whose
+     liquid layer about 2 K k_l / q thick moves the exact recession by 1.5-6.1 % (cold) and 5.4-17.6 % (hot) and the hot
+     non-rigid depth by 9 % (`ablation_1d.py --remove-at liquidus`); against those references both plates pass level 2 at
+     0.5 s as the flow-off plates pass against stage 2's (cold +2.4, +0.3, -0.8 % against the one-dimensional reference
+     and +0.6, -0.3, -0.6 % against the moved fine box; hot -1.6, -1.1 % at 1.5 and 2.0 s, flowing depth within 1.2 %,
+     base within 0.10 K), books to 2.2e-16, 5.2e-13 and 1.3e-16. The pushed plate's skins alone (the 170 mm flow-off plate
+     at 1.0 s pushed 0.2 s, base held, conduction on): books 3.5e-16, 1.4e-15, 4.4e-18; downstream 108 times the upstream
+     gain, the face's flux 0.8 degrees from -y; the liquid (45 um) at 0.78 of its Couette-Poiseuille speed (the
+     transport's 27-30 % loss); a ridge of deposit ending 18 mm past the heat, where a thin film's speed times the 10 ms
+     skin sub-step puts it (the flow sub-steps conduct no heat: 5 ms skin sub-steps pull 11 % of the deposit 5-10 mm back);
+     the grid scale's share of the face's thickness variance 0.14-0.16 % as the ridge grows; nothing at the edges. Flow
+     sub-step at the chosen count (Courant 5.9): 25 % off the 0.25 ms run in where the metal went (2.5 % on 6d's sphere),
+     two thirds the deposit's coasting front. Swelling off moves a third less metal. Cost alone on the 170 mm plate: a
+     10 ms skin sub-step 6.7 s with the flow against 3.5 s without, the transport a third of the flow. The coupled pushed
+     plate ran to 1.0 s (5 747 s alone; to 2.0 s about 6.5 h): books 4.4e-16, 6.5e-11, 1.2e-17, the runoff down the face
+     (12 times the upstream gain, the flux 2.2 degrees from -y), the liquid at 0.75 of Couette-Poiseuille, a deposit
+     tapering over 15 mm past the heat, nothing at the edges; its first melting macro step 5 229 s, because the deposits
+     are handed down and move bases, so every melting part is rejected for its moves and run again down to 0.0104 s
+     (880-950 s of processor time for each 0.0625 s against about 90 s), a real pass runs at its trial pass's counts up
+     to Courant 18.8, and a flow sub-step costs 0.25 s however few cells flow; and 1 761 base faults, 90 columns at the
+     heat's downstream rim and the deposit with bottom cells 5-400 K above their node (to 1 253 K), none flow off or on
+     the skins alone: spec 12's buried superheated cells back where runoff deposits. Short waves (`analysis/flow_wavelengths.py`): the share of the
+     flowing layers' volume flux at kh > 0.56 over flowing depths of at least 1 mm, on the surface Laplacian's modes, with
+     the flux-weighted excess of sqrt(kh / tanh kh) (inertial) and of the lubrication over the Stokes rate (viscous; 2.77
+     at kh = 1). On the 100 mm sphere given the element model's mean flowing depth (1.225 mm at 105 s, 3.384 mm at 120 s;
+     slurry under its 0.05 mm film) and 0.1 s of flow alone: at 1.2 mm 0.1-1.2 %, excess 0.2 % (inertial) and 1.7 %
+     (viscous); at 3.4 mm 5-7 % after 10 ms and 26-36 % after 100 ms, excess 5-8 % and 94-201 %, on the fronts of a pile
+     8-9 mm deep that the draining slurry builds at the shoulder (wavelengths 18-36 mm), 78 % at 0.4 s of a flux six times
+     smaller as the pile comes to rest; liquid 5 %. Measured again on the flow-on flight's own states in sub-plan 22
+     before deciding whether it is significant; the base where runoff lands is fixed first, in a Task 9 of sub-plan 21
+     (Asha, 2026-10-25, both option a). Tests: skin body 21, flow wavelengths 5; unit tier 506 passed, 1 skipped.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

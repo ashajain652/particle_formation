@@ -765,7 +765,10 @@ Each stage is tested and measured before the next begins.
    3.4 mm; a few per cent at most for the runoff along the meridian, which varies over tens of millimetres. Surface
    tension is taken in its thin-film form (§6.4). Stated as a limitation, with the share of the flight's flow at short
    wavelengths in layers over about 1 mm measured in sub-plan 21's verification (Asha, 2026-10-21, option a, over
-   making the push fade with depth for short wavelengths). If that share proves significant, the remedy is a
+   making the push fade with depth for short wavelengths). Measured there on states built from the element model's mean
+   depths (2026-10-25): about 1 % of the flowing layers' flux at 1.2 mm and of order a quarter at 3.4 mm; measured again
+   on the flow-on flight's own states in sub-plan 22 before deciding (Asha, 2026-10-25, option a). If that share proves
+   significant, the remedy is a
    non-hydrostatic pressure solved on the cells, a vertical velocity per cell and a Poisson equation for the pressure
    over the flowing cells each sub-step, as non-hydrostatic coastal models do (SWASH; Stelling and Zijlema 2003): exact
    for any kh the columns resolve, for liquid and slurry alike; not a depth-averaged Boussinesq correction, derived for
@@ -923,3 +926,14 @@ Each stage is tested and measured before the next begins.
   (target 0.02), between 1 and 40, the real pass taking its trial pass's counts. This supersedes the fixed ten 1 ms flow
   sub-steps above: the runoff now converges from about 2 ms (8 % off at 2 ms, 2.2 % at 1 ms against a 0.25 ms
   reference), and a melting macro step costs about an hour of processor time against about eight (fact 157).
+- 2026-10-25 (sub-plan 21 Task 8 built): level 2 with the flow on passes. On the plate pushed along its face, mass,
+  energy and momentum close to round-off and the runoff goes the way the push points; with the liquid released as it
+  forms and no push, the plate meets level 2's criteria against references whose liquid leaves at the liquidus, where
+  the release takes it (908 K against stage 2's 910 K, which moves the exact recession by 1.5-17.6 %). The share of the
+  flow at short wavelengths, on states built from the element model's mean depths, is about 1 % at 1.2 mm and of order
+  a quarter at 3.4 mm; it is measured again on the flow-on flight's own states in sub-plan 22 before deciding whether
+  the non-hydrostatic pressure is needed (option a, over building it now; §14 assumption 1). Where runoff lands on cold
+  metal and is handed down, the base's reconciliation (§6.6) leaves faulted bottom cells up to 1 253 K and the part cap
+  rejects parts down to 0.0104 s; a Task 9 of sub-plan 21 finds the cause and fixes it before any flow-on flight,
+  together with the heat the runoff loses to cold metal within the flow sub-steps and the real pass's flow counts at a
+  melting onset (option a, over leaving it to sub-plan 22) (Asha).
