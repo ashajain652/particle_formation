@@ -1,5 +1,7 @@
 # Droplet demise model: trajectory, heating and vaporisation of molten AA7075 droplets
 
+> **Moved 2026-10-26.** The code of this folder now lives in `reentry_model/droplet_reentry/` (`droplet_demise.py` became `model.py`; the sweeps, plots and checks are in its `analysis/` and `tests/`), and its outputs are written to `output/droplet_reentry_output/`. This file is kept as the record of the work; script names and `runs/` paths below are as they were.
+
 Session of 2026-10-21. Code and outputs are in `prototype/work-2026-10-21-droplet-demise/`; nothing is committed.
 Run outputs are under `runs/demise_sweep/` (git-ignored).
 

@@ -374,6 +374,32 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 - The transonic tail is compressed isentropically without a shock because the shock fixed point stalls at Ma 1 —
   found by the first full physics-mode run (facts §16).
 
+## Droplet stage — `reentry_model.droplet_reentry`
+
+Run from `Reentry Model/`.
+
+Follows one molten AA7075 droplet from its release until its speed is within 1 % of the local terminal velocity and
+its temperature within 1 K of the local equilibrium temperature, with aluminium, zinc and magnesium evaporating on
+the way; optionally it then settles to the ground under a mean vertical wind. The droplet starts either from the
+parent's DRAMA trajectory at a release altitude (the committed snapshot
+`data/generic_satellite_reentry/dmf_output.json`) or from a release state passed in, which is how the fragment model
+will hand over its droplets. Development history and results: `prototype/work-2026-10-21-droplet-demise/REPORT.md`.
+
+```python
+from reentry_model.droplet_reentry import model
+final, history = model.run_case(9.69, 70.0)                  # 9.69 um released at 70 km on the parent's descent
+final, history = model.run_case(9.69, release=initial_state)  # from a reentry_model.trajectory.InitialState
+```
+
+```bash
+"$PY" -m reentry_model.droplet_reentry.analysis.demise_sweep            # 15 diameters 1-200 um x 21 altitudes 90-50 km
+"$PY" -m reentry_model.droplet_reentry.analysis.terminal_profile_sweep  # final states + terminal velocity every 50 m
+"$PY" -m reentry_model.droplet_reentry.analysis.plot_demise_sweep       # figures; the other plot_* scripts likewise
+```
+
+Outputs go to `output/droplet_reentry_output/` (git-ignored). The tests, in `reentry_model/droplet_reentry/tests/`,
+run with the Reentry Model suite and include a re-run of five cases of the 2026-10-22 sweep that must match to 1e-9.
+
 ## Large fragments — `spheral_frag` core (M1)
 
 Run from `Spheral/`.
@@ -477,7 +503,7 @@ Each project is tested from inside its own folder (the three `tests/` folders ca
 
 ```bash
 cd "Reentry Model"
-"$PY" -m pytest -m "not reference" -q   # unit tests (~2 min; the thermal solver and coupled tests dominate)
+"$PY" -m pytest -m "not reference" -q   # unit tests (~3 min; the thermal solver and coupled tests dominate)
 "$PY" -m pytest -m reference -q         # the Step 1 reference flights (~15 min) and the Step 2 coupled runs (~35 min)
 
 cd "DRAMA Sphere Experiments"

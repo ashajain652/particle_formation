@@ -10,7 +10,7 @@ What is reused, and what is new
   hypersonic-only and wrong at low speed (factor 1.94 at Kn 0.1, measured 2026-10-14). The default (drag_law="singh",
   from 2026-10-22) is the general sphere correlation of Singh et al., AIAA Journal 2021 (singh_drag.py), fitted across
   continuum, transitional and free-molecule flow at all Mach numbers. drag_law="blend" keeps the earlier composed law
-  of prototype/work-2026-10-14-particle-settling/particle_trajectory.py (Schaaf & Chambre bridged to the continuum
+  of particle_trajectory.py (copied from the 2026-10-14 settling prototype; Schaaf & Chambre bridged to the continuum
   sphere, blended on the speed ratio into Stokes-Cunningham) for comparison. The two are identical in fast
   free-molecule flow; Singh gives 5-13 % more drag at low speed with the droplet at air temperature (its Epstein
   limit assumes fully diffuse reflection, where Millikan's Cunningham fit reflects real surfaces) and differs by up
@@ -46,29 +46,19 @@ Before a run, the release Weber number We = rho V^2 d / sigma is checked against
 skipped, not run.
 """
 import math
-import os
-import sys
 from dataclasses import dataclass
 
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
-SETTLING = os.path.join(REPO, "prototype", "work-2026-10-14-particle-settling")
-for p in (REPO, SETTLING):
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-import particle_trajectory as pt                                   # composed drag law (verified 2026-10-14)
-import droplet_heating_sweep as dhs                                # Schaaf & Chambre heat (verified 2026-10-14)
-import sphere_sweep
 from reentry_model import aero, earth, heating
 from reentry_model.atmosphere import US76TableAtmosphere
+from reentry_model.droplet_reentry import droplet_heating_sweep as dhs   # Schaaf & Chambre heat (verified 2026-10-14)
+from reentry_model.droplet_reentry import parent_trajectory
+from reentry_model.droplet_reentry import particle_trajectory as pt      # composed drag law (verified 2026-10-14)
+from reentry_model.droplet_reentry import singh_drag                     # Singh et al. (2021) general sphere drag
 from reentry_model.trajectory import InitialState, Settings, Simulator
-
-import singh_drag                                                 # Singh et al. (2021) general sphere drag
 
 R_GAS = 8.314462618
 SIGMA_SB = 5.670374419e-8
@@ -128,8 +118,8 @@ def weber(rho, V, d, T):
 
 # ---------------------------------------------------------------- release state from the parent
 
-PARENT_JSON = os.path.join(REPO, "Generic_Satellite Reentry", "output", "dmf_output.json")
-PARENT_OBJECT = "Main Body"
+PARENT_JSON = parent_trajectory.DEFAULT_PARENT
+PARENT_OBJECT = parent_trajectory.DEFAULT_PARENT_OBJECT
 
 
 def parent_release(parent, h_km):
@@ -138,15 +128,15 @@ def parent_release(parent, h_km):
     for a, c in zip(b, b[1:]):
         if a["altitude"] >= h_km >= c["altitude"]:
             f = (a["altitude"] - h_km) / (a["altitude"] - c["altitude"])
-            lerp = sphere_sweep.lerp
+            lerp = parent_trajectory.lerp
             t = lerp(a["time"], c["time"], f)
             return InitialState(
                 velocity=lerp(a["velocity"], c["velocity"], f) * 1e3, altitude=h_km * 1e3,
                 flight_path=math.radians(lerp(a["path"], c["path"], f)),
-                heading=math.radians(sphere_sweep.angle_lerp(a["heading"], c["heading"], f) % 360.0),
+                heading=math.radians(parent_trajectory.angle_lerp(a["heading"], c["heading"], f) % 360.0),
                 lat=math.radians(lerp(a["lat"], c["lat"], f)),
-                lon=math.radians(sphere_sweep.wrap_longitude(sphere_sweep.angle_lerp(a["lon"], c["lon"], f))),
-                epoch=parent.epoch + sphere_sweep.timedelta(seconds=t))
+                lon=math.radians(parent_trajectory.wrap_longitude(parent_trajectory.angle_lerp(a["lon"], c["lon"], f))),
+                epoch=parent.epoch + parent_trajectory.timedelta(seconds=t))
     raise ValueError("altitude {} km is outside the parent's descending branch".format(h_km))
 
 
@@ -519,12 +509,15 @@ def settle(sim, rows, wind, dh=50.0, h_top=100e3):
                 t_ground_s=last["t_s"] + t_fall, t_tropopause_s=t_trop)
 
 
-def run_case(d0_um, h0_km, parent=None, w_meso=None, w_strat=0.0, **kw):
-    """Weber pre-check, then the flight. With w_meso [m/s] set, the mesosphere carries that mean vertical wind
-    (MeanVerticalWind) and the droplet is followed past its final state to the ground (settle). Returns
-    (final_state dict, history rows or None)."""
-    parent = parent or sphere_sweep.load_parent(PARENT_JSON, PARENT_OBJECT)
-    rel = parent_release(parent, h0_km)
+def run_case(d0_um, h0_km=None, parent=None, w_meso=None, w_strat=0.0, release=None, **kw):
+    """Weber pre-check, then the flight. The droplet starts from `release` (an InitialState, for example the
+    fragment's state at separation) when given, otherwise from the parent's state at h0_km on its descending branch.
+    With w_meso [m/s] set, the mesosphere carries that mean vertical wind (MeanVerticalWind) and the droplet is
+    followed past its final state to the ground (settle). Returns (final_state dict, history rows or None)."""
+    if release is None:
+        rel = parent_release(parent or parent_trajectory.load_parent(PARENT_JSON, PARENT_OBJECT), h0_km)
+    else:
+        rel, h0_km = release, release.altitude / 1e3
     wind = MeanVerticalWind(w_meso, w_strat) if w_meso is not None else None
     atm = US76TableAtmosphere(wind=wind)
     fs = atm.state(0.0, rel.altitude, rel.lat, rel.lon)

@@ -21,7 +21,9 @@ wake. The repository root holds three projects, each in its own folder with its 
    (container under `spheral_frag/container/`), with its own `analysis/`, `data/` and `docs/`.
 
 `Generic_Satellite Reentry/` at the root is the DRAMA GUI project of the parent 3U CubeSat; its
-`output/dmf_output.json` is the parent trajectory the sweeps and the droplet work start from.
+`output/dmf_output.json` is the parent trajectory the sweeps and the droplet work start from. The GUI
+rewrites that folder on every run, so the droplet model reads a committed snapshot of the 2026-09-13
+run, `Reentry Model/data/generic_satellite_reentry/dmf_output.json`.
 `citations/` at the root holds source notes shared by the projects.
 
 Read the root `README.md` for the full command surface and the verification tables, and
@@ -35,9 +37,11 @@ Those two files are the contract with the thesis; keep them true when you change
   `PROJECT_ROOT` (this folder), `DATA_DIR` (`data/`: the US76 table, the ATDB sphere drag table, the
   material JSON), `OUTPUT_DIR` (`output/`), and `DRAMA_DATA_DIR` (`DRAMA Sphere Experiments/data/`,
   where `sesam_io.REFERENCE_DIR` and `fap.DEFAULT_FAP_DAY` point).
+- `reentry_model/droplet_reentry/` — the droplet stage, a sub-package with its own `analysis/`
+  (sweeps and plots) and `tests/` (see "The droplet stage" below).
 - `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot.
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
-  mesh fixtures).
+  mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/`.
 - `output/` — every run, mesh cache, plot and verification output; git-ignored.
 - `docs/` — `model_assumptions.md`, `milestones/`, and `superpowers/{specs,plans}`.
 - `prototype/` — throwaway working copies (see Repository conventions).
@@ -70,7 +74,7 @@ so they cannot share one pytest session.
 
 ```bash
 cd "Reentry Model"
-"$PY" -m pytest -m "not reference" -q                     # the normal loop, ~2 min
+"$PY" -m pytest -m "not reference" -q                     # the normal loop, ~3 min (droplet tests ~1 min)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
 "$PY" -m pytest tests/test_reentry_model_mesh.py -q -k prism   # one test
 "$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~35 min (Step 2)
@@ -133,19 +137,28 @@ in serial; `fenicsx_backend` exists for MPI scaling and is verified to agree to 
 a `Reference` in SI), `compare` (model sampled at the reference's time stamps → metrics + six plots),
 `viz` (PyVista animations read only the exported VTK series, never live objects).
 
-### The droplet stage (to be promoted)
+### The droplet stage (`reentry_model/droplet_reentry/`)
 
 The independent demise of the molten droplets sprayed into the wake — trajectory, heating,
 aluminium/zinc/magnesium evaporation, the Singh et al. (2021) sphere drag law, mean vertical winds and
-settling to the ground — is built and checked in
-`prototype/work-2026-10-21-droplet-demise/` (read its `REPORT.md` and `DATA_INDEX.md`). It is to be
-promoted into `reentry_model/droplet_reentry/`, with its plotting scripts in that folder and its
-outputs in `output/droplet_reentry_output/`. Decided so far (Asha, 2026-10-24): the eventual goal is
-to run the fragment model and the droplet model in series, each droplet released by the fragment
-starting from the velocity recorded at separation, so the droplet model must accept a release state
-supplied by the fragment model; the connection itself waits until melting (Step 3) joins the package.
-Until it is promoted, the prototype still imports `sphere_sweep` and the older settling prototype by
-their pre-2026-10-24 paths and does not run.
+settling to the ground. Promoted on 2026-10-26 from `prototype/work-2026-10-21-droplet-demise/`, whose
+`REPORT.md`, `DATA_INDEX.md` and `VERTICAL_WINDS.md` still hold its development and results.
+
+- `model.py` — `DropletSimulator` (a `trajectory.Simulator` with temperature and element masses in the
+  state) and `run_case(d0_um, h0_km)`, the entry point for one droplet. `run_case(d0_um, release=state)`
+  starts from a given `InitialState` instead of the parent's state at `h0_km`; that is the seam for the
+  fragment model, which will release each droplet with its velocity at separation (Asha, 2026-10-24).
+  The connection itself waits until melting (Step 3) joins the package.
+- Copies of its dependencies, so the package stands alone: `particle_trajectory.py` and
+  `droplet_heating_sweep.py` from `prototype/work-2026-10-14-particle-settling/`, and the parent-
+  trajectory section of `DRAMA Sphere Experiments/sphere_sweep.py` as `parent_trajectory.py`. Only
+  their imports and paths changed; `singh_drag.py` moved in with the model.
+- `analysis/` — the demise and terminal-velocity sweeps and their plots, run with
+  `"$PY" -m reentry_model.droplet_reentry.analysis.<name>` from this folder; everything they write
+  goes to `output/droplet_reentry_output/` (`droplet_reentry.OUTPUT`).
+- `tests/` — the prototype's checks as pytest tests, plus a reproduction test that re-runs five cases
+  of the 2026-10-22 demise sweep and must match them to 1e-9 (the rows are in `tests/fixtures/`). The
+  full re-run of that sweep from the package matched every case.
 
 ### Things that are easy to get wrong here
 

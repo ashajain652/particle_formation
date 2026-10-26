@@ -1,5 +1,5 @@
 """Final states and local terminal-velocity profiles for 15 chosen diameters (0.01-250 um) x 21 release altitudes
-(90-50 km), Singh drag, no vertical wind. Writes into runs/terminal_profile_sweep/:
+(90-50 km), Singh drag, no vertical wind. Writes into output/droplet_reentry_output/terminal_profile_sweep/:
 
   final_states.csv          one row per case: d0_um, h0_km, V_final_ms, h_final_km, r_final_um
   terminal_velocity_profile.csv
@@ -17,12 +17,13 @@ from multiprocessing import Pool
 
 import numpy as np
 
-import droplet_demise as dd
+from reentry_model.droplet_reentry import OUTPUT
+from reentry_model.droplet_reentry import model as dd
 
 DIAMETERS = (0.01, 0.1, 2.0, 6.0, 10.0, 14.0, 18.0, 25.0, 35.0, 45.0, 50.0, 100.0, 150.0, 200.0, 250.0)
 ALTITUDES = tuple(range(90, 49, -2))
 H_GRID_M = np.arange(0, 100000 + 1, 50)
-OUT = os.path.join(dd.HERE, "runs", "terminal_profile_sweep")
+OUT = os.path.join(OUTPUT, "terminal_profile_sweep")
 
 
 def worker(job):
@@ -33,7 +34,7 @@ def worker(job):
     last = rows[-1]
     lat, lon = math.radians(last["lat_deg"]), math.radians(last["lon_deg"])
     m, d = last["mass_kg"], last["d_um"] * 1e-6
-    sim = dd.DropletSimulator(dd.parent_release(dd.sphere_sweep.load_parent(dd.PARENT_JSON, dd.PARENT_OBJECT), h0), d0)
+    sim = dd.DropletSimulator(dd.parent_release(dd.parent_trajectory.load_parent(dd.PARENT_JSON, dd.PARENT_OBJECT), h0), d0)
     atm = dd.US76TableAtmosphere()
     vt = []
     for h in H_GRID_M:

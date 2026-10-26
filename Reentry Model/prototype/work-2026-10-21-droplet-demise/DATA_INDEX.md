@@ -1,5 +1,7 @@
 # Droplet demise: index of outputs
 
+> **Moved 2026-10-26.** The code of this folder now lives in `reentry_model/droplet_reentry/` (`droplet_demise.py` became `model.py`; the sweeps, plots and checks are in its `analysis/` and `tests/`), and its outputs are written to `output/droplet_reentry_output/`. This file is kept as the record of the work; script names and `runs/` paths below are as they were.
+
 What every output of this folder is, which are current, how to regenerate them, and what each column means.
 Interpretation lives in `REPORT.md` (demise model, drag law, mass loss) and `VERTICAL_WINDS.md` (updrafts,
 settling to the ground); sources in `../../citations/`.

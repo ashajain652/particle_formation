@@ -1,7 +1,7 @@
 """Droplet demise over 15 log-spaced diameters (1-200 um) x 21 release altitudes (90-50 km).
 
-Writes runs/demise_sweep/final_states.csv (one row per case, skipped cases included), the per-case histories, and,
-with --sensitivity, final_states_mach.csv for heating_mode="mach" on three diameters.
+Writes output/droplet_reentry_output/demise_sweep/final_states.csv (one row per case, skipped cases included),
+the per-case histories, and, with --sensitivity, final_states_mach.csv for heating_mode="mach" on three diameters.
 """
 import argparse
 import csv
@@ -12,14 +12,15 @@ from multiprocessing import Pool
 
 import numpy as np
 
-import droplet_demise as dd
+from reentry_model.droplet_reentry import OUTPUT
+from reentry_model.droplet_reentry import model as dd
 
 DIAMETERS = tuple(float("{:.3g}".format(v)) for v in np.logspace(0.0, np.log10(200.0), 15))
 # 1 nm to 500 nm, 15 points evenly spaced in log, in micrometres
 DIAMETERS_NANO = tuple(float("{:.3g}".format(v)) for v in np.logspace(np.log10(0.001), np.log10(0.5), 15))
 ALTITUDES = tuple(range(90, 49, -2))
-OUT = os.path.join(dd.HERE, "runs", "demise_sweep")
-OUT_NANO = os.path.join(dd.HERE, "runs", "demise_sweep_nano")
+OUT = os.path.join(OUTPUT, "demise_sweep")
+OUT_NANO = os.path.join(OUTPUT, "demise_sweep_nano")
 
 
 def history_name(d, h, mode="regime", drag="singh"):
@@ -55,7 +56,7 @@ def write(rows, name):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--sensitivity", action="store_true")
-    ap.add_argument("--nano", action="store_true", help="1-500 nm diameters into runs/demise_sweep_nano")
+    ap.add_argument("--nano", action="store_true", help="1-500 nm diameters into demise_sweep_nano")
     ap.add_argument("--drag", choices=("singh", "blend"), default="singh", help="drag law (default: singh)")
     ap.add_argument("--wind", type=float, default=None,
                     help="mean mesospheric vertical wind [cm/s, + up]; also follows every droplet to the ground. "

@@ -1,4 +1,4 @@
-"""Figures for the settling phase under a mean mesospheric vertical wind (run_demise_sweep.py --wind W [--nano]).
+"""Figures for the settling phase under a mean mesospheric vertical wind (demise_sweep.py --wind W [--nano]).
 
   8_time_to_ground_w<W>cms.png   per wind case and size range: time from release to the ground, every 4 km of
                                  release altitude; droplets held aloft are coloured separately and labelled with
@@ -16,7 +16,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 from matplotlib.patches import Patch
 
-import run_demise_sweep as rs
+from reentry_model.droplet_reentry.analysis import demise_sweep as rs
 
 SURFACE, INK, INK2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#8a8984", "#e4e3df"
 SEQ = LinearSegmentedColormap.from_list("blue", ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"])

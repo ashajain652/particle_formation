@@ -1,4 +1,4 @@
-"""Figures for the droplet demise sweep (run_demise_sweep.py) into runs/demise_sweep/figures/.
+"""Figures for the droplet demise sweep (demise_sweep.py) into output/droplet_reentry_output/demise_sweep/figures/.
 
 Every case skipped by the Weber pre-check is shaded grey: a grey cell in the heatmaps, a grey band in the line plots.
 
@@ -18,7 +18,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
 from matplotlib.patches import Patch, Rectangle
 
-import run_demise_sweep as rs
+from reentry_model.droplet_reentry.analysis import demise_sweep as rs
 
 RUN = sys.argv[1] if len(sys.argv) > 1 else rs.OUT
 FIG = os.path.join(RUN, "figures")

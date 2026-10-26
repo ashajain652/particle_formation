@@ -1,5 +1,5 @@
 """Weber-number stability of every droplet in the demise sweeps (1-500 nm and 1-200 um, Singh drag), into
-runs/demise_sweep/figures/10_weber_stability.png.
+output/droplet_reentry_output/demise_sweep/figures/10_weber_stability.png.
 
 The Weber number We = rho V^2 d / sigma(T) is followed along the whole flight with the shrinking diameter and a
 surface tension that falls with temperature; the break-up threshold is droplet_demise.WE_CRIT (12, Pilch & Erdman
@@ -15,8 +15,8 @@ import pandas as pd
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 
-import droplet_demise as dd
-import run_demise_sweep as rs
+from reentry_model.droplet_reentry import model as dd
+from reentry_model.droplet_reentry.analysis import demise_sweep as rs
 
 SURFACE, INK, INK2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#8a8984", "#e4e3df"
 CRITICAL = "#d03b3b"

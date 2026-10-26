@@ -1,5 +1,5 @@
 """The Singh et al. (2021) sphere drag coefficient (singh_drag.py) across the flow regimes, with the paths of three
-droplets from the demise sweep, into runs/demise_sweep/figures/7_drag_law_regimes.png.
+droplets from the demise sweep, into output/droplet_reentry_output/demise_sweep/figures/7_drag_law_regimes.png.
 
 (a) C_D over the Knudsen number (lambda/D) and Mach number plane; the two fix the Reynolds number,
     Re = (Ma / Kn) sqrt(pi gamma / 2), so the plane covers every regime. Wall at the air temperature.
@@ -15,8 +15,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, LogNorm
 
-import run_demise_sweep as rs
-import singh_drag as sg
+from reentry_model.droplet_reentry.analysis import demise_sweep as rs
+from reentry_model.droplet_reentry import singh_drag as sg
 
 FIG = os.path.join(rs.OUT, "figures")
 os.makedirs(FIG, exist_ok=True)
