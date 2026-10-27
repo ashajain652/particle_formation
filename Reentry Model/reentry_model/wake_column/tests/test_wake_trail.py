@@ -15,10 +15,14 @@ def _rows(ts, hs, vs, Ts, mAl, mZn=None, mMg=None):
             for i in range(n)]
 
 
-@pytest.mark.parametrize("d, h, L", [(1.0, 80.0, 51.0), (10.0, 60.0, 40.0)])   # spec 4.2 table (2026-10-27 runs)
+# The design table (spec 4.2, 2026-10-27 runs) gave 51 m and 40 m. Those were row-snapped: the path at the first
+# history row at or past 90 % of the Al loss. The rows are coarse integrator chunks (the 1 um case has one row at
+# 89 % and the next at 94 %), so that is biased long by up to one row. The spec defines L as the path containing 90 %
+# of the loss, so trail.py interpolates inside the step and this test pins the interpolated values.
+@pytest.mark.parametrize("d, h, L", [(1.0, 80.0, 44.6), (10.0, 60.0, 38.2)])
 def test_trail_length_matches_design_measurements(parent, d, h, L):
     t = trail_for(d, h, parent=parent)
-    assert t.L_m == pytest.approx(L, rel=0.05)
+    assert t.L_m == pytest.approx(L, rel=0.02)
     assert abs(t.z_mean_km - h) < 0.05
     assert sum(s.weight for s in t.samples) == pytest.approx(1.0)
 
