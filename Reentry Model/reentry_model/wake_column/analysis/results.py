@@ -44,10 +44,10 @@ def is_baseline(summary, ambient=None):
     return physics_signature(summary["settings"]) == physics_signature(default)
 
 
-def load_summaries(out):
+def load_summaries(out, include_skipped=False):
     """The summary of every finished run under `out` that has an outcome: a list of dictionaries, each with its folder
-    under "_dir". Runs that vaporised no aluminium ("skipped" summaries, which carry no outcome) and unreadable or
-    truncated summaries are left out."""
+    under "_dir". Runs that vaporised no aluminium ("skipped" summaries, which carry no outcome; kept only with
+    `include_skipped`, for counting them) and unreadable or truncated summaries are left out."""
     found = []
     for name in sorted(os.listdir(out)):
         path = os.path.join(out, name, "summary.json")
@@ -58,7 +58,12 @@ def load_summaries(out):
                 s = json.load(f)
         except (ValueError, OSError):
             continue
-        if not isinstance(s, dict) or s.get("skipped") or "condensed_fraction_end" not in s:
+        if not isinstance(s, dict):
+            continue
+        if s.get("skipped"):
+            if not include_skipped:
+                continue
+        elif "condensed_fraction_end" not in s:
             continue
         s["_dir"] = os.path.join(out, name)
         found.append(s)
@@ -126,7 +131,6 @@ def _load_plot_style():
 
 _STYLE = _load_plot_style()
 INK = getattr(_STYLE, "INK", "#0b0b0b")
-SECOND = getattr(_STYLE, "SECOND", "#52514e")
 MUTED = getattr(_STYLE, "MUTED", "#898781")
 GRID = getattr(_STYLE, "GRID", "#e1e0d9")
 RAMP = getattr(_STYLE, "SEQ_BLUE", None) or matplotlib.colormaps["Blues"]
@@ -151,7 +155,8 @@ def ramp_colours(n):
 
 
 def diameter_tag(d):
-    """'01.0um' style text used in file names (two integer digits, as run names do)."""
+    """'d01.0um' style text used in file names: the diameter in micrometres with one decimal, at least four characters
+    wide (so 1.0 gives 'd01.0um', 14.1 'd14.1um', 200.0 'd200.0um')."""
     return f"d{d:04.1f}um"
 
 

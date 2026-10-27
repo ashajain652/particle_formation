@@ -111,3 +111,17 @@ def test_truncated_summary_of_a_real_run_is_rerun(tmp_path, parent):
     b = run.run(case, st, out_dir=tmp_path)
     assert b["run_name"] == a["run_name"] and 0.0 <= b["condensed_fraction_end"] <= 1.0
     assert json.loads(path.read_text())["runtime_s"] == b["runtime_s"]
+
+
+def test_t50_and_t90_are_the_first_output_times_reaching_the_level():     # decision 17
+    t = np.array([0.0, 1.0, 10.0, 100.0, 1000.0])
+    condensed = np.array([0.0, 0.2, 0.5, 0.89, 0.95])
+    assert run._first_time_reaching(t, condensed, 0.5) == 10.0       # reaching the level exactly counts
+    assert run._first_time_reaching(t, condensed, 0.9) == 1000.0     # 0.89 at t = 100 s has not reached 0.9
+    assert run._first_time_reaching(t, condensed, 0.99) is None      # never reached: null
+    assert run._first_time_reaching(t, condensed[::-1] * 0.0, 0.5) is None
+
+
+def test_condensed_is_particles_plus_smoke_plus_settled():                # decision 17
+    budget = {"Al": 0.1, "AlO": 0.2, "AlOH": 0.3, "particles": 0.05, "smoke": 0.25, "settled": 0.1}
+    assert run._condensed(budget) == pytest.approx(0.4)             # no gas species in it

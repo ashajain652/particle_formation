@@ -93,6 +93,19 @@ def plot_tornado(summaries, key, name, xlabel, relative, out, ambient="waccm"):
     return results.save(fig, out, name)
 
 
+def coverage(summaries, ambient="waccm"):
+    """(baseline runs found, sensitivity runs found): out of 6 and of 90 for the complete set."""
+    cases = sensitivity.cases()
+    base = results.pick(summaries, results.physics_signature(dataclasses.asdict(
+        dataclasses.replace(Settings(), ambient=ambient))), ambient)
+    n_base = sum(1 for c in cases if (c.d0_um, c.h0_km, c.time_of_day) in base)
+    n_sens = 0
+    for _, st in sensitivity.settings_set(ambient=ambient):
+        runs = results.pick(summaries, results.physics_signature(dataclasses.asdict(st)), ambient)
+        n_sens += sum(1 for c in cases if (c.d0_um, c.h0_km, c.time_of_day) in runs)
+    return n_base, n_sens
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", default=OUTPUT, help="folder holding the runs (default: the wake-column OUTPUT)")
@@ -100,6 +113,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
     results.apply_style()
     summaries = results.load_summaries(args.out)
+    n_base, n_sens = coverage(summaries, args.ambient)
+    total = len(sensitivity.cases())
+    print(f"found {n_base} of {total} baselines, {n_sens} of {total * len(sensitivity.settings_set())} "
+          f"sensitivity runs, ambient {args.ambient}, in {args.out}")
     for key, name, xlabel, relative in QUANTITIES:
         print(plot_tornado(summaries, key, name, xlabel, relative, args.out, args.ambient))
     return 0

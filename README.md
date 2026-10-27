@@ -434,12 +434,14 @@ the vaporised aluminium against time), `size_distribution.csv` (particle bins at
 and `summary.json`; plots go to `<out>/plots/`. Outputs are git-ignored; the inputs (ambient columns, reaction and
 species tables, Megner eddy and smoke tables) are committed in `Reentry Model/data/wake_column/`.
 
-Verification (`reentry_model/wake_column/tests/`, in the Reentry Model unit tier; the numbers are in assumptions section 9):
-aluminium is conserved to 1e-14 of the inventory (limit 1e-6); an inert tracer follows r0^2/r^2; the AlO and Al lifetimes
-equal 1/(k6 n [O2]) (0.093, 2.27 and 45.9 s at 70, 80 and 90 km at night) and 1/(k1 [O2]); coagulation reaches the
-free-molecule self-preserving width 1.4755 (literature about 1.46, test band 1.45 +- 0.03); settling matches
-2 v_s / (pi r) to 1.6e-5; the reaction table reproduces Plane's rates at 200 and 300 K; Stage A's mean energy loss per
-collision is 0.4997 against 0.4998; the provenance tallies close to 3e-12 atoms.
+Verification (`reentry_model/wake_column/tests/`, in the Reentry Model unit tier; each test's limit and the value
+measured in the build are in assumptions section 9): aluminium is conserved to 1e-6 of the inventory at every output
+(test limit; 1e-14 measured in the build); an inert tracer follows r0^2/r^2; the AlO and Al decay against R6 and R1
+follows exp(-t/lifetime) to 1e-3 (the lifetimes 1/(k6 n [O2]) are 0.093, 2.27 and 45.9 s at 70, 80 and 90 km at night);
+coagulation reaches the free-molecule self-preserving width, test band 1.45 +- 0.03 (1.4755 measured, literature about
+1.46); settling matches 2 v_s / (pi r) to 1e-4 (1.6e-5 measured); the reaction table reproduces four of Plane's rows (R1,
+R11, R6, R17) at 200 and 300 K; Stage A's mean energy loss per collision is within 0.01 of 2mM/(m+M)^2 (0.4997 measured
+against 0.4998); the provenance tallies close within 1e-6 of the inventory (3e-12 atoms measured).
 
 ## Large fragments — `spheral_frag` core (M1)
 

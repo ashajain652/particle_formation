@@ -78,12 +78,16 @@ def test_load_summaries_skips_skipped_and_unreadable(tmp_path):
     (tmp_path / "plots").mkdir()
     got = results.load_summaries(tmp_path)
     assert [s["run_name"] for s in got] == ["wake_good"] and got[0]["_dir"] == str(good)
+    both = results.load_summaries(tmp_path, include_skipped=True)           # for counting skipped runs
+    assert [s["run_name"] for s in both] == ["wake_good", "wake_skipped"]
 
 
-def test_plot_scripts_run_on_a_tiny_sweep(tmp_path, parent):
+def test_plot_scripts_run_on_a_tiny_sweep(tmp_path, parent, capsys):
     sweep.main(["--diameters", "1.0", "--altitudes", "80", "--out", str(tmp_path)] + TINY)
     from reentry_model.wake_column.analysis import plot_sweep
+    capsys.readouterr()
     plot_sweep.main(["--out", str(tmp_path)])
+    assert "found 2 of 126 baseline runs (0 skipped" in capsys.readouterr().out      # a partial sweep says so
     pngs = {p.name for p in (tmp_path / "plots").glob("*.png")}
     assert pngs
     assert "condensed_vs_time_d01.0um.png" in pngs and "provenance_d01.0um.png" in pngs
@@ -95,7 +99,7 @@ def test_plot_scripts_run_on_a_tiny_sweep(tmp_path, parent):
     assert sorted(p.name for p in tmp_path.iterdir()) == names
 
 
-def test_plot_scripts_ignore_a_skipped_run(tmp_path, parent):
+def test_plot_scripts_ignore_a_skipped_run(tmp_path, parent, capsys):
     sweep.main(["--diameters", "1.0", "--altitudes", "80", "--out", str(tmp_path)] + TINY)
     d = tmp_path / "wake_d200.00um_h050.0km_day_waccm_tend60_ntp200"
     d.mkdir()
@@ -104,11 +108,13 @@ def test_plot_scripts_ignore_a_skipped_run(tmp_path, parent):
         "case": {"d0_um": 200.0, "h0_km": 50.0, "time_of_day": "day"},
         "settings": dataclasses.asdict(Settings(t_end_s=60.0, n_test_particles=200))}))
     from reentry_model.wake_column.analysis import plot_sweep
+    capsys.readouterr()
     plot_sweep.main(["--out", str(tmp_path)])
+    assert "found 2 of 126 baseline runs (1 skipped" in capsys.readouterr().out
     assert not any("d200" in p.name for p in (tmp_path / "plots").glob("*.png"))
 
 
-def test_sensitivity_runs_and_tornado_plot(tmp_path, parent):
+def test_sensitivity_runs_and_tornado_plot(tmp_path, parent, capsys):
     rc = sensitivity.main(["--out", str(tmp_path), "--altitudes", "76", "--time-of-day", "night",
                            "--labels", "formation x0.1", "droplet-temperature start"] + TINY)
     assert rc == 0
@@ -118,7 +124,9 @@ def test_sensitivity_runs_and_tornado_plot(tmp_path, parent):
     hot = [s for s in got.values() if s["settings"]["hot_start"] == "droplet_temperature"]
     assert len(hot) == 1 and hot[0]["hot_fractions"] and hot[0]["share_above_AlO_bond"] == 0.0
     from reentry_model.wake_column.analysis import plot_sensitivity
+    capsys.readouterr()
     plot_sensitivity.main(["--out", str(tmp_path)])
+    assert "found 1 of 6 baselines, 2 of 90 sensitivity runs" in capsys.readouterr().out
     pngs = {p.name for p in (tmp_path / "plots").glob("*.png")}
     assert {"tornado_condensed_fraction.png", "tornado_volume_mean_diameter.png"} <= pngs
 

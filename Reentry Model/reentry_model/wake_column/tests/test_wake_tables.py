@@ -66,3 +66,12 @@ def test_bad_hot_start_or_ambient_raises():
         Settings(hot_start="slowing-down")
     with pytest.raises(ValueError):
         Settings(ambient="msis")
+
+
+def test_atoms_delivered_per_molecule_follow_decision_9():
+    s = sp.load_species()
+    want = {"Al": (0, 0), "AlO": (1, 0), "OAlO": (2, 0), "OAlO2": (3, 0), "AlCO3": (1, 0), "AlOH": (1, 1),
+            "AlOH2": (2, 2)}
+    assert set(want) == set(sp.AL_SPECIES)
+    for name, (o, h) in want.items():
+        assert (s[name].deliver_O, s[name].deliver_H) == (o, h), name

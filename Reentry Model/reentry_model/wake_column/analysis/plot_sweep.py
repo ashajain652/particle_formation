@@ -23,7 +23,6 @@ Runs that vaporised no aluminium carry no outcome and are left out. "Condensed" 
 (plume particles, background-smoke uptake and settled matter).
 """
 import argparse
-import os
 import sys
 
 import matplotlib.pyplot as plt
@@ -33,7 +32,7 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.ticker import FormatStrFormatter
 
 from reentry_model.wake_column import OUTPUT
-from reentry_model.wake_column.analysis import results
+from reentry_model.wake_column.analysis import results, sweep
 from reentry_model.wake_column.box import ROUTES, SOURCES
 
 ROUTE_LABELS = {"formation": "new-particle formation", "growth": "growth of plume particles",
@@ -188,8 +187,12 @@ def main(argv=None):
     ap.add_argument("--ambient", choices=("waccm", "msis_afgl"), default="waccm", help="ambient of the main plots")
     args = ap.parse_args(argv)
     results.apply_style()
-    summaries = results.load_summaries(args.out)
+    everything = results.load_summaries(args.out, include_skipped=True)
+    summaries = [s for s in everything if not s.get("skipped")]
     runs = results.baseline_runs(summaries, args.ambient)
+    n_skipped = sum(1 for s in everything if s.get("skipped") and results.is_baseline(s, args.ambient))
+    print(f"found {len(runs)} of {len(sweep.default_cases())} baseline runs ({n_skipped} skipped: no aluminium "
+          f"vaporised), ambient {args.ambient}, in {args.out}")
     written = []
     for d in sorted({k[0] for k in runs}):
         written.append(plot_condensed_vs_time(runs, d, args.out))
