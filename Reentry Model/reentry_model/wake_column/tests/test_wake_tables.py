@@ -42,3 +42,27 @@ def test_run_name_encodes_non_default_settings():
     assert run_name(c, Settings()) == "wake_d014.10um_h076.0km_day_waccm"
     assert run_name(c, Settings(formation_scale=0.1, hot_start="droplet_temperature")).endswith("_form0.1_hotdroplet")
     assert run_name(c, Settings(ambient="msis_afgl")) != run_name(c, Settings())
+
+def test_every_setting_changes_the_run_name():        # spec §8: run names encode every non-default setting
+    import dataclasses
+    changed = {"hot_start": "droplet_temperature", "hot_reaction_scale": 0.5, "thermal_cutoff": 3.0,
+               "n_test_particles": 5000, "n_emission_samples": 10, "seed": 12345678, "l_inner_m": 10.0,
+               "eddy_scale": 2.0, "formation_scale": 0.1, "formation_eff": (("AlO+AlO", 0.5),),
+               "sticking_scale": 0.5, "sticking": (("AlO", 0.1),), "oxidation_eff": 0.3, "smoke_sticking": 0.2,
+               "ambient": "msis_afgl", "bin_ratio": 1.5, "d_max_nm": 200.0, "t_end_s": 3600.0, "t_first_s": 1e-5,
+               "points_per_decade": 5, "rtol": 1e-8, "chemistry": False, "particles": False, "coagulation": False,
+               "settling": False, "freeze_radius": True, "reactions": ("R1", "R3"), "smoke": False}
+    assert set(changed) == {f.name for f in dataclasses.fields(Settings)}      # a new field must be added here
+    c = Case(14.1, 76.0, "day")
+    base = run_name(c, Settings())
+    names = {k: run_name(c, Settings(**{k: v})) for k, v in changed.items()}
+    assert all(n != base for n in names.values())
+    assert len(set(names.values())) == len(names)
+    assert run_name(c, Settings(reactions=())) not in (base, names["reactions"])
+    assert run_name(c, Settings(seed=1)) != run_name(c, Settings(seed=2))
+
+def test_bad_hot_start_or_ambient_raises():
+    with pytest.raises(ValueError):
+        Settings(hot_start="slowing-down")
+    with pytest.raises(ValueError):
+        Settings(ambient="msis")

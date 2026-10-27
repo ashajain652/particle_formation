@@ -6,6 +6,17 @@ run whose summary JSON already exists.
 """
 from dataclasses import dataclass
 
+HOT_STARTS = ("slowing_down", "droplet_temperature")
+AMBIENTS = ("waccm", "msis_afgl")
+
+
+def _fmt(v):
+    """A value for a run name: shortest exact text (the 6-digit %g form when it is exact, else repr)."""
+    if isinstance(v, int):
+        return str(v)
+    g = f"{v:g}"
+    return g if float(g) == v else repr(v)
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -44,27 +55,49 @@ class Settings:
     reactions: tuple = None                 # tuple of rids to keep, or None for all
     smoke: bool = True
 
+    def __post_init__(self):
+        if self.hot_start not in HOT_STARTS:
+            raise ValueError(f"hot_start must be one of {HOT_STARTS}, got {self.hot_start!r}")
+        if self.ambient not in AMBIENTS:
+            raise ValueError(f"ambient must be one of {AMBIENTS}, got {self.ambient!r}")
+
     def tag(self):
-        """'_<short><value>' for each non-default physics field, in a fixed order ('' when all are default)."""
+        """'_<short><value>' for every field that differs from its default, in a fixed order ('' when all are
+        default): first the physics fields (form, stick, ox, hot, hotdroplet, eddy, lin, cut, smk, q, fe-, st-),
+        then the numerical, sampling and test-only fields. `ambient` is not here: run_name puts it in the name."""
         d = Settings()
         parts = []
         for short, field in (("form", "formation_scale"), ("stick", "sticking_scale"), ("ox", "oxidation_eff"),
                              ("hot", "hot_reaction_scale")):
             if getattr(self, field) != getattr(d, field):
-                parts.append(f"{short}{getattr(self, field):g}")
+                parts.append(f"{short}{_fmt(getattr(self, field))}")
         if self.hot_start != d.hot_start:
-            if self.hot_start == "droplet_temperature":
-                parts.append("hotdroplet")
-            else:
-                parts.append(f"hotstart-{self.hot_start}")
+            parts.append("hotdroplet")              # the only other hot_start allowed
         for short, field in (("eddy", "eddy_scale"), ("lin", "l_inner_m"), ("cut", "thermal_cutoff"),
                              ("smk", "smoke_sticking"), ("q", "bin_ratio")):
             if getattr(self, field) != getattr(d, field):
-                parts.append(f"{short}{getattr(self, field):g}")
+                parts.append(f"{short}{_fmt(getattr(self, field))}")
         for pid, value in sorted(self.formation_eff):
-            parts.append(f"fe-{pid}{value:g}")
+            parts.append(f"fe-{pid}{_fmt(value)}")
         for name, value in sorted(self.sticking):
-            parts.append(f"st-{name}{value:g}")
+            parts.append(f"st-{name}{_fmt(value)}")
+        # sampling, time grid and solver
+        for short, field in (("ntp", "n_test_particles"), ("nem", "n_emission_samples"), ("seed", "seed"),
+                             ("dmax", "d_max_nm"), ("tend", "t_end_s"), ("tfirst", "t_first_s"),
+                             ("ppd", "points_per_decade"), ("rtol", "rtol")):
+            if getattr(self, field) != getattr(d, field):
+                parts.append(f"{short}{_fmt(getattr(self, field))}")
+        # test-only switches
+        for short, field in (("nochem", "chemistry"), ("nopart", "particles"), ("nocoag", "coagulation"),
+                             ("nosettle", "settling")):
+            if getattr(self, field) != getattr(d, field):
+                parts.append(short)
+        if self.freeze_radius != d.freeze_radius:
+            parts.append("freeze")
+        if self.reactions != d.reactions:
+            parts.append("rx-" + ("-".join(sorted(self.reactions)) if self.reactions else "none"))
+        if self.smoke != d.smoke:
+            parts.append("nosmoke")
         return "".join("_" + p for p in parts)
 
 
