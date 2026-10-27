@@ -4,8 +4,10 @@ Usage:  python -m reentry_model.wake_column.analysis.extract_waccm_columns <path
 
 The 1.6 GB starting-condition file (64-bit-offset netCDF) lies outside the repository, so the committed CSV is the
 product. Method (design section 4.3): latitude nearest 40.7 N; day = longitude 180 (local noon at 00 UT), night =
-longitude 0 (local midnight); pressure p = hyam*P0 + hybm*PS; geometric altitude by hypsometric integration of the
-layer interfaces (Rd = 287.05 J/kg/K, g = 9.80665 m/s^2) with the layer temperature; number density of a species with
+longitude 0 (local midnight); pressure p = hyam*P0 + hybm*PS; hypsometric integration of the layer interfaces
+(Rd = 287.05 J/kg/K, constant g = 9.80665 m/s^2, layer temperature) gives the geopotential height Z (starting from the
+surface geopotential PHIS/g, or from 0 when the file has no PHIS, as is the case for this file); the geometric
+altitude is z = R Z/(R - Z) with R = 6371 km (z is about 1.6 km above Z at 100 km); number density of a species with
 mass mixing ratio q is q * 28.96/M * p/(k_B T); N2 is the remainder of the air (n_total minus the other eight
 species, so it also absorbs helium, argon, atomic nitrogen and nitric oxide). The native levels are interpolated to
 a regular 1 km grid from 45 to 100 km (temperature linearly, pressure and every density log-linearly in altitude), so
@@ -24,6 +26,7 @@ K_B = 1.380649e-23      # J/K
 R_D = 287.05            # J/kg/K, dry air
 G0 = 9.80665            # m/s^2
 M_AIR = 28.96           # amu, mean molecular mass of dry air used in the conversion
+R_EARTH = 6371e3        # m, mean Earth radius for the geopotential-to-geometric conversion
 TARGET_LAT = 40.7
 Z_GRID_KM = np.arange(45.0, 100.0 + 0.5, 1.0)
 # WACCM variable name for each ambient species whose mixing ratio is read (water vapour is "Q"; N2 is the remainder)
@@ -42,9 +45,12 @@ def native_column(v, j, i, mass_amu):
     p = hyam * p0 + hybm * ps
     p_int = hyai * p0 + hybi * ps
     z_int = np.zeros(len(p_int))                       # the bottom interface (last index) is the ground
+    if "PHIS" in v:                                    # surface geopotential (m^2/s^2) -> surface height
+        z_int[-1] = float(v["PHIS"][0, j, i]) / G0
     for k in range(len(p_int) - 2, -1, -1):
         z_int[k] = z_int[k + 1] + R_D * T[k] / G0 * np.log(p_int[k + 1] / p_int[k])
-    z_km = 0.5 * (z_int[:-1] + z_int[1:]) / 1e3
+    z_geop = 0.5 * (z_int[:-1] + z_int[1:])            # geopotential height of each layer midpoint, m
+    z_km = R_EARTH * z_geop / (R_EARTH - z_geop) / 1e3  # geometric altitude, km
     n_total = p / (K_B * T)
     out = {"z_km": z_km, "p_Pa": p, "T_K": T, "n_total_m3": n_total}
     for s, var in WACCM_VAR.items():
@@ -101,8 +107,11 @@ def write_csv(res, path, source_name):
         fh.write(f"# source file: {source_name} (full-chemistry WACCM starting condition, date 2001-01-01 00 UT; "
                  f"day = longitude {res['day_lon']:.0f} E (local noon), night = longitude {res['night_lon']:.0f} E "
                  "(local midnight))\n")
-        fh.write("# pressure from hybrid coefficients, altitude by hypsometric integration (Rd 287.05, g 9.80665), "
-                 "number density = mass mixing ratio * 28.96/M * p/(k_B T); N2 = n_total minus the other eight species;\n")
+        fh.write("# pressure from hybrid coefficients; altitude = geometric altitude z = R Z/(R - Z), R = 6371 km, from the "
+                 "geopotential height Z by hypsometric integration (Rd 287.05, g 9.80665) from the surface; this file has "
+                 "no PHIS (surface geopotential), so the surface height is taken as 0 (terrain height at these two "
+                 "columns is not applied, at most a few hundred metres);\n"
+                 "# number density = mass mixing ratio * 28.96/M * p/(k_B T); N2 = n_total minus the other eight species;\n")
         fh.write("# native levels interpolated to a 1 km grid, 45-100 km (T linear, p and densities log-linear). "
                  "Units: z km, p Pa, T K, densities m^-3. Held fixed for 12 h in the model.\n")
         fh.write(",".join(FIELDS) + "\n")
