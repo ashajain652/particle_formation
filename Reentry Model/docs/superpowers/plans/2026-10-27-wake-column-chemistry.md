@@ -48,7 +48,7 @@ These are recorded here once so every task uses the same choice. Task 10 copies 
    - `k_HS = π σ_AB² v̄`.
    - For AlO + AlO at 298 K with 4.36 D this gives 1.52e-9 cm³/s. Gómez Martín et al. (2017) quote 1.1e-9; the difference goes in the assumption entry.
    - `spin = g_P / (g_A g_B)`, where g_P = 1 when the pair's total electron count is even and 2 when it is odd.
-8. **Bins by aluminium atoms.** Pivots `n_k = 2 · q^k` (`q = Settings.bin_ratio`, default 2). They run from bin 0 (two Al atoms, a 0.476 nm alumina sphere) until the alumina diameter passes `d_max_nm` (default 400). Number and Al atoms are conserved by fixed-pivot splitting (Kumar & Ramkrishna 1996):
+8. **Bins by aluminium atoms.** Pivots `n_k = 2 · q^k` (`q = Settings.bin_ratio`, default 2^(1/2) = 1.41421: Task 8's coagulation test gave a self-preserving geometric standard deviation of 1.506 at q = 2, outside 1.45 ± 0.03 by numerical diffusion, and 1.476 at 2^(1/2) and 1.468 at 2^(1/3); 60 bins at the default). They run from bin 0 (two Al atoms, a 0.476 nm alumina sphere) until the alumina diameter passes `d_max_nm` (default 400). Number and Al atoms are conserved by fixed-pivot splitting (Kumar & Ramkrishna 1996):
    - An entity of n atoms with `n_k ≤ n < n_{k+1}` puts the fraction `ζ = (n_{k+1} − n)/(n_{k+1} − n_k)` of its number in bin k and `1 − ζ` in bin k+1.
    - Its tallies split in proportion to the atoms each bin receives.
    - Above the last pivot, the entity goes to the last bin with its number scaled to conserve atoms.
@@ -157,7 +157,7 @@ These are recorded here once so every task uses the same choice. Task 10 copies 
 - **Hot start:** `hot_start="slowing_down"`, `hot_reaction_scale=1.0`, `thermal_cutoff=2.0`, `n_test_particles=10000`, `n_emission_samples=20`, `seed=20261027`.
 - **Spreading:** `l_inner_m=30.0`, `eddy_scale=1.0`.
 - **Efficiencies:** `formation_scale=1.0`, `formation_eff=()` (tuple of (pathway id, value)), `sticking_scale=1.0`, `sticking=()`, `oxidation_eff=1.0`, `smoke_sticking=1.0`.
-- **Ambient and bins:** `ambient="waccm"`, `bin_ratio=2.0`, `d_max_nm=400.0`.
+- **Ambient and bins:** `ambient="waccm"`, `bin_ratio=2.0 ** 0.5` (2.0 until Task 8; see decision 8), `d_max_nm=400.0`.
 - **Time grid and solver:** `t_end_s=43200.0`, `t_first_s=1e-6`, `points_per_decade=10`, `rtol=1e-6`.
 - **Test-only switches:** `chemistry=True`, `particles=True`, `coagulation=True`, `settling=True`, `freeze_radius=False`, `reactions=None` (a tuple of rids, or None for all), `smoke=True`.
 

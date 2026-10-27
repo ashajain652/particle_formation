@@ -39,7 +39,9 @@ class Settings:
     smoke_sticking: float = 1.0             # efficiency of uptake onto background meteoric smoke
     # ambient and bins
     ambient: str = "waccm"                  # "waccm", or "msis_afgl" (NRLMSIS + AFGL cross-check)
-    bin_ratio: float = 2.0                  # atom-number ratio q between neighbouring particle bins
+    bin_ratio: float = 2.0 ** 0.5           # atom-number ratio q between neighbouring particle bins; 2^(1/2), the
+                                            # largest of 2, 2^(1/2), 2^(1/3) that keeps the self-preserving width
+                                            # within 1.45 +- 0.03 (q = 2 gives 1.506 by numerical diffusion)
     d_max_nm: float = 400.0                 # alumina diameter at which the bins stop, nm
     # time grid and solver
     t_end_s: float = 43200.0                # 12 hours
