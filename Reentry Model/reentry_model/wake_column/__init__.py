@@ -8,6 +8,8 @@ settling. Design: docs/superpowers/specs/2026-10-27-wake-column-chemistry-design
   species.py      the species table (data/wake_column/species.csv)
   reactions.py    the reaction table (data/wake_column/reactions.csv) and rate evaluation with validity clipping
   settings.py     the Settings, the Case and the run-name scheme
+  ambient.py      the ambient-air columns (WACCM baseline, NRLMSIS + AFGL cross-check) and their interpolation
+  analysis/       scripts that build the committed tables (WACCM extraction, MSIS + AFGL columns)
   tests/          the checks, run by pytest from Reentry Model/
 
 All code works in SI units; literature units appear only in the committed tables and are converted on load.
