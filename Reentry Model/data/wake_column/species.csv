@@ -1,0 +1,20 @@
+# Species of the wake-column network. mass_amu in atomic mass units; n_Al/n_O/n_H atoms of each element in the molecule (carbon is not tracked, so AlCO3 lists 3 O);
+# deliver_O/deliver_H = oxygen and hydrogen atoms a molecule adds to a particle when it sticks (design decision 9; AlCO3 is assumed to lose its CO2); electrons = total electron count (sets the
+# spin degeneracy of a pair); dipole_D in debye, blank = unknown (such pairs use the hard-sphere collision rate); multiplicity = 2S+1 of the ground state; sigma_A = hard-sphere collision diameter in angstrom; ambient = 1 for background-air species.
+name,mass_amu,n_Al,n_O,n_H,deliver_O,deliver_H,dipole_D,multiplicity,electrons,sigma_A,ambient,source
+Al,26.982,1,0,0,0,0,0,2,13,2.655,0,"sigma: Svehla 1962 (decision 5); dipole 0 (atom); multiplicity 2 (2P ground state)"
+AlO,42.981,1,1,0,1,0,4.45,2,21,3.5,0,"dipole: Bai & Steimle 2020 as used by Plane et al. 2021 (decision 6); sigma 3.5 A assumed (decision 5)"
+OAlO,58.980,1,2,0,2,0,,2,29,3.5,0,"dipole unknown (hard-sphere rate for its pairs); sigma 3.5 A assumed (decision 5); multiplicity assumed doublet (odd electron count)"
+OAlO2,74.979,1,3,0,3,0,,2,37,3.5,0,"dipole unknown (hard-sphere rate for its pairs); sigma 3.5 A assumed (decision 5); multiplicity assumed doublet (odd electron count)"
+AlCO3,86.990,1,3,0,1,0,,2,43,3.5,0,"dipole unknown; sigma 3.5 A assumed (decision 5); CO2 assumed to leave on sticking so only 1 O is delivered (decision 9); multiplicity assumed doublet (odd electron count)"
+AlOH,43.989,1,1,1,1,1,0.97,1,22,3.5,0,"dipole: Sikorska & Skurski 2009 as used by Plane et al. 2021 (decision 6); sigma 3.5 A assumed (decision 5); closed shell"
+AlOH2,60.996,1,2,2,2,2,,2,31,3.5,0,"Al(OH)2; dipole unknown; sigma 3.5 A assumed (decision 5); multiplicity assumed doublet (odd electron count)"
+N2,28.014,0,0,0,0,0,,1,14,3.798,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+O2,31.998,0,2,0,0,0,,3,16,3.467,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+O,15.999,0,1,0,0,0,,3,8,3.050,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+O3,47.998,0,3,0,0,0,,1,24,3.6,1,"sigma 3.6 A assumed (decision 5); dipole not used for ambient species"
+H,1.008,0,0,1,0,0,,2,1,2.708,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+H2,2.016,0,0,2,0,0,,1,2,2.827,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+H2O,18.015,0,1,2,0,0,,1,10,2.641,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+CO,28.010,0,1,0,0,0,,1,14,3.690,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
+CO2,44.009,0,2,0,0,0,,1,22,3.941,1,"sigma: Svehla 1962 (decision 5); dipole not used for ambient species"
