@@ -100,20 +100,31 @@ def test_settling_rate():
     assert tr.settling_rate(0.03, 2.0) == pytest.approx(2 * 0.03 / (math.pi * 2.0))
 
 
-def test_smoke_table_matches_megner_fig2_numbers():
-    """The digitised smoke table: positive, decreasing with radius, and at 90 km the visible part of the size
-    distribution holds the fraction of the Fig. 2a number density (4.8e4 cm^-3) that the header states."""
+def _smoke_rows():
     import csv
     import os
     from reentry_model.wake_column import DATA
     with open(os.path.join(DATA, "megner2006_smoke.csv"), newline="") as f:
-        rows = [(float(r["z_km"]), float(r["r_nm"]), float(r["dN_dlnr_m3"]))
+        return [(float(r["z_km"]), float(r["r_nm"]), float(r["dN_dlnr_m3"]))
                 for r in csv.DictReader(l for l in f if not l.startswith("#"))]
+
+
+def test_smoke_table_shape():
+    """Altitudes 45-100 km; at each, the visible Fig. 2b radii (0.3 nm and up) decrease steeply with radius, and
+    the first row is the assumed deficit bin at Megner's smallest radius, 0.2 nm."""
+    rows = _smoke_rows()
     zs = sorted({z for z, _, _ in rows})
     assert zs[0] == 45.0 and zs[-1] == 100.0
     for z in zs:
         r, d = np.array([(a, b) for zz, a, b in rows if zz == z]).T
-        assert np.all(d > 0) and np.all(np.diff(r) > 0) and np.all(np.diff(d) < 0)
-    r, d = np.array([(a, b) for zz, a, b in rows if zz == 90.0]).T
-    n_visible_cm3 = np.trapezoid(d, np.log(r)) * 1e-6
-    assert 5e3 < n_visible_cm3 < 1.5e4          # about 19 % of the 4.8e4 cm^-3 in Fig. 2a; the rest is below 0.28 nm
+        assert r[0] == pytest.approx(0.2) and np.all(np.diff(r) > 0) and np.all(d > 0)
+        assert np.all(np.diff(d[1:]) < 0)
+
+
+@pytest.mark.parametrize("z, n_fig2a_cm3", [(60.0, 1742.0), (75.0, 20287.0), (90.0, 47784.0)])
+def test_smoke_table_integrates_to_fig2a_number_density(z, n_fig2a_cm3):
+    """Sum of dN/dln r times the bin width in ln r (Megner's 35 geometric bins, ln(200)/34 each) over the table's
+    radii equals the Fig. 2a total number density read at that altitude (cm^-3 recorded in the CSV header)."""
+    r, d = np.array([(a, b) for zz, a, b in _smoke_rows() if zz == z]).T
+    n_cm3 = d.sum() * (math.log(200.0) / 34) * 1e-6
+    assert n_cm3 == pytest.approx(n_fig2a_cm3, rel=0.01)

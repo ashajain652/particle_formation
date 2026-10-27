@@ -1,12 +1,13 @@
 # Background meteoric smoke number and size distribution, Megner, L., Rapp, M. and Gumbel, J. (2006), Atmos. Chem. Phys. 6, 4415-4426, doi:10.5194/acp-6-4415-2006, Fig. 2 (the CARMA model with the ablation profile and eddy diffusion of Hunten et al. 1980; solid lines).
 # Digitised by eye from Megner et al. (2006) ACP 6, 4415, Fig. 3c / Fig. 2, page 4; reading uncertainty about +-10 % in log value. Digitised 2026-10-27. Radius is the particle radius in nm; dN_dlnr_m3 is dN/d(ln r), the number per m3 of air per unit natural-log radius (m^-3).
-# What Fig. 2 shows: (a) the total smoke number density against altitude (a curve on log axes, ticks at 1e1, 1e3, 1e5 cm^-3; 30-110 km), and (b) the size distribution at 90 km only, dN/dr in cm^-3 nm^-1 against radius (a curve on log-linear axes; the axis stops at 1e5, so the curve is visible only for radius about 0.28 nm and above, up to about 3.1 nm). Hunten et al. (1980) points drawn as squares were not used.
-# Conversion to this table: (1) the 90 km size distribution was read from the solid curve in (b) (centre-line trace against the axis ticks; a quintic fit of log10 dN/dr against radius, residual scatter 0.006 in log10), then dN/dln r = r dN/dr, evaluated at the 15 radii r_k = 0.2 nm * (200)^(k/34) for k = 3..17, which are Megner's 35 geometric bins between 0.2 and 40 nm that fall in the visible range. Rows for 90 km are those values as read (cm^-3 times 1e6 gives m^-3).
-# (2) Fig. 2 gives the size distribution at 90 km only. For every other altitude the 90 km SHAPE IS ASSUMED to hold and is scaled by n_total(z)/n_total(90 km), where n_total(z) is the solid curve of (a) (read every 5 km; 90 km value 4.8e4 cm^-3). The paper's size distribution does shift with altitude, so the rows other than z = 90 are an assumption, not a reading.
-# (3) The table is incomplete at small radius: the integral of dN/dr over the visible range (0.28-3.1 nm) at 90 km is about 9e3 cm^-3, only about 19 % of the 4.8e4 cm^-3 total in (a); the rest lies below 0.28 nm, outside the axes of (b), and is NOT in this table. The table is therefore not renormalised to the total; sum the rows only as the number of smoke particles of 0.3 nm and larger.
-# Altitude: 45-100 km every 5 km (the range of the ambient tables; Fig. 2a reaches 30 km). Number densities in (a) at the table altitudes (cm^-3), read from the solid curve: 45 km 435, 50 km 615, 55 km 1e+03, 60 km 1.74e+03, 65 km 3.42e+03, 70 km 7.91e+03, 75 km 2.03e+04, 80 km 5.04e+04, 85 km 7.01e+04, 90 km 4.78e+04, 95 km 2.16e+04, 100 km 5.9e+03.
+# What Fig. 2 shows: (a) the total smoke number density against altitude (a curve on log axes, ticks at 1e1, 1e3, 1e5 cm^-3; 30-110 km), and (b) the size distribution at 90 km only. The ordinate of (b) is dN/dr, the number concentration per unit radius, in cm^-3 nm^-1 (log axis, top at 1e5), against radius in nm (linear axis); the curve is visible for radius about 0.28 nm and above, up to about 3.1 nm, because the axis stops at 1e5. Hunten et al. (1980) points drawn as squares were not used.
+# Conversion: (1) the 90 km curve of (b) was read by centre-line trace against the axis ticks (quintic fit of log10 dN/dr against radius, residual scatter 0.006 in log10). It was converted to dN/dln r = r dN/dr (cm^-3 nm^-1 times nm = cm^-3; times 1e6 gives m^-3, the units of the dN_dlnr_m3 column) at the 15 radii r_k = 0.2 nm * 200^(k/34), k = 3..17, which are Megner's 35 geometric bins between 0.2 and 40 nm that fall in the visible range. Each bin has width ln(200)/34 = 0.1558 in ln r. The integral over ln r is the sum of dN_dlnr_m3 times 0.1558.
+# (2) ASSUMED: deficit of Fig. 2a total placed at the smallest radius. The visible part of the 90 km curve integrates (over ln r, 15 bins) to only 7.54e+03 cm^-3, against the 4.78e+04 cm^-3 total of Fig. 2a; the remaining 4.02e+04 cm^-3 lies at radius below the visible axis range. It is placed in one extra bin at r = 0.2 nm, the smallest radius of Megner's grid and the initial particle radius of the model (p. 4: 'initial particle size of 0.2 nm in radius'; 35 bins between 0.2 and 40 nm), with the same bin width 0.1558 in ln r, i.e. dN/dln r = deficit / 0.1558. The table's number density therefore equals the Fig. 2a value at 90 km.
+# (3) ASSUMED: Fig. 2 gives the size distribution at 90 km only. For every other altitude the 90 km shape (including the 0.2 nm bin) is held and scaled by n_total(z)/n_total(90 km), with n_total(z) the solid curve of (a) read every 5 km. The summed table equals the Fig. 2a value at every table altitude. The paper's size distribution does shift with altitude, so the rows other than z = 90 are an assumption, not a reading.
+# Altitude: 45-100 km every 5 km (the range of the ambient tables; Fig. 2a reaches 30 km). Fig. 2a total number density read at the table altitudes (cm^-3): 45 km 435.2, 50 km 615.4, 55 km 1000, 60 km 1742, 65 km 3422, 70 km 7911, 75 km 2.029e+04, 80 km 5.037e+04, 85 km 7.009e+04, 90 km 4.778e+04, 95 km 2.161e+04, 100 km 5895.
 # Columns: z_km altitude (km); r_nm particle radius (nm); dN_dlnr_m3 smoke particles per m3 per unit ln radius (m^-3). Values rounded to 3 significant figures.
 z_km,r_nm,dN_dlnr_m3
+45,0.2000,2.35e+09
 45,0.3192,1.4e+08
 45,0.3730,1.02e+08
 45,0.4359,7.16e+07
@@ -22,6 +23,7 @@ z_km,r_nm,dN_dlnr_m3
 45,2.0710,2.73e+05
 45,2.4203,1.22e+05
 45,2.8284,5.25e+04
+50,0.2000,3.33e+09
 50,0.3192,1.98e+08
 50,0.3730,1.45e+08
 50,0.4359,1.01e+08
@@ -37,6 +39,7 @@ z_km,r_nm,dN_dlnr_m3
 50,2.0710,3.86e+05
 50,2.4203,1.73e+05
 50,2.8284,7.42e+04
+55,0.2000,5.4e+09
 55,0.3192,3.22e+08
 55,0.3730,2.35e+08
 55,0.4359,1.65e+08
@@ -52,6 +55,7 @@ z_km,r_nm,dN_dlnr_m3
 55,2.0710,6.28e+05
 55,2.4203,2.81e+05
 55,2.8284,1.21e+05
+60,0.2000,9.41e+09
 60,0.3192,5.61e+08
 60,0.3730,4.09e+08
 60,0.4359,2.87e+08
@@ -67,6 +71,7 @@ z_km,r_nm,dN_dlnr_m3
 60,2.0710,1.09e+06
 60,2.4203,4.89e+05
 60,2.8284,2.1e+05
+65,0.2000,1.85e+10
 65,0.3192,1.1e+09
 65,0.3730,8.04e+08
 65,0.4359,5.63e+08
@@ -82,6 +87,7 @@ z_km,r_nm,dN_dlnr_m3
 65,2.0710,2.15e+06
 65,2.4203,9.61e+05
 65,2.8284,4.13e+05
+70,0.2000,4.27e+10
 70,0.3192,2.55e+09
 70,0.3730,1.86e+09
 70,0.4359,1.3e+09
@@ -97,6 +103,7 @@ z_km,r_nm,dN_dlnr_m3
 70,2.0710,4.97e+06
 70,2.4203,2.22e+06
 70,2.8284,9.54e+05
+75,0.2000,1.1e+11
 75,0.3192,6.53e+09
 75,0.3730,4.77e+09
 75,0.4359,3.34e+09
@@ -112,6 +119,7 @@ z_km,r_nm,dN_dlnr_m3
 75,2.0710,1.27e+07
 75,2.4203,5.7e+06
 75,2.8284,2.45e+06
+80,0.2000,2.72e+11
 80,0.3192,1.62e+10
 80,0.3730,1.18e+10
 80,0.4359,8.29e+09
@@ -127,6 +135,7 @@ z_km,r_nm,dN_dlnr_m3
 80,2.0710,3.16e+07
 80,2.4203,1.41e+07
 80,2.8284,6.07e+06
+85,0.2000,3.79e+11
 85,0.3192,2.26e+10
 85,0.3730,1.65e+10
 85,0.4359,1.15e+10
@@ -142,6 +151,7 @@ z_km,r_nm,dN_dlnr_m3
 85,2.0710,4.4e+07
 85,2.4203,1.97e+07
 85,2.8284,8.45e+06
+90,0.2000,2.58e+11
 90,0.3192,1.54e+10
 90,0.3730,1.12e+10
 90,0.4359,7.86e+09
@@ -157,6 +167,7 @@ z_km,r_nm,dN_dlnr_m3
 90,2.0710,3e+07
 90,2.4203,1.34e+07
 90,2.8284,5.76e+06
+95,0.2000,1.17e+11
 95,0.3192,6.96e+09
 95,0.3730,5.08e+09
 95,0.4359,3.55e+09
@@ -172,6 +183,7 @@ z_km,r_nm,dN_dlnr_m3
 95,2.0710,1.36e+07
 95,2.4203,6.07e+06
 95,2.8284,2.6e+06
+100,0.2000,3.19e+10
 100,0.3192,1.9e+09
 100,0.3730,1.38e+09
 100,0.4359,9.7e+08
