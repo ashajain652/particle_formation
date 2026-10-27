@@ -111,9 +111,9 @@ def _trail_block(trail):
             "m_Zn_kg": trail.m_Zn_kg, "m_Mg_kg": trail.m_Mg_kg}
 
 
-def _condensed(sol, i):
-    b = sol.al_budget(i)
-    return b["particles"] + b["smoke"] + b["settled"]
+def _condensed(budget):
+    """Everything that left the gas phase (decision 17) from an al_budget dictionary: particles + smoke + settled."""
+    return budget["particles"] + budget["smoke"] + budget["settled"]
 
 
 def _first_time_reaching(t, values, level):
@@ -126,7 +126,7 @@ def summarise(sol, trail, hot, case, settings):
     n_t = len(sol.t)
     last = n_t - 1
     budgets = [sol.al_budget(i) for i in range(n_t)]
-    condensed = np.array([b["particles"] + b["smoke"] + b["settled"] for b in budgets])
+    condensed = np.array([_condensed(bud) for bud in budgets])
     final = budgets[last]
 
     # mean diameters and the alumina-like share over the plume particles at the final time
@@ -194,8 +194,7 @@ def write_history(path, sol):
         bud = sol.al_budget(i)
         prov = sol.provenance(i)
         rows.append([t, sol.r(i), sol.V(i), box.amb.T_K] + [bud[s] for s in AL_SPECIES]
-                    + [bud["particles"], bud["smoke"], bud["settled"], bud["particles"] + bud["smoke"]
-                       + bud["settled"]]
+                    + [bud["particles"], bud["smoke"], bud["settled"], _condensed(bud)]
                     + [prov[k] for k in prov_keys] + [sol.concentration(s, i) for s in HISTORY_AMBIENT])
     _write_csv(path, header, rows)
 
@@ -246,14 +245,20 @@ def _write_summary(path, summary):
 
 def run(case: Case, settings=None, out_dir=OUTPUT, trail=None, overwrite=False):
     """Run one case and write its outputs under out_dir/<run_name>/; returns the summary dictionary (the finished
-    run's own when its summary.json exists and `overwrite` is false)."""
+    run's own when a valid summary.json exists and `overwrite` is false; an unreadable or truncated one is replaced
+    by a fresh run). `trail=` is for tests: it is not encoded in the run name."""
     settings = settings if settings is not None else Settings()
     name = run_name(case, settings)
     d = os.path.join(out_dir, name)
     summary_path = os.path.join(d, "summary.json")
     if os.path.exists(summary_path) and not overwrite:
-        with open(summary_path) as f:
-            return json.load(f)
+        try:
+            with open(summary_path) as f:
+                done = json.load(f)
+            if isinstance(done, dict) and "run_name" in done:
+                return done
+        except (ValueError, OSError):
+            pass                                     # truncated or hand-edited: fall through and run again
 
     t0 = time.perf_counter()
     if trail is None:

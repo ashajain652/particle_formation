@@ -88,3 +88,26 @@ def test_steady_state_needs_a_decade_of_evidence():
     assert run.steady_state_time(t, {"a": np.ones_like(t)}) == pytest.approx(1e-6)
     short = np.array([0.0, 1e-6, 5e-6])                           # less than one decade after the first point
     assert run.steady_state_time(short, {"a": np.ones(3)}) is None
+
+
+@pytest.mark.parametrize("junk", ['{"run_name": "x", "t50', "", "[1, 2]", '{"no_name": 1}'])
+def test_unreadable_summary_is_rerun(tmp_path, junk):
+    t = Trail(1.0, 50.0, 0.0, 0.0, 0.0, 1e-15, 1e-16, 50.0, ())
+    case, st = Case(1.0, 50.0, "day"), Settings()
+    d = tmp_path / run.run_name(case, st)
+    d.mkdir()
+    (d / "summary.json").write_text(junk)
+    s = run.run(case, st, out_dir=tmp_path, trail=t)
+    assert s["skipped"] == "no aluminium vaporised" and s["run_name"] == d.name
+    assert json.loads((d / "summary.json").read_text())["run_name"] == d.name
+
+
+def test_truncated_summary_of_a_real_run_is_rerun(tmp_path, parent):
+    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2)
+    case = Case(1.0, 80.0, "night")
+    a = run.run(case, st, out_dir=tmp_path)
+    path = tmp_path / a["run_name"] / "summary.json"
+    path.write_text(path.read_text()[:200])                      # cut off mid-file
+    b = run.run(case, st, out_dir=tmp_path)
+    assert b["run_name"] == a["run_name"] and 0.0 <= b["condensed_fraction_end"] <= 1.0
+    assert json.loads(path.read_text())["runtime_s"] == b["runtime_s"]
