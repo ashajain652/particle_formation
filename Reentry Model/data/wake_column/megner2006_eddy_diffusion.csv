@@ -1,0 +1,41 @@
+# Eddy diffusion coefficient K(z), Megner, L., Rapp, M. and Gumbel, J. (2006), 'Distribution of meteoric smoke - sensitivity to microphysical properties and atmospheric conditions', Atmos. Chem. Phys. 6, 4415-4426, doi:10.5194/acp-6-4415-2006.
+# Digitised by eye from Megner et al. (2006) ACP 6, 4415, Fig. 3c / Fig. 2, page 4; reading uncertainty about +-10 % in log value. Digitised 2026-10-27.
+# Fig. 3c, the solid line (the reference profile; the paper's average of CHEM2D eddy diffusion coefficients). The page was rendered at 400 dpi; the centre of the drawn line was read at each altitude against the axes (x: log scale, ticks at 1e-1, 1e0, 1e1 m2/s; y: linear, ticks every 20 km), and checked against the image by eye.
+# The plotted range is 10-110 km; the table covers 22.5-107.5 km every 2.5 km. Below about 20 km the line runs nearly horizontally and doubles back, so the value at a given altitude cannot be read, and the two end rows (10 and 110 km) sit on the frame.
+# Columns: z_km altitude (km); K_m2s eddy diffusion coefficient (m2/s). Values rounded to 2 significant figures.
+z_km,K_m2s
+22.5,0.15
+25.0,0.15
+27.5,0.16
+30.0,0.18
+32.5,0.2
+35.0,0.2
+37.5,0.2
+40.0,0.2
+42.5,0.2
+45.0,0.21
+47.5,0.23
+50.0,0.3
+52.5,0.43
+55.0,0.74
+57.5,1.3
+60.0,1.9
+62.5,2.9
+65.0,4
+67.5,4.9
+70.0,5.5
+72.5,6
+75.0,6.4
+77.5,6.9
+80.0,7.3
+82.5,8
+85.0,8.8
+87.5,9.5
+90.0,9.7
+92.5,9.4
+95.0,8.8
+97.5,8.6
+100.0,8.9
+102.5,9.5
+105.0,9.9
+107.5,9.7
