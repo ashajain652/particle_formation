@@ -39,9 +39,13 @@ Those two files are the contract with the thesis; keep them true when you change
   where `sesam_io.REFERENCE_DIR` and `fap.DEFAULT_FAP_DAY` point).
 - `reentry_model/droplet_reentry/` — the droplet stage, a sub-package with its own `analysis/`
   (sweeps and plots) and `tests/` (see "The droplet stage" below).
+- `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
+  chemistry and condensation of the aluminium the droplets vaporise (see "The wake column" below). Its committed
+  inputs are in `data/wake_column/`.
 - `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot.
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
-  mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/`.
+  mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/` and
+  `reentry_model/wake_column/tests/`.
 - `output/` — every run, mesh cache, plot and verification output; git-ignored.
 - `docs/` — `model_assumptions.md`, `milestones/`, and `superpowers/{specs,plans}`.
 - `prototype/` — throwaway working copies (see Repository conventions).
@@ -159,6 +163,51 @@ settling to the ground. Promoted on 2026-10-26 from `prototype/work-2026-10-21-d
 - `tests/` — the prototype's checks as pytest tests, plus a reproduction test that re-runs five cases
   of the 2026-10-22 demise sweep and must match them to 1e-9 (the rows are in `tests/fixtures/`). The
   full re-run of that sweep from the package matched every case.
+
+### The wake column (`reentry_model/wake_column/`)
+
+Follows the aluminium a droplet vaporises (about 45 % of a droplet's mass at most) from hot vapour to alumina
+nanoparticles over 12 hours. Built 2026-10-27 from `docs/superpowers/specs/2026-10-27-wake-column-chemistry-design.md`
+(the design, with the physics decided with Asha) and its plan in `docs/superpowers/plans/`; the assumptions, each marked
+verified (with its test) or assumed, are `docs/model_assumptions.md` section 9. Read that section before changing the
+physics or quoting a result.
+
+- Pipeline, one `Case(d0_um, h0_km, time_of_day)` at a time, chained by `run.run`: the droplet run
+  (`droplet_reentry`, not modified) gives the trail (`trail.py`: length L is the path containing 90 % of the aluminium
+  loss, the inventory, the mean altitude, the emission samples); Stage A (`slowing.py`) slows the hot vapour to
+  ambient speed with a test-particle Monte Carlo and returns the starting Al/AlO/OAlO fractions and the radius r0;
+  Stage B (`box.py`) is one stiff ODE system (scipy BDF) of extensive counts in a diffusing cylinder:
+  entrainment, the Plane et al. (2021) neutral network, sectional particles (bins by aluminium atoms, `particles.py`)
+  with tallies by source molecule and route, uptake onto Megner smoke, coagulation and settling. `transport.py`,
+  `ambient.py`, `species.py`, `reactions.py` and `settings.py` hold diffusion and geometry, the ambient columns, and
+  the tables and settings.
+- Data-driven: species, reactions, ambient columns (WACCM baseline, NRLMSIS + AFGL cross-check) and the Megner eddy
+  and smoke tables are committed in `data/wake_column/`, each with a source and its assumed values flagged. No
+  unmeasured rate or efficiency is hard-coded: each is a named field of `Settings` (formation, sticking, oxidation and
+  smoke-sticking efficiencies, `hot_start`, `hot_reaction_scale`, `eddy_scale`, `l_inner_m`, `bin_ratio`, ...).
+- Commands, from this folder; everything goes to `output/wake_column_output/` (`wake_column.OUTPUT`, git-ignored):
+
+  ```bash
+  "$PY" -m reentry_model.wake_column.analysis.sweep --ambient waccm      # 126 cases (21 altitudes x 1, 14.1, 200 um x day, night); --ambient msis_afgl for the cross-check
+  "$PY" -m reentry_model.wake_column.analysis.sensitivity                # 15 settings x 6 cases (14.1 um at 60, 76, 90 km, day, night) = 90 runs
+  "$PY" -m reentry_model.wake_column.analysis.plot_sweep                 # plots into <out>/plots/; plot_sensitivity likewise (tornado plots)
+  ```
+
+  `sweep` and `sensitivity` take `--workers N` (default CPU count less one) and `--out DIR`; a run whose `summary.json`
+  exists is skipped, so a stopped sweep resumes, and a run that raises is reported at the end without stopping the rest.
+  The plot scripts choose baseline runs by their physics settings (`analysis/results.py`), so test runs and the two
+  ambients can share a folder. Runs that vaporised no aluminium (`skipped` in the summary) have no outcome keys.
+- Run names encode the case, the ambient and every non-default setting (`settings.run_name`); keep that when adding a
+  setting, and update `test_every_setting_changes_the_run_name`.
+- Things that are easy to get wrong: `hot_start="droplet_temperature"` is Stage A with the droplet speed zeroed, not
+  "no hot chemistry"; "condensed" includes uptake onto background smoke and settled matter, and at 76 km nearly all of
+  the 12-hour condensed fraction is smoke uptake, which rests on an assumed 0.2 nm smoke bin (the sensitivity set has
+  "smoke sticking x0.1" and "no smoke uptake" for that); `d_volume_mean_nm` is the volume-weighted mean diameter
+  (sum N d^4 over sum N d^3), not the mean-volume diameter; the oxygen-uptake factor is a cubic smoothstep, and the
+  default bin ratio is 2^(1/2), both chosen to make BDF converge and the coagulation test pass (assumptions 9.4);
+  `Settings.particles=False` also switches off smoke uptake. The WACCM ambient needs `data/wake_column/` only; the
+  1.6 GB WACCM file is not in the repository (`analysis/extract_waccm_columns.py` re-extracts the committed table).
+- A 12-hour run takes about 6-25 s; the default sweep's 126 cases take minutes on several cores.
 
 ### Things that are easy to get wrong here
 

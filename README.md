@@ -400,6 +400,47 @@ final, history = model.run_case(9.69, release=initial_state)  # from a reentry_m
 Outputs go to `output/droplet_reentry_output/` (git-ignored). The tests, in `reentry_model/droplet_reentry/tests/`,
 run with the Reentry Model suite and include a re-run of five cases of the 2026-10-22 sweep that must match to 1e-9.
 
+## Wake column — `reentry_model.wake_column`
+
+Run from `Reentry Model/`.
+
+Follows the aluminium a droplet vaporises from hot vapour to alumina nanoparticles. Stage A slows the vapour to
+ambient speed with a test-particle Monte Carlo (it sets the starting composition, Al/AlO/OAlO, and the starting
+radius of the plume); Stage B is a 12-hour box model of the plume as a diffusing horizontal cylinder along the trail,
+with the gas chemistry of Plane et al. (2021), sectional particles tallied by the molecule that delivered each
+aluminium atom and by route (new-particle formation, growth, or uptake onto background meteoric smoke),
+coagulation and settling. Ambient air is a WACCM column (day or night, held fixed), with an NRLMSIS + AFGL
+cross-check. Design: `Reentry Model/docs/superpowers/specs/2026-10-27-wake-column-chemistry-design.md`; assumptions
+and their verification status: `Reentry Model/docs/model_assumptions.md` section 9.
+
+```python
+from reentry_model.wake_column import run
+from reentry_model.wake_column.settings import Case, Settings
+summary = run.run(Case(14.1, 76.0, "day"), Settings())      # about 7 s; writes output/wake_column_output/<run name>/
+```
+
+```bash
+"$PY" -m reentry_model.wake_column.analysis.sweep --ambient waccm       # 21 altitudes 90-50 km x 1, 14.1, 200 um x day, night = 126 runs
+"$PY" -m reentry_model.wake_column.analysis.sweep --ambient msis_afgl   # the same on the NRLMSIS + AFGL cross-check
+"$PY" -m reentry_model.wake_column.analysis.sensitivity                 # 15 one-at-a-time settings x 6 cases (14.1 um at 60, 76, 90 km, day, night) = 90 runs
+"$PY" -m reentry_model.wake_column.analysis.plot_sweep                  # condensed fraction vs time, provenance, size distributions, day-night, WACCM vs MSIS
+"$PY" -m reentry_model.wake_column.analysis.plot_sensitivity            # tornado plots of the condensed fraction and the volume-mean diameter
+```
+
+Every script takes `--out DIR` (default `output/wake_column_output/`); the sweeps also take `--workers N` (default the CPU
+count less one), and `sweep` takes `--diameters` and `--altitudes`. A run whose `summary.json` exists is not repeated, so
+a stopped sweep resumes. Each run writes `history.csv` (gas species, particles, smoke, settled and provenance as shares of
+the vaporised aluminium against time), `size_distribution.csv` (particle bins at 1 ms, 1 s, 1 min, 10 min, 1 h and 12 h)
+and `summary.json`; plots go to `<out>/plots/`. Outputs are git-ignored; the inputs (ambient columns, reaction and
+species tables, Megner eddy and smoke tables) are committed in `Reentry Model/data/wake_column/`.
+
+Verification (`reentry_model/wake_column/tests/`, in the Reentry Model unit tier; the numbers are in assumptions section 9):
+aluminium is conserved to 1e-14 of the inventory (limit 1e-6); an inert tracer follows r0^2/r^2; the AlO and Al lifetimes
+equal 1/(k6 n [O2]) (0.093, 2.27 and 45.9 s at 70, 80 and 90 km at night) and 1/(k1 [O2]); coagulation reaches the
+free-molecule self-preserving width 1.4755 (literature about 1.46, test band 1.45 +- 0.03); settling matches
+2 v_s / (pi r) to 1.6e-5; the reaction table reproduces Plane's rates at 200 and 300 K; Stage A's mean energy loss per
+collision is 0.4997 against 0.4998; the provenance tallies close to 3e-12 atoms.
+
 ## Large fragments — `spheral_frag` core (M1)
 
 Run from `Spheral/`.

@@ -58,7 +58,7 @@ These are recorded here once so every task uses the same choice. Task 10 copies 
    - The O atom released by AlO + AlO → Al2O + O is not tracked.
    - Particle oxidation does not consume gas-phase O, O2 or O3. The aluminium is a trace.
 10. **Particle size and density.** Volume per Al atom = `(1 − f) v_Al2O3 + f v_Al(OH)3`, with `f = min(H/Al / 3, 1)`, `v_Al2O3 = 2.8218e-29 m³` (3.0 g/cm³) and `v_Al(OH)3 = 5.3524e-29 m³` (2.42 g/cm³).
-11. **Oxygen uptake.** Rate per bin = Σ over O, O2 and O3 of collision rate × `oxidation_eff` × `g(O/Al)`, adding one O atom per event. `g` is 1 below O/Al = 1.485, 0 at 1.5 and above, and linear between.
+11. **Oxygen uptake.** Rate per bin = Σ over O, O2 and O3 of collision rate × `oxidation_eff` × `g(O/Al)`, adding one O atom per event. `g` is 1 below O/Al = 1.485, 0 at 1.5 and above, and a cubic smoothstep (3s² − 2s³ in s = (1.5 − O/Al)/0.015) between; Task 8 replaced the linear ramp originally written here because its slope jump from −67 to 0 at 1.5 stalled BDF's Newton iteration.
 12. **Three-body steps.** [M] is the total air number density, using Plane's N2-measured coefficients for all air (O2 assumed as efficient as N2). The spec's test 4 therefore uses `1/(k6 n_total [O2])`.
 13. **Duplicate reaction removed.** The spec lists "AlO + O2 → AlO2 + O and its reverse". The reverse, OAlO + O → AlO + O2, is Plane's R3, so only R3 is kept and the reaction table notes this.
 14. **Reaction validity ranges** where the source states none (column `validity_source = assumed`):

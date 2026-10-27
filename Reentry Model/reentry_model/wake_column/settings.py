@@ -21,7 +21,9 @@ def _fmt(v):
 @dataclass(frozen=True)
 class Settings:
     # hot start (Stage A)
-    hot_start: str = "slowing_down"         # "slowing_down" Monte Carlo, or "droplet_temperature" (no hot chemistry)
+    hot_start: str = "slowing_down"         # "slowing_down" Monte Carlo, or "droplet_temperature": the same Stage A with
+                                            # the droplet speed set to zero (atoms leave at the droplet temperature
+                                            # only; the reactions stay on, but collisions seldom reach a threshold)
     hot_reaction_scale: float = 1.0         # multiplier on the hot-stage reaction probabilities
     thermal_cutoff: float = 2.0             # a test particle is thermal once its energy is below this many k_B T
     n_test_particles: int = 10000
