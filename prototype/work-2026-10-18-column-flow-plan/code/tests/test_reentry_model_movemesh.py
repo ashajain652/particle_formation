@@ -261,6 +261,24 @@ def test_an_outward_move_books_metal_coming_in(coarse_sphere_mesh):
     assert np.abs(solver.temperature() - 500.0).max() < 1e-9
 
 
+def test_an_outward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_it(coarse_sphere_mesh):
+    """`h_outward` [J/kg per corner] values the metal an outward sweep adds to the 3D model -- the metal the skins
+    handed down there, at its own enthalpy (spec 6.6, amended 2026-10-26; sub-plan 21 Task 9) -- and nan leaves a
+    corner's sweep at its own nodal enthalpy, as before: the books still close exactly."""
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat, 500.0)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3)
+    E0 = solver.energy()
+    given = np.arange(len(moving.corners)) % 2 == 0
+    r = moving.move(inward(moving, -2e-4), h_outward=np.where(given, 7.0e5, np.nan))
+    assert not r.refused and np.all(r.swept_volume < 0.0)
+    np.testing.assert_allclose(r.swept_enthalpy[given], mat.rho * r.swept_volume[given] * 7.0e5, rtol=1e-12)
+    np.testing.assert_allclose(r.swept_enthalpy[~given], mat.rho * r.swept_volume[~given] * float(mat.enthalpy(500.0)),
+                               rtol=1e-12)
+    assert solver.energy() + r.swept_enthalpy.sum() == pytest.approx(E0, rel=1e-12)
+
+
 def test_a_tangential_move_sweeps_nothing_and_keeps_the_books(coarse_sphere_mesh):
     m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
     mat = constant_material()

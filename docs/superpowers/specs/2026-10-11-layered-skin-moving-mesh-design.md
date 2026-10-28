@@ -377,10 +377,30 @@ After the sub-steps, each column's base moves by the metal crossing it:
   When the body starts near its melting range the non-rigid layer is genuinely thick, so the base sitting above T_rigid
   is physics, and the skins must absorb it as fast as the T_rigid isotherm advances.)
 - **Hand down.** Rigid cells at the bottom of a skin above its minimum pass to the 3D model, oldest first, as far as
-  the skin stays at or above its minimum. The base node moves outward by their volume.
+  the skin stays at or above its minimum and no cell handed is warmer than the base node by more than the fault
+  tolerance below (5 K); warmer metal stays in the skin until it has cooled to that. The base node moves outward by
+  their volume. (Amended 2026-10-26, Asha. Where runoff froze onto cold metal on sub-plan 21 Task 8's pushed plate, the
+  deposit, growing 0.6–1.75 mm in a 0.0625 s part on 850–735 K metal, was handed down while still warmer than the node
+  by 35–67 K/mm of depth: 1.1–3.2 move allowances a part, so parts were rejected down to 0.0104 s and the melting macro
+  step cost about ten times its usual processor time. Held until it cools, no part was rejected on a reduced pushed
+  plate to 1.0 s, against 4 of 17, and the skins held 1.18 g above their minimum at 1.5 s, 1.2 % more cells.) In a
+  part a column hands down at most what moves its base by the move allowance (§7.1), a cell going in part, and the
+  rest waits for the next part, as absorption's rest does. (Amended 2026-10-27, Asha, option 1 of sub-plan 21 Task 9's
+  third hand-back. The tolerance releases a held cell whole once it is near its node's temperature, and the deep cells
+  of a thick skin are large: on Task 8's full pushed plate at 1.5 s the lowest held cells were 0.18 mm of solid metal
+  at the median and up to 0.79 mm, against a 0.556 mm allowance. Such a release does not shrink with the part, so from
+  1.56 s splitting failed -- the same 1.026 allowances at parts of 62.5 to 7.8 ms -- eight of the last fifteen parts
+  were kept over the allowance at the split limit, the 12.4 g held came down in 0.039 s and the mesh failed at 1.60 s.
+  With the cap the reduced pushed plate split no part after 1.3 s.)
 
 Metal crossing the base carries its own enthalpy — the 3D field's enthalpy in the swept volume for a draw or absorption,
-the cells' enthalpy for a hand-down — and the other side gains or loses exactly that. The 3D field's enthalpy in the
+the cells' enthalpy for a hand-down — and the other side gains or loses exactly that: the moving mesh books an
+outward sweep at the handed metal's own enthalpy, at each corner the mean of the metal handed there. (Amended
+2026-10-26, Asha. Sub-plan 20's build booked outward sweeps at the base node's enthalpy, harmless while hand-downs were
+thin and at the node's temperature; where runoff deposits the handed metal is warmer, and the reconciliation put the
+difference into the skin's new bottom cell, often a sliver of a cell: a 0.316 mm hand-down at 818.0 K over a node at
+810.8 K raised a sliver of 1.4 % of a cell to 3 709 K, bottom cells merged up to 266 K above their node on the reduced
+pushed plate and up to 1 253 K on Task 8's. Flow-off results move by up to 0.22 K in the skins.) The 3D field's enthalpy in the
 swept volume is taken along the field's linear profile below the base node, T(s) = T_b − g s with g the gradient along
 the outward normal: each draw within a step takes the next layer down at that layer's enthalpy (capped at T_rigid), and
 the moving mesh books an inward sweep at the same profile's average over the swept depth. (Amended 2026-10-12, Asha.
@@ -390,10 +410,16 @@ excess predicts 0.72 mm of extra melting, and 0.76 mm was observed, the centre 9
 0.25 s the prediction is 0.46 mm against 0.45 mm observed.) Temperatures are never
 overwritten: a cell receiving metal takes the mixture's temperature from its total mass and enthalpy. Because the base
 is the rigid front, the metal crossing it is close to the bottom cell's temperature: a bottom cell more than a set
-tolerance (provisionally 5 K) outside the temperatures of the metal that crossed — between the base node's and the 3D
-profile's at the depth swept — means the coupling has not converged and is counted as a fault, not absorbed (§10.2).
+tolerance (provisionally 5 K) outside the temperatures of the metal that crossed, read after the reconciliation — for
+a draw or an absorption between the base node's and the 3D profile's at the depth swept, for a hand-down the handed
+cells' and the cell it uncovers', as the hand-down left it — means the coupling has not converged and is counted as a fault, not absorbed (§10.2).
 (Amended 2026-10-12, Asha: the comparison was with the node alone, which counted the profile valuation's colder drawn
-metal as faults, 812–1 694 on the level-2 plate at 0.1–0.5 s steps and none at 0.05 s.) A column whose
+metal as faults, 812–1 694 on the level-2 plate at 0.1–0.5 s steps and none at 0.05 s. Amended 2026-10-26, Asha: it
+ignored hand-downs, so where runoff deposits it counted the warmer cell a hand-down uncovers, 6–30 K above the node,
+rather than the superheating; on the reduced pushed plate to 1.0 s it counted 199 faults before the fixes above and
+200 after, where the comparison with the handed cells counts 270 and none. Amended after the build, 2026-10-26, Asha:
+judged against the handed cells alone it counted the cell a hand-down uncovers where the skin warms steeply above its
+base, which the reconciliation had not heated, 1 900 of 1 942 faults on Task 8's full pushed plate to 1.5 s.) A column whose
 flowing material drains away entirely draws rigid metal back to its minimum; no skin is ever created or removed.
 
 ### 6.7 Depths read from the skin
@@ -411,9 +437,11 @@ flowing material drains away entirely draws rigid metal back to its minimum; no 
 
 The macro step Δt (`--dt`, 0.5 s by default, provisional) is the trajectory's and the gas flow's. The skins and the 3D
 conduction run it as equal parts, so that no base moves more than a quarter of the mean surface edge in one part by
-drawing and handing down: a part whose passes would move a base further is restored and run again as shorter parts
-(absorption takes what is left of the allowance, so it never splits a part), and the next macro step starts with as many parts as this one's largest move called for (Asha,
-2026-10-12). While any skin's top is non-rigid at the macro step's start, no part is longer than 0.0625 s (Asha,
+drawing and handing down: a part whose draws would move a base further is restored and run again as shorter parts (a
+hand-down is capped at the allowance, §6.6, and absorption takes what is left of it, so neither splits a part), and the
+next macro step starts with as many parts as this one's largest move called for (Asha, 2026-10-12; the cap on
+hand-downs amended 2026-10-27, Asha, because a held cell released whole does not shrink with the part, so splitting
+for it was in vain). While any skin's top is non-rigid at the macro step's start, no part is longer than 0.0625 s (Asha,
 2026-10-12, option 1: long parts during melting were rejected for their moves and needed many passes; fact 126), nor
 in the macro step in which a top is about to become non-rigid: its rise over the last macro step, carried on across
 this one, reaches T_rigid (Asha, 2026-10-16: with the 800 µm minimum the level-2 cold plate's top stood at 884.8 K at
@@ -661,6 +689,21 @@ Each stage is tested and measured before the next begins.
   it, so the run fails. A recession law that sharpens the shoulder reached it after 25–30 mm of nose recession. Decided
   2026-10-11 (Asha, option 1): measure it with heating-driven recession in stage 2 before building anything for it; the
   fold angle is reported every step, and local refinement (§13) is built only if real flights approach the limit.
+- **Deposit folds** (measured 2026-10-27, sub-plan 21 Task 9): where runoff freezes on cold metal the deposit is handed
+  down and the base grows out under it, unevenly at the scale of one triangle. On Task 8's pushed plate it made a
+  one-column ridge along the flow in the heating's taper (corners 1-1.5 mm proud of their neighbours 2 mm away, the
+  triangles either side tilted about 35 degrees), and the runoff spilled over the plate's square edge and piled up
+  across its side face (skins up to 7.9 mm) to its back edge. The heated face's own sharpest fold rose about 90 degrees
+  a second from 1.0 s on the full plate (24 degrees, 69 at 1.5 s) and 100-130 a second on reduced plates once deposits
+  formed, toward the limit above: the full plate failed at 1.60 s, the reduced plate without the fault tolerance's
+  hold at 1.92 s, and Task 8's own code folded the reduced plate's face past 100 degrees by 1.3 s. With a part's hand-down capped at the move allowance
+  (§6.6) the full plate split no part from 1.5 s and still failed at 1.80 s, at its spilled edge, the face's own fold
+  then at 99 degrees.
+  Decided 2026-10-27 (Asha, option 2 of Task 9's third hand-back): the pushed plate is judged at 1.5 s and the fold is a
+  watched risk for sub-plan 22's flight, whose history reports it every step -- the sphere has no square edges, but its
+  runoff also freezes downstream of the heat. The fallback (option 3) is a hand-down limited by its neighbours' depth,
+  as the rim limit for absorption below, or local refinement (§13), once it is known whether the ridge is a rivulet of
+  runoff freezing or a grid-scale product of the flow.
 - **Thick columns on concave surfaces**: column tops could cross where a skin is thicker than the local concave radius
   of curvature; not expected at millimetre depths, watched through the top surface's triangle quality.
 - **Slurry rheology**: Li et al.'s law was measured to 490 1/s at solid fractions 0.1–0.5; the bridge to the liquid has
@@ -735,7 +778,14 @@ Each stage is tested and measured before the next begins.
   book differently still goes into one bottom cell. Under 6 MW/m² on 4 mm elements 289 buried cells ended above T_feed,
   at most 959 K (2 910 K before the profile valuation and damping). With absorption keeping up (2026-10-14) none remain
   in the cases measured — 3 MW/m² on the 4 mm sphere and 6 MW/m² on the production mesh — because no non-rigid metal is
-  left below the base to be drawn at T_rigid's enthalpy; the mechanism remains if metal were stranded.
+  left below the base to be drawn at T_rigid's enthalpy; the mechanism remains if metal were stranded. Where runoff
+  deposits on cold metal (sub-plan 21 Task 8) it returned through hand-downs booked at the node's enthalpy, bottom
+  cells up to 1 253 K, and is closed by booking handed metal at its own enthalpy and handing down only metal near the
+  node's temperature (§6.6, 2026-10-26). The skins then hold the warm deposit instead, and on Task 8's full pushed plate
+  that had not levelled off by 1.5 s: 12.0 g in 632 columns, up to 4.05 mm deep, rising 11 g/s (about 0.3 kg over the
+  100 mm sphere's 30 s of melting if its runoff deposited as the plate's does, extrapolated). The skin body's history
+  records it, the flow-on flight of sub-plan 22 reports it, and a bound on it is set only if the skins grow too thick
+  for their cost or as thick columns on concave surfaces (above) (Asha, 2026-10-26).
 - **Agreement of the backends across a rebuild**: the rebuild's mesher answers round-off differences in the corner
   positions with a different mesh, so the two thermal backends agree to round-off only up to the first rebuild.
 
@@ -937,3 +987,38 @@ Each stage is tested and measured before the next begins.
   rejects parts down to 0.0104 s; a Task 9 of sub-plan 21 finds the cause and fixes it before any flow-on flight,
   together with the heat the runoff loses to cold metal within the flow sub-steps and the real pass's flow counts at a
   melting onset (option a, over leaving it to sub-plan 22) (Asha).
+- 2026-10-26 (sub-plan 21 Task 9, the cause found): where runoff deposits on cold metal and is handed down, the moving
+  mesh booked the outward sweep at the base node's enthalpy while the skins handed the metal at its own, warmer
+  enthalpy, and the reconciliation put the difference into the skin's new bottom cell, often a sliver, which made the
+  superheated bottom cells; the rejected parts were the move allowance doing its job, the deposit growing 1.1–3.2
+  allowances a 0.0625 s part. The moving mesh now books handed-down metal at its own enthalpy, as §6.6 already said
+  (option A), and only metal within the fault tolerance of the base node is handed down, warmer metal waiting in the
+  skin until it cools (option C); both, over either alone, over A with the flow on only, and over running the rest of a
+  split macro step at the split length. On a reduced pushed plate to 1.0 s together they leave no bottom cell heated by
+  the reconciliation (270 before) and reject no part (4 of 17 before); flow-off results move by up to 0.22 K in the
+  skins and 1.3e-8 mm in the recession, so they are no longer the same to the last bit. A bottom cell's fault is
+  judged against the metal that actually crossed, for a hand-down the handed cells and the cell it uncovers as it left
+  it (§6.6), over keeping the comparison and over reading the 3D profile at the signed swept depth; the uncovered cell
+  was added after the build, when the handed cells alone counted it in 1 900 of 1 942 faults on Task 8's full pushed
+  plate to 1.5 s. The metal C holds in the skins, 12.0 g there at 1.5 s and still rising, is kept unbounded, recorded
+  in the history and reported by sub-plan 22's flow-on flight, a bound set only if the skins grow too thick (§12),
+  over bounding it now. The real pass takes, in each heat sub-step, the larger of
+  its trial pass's flow sub-step count and the count its own memory chooses, its own where the trial took none; this
+  amends the 2026-10-22 entry's "the real pass taking its trial pass's counts", which left real passes at up to three
+  times the Courant target at a melting onset (18.8 against 6) and replayed empty flow sub-steps (Asha).
+- 2026-10-27 (sub-plan 21 Task 9, the pushed plate to 2.0 s): run on, Task 8's pushed plate closed its books to 1.5 s
+  and failed at 1.60 s, its base surface folded to 159 degrees. The deposit folds it: runoff freezing on cold metal is
+  handed down and ridges at the scale of one triangle in the heating's taper and where it spills over the plate's
+  square edge, the face's own fold rising about 90 degrees a second from 1.0 s, and the reduced plate fails without the
+  fault tolerance's hold too (1.92 s). The hold made it fast: it releases a held cell whole once it is near its node's
+  temperature, a thick skin's deep cells are as thick as the move allowance (0.18 mm at the median and up to 0.79 mm,
+  against 0.556 mm), and such a release does not shrink with the part, so from 1.56 s parts were split in vain (1.026
+  allowances at 62.5 to 7.8 ms), 8 of the last 15 were kept over the allowance and the 12.4 g held came down in 0.039 s.
+  A part now hands down at most what moves its base by the move allowance, a cell going in part (§6.6, §7.1), and the
+  pushed plate is judged at 1.5 s, its deposit's folding a watched risk for sub-plan 22's flight (§12): option 1 then
+  option 2 of the third hand-back, over option 2 alone, a hand-down limited by its neighbours' depth or local
+  refinement (option 3, the fallback once the ridge is known to be a rivulet or a grid artefact) and a test plate
+  without square edges (option 4). With the cap the reduced pushed plate to 2.0 s is the same to the last bit as
+  before to the first part in which the cap holds metal back (1.4375 s), and the flow-off plate to 2.0 s is the same
+  throughout; on the full plate from 1.5 s the cap kept every part at 0.05 s and the held metal falling at about 26 g/s
+  instead of 260, and the plate failed on its deposit's folding at 1.80 s instead of 1.60 s (Asha).

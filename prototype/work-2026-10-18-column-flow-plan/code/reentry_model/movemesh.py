@@ -32,8 +32,10 @@ neighbours swept (a third of each prism to every corner, as sub-plan 19 booked i
 The third-order remainder by which the prisms miss the change of the mesh's volume, which arises in how the prisms'
 shared side faces are split, is then spread over the corners in proportion to their own |volume| (in `move`), so the
 corners' volumes add up exactly to that change. Each corner's volume carries the corner's own nodal enthalpy before the
-move (the surface value, which the exact moving-front solution favours over the mean of the old and remapped values).
-The layered skins take exactly that mass and enthalpy (stage 2).
+move (the surface value, which the exact moving-front solution favours over the mean of the old and remapped values),
+unless the caller values it: metal swept inward along the 3D profile below the corner (`h_inward`, sub-plan 20) and
+metal swept outward at the enthalpy of what the skins handed down there (`h_outward`, sub-plan 21 Task 9: spec 6.6,
+amended 2026-10-26). The layered skins take exactly that mass and enthalpy (stage 2).
 
 Rebuild: gmsh meshes the volume inside the current surface triangulation without touching it (a discrete surface in
 a geo surface loop, generate(3) only; checked 2026-10-11: every surface triangle and corner is kept to the last bit,
@@ -350,12 +352,14 @@ class MovingMesh:
         """The largest angle between neighbouring surface triangles' normals [degrees]."""
         return max_dihedral(self.mesh.points[self.corners], self.faces_corner)
 
-    def move(self, u_corners, h_inward=None):
+    def move(self, u_corners, h_inward=None, h_outward=None):
         """Move the corners by `u_corners` (n_corners, 3), the zone with them; remap the enthalpy; close the books.
         Refuses, changing nothing, if any element the move touches would invert or fall below the radius-ratio floor.
         `h_inward(depth)`: the specific enthalpy [J/kg] per corner of metal swept inward to `depth` [m] (the swept volume
-        over the corner's area), for the corners whose sweep takes metal out of the 3D model; None books every sweep at
-        the corner's enthalpy."""
+        over the corner's area), for the corners whose sweep takes metal out of the 3D model; `h_outward` (n_corners,)
+        [J/kg]: that of the metal a corner's outward sweep adds to the 3D model -- the metal the skins handed down there,
+        at its own enthalpy (spec 6.6, amended 2026-10-26) -- nan where none is given; None books every sweep at the
+        corner's own enthalpy."""
         mesh, solver, mat = self.mesh, self.solver, self.material
         u = np.asarray(u_corners, dtype=float)
         U = self.zone.displacement(u)
@@ -394,6 +398,11 @@ class MovingMesh:
         if h_inward is not None and np.any(dV > 0.0):
             inward = dV > 0.0
             swept_h = np.where(inward, mat.rho * dV * h_inward(np.where(inward, dV / area, 0.0)), swept_h)
+        # metal handed down by the skins joins the 3D model at its own enthalpy (sub-plan 21 Task 9): booked at the
+        # corner's, the difference stayed in the skin's new bottom cell -- 1 253 K where runoff deposits on Task 8's plate
+        if h_outward is not None:
+            out = (dV < 0.0) & np.isfinite(h_outward)
+            swept_h = np.where(out, mat.rho * dV * np.where(out, h_outward, 0.0), swept_h)
         solver.update_geometry(touched)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         correction = (E_old - swept_h.sum()) - solver.energy()
@@ -442,7 +451,7 @@ class MovingMesh:
             return "compression"
         return None
 
-    def move_with_policy(self, u_corners, h_inward=None):
+    def move_with_policy(self, u_corners, h_inward=None, h_outward=None):
         """Rebuild first if compression calls for it; move; if the move is refused, rebuild and move again. A move
         refused on a fresh mesh is a model failure (RuntimeError, exit code 1)."""
         rebuilt = False
@@ -450,11 +459,11 @@ class MovingMesh:
         if reason:
             self.rebuild(reason)
             rebuilt = True
-        result = self.move(u_corners, h_inward)
+        result = self.move(u_corners, h_inward, h_outward)
         if result.refused:
             self.rebuild("quality")
             rebuilt = True
-            result = self.move(u_corners, h_inward)
+            result = self.move(u_corners, h_inward, h_outward)
             if result.refused:
                 raise RuntimeError("a corner move of up to {:.3g} m degrades the mesh even after a rebuild".format(
                     float(np.linalg.norm(u_corners, axis=1).max())))

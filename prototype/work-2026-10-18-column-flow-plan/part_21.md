@@ -2,10 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1–5, 6a, 6b, 6c, 6d, 7 and 8
-> (2026-10-18/24).** Task 9, the base where runoff lands (Asha, 2026-10-25), is outlined at the end and not yet
-> written. The outline points to the tasks, and the inputs it listed are settled, each where it says.
-> Task 8's coupled pushed plate ran to 1.0 s, not 2.0 s (its ruling 8: about 6.5 hours alone to 2.0 s).
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1–5, 6a, 6b, 6c, 6d, 7, 8 and 9
+> (2026-10-18/27).** The outline points to the tasks, and the inputs it listed are settled, each where it says.
+> Task 8's coupled pushed plate ran to 1.0 s, not 2.0 s (its ruling 8: about 6.5 hours alone to 2.0 s); Task 9 ran it
+> again with its fixes, closing its books to 1.5 s and failing at 1.60 s where its deposits folded the base surface,
+> and the pushed plate is judged at 1.5 s, the deposit's folding a watched risk for sub-plan 22 (Asha, 2026-10-27;
+> Task 9, item 9).
 
 **Goal:** The flowing layer moves: every skin cell carries a velocity in its column's tangent plane, coupled through the
 depth by the viscosity at each interface, pushed by the gas pressure gradient, the deceleration and the two thickness
@@ -130,7 +132,10 @@ regenerate.
     the count follows; the first from rest takes 6c's ten. On Task 8's pushed plate (45 um of liquid at 3-4 m/s running
     onto cold metal) the chosen count, at Courant 5.9, leaves where the metal went in 50 ms 25 % (L1) off the 0.25 ms
     run's and its kinetic energy 9 % high, against 2.5 % and 5 % on 6d's sphere: two thirds of it the deposit's coasting
-    front (Review Focus 13), 13.7 of 338 mg landing 10-35 mm further; 11 % at 0.5 ms flow sub-steps.
+    front (Review Focus 13), 13.7 of 338 mg landing 10-35 mm further; 11 % at 0.5 ms flow sub-steps. Since Task 9 the real pass's count
+    follows its own flow where that is faster than its trial pass's (Review Focus 17): on the pushed plate's first
+    melting macro step 9 real passes ran above a Courant number of 6.5, the largest at 9.2 (13 and 18.8 before), the
+    heat sub-steps above it the first of a pass or one after the flow sped up (13 of 523).
 15. **The flow's cost** — 6c: a heat sub-step on the heated melting state cost 48 s (54–59 s re-measured beside 6d under
     load), ten flow sub-steps each about as much as its conduction, the transport three fifths. 6d: 43 s at ten flow
     sub-steps and 30–33 s at the nine the adaptive count chose, the transport under half; one flow sub-step 3.7 s
@@ -143,7 +148,11 @@ regenerate.
     transport a third of the flow; the trial pass the same. A flow sub-step costs about 0.25 s there however few cells
     flow. The regression's melting macro steps, the liquid released as it forms, cost a quarter to two thirds more than
     the flow-off plate's (under load); the pushed plate's first melting macro step took 5 229 s alone, for Review Focus
-    17 and 24.
+    17 and 24. Task 9: that macro step took 3 878 s (one
+    run beside it): no part rejected, but each 0.0625 s part still five damped passes of 45-77 s, the real passes now
+    at the Courant target with three to five flow sub-steps a heat sub-step where Task 8's early parts ran one; the
+    landing conduction 51 s of its 1 650 s of flow (3 %); the real pass whose cells flowed only because of its base
+    took 54 flow sub-steps (24 s, 0.44 s each) where Task 8's replayed 380 (126 s).
 16. **The transport's iterative solve** — stops at a normwise backward error of 1e-13 or after 40 corrections, then
     takes the LU; every cell is installed from the solve's fluxes, so the books do not depend on the tolerance and the
     masses stay positive at any (the iterates rise to the masses from below). Pinned by
@@ -152,17 +161,22 @@ regenerate.
     `test_an_iteration_that_cannot_finish_falls_back_to_the_direct_solve`. The 500-cell threshold suits the quiescent
     melt's many mid-sized cycles (0.88 s a transport against 1.45 s at 2 000 cells) and costs a driven state's lone
     1 700-cell cycle 0.1 s (Task 6d).
-17. **The real pass's flow counts** — taken from its trial pass, so that the base law is made by the pass it predicts;
-    the skins' memory of the flow is part of their state (`Skins.state()` has seven arrays since 6d; code that unpacks
-    six must take the first six). Pinned by
-    `test_the_real_pass_takes_the_trial_pass_s_counts_and_the_memory_is_part_of_the_skins_state` and
-    `test_a_skin_body_s_flow_takes_the_counts_each_trial_pass_chose_in_its_real_pass` (Task 6d). Found in Task 8: the
-    trial pass holds its base at the start-of-step temperature, so at a melting onset it can melt less and flow slower
-    than its real pass, which then runs at the trial's counts above the Courant target -- one flow sub-step a skin
-    sub-step at Courant 18.8 on the pushed plate's third melting part, where 12.6 put the runoff 16 % off on 6d's
-    sphere; and a real pass whose cells flow only because its base was held at the 3D model's first answer replays the
-    ten its trial pass chose with no memory, 380 flow sub-steps in which nothing moved, 96 s of a 124 s pass. Counts
-    taken from the real pass's own memory where it exceeds the target would end both; Task 9 (Asha, 2026-10-25).
+17. **The real pass's flow counts** — 6d took them from its trial pass, so that the base law is made by the pass it
+    predicts; the skins' memory of the flow is part of their state (`Skins.state()` has seven arrays since 6d; code
+    that unpacks six must take the first six). Task 8 found the trial pass, its base held at the start-of-step
+    temperature, melting less and flowing slower at a melting onset, so that the real pass ran at the trial's counts
+    above the Courant target (one flow sub-step a heat sub-step at 18.8 on the pushed plate's third melting part, where
+    12.6 put the runoff 16 % off on 6d's sphere), and a real pass whose cells flowed only because of its base replayed
+    the ten flow sub-steps its trial pass chose with no memory (380 in which nothing moved, 96 s of a 124 s pass). Since
+    Task 9 (spec 16, 2026-10-26) the real pass takes in each heat sub-step the larger of its trial pass's count and the
+    count its own memory chooses, and its own where the trial took none (0 in the plan); where the two passes flow
+    alike nothing changes. On the pushed plate's first melting macro step 9 real passes ran above a Courant number of
+    6.5, the largest at 9.2 (13 and 18.8 before), and the first macro step's real pass took 54 flow sub-steps (24 s)
+    where it replayed 380 (126 s). Pinned by
+    `test_a_real_pass_takes_the_larger_of_its_trial_pass_s_count_and_its_own_and_its_own_where_the_trial_flowed_nothing`
+    and `test_a_skin_body_s_real_pass_takes_at_least_its_trial_pass_s_counts_and_its_own_where_the_trial_flowed_nothing`;
+    6d's `test_the_real_pass_takes_the_trial_pass_s_counts_and_the_memory_is_part_of_the_skins_state` holds where the
+    passes flow alike.
 18. **Task 4's shear-rate fixed point** — five passes wherever bridge or slurry cells carry a stress on the falling
     branch of Li et al.'s flow curve (between its maximum at about 228 1/s and the 367 1/s at which the law is held):
     there the fixed point has an unstable middle root and drifts away from it, 1.1–1.8 times a pass, to the held rate or
@@ -179,12 +193,17 @@ regenerate.
     taken over the sheared tops, so a release there (Girin's modes release only windward) is in neither, and the
     history's Pi measures a developing layer below its steady speed early in melting. Pinned by
     `test_the_droplet_momentum_ratio_is_fact_29_s_v_melt_delta_over_nu_on_a_sheared_layer` (Task 7).
-21. **Runoff over cold metal freezes only at the skin sub-step's conduction** — the flow sub-steps conduct no heat, so
-    liquid landing on cold rigid metal stays liquid and flows on until the next conduction. On Task 8's pushed plate a
-    film of 10-20 um moves at 0.6-1.2 m/s on a rigid top, 6-12 mm in a 10 ms skin sub-step, where it would really freeze
-    within some 0.03 ms: with 10 ms skin sub-steps 11 % of the deposit lands 5-10 mm further than with 5 or 2.5 ms, which
-    agree. Not pinned by a test; on the sphere's rigid rear the deposits would spread that much further than physics does.
-    Task 9 (Asha, 2026-10-25).
+21. **Runoff over cold metal freezes within the flow sub-steps** (Task 9) — the flow sub-steps conducted no heat, so
+    landed metal stayed liquid and coasted on until the next heat sub-step's conduction: on Task 8's pushed plate a film
+    of 10-20 um at 0.6-1.2 m/s ran 6-12 mm in a 10 ms heat sub-step, where it freezes within 0.005-0.03 ms. Now the
+    columns metal landed on top of have their top 0.4 mm conducted adiabatically in every flow sub-step from the landing
+    on (`landing_conduct`): at 10 ms heat sub-steps the share of the pushed plate's deposit landing 5-10 mm past the heat
+    falls from 9.9 % to 3.0 % (0.9 and 0.7 % at 5 and 2.5 ms), its centroid from 1.84 to 1.05 mm past the heat's end (0.68
+    and 0.65 mm), at 2-3 % of the flow's cost. What remains at 10 ms is the flowing layer's own cooling at the heat's rim,
+    which only the heat sub-step's conduction does (not measured further); the block's own cells, conducted with their
+    column already, are conducted again within the block (ruling 5 of Task 9). Pinned by
+    `test_metal_landing_on_cold_rigid_metal_loses_its_heat_to_it_within_the_flow_sub_steps` and
+    `test_runoff_onto_cold_metal_freezes_where_it_lands_and_the_books_close`.
 22. **The release's threshold against stage 2's** — Task 7's release takes liquid at the liquidus, 908 K, stage 2's
     removal at T_feed, 910 K, which keeps a liquid layer about 2 K k_l / q thick on the front: the plates' exact recession
     moves by 1.5-6.1 % (cold) and 5.4-17.6 % (hot), the hot plate's non-rigid depth by 9 %. Level 2's regression with
@@ -201,19 +220,55 @@ regenerate.
     measured the share again on the flow-on flight's own states (Asha, 2026-10-25, option a). The measure's definition is pinned by
     `test_a_single_sinusoid_on_a_flat_layer_has_the_share_and_excess_of_its_own_wavenumber` and
     `test_the_share_of_two_waves_is_the_short_one_s_power_over_both_and_a_vector_field_counts_every_component`.
-24. **Runoff deposits and the part cap** — deposits make skins thicker than their minimum, their rigid bottoms are
-    handed down and the bases move, so a melting part of 0.0625 s can be rejected for its moves after its damped passes
-    (fact 126's cost, which the part cap removed): on the coupled pushed plate every part from the fifth was rejected
-    after 5-7 passes, run again as three, each of those rejected and run again as two of 0.0104 s, 880-950 s of processor
-    time for each 0.0625 s of melting against about 90 s, and its first melting macro step took 5 229 s alone (Task 8,
-    item 6). Not pinned; the history's `step_parts` and the interface repeats show it. Task 9 (Asha, 2026-10-25).
-25. **Base faults where runoff deposits** — on the coupled pushed plate 1 761 base faults in its first melting macro
-    step and 90 columns around the heat's downstream rim and the deposit with a bottom cell 5-400 K above its base node,
-    up to 1 253 K, none on the flow-off or released plates and none on the pushed skins alone: the base's reconciliation
-    (spec 6.6) putting the move's sweep less the skins' exchange into small bottom cells of columns handing deposits down
-    beside columns drawing -- spec 12's buried superheated cells back (assumed from the books, not traced). The energy
-    books still close (6.5e-11). Not pinned; for the base's own design to answer before a flow-on flight: Task 9 (Asha,
-    2026-10-25, option a, over leaving it to sub-plan 22).
+24. **Runoff deposits and the part cap** — Task 8: deposits handed down as they grew moved bases by 1.1-3.2 move
+    allowances a 0.0625 s part (a rigid deposit grows as conduction into cold metal allows, 0.6-1.75 mm in 0.0625 s on
+    850-735 K metal), so every melting part was rejected for its moves after its damped passes, down to 0.0104 s (fact
+    126's cost, which the part cap removed): the allowance doing its job. Since Task 9 (spec 6.6, option C) metal more
+    than 5 K warmer than the base node waits in the skin until it cools, so a deposit moves its base only as fast as its
+    heat leaves it: on Task 8's pushed plate to 1.5 s no part was rejected (the largest move 0.8 allowances), and the
+    first melting macro step took 3 878 s against 5 229 s. What it costs: the skins hold the warm deposit, 12.0 g in
+    632 columns at 1.5 s, up to 4.05 mm, the plate's cells 2.5 % more (Task 9, item 6). But the limit releases a held
+    cell whole once it is near its node's temperature, and the deep cells of a thick skin are as thick as the
+    allowance: run on to 2.0 s, the plate split its parts in vain from 1.56 s (the same 1.026 allowances at 62.5 to 7.8
+    ms), kept 8 of its last 15 over the allowance and handed the 12.4 g held down in 0.039 s before its mesh failed at
+    1.60 s. Since 2026-10-27 (spec 6.6, 7.1) a part hands down at most what moves its base by the allowance, a cell
+    going in part, so a hand-down never splits a part (Task 9, item 9). Run on with the cap from 1.5 s the plate split no part (parts of 0.05 s) and still failed at 1.80 s, on the deposit's
+    folding (item 9). Pinned by
+    `test_hand_down_passes_only_bottom_metal_within_the_fault_tolerance_of_the_base_node`,
+    `test_hand_down_takes_at_most_its_cap_a_cell_going_in_part` and
+    `test_a_deposit_thicker_than_the_move_allowance_comes_down_over_several_parts_and_splits_none`; the parts and the held
+    mass are the logged runs' (`measure/task9/run_logged9.py`, `item4/run_fold.py`).
+25. **Base faults where runoff deposits** — found in Task 9: sub-plan 20's moving mesh booked an outward sweep at the
+    base node's enthalpy while the skins handed down warmer metal, and the reconciliation put the difference into the
+    skin's new bottom cell, often a sliver of a cell (3 709 K before a merge, bottom cells kept up to 1 111 K on a reduced
+    pushed plate, 1 253 K on Task 8's); Task 8's reading, the move's sweep less the skins' exchange beside columns
+    drawing, had the place right and the quantity wrong. Since Task 9 (spec 6.6, options A and C) handed metal is booked
+    at its own enthalpy and is within 5 K of its node: no bottom cell is heated by the reconciliation, and on Task 8's
+    pushed plate to 1.5 s the hottest cell is 911.8 K (1 253 K before).
+    The counter now judges the bottom cell after the reconciliation against the metal that crossed, for a hand-down
+    the range from the handed cells' coldest and warmest to the cell it uncovered, as the hand-down left it (K2, in
+    the wording Asha adopted on 2026-10-26): the skin's own warmer interior that a hand-down uncovers is no fault, a
+    reconciliation that heats it is. Judged by the handed cells alone it had counted the uncovered cell wherever the
+    skin's own gradient made that cell more than 5 K warmer than the warmest handed one, 1 900 of the 1 942 faults on
+    the pushed plate to 1.5 s (Task 9, item 7). Pinned by
+    `test_a_warm_deposit_goes_down_only_near_the_node_s_temperature_at_its_own_enthalpy_and_heats_no_cell`,
+    `test_a_hand_down_s_bottom_cell_is_judged_against_the_handed_cells_and_the_cell_it_uncovered`,
+    `test_the_cell_a_hand_down_uncovers_is_no_fault_unless_the_reconciliation_heats_it` and
+    `test_an_outward_sweep_is_booked_at_the_enthalpy_the_caller_gives_for_it`.
+26. **The metal the fault tolerance holds in the skins** (Task 9) — option C keeps rigid metal more than 5 K warmer
+    than its base node in the skin until it has cooled, with no bound (Asha, 2026-10-26), and since 2026-10-27 a part
+    hands down at most its move allowance, the rest waiting too: on Task 8's pushed plate it held 12.0 g in 632 columns
+    at 1.5 s, up to 4.05 mm deep, rising at 11 g/s then and 7 g/s over the next part, to 12.4 g (Task 9, items 6 and 9) --
+    over the 30 s or so of melting the 100 mm sphere sees, about 0.3 kg of its 1.47 kg if its runoff deposited as the
+    plate's does (an extrapolation). The metal is still the body's and the tops are where they would be; what grows is
+    the skins' depth and cells (the plate's cells 2.5 % more by 1.5 s). The skin body records it at every macro step
+    (`held_mass_kg`, `held_depth_max_mm`; a run's results `held_mass_max_kg`, `held_depth_max_mm`), and **sub-plan
+    22's flow-on flight reports it**, with the fold of the base surface the deposit makes (spec 12, 2026-10-27); a
+    bound is set only if the skins grow too thick there. With the cap it came down at about 26 g/s, from 12.0 g at 1.5 s to 10.6 g at 1.75 s, where without it the whole
+    12.4 g came down in 0.039 s. Pinned by
+    `test_a_warm_deposit_goes_down_only_near_the_node_s_temperature_at_its_own_enthalpy_and_heats_no_cell` (the
+    steep skins' whole excess held) and `test_hand_down_passes_only_bottom_metal_within_the_fault_tolerance_of_the_base_node`
+    (`handable`, what a hand-down would take).
 
 ## Amendment of 2026-10-17 — the sideways conduction becomes implicit (Asha's decision)
 
@@ -2219,6 +2274,592 @@ git commit -m "Skins: level 2 with the flow on -- the plate pushed along its fac
 
 ---
 
+### Task 9: The base where runoff lands — handed-down metal at its own enthalpy and only near the node's temperature, the runoff's heat lost within the flow sub-steps, and the real pass's flow counts at a melting onset
+
+**Files:**
+- Modify: `reentry_model/movemesh.py` (`MovingMesh.move(..., h_outward=None)` and `.move_with_policy(...,
+  h_outward=None)`, an outward sweep booked at the enthalpy given; the module docstring), `reentry_model/skin.py`
+  (`hand_down(..., T_limit=None, span=False, cap=None)` and `handable`, which share `_bottom_run`; `TransportBook.landed`;
+  `LANDING_DEPTH`, `landing_conduct`; `flow_substeps` conducting what landed after each transport;
+  `FLOW_SECONDS["landing"]`; `advance`'s real pass taking the larger of its trial pass's count and its own),
+  `reentry_model/skinbody.py` (`jump_faults(..., handed=None)`; `HAND_DOWN_SHARE` and `SkinBody._hand_cap`, a part's
+  hand-down capped at its move allowance (item 9); `SkinBody._move_ratio` and `._move_base`, which records the metal the
+  limit and the cap hold, `held_mass` and `held_depth_max`, in `skin_stats`; the module docstring),
+  `reentry_model/coupled.py` (two history columns and two results for the held metal)
+- Test: `tests/test_reentry_model_movemesh.py` (one test), `tests/test_reentry_model_skinbody.py` (seven tests, two of
+  them the cap's; 6d's counts test rewritten for the new rule; the parts test's recorded move, Task 8's pushed plate's
+  threshold and the flow-off plate's recorded hand-down changed), `tests/test_reentry_model_skin.py` (three tests; the two flow sub-step tests built by hand take the landing
+  conduction), `tests/test_reentry_model_cli.py` (a skin run's results carry the held metal)
+
+**Interfaces:**
+- Consumes: sub-plan 20's `MovingMesh.move_with_policy(u, h_inward)`, `skin.hand_down`, `SkinBody._move_base`,
+  `_move_ratio`, `jump_faults`, `JUMP_TOLERANCE`; Task 1's `_conduct`; 6a's and 6d's `transport` (its new top cells where
+  metal lands on a rigid top); 6d's `flow_cycles`, `Flow.plan`, `advance`'s trial and real passes; Task 7's release
+  after the transport.
+- Produces: `MovingMesh.move(u, h_inward=None, h_outward=None)` and `.move_with_policy(...)`, `h_outward` (n_corners,)
+  [J/kg], nan where none is given; `skin.hand_down(sk, m_min, T_rigid, T_limit=None, span=False, cap=None) -> (mass,
+  enthalpy)` or, with `span`, `(mass, enthalpy, coldest, warmest)` [kg, J, K, K per column; nan where nothing went],
+  `T_limit` [K per column], `cap` [kg per column], at most that much taken, a cell going in part;
+  `skinbody.HAND_DOWN_SHARE` (1 - 1e-6 of the move allowance) and `SkinBody._hand_cap() -> mass` [kg per column]; `skin.handable(sk, m_min, T_rigid, T_limit=None) -> mass` [kg per column], what `hand_down` would take,
+  taking nothing; `skinbody.jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None)`, `handed` = (mask,
+  coldest, warmest[, uncovered]), the last the bottom cell's temperature as the hand-down left it, `crossed` now the
+  columns that drew or absorbed; `SkinBody.held_mass` [kg] and `.held_depth_max` [m], what the limit and the cap hold
+  at the last base move, as the history's `held_mass_kg` and `held_depth_max_mm` and the results' `held_mass_max_kg` and
+  `held_depth_max_mm`; `TransportBook.landed` (n,) bool;
+  `skin.landing_conduct(sk, landed, dt, depth=None)`, `skin.LANDING_DEPTH` (0.4 mm); `FLOW_SECONDS["landing"]`;
+  `Flow.plan` holding 0 where the trial pass took no flow sub-step. Nothing else changes in an interface: the command
+  line is as it was, and the history gains the two columns of the held metal, every other keeping its name
+  (`jump_faults` now counts by spec 6.6 as amended).
+
+Task 8's coupled pushed plate closed its books, but where runoff left the heat and landed on cold rigid metal its first
+melting macro step counted 1 761 base faults, left bottom cells up to 1 253 K -- spec 12's buried superheated cells,
+which sub-plan 20 had removed -- and had every part from the fifth rejected for its moves, down to 0.0104 s (5 229 s for
+the macro step); the flow sub-steps conducted no heat, so landed metal ran on 6-12 mm before freezing; and a real pass
+took its trial pass's flow counts even where it flowed faster or where its trial pass had flowed nothing (Review Focus
+17, 21, 24, 25). Asha, 2026-10-25 (option a): find the cause before any flow-on flight and fix it, with the other two.
+Investigated and measured 2026-10-25/26 in `prototype/work-2026-10-18-column-flow/measure/task9/`; the cause was
+reported first, and Asha decided the fix on 2026-10-26 (spec 6.6 and 16 as amended that day): options A and C and
+the counter K2 below, and the counts rule of item 4. The pushed plate's run to 2.0 s then failed at 1.60 s; its cause,
+reported in a third hand-back (item 9), led Asha on 2026-10-27 to cap a part's hand-down at its move allowance and to
+judge the pushed plate at 1.5 s, the deposit's folding a watched risk for sub-plan 22's flight (option 1, then option
+2; spec 6.6, 7.1, 12 and 16 as amended that day).
+
+**1. The cause, traced** (`measure/task9/trace_move.py`, `analyse_trace.py`; ruling 1). *The reproduction:* Task 8's
+pushed plate reduced to 60 mm across (2 282 columns against 15 812), heated within 15 mm and to nothing at 21 mm, from
+700 K under 6 MW/m2, the flight push, the skins' own density law, 0.5 s macro steps, no fine band; every kept part's
+base operations recorded column by column (262 s of processor time to 1.0 s, alone). It gives faults of the same kind
+and size: every fault a column handing metal down on the face just downstream of the heat (y = -12 to -22 mm), 199 by
+1.0 s (Task 8: 1 761 on seven times the columns); bottom cells after a move up to 266 K above their node, 1 111 K
+(Task 8: 5-400 K, 1 253 K); and parts rejected for hand-downs at the heat's downstream rim, split down to 0.0156 s
+(Task 8: 0.0104 s). Task 8's state at 1.0 s fits: its 90 hot bottom cells are all on the face, the cell above each a
+median 10 K over its node, the bottom cells 0.5-1.4 times their target, as a hand-down and a regrid leave them.
+
+*One faulted column through a part* (column 201, the part ending at 0.8125 s): through the real pass's conduction, flow
+sub-steps, arrivals, release, draws and regrids its bottom cell stays within 1-5 K of the node (811.8 K over 810.8 K);
+the hand-down then takes 0.316 mm of its bottom, whose mean is 818.0 K -- the skin above its base is 35-67 K/mm warmer
+than the base node where a deposit's heat is conducting down, against the 3D model's 13-28 K/mm below it -- and leaves
+of the cell it took in part a sliver of 8.5e-9 kg (1.4 % of a cell) at 824.3 K; the moving mesh books the outward
+sweep at the node's enthalpy, h(810.8 K), extrapolates its own gradient over the new metal and closes its books by its
+uniform offset; the reconciliation (`exchange_bottom`) gives the skin the sweep less what it exchanged -- in mass
+2.0e-9 kg, but in enthalpy 0.038 J beyond the node's value, the handed slab's excess over the node -- and the sliver
+reaches 3 709 K; the regrid merges it, 859.6 K, 49 K above the node. Where the cell the hand-down left is too big to
+merge (60 % of its target) the heat stays: 1 111 K. Over each part the enthalpy the reconciliation returned beyond the
+node's equals the handed metal's excess over its node to 0.1 % (0.16-1.9 J a part, against 0.0005-0.005 J before any
+deposit formed); the faulted columns drew nothing, and the sweep's mass matched the hand-down to within 2 % of a cell.
+*The cause:* sub-plan 20's moving mesh booked an outward sweep at the corner's own enthalpy while the skins hand down
+their bottom cells at theirs, which spec 6.6 says the 3D model gains; harmless while hand-downs were thin and at the
+node's temperature, but runoff thickens the skins by 0.2-1 mm a part, so the slab handed spans their warmer interior,
+and the difference landed in one bottom cell, often a sliver -- spec 12's mechanism of "metal crossing the base at
+different temperatures", returned through hand-downs. Task 8's reading (Review Focus 25, "the move's sweep less the
+skins' exchange into small bottom cells of columns handing deposits down beside columns drawing") had the place right
+and the quantity wrong: it is the valuation, not the mass, and the neighbours' draws play no part. The fault counter
+fired one step earlier for another reason: it judged a hand-down against the node alone, so it counted the warmer cell
+a hand-down uncovers (6-30 K above the node) rather than the superheating, which it never saw (199 faults, against 270
+bottom cells the reconciliation heated by more than 5 K). Confirmed by
+`test_a_warm_deposit_goes_down_only_near_the_node_s_temperature_at_its_own_enthalpy_and_heats_no_cell`, which fails
+before the fix with a cell at 1 614 K in a column whose hottest metal was 890 K.
+
+*One rejected part* (0.9375-1.0 s, 0.0625 s): 12 bases beyond the allowance (0.538 mm), the worst column 141, 1.2 mm
+past the heat's end, by its hand-down of 1.055 mm (1.96 allowances); the largest draw anywhere 0.19 mm. Every rejection
+on the reduced plate was a hand-down at the heat's downstream rim (y = -20 to -22 mm).
+
+*Are the rejections the allowance doing its job?* Yes. A rigid deposit freezing onto cold metal under a sustained
+supply grows as conduction into the metal allows: 2 e (T_rigid - T_s) sqrt(t / pi) / (rho dh), e = sqrt(k rho c) the
+metal's effusivity and dh = h(908 K) - h(T_rigid) = 2.1e5 J/kg the heat that makes liquid rigid -- 1.75, 1.16 and 0.61
+mm in 0.0625 s on metal at 735, 800 and 850 K (a mean of 28, 18.5 and 9.7 mm/s). The runoff supplies about 5-9e-5
+m2/s per unit width (Task 8's 4.37 g in 0.2 s over the downstream rim's 90-140 mm), 28-43 mm/s into one 2 mm column,
+so the first cold columns grow at the conduction limit -- the reduced plate's front column 1.06 mm in 0.0625 s on
+810-860 K metal -- and the rest spreads over a few columns. Handed down as it grows, a deposit moves its base out by
+1.1-3.2 quarter-edges a 0.0625 s part, which needs parts of 0.02-0.06 s; it was the allowance doing its job, at ten
+times a part's cost (fact 126's waste, each part converging 5-7 damped passes before being rejected). Freezing within
+the flow sub-steps (item 3) pulls back the deposit's thin leading edge, not its front column, already at the
+conduction limit, so it changes the part length little (estimated). Held in the skin until it cools (option C), the
+deposit no longer moves the base faster than its heat leaves it.
+
+**2. The fix** (Asha, 2026-10-26; spec 6.6 as amended). *Option A:* the moving mesh books an outward sweep at the
+handed metal's own enthalpy, per corner the mean of what was handed there (`MovingMesh.move(..., h_outward)`, nan where
+none was, those corners' sweeps at their own enthalpy as before); the 3D model gains exactly what the skins handed, and
+the reconciliation returns only the sweep's mass mismatch, at that enthalpy. *Option C:* `hand_down(..., T_limit)` passes
+down only rigid bottom cells no warmer than the base node plus the fault tolerance (`T_node + JUMP_TOLERANCE`, the node
+after the part's 3D solve; ruling 2); warmer metal waits in the skin until it has cooled. Where the limit ends the take
+at a cell's top, the round-off that the take leaves of that cell (a remainder below SLIVER of it) goes too (ruling 3):
+left, a remainder of 1e-22 kg took the reconciliation's round-off to thousands of kelvin and the counter read it.
+*Counter K2:* `jump_faults(..., handed=(mask, coldest, warmest, uncovered))` judges the bottom cell, now read after
+the reconciliation (before the regrid), against the metal that crossed -- for a draw or an absorption the node's and
+the profile's temperatures at the depth swept, as before, for a hand-down the range from the handed cells' coldest and
+warmest (`hand_down(..., span=True)`) to the cell it uncovers, as the hand-down left it (Asha, 2026-10-26, adopting
+item 7's wording after the build); a column that did both is a fault only outside both. On the reduced plate to 1.0 s
+(prototypes in `measure/task9/proto_A`, `proto_C`, `proto_AC`; the final code in `count_faults.py`):
+
+| | before | A alone | C alone | A and C, as built (with items 3 and 4) |
+|---|---|---|---|---|
+| bottom cells the reconciliation heated by more than 5 K | 270 | 0 | 141 | 0 |
+| largest excess of a bottom cell over its node after a move | 266 K | 32 K | 44 K | 11 K |
+| parts attempted, rejected for their moves | 17, 4 (to 0.0156 s) | 18, 4 | 9, 0 | 9, 0 |
+| processor time to 1.0 s (alone) | 262 s | 239 s | 173 s | 169 s |
+
+The table shows A removing the superheating and C the rejections, and only both together removing both; the counter
+as amended then counts 17 faults where it counted 199 (item 7). Mass, energy and momentum close to 9e-16, 5e-11 and
+2e-17 in every variant.
+
+**3. The runoff's heat lost within the flow sub-steps** (`skin.landing_conduct`; ruling 5). The flow sub-steps conducted
+no heat, so metal landing on a rigid top stayed liquid and coasted on (6d's rule) until the next heat sub-step's
+conduction caught it: on Task 8's pushed plate a film of 10-20 um at 0.6-1.2 m/s ran 6-12 mm over metal at about 700 K
+in a 10 ms heat sub-step, where it freezes in 0.005-0.03 ms (a contact estimate: the heat that makes 10-20 um of liquid
+at 908 K rigid, rho_l d dh with dh = 2.1e5 J/kg, against 2 e (T_c - T_s) sqrt(t / pi) into metal at T_s = 735-850 K
+from the contact temperature T_c, their mean), 3-36 um of travel. Now the transport marks the columns metal landed on
+top of (`TransportBook.landed`, its new top cells), and from the flow sub-step it landed in to the heat sub-step's end
+each such column's top block -- the cells within LANDING_DEPTH, 0.4 mm, of its top, the landed metal and the cold metal
+beneath -- is conducted for the flow sub-step with no heat across the block's top or bottom (`_conduct` on the blocks
+alone), after the transport and before the release. The block is adiabatic, so the books stay exact (the Newton
+iteration's error, about 1e-10 J a cell, kept by its bottom cell) and the base law and its sensitivity are untouched;
+the film freezes where it lands, coasting at most a flow sub-step, 0.3-0.6 mm at 0.5 ms and 1.2-2.4 mm at the 2 ms the
+pushed plate's count chooses. Measured: a 20 um film at 950 K on 0.8 mm of metal at 700 K, one 0.5 ms flow sub-step,
+ends at 763-765 K, the block's energy to 1.1e-16; on a strip, liquid 0.2 mm deep sheared onto metal at 700 K for one
+10 ms heat sub-step, the heat sub-step's conduction off, is rigid beyond the edge's first column, the deposit's centroid
+0.30 columns past the edge against 1.63 without (the unit tests, 2026-10-26).
+
+*Where the pushed plate's deposit lands against the heat sub-step* (Task 8's study, item 4: 50 ms from its pushed skins
+at 0.2 s, the conduction on, the base held; `measure/task9/plate_skins9.py`, `compare_substeps9.py`): of the metal
+deposited beyond the heat within 20 mm of the centre line, the share landing 5-10 mm past the heat's end, the deposit's
+centroid past it, the tops beyond the heat still above T_rigid at the end, and the processor time (under a load of two
+or three runs):
+
+| Heat sub-step, flow sub-steps | 5-10 mm past, without; with | Centroid past, without; with | Tops above T_rigid | Processor time (landing) |
+|---|---|---|---|---|
+| 10 ms, 0.5 ms (20) | 39.0 mg, 9.9 %; 11.4 mg, 3.0 % | 1.84; 1.05 mm | 71; 45 | 71; 86 s (1.1 s) |
+| 5 ms, 0.5 ms (10) | 2.1 mg, 0.6 %; 3.1 mg, 0.9 % | 0.69; 0.68 mm | 51; 40 | 89; 118 s (1.1 s) |
+| 2.5 ms, 0.5 ms (5) | 1.8 mg, 0.5 %; 2.4 mg, 0.7 % | 0.67; 0.65 mm | 48; 37 | 108; 151 s (1.0 s) |
+| 10 ms, chosen (5, 2 ms) | 44.0 mg, 11.2 %; 21.1 mg, 5.8 % | 1.99; 1.34 mm | 74; 34 | 45; 50 s (0.7 s) |
+
+The table shows the landing conduction pulling the deposit back toward where the shorter heat sub-steps put it: at 10
+ms the share landing 5-10 mm past the heat falls from 9.9 % to 3.0 % (0.9 and 0.7 % at 5 and 2.5 ms) and its centroid
+from 1.84 to 1.05 mm past the heat's end (0.68 and 0.65 mm), half the tops beyond the heat that were still above
+T_rigid are rigid, and at 5 and 2.5 ms, which agreed before, it changes the deposit by under 0.1 mm. What remains at 10
+ms is not landed metal: the liquid still flowing over rigid metal at the heat's rim cools only in each heat sub-step's
+conduction (not measured further). With the conduction off, Task 9's code gives Task 8's 10 ms run to the last bit.
+At the depths of ruling 5's alternatives, 0.2 and 0.8 mm, 3.3 and 2.7 % land 5-10 mm past, the centroid at 1.11 and
+0.97 mm. The landing conduction costs 1.0-1.1 s of a flow's 50-77 s (2 %) at 0.5 ms flow sub-steps and 0.7 s of 23 s
+(3 %) at the chosen count.
+
+**4. The real pass's flow counts** (spec 16, 2026-10-26, amending 6d's "the real pass taking its trial pass's counts";
+ruling 6). The trial pass holds its base at the start-of-step temperature, so at a melting onset it can melt less and
+flow slower than its real pass, which then ran at the trial's counts: on Task 8's pushed plate one flow sub-step a heat
+sub-step at a Courant number of 18.8 (target 6), and a real pass whose cells flowed only because its base was held at
+the 3D model's first answer replayed the ten flow sub-steps its trial pass chose with no memory, 380 in which nothing
+moved, 96 s of a 124 s pass. Now the trial pass leaves in its plan the count it took in each heat sub-step, 0 where
+nothing flowed (`flow_substeps` took no sub-step), and the real pass takes the larger of that and the count its own
+memory chooses, and its own where the plan holds 0: where the two passes flow alike the counts are the same and the base
+law is made by the pass it predicts (6d's reason), and a real pass flowing faster follows its own flow from its next
+heat sub-step, as any pass's count follows a flow that speeds up. On the pushed plate's first melting macro step (item
+5) 9 real passes ran above a Courant number of 6.5, the largest at 9.2 (Task 8: 13, and 18.8); of their 523 heat
+sub-steps 13 were above 6.5, 5 of them the first of a pass. In its first macro step the real pass whose cells flowed
+only because of its base took 54 flow sub-steps (24 s of processor time) where Task 8's replayed 380 (126 s): ten in
+the heat sub-step its cells began to flow, as a flow from rest takes, then 5, 3, 2 and one a heat sub-step, at Courant
+numbers of 0.001-0.004. On the reduced pushed plate to 1.0 s, 10 of 71 real passes ran above 6.5 before, the largest
+at 24.0, and 6 of 38 after, the largest at 9.2 (`measure/task9/runs/red60_*.passes.jsonl`).
+
+**5. Task 8's coupled pushed plate again** (its settings: cold, 6 MW/m2, the flight push, the skins' own density law,
+170 mm across, 0.5 s macro steps; `measure/task9/run_logged9.py`, every pass and part logged; `analyse_push9.py`). It
+ran detached on mains power from 14:15, alone but for the unit tests of this task for most of its first melting macro
+step (one process beside it, so its times are under a light load), then beside the other runs of this task. Its first
+melting macro step (0.5-1.0 s), against Task 8's run of it:
+
+| 0.5-1.0 s | Task 8 | Task 9 |
+|---|---|---|
+| parts of the macro step; rejected for their moves | every part from the fifth rejected, run again down to 0.0104 s | 8 of 0.0625 s; none (the largest move 0.53 allowances) |
+| skin passes (real); interface repeats | 303 (152); 107 | 75 (38); 29 |
+| processor time in the skins' passes; the flow's; the landing conduction's | 4 209 s; 1 888 s; -- | 3 215 s; 1 650 s; 51 s |
+| wall time of the macro step | 5 229 s (alone) | 3 878 s (one run beside it) |
+| real passes above a Courant number of 6.5; the largest | 13; 18.8 | 9; 9.2 |
+| base faults counted | 1 761 (the old counter) | 456 (K2, every one the cell a hand-down uncovered) |
+| bottom cells' largest excess over their node after a move; the hottest cell | 400 K; 1 253 K | 20.2 K; 910.8 K |
+| metal handed down; held in the skins by the limit at 1.0 s | 10.5 g; -- | 5.4 g; 4.7 g in 381 columns, 2.0 mm at most |
+| cells at 1.0 s | 523 355 | 527 340 |
+
+The table shows the fixes doing what they were for: no part rejected, no bottom cell heated beyond its neighbours (the
+hottest cell 910.8 K, liquid at the top, against 1 253 K at a bottom), the real passes at their target. The macro step
+is not the ten times cheaper that removing the rejections promised: each 0.0625 s part still takes four or five damped
+passes (4, 4, 4 and 9 in Task 8's first parts), and its passes cost 19-77 s each against 7.5-40 s, because the real
+passes now run the flow at the Courant target -- three to five flow sub-steps a heat sub-step where Task 8's early parts
+ran one at a Courant number of 18.8 -- and the skins hold the deposit (4 000 cells more). In the first macro step the
+real pass whose cells flowed only because of its base took 54 flow sub-steps (24 s) where Task 8's replayed 380 (126 s).
+*From 1.0 to 1.5 s* (beside the other runs of this task; Task 8 did not run it): 7 118 s of wall time, eight parts of
+0.0625 s, none rejected (the largest move 0.8 allowances), four damped passes each, 64 passes, 6 339 s of processor time
+in them (the flow 3 797 s, the landing conduction 77 s), the real passes at six or seven flow sub-steps a heat sub-step
+(three to five in the macro step before) and a Courant number of at most 6.1, 1 486 faults counted (1 444 the uncovered
+cell), 10.0 g handed down; the centre receded to 2.756 mm. In the last part (1.4375-1.5 s) the bottom cells' largest
+excess over their node rose to 68.6 K, the counter counted 33 faults that were not uncovered cells, the sharpest fold of
+the base surface went from 85.7 degrees (1.0 s) to 95.3 (98.0 at 0.5 s, the plate's edges; spec 12's fold limit is 75-95
+degrees), the third rebuild had taken place and a column held 6.1 mm of metal above T_rigid: the runoff had spilled
+over the plate's square edge, examined with the run's continuation to 2.0 s in item 9. Books: the
+history prints the mass error, the energy residual and the momentum residual as 0.0 to its six decimals at 1.0 and 1.5 s
+(the run's summary, with them in full, is written only at its end); the reduced plate's are 6.7e-16, 3.4e-11 and
+1.5e-17. At 1.0 s the centre has receded 0.852 mm (Task 8 0.795 mm; the flow-off plate of that width 0.857 mm): the
+limit's doing (on the reduced pushed plate the centre recedes 0.704 mm before this task, 0.729 mm after it, 0.700 mm
+with the limit undone and 0.729 mm with any other change undone), though at 1.0 s the limit holds nothing in the fully
+heated region's skins (1.15 g in the taper's 153 columns, 3.25 g in 208 beyond the heat): it acts through the heat's rim
+and the flow there, not traced further.
+
+**6. The metal option C holds in the skins** (`run_logged9.py`: after every kept part, what a hand-down with no limit
+would take less what went; ruling 7). The hold is unbounded (Asha, 2026-10-26): the skin body records it at every base
+move (`held_mass`, `held_depth_max`; the history's `held_mass_kg` and `held_depth_max_mm`, a run's results' largest),
+by `handable` with no limit less what the hand-down took, and sub-plan 22's flow-on flight reports it; a bound is set
+only if the skins grow too thick there. On the reduced pushed plate to 1.0 s the body's record equals the copy's
+measure to the last bit in every part (0.31 g in 52 columns at 1.0 s, the deepest 1.37 mm; `runs/red60_k2`). On the
+pushed plate it grows as long as runoff keeps arriving, and had not levelled off by 1.5 s:
+
+| End of part | 0.75 s | 0.875 s | 1.0 s | 1.125 s | 1.25 s | 1.375 s | 1.5 s | 1.5625 s | 1.6016 s |
+|---|---|---|---|---|---|---|---|---|---|
+| held [g] | 0.48 | 2.34 | 4.68 | 6.95 | 9.13 | 10.83 | 11.96 | 12.38 | 2.14 |
+| columns holding; the deepest held [mm] | 177; 0.67 | 286; 1.56 | 381; 2.01 | 462; 2.36 | 542; 2.70 | 582; 2.84 | 632; 4.05 | 651; 4.04 | 316; 2.35 |
+| cells (523 777 before any melting) | 523 382 | 527 019 | 527 340 | 530 182 | 531 814 | 534 653 | 536 754 | 537 569 | 530 119 |
+
+The table shows the held metal rising at about 17 g/s from 0.75 to 1.25 s and at 11 g/s over the next quarter-second,
+while 10 g was handed down from 1.0 to 1.5 s (15.4 g in all by 1.5 s): it slows as the oldest deposits cool to their
+node and go down. The last two columns are the run to 2.0 s (item 9; its earlier columns agree with these to a few
+hundredths of a gram): 7 g/s over the next part, levelling off, and then the limit released it in whole cells, 10.2 g
+in 0.039 s, until the mesh failed; with the cap (item 9) it fell from 12.0 g at 1.5 s to 10.6 g at 1.75 s, about 26 g/s, the deepest held 3.6-3.9 mm. Where it sits at 1.0 s: 1.15 g in 153 columns of the heat's taper, 3.25 g in
+208 beyond the heat downstream, none in the fully heated region or upstream. A holding column's skin carries 49 cells
+on average at 1.0 s (at most 62) against 33 at its minimum (development cells; graded cells grow 10 % a cell, so a
+skin's cells grow with the logarithm of its thickness: with production cells a 4 mm skin holds about 76 against 59),
+and the plate's cells grew 2.5 % by 1.5 s, which a skin sub-step's conduction, a third to a half of its cost, follows in
+proportion -- about 1 % of a skin sub-step. *Over a flight* (estimated, not measured): extrapolated at the last
+quarter-second's 11 g/s, about 0.3 kg would be held in the skins after the 30 s or so of melting the 100 mm sphere sees
+-- a fifth of its 1.47 kg -- if its runoff deposited as this plate's does; how much reaches the cold rear depends on the
+spraying (sub-plan 22). The metal is still the body's, in the skins rather than the 3D model, and the skins' tops are
+where they would be; what grows is their depth and their cells, a few millimetres and tens of cells a deposit column
+after a second.
+
+**7. The counter as amended, and the cell a hand-down uncovers.** Read after the reconciliation and judged against the
+handed cells for a hand-down, the counter counts what the reconciliation did wrong where the old counter counted the
+skin's own interior: on the reduced pushed plate to 1.0 s before the fixes it would have counted the 270 bottom cells
+the reconciliation heated by more than 5 K, where the old counter counted 199 uncovered cells. After the fixes, judged
+by the handed cells alone, it counted 17 there (none to 0.75 s, then 2, 1, 4 and 10 a part), and on Task 8's pushed
+plate 456 to 1.0 s and 1 942 to 1.5 s. None of the reduced plate's was a heated cell, nor were 1 900 of the pushed
+plate's (the other 42 came in its last four parts): every one was the cell the hand-down uncovered, within 1 K of its
+temperature before the reconciliation (the column `faults_uncovered` of `run_logged9.py`). The limit ends a hand-down
+at the first cell more than 5 K warmer than the node, and where the skin's own gradient makes that cell, now the bottom
+one, more than 5 K warmer than the warmest cell handed, judging by the handed cells alone counts it. Asha adopted on
+2026-10-26 the wording that counts only the coupling's faults -- "... for a hand-down the handed cells' and the cell it
+uncovers', as the hand-down left it" -- built as ruling 4 says, the uncovered cell read straight after the hand-down
+and the bottom cell still after the reconciliation. On the reduced pushed plate to 1.0 s it counts none of the 17
+(`runs/red60_k2`); `test_the_cell_a_hand_down_uncovers_is_no_fault_unless_the_reconciliation_heats_it` pins that the
+cell a hand-down uncovers is no fault and that the same cell heated by a reconciliation returning 0.05 J more is. On
+the pushed plate: item 5.
+
+**8. Flow off and nothing landing.** With the flow off only option A moves a result, by booking hand-downs at their own
+enthalpy; option C holds nothing back where the skins' bottoms sit at their nodes' temperature, which
+`test_on_the_flow_off_plate_the_fault_tolerance_holds_no_hand_down_back` pins on the reduced flow-off plate, and the
+level-2 plates with C alone are the same to the last bit, every array and history column, to 1.0 s (cold and hot,
+seeded; `measure/task9/flowoff_state.py`, `TASK9_NO_A=1`). With A, at 1.0 s: the centre's recession moves by -1.1e-8
+mm (cold) and +1.3e-8 mm (hot); 38 and 37 of the 6 932 columns change their mean specific enthalpy by more than 100
+J/kg (at most 7 279 and 1 090 J/kg), their top cells by more than 0.1 K in 9 and 1 columns (at most 1.1 and 0.12 K);
+on the cold plate 6 columns hold one cell more or fewer (a split or merge on the other side of its threshold), and the
+one rebuild at 0.5-1.0 s meshes the volume differently (88 898 against 88 849 nodes; 86 686 against 86 664 hot), the
+mesher answering round-off with a different mesh (fact 124). On the reduced flow-off plate of the unit tests (880 K,
+6 MW/m2, 0.2 s), cells move by at most 0.048 K, the 3D field by 0.0042 K, the masses and the recession not at all. The
+flow-off plates over 2.0 s still pass levels 2 and 2b, against Task 8's runs of them (unseeded both):
+
+| Flow off | 1.0 s | 1.5 s | 2.0 s |
+|---|---|---|---|
+| cold, against the 1D reference; the fine box: Task 8 | +3.2 %; +1.2 % | +0.5 %; -0.2 % | -0.9 %; -0.6 % |
+| cold: Task 9 | +3.2 %; +1.2 % | +0.4 %; -0.2 % | -0.8 %; -0.6 % |
+| hot, against its 1D reference: Task 8 (flowing depth against the exact; base over T_rigid) | -9.0 % (onset) | -3.0 % (+1.1 %; 0.012 K) | -1.1 % (-0.1 %; 0.069 K) |
+| hot: Task 9 | -9.0 % (onset) | -3.0 % (+1.1 %; 0.038 K) | -1.1 % (-0.4 %; 0.070 K) |
+
+The table shows the flow-off plates meeting levels 2 and 2b as before: the cold plate's centre moves by -0.0008 mm at
+1.5 s and +0.0038 mm at 2.0 s (of 2.72 and 5.17 mm), the hot plate's by -0.00002 and -0.0004 mm (of 1.76 and 2.88 mm),
+no base fault, mass and energy to 2.2e-16 and 5.2e-13 (cold) and 4.5e-13 (hot). No test asserted a flow-off result of an
+earlier build to the last bit; each such claim was a measurement in a docstring (Task 6c's
+`test_the_flow_is_off_by_default...`, Task 8's `test_the_plate_with_the_flow_off_is_sub_plan_20_s_plate`), whose
+assertions compare two bodies of the same code and stand. *With the flow on and nothing landing on cold metal*: the
+landing conduction acts only where metal landed on a rigid top, so it changes nothing else; the real pass's counts
+change only where its own memory asks for more flow sub-steps than its trial pass took or where its trial pass flowed
+nothing; A changes every result in which metal is handed down (by the same order as with the flow off where the handed
+metal is near its node's temperature, which C now ensures); C changes the results where a hand-down would have taken
+metal more than 5 K warmer than its node -- deposits, and skins thickened by arriving melt over a steep profile; and the
+counter counts differently wherever metal is handed down.
+
+*The regression with the flow on* (Task 8's item 3: no push, the liquid released as it forms, the skins at the solid's
+density, against the references whose liquid leaves at the liquidus):
+
+| Flow on and released | 1.0 s | 1.5 s | 2.0 s | Hot: flowing depth, base over T_rigid |
+|---|---|---|---|---|
+| cold, 1D; fine box: Task 8 | +2.4 %; +0.6 % | +0.3 %; -0.3 % | -0.8 %; -0.6 % | |
+| cold: Task 9 | +2.4 %; +0.6 % | +0.5 %; -0.1 % | -1.2 %; -1.0 % | |
+| hot: Task 8 | -6.4 % (onset) | -1.6 % | -1.1 % | within 1.2 %; at most 0.10 K |
+| hot: Task 9 | -6.7 % (onset) | -3.4 % | -1.5 % | within 0.9 %; at most 0.09 K |
+
+The table shows both plates still meeting level 2 against the liquidus's references (5 % allowed), the hot plate 1.8
+points further behind at 1.5 s. No single change of this task accounts for that: undoing each in turn on the hot plate
+to 1.5 s, its centre recedes 1.935 mm in Task 8, 1.899 mm with all of them, and 1.922, 1.916 and 1.911 mm with the
+booking (A), the limit (C) and the landing conduction undone, 1.898 mm with the counts rule undone
+(`measure/task9/plate_toggle.py`): metal is handed down there (2.1-2.7 g), some of it warmer than its node, and the
+rim's slurry lands on rigid tops, and each moves the coupled run by a fraction of a per cent. Books: mass to 2.2e-16
+and 4.4e-16, energy to 5.2e-13 and 4.3e-13, momentum to 7.4e-18 and 4.9e-17 (cold, hot); no base fault; released by
+2.0 s 49.47 g (cold, as Task 8's) and 32.72 g (hot; 32.70 g).
+
+**9. The pushed plate to 2.0 s, and the cap on a part's hand-down** (2026-10-27; `measure/task9/item4/`, the third and
+fourth hand-backs in `measure/task9/report.md`). Run again to 2.0 s on mains power (`run_logged9.py`, as item 5 but with
+the end's examination logged), the plate closed its books to 1.5 s and failed inside the 1.5-2.0 s macro step: "a corner
+move of up to 0.000399 m degrades the mesh even after a rebuild", the base surface's sharpest fold 158.7 degrees. *What
+folds* (`run_fold.py`, `folds_state.py`): the deposit. Runoff freezing on cold metal is handed down, so the base grows out
+under it, unevenly at the scale of one triangle -- a one-column ridge along the flow in the heating's taper (at a radius
+of about 36-40 mm, corners 1-1.5 mm proud of their neighbours 2 mm away, the triangles either side tilted about 35
+degrees), the heated face's own sharpest fold rising from 24 degrees at 1.0 s to 69 at 1.5 s, about 90 degrees a
+second -- and, from about 1.3 s, the runoff spilling over the plate's square y = -85 mm edge, across the 8 mm side face
+(skins up to 7.9 mm, 6.1 mm of it above T_rigid, at 1.5 s) to the back edge, where the surface starts at 90 degrees.
+Spec 12's limit for neighbouring triangles is about 75-95 degrees. *What made it fast*: option C's limit releases a held
+cell whole once it is within 5 K of its node, and the deep cells of a thick skin are large (a cell's target is a tenth
+of its depth below the fine zone): at 1.5 s the lowest held cells were 0.18 mm of solid metal at the median and up to
+0.79 mm (20 of 613 holding columns over the 0.556 mm allowance, 163 over half of it), a median 1.8 K above the limit. A
+release does not shrink with the part, and each outward move raises the base node by the 3D gradient times the move,
+which admits the next cell at the next part (offline, with no time passing, 0.94, 0.55 and 0.36 g in the first three
+rounds; `ratchet.py`, `cells_held.py`). From 1.5625 s the part asked for 1.026 allowances at 62.5, 31, 16 and 7.8 ms;
+8 of the last 15 parts were kept at the split limit (1.95 ms) over the allowance (1.015-1.19), each handing down
+0.65-1.38 g whatever its length, against 0.8-1.7 g per 62.5 ms part before: the 12.38 g held came down to 2.14 g in
+0.039 s, about 260 g/s, and the folds at the side edge rose from 117 to 159 degrees. *Not Task 9 alone* (the reduced
+pushed plate to 2.0 s with each rule for the hand-down, every move, fold and refused move logged): Task 8's own code
+folded the face's ridge past 100 degrees by 1.28 s, with moves refused and rescued by rebuilds from 1.13 s; Task 9
+without the limit failed at 1.92 s on the deposit's rim beside the spilled edge; Task 9 as built folded to 131 degrees
+by 1.81 s; with the release capped at the allowance (a diagnostic) it reached 2.0 s splitting no part after 1.3 s, its
+face's fold past 90 degrees at about 1.85 s; on a 90 mm plate whose runoff did not reach the edge before about 1.7 s
+the face's ridge alone passed 90 degrees at about 1.70 s. *Decided* (Asha, 2026-10-27, option 1 then option 2, over
+option 2 alone, a hand-down limited by its neighbours' depth or local refinement (option 3, the fallback) and a test
+plate without square edges (option 4); spec 6.6, 7.1, 12, 16): a part hands down at most what moves its base by the move
+allowance (`hand_down(..., cap)`, `SkinBody._hand_cap`, HAND_DOWN_SHARE of the allowance; ruling 8), a cell going in
+part, the rest waiting, so a hand-down never splits a part; and the pushed plate is judged at 1.5 s, the deposit's
+folding a watched risk for sub-plan 22's flight. *The capped full plate*
+(`item4/run_fold.py --resume`, from the planning copy's run again to 1.5 s, pickled there; `runs/cap9_w170`). The cap
+would not have bitten before 1.5 s: the largest hand-down in that run's 17 parts was 0.532 mm, 0.957 of the cap, so the
+capped code takes every hand-down to the last bit as it did (`item4/cap_check.py`), and the resumed body's first part
+is the uninterrupted run's to the last digit logged. From 1.5 s the macro step ran in parts of 0.05 s, none split (no
+move ratio above the cap's 0.999999); the cap held metal back from 1.60 s, in 1, 10, 11, 17 and 28 columns a part --
+at the spilled edge, its side and the face's deposit, which would have handed down up to 0.64-1.14 mm -- the parts
+handed down 1.6-2.1 g each, and the held metal fell from 12.0 g at 1.5 s to 10.6 g at 1.75 s, about 26 g/s against 260
+g/s without the cap. The surface still folded: its sharpest fold 120 degrees at 1.55 s, 131 at 1.65 s on the spilled
+front edge and 127.5 at 1.75 s on the side's back edge (triangles tilted 73 and 159 degrees from the face's direction);
+the face's own 74, 78, 90, 98 and 99 degrees at a radius of about 40 mm, 36 then 110 face corners over 45 degrees; the
+surface quality from 0.73 to 0.58. A move refused at the face's centre at 1.70 s was rescued by a rebuild; in the part
+to 1.80 s the move was refused at the face's deposit 50 mm out and, after the rebuild, at corners of the spilled edge,
+its side and its back edge: "a corner move of up to 0.000603 m degrades the mesh even after a rebuild" -- 0.2 s later
+than without the cap, on the deposit's folding, as option 2 expects. Books at every kept part to 1.75 s (the replay run again with
+them logged, `runs/cap9b_w170`, the same to the last digit logged): mass to 2.2e-16, energy to 7.1e-11, momentum to
+4.9e-18; the counter counted 7 faults in the five parts kept (30 to 1.5 s; not examined -- the reduced plate's were the
+side face's draws). The five parts cost 2 738 s of processor time, about 550 s a 0.05 s part (on battery power, alone).
+
+*The regression* (`item4/cap_state.py`: the reduced plate to 2.0 s, seeded, with the cap and with it lifted, compared bit
+for bit by `compare_states.py`). With the flow off (700 K, 6 MW/m2, the liquid removed as it forms) the cap never holds
+metal back and the two runs are the same to the last bit, every array and history column. With the flow on and the
+flight push they are the same in every history column at 0.5 and 1.0 s; the cap first holds metal back at 1.4375 s, in
+one column at the spilled edge by 0.014 mm, then in each of the next ten parts (from 1.5 s parts of 0.05 s), in at most
+8 columns and by at most 0.24 mm, mostly at the edge (38 of 62 holdings, the face 12, the side 12). At 2.0 s, with the
+cap against without: the sharpest fold 103 against 132 degrees, the surface quality 0.57 against 0.48, 2 rebuilds
+against 8, 77 interface repeats against 105, 6.16 g handed down against 7.92 g, 0.28 g held against 0.01 g, the
+centre receded 4.600 against 4.587 mm; the counter counts 6 faults against none, all on the spilled side face at 1.4375-1.5 s, in columns that
+drew while their slurry drained (one also handing metal down), their bottom cells 9-17 K above their nodes -- the kind the full plate counted at
+1.5 s -- and none in a column whose hand-down the cap held back (`item4/fault_trace.py`). Mass, energy and momentum
+close to 9e-16, 2e-11 and 2e-17 in both.
+
+**Rulings** (2026-10-25/27, within spec 6.5, 6.6 and 7.1-7.2 as amended 2026-10-26/27 and the rulings of Tasks 1-8; each is
+what, then why, then the cost if wrong):
+1. *The reproduction: Task 8's pushed plate reduced to 60 mm, heated within 15 mm and to nothing at 21 mm, no fine band,
+   to 1.0 s.* Why: item 1; it gives faults, bottom cells and rejections of the same kind and of comparable size at a
+   twentieth of the cost, and its base operations can be recorded column by column. Cost if wrong: a mechanism of the
+   full plate's alone missed -- the full plate re-run (item 5) shows the same fixes act there; its runoff reaches the
+   reduced plate's edge after 1.3 s, so it is no measure of the plate's later steps.
+2. *The limit on hand-downs is the base node's temperature after the part's 3D solve plus JUMP_TOLERANCE (5 K), the
+   fault tolerance spec 6.6 names, in the part's move ratio and its move alike.* Why: that node is the surface the
+   handed metal joins, and the move ratio must see the hand-down the move will make. Cost if wrong: hand-downs judged
+   against a temperature the 3D model no longer has -- held a part longer or passed a part sooner.
+3. *Where the limit ends a hand-down at a cell's top, the take's round-off remainder of that cell (below SLIVER of it)
+   goes too.* Why: `take_bottom` leaves 1e-22 kg of the last cell when the take is the sum of whole cells, and the
+   reconciliation's round-off then raised such a remainder to thousands of kelvin, which the counter, now reading
+   after the reconciliation, counted. Applied only where the limit binds, so no hand-down it does not bind changes.
+   Cost if wrong: none measurable (a round-off of mass).
+4. *The counter reads the bottom cell after the reconciliation and before the regrid, and a hand-down's range runs
+   from the coldest and warmest of the cells it took from, whole or in part, to the cell it uncovered, read straight
+   after the hand-down.* Why: spec 6.6 as amended (K2, with the uncovered cell: Asha, 2026-10-26); before the regrid,
+   so that a sliver the reconciliation heated is seen before a merge hides it; the uncovered cell as the hand-down left
+   it, so that the skin's own interior is no fault and what the reconciliation then does to it is judged. Cost if
+   wrong: a reconciliation that heats an uncovered cell by less than the gap between it and the handed cells goes
+   uncounted -- with A that gap is the skin's own gradient, and the reconciliation returns only the sweep's mass
+   mismatch at the handed metal's enthalpy.
+5. *The landing conduction: in every flow sub-step after the transport, the columns that metal landed on top of in this
+   heat sub-step, from the flow sub-step it landed in, have the cells within LANDING_DEPTH = 0.4 mm of their top (at least
+   two) conducted through the depth for the flow sub-step, adiabatically -- no heat across the block's top, whose
+   heating and radiation are the heat sub-step's, nor across its bottom -- the Newton iteration's error kept by the
+   block's bottom cell; before the release.* Why: item 3; the block holds the landed metal and as much of the cold metal
+   beneath as heat reaches in a flow sub-step (sqrt(alpha h), 0.33 mm at 2 ms), so the film freezes where it lands, the
+   base law is untouched and the books stay exact; adiabatic, its diffusion counted twice only within the block (the
+   heat sub-step's conduction already took its cells). Cost if wrong: the measured sensitivity (item 3): 0.2 and 0.8 mm
+   put 3.3 and 2.7 % of the deposit 5-10 mm past the heat against 3.0 % (its centroid 1.11 and 0.97 mm past against
+   1.05 mm); a block too shallow bottles the film's heat and lets it flow on, a deep one doubles the
+   diffusion of more of the column.
+6. *A trial pass's flow sub-step count is 0 in its plan where its heat sub-step took none (nothing flowed), and the real
+   pass then takes its own memory's count; elsewhere the larger of the trial's and its own.* Why: spec 16, 2026-10-26
+   (item 4). Cost if wrong: none for the base law where the two passes flow alike (the counts are equal there); where
+   they do not, the base law is made by a pass that flowed differently, which the damped repetition corrects.
+7. *C's held metal measured as what a hand-down with no limit would take less what went, after every kept part; in
+   the skin body as `handable` with no limit, just before the hand-down, less what the hand-down took.* Why: it is the
+   metal C keeps in the skins and nothing else: a skin is above its minimum also by its flowing layer, by the sweep's
+   mismatch and by its area's change, none of them C's; `handable` computes the take a hand-down with no limit would
+   make from the same cells, so it is that measure exactly, without the copy of the skins or the take that
+   `run_logged9.py` made. Cost if wrong: none for the model; a reading.
+8. *A part's hand-down is capped at HAND_DOWN_SHARE = 1 - 1e-6 of the move allowance at every column, whatever the
+   column drew, and the held metal is what a hand-down with neither the limit nor the cap would take less what went.*
+   Why: item 9 (Asha, 2026-10-27); a cap at the whole allowance split parts by round-off (a move ratio of 1.000 plus a
+   few 1e-16 in the diagnostic run, `item4/run_variant.py`), since the ratio divides the capped mass by the area again;
+   a draw and a hand-down in one part move a base opposite ways, so each within the allowance keeps the net move within
+   it; and metal waiting for the cap is held in the skins as surely as the limit's. Cost if wrong: a column that drew a
+   whole allowance could hand down only one more in the part, a part's delay.
+
+**What this task found in earlier tasks.**
+- *Sub-plan 20's moving mesh* booked an outward sweep at the corner's own enthalpy, where spec 6.6 said the 3D model
+  gains the handed cells' (item 1); harmless while hand-downs were thin and at the node's temperature, it made the
+  superheated bottom cells where runoff deposits. Changed (A).
+- *Sub-plan 20's fault counter* judged a hand-down against the node alone, before the reconciliation, so it counted the
+  warmer cell a hand-down uncovers and never saw what the reconciliation did (item 1). Changed (K2, the uncovered cell
+  in a hand-down's range; item 7).
+- *`Skins.take_bottom`* leaves a round-off remainder of about 1e-22 kg of the last cell when the take is the sum of
+  whole cells; the regrid merged it before, the counter now reads it (ruling 3). Folded where the limit ends a
+  hand-down; left elsewhere, where the regrid still merges it.
+- *Task 8's reading of the faults* (Review Focus 25): the reconciliation, yes, but its enthalpy, not the sweep's mass,
+  and no neighbour's draw (item 1).
+- *6d's counts*: the real pass at its trial pass's counts above the Courant target at an onset, and replaying counts
+  chosen where nothing flowed (item 4). Changed (spec 16, 2026-10-26).
+- *Task 8's heat sub-step study*: the 11 % of the deposit landing 5-10 mm further at 10 ms is 9.9 % of what lands beyond
+  the heat within 20 mm of the centre line (Task 8 counted it against 345 mg deposited, this task against the 395 mg
+  beyond the heat) (item 3).
+- *The damped repetition where deposits form*: each 0.0625 s part of the pushed plate takes four or five passes,
+  against fact 126's 1.8 on the sphere, which is now most of a melting macro step's cost (item 5; not investigated).
+- *The fold and the warm bottom cells at 1.5 s*: in the pushed plate's last part the base surface's sharpest fold rose
+  to 95.3 degrees and the bottom cells' largest excess over their node to 68.6 K, with 33 faults that were not uncovered
+  cells (item 5): the runoff spilled over the plate's square edge, the warm bottom cells and the faults are the
+  slurry's on its side face, and the fold is the deposit's (item 9).
+- *Option C's limit* releases a held cell whole once it is near its node's temperature, a release that does not
+  shrink with the part, so the part cap's splitting failed for it and the held metal came down at once (item 9).
+  Changed (the cap, spec 6.6 and 7.1, 2026-10-27).
+
+- [ ] **Step 1: The moving mesh's test** -- in `tests/test_reentry_model_movemesh.py`:
+
+{{DIFF_TEST_MOVEMESH_T9}}
+
+- [ ] **Step 2: The base's tests and the skin body's counts** -- in `tests/test_reentry_model_skinbody.py` (the hand-down
+  limited by the node's temperature and what it would take, and capped, a cell going in part; the warm deposit that was
+  the cause and the metal held; a deposit thicker than the move allowance coming down over several parts, splitting
+  none; the counter judging a hand-down by the handed cells and the cell it uncovers, in its arrays and on a skin body;
+  the real pass's counts in the skin body, which replaces 6d's test of the trial's counts; and the flow-off plate's
+  hand-downs, which neither the limit nor the cap holds back; the parts test's recorded move passes the new valuation
+  on, and the pushed plate's threshold is Task 8's ruling 6's ten, its docstring saying why):
+
+{{DIFF_TEST_SKINBODY_T9}}
+
+- [ ] **Step 3: The landing conduction's and the counts' tests** -- in `tests/test_reentry_model_skin.py` (the two flow
+  sub-step tests built by hand take the landing conduction after the transport):
+
+{{DIFF_TEST_SKIN_T9}}
+
+- [ ] **Step 4: The skin run's results** -- in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T9}}
+
+- [ ] **Step 5: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_movemesh.py
+  tests/test_reentry_model_skinbody.py tests/test_reentry_model_skin.py tests/test_reentry_model_cli.py -q -m "not
+  reference" -k "outward_sweep_is_booked or only_bottom_metal_within or warm_deposit_goes_down or judged_against_the_handed
+  or uncovers_is_no_fault or real_pass_takes_at_least or holds_no_hand_down_back or landing_on_cold_rigid or
+  runoff_onto_cold_metal or larger_of_its_trial or in_that_order or releases_after_the_transport or too_far or
+  writes_its_columns_frames or cap_a_cell or thicker_than_the_move_allowance"`. Expected: 16 failed --
+  - `TypeError: MovingMesh.move() got an unexpected keyword argument 'h_outward'`;
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'handable'`, `TypeError: hand_down() got an unexpected
+    keyword argument 'cap'` (the flow-off plate's) and `TypeError: hand_down() takes 3 positional arguments but 4 were
+    given` (the cap's);
+  - `TypeError: MovingMesh.move_with_policy() takes from 2 to 3 positional arguments but 4 were given` (the deposit
+    thicker than the allowance; with Task 9 built but the cap lifted, `assert (2.513518154313309 < 1.0)`, the first
+    part asking for 2.51 allowances at every length from 0.5 s to 0.69 ms, measured 2026-10-27);
+  - `AssertionError: 1614.0 K in a column whose hottest metal was 890.0 K` (the cause);
+  - `TypeError: jump_faults() got an unexpected keyword argument 'handed'`;
+  - `AssertionError: assert (np.float64(99.8087120132434) < 0.5)` (the uncovered cell on a skin body: with no limit the
+    warm metal goes down too, and the bottom cell the reconciliation leaves is 97-100 K above the 760 K expected);
+  - `KeyError: 'held_mass_max_kg'` (the skin run's results);
+  - `assert [10, 10, 10, 10, 10, 5, ...] == []` (the skin body's real pass chose no count of its own);
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'landing_conduct'`;
+  - `assert [np.int64(10), np.int64(11), np.int64(12), np.int64(13), np.int64(14)] in ([], [10])` (landed metal still
+    above T_rigid five columns past the edge);
+  - `assert [1, 1, 1, 1, 1, 1, ...] == [10, 7, 9, 8, 7, 6, ...]` (a real pass at its trial pass's one flow sub-step);
+  - `AttributeError: 'TransportBook' object has no attribute 'landed'` (2: the flow sub-steps built by hand);
+  - `TypeError: MovingMesh.move_with_policy() takes from 2 to 3 positional arguments but 4 were given` (the parts test's
+    recorded move).
+
+- [ ] **Step 6: Handed-down metal at its own enthalpy** in `reentry_model/movemesh.py`:
+
+{{DIFF_MOVEMESH_T9}}
+
+- [ ] **Step 7: The limited hand-down, the landing conduction and the real pass's counts** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T9}}
+
+- [ ] **Step 8: The base's operations, the held metal and the counter** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T9}}
+
+- [ ] **Step 9: The held metal's history columns and results** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T9}}
+
+- [ ] **Step 10: Run them to see them pass.** Expected: `tests/test_reentry_model_movemesh.py` 39 passed,
+  `tests/test_reentry_model_skinbody.py` 28 passed (2 deselected, the reference tier's; 21 before),
+  `tests/test_reentry_model_skin.py` 90 passed (87 before), `tests/test_reentry_model_cli.py` 66 passed (one
+  assertion added); the unit tier 517 passed, 1 skipped (1 276 s alone before the cap's two tests, 2 025 s under a load
+  of about ten processes after; 506 before). Every skin flight with the flow off moves only by
+  the booking of handed-down metal (item 8); with the flow on, by all four changes.
+
+- [ ] **Step 11: The analysis runs** (each on mains power under `caffeinate -i`, the scripts in `measure/task9/`, the
+  long ones detached by `launch9.sh`, which logs the power source at their start and end):
+  - the cause, on the planning copy before this task and on the prototypes (`TASK9_CODE=.../proto_A`, `proto_C`,
+    `proto_AC`): `"$PY" trace_move.py 60 1.0` (262 s alone) and `"$PY" analyse_trace.py runs/trace_w60`; the failing
+    test first written as `test_task9_cause.py`; the fixed code on the same plate, `"$PY" count_faults.py 60 1.0
+    runs/fix_w60.json` (169 s alone; item 2);
+  - the landing conduction: `run_substeps9.sh` (`plate_skins9.py substep`, 50 ms from Task 8's pushed skins at 0.2 s,
+    heat sub-steps of 10, 5 and 2.5 ms at 0.5 ms flow sub-steps, depths of 0.2 and 0.8 mm, the chosen count, with the
+    landing conduction and without) and `"$PY" compare_substeps9.py` (item 3; 45-151 s a run under load);
+  - the counts and the parts on the reduced plate before and after: `run_logged9.py --case cold --dt 0.5 --t-end 1.0
+    --flow on --push flight --swell on --width-mm 60 --r-flat-mm 15 --r-zero-mm 21 --fine-mm 0` (item 4), and again
+    under the adopted fault wording, `--out red60_k2.json` (item 7; 202 s alone);
+  - the pushed plate: `launch9.sh push9_w170 run_logged9.py --case cold --dt 0.5 --flow on --push flight --swell on
+    --width-mm 170 --t-end 2.0 --save-state 1.0 --columns push9_w170.npz` and `"$PY" analyse_push9.py` (items 5 and 6;
+    to 1.5 s in 3 h 12 min of the run's own time, stopped there when the laptop went onto battery power; its outputs
+    kept as `runs/push9_w170_to1.5.*`, its logging script as `run_logged9_to1.5.py`); then, with the logging extended
+    for the examination of its end (the faults' split, the warmest bottom cell over its node, the fold's place, the
+    body's held metal), the same to 2.0 s with `--save-state 1.5`, and `"$PY" analyse_rerun9.py runs/push9_w170`;
+  - the failure at 1.60 s and the cap (item 9): `launch9.sh fold9_w170 item4/run_fold.py --pickle-at 1.5 ...` (the
+    pushed plate again, every part tried, kept and refused logged, the whole body pickled at 1.5 s) and the same on Task
+    8's code (`TASK9_CODE=.../item4/task8tree/...`, `fold8_w170`); the reduced plate to 2.0 s with each rule for the
+    hand-down (`run_fold.py`, and `item4/run_variant.py noC|capped`; `red8_*`, `red9_*`, `rednoC_nof`, `redcap_nof`,
+    `red9w90_nof`), read with `"$PY" item4/analyse_fold.py runs/NAME`; the held cells and the per-move release on the
+    1.5 s state (`item4/cells_held.py`, `item4/ratchet.py`); the cap checked against the run as built to 1.5 s
+    (`"$PY" item4/cap_check.py runs/fold9_w170 1.5`) and the replay from the pickle with the cap, `launch9.sh cap9_w170
+    item4/run_fold.py --resume fold9_w170.body.pkl --case cold --dt 0.5 --push flight --width-mm 170 --t-end 2.0`; the
+    regression, the reduced plate to 2.0 s with the cap and with it lifted (`CAP_OFF=1`), flow on and off, compared bit
+    for bit (`item4/cap_state.py`, `compare_states.py`);
+  - flow off: `run_flowoff9.sh` (the level-2 plates to 1.0 s, seeded, with the fix and with the limit alone,
+    `TASK9_NO_A=1`, against the same before this task) and `"$PY" compare_states.py`; `launch9.sh off_cold9
+    run_logged9.py --case cold --dt 0.5` and `off_hot9 ... --case hot` to 2.0 s (item 8; 39 and 13 minutes under load);
+  - the regression: `launch9.sh reg_cold9 run_logged9.py --case cold --dt 0.5 --flow on --release all --swell off` and
+    `reg_hot9 ... --case hot ...` (51 and 17 minutes under load), and on the hot plate each change undone in turn,
+    `"$PY" plate_toggle.py noA|noC|noland|oldcounts --case hot --dt 0.5 --t-end 1.5 --flow on --release all --swell
+    off`, and on the reduced pushed plate (`run_toggles60.sh`) (item 8).
+
+- [ ] **Step 12: Commit.**
+
+```bash
+git add reentry_model/movemesh.py reentry_model/skin.py reentry_model/skinbody.py reentry_model/coupled.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py
+git commit -m "Skins: the base where runoff lands -- handed-down metal booked at its own enthalpy and only metal within the fault tolerance of the base node handed down, so that no bottom cell is superheated and no part is rejected for a deposit's moves (spec 6.6 as amended 2026-10-26, options A and C); a fault judged against the metal that crossed, for a hand-down the handed cells and the cell it uncovers; the metal the fault tolerance holds recorded in the history; metal landing on a rigid top losing its heat to the metal beneath within the flow sub-steps; and the real pass taking the larger of its trial pass's flow count and its own; and a part's hand-down capped at its move allowance, a cell going in part, so that a hand-down never splits a part (spec 6.6 and 7.1 as amended 2026-10-27) (sub-plan 21 Task 9)"
+```
+
+---
+
 ## The outline (every item written out above)
 
 6. **Sideways exchange**, split in three (Asha, 2026-10-21) and a fourth (2026-10-22), each with its own tests and
@@ -2232,12 +2873,11 @@ git commit -m "Skins: level 2 with the flow on -- the plate pushed along its fac
    whether a further task replaces the depth-uniform pressure by a non-hydrostatic pressure solved on the cells (Asha,
    2026-10-22), is decided once sub-plan 22 has measured it again on the flow-on flight's own states (Asha, 2026-10-25,
    option a; Review Focus 23).
-9. **The base where runoff lands** (Asha, 2026-10-25, option a, over leaving it to sub-plan 22): on Task 8's coupled
-   pushed plate, where runoff deposits on cold metal and is handed down, the base's reconciliation leaves faulted bottom
-   cells up to 1 253 K and the part cap rejects parts down to 0.0104 s (Review Focus 24 and 25). Task 9 finds the cause
-   and fixes it before any flow-on flight, and with it the heat the runoff loses to cold metal within the flow sub-steps
-   (Review Focus 21) and the real pass's flow counts above the Courant target at a melting onset (Review Focus 17). Not
-   yet written.
+9. **The base where runoff lands** (Asha, 2026-10-25, option a, over leaving it to sub-plan 22; its fix decided
+   2026-10-26, spec 6.6 and 16) -- the cause of the base faults and rejected parts where runoff lands on cold metal,
+   handed-down metal booked at its own enthalpy and only metal near the node's temperature handed down, the fault judged
+   against the metal that crossed, the runoff's heat lost within the flow sub-steps and the real pass's flow counts --
+   is written out above as Task 9.
 
 ## Inputs that were to be settled (all settled)
 

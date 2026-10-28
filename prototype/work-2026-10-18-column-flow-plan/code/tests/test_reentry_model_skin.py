@@ -1406,14 +1406,19 @@ def sphere_flow(col, cycles=1, tau=50.0, A_top=None):
     return skin.Flow(col, dp_ds, shear, 30.0 * V_HAT, V_HAT, RHO_L, SIGMA, col.area if A_top is None else A_top, cycles)
 
 
-def by_hand(sk, flow, dt):
-    """One flow sub-step called piece by piece, in 6b's order."""
+def by_hand(sk, flow, dt, landed):
+    """One flow sub-step called piece by piece, in 6b's order, and since Task 9 the landing conduction of the columns
+    metal landed on in this heat sub-step (`landed`, updated)."""
     G, terms = skin.push(flow.columns, sk.thickness(), flow.dp_ds, flow.g, flow.v_hat, flow.rho_l, flow.sigma,
                          wet=skin.flowing_tops(sk))
     mb = skin.momentum_step(sk, dt, G, flow.shear, flow.A_top, response=True)
     tb = skin.thickness_step(sk, flow.columns, dt, mb, terms["thickness"] + terms["capillary"], flow.g, flow.rho_l,
                              flow.sigma)
-    return mb, tb, skin.transport(sk, flow.columns, dt, regrid=False, faces=tb.faces)
+    tr = skin.transport(sk, flow.columns, dt, regrid=False, faces=tb.faces)
+    if tr.landed is not None:
+        landed |= tr.landed
+    skin.landing_conduct(sk, landed, dt)
+    return mb, tb, tr
 
 
 def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_transport_in_that_order(coarse_sphere_mesh):
@@ -1423,7 +1428,8 @@ def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_tra
     included), the gas shear's, the walls' (the anchored metal's, the thickness step's and the transport's projections)
     and what the transport carried, to round-off (2.1e-12 of the largest impulse at one cycle and 9.4e-13 at three,
     measured 2026-10-22, as 6b's books on these skins; 9.6e-13 at three with Task 6d's transport). With `cycles` the sub-step runs as that many flow sub-steps,
-    the cells split and merged between them; the heat sub-step's own regrid follows the last."""
+    the cells split and merged between them; the heat sub-step's own regrid follows the last. Since Task 9 the columns
+    metal landed on top of in the heat sub-step lose its heat after each transport (`landing_conduct`)."""
     from test_reentry_model_columns import sphere_columns
     col, _ = sphere_columns(coarse_sphere_mesh)
     for cycles in (1, 3):
@@ -1432,11 +1438,12 @@ def test_a_flow_sub_step_is_the_push_the_momentum_the_thickness_step_and_the_tra
         flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
         P0 = first.column_momentum()
         book = skin.flow_substeps(first, flow, 0.01)
-        parts = []
+        parts, landed = [], np.zeros(col.n, dtype=bool)
         for k in range(cycles):
             if k:
                 second.regrid()
-            parts.append(by_hand(second, flow, 0.01 / cycles))
+            parts.append(by_hand(second, flow, 0.01 / cycles, landed))
+        assert landed.any()
         assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
         assert book.sub_steps == cycles and book.courant == max(tr.courant for _, _, tr in parts) > 0.0
         assert book.growth == max(tb.growth for _, tb, _ in parts) and book.passes == max(tb.passes for _, tb, _ in parts)
@@ -1819,7 +1826,8 @@ def released(skins, rate, A_top, dt, slurry=False):
 
 def test_a_flow_sub_step_releases_after_the_transport_and_its_books_close_with_the_droplets_momentum(coarse_sphere_mesh):
     """Spec 7.1's order within each flow sub-step -- the flow, the sideways exchange, the spray: `flow_substeps` with a
-    release calls `push`, `momentum_step`, `thickness_step`, `transport` and then `release_top` with the rate the
+    release calls `push`, `momentum_step`, `thickness_step`, `transport` (and since Task 9 `landing_conduct`) and then
+    `release_top` with the rate the
     release gives at that moment times the top area and the flow sub-step, to the last bit, at one cycle and three, and
     books what left: the columns' momentum changes by the push's, the shear's, the walls' and what the transport carried,
     less the momentum the droplets took at their cells' own velocities (fact 29's sink), to 2.1e-12 and 1.1e-12 of the
@@ -1837,11 +1845,11 @@ def test_a_flow_sub_step_releases_after_the_transport_and_its_books_close_with_t
         flow.release, flow.slurry = skin.prescribed_release(rate), slurry
         P0, M0, E0 = first.column_momentum(), first.mass(), first.energy()
         book = skin.flow_substeps(first, flow, 0.01)
-        parts = []
+        parts, landed = [], np.zeros(col.n, dtype=bool)
         for k in range(cycles):
             if k:
                 second.regrid()
-            parts.append(by_hand(second, flow, 0.01 / cycles)
+            parts.append(by_hand(second, flow, 0.01 / cycles, landed)
                          + (released(second, rate, flow.A_top, 0.01 / cycles, slurry),))
         assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
         for key, part in (("released", "mass"), ("released_H", "enthalpy"), ("released_p", "momentum"),
@@ -1988,3 +1996,120 @@ def test_the_trial_pass_releases_what_its_real_pass_releases_and_its_base_law_in
     (a0, s0), (a1, s1) = laws[None], laws[3.0]
     change = np.abs((a1 + s1 * T_b) - (a0 + s0 * T_b)).sum() * 0.05 / throughput
     assert 1e-3 < change < 4e-3
+
+
+# -- where runoff lands, and the real pass's counts (sub-plan 21 Task 9) ------------------------------------------------
+COLD = 700.0                       # K: the cold rigid metal runoff lands on, as on Task 8's pushed plate
+
+
+def test_metal_landing_on_cold_rigid_metal_loses_its_heat_to_it_within_the_flow_sub_steps():
+    """Spec 6.5: runoff landing on cold metal freezes from below in the skin's own heat equation; since Task 9 it does so
+    within the flow sub-steps (`landing_conduct`), not only at the next heat sub-step's conduction. A film of 20 um of
+    liquid at 950 K landed on 0.8 mm of rigid metal at 700 K, one flow sub-step of 0.5 ms: the block of the cells within
+    LANDING_DEPTH of the top -- the film and the receiver's top 0.38 mm, 40 cells -- is conducted with no heat across its
+    top or its bottom: the film ends at 763-765 K, rigid, the block's bottom cell 10 K warmer than it was (after 0.02 ms
+    the film's top cell is still at 901 K, the contact estimate's 0.02 ms for 20 um on 700 K metal), the block keeps its
+    energy to 1.1e-16, and the cells beneath it and the columns nothing landed on are untouched to the last bit; with
+    the trial pass's sensitivity tracked it is carried with the heat (measured 2026-10-26)."""
+    mat = scheil()
+    col, _ = strip_grid(4, 2)
+    sk = stacked(col, [[LIQUID] * 2 + [COLD] * 80] * col.n)
+    landed = np.arange(col.n) < 4
+    sk.S = np.zeros_like(sk.m)
+    sk.S[:, -1] = 1.0                                                 # a sensitivity below the block, to see it kept
+    before, E0 = [a.copy() for a in sk.state()], sk.H.sum(axis=1)
+    skin.landing_conduct(sk, landed, 5e-4)
+    dz = sk.dz()
+    block = (np.cumsum(dz, axis=1) - dz) < skin.LANDING_DEPTH
+    k = int(block[0].sum())
+    assert 10 < k < 80 and np.all(sk.T[landed, :2] < mat.T_rigid) and np.all(sk.T[landed, :k] > COLD)
+    np.testing.assert_allclose(sk.H.sum(axis=1), E0, rtol=1e-14, atol=0.0)
+    for now, then in ((sk.m, before[1]), (sk.H, before[2]), (sk.T, before[3])):
+        assert np.array_equal(now[landed, k:], then[landed, k:]) and np.array_equal(now[~landed], then[~landed])
+    assert np.all(sk.S[landed, -1] == 1.0) and np.all(np.isfinite(sk.S))
+
+
+def cold_runoff(landing=True, cycles=10, span=0.01, tau=20.0, edge=10, monkeypatch=None):
+    """`strip_runoff`'s sheared liquid (0.2 mm at 950 K over five cells) on the first `edge` columns of a strip of 1 mm
+    columns, running onto rigid metal at 700 K (25 cells), `cycles` flow sub-steps in each 10 ms heat sub-step, the
+    landing conduction on (or off), the heat sub-step's own conduction as the caller leaves it: the skins after `span`
+    s, the pass's book, each column's place along the strip [columns], and the mass, enthalpy, momentum and thicknesses
+    at the start."""
+    col, pts = strip_grid(40, 2)
+    x = np.rint(pts[:, 0] / 1e-3).astype(int)
+    sk = stacked(col, [[LIQUID] * 20 + [COLD] * 5 if xi < edge else [COLD] * 25 for xi in x])
+    sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+    if not landing:
+        monkeypatch.setattr(skin, "landing_conduct", lambda sk_, landed, dt, depth=None: None)
+    start = (sk.mass(), sk.energy(), sk.momentum().copy(), sk.thickness().copy())
+    T_b = np.full(sk.n, COLD)
+    book = skin.advance(sk, span, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b, remove=False,
+                        flow=strip_flow(col, dp_ds=0.0, tau=tau, cycles=cycles))
+    return sk, book, x, start
+
+
+def test_runoff_onto_cold_metal_freezes_where_it_lands_and_the_books_close(monkeypatch):
+    """Sub-plan 21 Task 9: the sheared layer of `cold_runoff` (its fastest cell 1.1 m/s) runs onto metal at 700 K for one
+    10 ms heat sub-step of ten 1 ms flow sub-steps, the heat sub-step's own conduction off (with its base held), the
+    landing conduction, whose block is adiabatic, on. Without the landing conduction the landed metal coasts on over the
+    cold tops (6d's rule) and stays liquid until the next heat sub-step's conduction: five columns past the edge hold
+    metal above T_rigid and the deposit's centroid lies 1.63 columns past it. With it, the metal freezes where it lands:
+    only the edge's first column is not rigid, the centroid 0.30 columns past the edge (measured 2026-10-26). Mass,
+    enthalpy and momentum close as without it (no heat enters or leaves): 2.2e-16, 2.2e-16 and 3.5e-18."""
+    real = skin._conduct
+    monkeypatch.setattr(skin, "_conduct", lambda sk, dt, q, A, T_amb, eps, T_b, sideways=None: (
+        real(sk, dt, q, A, T_amb, eps, T_b, sideways) if T_b is None else no_conduction(sk, dt, q, A, T_amb, eps, T_b)))
+    sk, book, x, (M0, E0, P0, H0) = cold_runoff()
+    mat = sk.material
+    hot = lambda s: sorted(set(x[(s.valid & (s.T > mat.T_rigid)).any(axis=1) & (x >= 10)]))
+    gained = lambda s, h0: np.array([(s.thickness() - h0)[x == k].sum() for k in range(10, 40)])
+    centroid = lambda g: float((np.arange(30) * g).sum() / g.sum())
+    assert hot(sk) in ([], [10])
+    assert sk.mass() == pytest.approx(M0, rel=1e-13) and sk.energy() == pytest.approx(E0, rel=1e-13)
+    fb = book.flow
+    impulse = (fb.push + fb.shear + fb.wall + fb.carried).sum(axis=0)
+    size = sum(np.linalg.norm(v, axis=1).sum() for v in (fb.push, fb.shear, fb.wall))
+    assert np.linalg.norm(sk.momentum() - P0 - impulse) < 1e-12 * size
+    here = centroid(gained(sk, H0))
+    free, _, _, (_, _, _, H1) = cold_runoff(landing=False, monkeypatch=monkeypatch)
+    assert len(hot(free)) >= 4 and here < 0.4 * centroid(gained(free, H1))
+
+
+def test_a_real_pass_takes_the_larger_of_its_trial_pass_s_count_and_its_own_and_its_own_where_the_trial_flowed_nothing(
+        monkeypatch):
+    """Spec 16, 2026-10-26 (sub-plan 21 Task 9), amending 6d's rule that a real pass takes its trial pass's counts: in each
+    heat sub-step the real pass takes the larger of its trial pass's count and the count its own memory chooses, and its
+    own where the trial pass took no flow sub-step (its plan's 0). On the sheared and pushed bump of liquid, whose own
+    memory settles at 6 flow sub-steps a heat sub-step, a real pass handed a plan of one a heat sub-step -- a trial pass
+    that flowed slower, as at a melting onset on Task 8's pushed plate, where the real pass then ran at a Courant number
+    of 18.8 against the target of 6 -- takes the counts a real pass with no trial before it chooses, and so does one
+    handed a plan whose trial pass flowed nothing (Task 8: 380 flow sub-steps replayed in which nothing moved); one
+    handed a plan of more than its own keeps the plan's (6d: the base law made by the pass it predicts)."""
+    monkeypatch.setattr(skin, "_conduct", no_conduction)
+    seen = []
+    substeps = skin.flow_substeps
+
+    def recorded(sk, flow, dt, cycles=None):
+        book = substeps(sk, flow, dt, cycles)
+        seen.append((book.cycles, book.courant))
+        return book
+    monkeypatch.setattr(skin, "flow_substeps", recorded)
+    out = {}
+
+    def real_pass(name, plan):
+        sk, col, _ = strip_layer(bump=0.2)
+        sk.settings = skin.SkinSettings(**CELLS_04, substep=0.01)
+        T_b = np.full(sk.n, RIGID)
+        flow = strip_flow(col, dp_ds=-2e4, tau=50.0, cycles=None)
+        flow.plan = None if plan is None else list(plan)
+        seen.clear()
+        skin.advance(sk, 0.1, np.zeros(sk.n), sk.area, 0.0, 0.0, T_b, np.zeros(sk.n), T_b1=T_b, remove=False, flow=flow)
+        out[name] = list(seen)
+        assert flow.plan is None
+        return [c for c, _ in out[name]]
+    alone = real_pass("alone", None)
+    assert alone[0] == skin.FLOW_CYCLES and alone[-1] == 6
+    assert real_pass("ones", [1] * 10) == alone
+    assert max(c for _, c in out["ones"][1:]) < 1.5 * skin.FLOW_COURANT
+    assert real_pass("none flowed", [0] * 10) == alone
+    assert real_pass("more", [20] * 10) == [20] * 10
