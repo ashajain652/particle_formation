@@ -56,7 +56,7 @@ def test_every_pair_is_its_own_pathway():
 
 def test_smoke_uptake_is_positive_in_the_mesosphere():
     sm, s = pa.SmokeBackground.load(), sp.load_species()
-    assert sm.uptake_coefficient(s["AlO"], 85.0, 200.0) > 0
+    assert sm.uptake_coefficient(s["AlO"], 85.0, 200.0, 2000.0) > 0
 
 
 # ---- additions beyond the brief -------------------------------------------------------------------------------
@@ -153,17 +153,43 @@ def test_smoke_uptake_equals_the_direct_sum_at_a_table_altitude():
     sm, s = pa.SmokeBackground.load(), sp.load_species()
     mol = s["AlO"]
     r_mol = mol.sigma_A * 1e-10 / 2
+    m_mol = mol.mass_amu * 1.66053906660e-27
+    rho = 2000.0
     rows = [(r, n) for z, r, n in sm.rows() if z == 75.0]
+
+    def mu(r):         # reduced mass of the molecule and one smoke sphere of radius r nm
+        m_smoke = 4.0 / 3.0 * math.pi * (r * 1e-9) ** 3 * rho
+        return m_smoke * m_mol / (m_smoke + m_mol)
     direct = sum(n * (math.log(200) / 34) * math.pi * (r * 1e-9 + r_mol) ** 2
-                 * math.sqrt(8 * 1.380649e-23 * 200.0 / (math.pi * mol.mass_amu * 1.66053906660e-27)) for r, n in rows)
+                 * math.sqrt(8 * 1.380649e-23 * 200.0 / (math.pi * mu(r))) for r, n in rows)
     assert len(rows) == 16
-    assert sm.uptake_coefficient(mol, 75.0, 200.0) == pytest.approx(direct, rel=1e-12)
+    assert sm.uptake_coefficient(mol, 75.0, 200.0, rho) == pytest.approx(direct, rel=1e-12)
+
+
+def test_smoke_of_finite_mass_is_taken_up_faster_than_infinitely_heavy_smoke():
+    """One 0.2 nm bin of 2000 kg/m3 smoke against AlOH: the reduced-mass kernel against a hand computation."""
+    mol = sp.load_species()["AlOH"]
+    r, T, rho, n = 0.2e-9, 200.0, 2000.0, 1.0e12
+    sm = pa.SmokeBackground([50.0, 100.0], [r], [[n / pa.SMOKE_DLNR], [n / pa.SMOKE_DLNR]])
+    m_mol = mol.mass_amu * 1.66053906660e-27
+    m_smoke = 4.0 / 3.0 * math.pi * r ** 3 * rho
+    r_mol = mol.sigma_A * 1e-10 / 2
+    hand = n * math.pi * (r + r_mol) ** 2 * math.sqrt(8 * 1.380649e-23 * T * (1 / m_mol + 1 / m_smoke) / math.pi)
+    finite = sm.uptake_coefficient(mol, 70.0, T, rho)
+    infinite = n * pa.fm_kernel(r, math.inf, r_mol, m_mol, T)
+    assert finite == pytest.approx(hand, rel=1e-12)
+    assert finite > infinite
+    assert 1.1 < finite / infinite < 1.6       # a 0.2 nm particle weighs about as much as the molecule
+    # a heavier smoke approaches the infinite-mass value and a bad density is refused
+    assert sm.uptake_coefficient(mol, 70.0, T, 1e9) == pytest.approx(infinite, rel=1e-4)
+    with pytest.raises(ValueError, match="density"):
+        sm.uptake_coefficient(mol, 70.0, T, 0.0)
 
 
 def test_smoke_uptake_between_table_altitudes_is_between_the_neighbours():
     sm, s = pa.SmokeBackground.load(), sp.load_species()
-    lo, hi = (sm.uptake_coefficient(s["AlO"], z, 200.0) for z in (75.0, 80.0))
-    mid = sm.uptake_coefficient(s["AlO"], 77.5, 200.0)
+    lo, hi = (sm.uptake_coefficient(s["AlO"], z, 200.0, 2000.0) for z in (75.0, 80.0))
+    mid = sm.uptake_coefficient(s["AlO"], 77.5, 200.0, 2000.0)
     assert min(lo, hi) < mid < max(lo, hi)
     # log-linear bin by bin: at the midpoint each bin holds the geometric mean of its neighbours' numbers
     assert sm.number_per_bin(77.5) == pytest.approx(np.sqrt(sm.number_per_bin(75.0) * sm.number_per_bin(80.0)), rel=1e-12)
@@ -173,5 +199,5 @@ def test_smoke_uptake_between_table_altitudes_is_between_the_neighbours():
 def test_smoke_uptake_outside_the_table_raises_naming_altitude_and_file(z):
     sm, s = pa.SmokeBackground.load(), sp.load_species()
     with pytest.raises(ValueError, match=r"megner2006_smoke\.csv") as e:
-        sm.uptake_coefficient(s["AlO"], z, 200.0)
+        sm.uptake_coefficient(s["AlO"], z, 200.0, 2000.0)
     assert str(z) in str(e.value)

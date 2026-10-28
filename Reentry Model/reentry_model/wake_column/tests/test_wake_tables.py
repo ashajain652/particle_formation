@@ -49,6 +49,7 @@ def test_every_setting_changes_the_run_name():        # spec §8: run names enco
                "n_test_particles": 5000, "n_emission_samples": 10, "seed": 12345678, "l_inner_m": 10.0,
                "eddy_scale": 2.0, "formation_scale": 0.1, "formation_eff": (("AlO+AlO", 0.5),),
                "sticking_scale": 0.5, "sticking": (("AlO", 0.1),), "oxidation_eff": 0.3, "smoke_sticking": 0.2,
+               "smoke_density_kgm3": 3000.0,
                "ambient": "msis_afgl", "bin_ratio": 1.5, "d_max_nm": 200.0, "t_end_s": 3600.0, "t_first_s": 1e-5,
                "points_per_decade": 5, "rtol": 1e-8, "chemistry": False, "particles": False, "coagulation": False,
                "settling": False, "freeze_radius": True, "reactions": ("R1", "R3"), "smoke": False}
@@ -60,6 +61,12 @@ def test_every_setting_changes_the_run_name():        # spec §8: run names enco
     assert len(set(names.values())) == len(names)
     assert run_name(c, Settings(reactions=())) not in (base, names["reactions"])
     assert run_name(c, Settings(seed=1)) != run_name(c, Settings(seed=2))
+
+def test_nonpositive_smoke_density_raises():
+    for bad in (0.0, -1.0, float("nan")):
+        with pytest.raises(ValueError, match="smoke_density"):
+            Settings(smoke_density_kgm3=bad)
+
 
 def test_bad_hot_start_or_ambient_raises():
     with pytest.raises(ValueError):

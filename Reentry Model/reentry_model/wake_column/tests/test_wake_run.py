@@ -125,3 +125,32 @@ def test_t50_and_t90_are_the_first_output_times_reaching_the_level():     # deci
 def test_condensed_is_particles_plus_smoke_plus_settled():                # decision 17
     budget = {"Al": 0.1, "AlO": 0.2, "AlOH": 0.3, "particles": 0.05, "smoke": 0.25, "settled": 0.1}
     assert run._condensed(budget) == pytest.approx(0.4)             # no gas species in it
+
+
+def test_summary_records_whether_the_checkout_was_dirty(tmp_path, parent):
+    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2)
+    s = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
+    assert "git_dirty" in s and (s["git_dirty"] is None or isinstance(s["git_dirty"], bool))
+    saved = json.loads((tmp_path / s["run_name"] / "summary.json").read_text())
+    assert saved["git_dirty"] == s["git_dirty"]
+
+
+@pytest.mark.parametrize("porcelain, code, want", [(" M file.py\n", 0, True), ("?? new.py\n", 0, True),
+                                                   ("", 0, False), ("\n", 0, False), ("", 128, None)])
+def test_git_dirty_follows_git_status_porcelain(monkeypatch, porcelain, code, want):
+    import subprocess
+    seen = {}
+
+    def fake(cmd, **kw):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, code, stdout=porcelain, stderr="")
+    monkeypatch.setattr(run.subprocess, "run", fake)
+    assert run._git_dirty() is want
+    assert seen["cmd"][:3] == ["git", "status", "--porcelain"] and seen["cmd"][-1].endswith("Reentry Model")
+
+
+def test_git_dirty_is_none_when_git_is_missing(monkeypatch):
+    def boom(cmd, **kw):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(run.subprocess, "run", boom)
+    assert run._git_dirty() is None

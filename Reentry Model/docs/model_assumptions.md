@@ -367,7 +367,18 @@ research output and are not summarised here.
   defaults to 1 and is a sensitivity parameter, so the formation rates are upper bounds with unmeasured efficiency.
 - **Growth.** Any aluminium-bearing molecule sticks to a particle of any bin at the free-molecule collision rate
   including its own size times `sticking[species]` x `sticking_scale` (default 1) **(assumed efficiency)**. Smoke uptake
-  uses the infinite-mass limit for the smoke particle, slightly overestimating the rate.
+  uses the free-molecule kernel with the true reduced mass of the molecule and one smoke particle,
+  mu = m_mol m_smoke / (m_mol + m_smoke), the smoke particle of radius r being a sphere of mass (4/3) pi r^3 rho_smoke;
+  rho_smoke is `Settings.smoke_density_kgm3`, default 2000 kg/m^3, the density Megner et al. (2006) state for their
+  smoke (Sect. 4.5, p. 4421: "the original density of 2 g/cm3"; they vary it between 0.2 and 5 g/cm^3). The earlier
+  infinite-mass limit (mu = m_mol) was wrong in sign as well as size: the assumed 0.2 nm smoke particle weighs about
+  40 amu at that density, about as much as AlOH (44 amu), so a molecule meets it faster than it would meet an
+  immovable wall, by a factor sqrt(1 + m_mol / m_smoke) (1.45 for AlOH and the 0.2 nm bin). Summed over the bins the
+  new AlOH uptake rate is 1.30 times the infinite-mass one (the same factor, to three figures, at 60, 76 and 90 km), so
+  the infinite-mass limit underestimated the uptake by about 23 % **(measured once)**. The density enters the run name (`smkrho`) when changed, and the sensitivity set does not
+  vary it. **(verified)** `test_smoke_of_finite_mass_is_taken_up_faster_than_infinitely_heavy_smoke` (the uptake of a
+  single 0.2 nm bin equals a hand computation with the reduced mass to 1e-12, exceeds the infinite-mass value, and
+  approaches it for a very heavy smoke), `test_smoke_uptake_equals_the_direct_sum_at_a_table_altitude`.
 - **Oxygen uptake (D11, ruling).** Rate per bin = sum over O, O2 and O3 of collision rate x `oxidation_eff` x g(O/Al),
   one O atom per event; g is 1 below O/Al = 1.485, 0 at 1.5 and above and a cubic smoothstep (3s^2 - 2s^3) between, not
   the plan's linear ramp: the linear ramp's slope jump (-67 to 0) stalled the BDF Newton iteration and let O/Al drift
@@ -381,13 +392,16 @@ research output and are not summarised here.
   `data/wake_column/megner2006_smoke.csv`. Fig. 2b gives the size distribution at 90 km only and shows only about
   16 % of Fig. 2a's number (the smallest smoke is below the plotted axis), so (ruling) the deficit is put in one bin at
   Megner's smallest radius, 0.2 nm, and other altitudes use the 90 km shape scaled by Fig. 2a **(assumed)**. That bin
-  holds 4.0e4 of 4.8e4 per cubic centimetre at 90 km and about 47 % of the smoke surface area, so smoke uptake depends
-  on it at about a factor of two. The smoke is a fixed background, not depleted, not coagulated with plume particles,
+  holds 4.0e4 of 4.8e4 per cubic centimetre at 90 km and about 47 % of the smoke surface area. With the
+  reduced-mass kernel that bin supplies 71 % of the AlOH uptake (70.7 % at 90 km and 241 K, 70.8 % at 76 km, 70.7 % at
+  60 km; 66 % for Al, 72 % for Al(OH)2), so removing it would cut the uptake by a factor of 3.4 **(measured once, not
+  by a test)**; the smoke uptake, and with it the 12-hour condensed fraction, therefore rests mainly on this assumed bin. The smoke is a fixed background, not depleted, not coagulated with plume particles,
   and sticks at efficiency `smoke_sticking` (default 1) **(assumed)**. **(verified)** `test_smoke_table_integrates_to_fig2a_number_density`
   (the table's totals match the Fig. 2a values recorded in its CSV header to 1 % at 60, 75 and 90 km: a check of
   the table against the read-off, not of the read-off itself), `test_smoke_uptake_equals_the_direct_sum_at_a_table_altitude`, `test_smoke_uptake_outside_the_table_raises_naming_altitude_and_file`.
-  The uptake rate of AlO at 200 K, measured once in the Task 4 build, is 3.2e-7, 3.7e-6 and 8.8e-6 per second per
-  molecule at 60, 75 and 90 km (a time scale of about 32 hours at 90 km).
+  The uptake rate of AlO at 200 K, measured once after the reduced-mass fix (smoke density 2000 kg/m^3), is
+  4.1e-7, 4.8e-6 and 1.1e-5 per second per molecule at 60, 75 and 90 km (a time scale of about 24 hours at 90 km;
+  with the earlier infinite-mass kernel they were 3.2e-7, 3.7e-6 and 8.8e-6).
 - **Coagulation.** Free-molecule Brownian kernel between all bins (half for a self-pair), particles compact spheres
   **(assumed)**. **(verified)** `test_coagulation_reaches_self_preserving_width`.
 - **Settling.** Bin k leaves at 2 v_s / (pi r), v_s the Epstein (free-molecule) speed, through the lower half of a
@@ -461,10 +475,14 @@ research output and are not summarised here.
   366 m trail with r0 = 21.6 mm; in the Task 8 diagnostic (3e13 atoms, L = 500 m, r0 = 2 cm) molecular diffusion
   (0.73 m^2/s) took the plume to a radius of 1.7 m within a second, a 7000-fold dilution in volume, and formation, being
   second order, stops at once. Plume particles hold about 3.1e-5 of the
-  inventory and never grow past the first bin (0.485 nm by day, 0.482 nm by night); the condensed fraction at 12 hours is
-  0.168 by day and 0.167 by night, nearly all of it first-order uptake onto background smoke (AlOH 0.114 and Al(OH)2
-  0.052 by day), about 82 % is still gas (AlOH 0.54 and Al(OH)2 0.29), and t50, t90 and the steady time are null.
+  inventory by day and never grow past the first bin (0.485 nm by day, 0.482 nm by night); the condensed fraction at
+  12 hours is 0.217 by day and 0.219 by night, nearly all of it first-order uptake onto background smoke (by day 0.2174
+  condensed = 3.1e-5 particles + 0.2174 smoke + 8.9e-7 settled; AlOH 0.144 and Al(OH)2 0.071), about 78 % is still gas
+  (AlOH 0.50 and Al(OH)2 0.27), and t50, t90 and the steady time are null. Across altitude (14.1 micrometres, by day,
+  same settings) the condensed fraction at 12 hours is 0.0174 at 60 km, 0.217 at 76 km and 0.417 at 90 km, of which the
+  plume particles hold 2.0e-4, 3.1e-5 and 4.2e-7 and smoke uptake nearly all the rest (the earlier infinite-mass smoke
+  gave 0.0126, 0.168 and 0.340).
   This rests on the assumed 0.2 nm smoke bin, a smoke sticking of 1, the diffusion coefficient of D4, and one altitude;
   lower altitudes, where r0 is smaller (1.7 mm at 60 km), may nucleate more. Measured once
-  (`run.run` on 14.1 micrometres, 76 km, day, WACCM, 6.6 s; no test pins these values); the physical conclusion is **(assumed)** until the
+  (`run.run` on 14.1 micrometres, 76 km, day, WACCM, 5.4 s, from the commit that fixed the smoke mass; no test pins these values); the physical conclusion is **(assumed)** until the
   sensitivity set has been run.

@@ -101,6 +101,18 @@ def _git_commit():
         return None
 
 
+def _git_dirty():
+    """True when the Reentry Model project folder has uncommitted changes (git status --porcelain over it, untracked
+    files included, so a run made from edited code is flagged), False when it is clean, None when git cannot say."""
+    project = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        out = subprocess.run(["git", "status", "--porcelain", "--", project], cwd=project,
+                             capture_output=True, text=True, timeout=30)
+        return bool(out.stdout.strip()) if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def _case_settings(case, settings):
     return {"case": dataclasses.asdict(case), "settings": dataclasses.asdict(settings),
             "run_name": run_name(case, settings)}
@@ -159,7 +171,7 @@ def summarise(sol, trail, hot, case, settings):
         "particle_fraction_end": final["particles"],
         "steady_state_time_s": steady_state_time(sol.t, reservoirs),
         "rate_warnings": list(sol.box.warnings),
-        "git_commit": _git_commit(), "runtime_s": None})
+        "git_commit": _git_commit(), "git_dirty": _git_dirty(), "runtime_s": None})
     return out
 
 
@@ -268,6 +280,7 @@ def run(case: Case, settings=None, out_dir=OUTPUT, trail=None, overwrite=False):
         summary = _case_settings(case, settings)
         summary.update(_trail_block(trail))
         summary.update({"skipped": SKIPPED_NO_AL, "git_commit": _git_commit(),
+                        "git_dirty": _git_dirty(),
                         "runtime_s": time.perf_counter() - t0})
         _write_summary(summary_path, summary)
         return _clean(summary)

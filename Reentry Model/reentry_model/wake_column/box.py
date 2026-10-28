@@ -41,8 +41,9 @@ The plume is a horizontal line segment of length L (the trail) broadened into a 
         O tolerance below. The O content is a diagnostic (it changes no size, mass or rate other than its own),
         so it is integrated with its own absolute tolerance ATOL_O = 1e-18 on the scaled variable, which keeps
         its Newton updates visible in the convergence norm.
-      - Background smoke: species s is lost at uptake_coefficient(s, z, T) x smoke_sticking per molecule (the smoke
-        is a fixed background at the ambient Megner density, not a state); the atoms are tallied in smoke[s].
+      - Background smoke: species s is lost at uptake_coefficient(s, z, T, smoke_density_kgm3) x smoke_sticking per
+        molecule (the smoke is a fixed background at the ambient Megner density, not a state; its particles weigh
+        (4/3) pi r^3 smoke_density_kgm3 in the reduced mass); the atoms are tallied in smoke[s].
       - Coagulation: free-molecule kernel between every pair of bins (1/2 for a self-pair); the merged entity of
         n_i + n_j atoms is placed by Bins.place and carries both partners' tallies, O and H.
       - Settling: bin k is lost at 2 v_s / (pi r) with r the current plume radius and v_s the Epstein speed; its
@@ -327,7 +328,7 @@ class Box:
             cols.append(col)
         self.smoke_uptake = {}
         for a, name in enumerate(AL_SPECIES):
-            u = self.smoke.uptake_coefficient(sp[name], self.amb.z_km, T) * s.smoke_sticking
+            u = self.smoke.uptake_coefficient(sp[name], self.amb.z_km, T, s.smoke_density_kgm3) * s.smoke_sticking
             self.smoke_uptake[name] = u
             if not self._smoke_on:
                 continue

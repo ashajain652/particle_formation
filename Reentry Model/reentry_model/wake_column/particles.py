@@ -207,12 +207,17 @@ class SmokeBackground:
             raise ValueError(f"altitude {z_km} km outside {self.path} ({zmin}-{zmax} km)")
         return np.array([_interp_log(z, self.z_km, self.dN_dlnr[:, j]) for j in range(len(self.r_m))]) * SMOKE_DLNR
 
-    def uptake_coefficient(self, sp, z_km, T):
+    def uptake_coefficient(self, sp, z_km, T, density_kgm3):
         """Loss rate (1/s) of one molecule of species sp to the smoke, sticking probability 1.
 
-        Sum over radius bins of n_bin pi (r_bin + r_mol)^2 sqrt(8 k_B T / (pi m_mol)): the smoke particle is
-        infinitely heavy compared with the molecule (reduced mass = molecule mass); r_mol = sigma_A / 2."""
+        Sum over radius bins of n_bin pi (r_bin + r_mol)^2 sqrt(8 k_B T / (pi mu)), with mu the reduced mass of the
+        molecule and one smoke particle of that bin: a sphere of radius r_bin and density density_kgm3, mass
+        (4/3) pi r_bin^3 density. The smallest bin (0.2 nm) weighs 40-60 amu, as much as AlOH, so the smoke is not
+        treated as infinitely heavy. r_mol = sigma_A / 2."""
+        if not density_kgm3 > 0.0:
+            raise ValueError(f"smoke density must be positive, got {density_kgm3!r} kg/m3")
         n_bin = self.number_per_bin(z_km)
         m_mol = sp.mass_amu * AMU
         r_mol = 0.5 * sp.sigma_A * ANGSTROM
-        return float(sum(n * fm_kernel(r, math.inf, r_mol, m_mol, T) for n, r in zip(n_bin, self.r_m)))
+        return float(sum(n * fm_kernel(r, 4.0 / 3.0 * math.pi * r ** 3 * density_kgm3, r_mol, m_mol, T)
+                         for n, r in zip(n_bin, self.r_m)))

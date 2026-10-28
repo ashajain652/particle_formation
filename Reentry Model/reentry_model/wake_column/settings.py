@@ -39,6 +39,9 @@ class Settings:
     sticking: tuple = ()                    # ((species, value), ...) per-species sticking efficiencies
     oxidation_eff: float = 1.0              # efficiency of O, O2 and O3 uptake by particles
     smoke_sticking: float = 1.0             # efficiency of uptake onto background meteoric smoke
+    smoke_density_kgm3: float = 2000.0      # material density of a smoke particle, kg/m3: sets its mass in the uptake
+                                            # kernel (Megner et al. 2006, Sect. 4.5, p. 4421: "the original density of
+                                            # 2 g/cm3")
     # ambient and bins
     ambient: str = "waccm"                  # "waccm", or "msis_afgl" (NRLMSIS + AFGL cross-check)
     bin_ratio: float = 2.0 ** 0.5           # atom-number ratio q between neighbouring particle bins; 2^(1/2), the
@@ -64,10 +67,12 @@ class Settings:
             raise ValueError(f"hot_start must be one of {HOT_STARTS}, got {self.hot_start!r}")
         if self.ambient not in AMBIENTS:
             raise ValueError(f"ambient must be one of {AMBIENTS}, got {self.ambient!r}")
+        if not self.smoke_density_kgm3 > 0.0:
+            raise ValueError(f"smoke_density_kgm3 must be positive, got {self.smoke_density_kgm3!r}")
 
     def tag(self):
         """'_<short><value>' for every field that differs from its default, in a fixed order ('' when all are
-        default): first the physics fields (form, stick, ox, hot, hotdroplet, eddy, lin, cut, smk, q, fe-, st-),
+        default): first the physics fields (form, stick, ox, hot, hotdroplet, eddy, lin, cut, smk, smkrho, q, fe-, st-),
         then the numerical, sampling and test-only fields. `ambient` is not here: run_name puts it in the name."""
         d = Settings()
         parts = []
@@ -78,7 +83,7 @@ class Settings:
         if self.hot_start != d.hot_start:
             parts.append("hotdroplet")              # the only other hot_start allowed
         for short, field in (("eddy", "eddy_scale"), ("lin", "l_inner_m"), ("cut", "thermal_cutoff"),
-                             ("smk", "smoke_sticking"), ("q", "bin_ratio")):
+                             ("smk", "smoke_sticking"), ("smkrho", "smoke_density_kgm3"), ("q", "bin_ratio")):
             if getattr(self, field) != getattr(d, field):
                 parts.append(f"{short}{_fmt(getattr(self, field))}")
         for pid, value in sorted(self.formation_eff):
