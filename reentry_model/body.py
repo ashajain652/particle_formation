@@ -971,8 +971,9 @@ class MeltingBody(ThermalBody):
         if released > 0.0:
             if self.spray_onset is None:
                 self.spray_onset = t
-            if s.particles:
-                self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state)
+            if s.particles:                  # the film is liquid and leaves at its own enthalpy (sub-plan 22 Task 2)
+                self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state,
+                                                          solid_fraction=np.zeros(b.size), h_kg=h_p)
             hn, hm = spray_mod.histogram(res.r, res.dn, res.dm)
             self.hist_n += hn
             self.hist_m += hm

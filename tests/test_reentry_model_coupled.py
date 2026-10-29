@@ -141,6 +141,8 @@ def test_coupled_melting_run_and_writers(coarse_sphere_mesh, tmp_path):
     from reentry_model import spray
     npz = np.load(files["particles"])
     assert set(npz.files) == set(spray.SOURCE_COLUMNS) and npz["dm_kg"].sum() == pytest.approx(b.sprayed_mass, rel=1e-9)
+    assert np.array_equal(np.column_stack([npz[k] for k in spray.SOURCE_COLUMNS]), np.array(b.source_rows), equal_nan=True)
+    assert not npz["solid_fraction"].any() and np.isfinite(npz["h_kg"]).all()        # liquid film (sub-plan 22 Task 2)
     with open(files["size_distribution"]) as fh:
         lines = fh.read().splitlines()
     assert lines[0] == "window_start_s,window_end_s,r_lo_m,r_hi_m,dn,dm_kg" and (len(lines) - 1) % spray.N_BINS == 0
