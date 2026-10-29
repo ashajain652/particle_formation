@@ -57,6 +57,19 @@ laws, Knudsen and Reynolds numbers, pressure parameter and range flags met there
 refuse a computation. A follower that moves ahead of the parent from release is inside for the time its margin takes
 to go negative (spec section 4.4), never "never inside".
 
+The front plane (controller ruling "Task 6b"). The plume exists only behind the plane through the parent's current
+position P(t) normal to its velocity: with proj = (x - P(t)) . v_hat(t) (positive ahead of the parent), the margin is
+min(union-of-balls margin, -proj), and `MarginResult.front_limited` says when -proj is the smaller term. Without the
+plane, the ball emitted at tau = t reaches r0 ahead of the parent and carries full wake gas, so a follower in a
+forward-moving wake (wake_flow "both") could overtake the parent inside its own plume; the parent is not an obstacle
+in this model. A follower that catches the parent would in reality hit it or be pushed aside by its shock, which is
+not modelled; instead the exit through the plane is labelled (`ExitState.through == "front"`) and a first interval
+that ends that way has reason "reached_parent", reporting the time the follower reaches the parent. The wake gas of
+`Plume.wake_state` is ramped down to ambient over the last r0 before the plane (see there). A NaN union margin (no
+law) stays NaN: the plane never makes a no-law point inside. At release the follower sits on the plane, so the start
+of `residence` counts as inside when the union margin is non-negative and the follower is less than
+`START_PLANE_TOL_M` (1 mm) ahead of the plane (the round-off of a release built through geodetic coordinates).
+
 Units: SI throughout (metres, seconds).
 """
 from dataclasses import dataclass, field, fields, replace
@@ -77,7 +90,8 @@ MAX_TREE_SAMPLES = 200_000         # ... widened to keep at most this many sampl
 SCAN_DT_RANGE = (1e-4, 0.05)       # s: clip of the default finest scan step
 MAX_STEP_S = 0.05                  # s: default largest scan step
 SCAN_MIN_SPEED = 1.0               # m/s: floor on the relative speed used for steps
-REASONS = ("ok", "censored", "starts_outside", "rarefied_no_law", "too_slow_no_law")
+REASONS = ("ok", "censored", "starts_outside", "rarefied_no_law", "too_slow_no_law", "reached_parent")
+START_PLANE_TOL_M = 1e-3           # m: a follower this close ahead of the front plane at t_start counts as on it
 
 _PENALTY = 1e30                    # objective value where no law applies (bounded search minimises -margin)
 _REL_XTOL = 1e-7                   # bounded-search tolerance, as a fraction of the interval length
@@ -96,6 +110,11 @@ class MarginResult:
     r_b       plume radius there, m (NaN when no law applies)
     regime, laws, flags  from `laws.plume_radius` at tau_star
     emission  the `EmissionState` at tau_star (with the Plume's r0 override applied)
+    front_limited  the front-plane term -proj, not the union of balls, set the margin
+    behind_m  -proj = how far behind the parent's front plane the point is, m (negative ahead; NaN for a stopped parent)
+
+    `margin` is min(union-of-balls margin, behind_m) (module docstring, "The front plane"); the other fields describe
+    the union-of-balls best point.
     """
     margin: float
     tau_star: float
@@ -106,13 +125,16 @@ class MarginResult:
     laws: tuple
     flags: dict
     emission: EmissionState
+    front_limited: bool = False
+    behind_m: float = math.nan
 
 
 @dataclass(frozen=True)
 class ExitState:
     """The follower at one exit: time [s], position (3,) [m], its air-relative speed [m/s], its lag behind the parent
     along the parent's velocity [m], its distance from the best emission point [m], the plume radius there [m] and that
-    point's distance behind the parent along the track [m]."""
+    point's distance behind the parent along the track [m]; `through` is "front" when the follower left through the
+    parent's front plane (it reached the parent) and "edge" when it left through the side of the plume."""
     t: float
     position: np.ndarray
     follower_speed: float
@@ -120,6 +142,7 @@ class ExitState:
     distance_m: float
     r_b: float
     s_behind: float
+    through: str = "edge"
 
 
 @dataclass(frozen=True)
@@ -150,8 +173,9 @@ class ResidenceResult:
     exits           an `ExitState` per closed interval
     validity        a `ValidityRecord` per interval
     interp_error_m  the follower Track's `interpolation_error()`, m; the parent's is reported separately by callers
-    reason          "ok" (started inside and left), "censored" (started inside and never left), "starts_outside",
-                    "rarefied_no_law" or "too_slow_no_law" (no law at the start point)
+    reason          "ok" (started inside and left through the plume's edge), "reached_parent" (started inside and
+                    the first interval ended at the parent's front plane), "censored" (started inside and never left),
+                    "starts_outside", "rarefied_no_law" or "too_slow_no_law" (no law at the start point)
     """
     intervals: list
     residence_time: float
@@ -281,8 +305,19 @@ class Plume:
         """MarginResult at the best of the evaluated nodes and refined points, or at the nearest node if none had a
         law."""
         if np.all(np.isnan(g)):
-            return self._result(x, t, S_t, float(nodes[int(np.argmin(dist))]), margin_nan=True)
-        return self._result(x, t, S_t, float(nodes[int(np.nanargmax(g))]))
+            return self._front(x, t, self._result(x, t, S_t, float(nodes[int(np.argmin(dist))]), margin_nan=True))
+        return self._front(x, t, self._result(x, t, S_t, float(nodes[int(np.nanargmax(g))])))
+
+    def _front(self, x, t, m):
+        """Apply the front plane: margin = min(union margin, -proj); a NaN (no-law) margin stays NaN."""
+        v = np.asarray(self.parent.velocity(t), dtype=float).reshape(3)
+        speed = float(np.linalg.norm(v))
+        if not speed > 0.0:                              # a stopped parent has no front
+            return m
+        behind = -float(np.dot(x - np.asarray(self.parent.position(t), dtype=float).reshape(3), v / speed))
+        if not math.isnan(m.margin) and behind < m.margin:
+            return replace(m, margin=behind, front_limited=True, behind_m=behind)
+        return replace(m, behind_m=behind)
 
     def margin(self, x, t, t_release=None) -> MarginResult:
         """Margin of the point x (3,) at time t: the k-d tree search described in the module docstring.
@@ -355,6 +390,11 @@ class Plume:
         there. `ambient` is the undisturbed air at the follower (numbers passed in; no atmosphere module is used). The
         state is plain ambient air, with no gas velocity, when `mode` is "off", when no emission point has a law (the
         margin is NaN: a rarefied or too-slow parent has no wake gas state), or beyond the profiles' cutoff.
+
+        Front plane (ruling "Task 6b"): the wake excess -- the gas velocity and q = 1 - T_inf/T, the fraction by which
+        the gas is hotter and thinner than ambient -- is multiplied by w = smoothstep(clip(behind_m / r0, 0, 1)),
+        smoothstep(z) = 3 z^2 - 2 z^3, with r0 from the emission state: exactly ambient at and ahead of the parent's
+        front plane, the unramped `gas_state` from one r0 behind it, and continuous with a continuous slope between.
         """
         check_mode(mode)
         m = self.margin(x, t, t_release=t_release)
@@ -364,7 +404,8 @@ class Plume:
         speed = float(np.linalg.norm(v))
         if not speed > 0.0:                              # a stopped parent has no direction to push the gas along
             return ambient_state(ambient), m
-        return gas_state(m.distance, m.r_b, m.emission, v / speed, ambient, mode, k_E=k_E), m
+        gas = gas_state(m.distance, m.r_b, m.emission, v / speed, ambient, mode, k_E=k_E)
+        return _ramp(gas, ambient, m.behind_m / m.emission.r0), m
 
     def margin_bruteforce(self, x, t, n: int = 20001, t_release=None) -> MarginResult:
         """Reference margin (for tests): n evenly spaced emission times over the whole window, the best one then
@@ -381,6 +422,22 @@ class Plume:
             cand_g.append(g_r)
         cand_d = np.concatenate([dist, np.full(len(cand_tau) - len(taus), math.inf)])
         return self._best(x, t, S_t, np.array(cand_tau), np.array(cand_g), cand_d)
+
+
+def _ramp(gas: GasState, ambient: Ambient, z: float) -> GasState:
+    """Scale the wake excess of `gas` by smoothstep(clip(z, 0, 1)): its velocity, and q = 1 - T_inf/T (temperature
+    and density follow from q at constant pressure, as in `gas_state`). w = 1 returns `gas` itself and w = 0 exactly
+    ambient; a NaN z (a stopped parent, which has no front) leaves `gas` unchanged."""
+    if math.isnan(z):
+        return gas
+    zc = min(max(z, 0.0), 1.0)
+    w = zc * zc * (3.0 - 2.0 * zc)
+    if w >= 1.0:
+        return gas
+    if w <= 0.0:
+        return ambient_state(ambient)
+    q = w * (1.0 - ambient.T / gas.T)
+    return GasState(ambient.rho * (1.0 - q), ambient.T / (1.0 - q), gas.p, w * np.asarray(gas.u, dtype=float))
 
 
 def _check_r0(value, what):
@@ -455,9 +512,18 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
                 growth = max(r2 - m.r_b, 0.0) / ds * par.speed(tt)
         return max(min(v_rel, float(np.linalg.norm(vf)) + growth), SCAN_MIN_SPEED)
 
+    def inside(tt, m):
+        """Inside, with the release on the front plane: at t_start a follower whose union-of-balls margin is
+        non-negative and which is less than START_PLANE_TOL_M ahead of the plane counts as inside."""
+        if _inside(m):
+            return True
+        return (tt == t_start and m.front_limited and m.r_b - m.distance >= 0.0
+                and m.behind_m >= -START_PLANE_TOL_M)
+
     def crossing(a, ma, b, mb):
         """Time of the change of inside/outside in [a, b], to tol."""
-        if not (math.isnan(ma.margin) or math.isnan(mb.margin)):
+        ins_a = inside(a, ma)
+        if not (math.isnan(ma.margin) or math.isnan(mb.margin)) and (ma.margin >= 0.0) != (mb.margin >= 0.0):
             def f(tt):
                 v = M(tt).margin
                 if math.isnan(v):
@@ -469,8 +535,7 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
                 return root
             except _NoLaw:
                 pass
-        ins_a = _inside(ma)
-        while b - a > tol:
+        while b - a > tol:                               # bisection on inside/outside
             mid = 0.5 * (a + b)
             if _inside(M(mid)) == ins_a:
                 a = mid
@@ -493,13 +558,13 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
             if not math.isnan(m1.margin) and abs(m1.margin - m.margin) <= 0.5 * abs(m.margin):
                 break
             h = max(h / 4.0, scan_dt)
-        if _inside(m) != _inside(m1):
+        if inside(t, m) != _inside(m1):
             crossings.append((crossing(t, m, t1, m1), _inside(m1)))
         t, m = t1, m1
 
     # ---- intervals ----
     m0 = M(t_start)
-    intervals, open_at = [], (t_start if _inside(m0) else None)
+    intervals, open_at = [], (t_start if inside(t_start, m0) else None)
     for tc, entering in crossings:
         if entering:
             open_at = tc
@@ -513,12 +578,12 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
     if math.isnan(m0.margin):
         residence_time = math.nan
         reason = "too_slow_no_law" if m0.regime == "too_slow" else "rarefied_no_law"
-    elif not _inside(m0):
+    elif not inside(t_start, m0):
         residence_time, reason = 0.0, "starts_outside"
     else:
         first_end = intervals[0][1]
         residence_time = (t_end if first_end is None else first_end) - t_start
-        reason = "censored" if first_end is None else "ok"
+        reason = ("censored" if first_end is None else "reached_parent" if M(first_end).front_limited else "ok")
     total_inside = sum((t_end if e is None else e) - s for s, e in intervals)
 
     exits = []
@@ -529,7 +594,8 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
         vp = par.velocity(e)
         vn = float(np.linalg.norm(vp))
         lag = float(np.dot(par.position(e) - x, vp / vn)) if vn > 0.0 else math.nan
-        exits.append(ExitState(e, x, follower.speed(e), lag, me.distance, me.r_b, me.s_behind))
+        exits.append(ExitState(e, x, follower.speed(e), lag, me.distance, me.r_b, me.s_behind,
+                               "front" if me.front_limited else "edge"))
 
     validity = []
     for s, e in intervals:

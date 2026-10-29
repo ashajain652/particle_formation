@@ -27,7 +27,9 @@ def test_release_starts_exactly_on_the_track(twin):
     from reentry_model import earth
     x = earth.geodetic_to_ecef(st.altitude, st.lat, st.lon)
     m = Plume(twin.track).margin(x, t_r)
-    assert m.margin == pytest.approx(m.r_b, abs=1e-3) and m.distance < 1e-3
+    # on the track at the parent's position: the union of balls gives r_b, and the front plane (Task 6b) caps it at 0
+    assert m.r_b - m.distance == pytest.approx(m.r_b, abs=1e-3) and m.distance < 1e-3
+    assert m.margin == pytest.approx(0.0, abs=1e-3) and m.front_limited
 
 
 def test_altitude_outside_track_raises(twin):

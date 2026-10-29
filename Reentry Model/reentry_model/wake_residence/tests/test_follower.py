@@ -20,10 +20,12 @@ def test_off_run_reproduces_plain_simulator(twin):
     assert np.allclose(plain.sol.sol(5.0), wrapped.sol.sol(5.0), rtol=0, atol=1e-9)
 
 def test_tailwind_and_thin_gas_reduce_deceleration(twin):
+    # A 10 mm sphere, which falls behind the parent after release. (A 50 mm sphere decelerates less than the parent at
+    # 60 km and moves ahead of it, where there is no wake gas after Task 6b, so its "both" and "off" runs coincide.)
     t_r, st = release(twin)
     speeds = {}
     for mode in ("off", "both"):
-        run = dense_solve(sphere_simulator(st, 0.05, WakeAtmosphere(US76TableAtmosphere(), Plume(twin.track), t_r, mode)), 1.0)
+        run = dense_solve(sphere_simulator(st, 0.01, WakeAtmosphere(US76TableAtmosphere(), Plume(twin.track), t_r, mode)), 1.0)
         speeds[mode] = np.linalg.norm(run.sol.sol(1.0)[3:])
     assert speeds["both"] > speeds["off"]
 
@@ -106,4 +108,21 @@ def test_sphere_parent_track_carries_the_spheres_own_drag(twin):
     assert e.cda == pytest.approx(a.cd * sim.area, rel=1e-6) and e.U == pytest.approx(a.V, rel=1e-6)
     assert e.rho == pytest.approx(a.freestream.rho, rel=1e-6)
     plume = Plume(tr)                                     # a sphere parent's plume can be built and queried
-    assert plume.margin(tr.position(t_r + 0.5), t_r + 0.5).margin == pytest.approx(0.025, rel=1e-6)
+    x = tr.position(t_r + 0.5) - 0.0125 * tr.velocity(t_r + 0.5) / tr.speed(t_r + 0.5)   # half a radius behind it
+    m = plume.margin(x, t_r + 0.5)                       # the front plane (Task 6b) limits the margin to 0.0125 m
+    assert m.margin == pytest.approx(0.0125, rel=1e-6) and m.front_limited and m.r_b >= 0.025 * (1 - 1e-6)
+
+
+
+def test_sphere_in_a_forward_wake_never_leaves_through_the_front_unlabelled(twin, capsys):
+    # Task 6b: with wake_flow "both" a 10 mm sphere released at 60 km drifts up to the parent; the plume ends at the
+    # parent's front plane, so the first interval is either still open or ends there, labelled "reached_parent"
+    from reentry_model.wake_residence.adapters import solution_track
+    from reentry_model.wake_residence.overlap import residence
+    t_r, st = release(twin)
+    w = WakeAtmosphere(US76TableAtmosphere(), Plume(twin.track), t_r, "both")
+    run = dense_solve(sphere_simulator(st, 0.01, w), min(2.0, w.follower_t_max))
+    tr = solution_track(run, t_r)
+    res = residence(Plume(twin.track), tr, t_start=t_r, t_end=min(tr.t1, twin.track.t1))
+    print("10 mm at 60 km, wake both: residence {:.4f} s, reason {}".format(res.residence_time, res.reason))
+    assert res.censored or (res.exits[0].through == "front" and res.reason == "reached_parent")

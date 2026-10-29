@@ -91,7 +91,8 @@ def test_follower_identical_to_parent_is_censored():
 def test_follower_ahead_of_parent_has_small_positive_residence():           # Review Focus 4
     t = np.linspace(0, 20, 2001); f = follower(t, np.c_[1.05*U*t, 0*t, 0*t])
     res = residence(Plume(line_parent()), f, t_start=0.0)
-    assert 0.0 < res.residence_time < 0.05 and res.reason == "ok"
+    # Task 6b: the plume ends at the parent's front plane, so a follower moving ahead leaves through it at once
+    assert 0.0 <= res.residence_time < 0.05 and res.reason == "reached_parent" and res.exits[0].through == "front"
 
 def test_window_outside_parent_raises():                                    # Review Focus 2
     t = np.linspace(-5, 20, 101); f = follower(t, np.c_[0*t, 0*t, 0*t])
@@ -138,7 +139,8 @@ def test_window_ending_after_parent_raises_and_a_later_start_is_normal():
     t = np.linspace(0, 25, 101); f = follower(t, np.c_[0*t, 0*t, 0*t])
     with pytest.raises(ValueError, match=r"\[0\.0, 25\.0\].*parent.*\[0\.0, 20\.0\]"):
         residence(Plume(line_parent()), f)
-    t = np.linspace(5, 20, 101); late = residence(Plume(line_parent()), follower(t, np.c_[U*t, 0*t, 0*t]))
+    # the follower rides 0.5 m behind the parent (exactly on the parent it would sit on the front plane, Task 6b)
+    t = np.linspace(5, 20, 101); late = residence(Plume(line_parent()), follower(t, np.c_[U*t - 0.5, 0*t, 0*t]))
     assert late.reason == "censored" and late.intervals[0][0] == 5.0
 
 def test_too_slow_parent_reports_no_law():
@@ -177,3 +179,46 @@ def test_fast_margin_matches_bruteforce_on_a_long_track_with_a_capped_tree():
     for _ in range(30):
         tt = rng.uniform(1, T); x = np.array([U*tt - rng.uniform(0, 5000), *rng.uniform(-0.1, 0.1, 2)])
         assert p.margin(x, tt).margin == pytest.approx(p.margin_bruteforce(x, tt).margin, abs=1e-6)
+
+
+# ---- Task 6b (controller ruling): the plume and its wake gas end at the parent's front plane ----
+
+from reentry_model.wake_residence.wake_gas import Ambient, R_AIR, gas_state
+R0 = TURB["r0"]
+AMB = Ambient(p=300.0, T=250.0, rho=300.0 / (R_AIR * 250.0))
+
+def test_points_ahead_of_the_front_plane_are_outside_and_behind_it_inside():
+    p = Plume(line_parent()); t = 10.0; P = np.array([U*t, 0.0, 0.0])
+    ahead, behind = p.margin(P + [0.5*R0, 0, 0], t), p.margin(P - [0.5*R0, 0, 0], t)
+    assert ahead.margin < 0.0 and ahead.front_limited and ahead.margin == pytest.approx(-0.5*R0, abs=1e-9)
+    assert behind.margin > 0.0
+    assert p.margin_bruteforce(P + [0.5*R0, 0, 0], t).margin == pytest.approx(ahead.margin, abs=1e-6)
+
+def test_margin_is_continuous_across_the_front_plane():
+    p = Plume(line_parent()); t = 10.0
+    a = p.margin(np.array([U*t + 1e-9, 0.3, 0.0]), t); b = p.margin(np.array([U*t - 1e-9, 0.3, 0.0]), t)
+    assert a.front_limited and b.front_limited and a.margin == pytest.approx(b.margin, abs=1e-8)
+
+def test_no_law_stays_no_law_behind_the_front_plane():
+    p = Plume(line_parent(flow=dict(TURB, mfp=0.1)))                  # rarefied: no law
+    m = p.margin(np.array([U*10.0 - 0.5*R0, 0.0, 0.0]), 10.0)
+    assert math.isnan(m.margin) and not m.front_limited and m.behind_m == pytest.approx(0.5*R0)
+
+def test_wake_gas_is_ramped_to_ambient_at_the_front_plane():
+    p = Plume(line_parent()); t = 10.0; y = 0.3
+    def at(behind):
+        return p.wake_state(np.array([U*t - behind, y, 0.0]), t, AMB, "both")
+    for behind in (0.0, -1e-9, -0.5*R0):                                 # at and ahead of the plane: exactly ambient
+        s, _ = at(behind)
+        assert (s.rho, s.T, s.p) == (AMB.rho, AMB.T, AMB.p) and not s.u.any()
+    for behind in (R0, 2*R0, 50.0):                                       # one r0 or more behind: the unramped state
+        s, m = at(behind)
+        ref = gas_state(m.distance, m.r_b, m.emission, np.array([1.0, 0, 0]), AMB, "both")
+        assert (s.rho, s.T) == (ref.rho, ref.T) and np.array_equal(s.u, ref.u) and s.T > AMB.T and s.u[0] > 0
+    s, m = at(0.5*R0)                                                      # half way: smoothstep weight 1/2
+    ref = gas_state(m.distance, m.r_b, m.emission, np.array([1.0, 0, 0]), AMB, "both")
+    assert s.u[0] == pytest.approx(0.5*ref.u[0], rel=1e-9)          # 1e-9: round-off of 0.5 r0 at x = 60 km
+    assert 1 - AMB.T/s.T == pytest.approx(0.5*(1 - AMB.T/ref.T), rel=1e-9)
+    for e in (1e-9, R0 - 1e-9):                                            # continuous across the plane and at r0
+        lo, _ = at(e - 1e-9); hi, _ = at(e + 1e-9)
+        assert abs(hi.T - lo.T) < 1e-6 and abs(hi.u[0] - lo.u[0]) < 1e-6 and abs(hi.rho - lo.rho) < 1e-12
