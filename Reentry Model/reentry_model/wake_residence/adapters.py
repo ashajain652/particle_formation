@@ -36,6 +36,22 @@ What is taken from the file, and what is assumed
 
 `twin_vs_drama` is the consistency check of spec 4.3: speed against altitude (target within 1 percent above 60 km)
 and altitude against time.
+
+Followers in the wake (spec 4.3 and 4.3a)
+-----------------------------------------
+  * `WakeAtmosphere` wraps any atmosphere. Its `state(t, h, lat, lon)` (t on the follower's clock) asks the plume for
+    the wake gas at the follower (`Plume.wake_state` at parent time t + t_offset, emission window anchored at the
+    release, t_release = t_offset) and returns the wrapped atmosphere's own `Freestream` object when the mode is "off"
+    (the plume is then not queried at all) or the gas there is plain ambient air (beyond the profiles' cutoff, or no
+    law at the best emission point); otherwise the wake's density, temperature and pressure, the wrapped atmosphere's
+    mean molecular mass, and its wind plus the wake gas velocity converted from Earth-fixed to east-north-up.
+    `trajectory.Simulator` and `DropletSimulator` read the air only through `state()`, so neither is modified. A
+    follower time beyond the end of the parent's track raises ValueError naming both ranges (the plume is undefined
+    there); `follower_t_max` is the longest follower integration the parent track supports.
+  * `sphere_simulator` builds a sphere follower exactly as `cli.py` builds a `--thermal none` run.
+  * `solution_track` samples a dense run every `cadence` seconds (default 0.002 s, plus the end time) into a Track on
+    the parent's clock; `sphere_parent_track` adds the flow arrays a sphere parent's plume needs, with
+    C_D A = C_D(Kn, Ma) times the sphere's area from the simulator's own drag tables and bridging.
 """
 import json
 import math
@@ -47,8 +63,8 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
-from reentry_model import aero, earth
-from reentry_model.atmosphere import US76TableAtmosphere
+from reentry_model import aero, body, earth
+from reentry_model.atmosphere import Freestream, US76TableAtmosphere
 from reentry_model.body import ConstantBody
 from reentry_model.constants import G0
 from reentry_model.droplet_reentry import parent_trajectory
@@ -56,8 +72,11 @@ from reentry_model.droplet_reentry.model import parent_release
 from reentry_model.droplet_reentry.particle_trajectory import viscosity
 from reentry_model.trajectory import InitialState, Settings, Simulator
 from reentry_model.wake_residence.track import FLOW_KEYS, Track
+from reentry_model.wake_residence.wake_gas import Ambient, check_mode
 
 PARENT_FRONTAL_AREA = 6.215     # m2, DRAMA's impacting cross-section of the parent (spec 4.2)
+AA7075_DENSITY = 2813.0         # kg/m3, AA7075 solid (DRAMA Sphere Experiments/data/user_materials/AA7075_nomelt.json)
+SOLUTION_CADENCE = 0.002        # s, default sampling of a follower's dense run into a Track
 LOAD_FACTOR_MIN = 1e-4          # rows with a smaller loadFactor (g) are dropped from the beta table
 TWIN_T_MAX = 3600.0             # s, integration limit for the twin (the flight to 45 km takes about 950 s)
 
@@ -316,3 +335,135 @@ def twin_vs_drama(twin, parent):
                     "drama_downrange_km": r["downrange"], "twin_speed_ms": v_twin, "twin_altitude_km": h_twin,
                     "speed_rel_diff": v_twin / v_drama - 1.0})
     return out
+
+
+# ---------------------------------------------------------------- followers in the wake (spec 4.3a)
+
+class WakeAtmosphere:
+    """An atmosphere whose `state()` is the wrapped atmosphere's, with the parent's wake gas inside the plume.
+
+    base      the atmosphere wrapped (anything with `state(t, h, lat, lon) -> Freestream`)
+    plume     the parent's `overlap.Plume`
+    t_offset  the follower's release time on the parent's clock [s]: follower time t is parent time t + t_offset, and
+              the plume's emission window is anchored there (spec 4.4)
+    mode      `wake_flow`: "off", "velocity", "density" or "both" (spec 4.3a)
+    k_E       scale on the line-blast radius of the energy profile (`wake_gas.gas_state`)
+
+    `n_calls` counts `state()` calls; `last_margin` is the `MarginResult` of the last plume query (None in mode "off").
+    """
+
+    def __init__(self, base, plume, t_offset, mode, k_E=1.0):
+        check_mode(mode)
+        t_offset, k_E = float(t_offset), float(k_E)
+        if not math.isfinite(t_offset):
+            raise ValueError(f"t_offset must be a finite number of seconds, got {t_offset!r}")
+        if not (math.isfinite(k_E) and k_E > 0.0):
+            raise ValueError(f"k_E must be a finite positive number, got {k_E!r}")
+        self.base, self.plume, self.t_offset, self.mode, self.k_E = base, plume, t_offset, mode, k_E
+        self.n_calls = 0
+        self.last_margin = None
+
+    @property
+    def follower_t_max(self):
+        """Longest follower time [s] for which the parent's track defines the plume (parent t1 - t_offset)."""
+        return self.plume.parent.t1 - self.t_offset
+
+    def state(self, t, h, lat, lon):
+        self.n_calls += 1
+        fs = self.base.state(t, h, lat, lon)
+        if self.mode == "off":
+            return fs
+        tp = float(t) + self.t_offset
+        par = self.plume.parent
+        slack = 1e-9 * (par.t1 - par.t0)
+        if not (par.t0 - slack <= tp <= par.t1 + slack):
+            raise ValueError(f"follower time {float(t)!r} s is parent time {tp!r} s, outside the parent track's range "
+                             f"[{par.t0!r}, {par.t1!r}] s (follower range [{par.t0 - self.t_offset!r}, "
+                             f"{self.follower_t_max!r}] s)")
+        x = earth.geodetic_to_ecef(h, lat, lon)
+        gas, m = self.plume.wake_state(x, tp, Ambient(fs.p, fs.T, fs.rho), self.mode, self.k_E,
+                                       t_release=self.t_offset)
+        self.last_margin = m
+        u = np.asarray(gas.u, dtype=float)
+        if gas.rho == fs.rho and gas.T == fs.T and gas.p == fs.p and not np.any(u):
+            return fs                                    # plain ambient air: beyond the cutoff, or no law there
+        e, n, up = earth.enu_basis(lat, lon)
+        u_enu = np.array([u @ e, u @ n, u @ up])
+        return Freestream(gas.rho, gas.T, gas.p, fs.m_bar, np.asarray(fs.wind_enu, dtype=float) + u_enu)
+
+
+def sphere_simulator(initial, d_m, atmosphere, density=AA7075_DENSITY, bridging="sesam-table", t_max=600.0):
+    """A solid sphere of diameter d_m [m] and density [kg/m3] from `initial`, built as `cli.py` builds a
+    `--thermal none` run: ConstantBody of the sphere's mass, the SESAM sphere drag tables, the named bridging, J2
+    gravity, rotating frame, and the repository's default tolerances."""
+    d_m = float(d_m)
+    if not (math.isfinite(d_m) and d_m > 0.0):
+        raise ValueError(f"d_m must be a finite positive diameter in metres, got {d_m!r}")
+    settings = Settings(diameter=d_m, gravity="j2", rotating_frame=True, t_max=float(t_max))
+    return Simulator(initial, ConstantBody(body.sphere_mass(d_m, density)), atmosphere,
+                     aero.SphereDragTables.from_json(), aero.bridging_by_name(bridging), settings)
+
+
+def _solution_samples(run, cadence):
+    """(t, states): the dense run sampled every `cadence` s from its start, plus its end time; states (N, 6) are the
+    first six components (ECEF position and velocity), so a droplet's longer state vector works too."""
+    cadence = SOLUTION_CADENCE if cadence is None else float(cadence)
+    if not (math.isfinite(cadence) and cadence > 0.0):
+        raise ValueError(f"cadence must be a finite positive number of seconds, got {cadence!r}")
+    t0 = float(run.sol.t[0])
+    t = t0 + np.arange(0.0, run.t_end - t0, cadence)
+    if t.size and run.t_end - t[-1] < 1e-3 * cadence:
+        t = t[:-1]
+    t = np.append(t, run.t_end)
+    states = np.atleast_2d(run.sol.sol(t).T)[:, :6]
+    return t, states
+
+
+def solution_track(run, t_offset, flow=None, cadence=None):
+    """Track of a dense run on the parent's clock (times shifted by t_offset), sampled every `cadence` s (default
+    0.002 s, plus the end time), with the run's positions and velocities as a Hermite spline.
+
+    `flow` is None, a dict of per-sample arrays for exactly the Track's flow keys (optionally with `speed`, the
+    air-relative speed), or a callable `flow(t, states)` returning such a dict, called with the sample times on the
+    run's own clock and the (N, 6) states. Without `speed` the Track's speed is the Earth-fixed speed.
+    """
+    t, states = _solution_samples(run, cadence)
+    speed = None
+    if flow is not None:
+        flow = dict(flow(t, states) if callable(flow) else flow)
+        speed = flow.pop("speed", None)
+    return Track.from_arrays(t + float(t_offset), states[:, :3], states[:, 3:6], speed=speed, flow=flow)
+
+
+def sphere_parent_track(run, sim, t_offset, atmosphere, cadence=None):
+    """Track of a sphere integrated by `sim` (a `sphere_simulator`), as the parent of a plume: `solution_track` with
+    flow arrays from `atmosphere` (rho, T, p, viscosity, mean free path, air-relative speed), d the sphere diameter,
+    r0 = d / 2 and C_D A = C_D(Kn, Ma) times the sphere's area from the simulator's own tables and bridging. The
+    altitude used for the air is clamped to the simulator's ground and escape altitudes, as `Simulator.aero_state`
+    does, so the sample at a ground event (a fraction of a millimetre below 0 m) is valid."""
+    s = sim.settings
+    d, area = float(s.diameter), float(sim.area)
+
+    def flow(t, states):
+        n = len(t)
+        out = {k: np.empty(n) for k in ("rho", "T", "p", "mu", "mfp", "speed", "cda")}
+        for i in range(n):
+            r, v = states[i, :3], states[i, 3:6]
+            h, lat, lon = earth.ecef_to_geodetic(r)
+            fs = atmosphere.state(float(t[i]), min(max(h, s.ground_altitude), s.escape_altitude), lat, lon)
+            e, nn, up = earth.enu_basis(lat, lon)
+            wind = fs.wind_enu[0] * e + fs.wind_enu[1] * nn + fs.wind_enu[2] * up
+            V = float(np.linalg.norm(v - wind))
+            ma = aero.mach(V, fs.T, fs.m_bar)
+            if fs.rho > 0.0:
+                cd = aero.drag_coefficient(aero.knudsen(fs.rho, fs.m_bar, d), ma, sim.tables, sim.bridging)
+            else:
+                cd = sim.tables.cd_free_molecular(ma)
+            out["rho"][i], out["T"][i], out["p"][i] = fs.rho, fs.T, fs.p
+            out["mu"][i] = viscosity(fs.T)
+            out["mfp"][i] = aero.mean_free_path(fs.rho, fs.m_bar)
+            out["speed"][i], out["cda"][i] = V, cd * area
+        out["d"], out["r0"] = np.full(n, d), np.full(n, 0.5 * d)
+        return out
+
+    return solution_track(run, t_offset, flow=flow, cadence=cadence)
