@@ -21,7 +21,7 @@ def line_parent(T=20.0, n=2001, flow=TURB):
 def follower(t, r):
     return Track.from_arrays(np.asarray(t), np.asarray(r))
 
-@pytest.mark.parametrize("modname", ["overlap", "laws", "track", "wake_gas"])
+@pytest.mark.parametrize("modname", ["overlap", "laws", "track", "wake_gas", "affix"])
 def test_engine_imports_nothing_physical(modname):
     mod = importlib.import_module("reentry_model.wake_residence." + modname)
     tree = ast.parse(inspect.getsource(mod))
