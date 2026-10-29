@@ -28,7 +28,12 @@ cites its sections as §n).
   `reentry_model/droplet_reentry/tests/test_droplet_reentry_model.py`, the oxidation scripts or `Literature Review/`
   — they hold Asha's uncommitted oxidation work. Stage files by explicit path only, never `git add -A` or `git add .`.
 - Do not modify `reentry_model/trajectory.py` or `reentry_model/droplet_reentry/model.py` (§4.3a).
-- `overlap.py`, `laws.py`, `track.py` and `wake_gas.py` must not import `trajectory`, `droplet_reentry`,
+- AFFIx release classifier (§4.3b, amended 2026-10-29): spacecraft releases windward only, theta 90-180 degrees;
+  far-wake releases start on the wake axis two parent diameters behind the parent's centroid; escape releases at
+  the windward surface point; shock-band cases not integrated; s_w 2 degrees, `mach_min` 5, fitted r range 1/16-1.
+- Front plane (§4.3a): the plume exists only behind the parent's base plane; first exits through it are labelled
+  `reached_parent` (fell behind, caught up) or `ahead_of_parent` (never fell behind).
+- `overlap.py`, `laws.py`, `track.py`, `wake_gas.py` and `affix.py` must not import `trajectory`, `droplet_reentry`,
   `parent_trajectory`, `body`, `aero` or `atmosphere`, and contain no altitude constants or altitude arguments (§4.0, §4.2).
 - All code in SI units; cm Hg-cm appears only inside `pressure_parameter`.
 - AA7075 solid density 2813 kg/m3 (`DRAMA Sphere Experiments/data/user_materials/AA7075_nomelt.json`).
@@ -70,6 +75,7 @@ reentry_model/wake_residence/
   wake_gas.py        Ambient, GasState, gas_state(): momentum/energy-conserving Gaussian wake profiles
   adapters.py        DRAMA beta table, TwinSimulator, dense_solve, twin_parent, release_state, WakeAtmosphere,
                      sphere_simulator, solution_track, sphere_parent_track
+  affix.py           Register et al. (2020) release classifier: zone, interaction time, validity, release offsets
   scenarios.py       ScenarioSettings, run_name, sphere_in_spacecraft_plume, droplet_in_sphere_plume, write_case
   analysis/__init__.py
   analysis/sweep.py        default sweep (resumable, --workers), summary.csv, crossover.csv
@@ -77,9 +83,10 @@ reentry_model/wake_residence/
   analysis/tables.py       plume_size.csv, ballistic_coefficient.csv, twin_vs_drama.csv
   analysis/plots.py        the §2 goal-6 plots into <out>/plots/
   tests/__init__.py, tests/conftest.py, tests/test_laws.py, tests/test_track.py, tests/test_overlap.py,
-  tests/test_wake_gas.py, tests/test_twin.py, tests/test_follower.py, tests/test_scenarios.py, tests/test_analysis.py
+  tests/test_wake_gas.py, tests/test_twin.py, tests/test_follower.py, tests/test_affix.py, tests/test_scenarios.py,
+  tests/test_analysis.py
 Modify: pytest.ini (testpaths), docs/model_assumptions.md (new section 10), README.md (root; commands),
-        CLAUDE.md (layout + commands; edited but NOT staged)
+        CLAUDE.md (layout + commands; committed on the branch — ruling R3)
 ```
 
 ---
@@ -716,51 +723,175 @@ git commit -m "wake_residence: WakeAtmosphere feeds the wake gas to any follower
 
 ---
 
-### Task 7: Scenarios, run names and case output
+### Task 7: Release classifier (Register et al. 2020, AFFIx)
+
+**Files:**
+- Create: `reentry_model/wake_residence/affix.py`, `reentry_model/wake_residence/tests/test_affix.py`
+- Modify: `reentry_model/wake_residence/tests/test_overlap.py` (add `affix` to the import-purity parametrisation)
+
+**Interfaces:**
+- Consumes: `laws.EmissionState`, `laws.LawSettings.kn_continuum` (pass the value in, do not import settings
+  objects you do not need).
+- Produces (in `affix.py`, a pure module: no imports of trajectory/droplet_reentry/parent_trajectory/body/aero/
+  atmosphere, no altitude argument):
+  - `R_STAR = 0.353`, `R_FIT_RANGE = (1/16, 1.0)`, `GAMMA_AIR = 1.4`, `R_AIR = 287.05`, zone names
+    `ZONES = ("trapped", "far_wake", "shock_band", "escape")`.
+  - `theta_inn(r) -> float` = 122 r + 47 (degrees) for r <= R_STAR, NaN otherwise.
+  - `theta_bif(r) -> float` = 100 exp(-1.618 r) + 40 (degrees).
+  - `@dataclass(frozen=True) AffixSettings(s_w_deg=2.0, kn_continuum=0.01, mach_min=5.0)`.
+  - `@dataclass(frozen=True) AffixResult(zone, r, theta_deg, theta_inn, theta_bif, t_hat, t_fz, flags: dict)` —
+    flags keys: `r_below_fit`, `r_above_rstar`, `rarefied_parent`, `rarefied_follower`, `not_hypersonic`,
+    `unequal_density`; plus `parent_bulk_density` (NaN when no parent mass is given).
+  - `affix_regime(d_follower, d_parent, theta_deg, emission, follower_density, parent_mass=None,
+    settings=AffixSettings()) -> AffixResult` — zone: trapped if theta < theta_inn; far_wake if theta_inn <= theta
+    < theta_bif - s_w; shock_band if |theta - theta_bif| <= s_w; escape if theta > theta_bif + s_w. For r > R_STAR
+    theta_inn is NaN, `r_above_rstar` is set, and the zone is decided by theta_bif alone (far_wake below the band).
+    t_hat: 0 (trapped); A0(r) + 0.5 exp[-0.05(theta - theta_inn)] with A0 = -7.2 r^2 + 3 r + 0.1 (far_wake; NaN when
+    r > R_STAR); 0.88 r + 0.32 + 0.01 exp[0.125(theta - theta_bif - 10)] (escape); NaN (shock_band).
+    t_fz = d_parent * sqrt(follower_density / q_inf) * t_hat with q_inf = 0.5 * emission.rho * emission.U**2.
+    Flags: r < 1/16; mfp/d > kn_continuum for parent and for follower; Mach = U / sqrt(GAMMA_AIR R_AIR T) below
+    mach_min; unequal_density when parent_mass is given and m/(pi d_parent^3/6) differs from follower_density by more
+    than 1 percent. Raises ValueError for theta outside [0, 180] or non-positive diameters.
+  - `release_offset(theta_deg, d_parent, v_hat, up) -> ndarray(3)` — the surface point relative to the centroid:
+    (d_parent/2)(-cos(theta) v_hat + sin(theta) n_hat), n_hat = unit(up - (up·v_hat) v_hat) (raise if up is
+    parallel to v_hat).
+  - `far_wake_offset(d_parent, v_hat) -> ndarray(3)` = -2 d_parent v_hat (Asha: two parent diameters behind, on the
+    axis).
+- Source notes: `/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/citations/fragment_shock_separation.md` §00 (main checkout only; cite in the docstring).
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_affix.py`:
+
+```python
+import math, numpy as np, pytest
+from reentry_model.wake_residence.affix import (affix_regime, theta_inn, theta_bif, AffixSettings,
+    release_offset, far_wake_offset)
+from reentry_model.wake_residence.laws import EmissionState, sutherland_mu
+
+E = EmissionState(rho=1.85e-5, T=199.0, p=1.05, mu=sutherland_mu(199.0), mfp=4e-3, U=7600.0, d=2.813,
+                  cda=5.5, r0=1.4065)          # roughly the Generic Spacecraft at 80 km
+
+@pytest.mark.parametrize("r", [1/16, 1/4])
+def test_thresholds_follow_register(r):
+    assert theta_inn(r) == pytest.approx(122 * r + 47)
+    assert theta_bif(r) == pytest.approx(100 * math.exp(-1.618 * r) + 40)
+
+def test_r_above_rstar_has_no_inner_threshold():
+    assert math.isnan(theta_inn(0.5)) and theta_bif(0.5) == pytest.approx(100 * math.exp(-0.809) + 40)
+
+def test_windward_small_sphere_far_wake_and_stagnation_escape():
+    d2 = 0.01
+    assert affix_regime(d2, E.d, 90.0, E, 2813.0).zone == "far_wake"
+    assert affix_regime(d2, E.d, 180.0, E, 2813.0).zone == "escape"
+    tb = theta_bif(d2 / E.d)
+    assert affix_regime(d2, E.d, tb + 0.5, E, 2813.0).zone == "shock_band"
+    assert affix_regime(d2, E.d, 30.0, E, 2813.0).zone == "trapped"
+
+def test_interaction_times():
+    d2 = 0.176; r = d2 / E.d
+    q = 0.5 * E.rho * E.U**2; scale = E.d * math.sqrt(2813.0 / q)
+    esc = affix_regime(d2, E.d, 180.0, E, 2813.0)
+    assert esc.t_fz == pytest.approx(scale * (0.88*r + 0.32 + 0.01*math.exp(0.125*(180 - theta_bif(r) - 10))))
+    fw = affix_regime(d2, E.d, 90.0, E, 2813.0)
+    A0 = -7.2*r**2 + 3*r + 0.1
+    assert fw.t_fz == pytest.approx(scale * (A0 + 0.5*math.exp(-0.05*(90 - theta_inn(r)))))
+    assert affix_regime(d2, E.d, 10.0, E, 2813.0).t_fz == 0.0
+
+def test_validity_flags():
+    f = affix_regime(0.01, E.d, 90.0, E, 2813.0, parent_mass=740.0).flags
+    assert f["r_below_fit"] and f["rarefied_follower"] and not f["rarefied_parent"] and f["unequal_density"]
+    slow = EmissionState(**{**E.__dict__, "U": 800.0})
+    assert affix_regime(0.3, E.d, 90.0, slow, 2813.0).flags["not_hypersonic"]
+
+def test_theta_range_and_no_altitude_argument():
+    import inspect
+    with pytest.raises(ValueError):
+        affix_regime(0.01, E.d, 181.0, E, 2813.0)
+    assert not any("alt" in p or p in ("h", "h_km") for p in inspect.signature(affix_regime).parameters)
+
+def test_release_offsets():
+    v = np.array([1.0, 0, 0]); up = np.array([0, 0, 1.0])
+    assert np.allclose(far_wake_offset(2.813, v), [-5.626, 0, 0])
+    assert np.allclose(release_offset(180.0, 2.813, v, up), [1.4065, 0, 0])
+    assert np.allclose(release_offset(90.0, 2.813, v, up), [0, 0, 1.4065], atol=1e-12)
+    assert np.linalg.norm(release_offset(135.0, 2.813, v, up)) == pytest.approx(1.4065)
+```
+
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_affix.py -q`. Expected: ImportError.
+- [ ] **Step 3: Implement `affix.py`** and add `"affix"` to the import-purity parametrisation in `test_overlap.py`.
+- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q`.
+- [ ] **Step 5: Commit**
+
+```bash
+git add reentry_model/wake_residence/affix.py reentry_model/wake_residence/tests/test_affix.py \
+  reentry_model/wake_residence/tests/test_overlap.py
+git commit -m "wake_residence: Register et al. (2020) release classifier -- trapped, far wake, shock band or escape from the size ratio and release angle, with the interaction time and a validity record"
+```
+
+---
+
+### Task 8: Scenarios, run names and case output
 
 **Files:**
 - Create: `reentry_model/wake_residence/scenarios.py`, `reentry_model/wake_residence/tests/test_scenarios.py`
+- Modify: `reentry_model/wake_residence/adapters.py` (add `state_from_ecef`)
 
 **Interfaces:**
-- Consumes: everything above; `droplet_reentry.model.DropletSimulator`, `weber`, `WE_CRIT`, `T_RELEASE`,
-  `VOLATILE`; `wake_column.run._git_commit`, `_git_dirty`.
+- Consumes: everything above (Tasks 1-7, and the 6b front-plane change: `ResidenceResult.reason` values include
+  `reached_parent` and `ahead_of_parent`; `ExitState.through`); `droplet_reentry.model.DropletSimulator`, `weber`,
+  `WE_CRIT`, `T_RELEASE`, `VOLATILE`; `wake_column.run._git_commit`, `_git_dirty`; `affix.*`.
 - Produces:
+  - In `adapters.py`: `state_from_ecef(r, v, epoch) -> InitialState` (geodetic position and flight angles from an
+    Earth-fixed position and velocity; `release_state` should call it).
   - `@dataclass(frozen=True) ScenarioSettings(law: LawSettings = LawSettings(), bound="low", wake_flow="off",
-    density=2813.0, frontal_area=6.215, beta_scale=1.0, k_E=1.0, t_max=600.0, scan_dt=None)`.
-  - `run_name(kind, d_mm, h_km, settings, droplet_d_um=None) -> str` — e.g.
-    `sphere_d0050.0mm_h080.0km_low_both_taylor` (or `droplet_s0050.0mm_d0100.0um_h080.0km_...`) plus
-    `_<field><value>` for each `LawSettings.non_default()` entry and each non-default `ScenarioSettings` field,
-    in sorted order.
+    density=2813.0, frontal_area=6.215, beta_scale=1.0, k_E=1.0, t_max=600.0, scan_dt=None,
+    affix: AffixSettings = AffixSettings())`.
+  - `run_name(kind, d_mm, h_km, settings, droplet_d_um=None, release="far_wake", theta_deg=None) -> str` — e.g.
+    `sphere_d0050.0mm_h080.0km_farwake_low_both_taylor`, or `..._escape_th160.0_...` for escape releases (the
+    far-wake run name has no theta: one run serves every far-wake theta), or `droplet_s0050.0mm_d0100.0um_h080.0km_...`;
+    plus `_<field><value>` for each `LawSettings.non_default()` entry and each non-default `ScenarioSettings`
+    field (including non-default `AffixSettings` fields), in sorted order.
+  - `@dataclass CaseResult(name, config: dict, residence: ResidenceResult | None, summary: dict, history: list[dict])`.
+  - `classify_release(d_mm, h_km, theta_deg, twin, settings) -> AffixResult` — the parent's EmissionState at the
+    twin's release time, the sphere density, the parent mass at that altitude (`twin.beta.mass_at`), D1 = equal-area
+    diameter.
+  - `sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSettings(), twin=None) -> CaseResult`.
+    Raises ValueError unless 90 <= theta_deg <= 180 (windward only, Asha). Classify first. Then:
+    - `far_wake`: release position P(t_r) + `far_wake_offset(D1, v_hat)`, velocity = parent velocity at t_r;
+    - `escape`: release position P(t_r) + `release_offset(theta, D1, v_hat, up)` with `up` the local geodetic up at
+      P(t_r), velocity = parent velocity;
+    - `shock_band`: no integration; `residence=None`, summary reason `"shock_band"`, residence_time NaN;
+    - `trapped`: no integration; reason `"near_wake_trapped"`, `censored=True`, residence_time NaN.
+    Integrated cases: `dense_solve` of `sphere_simulator(state_from_ecef(...), d, WakeAtmosphere(..., t_offset=t_r,
+    mode=settings.wake_flow))` with t_max = min(settings.t_max, wake_atmosphere.follower_t_max) (Task 6 finding: a
+    longer run passes the twin's end); `solution_track`; `residence(Plume(twin.track, settings.law, settings.bound),
+    follower, t_start=t_r, t_end=follower.t1)`.
+    `summary` has: diameter, altitude, theta, release kind (far_wake/escape), the AFFIx zone, theta_inn, theta_bif,
+    t_hat, t_fz and every AFFIx flag, `residence_exceeds_t_fz` (escape: residence > 3 t_fz), bound, wake_flow,
+    residence_time, reason, censored, total_inside, n_intervals, `follower_t_end` and `follower_end_reason` (the
+    integration's end time on the parent clock and its end reason — Task 3 ruling: a censored case reports when it
+    ended), exit altitude/speed/lag/distance/r_b/s/through, regimes and laws at release and exit, Kn/Re/P at
+    release, every plume flag, interp_error_m, sphere and parent ballistic coefficients at release, parent sha256,
+    git_commit, git_dirty.
   - Summary keys the tests read: `reason`, `residence_time`, `parent_sha256`, `git_commit`, `git_dirty`,
-    `regime_at_release`, `regime_at_exit`, `kn_at_release`, `re_at_release`, `p_at_release`. History keys:
-    `t`, `follower_x/y/z`, `parent_x/y/z` (parent position at the same t), `lag_m`, `distance_m`, `r_b`,
-    `margin`, `regime`.
-  - `@dataclass CaseResult(name, config: dict, residence: ResidenceResult, summary: dict, history: list[dict])`.
-  - `sphere_in_spacecraft_plume(d_mm, h_km, settings=ScenarioSettings(), twin=None) -> CaseResult` — twin built
-    once if not given (`twin_parent(frontal_area=..., beta_scale=...)`); follower released from
-    `release_state(twin.track, t_r, ...)`, integrated with `dense_solve` in a `WakeAtmosphere(..., t_offset=t_r,
-    mode=settings.wake_flow)`, turned into a Track with `solution_track`, and passed to
-    `residence(Plume(twin.track, settings.law, settings.bound), follower, t_start=t_r, t_end=follower.t1)`.
-    `summary` has: diameter, altitude, bound, wake_flow, residence_time, reason, censored, total_inside,
-    n_intervals, exit altitude/speed/lag/distance/r_b/s, regimes and laws at release and exit, Kn/Re/P at release,
-    every flag, interp_error_m, sphere and parent ballistic coefficients at release, parent sha256, git_commit,
-    git_dirty. `history` rows at the follower track's samples: t, follower and parent positions, lag, distance to
-    track, r_b there, margin, regime.
+    `regime_at_release`, `regime_at_exit`, `kn_at_release`, `re_at_release`, `p_at_release`, `affix_zone`, `t_fz`,
+    `follower_t_end`. History keys: `t`, `follower_x/y/z`, `parent_x/y/z` (parent position at the same t), `lag_m`,
+    `distance_m`, `r_b`, `margin`, `regime`.
   - `droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um, settings=ScenarioSettings(), twin=None) -> CaseResult`
-    — sphere released from the twin at h_km and integrated with `wake_flow="off"`; parent Track from
-    `sphere_parent_track`; droplet `InitialState` = the sphere's state at its release; Weber pre-check as
-    `run_case` does (`weber(fs.rho, V, d0, T_RELEASE) >= WE_CRIT` → summary `reason="skipped_weber"`, no run);
+    — sphere released from the twin at h_km at the far-wake start, integrated with `wake_flow="off"`; parent Track
+    from `sphere_parent_track`; droplet `InitialState` = the sphere's state at its release (no AFFIx offset for the
+    droplet: the droplet-from-sphere release geometry is not decided; record `release="centroid"`); Weber pre-check
+    as `run_case` does (`weber(fs.rho, V, d0, T_RELEASE) >= WE_CRIT` → summary `reason="skipped_weber"`, no run);
     `DropletSimulator(release, droplet_d_um, atmosphere=WakeAtmosphere(...))` solved with
     `dense_solve(..., method="LSODA", rtol=1e-8, atol=<the list DropletSimulator.run builds>, events=[ground, gone])`
     replicating `DropletSimulator.run`'s two events (`model.py` lines 463-469).
-  - `write_case(case, out_dir) -> (csv_path, json_path)` into `<out_dir>/runs/`.
+  - `write_case(case, out_dir) -> (csv_path, json_path)` into `<out_dir>/runs/` (no CSV when residence is None).
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_scenarios.py`:
 
 ```python
 import json, math, numpy as np, pytest
 from reentry_model.wake_residence.scenarios import (ScenarioSettings, run_name, sphere_in_spacecraft_plume,
-    droplet_in_sphere_plume, write_case)
+    droplet_in_sphere_plume, write_case, classify_release)
 from reentry_model.wake_residence.laws import LawSettings
 
 def test_run_names_differ_for_every_setting():
@@ -770,62 +901,95 @@ def test_run_names_differ_for_every_setting():
               ScenarioSettings(beta_scale=1.1), ScenarioSettings(density=2700.0)]
     names = {run_name("sphere", d_mm=50, h_km=80, settings=s) for s in others}
     assert base not in names and len(names) == len(others)
+    assert run_name("sphere", 50, 80, ScenarioSettings(), release="escape", theta_deg=160.0) != base
 
-def test_sphere_case_runs_and_writes(twin, tmp_path):
-    c = sphere_in_spacecraft_plume(50, 60, ScenarioSettings(wake_flow="both"), twin=twin)
+def test_far_wake_case_runs_and_writes(twin, tmp_path):
+    c = sphere_in_spacecraft_plume(10, 60, 90.0, ScenarioSettings(wake_flow="both"), twin=twin)
     csv_path, json_path = write_case(c, tmp_path)
     s = json.load(open(json_path))
-    assert s["reason"] in ("ok", "censored") and s["residence_time"] >= 0
-    assert s["parent_sha256"] and "git_commit" in s and s["regime_at_release"]
+    assert s["affix_zone"] == "far_wake" and s["t_fz"] > 0
+    assert s["reason"] in ("ok", "censored", "reached_parent") and s["residence_time"] >= 0
+    assert s["parent_sha256"] and "git_commit" in s and s["regime_at_release"] and s["follower_t_end"] > 0
+    h = c.history                                      # starts on the axis, two parent diameters behind
+    gap = np.linalg.norm([h[0]["follower_x"] - h[0]["parent_x"], h[0]["follower_y"] - h[0]["parent_y"],
+                          h[0]["follower_z"] - h[0]["parent_z"]])
+    assert gap == pytest.approx(2 * 2 * math.sqrt(6.215 / math.pi), rel=1e-6)
+
+def test_escape_and_shock_band_and_windward_limit(twin):
+    esc = sphere_in_spacecraft_plume(10, 60, 180.0, twin=twin)
+    assert esc.summary["affix_zone"] == "escape" and esc.summary["residence_time"] < 0.05
+    tb = classify_release(10, 60, 90.0, twin, ScenarioSettings()).theta_bif
+    band = sphere_in_spacecraft_plume(10, 60, tb, twin=twin)
+    assert band.summary["reason"] == "shock_band" and band.residence is None
+    with pytest.raises(ValueError):
+        sphere_in_spacecraft_plume(10, 60, 45.0, twin=twin)
 
 def test_droplet_in_sphere_plume_worked_examples(twin):
-    for args in ((50, 80, 100), (100, 70, 50)):
-        c = droplet_in_sphere_plume(*args, twin=twin)
-        if c.summary["reason"] == "skipped_weber":
-            continue
-        assert c.residence.validity or not math.isnan(c.residence.residence_time)
-        assert c.summary["kn_at_release"] > 0 and c.summary["regime_at_release"]
-        h = c.history
-        assert np.allclose([h[0]["follower_x"], h[0]["follower_y"], h[0]["follower_z"]],
-                           [h[0]["parent_x"], h[0]["parent_y"], h[0]["parent_z"]], atol=1e-3)
+    # controller ruling R2: (50, 80, 100) may be rarefied (no law) -- assert completion and the recorded regime;
+    # (100, 60, 50) is a continuum, laminar sphere parent and must give a finite residence with validity records
+    c = droplet_in_sphere_plume(50, 80, 100, twin=twin)
+    assert c.summary["regime_at_release"] and c.summary["kn_at_release"] > 0
+    c = droplet_in_sphere_plume(100, 60, 50, twin=twin)
+    assert c.summary["reason"] != "skipped_weber"
+    assert math.isfinite(c.residence.residence_time) and c.residence.residence_time >= 0 and c.residence.validity
+    h = c.history
+    assert np.allclose([h[0]["follower_x"], h[0]["follower_y"], h[0]["follower_z"]],
+                       [h[0]["parent_x"], h[0]["parent_y"], h[0]["parent_z"]], atol=1e-3)
 ```
 
 - [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_scenarios.py -q`. Expected: ImportError.
-- [ ] **Step 3: Implement `scenarios.py`.** If both droplet worked examples are skipped by the Weber check, replace
-  one with a smaller droplet that is not, and note it in the commit message.
+- [ ] **Step 3: Implement `scenarios.py` and `state_from_ecef`.** If the (100, 60, 50) droplet is skipped by the Weber
+  check, use a smaller droplet that is not, and note it in the commit message.
 - [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reentry_model/wake_residence/scenarios.py reentry_model/wake_residence/tests/test_scenarios.py
-git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume and molten droplet in a solid sphere's plume through the same engine, with configuration-encoding run names and case output"
+git add reentry_model/wake_residence/scenarios.py reentry_model/wake_residence/adapters.py \
+  reentry_model/wake_residence/tests/test_scenarios.py
+git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume released by the AFFIx outcome (far wake on the axis two parent diameters behind, escape at the windward surface point) and a molten droplet in a solid sphere's plume, with configuration-encoding run names and case output"
 ```
 
 ---
 
-### Task 8: Sweep, sensitivity and tables
+### Task 9: Sweep, sensitivity and tables
 
 **Files:**
 - Create: `reentry_model/wake_residence/analysis/__init__.py`, `analysis/sweep.py`, `analysis/sensitivity.py`,
   `analysis/tables.py`, `reentry_model/wake_residence/tests/test_analysis.py`
 
 **Interfaces:**
-- Consumes: `scenarios.*`, `twin_parent`, `twin_vs_drama`, `drama_beta_table`, `plume_radius`, `classify`.
+- Consumes: `scenarios.*`, `twin_parent`, `twin_vs_drama`, `drama_beta_table`, `plume_radius`, `classify`,
+  `affix.*`, `Plume.wake_state`.
 - Produces:
   - `sweep.main(argv=None)` — options `--diameters` (default `1 5 10 25 50 100 200 400` mm), `--altitudes`
-    (default `100 90 80 70 60 50` km; any outside the twin's range is dropped with a printed message), `--bounds`
-    (default `low high`), `--wake-flow` (default `off both`), `--workers` (default CPU count less one), `--out`
-    (default `wake_residence.OUTPUT`). Resumable: a case whose JSON exists is skipped. A case that raises is
-    reported at the end without stopping the rest. Writes `<out>/summary.csv` (rows sorted by diameter, altitude,
-    bound, wake_flow) and `<out>/crossover.csv` (per altitude and wake_flow: the largest diameter with positive
-    lag behind the parent at 1 s after release and the smallest with negative lag — the crossover bracket).
-  - `sensitivity.main(argv=None)` — the §4.6 set (spheres 10, 50, 200 mm at 80 and 60 km; each variation one at a
-    time against the baseline), `<out>/sensitivity.csv` with columns case, parameter, value, bound, residence_time,
-    change_vs_baseline.
-  - `tables.main(argv=None)` — `<out>/plume_size.csv` (for the twin's state at each default release altitude:
-    regime, Kn, Re_d, P, and r_b low/high at s = 10, 100, 1000, 3000, 10000, 30000 m with time since passage
-    s/U), `<out>/ballistic_coefficient.csv` (twin beta and C_D A against altitude, and each default sphere's
-    ballistic coefficient there), `<out>/twin_vs_drama.csv`.
+    (default `100 90 80 70 60 50` km; any outside the twin's range is dropped with a printed message), `--thetas`
+    (default `90 120 135 145 160 180` degrees), `--bounds` (default `low high`), `--wake-flow` (default `off both`),
+    `--workers` (default CPU count less one), `--out` (default `wake_residence.OUTPUT`). For each (diameter,
+    altitude, theta) classify; integrate the far-wake run once per (diameter, altitude, bound, wake_flow) and reuse
+    it for every far-wake theta; integrate escape runs per theta; do not integrate shock-band cases. Resumable: a
+    run whose JSON exists is skipped. A case that raises is reported at the end without stopping the rest. Writes
+    `<out>/summary.csv` — one row per (diameter, altitude, theta, bound, wake_flow), sorted in that order, joining
+    the classification with the run that serves it — and `<out>/crossover.csv` (per altitude and wake_flow, from the
+    far-wake runs: the largest diameter with positive lag behind the parent at 1 s after release and the smallest
+    with negative lag — the crossover bracket).
+  - `sensitivity.main(argv=None)` — the §4.6 set at theta = 90 (far wake) (spheres 10, 50, 200 mm at 80 and 60 km;
+    each variation one at a time against the baseline), `<out>/sensitivity.csv` with columns case, parameter, value,
+    bound, residence_time, change_vs_baseline.
+  - `tables.main(argv=None)` — writes:
+    - `<out>/plume_size.csv` (for the twin's state at each default release altitude: regime, Kn, Re_d, P, and r_b
+      low/high at s = 10, 100, 1000, 3000, 10000, 30000 m with time since passage s/U);
+    - `<out>/ballistic_coefficient.csv` (twin beta and C_D A against altitude, and each default sphere's ballistic
+      coefficient there);
+    - `<out>/twin_vs_drama.csv` — `twin_vs_drama` rows plus `twin_downrange_km` at the DRAMA time (great-circle
+      distance from the twin's start point, `earth.great_circle_distance`) and its difference from DRAMA's downrange
+      (Task 5 ruling: spec §4.3 asks for altitude AND downrange against time); a header comment notes the twin's
+      ~6.5 s time lag behind DRAMA and that the engine uses the twin's own clock;
+    - `<out>/affix_regimes.csv` (diameter, altitude, theta, zone, theta_inn, theta_bif, t_hat, t_fz, every flag);
+    - `<out>/drag_ratio_check.csv` (per release altitude and bound: our drag ratio at the far-wake start point,
+      rho_w (V - u)^2 / (rho_inf V^2) from `Plume.wake_state` with mode "both", next to Register's 0.14);
+    - `<out>/wake_gas_sanity.csv` (spec §4.3a sanity checks: the model's core gas speed at 30 km behind the parent
+      and core temperature 300 m behind, at each release altitude, next to the assumed values ~10 m/s and
+      1,000-2,000 K).
 - Commands (from `Reentry Model/`): `"$PY" -m reentry_model.wake_residence.analysis.sweep`,
   `... .analysis.sensitivity`, `... .analysis.tables`.
 
@@ -835,12 +999,15 @@ git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume and
 import csv, filecmp, os, shutil
 from reentry_model.wake_residence.analysis import sweep, tables
 
-ARGS = ["--diameters", "10", "--altitudes", "60", "--bounds", "low", "--wake-flow", "off", "--workers", "1"]
+ARGS = ["--diameters", "10", "--altitudes", "60", "--thetas", "90", "180", "--bounds", "low",
+        "--wake-flow", "off", "--workers", "1"]
 
 def test_short_sweep_is_reproducible_and_resumable(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     sweep.main(ARGS + ["--out", str(a)]); sweep.main(ARGS + ["--out", str(b)])
     assert filecmp.cmp(a / "summary.csv", b / "summary.csv", shallow=False)
+    rows = list(csv.DictReader(open(a / "summary.csv")))
+    assert {r["affix_zone"] for r in rows} == {"far_wake", "escape"} and len(rows) == 2
     mtime = os.path.getmtime(next((a / "runs").glob("*.json")))
     sweep.main(ARGS + ["--out", str(a)])                                   # resumes: nothing rerun
     assert os.path.getmtime(next((a / "runs").glob("*.json"))) == mtime
@@ -849,7 +1016,10 @@ def test_tables_report_regimes_as_outputs(tmp_path):
     tables.main(["--out", str(tmp_path)])
     rows = list(csv.DictReader(open(tmp_path / "plume_size.csv")))
     assert {r["regime"] for r in rows} <= {"rarefied", "laminar", "transitional", "turbulent", "too_slow"}
-    assert (tmp_path / "twin_vs_drama.csv").exists() and (tmp_path / "ballistic_coefficient.csv").exists()
+    for name in ("twin_vs_drama.csv", "ballistic_coefficient.csv", "affix_regimes.csv", "drag_ratio_check.csv",
+                 "wake_gas_sanity.csv"):
+        assert (tmp_path / name).exists(), name
+    assert "twin_downrange_km" in open(tmp_path / "twin_vs_drama.csv").read()
 ```
 
 (The `summary.csv` comparison requires that no wall-clock time is written into it; keep `runtime_s` in the
@@ -860,34 +1030,37 @@ per-case JSON only.)
 - [ ] **Step 4: Run them to confirm they pass.** Same command.
 - [ ] **Step 5: Run the real thing** (in the background; report wall time and any failed case):
   `"$PY" -m reentry_model.wake_residence.analysis.tables`, then `... .sweep`, then `... .sensitivity`.
-  Expected: `summary.csv` with 8 × 6 × 2 × 2 = 192 rows less any dropped altitudes; report to the controller
-  the twin-vs-DRAMA figure, the regime at each release altitude, and the crossover brackets.
+  Expected: `summary.csv` with 8 × 6 × 6 × 2 × 2 = 1152 rows less any dropped altitudes; report to the controller
+  the twin-vs-DRAMA figures, the regime at each release altitude, the AFFIx zone counts, the drag-ratio check, the
+  wake-gas sanity values and the crossover brackets.
 - [ ] **Step 6: Commit** (code and tests only; outputs are git-ignored)
 
 ```bash
 git add reentry_model/wake_residence/analysis/__init__.py reentry_model/wake_residence/analysis/sweep.py \
   reentry_model/wake_residence/analysis/sensitivity.py reentry_model/wake_residence/analysis/tables.py \
   reentry_model/wake_residence/tests/test_analysis.py
-git commit -m "wake_residence: resumable sweep (8 diameters x 6 altitudes x low/high bound x wake flow off/on), the sensitivity set, and the plume-size, ballistic-coefficient and twin-versus-DRAMA tables"
+git commit -m "wake_residence: resumable sweep over diameter, altitude and release angle (far-wake runs shared across angles), the sensitivity set, and the plume-size, ballistic-coefficient, twin-versus-DRAMA, AFFIx, drag-ratio and wake-gas tables"
 ```
 
 ---
 
-### Task 9: Plots
+### Task 10: Plots
 
 **Files:**
 - Create: `reentry_model/wake_residence/analysis/plots.py`; add a test to `tests/test_analysis.py`
 
 **Interfaces:**
-- Consumes: the CSV and run files written by Task 8; `DRAMA Sphere Experiments/analysis/plot_style.py` the way
+- Consumes: the CSV and run files written by Task 9; `DRAMA Sphere Experiments/analysis/plot_style.py` the way
   `reentry_model/compare.py` imports it (fall back to plain matplotlib without it).
 - Produces: `plots.main(argv=None)` with `--out` (default `wake_residence.OUTPUT`), writing to `<out>/plots/`:
   `plume_size.png` (r_b low/high against s and against time since passage, one line per release altitude,
   Taylor's 1200 (C_D A)^(1/2) and Park's 30 km limits marked, regime in the legend), `trajectories_<h>km.png`
-  (twin and spheres, altitude against downrange, for each release altitude present), `margin_<h>km.png`
-  (distance to track and r_b against time for every diameter at that altitude, wake flow off and on),
-  `residence_map.png` (residence time over diameter × altitude, one panel per wake_flow, low–high shown as two
-  panels or as hatching where they differ, censored and no-law cases marked). Prints how many runs it found.
+  (twin and far-wake spheres, altitude against downrange, for each release altitude present), `margin_<h>km.png`
+  (distance to track and r_b against time for every diameter's far-wake run at that altitude, wake flow off and
+  on), `residence_map.png` (far-wake residence time over diameter × altitude, one panel per wake_flow, low–high
+  shown as two panels or as hatching where they differ, censored, reached-parent, ahead-of-parent and no-law cases
+  marked), `affix_zones.png` (zone over diameter × release angle with theta_bif drawn, one panel per altitude only
+  if the validity flags differ by altitude, otherwise one panel). Prints how many runs it found.
 
 - [ ] **Step 1: Write the failing test** (append to `tests/test_analysis.py`):
 
@@ -897,7 +1070,8 @@ from reentry_model.wake_residence.analysis import plots
 def test_plots_are_written_from_a_short_sweep(tmp_path):
     sweep.main(ARGS + ["--out", str(tmp_path)]); tables.main(["--out", str(tmp_path)])
     plots.main(["--out", str(tmp_path)])
-    for name in ("plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png"):
+    for name in ("plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png",
+                 "affix_zones.png"):
         assert (tmp_path / "plots" / name).stat().st_size > 0
 ```
 
@@ -909,40 +1083,42 @@ def test_plots_are_written_from_a_short_sweep(tmp_path):
 
 ```bash
 git add reentry_model/wake_residence/analysis/plots.py reentry_model/wake_residence/tests/test_analysis.py
-git commit -m "wake_residence: plots of plume size, trajectories, distance-to-track against plume radius, and the residence-time map"
+git commit -m "wake_residence: plots of plume size, trajectories, distance-to-track against plume radius, the residence-time map and the AFFIx release zones"
 ```
 
 ---
 
-### Task 10: Documentation and final checks
+### Task 11: Documentation and final checks
 
 **Files:**
 - Modify: `docs/model_assumptions.md` (new section 10, "Wake residence"), root `README.md` (a "Wake residence"
   section with the four commands), `CLAUDE.md` (a "The wake residence" subsection under the droplet and wake column
-  ones, and the `pytest.ini` line) — **edit CLAUDE.md but do not stage it**.
+  ones, and the `pytest.ini` line). In the worktree CLAUDE.md has none of Asha's oxidation edits, so it IS committed
+  on the branch (controller ruling R3; merging will need her uncommitted CLAUDE.md edits committed or set aside).
 
 **Interfaces:**
-- Consumes: the measured figures from Tasks 5, 6 and 8.
+- Consumes: the measured figures from Tasks 5, 6, 6b and 9.
 
 - [ ] **Step 1: Write section 10** of `docs/model_assumptions.md` in the style of section 9: every assumption
   marked **(verified)** with the test that asserts it, or **(assumed)**. Include at least: the three laws with their
   sources, fitted ranges and caveats (Park's 0.7 second-hand from Schapker and Camac; Feldman's combined form
   assembled, not printed; R density-weighted); the regime criteria and thresholds (outputs, not altitude bands);
-  the twin and its measured agreement with DRAMA; the frontal area; the union-of-balls definition; the wake gas
-  model and its well-mixed temperature; the non-goals (no melting of the sphere, no sideways shock forces, no
-  plume drift); the measured cost of a wake run.
+  the twin and its measured agreement with DRAMA (0.52 % in speed above 60 km; the ~6.5 s time lag and its gravity-
+  model sensitivity; downrange agreement from Task 9); the frontal area; the union-of-balls definition and the
+  front plane with the `reached_parent` / `ahead_of_parent` labels; the wake gas model, its well-mixed temperature,
+  the density relative to the local ambient, and the drag-ratio check against Register's 0.14; the AFFIx release
+  classifier, the windward-only release angles, the far-wake start two parent diameters behind (Asha's estimate from
+  Register et al.) and the extrapolation below r = 1/16; the non-goals (no melting of the sphere, no integrated
+  shock forces, no plume drift); the measured cost of a wake run.
 - [ ] **Step 2: Add the README and CLAUDE.md sections.**
 - [ ] **Step 3: Run the whole unit tier.** `"$PY" -m pytest -m "not reference" -q`. Expected: all pass (report the
   count and wall time).
 - [ ] **Step 4: Confirm the protected files are untouched.**
-  Run: `git diff --stat main -- reentry_model/trajectory.py reentry_model/droplet_reentry/model.py` and
-  `git status --short`. Expected: no committed change to either file on the branch; `CLAUDE.md`, `model.py` and the
-  oxidation test file still show only as unstaged working-tree modifications.
+  Run: `git diff --stat main -- reentry_model/trajectory.py reentry_model/droplet_reentry/model.py`.
+  Expected: no change to either file on the branch.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/model_assumptions.md README.md
-git commit -m "docs: wake residence -- assumptions with their verification status, the plume laws' sources and ranges, and the commands"
+git add docs/model_assumptions.md ../README.md CLAUDE.md
+git commit -m "docs: wake residence -- assumptions with their verification status, the plume laws' and AFFIx sources and ranges, and the commands"
 ```
-
-Tell the controller that `CLAUDE.md` was edited and left unstaged next to the oxidation edits.

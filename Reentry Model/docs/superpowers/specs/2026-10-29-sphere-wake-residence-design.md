@@ -48,7 +48,8 @@ Non-goals (first version):
   velocity and low density, and their effect on the follower's drag, are in scope as a switchable effect, §4.3a.)
   The plume boundary is the turbulent-core law (or the laminar law, §4.2), not the shock-heated inviscid outer
   wake, although the outer wake's size enters the energy budget of §4.3a.
-- Sideways forces on the follower from shock-wave interaction close behind the parent (§4.3a).
+- Integrating the sideways forces of shock-wave interaction close to the parent. Instead, near-wake trapping and
+  shock-riding are classified and flagged with Register et al.'s (2020) fitted model, not integrated (§4.3b).
 - Ejection velocity at separation. The sphere is released with the parent's exact position and velocity (a
   deliberate baseline). The code takes the release state as an argument so a later fragment model can pass a
   separation velocity.
@@ -350,6 +351,66 @@ in Park's case should be of order 10 m/s; the mean temperature a few hundred met
 Spacecraft should be of order 1,000 to 2,000 K (the earlier research notes' estimate from Park's well-mixed
 model). Large departures are reported, not tuned away.
 
+**The front plane (controller ruling 2026-10-29, accepted by Asha the same day).** The parent is not an obstacle in
+the model, and the union of balls reaches r0 ahead of it. With the wake gas on, a follower released at the parent
+felt almost no drag, overtook the parent and left through the front. The plume and its wake gas therefore exist
+only behind the parent's current base plane: margin = min(union-of-balls margin, -(x - P(t))·v_hat(t)), and the
+wake gas excess is ramped from zero at the plane to full at one r0 behind (cubic smoothstep). An exit through
+the plane is labelled: `reached_parent` when the follower had fallen behind and caught up (it would hit the
+parent or be pushed aside by its shock, neither modelled), `ahead_of_parent` when it never fell behind (a larger
+ballistic coefficient than the parent, or a release on or ahead of the plane).
+
+### 4.3b Release angle and the shock-interaction outcome (Register et al. 2020; Asha, 2026-10-29)
+
+Source: Register, Mathias, Wheeler et al. (2020), Icarus 337:113468, the AFFIx model, read in full (notes:
+`Particle Wake Evolution/citations/fragment_shock_separation.md`, section 00; supporting Laurence and Deiterding
+2011, Laurence, Parziale and Deiterding 2012, Passey and Melosh 1980, section 0). Close to the parent the outcome
+of a release is set by shock-interaction forces, which this model does not integrate. AFFIx classifies it from two
+numbers: the size ratio r = D2/D1 (follower diameter over parent diameter) and the release angle theta, the angle
+between the parent's velocity axis and the line from the parent's centroid to the release point (theta = 0 directly
+behind, 180 at the stagnation point).
+
+**Classifier (new pure module `affix.py`).** `affix_regime(d_follower, d_parent, theta_deg, parent_flow,
+follower_density, settings)` returns the final zone and the interaction time:
+- `trapped` (near wake, z_f = 3): theta < theta_inn, with theta_inn = 122 r + 47 degrees for r <= r* = 0.353
+  (for r > r* the paper's other branch; the builder reads it from the notes or flags it unsupported);
+- `far_wake` (z_f = 2): theta_inn <= theta < theta_bif - s_w, theta_bif = 100 exp(-1.618 r) + 40 degrees, shock-band
+  half-width s_w a named setting (default 2 degrees, range 1 to 3);
+- `shock_band` (z_f = 1): |theta - theta_bif| <= s_w;
+- `escape` (z_f = 0): theta > theta_bif + s_w.
+Interaction time t_fz = D1 (rho_body / q_inf)^(1/2) t_hat, with t_hat = 0 (trapped), A0(r) + 0.5 exp[-0.05(theta -
+theta_inn)], A0 = -7.2 r^2 + 3 r + 0.1 for r <= r* (far wake), 0.88 r + 0.32 + 0.01 exp[0.125(theta - theta_bif - 10)]
+(escape); rho_body is the follower's density (AFFIx assumes equal densities; the Generic Spacecraft is a hollow
+shell, so an `unequal_density` flag is always set for it, with the parent's bulk density m / (pi D1^3 / 6) recorded).
+The function takes flow quantities only (no altitude), accepts any theta in 0 to 180, and returns a validity record:
+r inside the fitted range 1/16 to 1 (for D1 = 2.81 m that is D2 >= about 176 mm, so smaller spheres are flagged as
+extrapolation), both bodies in continuum flow (Kn = mfp / D below `kn_continuum`), hypersonic (parent Mach at least
+`affix_mach_min`, default 5), and the equal-density flag.
+
+**Release state by outcome (Asha, 2026-10-29).** The follower's release velocity is the parent's (zero sideways
+release speed stays the baseline; Register's dispersion result supports it). The release POSITION depends on the
+outcome, because the engine does not integrate the shock-driven motion that delivers the follower to it:
+- `far_wake`: on the wake axis, **two parent diameters behind the parent's centroid** (P(t_r) - 2 D1 v_hat), Asha's
+  estimate from Register et al. The far-wake start does not depend on theta, so one integration per (diameter,
+  altitude, bound, wake_flow) serves every far-wake theta; theta changes only the classification and t_fz.
+- `escape`: at the windward surface point, P(t_r) + (D1/2)(-cos(theta) v_hat + sin(theta) n_hat), with n_hat the
+  unit vector perpendicular to v_hat in the local vertical plane, pointing up. Its engine residence is expected to
+  be near zero (`ahead_of_parent` or `starts_outside`); t_fz is recorded beside it, and a computed residence much
+  longer than t_fz is flagged.
+- `shock_band`: not integrated; reported with residence NaN and reason `shock_band` ("outside both models").
+- `trapped` (unreachable on the windward side for our sizes, kept for general use): not integrated; reported as
+  censored with reason `near_wake_trapped`, rather than trusting a drag-only exit.
+
+**Scope for the Generic Spacecraft.** Releases are on the windward side only: theta from 90 to 180 degrees
+(Asha). The spacecraft scenario rejects other values; the general function accepts 0 to 180. For 1 to 400 mm
+spheres theta_inn is 47 to 64 degrees, so no windward release is trapped; theta_bif is about 139 degrees (10 mm),
+134 (100 mm), 129 (200 mm) and 119 (400 mm).
+
+**Cross-check.** AFFIx reports a near-wake force coefficient of about 0.12 against 0.88 in free flow, a ratio of
+about 0.14. The tables report our model's drag ratio for a sphere at the far-wake start point (two parent diameters
+behind, on the axis), rho_w (V - u)^2 / (rho_inf V^2) with V the parent's speed, at each release altitude and bound,
+next to 0.14.
+
 ### 4.4 In the plume, and residence time
 
 Let P(tau) be the parent's Earth-fixed track position at time tau, and S(t) the sphere's position at time t,
@@ -384,6 +445,10 @@ extended down to 1 mm; 200 and 400 mm are added so the crossover diameter, expec
 implementer adjusts the altitude list to the parent's branch if any altitude is outside it, and states so. The
 spheres are integrated in the continuum-to-free-molecular range the repository's drag tables cover; any case
 whose Knudsen number or Mach number leaves the tables' range is flagged.
+
+Release angles (§4.3b): theta = 90, 120, 135, 145, 160 and 180 degrees, which bracket theta_bif for every size.
+Every (diameter, altitude, theta) is classified; far-wake cases share one integration per (diameter, altitude,
+bound, wake_flow); escape cases are integrated from their surface points; shock-band cases are not integrated.
 
 Time step: the sphere history is sampled finely enough to resolve the exit to the 1 ms tolerance (use the
 integrator's dense output rather than the 1 s cadence).
@@ -469,6 +534,17 @@ Regime tests (§4.2):
 - Transitional range: in a transitional interval the record holds the two Feldman results, the turbulent result,
   and their minimum and maximum.
 
+Release classifier tests (§4.3b):
+- `affix_regime` reproduces theta_inn and theta_bif at r = 1/16, 1/4 and 1/2 and the zone boundaries around them.
+- theta = 90 with a small r gives `far_wake`; theta = 180 gives `escape`; a theta inside the shock band gives
+  `shock_band`; theta below theta_inn gives `trapped`.
+- t_fz follows the three t_hat formulas; t_hat = 0 when trapped.
+- An input outside 90 to 180 is accepted by the general function but rejected by the spacecraft scenario.
+- The validity record flags r < 1/16, Kn > `kn_continuum` for either body, Mach below `affix_mach_min`, and unequal
+  densities; the classifier has no altitude argument.
+- Release positions: the far-wake start is on the axis two parent diameters behind the centroid; the escape start
+  is on the parent's surface at theta (distance D1/2 from the centroid, angle theta from -v_hat).
+
 Wake gas state tests (§4.3a):
 - Conservation: integrating the velocity profile over a cross-section gives D/U per unit length, and the
   temperature excess gives D per unit length, to quadrature tolerance.
@@ -500,7 +576,11 @@ emission point from Kn, then Re_d and Taylor's pressure parameter together (lami
 laminar, turbulent only if both say turbulent, otherwise transitional and reported as a range), never from
 altitude bands, with all four thresholds overridable (§4.2; corrected by the side session the same day); Feldman (1961) is the laminar law, run as two bounds
 (ambient and hot axis diffusivity) with no cap on the laminar radius (§4.2); rarefied points have no law
-unless a fallback is chosen explicitly (§4.2).
+unless a fallback is chosen explicitly (§4.2). Later still: the front-plane ruling (plume only behind the
+parent's base plane; `reached_parent` / `ahead_of_parent` labels) stands (§4.3a); the Register et al. (2020) release
+classifier is added with releases limited to the windward side, theta 90 to 180 degrees, far-wake releases starting
+on the wake axis two parent diameters behind the parent (Asha's estimate from Register et al.), escape releases at
+the windward surface point, shock-band cases flagged and not integrated (§4.3b).
 
 Calls made by the author (not decided by Asha; the final handover lists them again):
 - Union-of-balls definition of "in the plume" (§4.4).
@@ -519,6 +599,8 @@ Calls made by the author (not decided by Asha; the final handover lists them aga
   sphere parent settling at terminal speed cannot make Feldman's x/(f U) blow up.
 - Defaults `T_axis_hot` = 3000 K and f = 0.8 for the Feldman law (§4.2).
 - Default diameter and altitude lists (§4.5) and the sensitivity ranges (§4.6).
+- AFFIx details (§4.3b): s_w default 2 degrees, `affix_mach_min` 5, rho_body = the follower's density, n_hat in the
+  local vertical plane pointing up, and one shared far-wake integration per case across theta.
 - The engine/adapter/scenario split (§4.0), the all-intervals output, and the validity record that flags
   but never refuses (so the droplet-in-sphere-plume use runs even where the plume law is poorly applicable).
 - Use of `trajectory.Simulator` rather than the droplet drag law, because the spheres are 1 to 400 mm and
