@@ -389,13 +389,14 @@ class Skins:
             self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T), U)
         return mass, H
 
-    def take_top_mass(self, dm, admit):
+    def take_top_mass(self, dm, admit, phase=None):
         """Remove dm >= 0 [kg] per column from its top down through the run of admissible cells from its top (`admit`,
         (n, K) bool), at most what that run holds, each cell's metal at its own specific enthalpy and velocity: a partly
         taken cell keeps both, its temperature and its sensitivity, and the cells beneath are untouched (sub-plan 21 Task
         7: the release of spec 8, which thins the top cell until it merges). Returns (mass, enthalpy, solid) taken per
         column, solid the mass of solid in it by the cells' liquid fractions, and leaves the momentum that went in
-        `momentum_out`."""
+        `momentum_out`. With `phase` ((n, K) bool), what was taken is also split by the cells it came from, those in
+        `phase` and the others, and left in `phase_out` (sub-plan 22 Task 2: each spray mode's droplets)."""
         dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
         if not np.all(np.isfinite(dm) & (dm >= 0.0)):
             raise ValueError("a release from a skin's top must be a finite, non-negative mass")
@@ -404,14 +405,36 @@ class Skins:
         taken = np.where(run, np.clip(dm[:, None] - above, 0.0, self.m), 0.0)
         frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
         mass, H = taken.sum(axis=1), (self.H * frac).sum(axis=1)
-        solid = (taken * (1.0 - self.props.liquid_fraction(self.T))).sum(axis=1)
+        f_s = 1.0 - self.props.liquid_fraction(self.T)
+        solid = (taken * f_s).sum(axis=1)
         momentum = (taken[..., None] * self.U).sum(axis=1)
+        if phase is not None:
+            self.phase_out = self._by_phase(taken, frac, f_s, np.asarray(phase, dtype=bool), (mass, H, solid, momentum))
         whole = np.cumprod(run & (taken >= self.m), axis=1).sum(axis=1)        # the cells wholly taken, from the top
         part = (taken > 0.0) & (np.arange(self.m.shape[1])[None, :] >= whole[:, None])
         self.m, self.H = np.where(part, self.m - taken, self.m), np.where(part, self.H * (1.0 - frac), self.H)
         self.take_top(whole)
         self.momentum_out = momentum
         return mass, H, solid
+
+    def _by_phase(self, taken, frac, f_s, phase, totals):
+        """`take_top_mass`'s (mass, enthalpy, solid, momentum) taken, each with a leading axis of two: [0] from the cells
+        in `phase`, [1] from the others. A column that took from cells of one kind gives that kind its totals to the last
+        bit and the other nothing; one that took from both sums each kind's cells."""
+        got = taken > 0.0
+        inside, outside = (got & phase).any(axis=1), (got & ~phase).any(axis=1)
+        out = [np.zeros((2,) + x.shape) for x in totals]
+        for j, only in ((0, inside & ~outside), (1, outside & ~inside)):
+            for o, x in zip(out, totals):
+                o[j, only] = x[only]
+        both = np.flatnonzero(inside & outside)
+        for j, on in enumerate((phase[both], ~phase[both])):
+            t = taken[both] * on
+            parts = (t.sum(axis=1), (self.H[both] * frac[both] * on).sum(axis=1), (t * f_s[both]).sum(axis=1),
+                     (t[..., None] * self.U[both]).sum(axis=1))
+            for o, x in zip(out, parts):
+                o[j, both] = x
+        return tuple(out)
 
     def add_bottom(self, dm, h, s=1.0, u=None):
         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
@@ -1750,7 +1773,9 @@ class Flow:
     records of its own: what was released is in the pass's FlowBook (`released`, `released_H`, `released_p`,
     `released_solid`). Since sub-plan 22 Task 1c it may give a `Cascade` instead, the liquid's rate and the exposed
     slurry's own per column, which the release takes cell by cell in time order (`cascade_mass`; Girin's,
-    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`)."""
+    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`). Every
+    release's book carries it by the cells it came from too, liquid and slurry (`phase_mass`, ...), and a Cascade with a
+    `histogram` has each flow sub-step's droplets binned by size (`hist_n`, `hist_m`; sub-plan 22 Task 2)."""
     columns: object
     dp_ds: np.ndarray
     shear: np.ndarray
@@ -1786,17 +1811,28 @@ class FlowBook:
     released_solid: np.ndarray = None  # kg (n,): the solid in it, by its cells' liquid fractions
     released_slurry: np.ndarray = None  # kg (n,): what the cascade took at the exposed slurry's own rate (sub-plan 22
                                         # Task 1c; zero for a release given as one rate)
+    # the release by the cells it came from (sub-plan 22 Task 2): [0] fully liquid, at or above the liquidus, [1] the
+    # others (the exposed slurry, only with slurry spraying) -- each spray mode's droplets
+    phase_mass: np.ndarray = None      # kg (2, n)
+    phase_H: np.ndarray = None         # J (2, n): its enthalpy, at its cells' own specific enthalpies
+    phase_p: np.ndarray = None         # kg m/s (2, n, 3): its momentum, at its cells' own velocities
+    phase_solid: np.ndarray = None     # kg (2, n): the solid in it
+    hist_n: np.ndarray = None          # (bins,): the droplets released, binned by size each flow sub-step at the radii of
+    hist_m: np.ndarray = None          # kg (bins,): the Cascade's `histogram`, and their mass (None without one)
 
     @classmethod
     def zero(cls, n):
         return cls(*(np.zeros((n, 3)) for _ in range(4)), released=np.zeros(n), released_H=np.zeros(n),
-                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n))
+                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n),
+                   phase_mass=np.zeros((2, n)), phase_H=np.zeros((2, n)), phase_p=np.zeros((2, n, 3)),
+                   phase_solid=np.zeros((2, n)))
 
     def add(self, other):
         """Add another book's impulses and releases and keep the worst numbers of both."""
         for key in ("push", "shear", "wall", "carried"):
             setattr(self, key, getattr(self, key) + getattr(other, key))
-        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry"):
+        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry", "phase_mass", "phase_H",
+                    "phase_p", "phase_solid", "hist_n", "hist_m"):
             mine, theirs = getattr(self, key), getattr(other, key)
             if theirs is not None:
                 setattr(self, key, theirs.copy() if mine is None else mine + theirs)
@@ -1885,6 +1921,10 @@ def flow_substeps(sk, flow, dt, cycles=None):
             rb = release_top(sk, dm, flow.slurry)
             step.released, step.released_H = rb.mass, rb.enthalpy
             step.released_p, step.released_solid = rb.momentum, rb.solid
+            ph = rb.by_phase                             # by the cells it came from, and binned by size (Task 2)
+            step.phase_mass, step.phase_H, step.phase_p, step.phase_solid = ph.mass, ph.enthalpy, ph.momentum, ph.solid
+            if isinstance(given, Cascade) and given.histogram is not None:
+                step.hist_n, step.hist_m = given.histogram(ph.mass)
             clock("release", started)
         book.add(step)
     book.cycles = cycles
@@ -1905,6 +1945,8 @@ class ReleaseBook:
     enthalpy: np.ndarray     # J (n,), at the cells' own specific enthalpies
     momentum: np.ndarray     # kg m/s (n, 3), at the cells' own velocities: the droplets' momentum, fact 29's sink
     solid: np.ndarray        # kg (n,): the solid in it, by the cells' liquid fractions (the droplets' solid fraction)
+    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] fully liquid,
+                             # [1] the others (sub-plan 22 Task 2)
 
 
 def release_top(sk, dm, slurry=False):
@@ -1917,11 +1959,14 @@ def release_top(sk, dm, slurry=False):
     enthalpy and velocity (`Skins.take_top_mass`): the droplets carry momentum away from the top cells at their release
     speed (spec 6.4), the speed of the metal they are made of, the top of the resolved profile -- fact 29's sink
     mdot V_s with V_s the sheared layer's surface speed -- so each column's mass, enthalpy and momentum fall by exactly
-    what the book says left. Updates the cells; returns a ReleaseBook."""
+    what the book says left. Updates the cells; returns a ReleaseBook, with what came from the fully liquid cells and
+    what from the others in `by_phase` (sub-plan 22 Task 2: the liquid's mode's droplets and the slurry's)."""
     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
-    admit = flowing if slurry else flowing & (sk.T >= sk.material.T_liquidus)
-    mass, H, solid = sk.take_top_mass(dm, admit)
-    return ReleaseBook(mass, H, sk.momentum_out.copy(), solid)
+    liquid = flowing & (sk.T >= sk.material.T_liquidus)
+    admit = flowing if slurry else liquid
+    mass, H, solid = sk.take_top_mass(dm, admit, phase=liquid)
+    pm, pH, ps, pp = sk.phase_out
+    return ReleaseBook(mass, H, sk.momentum_out.copy(), solid, ReleaseBook(pm, pH, pp, ps))
 
 
 @dataclass
@@ -1929,10 +1974,13 @@ class Cascade:
     """A release given phase by phase (`Flow.release`; sub-plan 22 Task 1c): per column the liquid's rate and the exposed
     slurry's own [kg/(m2 s) of top area, (n,)], the slurry's holding for slurry cells at least as warm as `T_slurry` [K,
     (n,)], the cell whose properties gave it -- a colder slurry cell, more solid and more viscous, ends the column's
-    cascade -- or for every slurry cell where None."""
+    cascade -- or for every slurry cell where None. `histogram`, if given, bins each flow sub-step's droplets by size:
+    a callable of the release by phase [kg, (2, n): the liquid's mode's, the slurry's] giving (droplets, mass [kg]) per
+    size bin (sub-plan 22 Task 2: `skinbody.SprayPlan.histogram`, at the macro step's radii)."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     T_slurry: np.ndarray = None
+    histogram: object = None
 
 
 def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):

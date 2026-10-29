@@ -95,7 +95,10 @@ the equator where it lies in the surface (corrected 2026-09-24; the whole decele
 nose by 1/cos(phi)).
 
 Release per patch and step: dm = min(mdot A dt, m_f) (the film after feed and runoff), dn = dm / (4/3 pi rho_l r^3);
-one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX].
+one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX]. The layered
+skins' records are one row per column, per mode, per macro step (`skinbody.SprayPlan.source_block`, sub-plan 22 Task 2):
+the same columns, written by the same `source_block`, the two last columns the droplets' solid fraction and the enthalpy
+per kilogram they carry (spec 8 and 10.2; the 2026-10-07 design 7.5).
 
 The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius and by one
 of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
@@ -123,10 +126,13 @@ N_BINS, R_MIN, R_MAX = 40, 1.0e-6, 1.0e-2
 BIN_EDGES = np.logspace(np.log10(R_MIN), np.log10(R_MAX), N_BINS + 1)
 WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected above this droplet Weber number
 CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
-# the last two: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22)
+# h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
+# solid_fraction and h_kg: the droplets' solid share of their mass and the enthalpy per kilogram they carry [J/kg, on
+# the material's enthalpy scale] (spec 8 and 10.2, sub-plan 22 Task 2): the element model's film is liquid by
+# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`)
 SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup",
-                  "h_floor_m", "gamma_tau"]
+                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg"]
 BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
 #                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
 BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous medium: Girin & Kopyt's step profile again
@@ -493,19 +499,45 @@ class SprayModel:
                            h_floor, gamma_tau, outside & gk, wavelength)
 
 
-def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state):
-    """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step."""
+def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
+    """Source-table rows, an array (k, len(SOURCE_COLUMNS)), for the patches that released mass (`res.dm` > 0): `h` [m]
+    and `V` [m/s] the altitude and speed, `theta` [rad], `centroids` (n, 3) [m] and `t_hat` (n, 3) per patch, `flow`'s
+    `closure`, `res` a SprayResult (or anything with its per-patch `branch`, `delta_m`, `we_s`, `r`, `dn`, `dm`, `v_s`,
+    `h_floor`, `gamma_tau`), `b` [m] the film thickness, `liquid` the droplets' properties -- each of its `rho`, `mu` and
+    `sigma` one value or one per patch (a slurry droplet's are its slurry's: sub-plan 22 Task 2) -- for their Weber and
+    Ohnesorge numbers at the freestream `state`, and `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given)."""
     k = np.flatnonzero(res.dm > 0.0)
     if k.size == 0:
-        return []
+        return np.zeros((0, len(SOURCE_COLUMNS)))
     r = res.r[k]
-    we_d = state.freestream.rho * state.V ** 2 * 2.0 * r / liquid.sigma
-    oh = liquid.mu / np.sqrt(liquid.rho * liquid.sigma * 2.0 * r)
-    rows = np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
+    n = len(res.dm)
+    rho, mu, sigma = (np.broadcast_to(np.asarray(x, dtype=float), (n,))[k] for x in (liquid.rho, liquid.mu, liquid.sigma))
+    we_d = state.freestream.rho * state.V ** 2 * 2.0 * r / sigma
+    oh = mu / np.sqrt(rho * sigma * 2.0 * r)
+    s_f = np.zeros(k.size) if solid_fraction is None else np.asarray(solid_fraction, dtype=float)[k]
+    h_d = np.full(k.size, np.nan) if h_kg is None else np.asarray(h_kg, dtype=float)[k]
+    return np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
                             centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
-                            res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1], t_hat[k, 2],
-                            we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k]])
-    return rows.tolist()
+                            res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1],
+                            t_hat[k, 2], we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k],
+                            s_f, h_d])
+
+
+def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
+    """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step
+    (`source_block`'s, as lists: the element model's form, one row per patch-step)."""
+    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg).tolist()
+
+
+def source_table(rows):
+    """A body's `source_rows` as one array (N, len(SOURCE_COLUMNS)): a list of rows (the element model's, one per
+    patch-step) or of blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about
+    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records)."""
+    if not len(rows):
+        return np.zeros((0, len(SOURCE_COLUMNS)))
+    if isinstance(rows[0], np.ndarray) and rows[0].ndim == 2:
+        return np.concatenate(rows, axis=0)
+    return np.array(rows, dtype=float)
 
 
 def histogram(r, dn, dm):

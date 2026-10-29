@@ -2184,3 +2184,82 @@ def test_a_flow_sub_step_with_the_liquid_s_rate_and_the_slurry_s_releases_the_ca
     flow.release = skin.prescribed_release(rates[0])
     one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
     assert one.released.sum() > 0.0 and not one.released_slurry.any()
+
+
+# -- the droplet records: the release by the cells it came from (sub-plan 22 Task 2) ----------------------------------
+def test_a_release_is_split_by_the_cells_it_came_from_and_a_column_of_one_kind_keeps_its_totals_to_the_last_bit():
+    """Spec 8's separate records for the liquid's mode and the slurry's (sub-plan 22 Task 2): `release_top` books what it
+    took by the cells it came from -- [0] the fully liquid ones, [1] the others -- mass, enthalpy, solid and momentum at
+    each cell's own. Five columns of 10 um cells, each kind of cell moving its own way: liquid over slurry, exposed
+    slurry, liquid alone, rigid metal, slurry over liquid. With slurry spraying on, asked for two and a half cells: the
+    first column gives its two liquid cells to [0] and half a slurry cell to [1], the fifth two slurry cells and half a
+    liquid one; a column that took one kind gives that kind its totals to the last bit and the other nothing; the liquid
+    carries no solid. With it off, everything is liquid's."""
+    col, _ = strip_grid(5, 2)
+    temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [SLURRY] * 3 + [RIGID] * 3, [LIQUID] * 4 + [RIGID] * 3,
+             [RIGID] * 4, [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3] * 2
+    for slurry in (True, False):
+        sk = stacked(col, temps)
+        liquid = sk.valid & (sk.T >= sk.material.T_liquidus)
+        sk.U = np.where(liquid[..., None], [2.0, 0.0, 0.0], [0.0, 0.5, 0.0]) * sk.valid[..., None]
+        m, h, U = sk.m[:, 0].copy(), sk.H / np.where(sk.m > 0.0, sk.m, 1.0), sk.U.copy()
+        f_s = 1.0 - sk.props.liquid_fraction(sk.T)
+        book = skin.release_top(sk, 2.5 * m, slurry=slurry)
+        ph = book.by_phase
+        for total, part in ((book.mass, ph.mass), (book.enthalpy, ph.enthalpy), (book.solid, ph.solid),
+                            (book.momentum, ph.momentum)):
+            assert part.shape == (2,) + total.shape
+            np.testing.assert_allclose(part.sum(axis=0), total, rtol=1e-15, atol=1e-30)
+        assert not ph.solid[0].any()
+        one = [1, 2, 3, 6, 7, 8] if slurry else list(range(10))                # one kind taken, or none
+        kind = (ph.mass[1] > 0.0).astype(int)
+        for i in one:
+            for total, part in ((book.mass, ph.mass), (book.enthalpy, ph.enthalpy), (book.momentum, ph.momentum)):
+                assert np.array_equal(part[kind[i], i], total[i]) and not part[1 - kind[i], i].any()
+        if not slurry:
+            assert not ph.mass[1].any() and np.array_equal(ph.mass[0], book.mass)
+            continue
+        for i, (n_liq, n_sl, first) in ((0, (2.0, 0.5, 0)), (4, (0.5, 2.0, 2))):     # the mixed columns, by hand
+            cells = [(0, 1.0), (1, 1.0), (2, 0.5)]
+            liq = [(k, w) for k, w in cells if liquid[i, k]]
+            sl = [(k, w) for k, w in cells if not liquid[i, k]]
+            for j, run in ((0, liq), (1, sl)):
+                np.testing.assert_allclose(ph.mass[j, i], sum(w for _, w in run) * m[i], rtol=1e-14)
+                np.testing.assert_allclose(ph.enthalpy[j, i], sum(w * m[i] * h[i, k] for k, w in run), rtol=1e-14)
+                np.testing.assert_allclose(ph.solid[j, i], sum(w * m[i] * f_s[i, k] for k, w in run), rtol=1e-14,
+                                           atol=1e-30)
+                np.testing.assert_allclose(ph.momentum[j, i], sum(w * m[i] * U[i, k] for k, w in run), rtol=1e-14)
+            assert ph.mass[0, i] == pytest.approx(n_liq * m[i], rel=1e-14) and ph.mass[1, i] == pytest.approx(n_sl * m[i])
+
+
+def test_a_cascade_with_a_histogram_bins_each_flow_sub_step_s_release_and_the_book_keeps_it_by_phase(coarse_sphere_mesh):
+    """Sub-plan 22 Task 2: the flow's book carries every flow sub-step's release by the cells it came from
+    (`phase_mass`, `phase_H`, `phase_p`, `phase_solid`), which add up to the release, and a `skin.Cascade` with a
+    `histogram` has each flow sub-step's release binned by size, the book summing the bins over the sub-steps. On the
+    test sphere's mixed skins at three cycles with slurry spraying on: the histogram is called once a flow sub-step, on
+    that sub-step's release by phase, and the slurry's part is what the cascade took at the slurry's rate (to round-off:
+    the release's own cells against the cascade's arithmetic)."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    rng = np.random.default_rng(10)
+    rates = np.vstack([rng.uniform(0.0, 8.0, col.n), rng.uniform(0.0, 4.0, col.n)])
+    seen = []
+
+    def histogram(mass):
+        seen.append(mass.copy())
+        return np.array([mass[0].sum(), mass[1].sum()]), np.array([1.0, 2.0])
+    sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+    flow = sphere_flow(col, 3, A_top=col.area * 1.01)
+    flow.release, flow.slurry = (lambda s: skin.Cascade(rates[0], rates[1], histogram=histogram)), True
+    book = skin.flow_substeps(sk, flow, 0.01)
+    assert len(seen) == 3 and book.hist_m.tolist() == [3.0, 6.0]
+    np.testing.assert_allclose(book.hist_n, [sum(s[0].sum() for s in seen), sum(s[1].sum() for s in seen)], rtol=1e-15)
+    np.testing.assert_allclose(book.phase_mass, sum(seen), rtol=1e-15)
+    for total, part in ((book.released, book.phase_mass), (book.released_H, book.phase_H),
+                        (book.released_solid, book.phase_solid), (book.released_p, book.phase_p)):
+        np.testing.assert_allclose(part.sum(axis=0), total, rtol=1e-14, atol=1e-25)
+    assert book.phase_mass[1].sum() > 0.0 and book.phase_mass[0].sum() > 0.0 and not book.phase_solid[0].any()
+    np.testing.assert_allclose(book.phase_mass[1], book.released_slurry, rtol=1e-12, atol=1e-22)
+    flow.release = skin.prescribed_release(rates[0])                          # a release of one rate: no histogram
+    one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
+    assert one.hist_n is None and one.phase_mass.sum() > 0.0
