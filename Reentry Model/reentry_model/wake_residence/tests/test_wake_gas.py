@@ -12,19 +12,35 @@ from reentry_model.wake_residence.track import Track
 E = EmissionState(rho=3e-4, T=240.0, p=20.0, mu=sutherland_mu(240.0), mfp=1e-4, U=4000.0, d=2.813, cda=5.5, r0=1.4065)
 AMB = Ambient(p=20.0, T=240.0, rho=20.0 / (R_AIR * 240.0)); X = np.array([1.0, 0, 0])
 
-def test_momentum_and_energy_are_conserved():
-    r_b = 40.0; D = 0.5 * E.rho * E.U**2 * E.cda
-    mom = quad(lambda r: gas_state(r, r_b, E, X, AMB, "both").rho * gas_state(r, r_b, E, X, AMB, "both").u[0]
-               * 2 * math.pi * r, 0, 10 * r_b, limit=200)[0]
-    q = lambda r: 1 - AMB.T / gas_state(r, r_b, E, X, AMB, "both").T
-    energy = quad(lambda r: q(r) * 2 * math.pi * r, 0, 10 * max(r_b, math.sqrt(D / E.p)), limit=200)[0]
+@pytest.mark.parametrize("r_b", [40.0, 5.0])    # 40 m: the core is the energy radius; 5 m: the line-blast radius (25.7 m) is
+def test_momentum_and_energy_are_conserved(r_b):    # larger than the core, so the R_E > r_b branch is integrated too
+    D = 0.5 * E.rho * E.U**2 * E.cda; R_E = max(r_b, math.sqrt(D / E.p))
+    st = lambda r: gas_state(r, r_b, E, X, AMB, "both")
+    mom = quad(lambda r: st(r).rho * st(r).u[0] * 2 * math.pi * r, 0, 10 * r_b, limit=200)[0]
+    # the enthalpy actually deposited above ambient, from the returned density and temperature (not from q)
+    energy = quad(lambda r: st(r).rho * CP_AIR * (st(r).T - AMB.T) * 2 * math.pi * r, 0, 10 * R_E, limit=200)[0]
     assert mom == pytest.approx(D / E.U, rel=1e-3)           # only exact where neither cap binds (r_b chosen so)
-    assert energy == pytest.approx(D * R_AIR / (AMB.p * CP_AIR), rel=1e-3)
+    assert energy == pytest.approx(D, rel=1e-3)
 
 def test_caps_hold_close_to_a_fast_parent():
-    s = gas_state(0.0, 0.5, EmissionState(**{**E.__dict__, "U": 7800.0, "rho": 1e-5, "p": 0.6}), X,
-                  Ambient(p=0.6, T=200.0, rho=0.6 / (R_AIR * 200.0)), "both")
-    assert s.u[0] <= 7800.0 and s.T <= 200.0 + 7800.0**2 / (2 * CP_AIR) + 1e-9
+    # a heavy drag on a tiny core in thin air: both the stagnation-temperature cap and the speed cap bind at the centre
+    e = EmissionState(**{**E.__dict__, "U": 3000.0, "rho": 1e-2, "p": 1e4, "cda": 50.0})
+    amb = Ambient(p=10.0, T=240.0, rho=10.0 / (R_AIR * 240.0))
+    s = gas_state(0.0, 0.1, e, X, amb, "both")
+    assert s.u[0] == pytest.approx(3000.0, rel=1e-12)
+    assert s.T == pytest.approx(240.0 + 3000.0**2 / (2 * CP_AIR), rel=1e-12)
+
+def test_density_is_continuous_across_the_cutoff_for_an_inconsistent_ambient():
+    amb = Ambient(p=20.0, T=240.0, rho=1.02 * 20.0 / (R_AIR * 240.0))     # 2 percent off the ideal gas with R_AIR
+    r_b = 40.0; R_E = max(r_b, math.sqrt(0.5 * E.rho * E.U**2 * E.cda / E.p)); edge = 6.0 * max(r_b, R_E)
+    for mode in ("both", "density", "velocity"):
+        inside, outside = gas_state(edge * (1 - 1e-12), r_b, E, X, amb, mode), gas_state(edge * (1 + 1e-12), r_b, E, X, amb, mode)
+        assert inside.rho == pytest.approx(outside.rho, rel=1e-12) and outside.rho == amb.rho
+        assert inside.T == pytest.approx(outside.T, rel=1e-12) and inside.p == outside.p
+        assert inside.u[0] == pytest.approx(outside.u[0], abs=1e-12 * E.U)
+    # in the plume the density is the ambient density times (1 - q), q = 1 - T_amb / T
+    s = gas_state(5.0, r_b, E, X, amb, "both")
+    assert s.rho == pytest.approx(amb.rho * amb.T / s.T, rel=1e-12) and s.rho < amb.rho
 
 def test_state_is_smooth_across_the_plume_edge():
     r_b = 40.0; f = lambda r: gas_state(r, r_b, E, X, AMB, "both")
@@ -44,7 +60,7 @@ def test_modes_switch_one_effect_each():
 def test_velocity_mode_uses_ambient_density_and_both_uses_the_hot_density():
     v, b = gas_state(5.0, 40.0, E, X, AMB, "velocity"), gas_state(5.0, 40.0, E, X, AMB, "both")
     assert v.rho == AMB.rho and b.rho < AMB.rho and b.T > AMB.T
-    assert b.p == AMB.p and b.rho == pytest.approx(AMB.p / (R_AIR * b.T), rel=1e-12)
+    assert b.p == AMB.p and b.rho == pytest.approx(AMB.rho * AMB.T / b.T, rel=1e-12)
     assert b.u[0] > v.u[0] > 0                          # same momentum density divided by the thinner gas
 
 def test_velocity_points_along_the_direction_and_direction_is_normalised():

@@ -29,7 +29,10 @@ Model (first version; every choice below is an assumption, not a measurement)
   q_c = D R / (p c_p pi R_E^2). At fixed pressure the enthalpy per unit volume above ambient is
   rho c_p (T - T_inf) = (p c_p / R) q exactly (because rho T = p / R and T - T_inf = T q), so the area integral of q,
   q_c pi R_E^2 = D R / (p c_p), is the statement that the drag work D per unit length is all deposited (a test integrates
-  it). T = T_inf / (1 - q) and rho = p / (R T). The centreline value q_c is capped at 1 - T_inf / T_st, where
+  it). T = T_inf / (1 - q) and rho = rho_inf (1 - q) = rho_inf T_inf / T: constant pressure, using the local ambient's
+  own gas constant p_inf / (rho_inf T_inf) (the spec's rho_w = p_inf / (R T_w) with that R), so the density is
+  continuous with the ambient density at the cutoff even when the table the ambient came from is not exactly
+  consistent with R_AIR (a US76 table drifts by a few percent at high altitude). The centreline value q_c is capped at 1 - T_inf / T_st, where
   T_st = T_inf + U^2 / (2 c_p) is the stagnation temperature of the parent's flow, so the gas never exceeds what
   stopping the flow could give (computed from the emission speed U); where the cap binds the energy integral falls short of D R / (p c_p), because the cap
   limits the temperature. This well-mixed mean understates the centreline temperature of a real wake (assumed).
@@ -122,7 +125,7 @@ def gas_state(r_axis: float, r_b: float, emission: EmissionState, direction, amb
     q_c = min(D * R_AIR / (ambient.p * CP_AIR * math.pi * R_E**2), 1.0 - ambient.T / T_st)
     q = q_c * math.exp(-(r_axis / R_E)**2) if mode in ("density", "both") else 0.0
     T = ambient.T / (1.0 - q)
-    rho = ambient.p / (R_AIR * T) if q > 0.0 else ambient.rho
+    rho = ambient.rho * (1.0 - q)                                                # constant pressure: rho T = rho_inf T_inf
     if mode == "density":
         return GasState(rho, T, ambient.p, np.zeros(3))
 
