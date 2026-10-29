@@ -2,12 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a and 1b (2026-10-28).** Task 1 is
-> split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying amendments
-> of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from each
-> column's top cells. **Task 1c waits for Asha's decision** on how the skins' depths are read where liquid lies on
-> slurry (Task 1c below, decision 1) and on the slurry cascade, which the viscous film makes inert (decision 2). Tasks
-> 2–6 are the outline's, below, and the inputs it listed are carried at the end.
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b and 1c (2026-10-28/29).** Task
+> 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
+> amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
+> each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
+> and on the slurry cascade. Tasks 2–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -89,11 +88,39 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
    10 mm top bin while h is under 4.7 mm (fact 170). Task 2's histograms and Task 5's flights report them.
 5. **The viscous film's floor on the skins** — the flowing depth (Asha, 2026-10-28), which counts slurry as part of the
    film with the liquid's viscosity; fact 165's open assumption (the effective floor may lie inside the slurry, the
-   damping larger) carries over (Task 1c).
+   damping larger) carries over (Task 1c). Pinned, with the rest of the depths' reading (option B, 2026-10-29), by
+   `test_girin_gives_each_prescribed_column_its_mode_from_the_skin_s_depths_once_for_the_macro_step`.
 6. **Girin once a macro step** (Task 1c's design) — the rate, the mode and the radius per column are fixed for the
    macro step from its start, as the cap is; a column that becomes wet or changes regime within it waits for the next,
    12.5 ms at the flow-on runs' continuum step and up to 0.5 s at the provisional default. Task 5's halving of the macro
-   step measures it.
+   step measures it. On the skin body's test the flag-off step sprayed only the 144 columns liquid at its start (Task
+   1c). Pinned by `test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_keeps_its_books`.
+7. **The cascade near the liquidus** (Task 1c, option i) — the exposed slurry sprays only within about 0.6–0.8 K of the
+   liquidus, where the bridge's viscosity (no data) is within about ten times the liquid's, but on a heated surface that
+   is where the slurry under the liquid, and a top just entering the bridge, are: with the flag on the skin body's test
+   sprayed 4.98 g of slurry against 0.79 g of liquid (1.54 g of liquid with it off). Off by default. Pinned by
+   `test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_with_the_flag`.
+8. **The cascade's floor** (Task 1c, ruling 3) — once a macro step, the slurry's rate holds for slurry at least as warm
+   as the cell that gave it: within a macro step 0.36 g on the heated state where a per-cell evaluation each flow
+   sub-step would take up to 1.56 g. Pinned by
+   `test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag`.
+
+## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
+
+> Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
+> day). This changes Task 1c and adds an optional argument to the shared spray physics; the element model is unchanged.
+
+1. **Decision 1, option B: the element model's reading.** Where liquid lies on slurry, the skins' front-surface
+   Rayleigh–Taylor mode reads the liquid depth and the molten region a wave must fit in is the liquid's, and off Girin's
+   closure a liquid on slurry is held from the shear modes, as the rigid-substrate amendment of 2026-10-06 has them in
+   the element model; b, the regime test and the viscous film's floor stay on the flowing depth. Through a small
+   optional argument in the shared spray code (`rt_layer`) that the element model never passes.
+2. **Decision 2, option i: the slurry cascade as spec §8 has it**, the 2026-10-07 design's cascade with its slurry
+   properties, behind `--slurry-spray on`, off by default, with its tests, and where it releases measured and recorded
+   in spec §8 as a measured fact, not a change of design. (Measured in Task 1c: it releases only exposed slurry within
+   about 0.6–0.8 K of the liquidus, which on a heated surface is where the slurry under the liquid lies -- not inert.)
+3. **The two choices made within the spec stand:** Girin evaluated once a macro step, at its start, only what the
+   admitted run holds re-checked in each flow sub-step; Girin's surface velocity his closure's.
 
 ## Amendment of 2026-10-28 — the element model's spraying amendments of 2026-10-22 come into this line in Task 1 (Asha's decision)
 
@@ -422,85 +449,184 @@ git commit -m "Spray: the droplet's size cap per crest, (4/3) pi r^3 <= lambda^2
 
 ---
 
-### Task 1c: Spraying from each column's top cells (outline; waits for Asha's decisions 1 and 2)
+### Task 1c: Spraying from each column's top cells
 
-What it builds (spec §8, §6.4, §6.7; the decisions of 2026-10-11, 2026-10-24 and 2026-10-28), on Tasks 1a and 1b and
-sub-plan 21 Task 7's release hook (`SkinBody(release=..., slurry_spray=...)`, `skin.Flow.release`, `skin.release_top`):
+**Files:**
+- Modify: `reentry_model/spray.py` (`SprayModel.evaluate(..., rt_layer=None)`), `reentry_model/skin.py` (`Cascade`,
+  `cascade_mass`; `Flow.release` may give a `Cascade`; `FlowBook.released_slurry`; `flow_substeps`),
+  `reentry_model/skinbody.py` (`SLURRY_SIGMA`; `FlowForcing.result`; `SprayPlan`, `region_extent`, `girin_plan`,
+  `slurry_modes`; `SkinBody(..., spray=None)`, `.spray_plan`, `.droplet_number`, `.transverse_radius()`; the module
+  docstring)
+- Test: `tests/test_reentry_model_spray.py` (one test), `tests/test_reentry_model_skin.py` (two),
+  `tests/test_reentry_model_skinbody.py` (four)
 
-- **Girin once a macro step** (decided here, within spec §8). At the start of each macro step, in `SkinBody.advance`,
-  from the surface flow the flow's forcing evaluates there (`flow_forcing`, the step's aero state and the tops'
-  temperatures at its start) and the skins' depths then: δ_m by Girin's Eq. (2) (`spray.melt_layer`); his surface
-  velocity by his closure, as the element model's (`film.lubrication` on b, the thick branch's τ δ_m / μ_l, which alone
-  enters a gate); b the flowing depth `sk.depth_above(T_rigid)` and the regime test on it (spec §6.7); the viscous
-  film's floor on it (2026-10-28); the windward columns θ ≤ 90°; the molten region on the columns' own graph; the
-  quarter-body cap from the top surface's transverse radius; and the cap's depth, the liquid depth
-  `sk.depth_above(T_liquidus)` with slurry spraying off and the flowing depth with it on (2026-10-24). That gives each
-  column its mode, wavelength, radius and rate per unit top area for the macro step, held through its parts, passes and
-  sub-steps. Why: spec §8 fixes a column's radius within a macro step by that step's gas state and δ_m, so the records
-  combine per column, per mode, per macro step without changing a radius; the cap is evaluated at the start by Asha's
-  decision of 2026-10-24; the gas state changes over seconds (§9); and the element model evaluates its spray once a macro
-  step too. Measured on the 100 mm sphere's 9 417 columns: 0.04–0.05 s an evaluation, nearly all of it reading the two
-  depths, against 0.06 s for the surface flow and about 2 s a flow sub-step (fact 171). Cost if wrong: a column that
-  becomes wet or changes regime within a macro step waits for the next — 12.5 ms at the flow-on runs' continuum step, up
-  to 0.5 s at the provisional default — which Task 5's halving of the macro step measures; the alternative, the
-  depth-dependent parts again in every flow sub-step with the gas state held, costs about 0.04 s each.
-- **Re-evaluated in every flow sub-step:** only what the admitted run holds. The release is the macro step's rate times
-  the top area and the flow sub-step, from the top cells, liquid first, the exposed slurry too only with
-  `--slurry-spray on`, never more than the run holds (`release_top`); the droplets' momentum and enthalpy leave with the
-  cells' own (Task 7's ruling 1).
-- **A minimal record per column per macro step** for the tests — released mass, number, mode, radius — and nothing of
-  Tasks 2–4: the source table's rows per column, per mode, per macro step with `solid_fraction` and `h_kg` and the
-  histograms are Task 2's; the CLI's `--slurry-spray` and the skin run's `--removal girin` default are Task 3's; the
-  history columns, frames and results of spec §10.2 are Task 4's.
-- **Tests** (the brief's): each mode's release from a prescribed column; mass, energy and momentum with spraying on a
-  small body; the cap's two depths, its independence of the column's area and its constancy over a macro step's
-  sub-steps; liquid first and slurry only with the flag; the element model unchanged (Task 1b's).
+**Interfaces:**
+- Consumes: Task 1a's spray model and its gates; Task 1b's `cap_depth` and `SprayResult.wavelength`; sub-plan 21 Task
+  7's `release_top`, `Flow.release`, `FlowBook` and the skin body's release books; 6c's `flow_forcing`;
+  `rheology.viscosity`; `film.lubrication`; `spray.melt_layer`.
+- Produces: `SprayModel.evaluate(..., rt_layer=None)`, `rt_layer` (n,) [m] the liquid pool the Rayleigh–Taylor mode
+  reads; `skin.Cascade(rate, rate_slurry, T_slurry=None)` [kg/(m2 s), kg/(m2 s), K per column];
+  `skin.cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None) -> (mass, from_slurry)` [kg per
+  column]; `FlowBook.released_slurry` (n,) [kg]; `skinbody.FlowForcing(dp_ds, tau, g, result=None)`;
+  `skinbody.girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False) -> SprayPlan`;
+  `SprayPlan` (`rate`, `rate_slurry` [kg/(m2 s)], `result` the liquid's `SprayResult`, `slurry` the exposed slurry's
+  per-column dict, `flowing`, `liquid`, `cap_depth` [m], `on_slurry`; the record `mass`, `mass_slurry` [kg], `number`,
+  `number_slurry`; `.release(sk) -> Cascade`, `.count(rho)`); `skinbody.region_extent(edges, selected, areas)` [m];
+  `skinbody.slurry_modes(...)`; `skinbody.SLURRY_SIGMA` (0.80 N/m); `SkinBody(..., spray=None)` with `.spray_plan`,
+  `.droplet_number` and `.transverse_radius()` [m]. No history column, result or command-line setting changes: those
+  are Tasks 2–4's.
 
-**Decision 1 (Asha): how the skins' depths are read where liquid lies on slurry.** Spec §6.7 and §8 settle b and the
-regime test (the flowing depth) and the 2026-10-28 decision the viscous film's floor (the flowing depth); the cap's depth
-is the admitted run's (2026-10-24). They do not settle what the Rayleigh–Taylor criteria, the molten region the wave
-must fit in, and the element model's hold on a film on slurry off Girin's closure (the rigid-substrate amendment of
-2026-10-06) read. The element model reads the liquid there; the shared spray physics as it stands reads at least b, so
-with b the flowing depth it would read the flowing depth.
-- (A) *One flowing film*: everything reads the flowing depth, no column is "on slurry" (the flowing layer rests on the
-  rigid front by construction), and the liquid and slurry differ only in what the release may take and the cap's depth.
-  No change to the shared physics. On the 100 mm sphere's skins with 0.3 mm of liquid over 3.1 mm of slurry at
-  103 m/s² the Rayleigh–Taylor mode takes the 79 columns within 1–10 degrees of the stagnation point from the thick
-  branch (droplets 3.05 mm); it reads as inviscid a slurry layer whose viscous depth at the mode's growth time
-  (about 7 ms), the Stokes depth √(2ντ*) of 2.1–5.4 mm for Li et al.'s 0.87–5.6 Pa s, is as deep as the layer itself.
-- (B) *The element model's split*: the Rayleigh–Taylor criteria and the molten region read the liquid depth, and a
-  liquid on slurry off Girin's closure is held from the shear modes, as the 2026-10-06 amendment has them. The shared
-  physics gains an optional depth for the Rayleigh–Taylor criteria (the element model never passes it, so it is
-  unchanged). On the same state the mode takes none, and 69 of the 79 columns release nothing; the element flight held
-  up to 17.9 g this way, at 48 s (fact 171).
-- Where neither matters: on sub-plan 21's heated state at 93 s and on 0.3 mm of liquid over 0.9–3.1 mm of slurry at
-  39–53 m/s² every windward column takes the thick branch under either.
-- Recommended: (B), because the Rayleigh–Taylor mode is a liquid pool's and the slurry beneath is viscous through its
-  depth on the mode's growth time, and because Task 5 compares the skins with the element model, which reads the
-  depths so.
+Asha decided on 2026-10-29 (spec §8 and §16 as amended that day): where liquid lies on slurry the skins read their depths
+as the element model does (decision 1, option B), the slurry cascade is built as spec §8 has it (decision 2, option i),
+and the two choices Task 1c's outline made within the spec stand — Girin evaluated once a macro step at its start, only
+what the admitted run holds re-checked in each flow sub-step; Girin's surface velocity his closure's.
 
-**Decision 2 (Asha): the slurry cascade under the viscous film.** Spec §8 carries the 2026-10-07 design's cascade over
-with its slurry properties: with `--slurry-spray on`, once the liquid is gone, the exposed slurry is stripped at the rate
-Girin's model gives for its own properties. An exposed slurry layer takes Girin & Kopyt's thin mode (its own δ_m is
-centimetres), and with Li et al.'s viscosity the viscous film damps it at Γτ* = 24–526 on every windward column of the
-100 mm sphere at 93 s, against 0.13 for liquid aluminium: the cascade releases nothing (fact 171). With the flag on, the
-only change would then be the liquid droplets' cap on the flowing depth.
-- (i) Build the cascade as the spec has it, inert: about a hundred lines (Li's viscosity at the slurry layer's own shear
-  rate, its δ_m and regime test) and their tests, for a release of nothing.
-- (ii) Record in spec §8 that the viscous film makes the cascade inert, and give `--slurry-spray on` the release of
-  sub-plan 21 Task 7 (the flowing cells taken after the liquid at the column's own mode's rate) as a sensitivity bound:
-  a spec change, small, and the flag no longer the cascade.
-- (iii) Defer the cascade to a later task, the flag refused with the flow on until then.
-- Recommended: (iii), the flag being off by default and the cascade inert by the measured gate; (i) if the spec's
-  cascade must exist for the thesis's statement of it.
+**Girin once a macro step.** At the start of every macro step `SkinBody.advance` evaluates Girin on the corners
+(`girin_plan`), from the surface flow the flow's forcing evaluates there (`flow_forcing`, which now hands its whole
+result on as `FlowForcing.result`) and the skins as they are then, and gives the plan's release to every part's `Flow`.
+`SprayPlan.release` returns the same `Cascade` whatever the skins hold until the next macro step: a column's mode,
+wavelength, radius and rates are the macro step's (spec §8), so the records combine per column, per mode, per macro step
+without changing a radius. What the accepted passes released is the plan's record, and at the step's end its droplets,
+the mass over one droplet's at the mode's radius (`SprayPlan.count`).
+
+**The depths** (option B). b and the regime test read the flowing depth `sk.depth_above(T_rigid)` (spec §6.7), and so
+does the viscous film's floor (2026-10-28). The front-surface Rayleigh–Taylor mode reads the liquid depth
+`sk.depth_above(T_liquidus)` — its depth criterion, its bounded growth and the depth it sheds within a growth time —
+through the shared model's new `rt_layer`, which the element model never passes (ruling 1). The molten region a wave must
+fit in is the contiguous region of columns with liquid (`region_extent` on the columns' graph and top areas); and where
+Girin's closure does not apply, a column whose liquid run lies on a flowing cell that is not fully liquid is held from
+the shear modes (`on_slurry`, judged on the cells, ruling 2). The cap reads the liquid depth with slurry spraying off and
+the flowing depth with it on (2026-10-24); the quarter-body cap reads the top surface's transverse radius about the 3D
+mesh's mean point (ruling 6). Girin's surface velocity is his closure's, `film.lubrication` on b, as the element model's:
+it enters a gate only on the thick branch, where it is τ δ_m / μ_l. The columns on the windward face, θ ≤ 90 degrees,
+alone spray.
+
+**The cascade** (option i; spec §8, the 2026-10-07 design's 8.1–8.2). With `slurry_spray`, the exposed slurry has a mode
+of its own per column (`slurry_modes`): its first cell beneath the liquid run gives the properties — Li et al.'s
+viscosity with the bridge to the liquid (`rheology.viscosity`) at the cell's solid fraction and at the shear rate of the
+slurry's own sheared layer (V_s over δ_m or over the layer, film.lubrication's rate), found by fixed point from rest in
+at most five passes with the rate held at 367 1/s; the cell's mixture density; 0.80 N/m — and Girin's formulas are the
+shared model's with them (its k_r, k_t, critical Weber number and table; the Rayleigh–Taylor mode left to the liquid),
+the slurry's layer from its top to T_rigid being its b, regime layer and floor, its wave fitting in the flowing region,
+its cap the flowing depth. In every flow sub-step the release works down the top cells in time order, each at its own
+phase's rate (`cascade_mass`): the liquid at the liquid's mode's rate, then, once nothing liquid covers it, the slurry at
+its own, until the flow sub-step is spent, a cell may not be taken or its rate is zero. Evaluated once a macro step, the
+slurry's rate holds for slurry cells at least as warm as the cell that gave it, and a colder cell, more solid and more
+viscous, ends the cascade until the next macro step's evaluation (`Cascade.T_slurry`, ruling 3).
+
+**Where the cascade releases** (measured; spec §8 as amended). The viscous film blocks the slurry's thin mode wherever its
+viscosity is more than about ten times the liquid's. Swept on the 100 mm sphere's 9 417 columns with the slurry exposed
+(`measure/task1c/cascade_where.py`): with the exposed cell at or below 907.0 K (μ 0.033 Pa·s and up, Γτ* 3.2–470) no
+column sprays at 93 s or at 120 s under 103 m/s² (Γτ* 3.2–610); from 907.2–907.4 K (μ 9–17 mPa·s, in the upper part
+of the bridge from 906.4 to 908 K) the thin mode opens, and from 907.5 K (6.6 mPa·s) nearly every windward column
+sprays (4 618–4 636 of 4 705), by the thick branch from 907.7 K. So the cascade releases only slurry within about 0.6–0.8 K of the liquidus, where Scheil's curve leaves a few
+per cent of solid. On a heated surface that is the slurry right under the liquid: on sub-plan 21's heated state at 93 s
+the first slurry cell beneath every windward column's liquid is at 907.78–908.00 K (median 907.98), so with the flag on
+a flow sub-step that strips the 6.6 g of liquid also takes 0.35 g of that slurry (5.1 %; one cell, about 10 µm). On the
+skin body's test, the 4 mm sphere heated at 3 MW/m2 from 890 K, the second 0.25 s step sprayed 1.54 g of liquid with the
+flag off; with it on, 0.79 g of liquid and 4.98 g of slurry from 615 columns, 471 of them with no liquid at the step's
+start but a top in the bridge (907.19–908.00 K): metal heated through the last kelvin before the liquidus is stripped
+there. Spec §8 records this as a measured fact; the bridge itself has no data.
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task1c/`):
+- *The books.* The skin body's test (`body_run.py`): the 4 mm test sphere heated at 3 MW/m2 from 890 K under the 100 mm
+  flight's gas state at 93 s, the flow on (one flow sub-step a heat sub-step), two 0.25 s steps. Its tops melt in the
+  first; the second's plan finds liquid on 156 columns and a mode on 144, all thick, and they release 1.54 g as 71 000
+  droplets (radius median 126 µm on a liquid depth of 16.5 µm at the start, median); the mass to 1.5e-16, the energy to
+  2.9e-11 of the heat absorbed, the momentum to 1.1e-17; Pi 0.008. With slurry spraying on, 5.77 g (above): mass 1.5e-16,
+  energy 1.4e-11, momentum 3.8e-17; 89 000 droplets, the slurry's radius median 187 µm.
+- *Nothing else moves.* `--surface-model elements` on the CLI test's short melting case (`measure/task1/cmp/`,
+  `line1c_short`) is Task 1b's to the last bit in all 115 history columns, the source table and the results; and a skin
+  body without a spray model -- flow off with removal, flow on, and flow on with a prescribed release, two 0.25 s steps
+  under 3 MW/m2 from 880 K -- is Task 1b's in all 147 arrays (`bitid.py`: the 3D field, the mesh, the skins' state and
+  every history column but the wall times).
+- *The cost.* On the 100 mm sphere's heated state: the plan 0.09 s of processor time without the cascade and 0.51 s
+  with it (4 705 columns' slurry modes, one shared-model evaluation each), against about 2 s a flow sub-step and about
+  an hour a melting macro step.
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *With `rt_layer` the Rayleigh–Taylor mode's rate sheds the liquid pool, ρ_l min(h_pool, λ/2) / τ*, not b.* Why:
+   option B's reason, the mode is a liquid pool's, and the element model's own form, its rate on the mobile liquid (the
+   film), not on its layer. Cost if wrong: where liquid lies on slurry the mode's demand is smaller by the liquid's share
+   of the flowing depth; its release is the liquid's anyway. Confirmed by Asha, 2026-10-29.
+2. *A column is on slurry where a flowing cell that is not fully liquid lies beneath its liquid run*, judged on the cells,
+   not by comparing the two interpolated depths, which differ by part of a cell at a sharp front. Cost: none.
+3. *The cascade's slurry rate holds for slurry cells at least as warm as the first slurry cell it was evaluated on.*
+   Why: Asha's confirmed rule (Girin once a macro step, only the admitted run re-checked each flow sub-step) and the
+   cascade's per-cell properties both hold: no cell is stripped faster than its own properties allow, to first order.
+   Cost if wrong: within one macro step the cascade takes less than the 2026-10-07 design's per-cell evaluation in every
+   flow sub-step would -- on the heated state 0.36 g (the first cell, about 10 µm) against up to 1.56 g (the slurry down
+   to 907.3 K, about 40 µm; `bridge_mass.py`) -- and catches up over the next macro steps; at the flow-on runs' 12.5 ms
+   macro step a heated front advances about one cell a macro step. Confirmed by Asha, 2026-10-29, over the per-cell evaluation.
+4. *The slurry's viscosity by fixed point from rest*, the shear rate film.lubrication's for the slurry's layer. Why: the
+   2026-10-07 design's rule, started from the most viscous end. Cost: not measured; a start elsewhere could end on
+   another root where Li's fit has two (spec §14 assumption 5).
+5. *The slurry's droplets at the cell's mixture density, 0.80 N/m*, the design's. Cost: none.
+6. *The transverse radius about the 3D mesh's mean point*, as `surface_stats` takes the centre. Why: the skin body has
+   no mass centre of its own; on the sphere the two agree. Cost: the quarter-body cap, which binds only above 12.5 mm on
+   the 100 mm sphere.
+7. *A spray model and a prescribed release are exclusive; a spray model needs the flow and the surface flow's result.*
+   Cost: none.
+8. *The record is the plan's, per column and mode, not the history's.* Why: Task 2 combines the records into the source
+   table and the histograms, Task 4 the history and results (the line drawn in the outline). Cost: none.
+
+- [ ] **Step 1: The Rayleigh–Taylor mode on the liquid pool** — append to `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T1C}}
+
+- [ ] **Step 2: The cascade's tests** — append to `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T1C}}
+
+- [ ] **Step 3: Girin on the skins' tests** — append to `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T1C}}
+
+- [ ] **Step 4: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py
+  tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py -q -k "liquid_pool or the_cascade_takes or
+  releases_the_cascade or girin_gives or cap_reads or slurry_cascade or sprays_by_girin"`. Expected: 7 failed --
+  - `TypeError: SprayModel.evaluate() got an unexpected keyword argument 'rt_layer'`;
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'cascade_mass'`, and `... 'Cascade'`;
+  - `AttributeError: module 'reentry_model.skinbody' has no attribute 'girin_plan'` (3);
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'spray'`.
+
+- [ ] **Step 5: The Rayleigh–Taylor mode's pool** in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T1C}}
+
+- [ ] **Step 6: The cascade in the flow sub-steps** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T1C}}
+
+- [ ] **Step 7: Girin once a macro step, the slurry's mode and the record** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T1C}}
+
+- [ ] **Step 8: Run them to see them pass.** Expected: `tests/test_reentry_model_spray.py` 24 passed,
+  `tests/test_reentry_model_skin.py` 92, `tests/test_reentry_model_skinbody.py` 32 (2 deselected, the reference tier's;
+  the body's spraying test about 100 s); the unit tier 533 passed, 1 skipped.
+
+- [ ] **Step 9: The measurements** (in `measure/task1c/`, each on mains power): `"$PY" body_run.py` and
+  `"$PY" body_run.py slurry` (the books and the record; about 2 minutes each); `"$PY" cascade_where.py heated`,
+  `"$PY" cascade_where.py sweep 93` and `"$PY" cascade_where.py sweep 120 103` (where the cascade releases);
+  `"$PY" bridge_mass.py` (ruling 3); `"$PY" bitid.py run <Task 1b's code> bit_1b.npz`, `"$PY" bitid.py run <code>
+  bit_1c.npz` and `"$PY" bitid.py compare bit_1b.npz bit_1c.npz`; and the element model's short case,
+  `./run_case.sh <code> runs line1c_short` and `"$PY" compare_runs.py runs linecap_short line1c_short` in
+  `measure/task1/cmp/`.
+
+- [ ] **Step 10: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_spray.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py
+git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- evaluated once at the start of every macro step from the surface flow and the skins' depths, b, the regime test and the viscous film's floor on the flowing depth, the Rayleigh-Taylor mode and the molten region on the liquid and a liquid on slurry held off Girin's closure (Asha 2026-10-29, option B), the droplet capped per crest on the depth the release may take; the release in every flow sub-step through the cascade, liquid first and the exposed slurry by its own properties only with slurry spraying on (option i), which sprays only within about a kelvin of the liquidus; a per-column record per mode per macro step; the element model and a skin body without a spray model unchanged to the last bit (sub-plan 22 Task 1c)"
+```
 
 ---
 
 ## The outline (Tasks 2–6, and Task 1 written out above as Tasks 1a, 1b and 1c)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
-   and 1c (the spraying from the top cells, which waits for Asha's decisions 1 and 2). The outline's item, as it
-   stood:
+   and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
    > **Spraying per column**: b the flowing depth, δ_m from Girin's Eq. (2), the rigid-substrate regime test reading the
    > skin's depths, the thin, thick and front-surface Rayleigh–Taylor modes; the release leaves the top cells, liquid
    > first; the droplets' momentum leaves with them. `--slurry-spray` carries over off. Tests: each mode's release from a

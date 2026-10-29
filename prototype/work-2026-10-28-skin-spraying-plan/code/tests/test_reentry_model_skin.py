@@ -2113,3 +2113,74 @@ def test_a_real_pass_takes_the_larger_of_its_trial_pass_s_count_and_its_own_and_
     assert max(c for _, c in out["ones"][1:]) < 1.5 * skin.FLOW_COURANT
     assert real_pass("none flowed", [0] * 10) == alone
     assert real_pass("more", [20] * 10) == [20] * 10
+
+
+# -- the cascade: Girin's release from the top cells (sub-plan 22 Task 1c) --------------------------------------------
+def test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag():
+    """Spec 8 and the 2026-10-07 design's 8.1: within a flow sub-step the release works down the top cells in time
+    order, each at its own phase's rate per unit top area -- a liquid cell at the liquid's mode's, a slurry cell at the
+    exposed slurry's own -- until the sub-step is spent or a cell it may not take is reached; slurry only with the flag,
+    never rigid metal, and a cell whose rate is zero ends it, as does a slurry cell colder than the cell whose properties
+    gave the slurry's rate (`T_slurry`). Six columns of 10 um cells: liquid over slurry (902 K) over rigid metal, slurry
+    exposed over liquid, liquid alone over rigid metal, rigid metal, liquid over a warm slurry cell (907 K) over the
+    slurry, and rigid metal. The liquid's rate takes three of a column's cells in the sub-step, the slurry's one and a
+    half: the first column takes its two liquid cells in two thirds of it and half a slurry cell in the last third.
+    `release_top` then takes exactly that mass from the same cells."""
+    col, _ = strip_grid(3, 2)
+    temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3,
+             [LIQUID] * 2 + [RIGID] * 3, [RIGID] * 4, [LIQUID] * 2 + [907.0] + [SLURRY] * 2 + [RIGID] * 2, [RIGID] * 4]
+    dt = 0.01
+    cases = ((False, (3.0, 1.5), None, [(2, 0), (0, 0), (2, 0), (0, 0), (2, 0), (0, 0)]),
+             (True, (3.0, 1.5), None, [(2.5, 0.5), (1.5, 1.5), (2, 0), (0, 0), (2.5, 0.5), (0, 0)]),
+             (True, (3.0, 0.0), None, [(2, 0), (0, 0), (2, 0), (0, 0), (2, 0), (0, 0)]),
+             (True, (0.0, 1.5), None, [(0, 0), (1.5, 1.5), (0, 0), (0, 0), (0, 0), (0, 0)]),
+             (True, (3.0, 4.5), 905.0, [(2, 0), (0, 0), (2, 0), (0, 0), (3, 1), (0, 0)]))
+    for slurry, (liquid_cells, slurry_cells), floor, want in cases:
+        sk = stacked(col, temps)
+        m = sk.m[:, 0].copy()                    # every cell of a column holds 10 um of solid metal's mass
+        rate = lambda cells: cells * m / (col.area * dt)
+        T_slurry = None if floor is None else np.full(col.n, floor)
+        mass, from_slurry = skin.cascade_mass(sk, rate(liquid_cells), rate(slurry_cells), col.area, dt, slurry, T_slurry)
+        np.testing.assert_allclose(mass, [w[0] for w in want] * m, rtol=1e-12, atol=0.0)
+        np.testing.assert_allclose(from_slurry, [w[1] for w in want] * m, rtol=1e-12, atol=0.0)
+        M0 = sk.column_mass()
+        book = skin.release_top(sk, mass, slurry=slurry)
+        np.testing.assert_allclose(book.mass, mass, rtol=1e-14, atol=0.0)
+        np.testing.assert_allclose(sk.column_mass(), M0 - mass, rtol=1e-14, atol=1e-30)
+
+
+def test_a_flow_sub_step_with_the_liquid_s_rate_and_the_slurry_s_releases_the_cascade_and_books_its_slurry(
+        coarse_sphere_mesh):
+    """A release that gives two rates per column (sub-plan 22 Task 1c), a `skin.Cascade` of the liquid's mode's and the
+    exposed slurry's [kg/(m2 s)], is taken in each flow sub-step by the cascade (`cascade_mass`) rather than as one rate, after
+    the transport and the landing conduction as before, and the flow's book carries what the slurry's rate took
+    (`released_slurry`); a release of one rate books none. On the test sphere's mixed skins at one and three cycles,
+    without and with the flag: the pieces by hand to the last bit, and the mass and energy fall by what was released."""
+    from test_reentry_model_columns import sphere_columns
+    col, _ = sphere_columns(coarse_sphere_mesh)
+    rng = np.random.default_rng(10)
+    rates = np.vstack([rng.uniform(0.0, 8.0, col.n), rng.uniform(0.0, 4.0, col.n)])
+    for cycles, slurry in ((1, False), (3, True)):
+        first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+        flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
+        flow.release, flow.slurry = (lambda sk: skin.Cascade(rates[0], rates[1])), slurry
+        M0, E0 = first.mass(), first.energy()
+        book = skin.flow_substeps(first, flow, 0.01)
+        landed, taken, from_slurry = np.zeros(col.n, dtype=bool), np.zeros(col.n), np.zeros(col.n)
+        for k in range(cycles):
+            if k:
+                second.regrid()
+            by_hand(second, flow, 0.01 / cycles, landed)
+            dm, ds = skin.cascade_mass(second, rates[0], rates[1], flow.A_top, 0.01 / cycles, slurry)
+            taken += skin.release_top(second, dm, slurry=slurry).mass
+            from_slurry += ds
+        assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
+        np.testing.assert_allclose(book.released, taken, rtol=1e-14, atol=0.0)
+        np.testing.assert_array_equal(book.released_slurry, from_slurry)
+        assert (book.released_slurry.sum() > 0.0) == slurry and book.released.sum() > 0.0
+        assert first.mass() == pytest.approx(M0 - book.released.sum(), rel=3e-16)
+        assert first.energy() == pytest.approx(E0 - book.released_H.sum(), rel=8e-16)
+    flow.release = skin.prescribed_release(rates[0])
+    one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
+    assert one.released.sum() > 0.0 and not one.released_slurry.any()

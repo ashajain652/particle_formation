@@ -2,12 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a and 1b (2026-10-28).** Task 1 is
-> split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying amendments
-> of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from each
-> column's top cells. **Task 1c waits for Asha's decision** on how the skins' depths are read where liquid lies on
-> slurry (Task 1c below, decision 1) and on the slurry cascade, which the viscous film makes inert (decision 2). Tasks
-> 2–6 are the outline's, below, and the inputs it listed are carried at the end.
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b and 1c (2026-10-28/29).** Task
+> 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
+> amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
+> each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
+> and on the slurry cascade. Tasks 2–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -89,11 +88,39 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
    10 mm top bin while h is under 4.7 mm (fact 170). Task 2's histograms and Task 5's flights report them.
 5. **The viscous film's floor on the skins** — the flowing depth (Asha, 2026-10-28), which counts slurry as part of the
    film with the liquid's viscosity; fact 165's open assumption (the effective floor may lie inside the slurry, the
-   damping larger) carries over (Task 1c).
+   damping larger) carries over (Task 1c). Pinned, with the rest of the depths' reading (option B, 2026-10-29), by
+   `test_girin_gives_each_prescribed_column_its_mode_from_the_skin_s_depths_once_for_the_macro_step`.
 6. **Girin once a macro step** (Task 1c's design) — the rate, the mode and the radius per column are fixed for the
    macro step from its start, as the cap is; a column that becomes wet or changes regime within it waits for the next,
    12.5 ms at the flow-on runs' continuum step and up to 0.5 s at the provisional default. Task 5's halving of the macro
-   step measures it.
+   step measures it. On the skin body's test the flag-off step sprayed only the 144 columns liquid at its start (Task
+   1c). Pinned by `test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_keeps_its_books`.
+7. **The cascade near the liquidus** (Task 1c, option i) — the exposed slurry sprays only within about 0.6–0.8 K of the
+   liquidus, where the bridge's viscosity (no data) is within about ten times the liquid's, but on a heated surface that
+   is where the slurry under the liquid, and a top just entering the bridge, are: with the flag on the skin body's test
+   sprayed 4.98 g of slurry against 0.79 g of liquid (1.54 g of liquid with it off). Off by default. Pinned by
+   `test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_with_the_flag`.
+8. **The cascade's floor** (Task 1c, ruling 3) — once a macro step, the slurry's rate holds for slurry at least as warm
+   as the cell that gave it: within a macro step 0.36 g on the heated state where a per-cell evaluation each flow
+   sub-step would take up to 1.56 g. Pinned by
+   `test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag`.
+
+## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
+
+> Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
+> day). This changes Task 1c and adds an optional argument to the shared spray physics; the element model is unchanged.
+
+1. **Decision 1, option B: the element model's reading.** Where liquid lies on slurry, the skins' front-surface
+   Rayleigh–Taylor mode reads the liquid depth and the molten region a wave must fit in is the liquid's, and off Girin's
+   closure a liquid on slurry is held from the shear modes, as the rigid-substrate amendment of 2026-10-06 has them in
+   the element model; b, the regime test and the viscous film's floor stay on the flowing depth. Through a small
+   optional argument in the shared spray code (`rt_layer`) that the element model never passes.
+2. **Decision 2, option i: the slurry cascade as spec §8 has it**, the 2026-10-07 design's cascade with its slurry
+   properties, behind `--slurry-spray on`, off by default, with its tests, and where it releases measured and recorded
+   in spec §8 as a measured fact, not a change of design. (Measured in Task 1c: it releases only exposed slurry within
+   about 0.6–0.8 K of the liquidus, which on a heated surface is where the slurry under the liquid lies -- not inert.)
+3. **The two choices made within the spec stand:** Girin evaluated once a macro step, at its start, only what the
+   admitted run holds re-checked in each flow sub-step; Girin's surface velocity his closure's.
 
 ## Amendment of 2026-10-28 — the element model's spraying amendments of 2026-10-22 come into this line in Task 1 (Asha's decision)
 
@@ -1273,85 +1300,1006 @@ git commit -m "Spray: the droplet's size cap per crest, (4/3) pi r^3 <= lambda^2
 
 ---
 
-### Task 1c: Spraying from each column's top cells (outline; waits for Asha's decisions 1 and 2)
+### Task 1c: Spraying from each column's top cells
 
-What it builds (spec §8, §6.4, §6.7; the decisions of 2026-10-11, 2026-10-24 and 2026-10-28), on Tasks 1a and 1b and
-sub-plan 21 Task 7's release hook (`SkinBody(release=..., slurry_spray=...)`, `skin.Flow.release`, `skin.release_top`):
+**Files:**
+- Modify: `reentry_model/spray.py` (`SprayModel.evaluate(..., rt_layer=None)`), `reentry_model/skin.py` (`Cascade`,
+  `cascade_mass`; `Flow.release` may give a `Cascade`; `FlowBook.released_slurry`; `flow_substeps`),
+  `reentry_model/skinbody.py` (`SLURRY_SIGMA`; `FlowForcing.result`; `SprayPlan`, `region_extent`, `girin_plan`,
+  `slurry_modes`; `SkinBody(..., spray=None)`, `.spray_plan`, `.droplet_number`, `.transverse_radius()`; the module
+  docstring)
+- Test: `tests/test_reentry_model_spray.py` (one test), `tests/test_reentry_model_skin.py` (two),
+  `tests/test_reentry_model_skinbody.py` (four)
 
-- **Girin once a macro step** (decided here, within spec §8). At the start of each macro step, in `SkinBody.advance`,
-  from the surface flow the flow's forcing evaluates there (`flow_forcing`, the step's aero state and the tops'
-  temperatures at its start) and the skins' depths then: δ_m by Girin's Eq. (2) (`spray.melt_layer`); his surface
-  velocity by his closure, as the element model's (`film.lubrication` on b, the thick branch's τ δ_m / μ_l, which alone
-  enters a gate); b the flowing depth `sk.depth_above(T_rigid)` and the regime test on it (spec §6.7); the viscous
-  film's floor on it (2026-10-28); the windward columns θ ≤ 90°; the molten region on the columns' own graph; the
-  quarter-body cap from the top surface's transverse radius; and the cap's depth, the liquid depth
-  `sk.depth_above(T_liquidus)` with slurry spraying off and the flowing depth with it on (2026-10-24). That gives each
-  column its mode, wavelength, radius and rate per unit top area for the macro step, held through its parts, passes and
-  sub-steps. Why: spec §8 fixes a column's radius within a macro step by that step's gas state and δ_m, so the records
-  combine per column, per mode, per macro step without changing a radius; the cap is evaluated at the start by Asha's
-  decision of 2026-10-24; the gas state changes over seconds (§9); and the element model evaluates its spray once a macro
-  step too. Measured on the 100 mm sphere's 9 417 columns: 0.04–0.05 s an evaluation, nearly all of it reading the two
-  depths, against 0.06 s for the surface flow and about 2 s a flow sub-step (fact 171). Cost if wrong: a column that
-  becomes wet or changes regime within a macro step waits for the next — 12.5 ms at the flow-on runs' continuum step, up
-  to 0.5 s at the provisional default — which Task 5's halving of the macro step measures; the alternative, the
-  depth-dependent parts again in every flow sub-step with the gas state held, costs about 0.04 s each.
-- **Re-evaluated in every flow sub-step:** only what the admitted run holds. The release is the macro step's rate times
-  the top area and the flow sub-step, from the top cells, liquid first, the exposed slurry too only with
-  `--slurry-spray on`, never more than the run holds (`release_top`); the droplets' momentum and enthalpy leave with the
-  cells' own (Task 7's ruling 1).
-- **A minimal record per column per macro step** for the tests — released mass, number, mode, radius — and nothing of
-  Tasks 2–4: the source table's rows per column, per mode, per macro step with `solid_fraction` and `h_kg` and the
-  histograms are Task 2's; the CLI's `--slurry-spray` and the skin run's `--removal girin` default are Task 3's; the
-  history columns, frames and results of spec §10.2 are Task 4's.
-- **Tests** (the brief's): each mode's release from a prescribed column; mass, energy and momentum with spraying on a
-  small body; the cap's two depths, its independence of the column's area and its constancy over a macro step's
-  sub-steps; liquid first and slurry only with the flag; the element model unchanged (Task 1b's).
+**Interfaces:**
+- Consumes: Task 1a's spray model and its gates; Task 1b's `cap_depth` and `SprayResult.wavelength`; sub-plan 21 Task
+  7's `release_top`, `Flow.release`, `FlowBook` and the skin body's release books; 6c's `flow_forcing`;
+  `rheology.viscosity`; `film.lubrication`; `spray.melt_layer`.
+- Produces: `SprayModel.evaluate(..., rt_layer=None)`, `rt_layer` (n,) [m] the liquid pool the Rayleigh–Taylor mode
+  reads; `skin.Cascade(rate, rate_slurry, T_slurry=None)` [kg/(m2 s), kg/(m2 s), K per column];
+  `skin.cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None) -> (mass, from_slurry)` [kg per
+  column]; `FlowBook.released_slurry` (n,) [kg]; `skinbody.FlowForcing(dp_ds, tau, g, result=None)`;
+  `skinbody.girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False) -> SprayPlan`;
+  `SprayPlan` (`rate`, `rate_slurry` [kg/(m2 s)], `result` the liquid's `SprayResult`, `slurry` the exposed slurry's
+  per-column dict, `flowing`, `liquid`, `cap_depth` [m], `on_slurry`; the record `mass`, `mass_slurry` [kg], `number`,
+  `number_slurry`; `.release(sk) -> Cascade`, `.count(rho)`); `skinbody.region_extent(edges, selected, areas)` [m];
+  `skinbody.slurry_modes(...)`; `skinbody.SLURRY_SIGMA` (0.80 N/m); `SkinBody(..., spray=None)` with `.spray_plan`,
+  `.droplet_number` and `.transverse_radius()` [m]. No history column, result or command-line setting changes: those
+  are Tasks 2–4's.
 
-**Decision 1 (Asha): how the skins' depths are read where liquid lies on slurry.** Spec §6.7 and §8 settle b and the
-regime test (the flowing depth) and the 2026-10-28 decision the viscous film's floor (the flowing depth); the cap's depth
-is the admitted run's (2026-10-24). They do not settle what the Rayleigh–Taylor criteria, the molten region the wave
-must fit in, and the element model's hold on a film on slurry off Girin's closure (the rigid-substrate amendment of
-2026-10-06) read. The element model reads the liquid there; the shared spray physics as it stands reads at least b, so
-with b the flowing depth it would read the flowing depth.
-- (A) *One flowing film*: everything reads the flowing depth, no column is "on slurry" (the flowing layer rests on the
-  rigid front by construction), and the liquid and slurry differ only in what the release may take and the cap's depth.
-  No change to the shared physics. On the 100 mm sphere's skins with 0.3 mm of liquid over 3.1 mm of slurry at
-  103 m/s² the Rayleigh–Taylor mode takes the 79 columns within 1–10 degrees of the stagnation point from the thick
-  branch (droplets 3.05 mm); it reads as inviscid a slurry layer whose viscous depth at the mode's growth time
-  (about 7 ms), the Stokes depth √(2ντ*) of 2.1–5.4 mm for Li et al.'s 0.87–5.6 Pa s, is as deep as the layer itself.
-- (B) *The element model's split*: the Rayleigh–Taylor criteria and the molten region read the liquid depth, and a
-  liquid on slurry off Girin's closure is held from the shear modes, as the 2026-10-06 amendment has them. The shared
-  physics gains an optional depth for the Rayleigh–Taylor criteria (the element model never passes it, so it is
-  unchanged). On the same state the mode takes none, and 69 of the 79 columns release nothing; the element flight held
-  up to 17.9 g this way, at 48 s (fact 171).
-- Where neither matters: on sub-plan 21's heated state at 93 s and on 0.3 mm of liquid over 0.9–3.1 mm of slurry at
-  39–53 m/s² every windward column takes the thick branch under either.
-- Recommended: (B), because the Rayleigh–Taylor mode is a liquid pool's and the slurry beneath is viscous through its
-  depth on the mode's growth time, and because Task 5 compares the skins with the element model, which reads the
-  depths so.
+Asha decided on 2026-10-29 (spec §8 and §16 as amended that day): where liquid lies on slurry the skins read their depths
+as the element model does (decision 1, option B), the slurry cascade is built as spec §8 has it (decision 2, option i),
+and the two choices Task 1c's outline made within the spec stand — Girin evaluated once a macro step at its start, only
+what the admitted run holds re-checked in each flow sub-step; Girin's surface velocity his closure's.
 
-**Decision 2 (Asha): the slurry cascade under the viscous film.** Spec §8 carries the 2026-10-07 design's cascade over
-with its slurry properties: with `--slurry-spray on`, once the liquid is gone, the exposed slurry is stripped at the rate
-Girin's model gives for its own properties. An exposed slurry layer takes Girin & Kopyt's thin mode (its own δ_m is
-centimetres), and with Li et al.'s viscosity the viscous film damps it at Γτ* = 24–526 on every windward column of the
-100 mm sphere at 93 s, against 0.13 for liquid aluminium: the cascade releases nothing (fact 171). With the flag on, the
-only change would then be the liquid droplets' cap on the flowing depth.
-- (i) Build the cascade as the spec has it, inert: about a hundred lines (Li's viscosity at the slurry layer's own shear
-  rate, its δ_m and regime test) and their tests, for a release of nothing.
-- (ii) Record in spec §8 that the viscous film makes the cascade inert, and give `--slurry-spray on` the release of
-  sub-plan 21 Task 7 (the flowing cells taken after the liquid at the column's own mode's rate) as a sensitivity bound:
-  a spec change, small, and the flag no longer the cascade.
-- (iii) Defer the cascade to a later task, the flag refused with the flow on until then.
-- Recommended: (iii), the flag being off by default and the cascade inert by the measured gate; (i) if the spec's
-  cascade must exist for the thesis's statement of it.
+**Girin once a macro step.** At the start of every macro step `SkinBody.advance` evaluates Girin on the corners
+(`girin_plan`), from the surface flow the flow's forcing evaluates there (`flow_forcing`, which now hands its whole
+result on as `FlowForcing.result`) and the skins as they are then, and gives the plan's release to every part's `Flow`.
+`SprayPlan.release` returns the same `Cascade` whatever the skins hold until the next macro step: a column's mode,
+wavelength, radius and rates are the macro step's (spec §8), so the records combine per column, per mode, per macro step
+without changing a radius. What the accepted passes released is the plan's record, and at the step's end its droplets,
+the mass over one droplet's at the mode's radius (`SprayPlan.count`).
+
+**The depths** (option B). b and the regime test read the flowing depth `sk.depth_above(T_rigid)` (spec §6.7), and so
+does the viscous film's floor (2026-10-28). The front-surface Rayleigh–Taylor mode reads the liquid depth
+`sk.depth_above(T_liquidus)` — its depth criterion, its bounded growth and the depth it sheds within a growth time —
+through the shared model's new `rt_layer`, which the element model never passes (ruling 1). The molten region a wave must
+fit in is the contiguous region of columns with liquid (`region_extent` on the columns' graph and top areas); and where
+Girin's closure does not apply, a column whose liquid run lies on a flowing cell that is not fully liquid is held from
+the shear modes (`on_slurry`, judged on the cells, ruling 2). The cap reads the liquid depth with slurry spraying off and
+the flowing depth with it on (2026-10-24); the quarter-body cap reads the top surface's transverse radius about the 3D
+mesh's mean point (ruling 6). Girin's surface velocity is his closure's, `film.lubrication` on b, as the element model's:
+it enters a gate only on the thick branch, where it is τ δ_m / μ_l. The columns on the windward face, θ ≤ 90 degrees,
+alone spray.
+
+**The cascade** (option i; spec §8, the 2026-10-07 design's 8.1–8.2). With `slurry_spray`, the exposed slurry has a mode
+of its own per column (`slurry_modes`): its first cell beneath the liquid run gives the properties — Li et al.'s
+viscosity with the bridge to the liquid (`rheology.viscosity`) at the cell's solid fraction and at the shear rate of the
+slurry's own sheared layer (V_s over δ_m or over the layer, film.lubrication's rate), found by fixed point from rest in
+at most five passes with the rate held at 367 1/s; the cell's mixture density; 0.80 N/m — and Girin's formulas are the
+shared model's with them (its k_r, k_t, critical Weber number and table; the Rayleigh–Taylor mode left to the liquid),
+the slurry's layer from its top to T_rigid being its b, regime layer and floor, its wave fitting in the flowing region,
+its cap the flowing depth. In every flow sub-step the release works down the top cells in time order, each at its own
+phase's rate (`cascade_mass`): the liquid at the liquid's mode's rate, then, once nothing liquid covers it, the slurry at
+its own, until the flow sub-step is spent, a cell may not be taken or its rate is zero. Evaluated once a macro step, the
+slurry's rate holds for slurry cells at least as warm as the cell that gave it, and a colder cell, more solid and more
+viscous, ends the cascade until the next macro step's evaluation (`Cascade.T_slurry`, ruling 3).
+
+**Where the cascade releases** (measured; spec §8 as amended). The viscous film blocks the slurry's thin mode wherever its
+viscosity is more than about ten times the liquid's. Swept on the 100 mm sphere's 9 417 columns with the slurry exposed
+(`measure/task1c/cascade_where.py`): with the exposed cell at or below 907.0 K (μ 0.033 Pa·s and up, Γτ* 3.2–470) no
+column sprays at 93 s or at 120 s under 103 m/s² (Γτ* 3.2–610); from 907.2–907.4 K (μ 9–17 mPa·s, in the upper part
+of the bridge from 906.4 to 908 K) the thin mode opens, and from 907.5 K (6.6 mPa·s) nearly every windward column
+sprays (4 618–4 636 of 4 705), by the thick branch from 907.7 K. So the cascade releases only slurry within about 0.6–0.8 K of the liquidus, where Scheil's curve leaves a few
+per cent of solid. On a heated surface that is the slurry right under the liquid: on sub-plan 21's heated state at 93 s
+the first slurry cell beneath every windward column's liquid is at 907.78–908.00 K (median 907.98), so with the flag on
+a flow sub-step that strips the 6.6 g of liquid also takes 0.35 g of that slurry (5.1 %; one cell, about 10 µm). On the
+skin body's test, the 4 mm sphere heated at 3 MW/m2 from 890 K, the second 0.25 s step sprayed 1.54 g of liquid with the
+flag off; with it on, 0.79 g of liquid and 4.98 g of slurry from 615 columns, 471 of them with no liquid at the step's
+start but a top in the bridge (907.19–908.00 K): metal heated through the last kelvin before the liquidus is stripped
+there. Spec §8 records this as a measured fact; the bridge itself has no data.
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task1c/`):
+- *The books.* The skin body's test (`body_run.py`): the 4 mm test sphere heated at 3 MW/m2 from 890 K under the 100 mm
+  flight's gas state at 93 s, the flow on (one flow sub-step a heat sub-step), two 0.25 s steps. Its tops melt in the
+  first; the second's plan finds liquid on 156 columns and a mode on 144, all thick, and they release 1.54 g as 71 000
+  droplets (radius median 126 µm on a liquid depth of 16.5 µm at the start, median); the mass to 1.5e-16, the energy to
+  2.9e-11 of the heat absorbed, the momentum to 1.1e-17; Pi 0.008. With slurry spraying on, 5.77 g (above): mass 1.5e-16,
+  energy 1.4e-11, momentum 3.8e-17; 89 000 droplets, the slurry's radius median 187 µm.
+- *Nothing else moves.* `--surface-model elements` on the CLI test's short melting case (`measure/task1/cmp/`,
+  `line1c_short`) is Task 1b's to the last bit in all 115 history columns, the source table and the results; and a skin
+  body without a spray model -- flow off with removal, flow on, and flow on with a prescribed release, two 0.25 s steps
+  under 3 MW/m2 from 880 K -- is Task 1b's in all 147 arrays (`bitid.py`: the 3D field, the mesh, the skins' state and
+  every history column but the wall times).
+- *The cost.* On the 100 mm sphere's heated state: the plan 0.09 s of processor time without the cascade and 0.51 s
+  with it (4 705 columns' slurry modes, one shared-model evaluation each), against about 2 s a flow sub-step and about
+  an hour a melting macro step.
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *With `rt_layer` the Rayleigh–Taylor mode's rate sheds the liquid pool, ρ_l min(h_pool, λ/2) / τ*, not b.* Why:
+   option B's reason, the mode is a liquid pool's, and the element model's own form, its rate on the mobile liquid (the
+   film), not on its layer. Cost if wrong: where liquid lies on slurry the mode's demand is smaller by the liquid's share
+   of the flowing depth; its release is the liquid's anyway. Confirmed by Asha, 2026-10-29.
+2. *A column is on slurry where a flowing cell that is not fully liquid lies beneath its liquid run*, judged on the cells,
+   not by comparing the two interpolated depths, which differ by part of a cell at a sharp front. Cost: none.
+3. *The cascade's slurry rate holds for slurry cells at least as warm as the first slurry cell it was evaluated on.*
+   Why: Asha's confirmed rule (Girin once a macro step, only the admitted run re-checked each flow sub-step) and the
+   cascade's per-cell properties both hold: no cell is stripped faster than its own properties allow, to first order.
+   Cost if wrong: within one macro step the cascade takes less than the 2026-10-07 design's per-cell evaluation in every
+   flow sub-step would -- on the heated state 0.36 g (the first cell, about 10 µm) against up to 1.56 g (the slurry down
+   to 907.3 K, about 40 µm; `bridge_mass.py`) -- and catches up over the next macro steps; at the flow-on runs' 12.5 ms
+   macro step a heated front advances about one cell a macro step. Confirmed by Asha, 2026-10-29, over the per-cell evaluation.
+4. *The slurry's viscosity by fixed point from rest*, the shear rate film.lubrication's for the slurry's layer. Why: the
+   2026-10-07 design's rule, started from the most viscous end. Cost: not measured; a start elsewhere could end on
+   another root where Li's fit has two (spec §14 assumption 5).
+5. *The slurry's droplets at the cell's mixture density, 0.80 N/m*, the design's. Cost: none.
+6. *The transverse radius about the 3D mesh's mean point*, as `surface_stats` takes the centre. Why: the skin body has
+   no mass centre of its own; on the sphere the two agree. Cost: the quarter-body cap, which binds only above 12.5 mm on
+   the 100 mm sphere.
+7. *A spray model and a prescribed release are exclusive; a spray model needs the flow and the surface flow's result.*
+   Cost: none.
+8. *The record is the plan's, per column and mode, not the history's.* Why: Task 2 combines the records into the source
+   table and the histograms, Task 4 the history and results (the line drawn in the outline). Cost: none.
+
+- [ ] **Step 1: The Rayleigh–Taylor mode on the liquid pool** — append to `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -553,3 +553,31 @@
+     res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.array([5.0, 20.0, 0.0]), np.ones(3, bool),
+                                          0.5, np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+     assert np.isfinite(res.wavelength[:2]).all() and np.isnan(res.wavelength[2])        # no mode on the dry patch
++
++
++def test_the_rayleigh_taylor_mode_can_read_a_liquid_pool_shallower_than_the_film():
++    """Asha, 2026-10-29 (sub-plan 22 Task 1c, decision 1, option B): where liquid lies on slurry the layered skins'
++    front-surface Rayleigh-Taylor mode reads the liquid pool, not the flowing film b -- its depth criterion, its bounded
++    growth and the depth it sheds within a growth time -- as the element model's mode reads its liquid layer (the
++    amendment of 2026-10-06). `rt_layer` is that depth; without it the mode reads the liquid layer as before, and given
++    that same depth it is the same to the last bit. 5 mm of flowing metal at the nose under a lambda* of 2 cm: as one
++    pool the mode takes it; with 0.3 mm of liquid on top it does not (h < lambda*/2 pi, 3.2 mm here), and nothing else
++    can (the thin lambda* at 5 m/s is metres); with 4 mm of liquid it does, at that pool's growth time and rate."""
++    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
++    model = spray.SprayModel(LIQ)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
++    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
++    run = lambda **k: model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas,
++                                     b * LIQ.rho * areas, extent=np.full(1, 0.05), deceleration_n=w_n, **k)
++    whole, same = run(), run(rt_layer=b)
++    assert whole.branch[0] == spray.BRANCH_RT and whole.rt_active and whole.dm[0] > 0.0
++    for key in ("branch", "unstable", "r", "mdot", "dm", "dn", "growth", "wavelength"):
++        assert np.array_equal(getattr(whole, key), getattr(same, key), equal_nan=True), key
++    shallow = run(rt_layer=np.full(1, 3e-4))
++    assert shallow.branch[0] == spray.BRANCH_THIN and shallow.mdot[0] == 0.0 and shallow.dm[0] == 0.0
++    assert not shallow.rt_active
++    pool = run(rt_layer=np.full(1, 4e-3))
++    _, lam, tau = spray.rayleigh_taylor_bounded(w_n, np.full(1, 4e-3), np.full(1, 0.05), LIQ)
++    assert pool.branch[0] == spray.BRANCH_RT and pool.growth[0] == tau[0] > whole.growth[0]
++    assert pool.wavelength[0] == lam[0] and pool.mdot[0] == pytest.approx(LIQ.rho * 4e-3 / tau[0], rel=1e-12)
+```
+
+- [ ] **Step 2: The cascade's tests** — append to `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -2113,3 +2113,74 @@
+     assert max(c for _, c in out["ones"][1:]) < 1.5 * skin.FLOW_COURANT
+     assert real_pass("none flowed", [0] * 10) == alone
+     assert real_pass("more", [20] * 10) == [20] * 10
++
++
++# -- the cascade: Girin's release from the top cells (sub-plan 22 Task 1c) --------------------------------------------
++def test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag():
++    """Spec 8 and the 2026-10-07 design's 8.1: within a flow sub-step the release works down the top cells in time
++    order, each at its own phase's rate per unit top area -- a liquid cell at the liquid's mode's, a slurry cell at the
++    exposed slurry's own -- until the sub-step is spent or a cell it may not take is reached; slurry only with the flag,
++    never rigid metal, and a cell whose rate is zero ends it, as does a slurry cell colder than the cell whose properties
++    gave the slurry's rate (`T_slurry`). Six columns of 10 um cells: liquid over slurry (902 K) over rigid metal, slurry
++    exposed over liquid, liquid alone over rigid metal, rigid metal, liquid over a warm slurry cell (907 K) over the
++    slurry, and rigid metal. The liquid's rate takes three of a column's cells in the sub-step, the slurry's one and a
++    half: the first column takes its two liquid cells in two thirds of it and half a slurry cell in the last third.
++    `release_top` then takes exactly that mass from the same cells."""
++    col, _ = strip_grid(3, 2)
++    temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3,
++             [LIQUID] * 2 + [RIGID] * 3, [RIGID] * 4, [LIQUID] * 2 + [907.0] + [SLURRY] * 2 + [RIGID] * 2, [RIGID] * 4]
++    dt = 0.01
++    cases = ((False, (3.0, 1.5), None, [(2, 0), (0, 0), (2, 0), (0, 0), (2, 0), (0, 0)]),
++             (True, (3.0, 1.5), None, [(2.5, 0.5), (1.5, 1.5), (2, 0), (0, 0), (2.5, 0.5), (0, 0)]),
++             (True, (3.0, 0.0), None, [(2, 0), (0, 0), (2, 0), (0, 0), (2, 0), (0, 0)]),
++             (True, (0.0, 1.5), None, [(0, 0), (1.5, 1.5), (0, 0), (0, 0), (0, 0), (0, 0)]),
++             (True, (3.0, 4.5), 905.0, [(2, 0), (0, 0), (2, 0), (0, 0), (3, 1), (0, 0)]))
++    for slurry, (liquid_cells, slurry_cells), floor, want in cases:
++        sk = stacked(col, temps)
++        m = sk.m[:, 0].copy()                    # every cell of a column holds 10 um of solid metal's mass
++        rate = lambda cells: cells * m / (col.area * dt)
++        T_slurry = None if floor is None else np.full(col.n, floor)
++        mass, from_slurry = skin.cascade_mass(sk, rate(liquid_cells), rate(slurry_cells), col.area, dt, slurry, T_slurry)
++        np.testing.assert_allclose(mass, [w[0] for w in want] * m, rtol=1e-12, atol=0.0)
++        np.testing.assert_allclose(from_slurry, [w[1] for w in want] * m, rtol=1e-12, atol=0.0)
++        M0 = sk.column_mass()
++        book = skin.release_top(sk, mass, slurry=slurry)
++        np.testing.assert_allclose(book.mass, mass, rtol=1e-14, atol=0.0)
++        np.testing.assert_allclose(sk.column_mass(), M0 - mass, rtol=1e-14, atol=1e-30)
++
++
++def test_a_flow_sub_step_with_the_liquid_s_rate_and_the_slurry_s_releases_the_cascade_and_books_its_slurry(
++        coarse_sphere_mesh):
++    """A release that gives two rates per column (sub-plan 22 Task 1c), a `skin.Cascade` of the liquid's mode's and the
++    exposed slurry's [kg/(m2 s)], is taken in each flow sub-step by the cascade (`cascade_mass`) rather than as one rate, after
++    the transport and the landing conduction as before, and the flow's book carries what the slurry's rate took
++    (`released_slurry`); a release of one rate books none. On the test sphere's mixed skins at one and three cycles,
++    without and with the flag: the pieces by hand to the last bit, and the mass and energy fall by what was released."""
++    from test_reentry_model_columns import sphere_columns
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    rng = np.random.default_rng(10)
++    rates = np.vstack([rng.uniform(0.0, 8.0, col.n), rng.uniform(0.0, 4.0, col.n)])
++    for cycles, slurry in ((1, False), (3, True)):
++        first, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++        second, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++        flow = sphere_flow(col, cycles, A_top=col.area * 1.01)
++        flow.release, flow.slurry = (lambda sk: skin.Cascade(rates[0], rates[1])), slurry
++        M0, E0 = first.mass(), first.energy()
++        book = skin.flow_substeps(first, flow, 0.01)
++        landed, taken, from_slurry = np.zeros(col.n, dtype=bool), np.zeros(col.n), np.zeros(col.n)
++        for k in range(cycles):
++            if k:
++                second.regrid()
++            by_hand(second, flow, 0.01 / cycles, landed)
++            dm, ds = skin.cascade_mass(second, rates[0], rates[1], flow.A_top, 0.01 / cycles, slurry)
++            taken += skin.release_top(second, dm, slurry=slurry).mass
++            from_slurry += ds
++        assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
++        np.testing.assert_allclose(book.released, taken, rtol=1e-14, atol=0.0)
++        np.testing.assert_array_equal(book.released_slurry, from_slurry)
++        assert (book.released_slurry.sum() > 0.0) == slurry and book.released.sum() > 0.0
++        assert first.mass() == pytest.approx(M0 - book.released.sum(), rel=3e-16)
++        assert first.energy() == pytest.approx(E0 - book.released_H.sum(), rel=8e-16)
++    flow.release = skin.prescribed_release(rates[0])
++    one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
++    assert one.released.sum() > 0.0 and not one.released_slurry.any()
+```
+
+- [ ] **Step 3: Girin on the skins' tests** — append to `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -925,3 +925,192 @@
+     body, rows, _, failure = sp_.run(dt=0.1, t_end=0.2, T_start=880.0, q0=6e6, **SMALL_PLATE)
+     assert failure is None and body.handed_mass > 0.0 and held and not any(held)
+     assert body.skin_stats()["held_mass_kg"] == 0.0 and body.skin_stats()["held_depth_max_mm"] == 0.0
++
++
++# -- Girin's spraying from the top cells (sub-plan 22 Task 1c) ----------------------------------------------------------
++def girin_flow(n, closure, u, tau, decel=106.0, branch=None):
++    """The fields Girin's evaluation reads from the surface flow, per column: the spray tests' FakeFlow (edge state,
++    closure, deceleration) with the gas shear and push the lubrication closure reads."""
++    from reentry_model import surface_flow
++    from test_reentry_model_spray import FakeFlow
++    f = FakeFlow(n, branch=surface_flow.BRANCH_SHOCK_LAYER if branch is None else branch, decel=decel)
++    f.closure, f.u_eff = np.asarray(closure), np.asarray(u, dtype=float)
++    f.u_e = f.u_eff
++    f.tau, f.G = np.asarray(tau, dtype=float), np.zeros(n)
++    return f
++
++
++def plan_on(sk, col, flow, slurry=False, theta=None):
++    from reentry_model import spray
++    from test_reentry_model_spray import FakeState
++    return skinbody.girin_plan(sk, flow, FakeState(), spray.SprayModel(sk.material.liquid), np.zeros(sk.n) if theta is None
++                               else theta, col.area, col.edges, 0.05, 0.0125, slurry=slurry)
++
++
++def crest(lam, h):
++    return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
++
++
++def test_girin_gives_each_prescribed_column_its_mode_from_the_skin_s_depths_once_for_the_macro_step():
++    """Spec 8 and 6.7 with Asha's decision of 2026-10-29 (option B): b and the regime test read the flowing depth, the
++    viscous film's floor too; the Rayleigh-Taylor mode reads the liquid pool and the molten region the wave must fit in
++    is the liquid's; off Girin's closure a liquid on slurry is held from the shear modes; the cap reads the liquid with
++    slurry spraying off. Six columns 20 mm apart at the nose (one molten region about 30 mm across): 1 mm of liquid over
++    rigid metal under Girin's closure (thick); 50 um of liquid on the rigid floor (thin); 5 mm of liquid with no shear
++    mode at 5 m/s (Rayleigh-Taylor, lambda* 2 cm at 106 m/s2); 0.3 mm of liquid over 4 mm of slurry the same (held: read
++    as one flowing film the Rayleigh-Taylor mode would take it); 50 um of liquid over slurry under the Couette closure
++    (held); exposed slurry (nothing: no liquid to take). The plan's rates are the shared spray model's on those depths,
++    and its release gives them whatever the skins hold until the next macro step."""
++    from reentry_model import spray, surface_flow
++    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
++    from test_reentry_model_spray import FakeState
++    col, _ = strip_grid(3, 2, h=20e-3)
++    temps = [[LIQUID] * 86 + [RIGID] * 10, [LIQUID] * 4 + [RIGID] * 10, [LIQUID] * 428 + [RIGID] * 10,
++             [LIQUID] * 26 + [SLURRY] * 340 + [RIGID] * 10, [LIQUID] * 4 + [SLURRY] * 50 + [RIGID] * 10,
++             [SLURRY] * 50 + [RIGID] * 10]
++    sk = stacked(col, temps)
++    G, C = surface_flow.CLOSURE_GIRIN, surface_flow.CLOSURE_COUETTE
++    flow = girin_flow(6, [G, G, C, C, C, G], [2000.0, 2000.0, 5.0, 5.0, 2000.0, 2000.0], [50.0, 50.0, 0.01, 0.01, 50.0, 50.0])
++    plan = plan_on(sk, col, flow)
++    mat, liq = sk.material, sk.material.liquid
++    F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
++    assert plan.result.branch.tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN, spray.BRANCH_RT, -1, -1,
++                                           spray.BRANCH_THICK]
++    assert (plan.rate > 0.0).tolist() == [True, True, True, False, False, False] and not plan.rate_slurry.any()
++    np.testing.assert_array_equal(plan.flowing, F)
++    np.testing.assert_array_equal(plan.liquid, L)
++    np.testing.assert_array_equal(plan.cap_depth, L)
++    assert plan.on_slurry.tolist() == [False, False, False, True, True, True]
++    # the shared model on the skin's depths, by hand
++    delta_m, _ = spray.melt_layer(flow, liq)
++    from reentry_model import film
++    v_s = film.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
++    extent = np.where(L > 0.0, 2.0 * np.sqrt(col.area[L > 0.0].sum() / np.pi), 0.0)     # one liquid region
++    run = np.cumprod(sk.valid & (sk.T >= mat.T_liquidus), axis=1).astype(bool)
++    res = spray.SprayModel(liq).evaluate(flow, FakeState(), F, delta_m, v_s, np.ones(6, bool), 0.0125, col.area,
++                                         (sk.m * run).sum(axis=1), 0.05, b_layer=F, extent=extent,
++                                         deceleration_n=np.full(6, 106.0), regime_layer=F, on_slurry=plan.on_slurry,
++                                         rt_layer=L, cap_depth=L)
++    np.testing.assert_allclose(plan.rate, res.mdot, rtol=1e-12, atol=0.0)
++    np.testing.assert_allclose(plan.result.r, res.r, rtol=1e-12, atol=0.0)
++    assert plan.rate[2] == pytest.approx(liq.rho * L[2] / res.growth[2], rel=1e-12)     # the pool shed in a growth time
++    # read as one flowing film the fourth column would be the Rayleigh-Taylor mode's (option A, not taken)
++    one = spray.SprayModel(liq).evaluate(flow, FakeState(), F, delta_m, v_s, np.ones(6, bool), 0.0125, col.area,
++                                         (sk.m * run).sum(axis=1), 0.05, b_layer=F, extent=np.full(6, extent.max()),
++                                         deceleration_n=np.full(6, 106.0), regime_layer=F, cap_depth=L)
++    assert one.branch[3] == spray.BRANCH_RT and one.mdot[3] > 0.0
++    # held for the macro step: the release gives the plan's rates whatever the skins then hold
++    before = plan.release(sk)
++    skin.release_top(sk, sk.column_mass())
++    assert plan.release(sk) is before and np.array_equal(before.rate, plan.rate)
++    assert np.array_equal(before.rate_slurry, plan.rate_slurry) and np.isinf(before.T_slurry).all()
++
++
++def test_the_cap_reads_the_liquid_with_slurry_spraying_off_the_flowing_depth_with_it_on_and_never_the_area():
++    """The decision of 2026-10-24: a droplet holds at most one crest of its own wave on the depth the release may take --
++    the liquid with slurry spraying off, the whole flowing depth with it on -- and the column's area does not enter. Six
++    columns of one liquid cell over 0.5 mm of slurry under Girin's closure, sheared near the thick branch's threshold so
++    that its wavelength is millimetres: the liquid's 15 um binds, the flowing 0.6 mm does not; the corner columns of the
++    strip have smaller areas than the others and the same droplet."""
++    from reentry_model import surface_flow
++    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
++    col, _ = strip_grid(3, 2, h=20e-3)
++    sk = stacked(col, [[LIQUID] + [SLURRY] * 50 + [RIGID] * 10] * 6)
++    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [2000.0] * 6, [20.0] * 6)
++    off, on = plan_on(sk, col, flow), plan_on(sk, col, flow, slurry=True)
++    mat = sk.material
++    L, F = sk.depth_above(mat.T_liquidus), sk.depth_above(mat.T_rigid)
++    lam = off.result.wavelength
++    assert np.isfinite(lam).all() and (off.rate > 0.0).all() and np.ptp(col.area) > 0.1 * col.area.max()
++    np.testing.assert_allclose(off.result.r, np.minimum(0.17 * lam, crest(lam, L)), rtol=1e-12)
++    np.testing.assert_allclose(on.result.r, np.minimum(0.17 * lam, crest(lam, F)), rtol=1e-12)
++    assert (off.result.r < 0.17 * lam).all() and (on.result.r == 0.17 * lam).all()
++    np.testing.assert_array_equal(on.cap_depth, F)
++    assert np.ptp(off.result.r) <= 1e-12 * off.result.r.max() and np.ptp(on.result.r) <= 1e-12 * on.result.r.max()
++
++
++def test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_with_the_flag():
++    """Spec 8's cascade (the 2026-10-07 design's 8.1-8.2, Asha 2026-10-29, option i): with `--slurry-spray on` the slurry
++    the release exposes sprays by Girin's model with its own properties -- Li et al.'s viscosity at its solid fraction and
++    the shear rate of its own sheared layer, found by fixed point (five passes at most, the rate held at 367 1/s), the
++    cell's mixture density and 0.80 N/m -- its layer the slurry from its top down to T_rigid; the Rayleigh-Taylor mode is
++    the liquid's. Five columns of slurry under 15 um of liquid, the slurry's top cell at 902 K (30 % solid), 906.0 K, 907.0
++    K, 907.5 K and 907.9 K (the last three in the bridge to the liquid). Off, nothing; on, the slurry's viscous film blocks
++    its thin mode wherever the slurry is more than a few times the liquid's viscosity, and it sprays only near the
++    liquidus."""
++    from reentry_model import rheology, surface_flow
++    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
++    col, _ = strip_grid(5, 2, h=20e-3)
++    tops = [902.0, 906.0, 907.0, 907.5, 907.9]
++    temps = [[LIQUID] + [T] + [SLURRY] * 48 + [RIGID] * 10 for T in tops] * 2
++    sk = stacked(col, temps)
++    flow = girin_flow(col.n, [surface_flow.CLOSURE_GIRIN] * col.n, [2000.0] * col.n, [50.0] * col.n)
++    off, on = plan_on(sk, col, flow), plan_on(sk, col, flow, slurry=True)
++    assert not off.rate_slurry.any() and np.isnan(off.slurry["mu"]).all()
++    mat = sk.material
++    s = on.slurry
++    f_s = 1.0 - sk.props.liquid_fraction(sk.T[:, 1])                    # the cells' own, as their viscosity's
++    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
++    np.testing.assert_allclose(s["mu"], rheology.viscosity(sk.T[:, 1], f_s, s["gamma"], mat.liquid.mu, f_b), rtol=1e-12)
++    np.testing.assert_allclose(s["rho"], sk.density(sk.T[:, 1]), rtol=1e-12)
++    assert (s["gamma"] <= rheology.GAMMA_MAX).all() and (s["mu"] > mat.liquid.mu).all()
++    dz = sk.dz()
++    np.testing.assert_allclose(s["depth"], on.flowing - dz[:, 0], rtol=1e-12)          # the slurry, top to T_rigid
++    blocked = s["gamma_tau"] >= 1.0
++    assert (on.rate_slurry[blocked] == 0.0).all() and blocked[[0, 5]].all()             # 30 % solid: blocked
++    assert (on.rate_slurry[~blocked] > 0.0).all() and (~blocked[[4, 9]]).all()          # 907.9 K: sprays
++    assert (np.diff(s["mu"][:5]) < 0.0).all()                                           # runnier toward the liquidus
++    np.testing.assert_array_equal(s["T"], sk.T[:, 1])
++    np.testing.assert_array_equal(on.release(sk).T_slurry, sk.T[:, 1])     # its rate for slurry at least as warm
++    np.testing.assert_array_equal(on.rate, off.rate)            # the liquid's own mode: the flag moves only its cap
++
++
++def test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_keeps_its_books(coarse_sphere_mesh,
++                                                                                              monkeypatch):
++    """The skin body with the flow on and a spray model (sub-plan 22 Task 1c): at the start of every macro step Girin is
++    evaluated once on the corners, from the surface flow the flow's forcing evaluates there and the skins' depths then;
++    every part's Flow releases the plan's two rates, the same in every call, through the cascade in every flow sub-step.
++    The 4 mm test sphere heated at 3 MW/m2 from 890 K under the 100 mm flight's gas state at 93 s, two 0.25 s steps, one
++    flow sub-step a heat sub-step: its tops melt in the first, and in the second the liquid is sprayed; the released
++    metal leaves the body, the mass left and released is the starting mass to round-off, the energy books close with the
++    released enthalpy and the momentum balance with the droplets' momentum. The plan's record counts what each column's
++    mode released in the step's accepted passes, and the droplets: their mass over one droplet's at the plan's radius.
++    A spray needs the flow and is not a prescribed release."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import spray
++    mat = material.Material.from_drama_json("AA7075_scheil")
++    model = spray.SprayModel(mat.liquid)
++    with pytest.raises(ValueError):
++        make(coarse_sphere_mesh, spray=model)
++    with pytest.raises(ValueError):
++        make(coarse_sphere_mesh, flow=True, remove=False, spray=model, release=skin.prescribed_release(1.0))
++    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
++    plans, flows = [], []
++    girin, advance = skinbody.girin_plan, skin.advance
++
++    def planned(*a, **k):
++        plans.append(girin(*a, **k))
++        return plans[-1]
++
++    def recorded(sk, dt, *a, **k):
++        flows.append(k["flow"])
++        return advance(sk, dt, *a, **k)
++    monkeypatch.setattr(skinbody, "girin_plan", planned)
++    monkeypatch.setattr(skinbody.skin_mod, "advance", recorded)
++    M0 = b.mass()
++    state = aero_state_at(93.0)
++    for k in range(2):
++        flows.clear()
++        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
++        assert len(plans) == k + 1 and b.spray_plan is plans[-1]
++        assert all(f.release == plans[-1].release for f in flows) and len(flows) >= 2
++    p = b.spray_plan
++    assert b.released_mass > 0.0 and p.mass.sum() > 0.0 and not p.mass_slurry.any()
++    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-13)
++    assert abs(b.energy_balance_residual()) < 1e-8 and b.skin_stats()["momentum_residual"] < 1e-12
++    ok = p.mass > 0.0
++    assert (p.rate[ok] > 0.0).all() and np.isfinite(p.result.r[ok]).all()
++    np.testing.assert_allclose(p.number[ok], p.mass[ok] / (4.0 / 3.0 * np.pi * mat.liquid.rho * p.result.r[ok] ** 3),
++                               rtol=1e-12)
++    assert b.droplet_number >= p.number.sum() > 0.0
+```
+
+- [ ] **Step 4: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py
+  tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py -q -k "liquid_pool or the_cascade_takes or
+  releases_the_cascade or girin_gives or cap_reads or slurry_cascade or sprays_by_girin"`. Expected: 7 failed --
+  - `TypeError: SprayModel.evaluate() got an unexpected keyword argument 'rt_layer'`;
+  - `AttributeError: module 'reentry_model.skin' has no attribute 'cascade_mass'`, and `... 'Cascade'`;
+  - `AttributeError: module 'reentry_model.skinbody' has no attribute 'girin_plan'` (3);
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'spray'`.
+
+- [ ] **Step 5: The Rayleigh–Taylor mode's pool** in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -295,7 +295,7 @@
+         self.table = table or dispersion.DispersionTable()
+ 
+     def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None,
+-                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None, cap_depth=None):
++                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None, cap_depth=None, rt_layer=None):
+         """Per-patch instability and release for the film thickness b, melt-layer thickness delta_m and film surface
+         velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's.
+ 
+@@ -317,7 +317,13 @@
+         `cap_depth`, if given, is the depth [m] the release can take from each patch, and the droplet's radius is capped
+         by one crest of its own wave on it, (3 lambda^2 h / (4 pi))^1/3, instead of by the film mass m_f (the module
+         docstring; 2026-10-24); a patch with no such depth releases nothing. Without it the film-mass cap is kept, bit
+-        for bit."""
++        for bit.
++
++        `rt_layer`, if given, is the depth [m] of the liquid pool the front-surface Rayleigh-Taylor mode reads -- its depth
++        criterion, its bounded growth and the depth it sheds within a growth time -- in place of the liquid layer (for the
++        criteria) and the film b (for the rate): the layered skins' liquid depth, where b is the flowing depth and liquid
++        lies on slurry (Asha, 2026-10-29, decision 1 of sub-plan 22 Task 1c, option B: the mode is a liquid pool's, as the
++        amendment of 2026-10-06 has it in the element model). Without it the mode reads them as before, bit for bit."""
+         liq = self.liquid
+         n = b.size
+         layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
+@@ -450,12 +456,14 @@
+         # shorter growth time takes the patch and the other does not act on the same film. That is also what keeps the
+         # shear from being spent twice (the double-counting checklist of the plan's fact 29).
+         w_n = flow.deceleration if deceleration_n is None else deceleration_n   # normal component, W cos(phi)
++        pool = layer if rt_layer is None else np.asarray(rt_layer, dtype=float)  # the liquid the mode reads (2026-10-29)
+         if self.rt_spray:
+-            deep, _, _ = rayleigh_taylor(w_n, layer, liq)               # the threshold: h > lambda*/2 pi
+-            rt_on, lam_rt, tau_rt = rayleigh_taylor_bounded(w_n, layer, np.full(n, np.inf) if L is None else L, liq)
++            deep, _, _ = rayleigh_taylor(w_n, pool, liq)                # the threshold: h > lambda*/2 pi
++            rt_on, lam_rt, tau_rt = rayleigh_taylor_bounded(w_n, pool, np.full(n, np.inf) if L is None else L, liq)
+             rt_on = np.asarray(rt_on) & np.asarray(deep) & has_film & np.isfinite(tau_rt)
++            shed = b if rt_layer is None else pool                       # what one growth time shakes off
+             with np.errstate(divide="ignore", invalid="ignore"):
+-                rate_rt = np.where(rt_on, liq.rho * np.minimum(b, lam_rt / 2.0) / np.where(rt_on, tau_rt, 1.0), 0.0)
++                rate_rt = np.where(rt_on, liq.rho * np.minimum(shed, lam_rt / 2.0) / np.where(rt_on, tau_rt, 1.0), 0.0)
+             faster = rt_on & (rate_rt > 0.0) & (~np.isfinite(growth) | (tau_rt < growth))
+             r = np.where(faster, lam_rt, r)
+             mdot = np.where(faster, rate_rt, mdot)
+@@ -478,7 +486,7 @@
+                 r = np.where(h_cap > 0.0, np.minimum(r, np.minimum(crest, 0.25 * radius)), np.nan)
+         with np.errstate(divide="ignore", invalid="ignore"):
+             dn = np.where(dm > 0.0, dm / (4.0 / 3.0 * np.pi * liq.rho * np.where(dm > 0.0, r, 1.0) ** 3), 0.0)
+-        rt_active, _, _ = rayleigh_taylor(w_n, layer, liq)     # the unbounded criterion, still reported for continuity
++        rt_active, _, _ = rayleigh_taylor(w_n, pool, liq)      # the unbounded criterion, still reported for continuity
+         gk = np.isin(branch, (BRANCH_THIN, BRANCH_RAREFIED, BRANCH_REGIME2))    # the Rayleigh-Taylor mode may have taken some
+         h_floor, gamma_tau = np.where(gk, h_floor, np.nan), np.where(gk, gamma_tau, np.nan)
+         return SprayResult(branch, we_s, unstable, r, mdot, dm, dn, bool(np.any(rt_active & has_film)), delta_m, v_s, growth,
+```
+
+- [ ] **Step 6: The cascade in the flow sub-steps** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -1748,7 +1748,9 @@
+     by `release_top` -- liquid first, the exposed slurry too where `slurry` (spec 8's `--slurry-spray on`, a setting of
+     sub-plan 22's). It is called in the trial pass, in every repeat of a part and in parts run again, so it keeps no
+     records of its own: what was released is in the pass's FlowBook (`released`, `released_H`, `released_p`,
+-    `released_solid`)."""
++    `released_solid`). Since sub-plan 22 Task 1c it may give a `Cascade` instead, the liquid's rate and the exposed
++    slurry's own per column, which the release takes cell by cell in time order (`cascade_mass`; Girin's,
++    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`)."""
+     columns: object
+     dp_ds: np.ndarray
+     shear: np.ndarray
+@@ -1782,17 +1784,19 @@
+     released_H: np.ndarray = None      # J (n,): its enthalpy, at its cells' own specific enthalpies
+     released_p: np.ndarray = None      # kg m/s (n, 3): its momentum, at its cells' own velocities -- fact 29's sink
+     released_solid: np.ndarray = None  # kg (n,): the solid in it, by its cells' liquid fractions
++    released_slurry: np.ndarray = None  # kg (n,): what the cascade took at the exposed slurry's own rate (sub-plan 22
++                                        # Task 1c; zero for a release given as one rate)
+ 
+     @classmethod
+     def zero(cls, n):
+         return cls(*(np.zeros((n, 3)) for _ in range(4)), released=np.zeros(n), released_H=np.zeros(n),
+-                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n))
++                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n))
+ 
+     def add(self, other):
+         """Add another book's impulses and releases and keep the worst numbers of both."""
+         for key in ("push", "shear", "wall", "carried"):
+             setattr(self, key, getattr(self, key) + getattr(other, key))
+-        for key in ("released", "released_H", "released_p", "released_solid"):
++        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry"):
+             mine, theirs = getattr(self, key), getattr(other, key)
+             if theirs is not None:
+                 setattr(self, key, theirs.copy() if mine is None else mine + theirs)
+@@ -1867,10 +1871,18 @@
+                         tb.passes, 1)
+         if flow.release is not None:
+             started = time.perf_counter()
+-            rate = np.broadcast_to(np.asarray(flow.release(sk), dtype=float), (n,))
++            given = flow.release(sk)
++            if isinstance(given, Cascade):               # the liquid's rate and the exposed slurry's (sub-plan 22 Task 1c)
++                rate = np.broadcast_to(np.array([given.rate, given.rate_slurry], dtype=float), (2, n))
++            else:
++                rate = np.broadcast_to(np.asarray(given, dtype=float), (n,))
+             if not np.all(np.isfinite(rate) & (rate >= 0.0)):
+                 raise ValueError("a release rate must be finite and non-negative")
+-            rb = release_top(sk, rate * flow.A_top * h, flow.slurry)
++            if isinstance(given, Cascade):
++                dm, step.released_slurry = cascade_mass(sk, rate[0], rate[1], flow.A_top, h, flow.slurry, given.T_slurry)
++            else:
++                dm, step.released_slurry = rate * flow.A_top * h, np.zeros(n)
++            rb = release_top(sk, dm, flow.slurry)
+             step.released, step.released_H = rb.mass, rb.enthalpy
+             step.released_p, step.released_solid = rb.momentum, rb.solid
+             clock("release", started)
+@@ -1910,6 +1922,42 @@
+     admit = flowing if slurry else flowing & (sk.T >= sk.material.T_liquidus)
+     mass, H, solid = sk.take_top_mass(dm, admit)
+     return ReleaseBook(mass, H, sk.momentum_out.copy(), solid)
++
++
++@dataclass
++class Cascade:
++    """A release given phase by phase (`Flow.release`; sub-plan 22 Task 1c): per column the liquid's rate and the exposed
++    slurry's own [kg/(m2 s) of top area, (n,)], the slurry's holding for slurry cells at least as warm as `T_slurry` [K,
++    (n,)], the cell whose properties gave it -- a colder slurry cell, more solid and more viscous, ends the column's
++    cascade -- or for every slurry cell where None."""
++    rate: np.ndarray
++    rate_slurry: np.ndarray
++    T_slurry: np.ndarray = None
++
++
++def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):
++    """The mass [kg, (n,)] the release takes from each column's top cells in dt [s] when each cell goes at its own phase's
++    rate, and the part of it taken from slurry cells (spec 8's cascade, the 2026-10-07 design's 8.1; sub-plan 22 Task 1c):
++    down the run of cells `release_top` may take -- the liquid cells from the top, at or above the liquidus, and with
++    `slurry` every flowing cell down to the first rigid one -- in time order, a liquid cell at `rate` and a slurry cell at
++    `rate_slurry` [kg/(m2 s) of top area, (n,)] times the top area A_top [m2], until dt is spent: the liquid first where
++    it covers the slurry, the slurry once nothing liquid covers it, then whatever lies beneath. A cell whose rate is zero
++    ends the column's cascade, as rigid metal does, and so does a slurry cell colder than `T_slurry` [K, (n,)], if given
++    (`Cascade`). `release_top(sk, mass, slurry)` then takes exactly these cells."""
++    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
++    liquid = flowing & (sk.T >= sk.material.T_liquidus)
++    run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
++    rate_s = np.asarray(rate_slurry, dtype=float)[:, None]
++    if T_slurry is not None:
++        rate_s = np.where(sk.T >= np.asarray(T_slurry, dtype=float)[:, None], rate_s, 0.0)
++    r = np.where(liquid, np.asarray(rate, dtype=float)[:, None], rate_s)
++    r = r * np.asarray(A_top, dtype=float)[:, None]                           # kg/s from each cell while it is exposed
++    with np.errstate(divide="ignore", invalid="ignore"):
++        lasts = np.where(run & (r > 0.0), sk.m / np.where(r > 0.0, r, 1.0), np.inf)    # s to strip each cell
++    starts = np.concatenate([np.zeros((sk.n, 1)), np.cumsum(lasts, axis=1)[:, :-1]], axis=1)
++    spare = np.where(run & (starts < dt), dt - starts, 0.0)
++    taken = np.where(run, np.minimum(spare * r, sk.m), 0.0)
++    return taken.sum(axis=1), (taken * ~liquid).sum(axis=1)
+ 
+ 
+ def prescribed_release(rate):
+```
+
+- [ ] **Step 7: Girin once a macro step, the slurry's mode and the record** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -69,7 +69,18 @@
+ release rate per column (`skin.Flow.release`, what sub-plan 22 supplies from Girin's model) taken in every flow
+ sub-step from the top cells, liquid first, the exposed slurry too with `slurry_spray`. The released metal leaves the
+ body with its cells' enthalpy and momentum, booked as the removed liquid is, and the history reports the released mass
+-and fact 29's droplet-momentum ratio Pi over each macro step (`skin.droplet_momentum_ratio`)."""
++and fact 29's droplet-momentum ratio Pi over each macro step (`skin.droplet_momentum_ratio`).
++
++Girin's spraying from the top cells (sub-plan 22 Task 1c; spec 8; `spray`, a `spray.SprayModel`, with the flow on): at
++the start of every macro step Girin's model is evaluated once on the corners (`girin_plan`), from the surface flow the
++flow's forcing evaluates there and the skins' depths then -- b and the regime test on the flowing depth (spec 6.7), the
++viscous film's floor there (Asha, 2026-10-28), the Rayleigh-Taylor mode on the liquid pool and the wave on the liquid's
++molten region, a liquid on slurry held from the shear modes off Girin's closure (Asha, 2026-10-29, option B), the droplet
++capped by one crest of its wave on the depth the release may take (2026-10-24) -- and, with `slurry_spray`, the exposed
++slurry's own mode by the cascade's properties (spec 8; Asha, 2026-10-29, option i). The plan's two rates per column are
++the release of every flow sub-step of the macro step (`SprayPlan.release`, through `skin.cascade_mass`); what the
++accepted passes released is the plan's record, per column and mode (`spray_plan`)."""
++import copy
+ import dataclasses
+ import math
+ import time
+@@ -77,8 +88,12 @@
+ import numpy as np
+ 
+ from . import columns as columns_mod
++from . import film as film_mod
++from . import material as material_mod
+ from . import movemesh
++from . import rheology
+ from . import skin as skin_mod
++from . import spray as spray_mod
+ from .body import ThermalBody
+ from .thermal import SIGMA_SB
+ 
+@@ -125,20 +140,216 @@
+                                   # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
+ 
+ 
++SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
++                                  # large-fragment design's labelled assumption for slurry)
++
++
+ @dataclasses.dataclass
+ class FlowForcing:
+     """The gas side's push on the skins' metal at a macro step, per corner: `dp_ds` [Pa/m, (n,)] the wall pressure's
+     gradient along the meridian and `tau` [Pa, (n,)] the gas shear (the surface flow's), and `g` [m/s2, (3,)] the
+     acceleration the metal feels in the body's frame -- minus the body's own: the deceleration along the flight
+-    direction."""
++    direction. `result`, the surface flow's whole evaluation (a `surface_flow.SurfaceFlowResult` on the corners), is what
++    Girin's spraying reads (sub-plan 22 Task 1c); None for a push given without one."""
+     dp_ds: np.ndarray
+     tau: np.ndarray
+     g: np.ndarray
++    result: object = None
+ 
+     def toward(self, other, frac):
+         """This forcing moved the fraction `frac` of the way to `other`, linearly."""
+         return FlowForcing(*(a + (b - a) * frac for a, b in ((self.dp_ds, other.dp_ds), (self.tau, other.tau),
+                                                              (self.g, other.g))))
++
++
++@dataclasses.dataclass
++class SprayPlan:
++    """Girin's spraying from the top cells over one macro step, evaluated at its start (`girin_plan`; spec 8, sub-plan 22
++    Task 1c), per column: `rate` [kg/(m2 s) of top area] the liquid's mode's and `rate_slurry` the exposed slurry's own
++    (the cascade; zero without slurry spraying); `result` the liquid's `spray.SprayResult` (branch, radius, wavelength);
++    `slurry` the exposed slurry's per column -- its `branch`, radius `r` [m], `wavelength` [m], viscosity `mu` [Pa s] at
++    the shear rate `gamma` [1/s] of its own sheared layer, density `rho` [kg/m3], conjugate depth `delta_m` [m], layer
++    `depth` [m] from its top to T_rigid, the viscous film's `gamma_tau` and the cell's temperature `T` [K] (nan, -1 where
++    there is none); the depths read
++    at the start, `flowing`, `liquid` and the cap's `cap_depth` [m], and `on_slurry`, where a flowing cell that is not
++    fully liquid lies beneath the liquid run. The record the macro step's accepted passes fill: `mass` and
++    `mass_slurry` [kg] released by each mode, and, at the step's end, `number` and `number_slurry`, the droplets: the mass
++    over one droplet's at the mode's radius."""
++    rate: np.ndarray
++    rate_slurry: np.ndarray
++    result: object
++    slurry: dict
++    flowing: np.ndarray
++    liquid: np.ndarray
++    cap_depth: np.ndarray
++    on_slurry: np.ndarray
++    mass: np.ndarray = None
++    mass_slurry: np.ndarray = None
++    number: np.ndarray = None
++    number_slurry: np.ndarray = None
++
++    def __post_init__(self):
++        T = self.slurry["T"]
++        self._cascade = skin_mod.Cascade(self.rate, self.rate_slurry, np.where(np.isfinite(T), T, np.inf))
++        n = len(self.rate)
++        self.mass, self.mass_slurry = np.zeros(n), np.zeros(n)
++        self.number, self.number_slurry = np.zeros(n), np.zeros(n)
++
++    def release(self, sk):
++        """`skin.Flow.release`: the liquid's rate and the exposed slurry's (`skin.Cascade`), whatever the skins hold within
++        the macro step -- Girin's modes and radii are the macro step's, from its start (spec 8) -- the slurry's for slurry
++        cells at least as warm as the cell that gave it."""
++        return self._cascade
++
++    def count(self, rho_liquid):
++        """The record's droplets: each mode's mass over one droplet's at its radius."""
++        for mass, r, rho, key in ((self.mass, self.result.r, rho_liquid, "number"),
++                                  (self.mass_slurry, self.slurry["r"], self.slurry["rho"], "number_slurry")):
++            ok = (mass > 0.0) & np.isfinite(r) & (r > 0.0)
++            with np.errstate(invalid="ignore", divide="ignore"):
++                setattr(self, key, np.where(ok, mass / (4.0 / 3.0 * np.pi * rho * np.where(ok, r, 1.0) ** 3), 0.0))
++
++
++def region_extent(edges, selected, areas):
++    """Lateral extent [m] of each column's own contiguous selected region on the columns' graph (`edges`, (E, 2)), as the
++    region's equivalent diameter 2 sqrt(A / pi) with A the selected columns' `areas` summed; zero where not selected: the
++    element model's `MeltingBody.region_extent` on the corners, the domain a surface wave must fit inside (2026-09-24)."""
++    from scipy.sparse import coo_matrix
++    from scipy.sparse.csgraph import connected_components
++    sel = np.asarray(selected, dtype=bool)
++    n = len(sel)
++    out = np.zeros(n)
++    if not sel.any():
++        return out
++    i, j = edges[:, 0], edges[:, 1]
++    keep = sel[i] & sel[j]
++    i, j = i[keep], j[keep]
++    g = coo_matrix((np.ones(2 * i.size), (np.concatenate([i, j]), np.concatenate([j, i]))), shape=(n, n))
++    count, label = connected_components(g, directed=False)
++    area = np.bincount(label[sel], np.asarray(areas, dtype=float)[sel], count)
++    out[sel] = 2.0 * np.sqrt(area[label[sel]] / np.pi)
++    return out
++
++
++def _rows(flow, idx):
++    """The surface flow's evaluation on the corners idx alone: every per-corner array taken at idx, the rest kept."""
++    n = len(flow.closure)
++    out = copy.copy(flow)
++    for key, value in vars(flow).items():
++        if isinstance(value, np.ndarray) and value.ndim >= 1 and value.shape[0] == n:
++            setattr(out, key, value[idx])
++    return out
++
++
++def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False):
++    """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
++    the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
++    spray model (`model`) and the skins as they are at its start: a SprayPlan.
++
++    The liquid's mode: b and the regime test read the flowing depth `sk.depth_above(T_rigid)` (spec 6.7), and so does
++    the viscous film's floor (Asha, 2026-10-28); delta_m is Girin's Eq. (2) and his surface velocity his closure's
++    (`film.lubrication` on b, as the element model's); the front-surface Rayleigh-Taylor mode reads the liquid pool, the
++    liquid depth `sk.depth_above(T_liquidus)` (`rt_layer`), and every wave must fit in the contiguous region of liquid
++    columns, and where Girin's closure does not apply a liquid lying on slurry takes no shear mode (`on_slurry`) -- the
++    element model's reading (amendment of 2026-10-06; Asha, 2026-10-29, option B); the droplet is capped by one crest of
++    its wave on the depth the release may take, the liquid's, or with `slurry` the flowing depth (2026-10-24); a quarter
++    of `radius` caps it too. Columns on the windward face, theta <= 90 degrees, only; `A_top` [m2] the top areas, `edges`
++    the columns' graph, `dt` [s] the macro step (the nominal release in the result). With `slurry`, the exposed slurry's
++    own mode too (`slurry_modes`)."""
++    mat, liq = sk.material, model.liquid
++    n = sk.n
++    F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
++    flowing = sk.valid & np.isfinite(skin_mod.cell_viscosity(sk, 0.0))
++    liquid = flowing & (sk.T >= mat.T_liquidus)
++    n_flow = np.cumprod(flowing, axis=1).sum(axis=1)
++    n_liq = np.cumprod(liquid, axis=1).sum(axis=1)
++    on_slurry = n_flow > n_liq
++    theta = np.asarray(theta, dtype=float)
++    windward = theta <= 0.5 * np.pi
++    w_n = flow.deceleration * np.maximum(np.cos(theta), 0.0)
++    delta_m, _ = spray_mod.melt_layer(flow, liq)
++    v_s = film_mod.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
++    extent = region_extent(edges, L > 0.0, A_top)
++    run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
++    cap = F if slurry else L
++    res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
++                         b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
++                         cap_depth=cap)
++    if slurry:
++        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow)
++    else:
++        rate_s, modes = np.zeros(n), _no_slurry(n)
++    return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry)
++
++
++def _no_slurry(n):
++    out = {key: np.full(n, np.nan) for key in ("r", "wavelength", "mu", "gamma", "rho", "delta_m", "depth", "gamma_tau",
++                                               "T")}
++    out["branch"] = np.full(n, -1)
++    return out
++
++
++def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow):
++    """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
++    option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
++    lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
++    properties: Li et al.'s viscosity (`rheology.viscosity`, with the bridge to the liquid) at the cell's solid fraction
++    and the shear rate of the slurry's own sheared layer, V_s over delta_m or over the layer, found by fixed-point
++    iteration from rest (at most skin.SHEAR_PASSES passes, until no viscosity moves by skin.SHEAR_TOL, the rate held at
++    rheology.GAMMA_MAX); the cell's mixture density; SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the
++    regime test, the viscous film's floor and b are it. Girin's formulas are the shared model's with these properties
++    (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
++    must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
++    rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and
++    more viscous, waits for the next macro step's evaluation (`skin.Cascade.T_slurry`)."""
++    mat = sk.material
++    n = sk.n
++    out = _no_slurry(n)
++    rate = np.zeros(n)
++    rows = np.flatnonzero((n_flow > n_liq) & windward)
++    if not rows.size:
++        return rate, out
++    k = n_liq[rows]
++    T = sk.T[rows, k]
++    dz = sk.dz()
++    depth = F[rows] - (np.cumsum(dz, axis=1) - dz)[rows, k]
++    f_s = 1.0 - sk.props.liquid_fraction(T)
++    rho = sk.density(T)
++    f_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
++    sub = _rows(flow, rows)
++    viscosity = lambda gamma: rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)
++
++    def layer(mu):
++        d, _ = spray_mod.melt_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA))
++        v, _, shear, _ = film_mod.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
++        return d, v, np.minimum(shear, rheology.GAMMA_MAX)
++
++    gamma = np.zeros(rows.size)
++    mu = viscosity(gamma)
++    for _ in range(skin_mod.SHEAR_PASSES):
++        gamma = layer(mu)[2]
++        mu_new = viscosity(gamma)
++        done = np.all(np.abs(mu_new - mu) <= skin_mod.SHEAR_TOL * mu)
++        mu = mu_new
++        if done:
++            break
++    d_m, v_s, _ = layer(mu)
++    extent = region_extent(edges, F >= spray_mod.B_MIN, A_top)
++    cells = np.arange(sk.m.shape[1])[None, :]
++    m_s = (sk.m * ((cells >= n_liq[:, None]) & (cells < n_flow[:, None]))).sum(axis=1)     # the slurry run, nominally
++    for j, i in enumerate(rows):
++        props = material_mod.LiquidProperties(float(rho[j]), float(mu[j]), SLURRY_SIGMA)
++        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False)
++        one, cell = slice(j, j + 1), slice(i, i + 1)
++        r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
++                       radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],
++                       cap_depth=F[cell])
++        rate[i] = r.mdot[0]
++        out["branch"][i], out["r"][i], out["wavelength"][i] = r.branch[0], r.r[0], r.wavelength[0]
++        out["gamma_tau"][i] = r.gamma_tau[0]
++    out["mu"][rows], out["gamma"][rows], out["rho"][rows], out["T"][rows] = mu, gamma, rho, T
++    out["delta_m"][rows], out["depth"][rows] = d_m, depth
++    return rate, out
+ 
+ 
+ def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None):
+@@ -175,12 +386,14 @@
+     `skin.flow_cycles` chooses each heat sub-step, Task 6d), driven by `surface_flow` (a `surface_flow.SurfaceFlow`, its
+     defaults if None) from each macro step's aero state; `release`, with the flow on, a release from the top cells in
+     every flow sub-step (`skin.Flow.release`: a callable of the skins giving a rate [kg/(m2 s)] per unit top area per
+-    column; sub-plan 21 Task 7), the exposed slurry released too where `slurry_spray`."""
++    column; sub-plan 21 Task 7), the exposed slurry released too where `slurry_spray`; or `spray`, a `spray.SprayModel`
++    with the flow on, Girin's spraying from the top cells evaluated at the start of every macro step (`girin_plan`; sub-plan
++    22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`."""
+ 
+     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+-                 surface_flow=None, release=None, slurry_spray=False):
++                 surface_flow=None, release=None, slurry_spray=False, spray=None):
+         if repeat_rule not in REPEAT_RULES:
+             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
+         self.flow_cycles = flow_cycles
+@@ -190,7 +403,14 @@
+         if release is not None and not self.flow_on:
+             raise ValueError("a release from the top cells needs the flow on: without it the heat-only skins remove the "
+                              "liquid as it forms (stage 2's stand-in for flow and spray)")
++        if spray is not None and not self.flow_on:
++            raise ValueError("Girin's spraying from the top cells needs the flow on: without it the heat-only skins "
++                             "remove the liquid as it forms")
++        if spray is not None and release is not None:
++            raise ValueError("a skin body sprays by Girin's model or by a release given, not both")
+         self.release, self.slurry_spray = release, bool(slurry_spray)
++        self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
++        self._step_release = release                         # what the parts' Flow releases this macro step
+         self.repeat_rule = repeat_rule
+         self.part_max = part_max                             # s, or None: no cap on the parts while melting
+         self.material, self.solver, self.mass_kg = material, solver, mass_kg
+@@ -228,6 +448,7 @@
+         self.impulse, self.momentum_lost = np.zeros(3), np.zeros(3)   # the momentum books since time zero [N s, kg m/s]
+         self.impulse_size = 0.0                              # N s: the push's, shear's and walls' impulses, in size
+         self.released_mass = self.released_enthalpy = 0.0    # kg, J: released from the top cells since time zero (Task 7)
++        self.droplet_number = 0.0                            # droplets Girin's spraying released since time zero (Task 1c)
+         self.droplet_momentum = np.zeros((self.columns.n, 3))   # kg m/s: what the droplets took from each column, and
+         self.droplet_shear = np.zeros((self.columns.n, 3))      # N s: the gas shear's impulse on its top, this macro step
+         self.flow_courant = self.flow_growth = 0.0           # this macro step's worst flow sub-step
+@@ -282,6 +503,13 @@
+             self.flow_courant = self.flow_growth = 0.0
+             self.flow_passes = self.flow_cycles_max = 0
+             self.droplet_momentum, self.droplet_shear = np.zeros((self.columns.n, 3)), np.zeros((self.columns.n, 3))
++            if self.spray is not None:                       # Girin once, at the macro step's start (sub-plan 22 Task 1c)
++                if end.result is None:
++                    raise ValueError("Girin's spraying reads the surface flow's evaluation: give the aero state, or a "
++                                     "forcing with its result")
++                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, self.surface.areas,
++                                             self.columns.edges, self.transverse_radius(), dt, self.slurry_spray)
++                self._step_release = self.spray_plan.release
+         sk, mat = self.skins, self.material
+         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+         if self.part_max is not None and mat.melts:
+@@ -301,6 +529,9 @@
+             self._advance_part(t if k == n - 1 else t - dt + (k + 1) * (dt / n), dt / n, dt, loads, 0 if n == 1 else 1)
+         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
+         self._q_prev = q_end.copy()
++        if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
++            self.spray_plan.count(self.spray.liquid.rho)
++            self.droplet_number += float(self.spray_plan.number.sum() + self.spray_plan.number_slurry.sum())
+ 
+     def flow_forcing(self, state):
+         """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
+@@ -316,7 +547,7 @@
+         res = self.surface_flow.evaluate(state, self.theta, self.nose_radius(), rho_l, self.surface_temperature())
+         self.last_flow = res
+         return FlowForcing(np.asarray(res.dp_ds, dtype=float), np.asarray(res.tau, dtype=float),
+-                           res.deceleration * self.v_hat)
++                           res.deceleration * self.v_hat, res)
+ 
+     def _advance_part(self, t, dt, dt_macro, loads, depth):
+         """One part of a macro step, ending at t: the passes, then -- if its draws would move a base more than MOVE_MAX
+@@ -332,7 +563,7 @@
+             f = self._forcing[0].toward(self._forcing[1], frac)
+             sigma = mat.liquid.sigma if mat.liquid is not None else 0.0
+             flow = skin_mod.Flow(self.columns, f.dp_ds, skin_mod.along_meridian(self.columns.normal, self.v_hat, f.tau),
+-                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles, release=self.release,
++                                 f.g, self.v_hat, sk.rho_l, sigma, A_top, self.flow_cycles, release=self._step_release,
+                                  slurry=self.slurry_spray)
+         eps = np.full(sk.n, self.emissivity)
+         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
+@@ -426,6 +657,9 @@
+             self.momentum_lost += fb.released_p.sum(axis=0)  # the droplets' momentum, at their cells' own velocities
+             self.droplet_momentum += fb.released_p
+             self.droplet_shear += fb.shear
++            if self.spray is not None:                       # the plan's record: each mode's mass (sub-plan 22 Task 1c)
++                self.spray_plan.mass += np.maximum(fb.released - fb.released_slurry, 0.0)
++                self.spray_plan.mass_slurry += fb.released_slurry
+         self.iterations.append(res.iterations)
+         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
+         self._move_base(book, m_min, g0)
+@@ -571,6 +805,12 @@
+ 
+     def nose_radius(self):
+         return float(self.mesh.params.get("radius_m", 0.05))
++
++    def transverse_radius(self):
++        """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
++        [m]: the body radius whose quarter caps a droplet (spec 8; the element model's transverse radius)."""
++        X = self.surface.points - self.mesh.points.mean(axis=0)
++        return float(np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ self.v_hat) ** 2, 0.0)).max())
+ 
+     def demised(self):
+         return self.mass() < self.demise_fraction * self.mass0
+```
+
+- [ ] **Step 8: Run them to see them pass.** Expected: `tests/test_reentry_model_spray.py` 24 passed,
+  `tests/test_reentry_model_skin.py` 92, `tests/test_reentry_model_skinbody.py` 32 (2 deselected, the reference tier's;
+  the body's spraying test about 100 s); the unit tier 533 passed, 1 skipped.
+
+- [ ] **Step 9: The measurements** (in `measure/task1c/`, each on mains power): `"$PY" body_run.py` and
+  `"$PY" body_run.py slurry` (the books and the record; about 2 minutes each); `"$PY" cascade_where.py heated`,
+  `"$PY" cascade_where.py sweep 93` and `"$PY" cascade_where.py sweep 120 103` (where the cascade releases);
+  `"$PY" bridge_mass.py` (ruling 3); `"$PY" bitid.py run <Task 1b's code> bit_1b.npz`, `"$PY" bitid.py run <code>
+  bit_1c.npz` and `"$PY" bitid.py compare bit_1b.npz bit_1c.npz`; and the element model's short case,
+  `./run_case.sh <code> runs line1c_short` and `"$PY" compare_runs.py runs linecap_short line1c_short` in
+  `measure/task1/cmp/`.
+
+- [ ] **Step 10: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skin.py reentry_model/skinbody.py tests/test_reentry_model_spray.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py
+git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- evaluated once at the start of every macro step from the surface flow and the skins' depths, b, the regime test and the viscous film's floor on the flowing depth, the Rayleigh-Taylor mode and the molten region on the liquid and a liquid on slurry held off Girin's closure (Asha 2026-10-29, option B), the droplet capped per crest on the depth the release may take; the release in every flow sub-step through the cascade, liquid first and the exposed slurry by its own properties only with slurry spraying on (option i), which sprays only within about a kelvin of the liquidus; a per-column record per mode per macro step; the element model and a skin body without a spray model unchanged to the last bit (sub-plan 22 Task 1c)"
+```
 
 ---
 
 ## The outline (Tasks 2–6, and Task 1 written out above as Tasks 1a, 1b and 1c)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
-   and 1c (the spraying from the top cells, which waits for Asha's decisions 1 and 2). The outline's item, as it
-   stood:
+   and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
    > **Spraying per column**: b the flowing depth, δ_m from Girin's Eq. (2), the rigid-substrate regime test reading the
    > skin's depths, the thin, thick and front-surface Rayleigh–Taylor modes; the release leaves the top cells, liquid
    > first; the droplets' momentum leaves with them. `--slurry-spray` carries over off. Tests: each mode's release from a

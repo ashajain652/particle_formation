@@ -2679,6 +2679,52 @@ of one comment in `spray.py`, both changed after.
      every windward column (liquid aluminium's 0.13): under the viscous film the cascade releases nothing. Measured once
      each.
 
+## Amendment of 2026-10-29 — sub-plan 22 Task 1c: Girin's spraying from the top cells, and where the cascade releases (facts 172–173)
+
+> Decided by Asha on 2026-10-29 (spec §8 and §16 as amended that day): where liquid lies on slurry the skins read their
+> depths as the element model does (option B), the slurry cascade is built as spec §8 has it (option i), and Task 1c's
+> two choices within the spec stand (Girin once a macro step at its start; his closure's surface velocity). Facts 1–171
+> stand except where these say otherwise; **fact 171's last finding, that the cascade releases nothing under the viscous
+> film, is corrected by fact 173**: it held for Li et al.'s slurry, not for the bridge to the liquid.
+
+172. **Girin from the top cells, built (sub-plan 22 Task 1c, 2026-10-29).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task1c/`. `skinbody.girin_plan` evaluates Girin at the start of
+     every macro step on the corners from the surface flow the flow's forcing evaluates (`FlowForcing.result`) and the
+     skins' depths then: b, the regime test and the viscous film's floor on the flowing depth, the Rayleigh–Taylor mode on
+     the liquid pool (the shared model's new `rt_layer`, its depth criterion, growth and shed depth), the molten region
+     the liquid columns' contiguous region on the columns' graph, a liquid on slurry held off Girin's closure (judged on
+     the cells), the cap on the liquid with slurry spraying off and the flowing depth with it on, his closure's surface
+     velocity, the windward columns only, the quarter-body cap on the top surface's transverse radius. `SprayPlan.release`
+     gives the same `skin.Cascade` of rates in every flow sub-step of the macro step, and `skin.cascade_mass` takes the top
+     cells in time order, each at its phase's rate. On the 4 mm test sphere heated at 3 MW/m² from 890 K under the 100 mm
+     flight's gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step: the tops melt in the first; the
+     second's plan finds liquid on 156 columns and a mode on 144, all thick, which release 1.54 g as 71 000 droplets (radius
+     median 126 µm, the liquid 16.5 µm deep at the start, median); mass to 1.5e-16, energy to 2.9e-11 of the heat absorbed,
+     momentum to 1.1e-17; Pi 0.008. Without a spray model the skin body is Task 1b's to the last bit in all 147 arrays of
+     three runs (flow off with removal, flow on, flow on with a prescribed release), and the element model's short case
+     (fact 169) in all 115 history columns, the source table and the results. The plan costs 0.09 s of processor time on
+     the 100 mm sphere's heated state, 0.51 s with the cascade (one shared-model evaluation per column with slurry beneath
+     its liquid, 4 705). Tests: spray one, skin two, skin body four; unit tier 533 passed, 1 skipped.
+173. **Where the cascade releases (sub-plan 22 Task 1c, 2026-10-29; `cascade_where.py`, `bridge_mass.py`, `body_run.py`).**
+     The exposed slurry's mode takes its first cell's properties: Li et al.'s viscosity with the log-linear bridge to the
+     liquid over 906.4–908 K (no data) at the cell's solid fraction and its sheared layer's shear rate by fixed point, its
+     mixture density, 0.80 N/m. Swept on the 100 mm sphere's columns with the slurry exposed (a top cell at T over 0.5 mm
+     of slurry at 902 K): at T ≤ 907.0 K (μ 0.033–5.0 Pa·s) the viscous film blocks every column, Γτ* 3.2–470 at 93 s and
+     4.3–610 at 120 s under 103 m/s²; at 907.2 K (17 mPa·s) 20 and 7 columns spray, at 907.4 K (9.1 mPa·s) 3 223 and
+     1 422, from 907.5 K (6.6 mPa·s) nearly all (4 618 and 4 636 of 4 705), by the thick branch from 907.7 K, at rates of
+     0.2–2.5 t/(m² s), the liquid's 2.3. So the cascade releases only slurry within about 0.6–0.8 K of the liquidus. On a
+     heated surface that is the slurry beneath the liquid: on sub-plan 21's heated state at 93 s the first slurry cell
+     under every windward column's liquid is at 907.78–908.00 K (median 907.98), and a flow sub-step of 1 or 10 ms that
+     strips the 6.57 g of liquid takes 0.35 g of it with the flag on (5.1 %, from 4 618 columns; one cell, about 10 µm).
+     A per-cell evaluation in every flow sub-step (the 2026-10-07 design to the letter) would take within the macro step
+     the slurry down to about 907.3 K, 1.56 g (about 40 µm); the floor Task 1c rules (the rate for slurry at least as warm
+     as the cell that gave it) takes the first cell and the rest over the next macro steps. On the 4 mm test sphere's step
+     above, with the flag on: 4.98 g of slurry from 615 columns (471 of them with no liquid at the step's start, their top
+     in the bridge at 907.19–908.00 K) and 0.79 g of liquid, against 1.54 g of liquid with it off; 89 000 droplets, the
+     slurry's radius median 187 µm; the books as with it off (mass 1.5e-16, energy 1.4e-11, momentum 3.8e-17). Metal
+     heated through the last kelvin before the liquidus is stripped there, as slurry of a few per cent solid. Off by
+     default; measured once each.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

@@ -553,3 +553,31 @@ def test_without_a_cap_depth_the_film_mass_caps_the_droplet_as_before():
     res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.array([5.0, 20.0, 0.0]), np.ones(3, bool),
                                          0.5, np.full(3, 1e-5), b * LIQ.rho * 1e-5)
     assert np.isfinite(res.wavelength[:2]).all() and np.isnan(res.wavelength[2])        # no mode on the dry patch
+
+
+def test_the_rayleigh_taylor_mode_can_read_a_liquid_pool_shallower_than_the_film():
+    """Asha, 2026-10-29 (sub-plan 22 Task 1c, decision 1, option B): where liquid lies on slurry the layered skins'
+    front-surface Rayleigh-Taylor mode reads the liquid pool, not the flowing film b -- its depth criterion, its bounded
+    growth and the depth it sheds within a growth time -- as the element model's mode reads its liquid layer (the
+    amendment of 2026-10-06). `rt_layer` is that depth; without it the mode reads the liquid layer as before, and given
+    that same depth it is the same to the last bit. 5 mm of flowing metal at the nose under a lambda* of 2 cm: as one
+    pool the mode takes it; with 0.3 mm of liquid on top it does not (h < lambda*/2 pi, 3.2 mm here), and nothing else
+    can (the thin lambda* at 5 m/s is metres); with 4 mm of liquid it does, at that pool's growth time and rate."""
+    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
+    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
+    run = lambda **k: model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas,
+                                     b * LIQ.rho * areas, extent=np.full(1, 0.05), deceleration_n=w_n, **k)
+    whole, same = run(), run(rt_layer=b)
+    assert whole.branch[0] == spray.BRANCH_RT and whole.rt_active and whole.dm[0] > 0.0
+    for key in ("branch", "unstable", "r", "mdot", "dm", "dn", "growth", "wavelength"):
+        assert np.array_equal(getattr(whole, key), getattr(same, key), equal_nan=True), key
+    shallow = run(rt_layer=np.full(1, 3e-4))
+    assert shallow.branch[0] == spray.BRANCH_THIN and shallow.mdot[0] == 0.0 and shallow.dm[0] == 0.0
+    assert not shallow.rt_active
+    pool = run(rt_layer=np.full(1, 4e-3))
+    _, lam, tau = spray.rayleigh_taylor_bounded(w_n, np.full(1, 4e-3), np.full(1, 0.05), LIQ)
+    assert pool.branch[0] == spray.BRANCH_RT and pool.growth[0] == tau[0] > whole.growth[0]
+    assert pool.wavelength[0] == lam[0] and pool.mdot[0] == pytest.approx(LIQ.rho * 4e-3 / tau[0], rel=1e-12)

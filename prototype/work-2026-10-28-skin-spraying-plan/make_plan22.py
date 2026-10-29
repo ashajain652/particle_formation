@@ -35,6 +35,11 @@ TASKS = (
             ("DIFF_BODY_T1A", "reentry_model/body.py"), ("DIFF_COUPLED_T1A", "reentry_model/coupled.py"),
             ("DIFF_CLI_T1A", "reentry_model/cli.py"), ("DIFF_MELT_SENSITIVITY_T1A", "analysis/melt_sensitivity.py"))),
     ("1b", (("DIFF_TEST_SPRAY_T1B", "tests/test_reentry_model_spray.py"), ("DIFF_SPRAY_T1B", "reentry_model/spray.py"))),
+    ("1c", (("DIFF_TEST_SPRAY_T1C", "tests/test_reentry_model_spray.py"),
+            ("DIFF_TEST_SKIN_T1C", "tests/test_reentry_model_skin.py"),
+            ("DIFF_TEST_SKINBODY_T1C", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_SPRAY_T1C", "reentry_model/spray.py"), ("DIFF_SKIN_T1C", "reentry_model/skin.py"),
+            ("DIFF_SKINBODY_T1C", "reentry_model/skinbody.py"))),
 )
 
 

@@ -510,6 +510,30 @@ on any layer: about 4.6 mm at λ = 2 cm and h = 1 mm (measured in sub-plan 22 Ta
 λ* < 2π h, so the droplet is under (3π)^⅓ h, about 2.1 h, and inside the size bins' 10 mm top while h stays under about
 4.7 mm.
 
+**Where liquid lies on slurry** (Asha, 2026-10-29, option B). The skins read their depths as the element model does
+(the rigid-substrate amendment of 2026-10-06): b, the regime test and the viscous film's floor read the flowing depth,
+but the front-surface Rayleigh–Taylor mode reads the liquid pool — its depth criterion, its bounded growth and the depth
+it sheds in a growth time — the molten region a wave must fit in is the contiguous region of columns with liquid, and
+where Girin's closure does not apply a liquid lying on slurry takes no shear mode. The shared spray physics takes the
+pool's depth as an optional argument (`rt_layer`) that the element model never passes. Girin is evaluated once, at the
+start of each macro step, from that step's surface flow and the skins' depths then, the mode, radius and rates of each
+column held for the macro step and only what the admitted run of cells holds re-checked in each sub-step; his surface
+velocity is his closure's (Asha, 2026-10-29, confirming sub-plan 22 Task 1c's choices).
+
+**The cascade** (Asha, 2026-10-29, option i) is built as the 2026-10-07 design §8 has it: with `--slurry-spray on`, in
+each sub-step the release works down the top cells in time order, the liquid at its mode's rate and then, once nothing
+liquid covers it, the exposed slurry at the rate of its own mode, from its first cell's properties (Li et al.'s
+viscosity with the bridge at the cell's solid fraction and the shear rate of its own sheared layer, its mixture density,
+0.80 N/m), evaluated once a macro step and holding for slurry at least as warm as that cell. Measured in sub-plan 22
+Task 1c (a fact, not a design): the viscous film blocks the slurry's modes wherever its viscosity exceeds about ten
+times the liquid's, so the cascade releases only exposed slurry within about 0.6–0.8 K of the liquidus, in the upper part
+of the bridge (906.4–908 K, which has no data) where Scheil's curve leaves a few per cent of solid; on the 100 mm
+sphere's 9 417 columns nothing at or below 907.0 K sprays, at 93 s or at 120 s under 103 m/s². On a heated surface that
+is exactly the slurry beneath the liquid and a top just entering the bridge, so the cascade is not inert: on sub-plan
+21's heated state at 93 s a flow sub-step takes 0.35 g of slurry beside 6.6 g of liquid, and on the 4 mm test sphere
+heated at 3 MW/m² from 890 K a 0.25 s step sprayed 4.98 g of slurry and 0.79 g of liquid against 1.54 g of liquid with
+the flag off.
+
 Droplet records are combined per column, per mode, per macro step, summing number and mass over the sub-steps; a
 column's radius is fixed within a macro step by that step's gas state and δ_m, so combining changes no radius, and the
 size histograms accumulate each sub-step. Two source columns are added: `solid_fraction` and `h_kg`.
@@ -1062,3 +1086,13 @@ Each stage is tested and measured before the next begins.
   sub-plan 22 is against its flights (Asha). Built in sub-plan 22's Tasks 1a and 1b (2026-10-28): on the CLI test's short
   melting case this line's element model sprays as that branch's does to the last bit, and the per-crest cap, built in
   the shared spray physics as `cap_depth`, leaves the element model unchanged to the last bit.
+- 2026-10-29 (sub-plan 22 Task 1c, the two choices its first writing stopped on): where liquid lies on slurry the skins'
+  front-surface Rayleigh–Taylor mode reads the liquid pool and the molten region a wave must fit in is the liquid's, and
+  off Girin's closure a liquid on slurry is held from the shear modes, as the element model reads its depths (option B,
+  over reading every depth as one flowing film, option A), through an optional argument of the shared spray physics
+  that the element model never passes; b, the regime test and the viscous film's floor stay on the flowing depth (§8).
+  The slurry cascade is built as §8 has it, with its tests (option i, over recording it as inert and redefining the flag,
+  or deferring it), and where it releases is measured and recorded in §8 as a fact: only exposed slurry within about
+  0.6–0.8 K of the liquidus, which on a heated surface is where the slurry beneath the liquid lies. Task 1c's choices
+  within the spec stand: Girin evaluated once a macro step at its start, only the admitted run re-checked in each
+  sub-step, and his closure's surface velocity (Asha).
