@@ -1748,7 +1748,9 @@ class Flow:
     by `release_top` -- liquid first, the exposed slurry too where `slurry` (spec 8's `--slurry-spray on`, a setting of
     sub-plan 22's). It is called in the trial pass, in every repeat of a part and in parts run again, so it keeps no
     records of its own: what was released is in the pass's FlowBook (`released`, `released_H`, `released_p`,
-    `released_solid`)."""
+    `released_solid`). Since sub-plan 22 Task 1c it may give a `Cascade` instead, the liquid's rate and the exposed
+    slurry's own per column, which the release takes cell by cell in time order (`cascade_mass`; Girin's,
+    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`)."""
     columns: object
     dp_ds: np.ndarray
     shear: np.ndarray
@@ -1782,17 +1784,19 @@ class FlowBook:
     released_H: np.ndarray = None      # J (n,): its enthalpy, at its cells' own specific enthalpies
     released_p: np.ndarray = None      # kg m/s (n, 3): its momentum, at its cells' own velocities -- fact 29's sink
     released_solid: np.ndarray = None  # kg (n,): the solid in it, by its cells' liquid fractions
+    released_slurry: np.ndarray = None  # kg (n,): what the cascade took at the exposed slurry's own rate (sub-plan 22
+                                        # Task 1c; zero for a release given as one rate)
 
     @classmethod
     def zero(cls, n):
         return cls(*(np.zeros((n, 3)) for _ in range(4)), released=np.zeros(n), released_H=np.zeros(n),
-                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n))
+                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n))
 
     def add(self, other):
         """Add another book's impulses and releases and keep the worst numbers of both."""
         for key in ("push", "shear", "wall", "carried"):
             setattr(self, key, getattr(self, key) + getattr(other, key))
-        for key in ("released", "released_H", "released_p", "released_solid"):
+        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry"):
             mine, theirs = getattr(self, key), getattr(other, key)
             if theirs is not None:
                 setattr(self, key, theirs.copy() if mine is None else mine + theirs)
@@ -1867,10 +1871,18 @@ def flow_substeps(sk, flow, dt, cycles=None):
                         tb.passes, 1)
         if flow.release is not None:
             started = time.perf_counter()
-            rate = np.broadcast_to(np.asarray(flow.release(sk), dtype=float), (n,))
+            given = flow.release(sk)
+            if isinstance(given, Cascade):               # the liquid's rate and the exposed slurry's (sub-plan 22 Task 1c)
+                rate = np.broadcast_to(np.array([given.rate, given.rate_slurry], dtype=float), (2, n))
+            else:
+                rate = np.broadcast_to(np.asarray(given, dtype=float), (n,))
             if not np.all(np.isfinite(rate) & (rate >= 0.0)):
                 raise ValueError("a release rate must be finite and non-negative")
-            rb = release_top(sk, rate * flow.A_top * h, flow.slurry)
+            if isinstance(given, Cascade):
+                dm, step.released_slurry = cascade_mass(sk, rate[0], rate[1], flow.A_top, h, flow.slurry, given.T_slurry)
+            else:
+                dm, step.released_slurry = rate * flow.A_top * h, np.zeros(n)
+            rb = release_top(sk, dm, flow.slurry)
             step.released, step.released_H = rb.mass, rb.enthalpy
             step.released_p, step.released_solid = rb.momentum, rb.solid
             clock("release", started)
@@ -1910,6 +1922,42 @@ def release_top(sk, dm, slurry=False):
     admit = flowing if slurry else flowing & (sk.T >= sk.material.T_liquidus)
     mass, H, solid = sk.take_top_mass(dm, admit)
     return ReleaseBook(mass, H, sk.momentum_out.copy(), solid)
+
+
+@dataclass
+class Cascade:
+    """A release given phase by phase (`Flow.release`; sub-plan 22 Task 1c): per column the liquid's rate and the exposed
+    slurry's own [kg/(m2 s) of top area, (n,)], the slurry's holding for slurry cells at least as warm as `T_slurry` [K,
+    (n,)], the cell whose properties gave it -- a colder slurry cell, more solid and more viscous, ends the column's
+    cascade -- or for every slurry cell where None."""
+    rate: np.ndarray
+    rate_slurry: np.ndarray
+    T_slurry: np.ndarray = None
+
+
+def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):
+    """The mass [kg, (n,)] the release takes from each column's top cells in dt [s] when each cell goes at its own phase's
+    rate, and the part of it taken from slurry cells (spec 8's cascade, the 2026-10-07 design's 8.1; sub-plan 22 Task 1c):
+    down the run of cells `release_top` may take -- the liquid cells from the top, at or above the liquidus, and with
+    `slurry` every flowing cell down to the first rigid one -- in time order, a liquid cell at `rate` and a slurry cell at
+    `rate_slurry` [kg/(m2 s) of top area, (n,)] times the top area A_top [m2], until dt is spent: the liquid first where
+    it covers the slurry, the slurry once nothing liquid covers it, then whatever lies beneath. A cell whose rate is zero
+    ends the column's cascade, as rigid metal does, and so does a slurry cell colder than `T_slurry` [K, (n,)], if given
+    (`Cascade`). `release_top(sk, mass, slurry)` then takes exactly these cells."""
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    liquid = flowing & (sk.T >= sk.material.T_liquidus)
+    run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
+    rate_s = np.asarray(rate_slurry, dtype=float)[:, None]
+    if T_slurry is not None:
+        rate_s = np.where(sk.T >= np.asarray(T_slurry, dtype=float)[:, None], rate_s, 0.0)
+    r = np.where(liquid, np.asarray(rate, dtype=float)[:, None], rate_s)
+    r = r * np.asarray(A_top, dtype=float)[:, None]                           # kg/s from each cell while it is exposed
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lasts = np.where(run & (r > 0.0), sk.m / np.where(r > 0.0, r, 1.0), np.inf)    # s to strip each cell
+    starts = np.concatenate([np.zeros((sk.n, 1)), np.cumsum(lasts, axis=1)[:, :-1]], axis=1)
+    spare = np.where(run & (starts < dt), dt - starts, 0.0)
+    taken = np.where(run, np.minimum(spare * r, sk.m), 0.0)
+    return taken.sum(axis=1), (taken * ~liquid).sum(axis=1)
 
 
 def prescribed_release(rate):
