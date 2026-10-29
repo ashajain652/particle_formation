@@ -486,6 +486,30 @@ Rayleigh–Taylor modes as they stand. The release in a sub-step leaves from the
 sprays only under `--slurry-spray on` (off by default), by the cascade rule of the 2026-10-07 design §8, which carries
 over unchanged with its slurry properties. The droplets' momentum leaves the top cells (§6.4).
 
+The modes are the element model's as amended on 2026-10-22 on branch `we-critical-308` and brought into this line
+(Asha, 2026-10-28; sub-plan 22 Task 1a, facts 161–169): Girin's critical surface Weber number, 3.08 by default, gates the
+thick branch only; Girin & Kopyt's thin, rarefied and regime-2 branches are gated by the wave fitting in the molten
+region and by a viscous film on the rigid floor (`spray.viscous_film`: Lamb's damping plus Hunt's Stokes layer, the
+column releasing nothing where Γτ* ≥ 1, and a depth under the floor's Stokes depth outside the inviscid mode and
+recorded), whose floor depth on the skins is the flowing depth.
+
+**The droplet's size cap is per crest** (Asha, 2026-10-24). A droplet holds no more liquid than one crest of its own
+wave can give, (4/3)π r³ ≤ λ² h, so r ≤ (3 λ² h / (4π))^⅓: λ is the wavelength of the mode that sprays the column — the
+thick branch's 2π δ_m / Δ_f, Girin & Kopyt's λ* on the thin, rarefied and regime-2 branches, the Rayleigh–Taylor λ* —
+and λ² because a crest repeats every wavelength in both surface directions, so the column's area does not enter; h is
+the depth of the run of cells the release may take, the liquid depth (§6.7) with `--slurry-spray off` and the flowing
+depth with it on. It is evaluated once, at the start of the macro step, from that step's gas state, δ_m and the column's
+depth then, and holds for every sub-step of it; the release in each sub-step still takes at most what the admitted run
+then holds. A quarter of the body radius caps the radius as before. It replaces, on the skins, the element model's cap by
+the film on the patch, r ≤ (3 m_f / (4π ρ_l))^⅓, which depends on the mesh facet's area and bound on 67 % of the thick
+branch's release rows on the element model's 100 mm flight (24 % of its mass) and set essentially every Rayleigh–Taylor
+droplet (about 2 mm); the element model keeps that cap. The shared spray physics takes h as `cap_depth`, and a column
+with no such depth releases nothing. A Rayleigh–Taylor droplet, whose radius is its wavelength, is then set by the cap
+on any layer: about 4.6 mm at λ = 2 cm and h = 1 mm (measured in sub-plan 22 Task 1b: 3.1, 4.6 and 6.7 mm on 0.3, 1.0 and
+3.3 mm of liquid at the nose under 103 m/s²); where the Rayleigh–Taylor criterion reads the cap's own depth h it admits only
+λ* < 2π h, so the droplet is under (3π)^⅓ h, about 2.1 h, and inside the size bins' 10 mm top while h stays under about
+4.7 mm.
+
 Droplet records are combined per column, per mode, per macro step, summing number and mass over the sub-steps; a
 column's radius is fixed within a macro step by that step's gas state and δ_m, so combining changes no radius, and the
 size histograms accumulate each sub-step. Two source columns are added: `solid_fraction` and `h_kg`.
@@ -1022,3 +1046,19 @@ Each stage is tested and measured before the next begins.
   before to the first part in which the cap holds metal back (1.4375 s), and the flow-off plate to 2.0 s is the same
   throughout; on the full plate from 1.5 s the cap kept every part at 0.05 s and the held metal falling at about 26 g/s
   instead of 260, and the plate failed on its deposit's folding at 1.80 s instead of 1.60 s (Asha).
+- 2026-10-24 (after the element model's flights on branch `we-critical-308`, facts 161–168): the droplet's size cap is
+  per crest, (4/3)π r³ ≤ λ² h, λ the wavelength of the mode that sprays the column and h the depth the release can take
+  (the liquid depth with `--slurry-spray off`, the flowing depth with it on), evaluated once at the start of the macro
+  step and held for its sub-steps, the quarter-body-radius cap unchanged (§8); over the film-mass cap, which depends on
+  the mesh facet's area, has no film account to read on the skins, and bound on 67 % of the element model's thick
+  release rows. The shared spray physics takes the cap's depth as its own argument and, without it, keeps the film-mass
+  cap, so the element model keeps its cap (Asha).
+- 2026-10-28 (as sub-plan 22 was written at code level): sub-plan 22's Task 1 first brings across the element model's
+  two spraying amendments of 2026-10-22 from branch `we-critical-308` -- Girin's critical surface Weber number 3.08 by
+  default (fa02a4c) and Girin & Kopyt's thin, rarefied and regime-2 branches gated by the wave fit and a viscous film on
+  the rigid floor instead of the borrowed critical Weber number (a54520c) -- with their tests, so that the flights spray
+  by the rules of record; on the skins the viscous film's floor depth is the flowing depth (§8). `--surface-model
+  elements` on this line becomes the element model of that branch, and the bit-for-bit check of the element model in
+  sub-plan 22 is against its flights (Asha). Built in sub-plan 22's Tasks 1a and 1b (2026-10-28): on the CLI test's short
+  melting case this line's element model sprays as that branch's does to the last bit, and the per-crest cap, built in
+  the shared spray physics as `cap_depth`, leaves the element model unchanged to the last bit.

@@ -2464,6 +2464,221 @@ edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
      skin body seven (6d's counts test rewritten; two of them the cap's), skin three, the coupled run's results one
      assertion; unit tier 517 passed, 1 skipped.
 
+## Amendment of 2026-10-28 — sub-plan 22 Tasks 1a and 1b: the element model's spraying amendments of 2026-10-22 brought across, and the droplet's cap per crest (facts 161–171)
+
+> Decided by Asha on 2026-10-28 (sub-plan 22's amendment of that date: the two amendments come into this line first, with
+> their tests, the viscous film's floor on the skins the flowing depth) and on 2026-10-24 (the cap). Facts 161–168 are
+> branch `we-critical-308`'s facts 108–115 (commits fa02a4c and a54520c, cut from `main` at 612b916, not merged),
+> renumbered by 53 because this line's 101–160 hold other facts: each says which it was, their references to one
+> another follow the new numbers, a reference to that branch's 101–107 (its frame export of 2026-10-08, not on this
+> line) says so, and their paths are on that branch. Facts 1–100 are the same on both lines. Facts 1–160 stand except
+> where these say otherwise; 169–171 are Task 1's own (1a, 1b, and the measurements for 1c).
+
+**On `we-critical-308`: its amendment of 2026-10-22 (critical Weber number), facts 108–110 there.** Girin (2017, A&A 606, A63) states the gradient instability's threshold as a surface Weber number of 3.08 and then, in
+his Section 3, recommends 4.62 "in practice" (GI ≥ 0.6 instead of 0.4, after Girin 2011a), because near the threshold
+the fastest wave is longer than the meteoroid's radius and its induction period longer than the meteor's life; his
+Appendix C explains what the threshold means (the melt's inertia against the surface tension of a disturbance of
+curvature radius about δ_m) and uses 4.62 without deriving it. Both reasons are represented explicitly in this model,
+so Asha decided on 2026-10-22 that 3.08 is the default. It amends sub-plans 04 (the constants' comments), 07 (the
+spray model's default), 13 (the flag's default), 14 (the sensitivity variant) and 15 (the README, the assumptions and
+the spec). That branch's facts 1–107 stood except where these say otherwise. Made in `prototype/work-2026-10-22-we-critical/`
+(tracked; run outputs ignored); its base is the frame-export copy of that branch's facts 101–107 (its amendment of 2026-10-08, which this line does not have), and the six diffs in `amendment/`
+rebuild `code/` from it exactly.
+
+161. **Girin's theoretical threshold is the default.** (`we-critical-308`'s fact 108.)
+     - Why: the two effects his 4.62 stands in for are in the model. `spray.wave_fits` lets a patch spray only if one
+       whole fastest wavelength fits inside the contiguous molten region it belongs to (sub-plan 07), and the growth
+       period k_t δ_m/(V_s Im Ω_f) sets the stripping rate, which falls to zero with Im Ω_f as We_s falls to 3.08
+       (sub-plan 04's table: Im Ω_f is 0.049 at 4.62 against 0.24 at large We_s). Keeping 4.62 on top of them counts the
+       near-threshold restriction twice. His 4.62 was set on 3 mm bodies lasting seconds; the 100 mm sphere is about 30
+       times his radius and flies for minutes.
+     - `--we-critical` and `SprayModel(we_critical=...)` default to `dispersion.WE_CRITICAL_THEORY` (3.08);
+       `WE_CRITICAL_PRACTICAL` (4.62) stays for `girin_case`, whose Girin-as-published mode reproduces his Table 1
+       critical angles only with it (fact 10), and as the sensitivity variant `we462`, which replaces `we308`.
+     - The same threshold gates the thin, rarefied and regime-2 branches (fact 32, 2026-09-24), whose
+       Girin & Kopyt modes have none of their own; they now borrow 3.08 instead of 4.62 (superseded the same day by
+       the thin-gate amendment, facts 164–168: they no longer borrow it).
+     - Tests: unit tier 261 passed, 1 skipped, with only Task 11's five known reference failures, as on the
+       frame-export copy (`unit_code.log`); the two spray tests and the CLI settings test now compare with 3.08.
+
+162. **Measured: the 100 mm flight changes by less than its known uncertainties.** (`we-critical-308`'s fact 109.)
+     - Two flights of the 100 mm Scheil sphere to 120 s with every default of the continuum-step copy
+       (`prototype/work-2026-10-07-dt-continuum/meas/`, checksum manifest verified unchanged before the second run;
+       the frame-export additions are write-only, that branch's fact 105), differing only in `--we-critical`: `runs/default_d100`
+       (4.62, 2026-10-07) and `runs/wecr308_d100` (3.08, 2026-10-22). Compared by `compare_wecr.py` in this amendment's
+       folder (`compare_wecr.out`). Each measured once.
+     - Sprayed mass 1.1654 → 1.1669 kg (+0.13 %); spraying onset unchanged (25.0 s, 74.04 km); final mass 0.3066 →
+       0.3051 kg; refrozen mass 0.486 → 0.440 kg; the runoff account 3.85 → 3.71 kg.
+     - Droplets: number-median radius 68.5 → 69.0 µm, mass-median 189.2 → 188.1 µm (both under 1 %); count
+       76.9 → 83.0 million (+7.9 %, inside the 9 % the count moved on a 1.4 mm surface mesh in the abstract's
+       grid-gate check).
+     - Underneath, 215 g (18 % of the spray) now leaves at 3.08 < We_s ≤ 4.62 — 192 g by the thin branch and 23 g by the
+       thick (Girin 2017) one — against 0.24 g (Rayleigh–Taylor only) at 4.62. By branch: thick 0.777 → 0.730 kg, thin
+       0.321 → 0.370 kg, Rayleigh–Taylor 0.068 → 0.067 kg. The total is limited by the melt supply, not by the
+       threshold: what the lower threshold releases earlier would otherwise have run off and sprayed elsewhere.
+     - Cost 8,207 → 8,578 s (+4.5 %).
+
+163. **Not done, and for Asha to decide.** (`we-critical-308`'s fact 110.)
+     - (a) **The borrowed threshold.** Most of what the switch moves is on the thin branch, whose inviscid mode has no
+       threshold of its own; 3.08 there is as borrowed as 4.62 was. A threshold derived for Girin & Kopyt's thin mode
+       (or the measured sensitivity standing in for one) is open.
+     - (b) **Not re-run:** the 50 mm flight, another mesh, and Girin removal past 120 s. The ASCEND 2027 abstract's
+       numbers were made at 4.62; by fact 162 they move by under 1 % except the count.
+     - (c) **The layered-skin line** (`step3-rigid-substrate-scheil`, sub-plans 19–22) numbers its own facts 101–155
+       and carries copies of `cli.py` with the 4.62 default; this amendment reaches it when `main` is merged into it,
+       and the facts need renumbering then (101–107 already collide). (Since 2026-10-28 on this line: brought across in sub-plan 22's Task 1a and renumbered, fact 169.)
+
+**On `we-critical-308`: its amendment of 2026-10-22 (thin gate), Girin & Kopyt's branches losing the borrowed threshold and gaining a viscous film, facts 111–115 there.** Fact 163 (a) left the thin branch borrowing Girin 2017's critical surface Weber number. Asked to find a threshold for
+it the way Girin found 3.08, Girin & Kopyt's Eq. 5 was solved (`prototype/work-2026-10-22-thin-threshold/`, its
+`REPORT.md`), and it has none (fact 164). Asha then decided on 2026-10-22 that the thin, rarefied and regime-2 branches
+lose the borrowed gate, so the wave fit decides, and that they gain a viscous gate for a film on a rigid floor (fact
+165). It amends sub-plans 07 (the spray model), 09 (the body records the gate's reject), 10 (two history columns, two
+result fields), 13 (the flag's help) and 15 (the README, the assumptions and the spec). That branch's facts 1–110 stood except where
+these say otherwise; **fact 161's third bullet and fact 163 (a) — the thin branches borrow 3.08 — are superseded.** Made
+in `prototype/work-2026-10-22-thin-gate/` (tracked; run outputs ignored); its base is the critical-Weber copy of facts
+161–163, and the six diffs in `amendment/` rebuild `code/` from it exactly. The measurement copy `meas/` was frozen with
+a checksum manifest before its run; `code/` differs from it only in the help text of `--we-critical` and the place
+of one comment in `spray.py`, both changed after.
+
+164. **Girin & Kopyt's Eq. 5 has no critical Weber number** (`we-critical-308`'s fact 111.) (`gk_dispersion.py`, `scan_we.py`, `REPORT.md` in the
+     thin-threshold folder).
+     - Eq. 5 was re-derived from the paper's Fig. 2 (inviscid layer at rest on a rigid floor, compressible gas at V0) and
+       matches as printed. Solved with the gas root on its decaying branch, checked against the closed form at M = 0
+       (four digits) and against its own large-wavenumber expansion.
+     - The largest growth rate over all wavelengths is positive at every gas Weber number ρ_g V0² b/σ: supersonic gas
+       radiates (wave drag) at every wavelength down to nanometres; subsonic gas is Kelvin–Helmholtz, whose long waves
+       always grow. So no We_cr exists as Girin's 3.08 does for his Eq. 1.
+     - Bounded by the molten region L and their dissipation limit (their Eq. 9) a threshold appears, and the film depth
+       cancels from it: subsonic, the capillary cutoff 2πσ/(ρ_g V0²) must fit in L; supersonic, the shortest surviving
+       wave 0.5Mσ/(ρ_g V0²) must. Measured on α = 4×10⁻⁷, b = 20 µm, L = 10 mm: 0.0126 against 0.0126 predicted
+       (subsonic), 0.0025 and 0.0032 against 0.0020 and 0.0030 (M = 2, 3). `wave_fits` on λ* = 1.5Mσ/(ρ_g V0²) is the
+       same criterion on the dominant wave, three times stricter.
+     - Their asymptotic Eq. 8 does not follow from Eq. 5 as printed (it puts the capillary frequency into the growth);
+       Eq. 5's root does reproduce their Eq. 9, so λ* and τ* (their Eqs. 11, 12), which `thin_film_mode` uses, stand.
+
+165. **The gates on Girin & Kopyt's branches** (`we-critical-308`'s fact 112.) (`spray.py`).
+     - Girin's We_s > We_cr gates the thick branch only; the thin, rarefied and regime-2 branches are gated by
+       `wave_fits` on λ* and by `viscous_film`. We_s is still computed and written to the source table.
+     - `viscous_film(lam, tau, h, liquid)`: the amplitude damping rate of the dominant wave on a layer of depth h over a
+       rigid floor, Γ = 2νk² + k√(νω/2)/sinh(2kh) with ω² = (σk³/ρ_l) tanh(kh) — Lamb's interior damping plus the
+       floor's Stokes layer (Hunt 1952, as in Mei). The patch releases nothing where Γτ* ≥ 1. Where h < √(2ν/ω) the
+       floor's boundary layer fills the liquid and the inviscid mode does not apply: the patch is rejected and recorded
+       (a validity limit, not a finding that nothing leaves; the factor 2 is a convention).
+     - h is the depth to the rigid floor: the non-rigid depth the regime test uses (`regime_layer`, falling back to
+       `b_layer`, then b), not the film. **Open assumption:** mushy material more than half liquid counts as non-rigid
+       there but is far more viscous, so the effective floor may lie inside that layer and the damping be larger.
+     - Regime 2 is classified but never sprays: for any melt more viscous than the gas, Lamb's term alone gives
+       Γτ* = 63ν√(ρ/σ)λ^−½, above 1 at every wavelength below kilometres (ν above 0.018 m²/s, the smallest edge ν_gas
+       measured). For liquid aluminium it never fired anyway.
+     - An interim gate of Lamb's term alone was tested and its flight stopped unfinished (`runs/thingate_d100_oldgate_stopped.log`)
+       when this one replaced it; no result of it is used.
+
+166. **What the reject removes is recorded, and the tests.** (`we-critical-308`'s fact 113.)
+     - The spray result carries `h_floor`, `gamma_tau` and `outside` per patch (nan / False off Girin & Kopyt's
+       branches, and where the Rayleigh–Taylor mode took the patch). The body counts the windward patches outside the
+       mode's validity and the film they hold: history `thin_invalid_patches` and `thin_invalid_mass_kg` (per step),
+       results `thin_invalid_patch_steps` and `thin_invalid_mass_max_kg` (the most film held in one step). The source
+       table gains `h_floor_m` and `gamma_tau` (24 columns).
+     - Five new tests: on deep liquid the damping is Lamb's; a thin layer is damped more than Lamb predicts; a layer
+       below the Stokes depth is rejected and flagged; the damping uses the non-rigid depth, not b; the body counts the
+       reject and the film it holds (a 2 µm film at 70 km: 2,034 of 2,043 thin patches outside). Nine tests changed
+       because the thin branch now sprays where the borrowed gate held it: the old gate test (now its absence), two
+       Rayleigh–Taylor tests (their nose patches now carry a near-stagnation edge velocity, so λ* does not fit), two
+       regime-2 tests (fully damped), two with rarefied cases (a floor 1 mm down, since the 7.5 mm wave's Stokes
+       layer, 0.14 mm, exceeds a 20 µm film), the slurry test (the classification read from the spray result) and the
+       source-table width.
+     - Unit tier 266 passed, 1 skipped, with only Task 11's five known reference failures: the base copy's 261 and the
+       five new tests (`unit_code.log`). `b_m` in the source table is the film thickness m_f/(ρ_l A) before the step's
+       release (`body.py`), the shallowest of the depths.
+
+167. **Measured: the 100 mm flight sprays the same mass, as twice as many droplets, half the mass median.** (`we-critical-308`'s fact 114.)
+     - The 100 mm Scheil sphere to 120 s, every default, on `meas/` (`runs/thingate_d100`, 2026-10-22, 8,725 s), against
+       fact 162's 3.08 flight (`wecr308_d100`), by `compare_thin.py` (`compare_thin.out`). Each measured once.
+     - Sprayed 1.1669 → 1.1836 kg (+1.4 %); onset unchanged (25.0 s, 74.04 km); final mass 0.3051 → 0.2884 kg;
+       refrozen 0.440 → 0.086 kg; the runoff account 3.71 → 1.99 kg.
+     - By branch: thick 0.730 → 0.253 kg, thin 0.370 → 0.866 kg, Rayleigh–Taylor 0.067 → 0.066 kg. 0.836 kg of the
+       thin spray (150 million droplets) leaves at We_s ≤ 3.08, which the borrowed gate held back: the melt is stripped
+       while the film is thin instead of running off, refreezing or deepening into the thick branch.
+     - Droplets: count 83.0 → 158.3 million (+91 %); number-median radius 69.0 → 69.4 µm; mass-median 188.1 → 110.7 µm.
+     - Where: thin spray by angle from the stagnation point, 0–10° / 10–30° / 30–60° / 60–90°: 0.000 / 0.051 / 0.193 /
+       0.127 kg before, 0.022 / 0.176 / 0.415 / 0.252 kg now — 22 g inside 10°, where none left before.
+     - The viscous gate binds now: on the thin releases Γτ* reaches 1.0 (median 0.24, mass-weighted mean 0.44; on the
+       3.08 flight, computed on the film, 0.12 / 0.87 max), the floor depth h has a median of 65 µm, and h reaches one
+       Stokes depth (median 11). The reject took 8.18 million patch-steps over the 5,739 macro steps, holding at most
+       0.20 g of film in one step. On 16 % of the thin rows (4.4 % of the thin mass) the droplet radius was capped, so
+       the statistics use the gate's recorded Γτ*, and h over the Stokes depth only the uncapped rows.
+
+168. **Not done, and for Asha to decide.** (`we-critical-308`'s fact 115.)
+     - (a) **Spray inside 10°.** 22 g of thin spray now leaves within 10° of the stagnation point, the region the
+       borrowed gate was added to stop on 2026-09-24 (fact 32: 2.2 g, measured before `wave_fits` read the molten
+       region). Whether λ* fitting in the nose's molten cap is physical there, where Girin & Kopyt assign the front
+       surface to their Rayleigh–Taylor mode, is open (spray.py's KNOWN LIMITATION: no front/side split).
+     - (b) **What Γτ* ≥ 1 held back** is not recorded; only the validity reject is. A per-step mass like the reject's
+       would say whether the damping gate or the reject moves the totals.
+     - (c) **The droplet population changes:** the ASCEND 2027 abstract's mass median (189 µm) and count (77 million)
+       came from the gated flight; on this one they are 111 µm and 158 million.
+     - (d) **Subsonic patches** are outside Girin & Kopyt's derivation (supersonic side surface); how much thin spray
+       comes from patches with edge Mach number below 1 was not measured.
+     - (e) **Not re-run:** the 50 mm flight and another mesh. The layered-skin line (`step3-rigid-substrate-scheil`)
+       carries none of this until `main` is merged into it (fact 163 (c)). (Since 2026-10-28 it carries both amendments' code and tests, fact 169.)
+169. **The amendments brought across (sub-plan 22 Task 1a, 2026-10-28).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task1/` (`cmp/`). The twelve diffs of facts 161 and 166 (the two
+     `amendment/` folders on `we-critical-308`) apply with `patch` to the planning copy, sub-plan 21's tested code at
+     0f0425e, but for three hunks taken by hand where this line's code differs from that branch's base for reasons outside
+     the amendments: the element model's step record ends in sub-plan 18's resolved depths (`**depths`), `MELT_COLUMNS`
+     lacks `p_w_stag_step_Pa`, and the CLI test's settings line lacks `v_hat_body` -- the last two that branch's frame
+     export of 2026-10-08 (its facts 101–107), which this line does not have. `spray.py`, `dispersion.py`,
+     `analysis/melt_sensitivity.py` and the spray and melting tests are then that branch's to the byte, but for
+     `dispersion.WE_CRITICAL_THEORY`'s comment, which cites fact 161 for its 108. This line's element model also carries
+     sub-plan 18's one-dimensional skins (off by default) with 23 skin and resolved-depth history columns, and sub-plan
+     21's `dp_ds` in the surface flow; none changes a number. On the CLI test's short melting case (15 s from 71 km at
+     7.24 km/s, 800 K, physics heating, the continuum step at 0.1 s: 76 history rows, about 30 s a run) this line's element
+     model and the branch's tested copy agree to the last bit in all 92 history columns they share, all 24 fields of the
+     25 266 source rows and every result they share. The case exercises the thick branch (12 899 rows, 0.190 kg; 242 of
+     them, 5.0 g, at 3.08 < We_s ≤ 4.62, which 4.62 held back), the thin branch (11 722 rows, 0.113 kg; 6 985, 8.5 g, at
+     We_s ≤ 3.08, which the borrowed gate held back), the viscous film (Γτ* up to 1.0, median 0.19, the floor's median
+     132 µm), its validity reject (28 590 patch-steps, at most 0.069 g of film in a step) and the Rayleigh–Taylor mode
+     (645 rows, 0.213 kg); the rarefied and regime-2 branches only in the unit tests (nothing melts under free-molecular
+     flow in the case, and regime 2 never sprays liquid aluminium, fact 165). Against this line before: sprayed 0.51587
+     rising to 0.51611 kg, thin rows 4 586 to 11 722 (0.103 to 0.113 kg), droplets 7.63 to 8.15 million, the history's
+     median radius 198 to 193 µm. Each run once, on mains power. The branch's sub-plan amendments (04, 07, 09, 10, 13,
+     14, 15) are not brought across: they describe `main`'s element-model plans and reach this line with the merge.
+170. **The droplet's cap per crest (sub-plan 22 Task 1b, 2026-10-28; decided by Asha 2026-10-24).**
+     `SprayModel.evaluate(..., cap_depth=None)`: with a depth h the radius is capped at (3 λ² h / (4π))^⅓ and a quarter
+     of the body radius, λ the spraying mode's wavelength, which the result now carries (`SprayResult.wavelength`: the
+     thick branch's 2π δ_m / Δ_f, Girin & Kopyt's λ* on the thin, rarefied and regime-2 branches, the admitted
+     Rayleigh–Taylor wavelength), and nothing leaves where h is zero; without it the film-mass cap, bit for bit: the short
+     case of fact 169 with the cap's code is the same as without it in all 115 history columns, the source table and the
+     results. It binds on the thick branch only where h is under about 0.021 λ (k_r = 0.17; 18 µm at λ = 0.89 mm), on the
+     thin branch under 0.065 λ* (30 µm at 0.46 mm), and on the Rayleigh–Taylor mode on any layer under about 4.2 λ, so
+     always. The outline's check holds: 4.57 mm at λ = 2 cm and h = 1 mm. On the element model's thin-gate flight (fact
+     167) the Rayleigh–Taylor droplets, held by the film cap on films of 12.7 mm (median), were 1.8–2.6 mm (10th to 90th
+     percentile of 620 rows; 2.26 mm the median by mass, 3.15 mm the largest; 65.5 g, 5.5 % of the spray); on the 100 mm
+     sphere's skins with 3.4 mm flowing under 103 m/s² (fact 171) they are 3.05, 4.56 and 6.72 mm on 0.3, 1.0 and 3.3 mm
+     of liquid (λ 19.7 mm). For the size bins: where the Rayleigh–Taylor depth criterion reads the cap's own depth h, it
+     admits only λ* < 2π h, so r < (3π)^⅓ h, about 2.1 h -- inside the top bin's 10 mm while h is under 4.7 mm, and below
+     the 100 mm sphere's quarter-radius cap of 12.5 mm. A 4.6 mm droplet holds about 1 g, so these move the count by
+     almost nothing and the mass in the top bins by what the mode releases. Tests: four (each mode's crest on two depths,
+     the area, a depth of nothing, the film cap as before); spray tests 23.
+171. **Girin on the skins: its cost, and what the depths decide where liquid lies on slurry (sub-plan 22 Task 1c's,
+     2026-10-28; `spray_skins.py`, `cascade_gate.py`).** On the 100 mm sphere's 9 417 columns, once a macro step: the
+     flowing and liquid depths read from the skins 0.036–0.045 s, δ_m and Girin's V_s 0.4 ms, the molten region on the
+     corner graph 1 ms, `SprayModel.evaluate` with the cap 1.3–1.6 ms, 0.04–0.05 s in all (the mean of 20 on each of five
+     states, under other sessions' load), against 0.06 s for the surface flow the flow already evaluates each macro step,
+     about 2 s a flow sub-step and about an hour of processor time a melting macro step (fact 157). On sub-plan 21's
+     heated state at 93 s (0.15 mm liquid over 0.57 mm slurry, medians) and on states built with 0.3 mm of liquid over
+     0.9 and 3.1 mm of slurry at 105 and 120 s (the constant-mass trajectory's 39 and 53 m/s²) every windward column is
+     under Girin's closure and flows deeper than δ_m, so takes the thick branch (4 618–4 636 of 4 705 release), and the
+     Rayleigh–Taylor mode is nowhere. At 103 m/s², the ablating flight's 10.5 g, with 3.4 mm flowing, the reading decides
+     the nose: with the Rayleigh–Taylor criteria on the flowing depth (one flowing film) the mode takes 79 columns 1–10
+     degrees from the stagnation point from the thick branch (λ 19.7 mm, droplets 3.05 mm on 0.3 mm of liquid, a demand of
+     0.27 kg/s on the 0.19 g of liquid they hold); on the liquid depth (the element model's split, amendment of
+     2026-10-06) none, and 69 of the 79 release nothing; with the layer all liquid both give the 79. Off Girin's closure
+     the element flight held liquid on slurry from every shear mode (the same amendment) up to 17.9 g, at 48 s, in 51
+     steps (fact 167's run). The slurry cascade's thin mode with Li et al.'s 0.87–5.6 Pa s at 93 s has Γτ* = 24–526 on
+     every windward column (liquid aluminium's 0.13): under the viscous film the cascade releases nothing. Measured once
+     each.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---
