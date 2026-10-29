@@ -5,7 +5,7 @@ The helpers build turbulent-flow tracks (Re_d about 1e7, pressure parameter abou
 Taylor's unless a test says otherwise. Taylor's radius behind this parent is about 10.6 t^(1/3) m at t seconds behind
 a 6 km/s parent, which sets the lateral speeds the hand-computed cases use.
 """
-import ast, inspect, math, numpy as np, pytest
+import ast, importlib, inspect, math, numpy as np, pytest
 from reentry_model.wake_residence import overlap
 from reentry_model.wake_residence.overlap import Plume, residence
 from reentry_model.wake_residence.track import Track
@@ -23,8 +23,7 @@ def follower(t, r):
 
 @pytest.mark.parametrize("modname", ["overlap", "laws", "track", "wake_gas"])
 def test_engine_imports_nothing_physical(modname):
-    # wake_gas.py arrives in Task 4; until then its case is skipped rather than failed
-    mod = pytest.importorskip("reentry_model.wake_residence." + modname)
+    mod = importlib.import_module("reentry_model.wake_residence." + modname)
     tree = ast.parse(inspect.getsource(mod))
     names = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
              for a in n.names} | {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}

@@ -69,6 +69,7 @@ from scipy.spatial import cKDTree
 from reentry_model.wake_residence.laws import (EmissionState, LawSettings, RadiusResult, knudsen, plume_radius,
                                                pressure_parameter, reynolds)
 from reentry_model.wake_residence.track import Track
+from reentry_model.wake_residence.wake_gas import Ambient, GasState, ambient_state, check_mode, gas_state
 
 K_NEAREST = 16                     # admissible samples refined per margin query (brief, Task 3)
 MAX_SPACING_M = 50.0               # tree sample spacing is min(r0 / 2, this) ...
@@ -344,6 +345,26 @@ class Plume:
                 m = e + 1
         cand_d = np.concatenate([dist, np.full(len(cand_tau) - len(nodes), math.inf)])   # nearest: nodes only
         return self._best(x, t, S_t, np.array(cand_tau), np.array(cand_g), cand_d)
+
+    def wake_state(self, x, t, ambient: Ambient, mode: str, k_E: float = 1.0,
+                   t_release=None) -> tuple[GasState, MarginResult]:
+        """The wake gas the follower at x sees at time t, and the margin result it came from (spec section 4.3a).
+
+        The gas state is evaluated at the best emission point of `margin` (same window, including `t_release`): its
+        distance from the follower is r_axis, its plume radius r_b, and the gas moves along the parent's unit velocity
+        there. `ambient` is the undisturbed air at the follower (numbers passed in; no atmosphere module is used). The
+        state is plain ambient air, with no gas velocity, when `mode` is "off", when no emission point has a law (the
+        margin is NaN: a rarefied or too-slow parent has no wake gas state), or beyond the profiles' cutoff.
+        """
+        check_mode(mode)
+        m = self.margin(x, t, t_release=t_release)
+        if mode == "off" or math.isnan(m.margin) or not math.isfinite(m.r_b):
+            return ambient_state(ambient), m
+        v = np.asarray(self.parent.velocity(m.tau_star), dtype=float).reshape(3)
+        speed = float(np.linalg.norm(v))
+        if not speed > 0.0:                              # a stopped parent has no direction to push the gas along
+            return ambient_state(ambient), m
+        return gas_state(m.distance, m.r_b, m.emission, v / speed, ambient, mode, k_E=k_E), m
 
     def margin_bruteforce(self, x, t, n: int = 20001, t_release=None) -> MarginResult:
         """Reference margin (for tests): n evenly spaced emission times over the whole window, the best one then
