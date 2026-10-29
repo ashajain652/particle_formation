@@ -1114,3 +1114,168 @@ def test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_ke
     np.testing.assert_allclose(p.number[ok], p.mass[ok] / (4.0 / 3.0 * np.pi * mat.liquid.rho * p.result.r[ok] ** 3),
                                rtol=1e-12)
     assert b.droplet_number >= p.number.sum() > 0.0
+
+
+# -- the droplet records (sub-plan 22 Task 2) ---------------------------------------------------------------------------
+def test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_solid_fraction_enthalpy_and_velocity():
+    """Spec 8 and 10.2: the droplet records are combined per column, per mode, per macro step, summing mass and number
+    over the sub-steps; a column's radius is its plan's, so combining changes none; the liquid's mode and the slurry's
+    are separate records; `solid_fraction` and `h_kg` are mass-weighted over the cells each record released, and the
+    droplets leave at the mean velocity of the metal they are made of. Three columns of 10 um cells under Girin's
+    closure, slurry spraying on: liquid alone (the thin branch), exposed slurry three cells of it in the bridge at 907.9 K
+    (the slurry's thick mode), and one liquid cell over that slurry -- the liquid moving at 2 m/s along x, the slurry at
+    0.5 m/s along y. Three flow sub-steps of 12 us: the third column gives its liquid cell in the first two and slurry
+    after it. Four rows, the liquid's mode's first; the size histograms accumulated each sub-step are the records'."""
+    from reentry_model import spray, surface_flow
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    from test_reentry_model_spray import FakeState
+    col, pts = strip_grid(3, 2, h=20e-3)
+    WARM = 907.9
+    sk = stacked(col, [[LIQUID] * 5 + [RIGID] * 10, [WARM] * 3 + [SLURRY] * 47 + [RIGID] * 10,
+                       [LIQUID] + [WARM] * 3 + [SLURRY] * 46 + [RIGID] * 10, [RIGID] * 10, [RIGID] * 10, [RIGID] * 10])
+    mat = sk.material
+    liquid = sk.valid & (sk.T >= mat.T_liquidus)
+    sk.U = np.where(liquid[..., None], [2.0, 0.0, 0.0], [0.0, 0.5, 0.0]) * sk.valid[..., None]
+    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [2000.0] * 6, [50.0] * 6)
+
+    class State(FakeState):
+        h = 71e3
+    theta = np.radians([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+    plan = skinbody.girin_plan(sk, flow, State(), spray.SprayModel(mat.liquid), theta, col.area, col.edges, 0.05, 0.0125,
+                               slurry=True, points=pts)
+    assert plan.result.branch[:3].tolist() == [spray.BRANCH_THIN, spray.BRANCH_THICK, spray.BRANCH_THICK]
+    assert (plan.rate > 0.0).tolist() == [True, False, True] + [False] * 3
+    assert (plan.rate_slurry > 0.0).tolist() == [False, True, True] + [False] * 3
+    hist = np.zeros((2, spray.N_BINS))
+    taken, m0 = np.zeros((2, 6)), sk.m[:, 0].copy()
+    for _ in range(3):
+        cascade = plan.release(sk)
+        dm, _ = skin.cascade_mass(sk, cascade.rate, cascade.rate_slurry, col.area, 12e-6, True, cascade.T_slurry)
+        ph = skin.release_top(sk, dm, slurry=True).by_phase
+        fb = skin.FlowBook.zero(6)
+        fb.phase_mass, fb.phase_H, fb.phase_p, fb.phase_solid = ph.mass, ph.enthalpy, ph.momentum, ph.solid
+        plan.book(fb)
+        hist += cascade.histogram(ph.mass)
+        taken += ph.mass
+    assert taken[0, 2] == pytest.approx(m0[2], rel=1e-12) and 0.0 < taken[1, 2] < m0[2]        # all its liquid
+    plan.count(mat.liquid.rho)
+    rows = plan.source_block(0.0125)
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    i, mode = np.array([0, 2, 1, 2]), np.array([0, 0, 1, 1])
+    assert rows.shape == (4, 26)
+    np.testing.assert_array_equal(rows[:, C["x_m"]:C["z_m"] + 1], pts[i])
+    np.testing.assert_array_equal(rows[:, C["theta_deg"]], np.degrees(theta[i]))
+    assert (rows[:, C["time_s"]] == 0.0125).all() and (rows[:, C["altitude_km"]] == 71.0).all()
+    s = plan.slurry
+    r = np.where(mode == 0, plan.result.r[i], s["r"][i])
+    np.testing.assert_array_equal(rows[:, C["r_m"]], r)                                  # combining changes no radius
+    np.testing.assert_array_equal(rows[:, C["dm_kg"]], taken[mode, i])
+    rho = np.where(mode == 0, mat.liquid.rho, s["rho"][i])
+    np.testing.assert_allclose(rows[:, C["dn"]], taken[mode, i] / (4.0 / 3.0 * np.pi * rho * r ** 3), rtol=1e-14)
+    for key, liq, sl in (("branch", plan.result.branch, s["branch"]), ("delta_m_m", plan.result.delta_m, s["delta_m"]),
+                         ("we_s", plan.result.we_s, s["we_s"]), ("b_m", plan.flowing, s["depth"]),
+                         ("h_floor_m", plan.result.h_floor, s["h_floor"]), ("gamma_tau", plan.result.gamma_tau,
+                                                                             s["gamma_tau"])):
+        np.testing.assert_array_equal(rows[:, C[key]], np.where(mode == 0, liq[i], sl[i]))
+    # the two new columns: liquid at 950 K carries no solid and its enthalpy; the slurry its cells' at 907.9 K
+    f_s = 1.0 - float(sk.props.liquid_fraction(np.array([WARM]))[0])
+    assert 0.0 < f_s < 0.1
+    np.testing.assert_allclose(rows[:, C["solid_fraction"]], np.where(mode == 0, 0.0, f_s), rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(rows[:, C["h_kg"]], mat.enthalpy(np.where(mode == 0, LIQUID, WARM)), rtol=1e-12)
+    # leaving at the metal's own velocity, and each phase's Weber and Ohnesorge numbers at its radius
+    np.testing.assert_allclose(rows[:, C["v_s_ms"]], np.where(mode == 0, 2.0, 0.5), rtol=1e-14)
+    np.testing.assert_allclose(rows[:, C["tx"]:C["tz"] + 1], np.where(mode[:, None] == 0, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+                               atol=1e-15)
+    sigma = np.where(mode == 0, mat.liquid.sigma, skinbody.SLURRY_SIGMA)
+    mu = np.where(mode == 0, mat.liquid.mu, s["mu"][i])
+    np.testing.assert_allclose(rows[:, C["we_d"]], State.freestream.rho * State.V ** 2 * 2.0 * r / sigma, rtol=1e-14)
+    np.testing.assert_allclose(rows[:, C["oh"]], mu / np.sqrt(rho * sigma * 2.0 * r), rtol=1e-14)
+    assert s["mu"][2] > 1.2 * mat.liquid.mu and s["rho"][2] > mat.liquid.rho
+    # the histograms accumulated each sub-step are the records' (in the same bins, to round-off)
+    n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
+    np.testing.assert_array_equal(hist[0] > 0.0, n_rec > 0.0)
+    np.testing.assert_allclose(hist[0], n_rec, rtol=1e-13, atol=0.0)
+    np.testing.assert_allclose(hist[1], m_rec, rtol=1e-13, atol=0.0)
+
+
+def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_writer_writes_them(coarse_sphere_mesh,
+                                                                                            tmp_path, monkeypatch):
+    """The skin body's droplet records (sub-plan 22 Task 2), on Task 1c's spraying test with slurry spraying on: the 4 mm
+    test sphere heated at 3 MW/m2 from 890 K under the 100 mm flight's gas state at 93 s, two 0.25 s steps, one flow
+    sub-step a heat sub-step. The second step sprays the liquid and the slurry under it, and the body keeps one block of
+    rows for it: one row per column and mode, the liquid's mode's first, each at its plan's radius; the rows' mass is
+    what the accepted passes released from each column (the slurry's part what the cascade took at the slurry's rate)
+    and the books' released mass, their enthalpy the books' released enthalpy, and their momentum, mass times speed
+    along their direction, the momentum the droplets took from each column, all to round-off; the size histograms
+    accumulated each flow sub-step are the rows'. The coupled writer writes the rows and their size distribution and
+    reads them back to the last bit; the summary, whose columns are the element model's history, waits for Task 4."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import coupled, spray
+    from reentry_model import trajectory as tj
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
+             slurry_spray=True)
+    plans, books = [], []
+    girin, book = skinbody.girin_plan, skinbody.SprayPlan.book
+
+    def planned(*a, **k):
+        plans.append(girin(*a, **k))
+        return plans[-1]
+
+    def booked(plan, fb):
+        books.append((plan, fb.released.copy(), fb.released_slurry.copy()))
+        return book(plan, fb)
+    monkeypatch.setattr(skinbody, "girin_plan", planned)
+    monkeypatch.setattr(skinbody.SprayPlan, "book", booked)
+    state = aero_state_at(93.0)
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
+    assert len(b.source_rows) == 1 and b.particles                      # the first step melts the tops
+    rows = spray.source_table(b.source_rows)
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    p = plans[-1]
+    index = {tuple(x): i for i, x in enumerate(p.points)}
+    i = np.array([index[tuple(x)] for x in rows[:, C["x_m"]:C["z_m"] + 1]])
+    n_liq, n_sl = int((p.mass > 0.0).sum()), int((p.mass_slurry > 0.0).sum())
+    mode = (np.arange(len(rows)) >= n_liq).astype(int)
+    assert len(rows) == n_liq + n_sl and n_liq > 100 and n_sl > 100 and (rows[:, C["time_s"]] == 0.5).all()
+    assert len(set(i[mode == 0])) == n_liq and len(set(i[mode == 1])) == n_sl
+    assert ((p.mass > 0.0) & (p.mass_slurry > 0.0)).sum() > 10                    # columns with both records
+    np.testing.assert_array_equal(rows[:, C["r_m"]], np.where(mode == 0, p.result.r[i], p.slurry["r"][i]))
+    # the books: the mass each column released and what the cascade took at the slurry's rate, the enthalpy, the momentum
+    mine = [x for x in books if x[0] is p]
+    released, from_slurry = sum(x[1] for x in mine), sum(x[2] for x in mine)
+    by_column = np.bincount(i, rows[:, C["dm_kg"]], b.columns.n)
+    np.testing.assert_allclose(by_column, released, rtol=1e-12, atol=0.0)
+    np.testing.assert_allclose(np.bincount(i[mode == 1], rows[mode == 1, C["dm_kg"]], b.columns.n), from_slurry,
+                               rtol=1e-12, atol=1e-21)
+    assert rows[:, C["dm_kg"]].sum() == pytest.approx(b.released_mass, rel=1e-12)
+    assert (rows[:, C["dm_kg"]] * rows[:, C["h_kg"]]).sum() == pytest.approx(b.released_enthalpy, rel=1e-12)
+    velocity = rows[:, C["v_s_ms"], None] * rows[:, C["tx"]:C["tz"] + 1]
+    momentum = np.stack([np.bincount(i, rows[:, C["dm_kg"]] * velocity[:, k], b.columns.n) for k in range(3)], axis=1)
+    np.testing.assert_allclose(momentum, b.droplet_momentum, rtol=0.0, atol=1e-12 * np.abs(b.droplet_momentum).max())
+    # the two new columns: the liquid carries no solid (to the property table's interpolation at the liquidus), the
+    # slurry less than half its mass, each at its cells' own enthalpy
+    s_f, h = rows[:, C["solid_fraction"]], rows[:, C["h_kg"]]
+    h_rigid, h_liq = mat.enthalpy(np.array([mat.T_rigid, mat.T_liquidus]))
+    assert (s_f[mode == 0] < 1e-9).all() and (s_f[mode == 1] > 0.0).all() and (s_f[mode == 1] < 0.5).all()
+    assert (h[mode == 0] > h_liq * (1.0 - 1e-6)).all() and (h_rigid < h[mode == 1]).all() and (h[mode == 1] < h_liq).all()
+    # the size histograms, accumulated each flow sub-step, are the rows': in the same bins, to the round-off of numpy's
+    # weighted histogram, which takes each bin as a difference of running sums over all the droplets (measured: 1.6e-12
+    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all)
+    n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
+    np.testing.assert_array_equal(b.hist_n > 0.0, n_rec > 0.0)
+    np.testing.assert_allclose(b.hist_n, n_rec, rtol=0.0, atol=1e-15 * n_rec.sum())
+    np.testing.assert_allclose(b.hist_m, m_rec, rtol=0.0, atol=1e-15 * m_rec.sum())
+    # the coupled writer: the same files as the element model's, read back to the last bit; no summary until Task 4
+    history = tj.History({"time_s": np.array([0.0, 0.25, 0.5])}, np.zeros((3, 6)), None)
+    files = coupled.write_particles(str(tmp_path), b, history)
+    assert set(files) == {"particles", "size_distribution"}
+    npz = np.load(files["particles"])
+    assert npz.files == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(npz[name], rows[:, k], equal_nan=True) for k, name in enumerate(spray.SOURCE_COLUMNS))
+    with open(files["size_distribution"]) as fh:
+        total = [line.split(",") for line in fh.read().splitlines()[1:]][-spray.N_BINS:]
+    np.testing.assert_allclose([float(x[4]) for x in total], n_rec, rtol=1e-8)
+    np.testing.assert_allclose([float(x[5]) for x in total], m_rec, rtol=1e-8)

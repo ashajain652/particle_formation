@@ -335,22 +335,30 @@ def write_skin_frame(output_dir, k, body, loads):
 
 def write_particles(run_dir, body, history, window=10.0):
     """particles.npz (the source table, SOURCE_COLUMNS as arrays), particles_summary.csv (per macro step) and
-    size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths."""
+    size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths.
+
+    The table is the body's `source_rows`, the element model's rows or the layered skins' blocks of them
+    (`spray.source_table`; sub-plan 22 Task 2). The summary's columns are the element model's history columns; a history
+    without them -- the skin body's, until sub-plan 22 Task 4 gives it its droplet columns -- writes no summary, and the
+    paths returned then have none."""
     import csv
     from . import spray
     os.makedirs(run_dir, exist_ok=True)
-    rows = np.array(body.source_rows, dtype=float) if body.source_rows else np.zeros((0, len(spray.SOURCE_COLUMNS)))
+    rows = spray.source_table(body.source_rows)
     npz = os.path.join(run_dir, "particles.npz")
     np.savez_compressed(npz, **{name: rows[:, i] for i, name in enumerate(spray.SOURCE_COLUMNS)})
     c = history.columns
     summary = os.path.join(run_dir, "particles_summary.csv")
-    with open(summary, "w", newline="") as fh:
-        w = csv.writer(fh)
-        keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
-                "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
-        w.writerow(keys)
-        for i in range(len(history)):
-            w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
+    keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
+            "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
+    if not set(keys) <= set(c):
+        summary = None
+    else:
+        with open(summary, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(keys)
+            for i in range(len(history)):
+                w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
     dist = os.path.join(run_dir, "size_distribution.csv")
     edges = spray.BIN_EDGES
     t = rows[:, 0] if len(rows) else np.zeros(0)
@@ -370,4 +378,5 @@ def write_particles(run_dir, body, history, window=10.0):
             for j in range(spray.N_BINS):
                 w.writerow(["{:.9g}".format(lo), "{:.9g}".format(hi), "{:.9g}".format(edges[j]), "{:.9g}".format(edges[j + 1]),
                             "{:.9g}".format(n_hist[j]), "{:.9g}".format(m_hist[j])])
-    return {"particles": npz, "particles_summary": summary, "size_distribution": dist}
+    out = {"particles": npz, "particles_summary": summary, "size_distribution": dist}
+    return {k: v for k, v in out.items() if v is not None}

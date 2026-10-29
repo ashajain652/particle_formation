@@ -2724,6 +2724,47 @@ of one comment in `spray.py`, both changed after.
      slurry's radius median 187 µm; the books as with it off (mass 1.5e-16, energy 1.4e-11, momentum 3.8e-17). Metal
      heated through the last kelvin before the liquidus is stripped there, as slurry of a few per cent solid. Off by
      default; measured once each.
+174. **The droplet records from the skins, built (sub-plan 22 Task 2, 2026-10-29; `body_records.py`, `cost_records.py`).**
+     Spikes in `prototype/work-2026-10-28-skin-spraying/measure/task2/`. The release books what it took by the cells it
+     came from (`Skins.take_top_mass(..., phase=)`, `ReleaseBook.by_phase`, `FlowBook.phase_*`): the fully liquid cells
+     are the liquid's mode's, the others the exposed slurry's, since the cascade takes each cell at its own phase's rate;
+     a column that took one kind gives it its totals to the last bit. The skin body adds an accepted pass's split to the
+     plan's record (`SprayPlan.book`) and at the macro step's end writes it as rows of `spray.SOURCE_COLUMNS` through the
+     shared `spray.source_block` (`SprayPlan.source_block`), one per column and mode, at the plan's radius, kept one
+     array a macro step in `SkinBody.source_rows` and read by `coupled.write_particles` through `spray.source_table`;
+     the plan's `Cascade` bins each flow sub-step's release at the plan's radii (`SprayPlan.histogram`), an accepted
+     pass's bins added to `hist_n`, `hist_m`. On the 4 mm test sphere's spraying run of fact 172 with slurry spraying on,
+     the second step's 759 rows (144 of the liquid's thick mode, 615 of the slurry's; the 144 liquid columns give both)
+     carry the books' released mass to the last bit printed (5.76888 g), their enthalpy (dm h_kg summed) to 1.5e-16 and
+     the droplets' momentum to 4.7e-17; the sub-steps' histograms have the rows' 14 bins, to 1.6e-12 droplets of the
+     89 173 (3.4e-11 of a bin holding 0.065: numpy's weighted histogram takes each bin as a difference of running sums
+     over every droplet, so its error is the step's, not the bin's). Liquid records: solid fraction 0 to 2.3e-11 (the
+     property table's interpolation across the liquidus), h_kg 1.043-1.044 MJ/kg; slurry records: solid fraction
+     8.5e-6 to 0.041 (median 0.0061), h_kg 1.026-1.043 MJ/kg, radius median 187 um, We_d by 0.80 N/m 3.8-108 (36 rows
+     above 12), Oh by the slurry's viscosity 5.2e-4 to 9.2e-3. The skin body's state is Task 1c's to the last bit with
+     the flag off and on (the plan's record differing in round-off, 1.8e-15 at most, against Task 1c's subtraction of the
+     cascade's slurry share), and without a spray model in all 147 arrays of fact 172's three runs. Cost on the 100 mm
+     sphere's heated state with the flag on (a 1 ms release of 6.9 g, 4 613 columns giving both kinds): the release
+     0.113 s of processor time against 0.079 s without the split, the histogram 1.1 ms, the macro step's 9 231 rows
+     1.4 ms; about 2 s a flow sub-step. Volume: a row per spraying column and mode per macro step, 4 600-9 200 at 93 s, so
+     0.37-0.74 million a second of flight (75-150 MB) at the 12.5 ms continuum step. The summary file waits for sub-plan
+     22 Task 4's history columns. Tests: spray one, skin two, skin body two, the melting and coupled tests extended.
+175. **The release velocity of a skin record (sub-plan 22 Task 2, 2026-10-29; confirmed by Asha the same day).** The source table's
+     `v_s_ms` and `tx, ty, tz` are the release velocity relative to the body (the 2026-09-20 design 9: body velocity +
+     V_s t); on a skin record they are the mean velocity of the metal released, its momentum over its mass, the momentum
+     the books lose with the droplets (spec 6.4 and 8), and the rows' momentum is that sink to 4.7e-17. Girin's closure
+     velocity stays the gates' (Task 1c) and enters the table in `we_s`. They differ: on the 4 mm test sphere the
+     liquid's records leave at 0.45-1.62 m/s, 1.04 m/s by mass, within 0.4-20 degrees (median 3.8) of the meridian,
+     where the closure gives 2.7-9.7 m/s, 5.6 m/s by mass (resolved over closure 0.14-0.24); the slurry's leave at 0.88
+     m/s by mass; on sub-plan 21's heated state at 93 s the top cells ran at 0.48 of the closure's speed with 0.15 mm of
+     liquid and 0.06 of it once the liquid had run off (Task 1's `speed_steady.py`). The element model's table carries
+     its film's lubrication speed, the closure's, so the two models' `v_s_ms` columns differ in meaning by this factor.
+176. **The element model's two new columns (sub-plan 22 Task 2, 2026-10-29; `runs/line2_short`).** Its rows carry a
+     solid fraction of 0 (its film is liquid by construction) and h_kg its film's own liquid enthalpy `h_p`, which its
+     removed enthalpy books for the sprayed film. On the CLI test's short melting case (fact 169) its 115 history columns
+     (the history file byte for byte), the 24 old fields of its 25 266 source rows, its results, its summary and its size
+     distribution are Task 1c's to the last bit; h_kg is 0.94/1.04/1.35 MJ/kg (minimum, median, maximum: films on patches
+     below the liquidus carry less), and the sum of dm h_kg is its removed enthalpy, 540 843 J, to the last bit.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

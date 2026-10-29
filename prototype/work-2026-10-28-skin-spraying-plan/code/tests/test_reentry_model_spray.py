@@ -581,3 +581,37 @@ def test_the_rayleigh_taylor_mode_can_read_a_liquid_pool_shallower_than_the_film
     _, lam, tau = spray.rayleigh_taylor_bounded(w_n, np.full(1, 4e-3), np.full(1, 0.05), LIQ)
     assert pool.branch[0] == spray.BRANCH_RT and pool.growth[0] == tau[0] > whole.growth[0]
     assert pool.wavelength[0] == lam[0] and pool.mdot[0] == pytest.approx(LIQ.rho * 4e-3 / tau[0], rel=1e-12)
+
+
+def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_takes_their_properties_per_patch():
+    """Spec 8 and 10.2 (sub-plan 22 Task 2): two columns end the source table, `solid_fraction` and `h_kg`, the droplets'
+    solid share and the enthalpy per kilogram they carry, 0 and nan where the caller gives none; the droplets' density,
+    viscosity and surface tension may be one per patch, a slurry droplet's Weber and Ohnesorge numbers being its own
+    phase's (the 2026-10-07 design 8.4); `source_block` is `source_rows` as an array, and `spray.source_table` reads a
+    body's rows or blocks of rows alike. The element model's form is unchanged in every other column."""
+    assert spray.SOURCE_COLUMNS[-2:] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 26
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-3)
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
+                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
+             res, b)
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    plain = np.array(spray.source_rows(*where, LIQ, FakeState()))
+    assert plain.shape == (2, 26) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
+    slurry = material.LiquidProperties(np.array([2400.0, 2500.0, 2550.0]), np.array([1.3e-3, 0.02, 0.05]),
+                                       np.array([0.86, 0.80, 0.80]))
+    block = spray.source_block(*where, slurry, FakeState(), solid_fraction=np.array([0.0, 0.1, 0.03]),
+                               h_kg=np.array([1.1e6, 1.0e6, 0.9e6]))
+    assert block.shape == (2, 26) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
+    assert block[:, C["h_kg"]].tolist() == [1.1e6, 0.9e6]
+    np.testing.assert_array_equal(block[:, :C["we_d"]], plain[:, :C["we_d"]])
+    np.testing.assert_array_equal(block[0, :C["solid_fraction"]], plain[0, :C["solid_fraction"]])   # the liquid's patch
+    r = block[1, C["r_m"]]
+    assert block[1, C["we_d"]] == pytest.approx(8e-5 * 7200.0 ** 2 * 2.0 * r / 0.80, rel=1e-14)
+    assert block[1, C["oh"]] == pytest.approx(0.05 / np.sqrt(2550.0 * 0.80 * 2.0 * r), rel=1e-14)
+    np.testing.assert_array_equal(spray.source_block(*where, LIQ, FakeState()), plain)        # rows as an array
+    table = spray.source_table([block, block[:1]])
+    assert table.shape == (3, 26) and np.array_equal(table[:2], block, equal_nan=True)
+    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 26)

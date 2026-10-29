@@ -2,11 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b and 1c (2026-10-28/29).** Task
-> 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c and 2 (2026-10-28/29).**
+> Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
-> and on the slurry cascade. Tasks 2–6 are the outline's, below, and the inputs it listed are carried at the end.
+> and on the slurry cascade. Task 2 makes the droplet records from the skins. Tasks 3–6 are the outline's, below, and the
+> inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -18,7 +19,9 @@ acceptance.
 passes the depth the release can take, so the element model is unchanged. Task 1c evaluates Girin per column once at
 the start of each macro step, from the surface flow the skins' flow already evaluates there and the skins' depths then,
 and hands the rate per column to sub-plan 21 Task 7's release hook, which takes it from the top cells in every flow
-sub-step.
+sub-step. Task 2 books what the release took by the cells it came from, combines it per column, per mode and per macro
+step into the plan's record, and writes it as source-table rows through the shared physics' own row writer, so that one
+coupled writer serves both surface models.
 
 **Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy, scikit-fem for the 3D model, gmsh for its rebuilds.
 
@@ -104,7 +107,22 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
    as the cell that gave it: within a macro step 0.36 g on the heated state where a per-cell evaluation each flow
    sub-step would take up to 1.56 g. Pinned by
    `test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag`.
-
+9. **The release velocity of a skin record** (Task 2, ruling 5) -- the mean velocity of the metal released, the momentum
+   the books lose with the droplets (spec 6.4), not Girin's closure velocity, which stays the gates' (Task 1c): on the
+   test sphere 0.14-0.24 of the closure's, 1.04 against 5.6 m/s by mass. The rows' momentum is the droplets' to 4.7e-17.
+   Confirmed by Asha, 2026-10-29 (option A over the closure velocity). Pinned by
+   `test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_writer_writes_them`.
+10. **The histograms against the records** (Task 2, ruling 2) -- the same bins, to numpy's weighted-histogram round-off,
+    which is the whole step's (1.8e-17 of its droplets), not the bin's (up to 3.4e-11 of a small one): "exact" in spec 8
+    is this. Pinned by the same test and
+    `test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_solid_fraction_enthalpy_and_velocity`.
+11. **The element model's two new columns** (Task 2, ruling 8) -- 0 and its film's liquid enthalpy, the sum of dm h_kg
+    its removed enthalpy to the last bit; its 115 history columns, its other 24 source columns, its results and its
+    summary and size distribution unchanged to the last bit on the short melting case. Pinned by
+    `test_film_spraying_death_and_balances`.
+12. **The skin flight's files** (Task 2, rulings 9 and 10) -- `particles.npz` and `size_distribution.csv` written by the
+    element model's writer from one block of rows a macro step; the summary waits for Task 4's history columns, and the
+    CLI's call for Task 3. The rows' volume at the continuum step is an input to settle (below).
 ## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
 
 > Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
@@ -623,7 +641,237 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
 
 ---
 
-## The outline (Tasks 2–6, and Task 1 written out above as Tasks 1a, 1b and 1c)
+### Task 2: The droplet records from the skins
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SOURCE_COLUMNS` + `solid_fraction`, `h_kg`; `source_block`; `source_rows(...,
+  solid_fraction=None, h_kg=None)`; `source_table`; the module docstring), `reentry_model/skin.py`
+  (`Skins.take_top_mass(..., phase=None)`, `._by_phase`; `ReleaseBook.by_phase`; `release_top`; `FlowBook.phase_mass`,
+  `.phase_H`, `.phase_p`, `.phase_solid`, `.hist_n`, `.hist_m`; `Cascade.histogram`; `flow_substeps`),
+  `reentry_model/skinbody.py` (`SprayPlan.theta`, `.closure`, `.points`, `.state`, `.props`, the record's `enthalpy`,
+  `solid` and `momentum` per mode, `.droplet_mass`, `.histogram`, `.book`, `.source_block`; `girin_plan(..., points=None)`;
+  the slurry's `we_s` and `h_floor`; `SkinBody(..., particles=True)`, `.source_rows`, `.hist_n`, `.hist_m`; the module
+  docstring), `reentry_model/body.py` (the element model's rows' two new columns), `reentry_model/coupled.py`
+  (`write_particles`)
+- Test: `tests/test_reentry_model_spray.py` (one test), `tests/test_reentry_model_skin.py` (two),
+  `tests/test_reentry_model_skinbody.py` (two), `tests/test_reentry_model_melting.py` (one changed),
+  `tests/test_reentry_model_coupled.py` (one changed)
+
+**Interfaces:**
+- Consumes: Task 1c's `girin_plan`, `SprayPlan` and its record, `skin.Cascade`, `cascade_mass`, `release_top` and
+  `FlowBook`; the element model's `spray.source_rows` and `MeltingBody.film_enthalpy`; `coupled.write_particles`.
+- Produces: `spray.SOURCE_COLUMNS` (26: + `solid_fraction`, `h_kg` [J/kg]); `spray.source_block(t, h, V, theta,
+  centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None) -> (k, 26)`, `liquid`'s `rho`, `mu`,
+  `sigma` one value or one per patch; `spray.source_rows(..., solid_fraction=None, h_kg=None)` (its rows as lists);
+  `spray.source_table(rows) -> (N, 26)` from a list of rows or of blocks; `Skins.take_top_mass(dm, admit, phase=None)`
+  leaving `phase_out`; `ReleaseBook.by_phase` (a ReleaseBook of (2, ...) arrays, [0] the fully liquid cells, [1] the
+  others); `FlowBook.phase_mass`, `phase_H`, `phase_solid` [kg, J, kg, (2, n)], `phase_p` [kg m/s, (2, n, 3)],
+  `hist_n`, `hist_m` [(N_BINS,), or None]; `skin.Cascade(..., histogram=None)`; `SprayPlan.book(fb)`,
+  `.histogram(mass) -> (dn, dM)`, `.droplet_mass(rho_liquid) -> (2, n)` [kg], `.source_block(t) -> (k, 26)`,
+  `.enthalpy`, `.enthalpy_slurry` [J], `.solid`, `.solid_slurry` [kg], `.momentum`, `.momentum_slurry` [kg m/s, (n,
+  3)]; `girin_plan(..., points=None)`; `SkinBody(..., particles=True)` with `.source_rows` (one (k, 26) array per macro
+  step), `.hist_n` and `.hist_m` [kg] per size bin; `write_particles` returning only the files it wrote. No history
+  column, frame field, result or command-line setting changes: those are Tasks 3 and 4's.
+
+Spec 8 and 10.2 (the 2026-10-07 design's 7.5): the droplet records are combined per column, per mode, per macro step,
+summing number and mass over the sub-steps; a column's radius is fixed within the macro step by its plan, so combining
+changes no radius; the size histograms accumulate each sub-step; two source columns are added, the droplets' solid
+fraction and the enthalpy per kilogram they carry.
+
+**The records.** Task 1c's cascade takes each top cell at its own phase's rate, so what a flow sub-step released from a
+column's fully liquid cells is the liquid's mode's and what it released from the others the exposed slurry's. The release
+now books that split from its own cells (`Skins.take_top_mass(..., phase=liquid)`, `ReleaseBook.by_phase`): mass,
+enthalpy at each cell's own specific enthalpy, solid by each cell's liquid fraction and momentum at each cell's own
+velocity, a column that took cells of one kind giving that kind its totals to the last bit (ruling 1). The flow's book
+carries it over the flow sub-steps (`FlowBook.phase_*`), and the skin body adds an accepted pass's book to the plan's
+record (`SprayPlan.book`), so the record holds, per column and mode, the macro step's mass, enthalpy, solid and momentum,
+and at the step's end its droplets (`count`, as Task 1c's). The liquid's mode and the slurry's are separate records, each
+at its own radius from the plan, which holds for the macro step: combining changes no radius.
+
+**The histograms.** The plan's `Cascade` carries the plan's `histogram`, which `flow_substeps` calls on every flow
+sub-step's release by mode (`spray.histogram` at the plan's radii and densities), the book summing the bins; the skin body
+adds an accepted pass's bins to its `hist_n` and `hist_m`, so the sub-steps of trial, repeated and rejected passes, whose
+releases are undone, are not counted (ruling 2). With the radius the macro step's, the bins are the records' own
+histogram to round-off.
+
+**The rows.** At the step's end the record becomes rows in the source table's format, written by the shared
+`spray.source_block` that the element model's `source_rows` now is (`SprayPlan.source_block`), one per column and mode
+that released, the liquid's mode's first. On a skin record (rulings 3-8):
+- `time_s`, `altitude_km`, `velocity_kms`: the macro step's end and its aero state, as the element model's;
+- `theta_deg`, `x_m`, `y_m`, `z_m`: the column's top corner on the top surface and its angle to the flight direction where
+  the plan was evaluated, at the macro step's start (`girin_plan(..., points=)`), where its mode and radius come from;
+- `closure`, `branch`, `delta_m_m`, `we_s`, `h_floor_m`, `gamma_tau`, `r_m`: the plan's, for the liquid's mode from the
+  shared model's result and for the slurry's from its own evaluation (whose We_s and floor the slurry's record now keeps);
+- `b_m`: the depth the mode read as Girin's b: for the liquid's mode the flowing depth (spec 6.7), for the slurry's its
+  own layer, from its first cell's top to T_rigid;
+- `dn`, `dm_kg`: the record's droplets and mass;
+- `v_s_ms` and `tx`, `ty`, `tz`: the release velocity relative to the body, as the source table defines it (the 2026-09-20
+  design 9: body velocity + V_s t), the mean velocity of the metal released, its momentum over its mass: the momentum the
+  books lose with the droplets, which leave at the speed of the cells they are made of (spec 6.4 and 8; sub-plan 21 Task
+  7); a zero direction where it is at rest. Girin's closure velocity remains the gates' (Task 1c), in `we_s`;
+- `we_d`, `oh`, `breakup`: at the record's radius, by its phase's density, viscosity and surface tension, the liquid's or
+  the slurry's (its mixture density, its viscosity at its sheared layer's rate, 0.80 N/m: the 2026-10-07 design 8.4);
+- `solid_fraction`, `h_kg`: the record's solid over its mass and its enthalpy over its mass, mass-weighted over the cells
+  released.
+
+The element model's rows carry 0 and its film's own liquid enthalpy `h_p`, which its removed enthalpy books for the
+sprayed film (`MeltingBody.film_enthalpy`: the film is liquid by construction and carries its latent heat): its other 24
+columns and its history are unchanged to the last bit (ruling 8). The skin body keeps one block of rows per macro step
+(`source_rows`, ruling 9) where `particles` (on by default), and `coupled.write_particles` reads either form through
+`spray.source_table`: a skin flight writes the same `particles.npz` and `size_distribution.csv`; the per-step summary,
+whose columns are the element model's history columns, waits for Task 4 (ruling 10).
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task2/`; facts 174–176):
+- *The records against the books* (`body_records.py`, `log_body_records.txt`). Task 1c's spraying run of the 4 mm test
+  sphere (3 MW/m2 from 890 K, the gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step). With slurry
+  spraying on, the second step's block holds 759 rows: 144 of the liquid's mode (the thick branch) and 615 of the
+  slurry's, the 144 liquid columns giving both. Every row's radius is its plan's; the rows' mass is the books' released
+  mass, 5.76888 g, to the last bit printed; their enthalpy, the sum of dm h_kg, is the books' released enthalpy to 1.5e-16
+  and their momentum, dm v_s t summed, the droplets' momentum to 4.7e-17; the histogram accumulated each flow sub-step has
+  the records' 14 bins, the counts within 1.6e-12 droplets of the records' (3.4e-11 of a bin holding 0.065, 1.8e-17 of the
+  89 173 in all: numpy's weighted histogram takes a bin as a difference of running sums over every droplet, so its error is
+  the whole step's, not the bin's) and the mass within 2.4e-14. The liquid's records: solid fraction 0 to 2.3e-11 (the
+  property table's interpolation across the liquidus), h_kg 1.043-1.044 MJ/kg (h(T_liquidus) 1.04302 MJ/kg), radius
+  120/130/2 734 um (minimum, median, maximum), We_d 3.7/4.0/84, Oh 4.0e-4/1.8e-3/1.9e-3. The slurry's: solid fraction
+  8.5e-6/0.0061/0.041, h_kg 1.026/1.041/1.043 MJ/kg, radius 125/187/3 532 um, We_d 3.8/5.7/108 (36 rows above the
+  breakup threshold of 12), Oh 5.2e-4/2.5e-3/9.2e-3. With slurry spraying off: 144 rows, the books to 0, 1.4e-16 and
+  2.6e-16, the histograms in 7 bins to 3.4e-13.
+- *The release velocity* (the same runs). The liquid's records leave at 0.45/1.28/1.62 m/s, 1.04 m/s weighted by mass,
+  within 0.4/3.8/20 degrees of the meridian; Girin's closure velocity on the same columns is 2.7/7.2/9.7 m/s, 5.6 m/s by
+  mass, so the resolved speed is 0.14-0.24 of it (0.14-0.23 with the flag off). The slurry's leave at 0.88 m/s by mass. On
+  sub-plan 21's heated state at 93 s (Task 1's `speed_steady.py`) the top cells ran at 0.48 of the closure's speed with
+  0.15 mm of liquid and fell to 0.06 of it as the liquid ran off.
+- *Nothing else moves.* The skin body's state at the end of both runs -- its 3D field, mesh, skins, every history column
+  but the wall times, its released mass, enthalpy, momentum and droplets -- is Task 1c's to the last bit; with the flag on
+  the plan's record differs from Task 1c's in round-off (1.8e-15 at most, in 97 columns: the split by the released cells
+  against the cascade's slurry share subtracted), no record appearing or vanishing. A skin body without a spray model is
+  Task 1c's in all 147 arrays of Task 1c's three runs (`bitid.py`, `run_bitid.sh`: none of the 147 differs). `--surface-model elements` on the CLI test's
+  short melting case (`runs/line2_short`) is Task 1c's in all 115 history columns (its history file byte for byte), all
+  24 old fields of its 25 266 source rows, its results, its summary and its size distribution; its rows carry a solid
+  fraction of 0 and h_kg 0.94/1.04/1.35 MJ/kg, whose sum of dm h_kg is its removed enthalpy, 540 843 J, to the last bit.
+- *The cost* (`cost_records.py`). On the 100 mm sphere's heated state at 93 s with slurry spraying on, a 1 ms flow
+  sub-step releases 6.9 g, the liquid from 4 618 columns and the slurry from 4 613, all of them both: the release costs
+  0.079 s of processor time without the split and 0.113 s with it, the histogram 1.1 ms and the macro step's 9 231 rows
+  1.4 ms, against about 2 s a flow sub-step; with slurry spraying off no column takes cells of both kinds and the split
+  adds two masks. Each the mean of 20 repeats, measured once.
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *The records split by the cells the release took*, not by the cascade's arithmetic. Why: the cascade gives each cell
+   its phase's rate, so the cell's phase is the mode that took it; booked from the release's own cells a record is exact
+   and a column of one kind keeps its totals to the last bit, where Task 1c's `released - released_slurry` subtracts two
+   sums made differently and could leave a round-off residue as a liquid record with no liquid. Cost: none (the two
+   agree to 1.8e-15 on the test).
+2. *The histograms accumulate in the flow sub-steps through the Cascade, an accepted pass's added to the body.* Why: spec
+   8's "each sub-step", without counting the sub-steps of passes that are undone. `spray.histogram` is unchanged, so the
+   element model's files are. Cost: none; the agreement with the records is numpy's round-off (above).
+3. *Position and angle: the column's top corner and its angle at the plan's evaluation*, the macro step's start. Why:
+   the droplets leave the top, and the mode and radius are from there; the element model's centroid is on its surface.
+   Cost if the base corner was meant: the skin's thickness, about a millimetre on the 100 mm sphere.
+4. *b_m the depth the mode read*: the flowing depth for the liquid's mode, the slurry's layer for the slurry's. Cost:
+   none.
+5. *v_s_ms and t: the mean velocity of the metal released.* Why: the source table's column is the release velocity, and
+   spec 6.4 and 8 have the droplets leave the top cells at the speed of the metal they are made of, the books' sink, so
+   the table's momentum is the momentum the body lost (to 4.7e-17); Girin's closure velocity is a gate's, Task 1c's
+   ruling, and is in We_s. Cost if wrong: the table's release speed is 0.14-0.24 of the closure's on the test sphere
+   (0.06-0.48 on sub-plan 21's heated state), a factor of 4-7 slower than the element model's convention; the
+   alternative is one line (`res.v_s` and the meridian). Confirmed by Asha, 2026-10-29 (option A).
+6. *A slurry droplet's We_d and Oh by its slurry's properties*, its mixture density, its viscosity at its sheared
+   layer's rate (the mode's) and 0.80 N/m (the 2026-10-07 design 8.4). Cost: Oh with another viscosity scales with it.
+7. *solid_fraction and h_kg by the books' cell values*: the solid by the property table's liquid fraction, as
+   `released_solid`, so a liquid record may carry up to 2.3e-11 of solid. Cost: none.
+8. *The element model's rows: 0 and its film's liquid enthalpy.* Why: its film is liquid by construction, booked at
+   `h_p` when it sprays, so the column is what its droplets carry and its books' sprayed enthalpy; nan would hide it.
+   Cost: none (its other columns unchanged to the last bit).
+9. *A skin body keeps one array of rows per macro step*, read by `spray.source_table`. Why: a list of floats costs about
+   0.9 kB a row against 0.2 kB, and a skin flight makes a row per spraying column per macro step (about 4 600 at 93 s,
+   so 370 000 a second of flight at the 12.5 ms continuum step). Cost: `len(source_rows)` counts macro steps on a skin
+   body (Task 4's results count rows).
+10. *No summary for a skin body until Task 4*: `particles_summary.csv`'s columns are the element model's per-step
+    history columns, which a skin history lacks, and its `released_mass_kg` is cumulative (sub-plan 21 Task 7) where the
+    summary's is per step; `write_particles` writes the summary only for a history that has all its columns and returns
+    the paths it wrote. Cost: none until Task 4, which gives the skin history its per-step droplet columns.
+11. *A spraying skin body needs the aero state*, now refused without it: the rows' altitude and speed. Cost: none (every
+    caller gives it).
+
+**What Tasks 3 and 4 add for a skin flight's files.** Task 3: the CLI builds the skin body with `spray=SprayModel(...)`,
+`slurry_spray` from `--slurry-spray` and `particles` from `--particles`, and calls `write_particles` for a skin run (it
+does for the element model's only, `melting` excluding the skins). Task 4: the skin history's per-step droplet columns
+for the summary (released mass and droplets per step, the radius median and maximum, the spraying area) and the results'
+row count, sprayed mass and droplets.
+
+- [ ] **Step 1: The two columns and the per-patch properties** -- append to `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T2}}
+
+- [ ] **Step 2: The release by the cells it came from, and the histograms** -- append to
+  `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T2}}
+
+- [ ] **Step 3: The plan's records and the body's** -- append to `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T2}}
+
+- [ ] **Step 4: The element model's two columns** in `tests/test_reentry_model_melting.py` and
+  `tests/test_reentry_model_coupled.py`:
+
+{{DIFF_TEST_MELTING_T2}}
+
+{{DIFF_TEST_COUPLED_T2}}
+
+- [ ] **Step 5: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py
+  tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py
+  tests/test_reentry_model_coupled.py -q -k "solid_fraction_and_enthalpy or split_by_the_cells or bins_each_flow or
+  records_are_one_per_column or close_on_its_books_and_the_coupled_writer or film_spraying_death_and_balances or
+  coupled_melting_run_and_writers"`. Expected: 7 failed --
+  - `AssertionError: assert (['h_floor_m', 'gamma_tau'] == ['solid_fraction', 'h_kg']` (the source table);
+  - `AttributeError: 'ReleaseBook' object has no attribute 'by_phase'` and `TypeError: Cascade.__init__() got an
+    unexpected keyword argument 'histogram'` (the release and the flow's book);
+  - `TypeError: girin_plan() got an unexpected keyword argument 'points'` and `AttributeError: type object 'SprayPlan'
+    has no attribute 'book'` (the plan's records and the body's);
+  - `assert (24 == 26)` (the melting body's rows) and `KeyError: 'solid_fraction is not a file in the archive'` (the
+    coupled writer's table).
+
+- [ ] **Step 6: The source table's two columns, its blocks and the per-patch properties** in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T2}}
+
+- [ ] **Step 7: The element model's rows** in `reentry_model/body.py`:
+
+{{DIFF_BODY_T2}}
+
+- [ ] **Step 8: The release by phase, and the histograms in the flow sub-steps** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T2}}
+
+- [ ] **Step 9: The plan's records, rows and histogram, and the body's** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T2}}
+
+- [ ] **Step 10: The writer** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T2}}
+
+- [ ] **Step 11: Run them to see them pass.** Expected: `tests/test_reentry_model_spray.py` 25 passed,
+  `tests/test_reentry_model_skin.py` 94, `tests/test_reentry_model_skinbody.py` 34 (2 deselected, the reference tier's;
+  the body's writer test about 130 s); the unit tier 538 passed, 1 skipped.
+
+- [ ] **Step 12: The measurements** (in `measure/task2/`, on mains power): `./run_body_records.sh` (Task 1c's code and
+  this one's, slurry spraying off and on, and their comparison; about 8 minutes); `./run_bitid.sh` (Task 1c's
+  `bitid.py` on this code against `bit_1c.npz`); `"$PY" -B cost_records.py`; and the element model's short case,
+  `../task1/cmp/run_case.sh <code> runs line2_short` and `"$PY" ../task1/cmp/compare_runs.py runs line1c_short
+  line2_short`, with `line1c_short` copied into `runs/`.
+
+- [ ] **Step 13: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skin.py reentry_model/skinbody.py reentry_model/body.py reentry_model/coupled.py tests/test_reentry_model_spray.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_coupled.py
+git commit -m "Skins: the droplet records (spec 8 and 10.2) -- what the accepted passes released, split by the cells it came from, combined per column, per mode (the liquid's and the exposed slurry's), per macro step at the plan's radius, and written by the shared source_block as one block of source-table rows a macro step, the droplets at the mean velocity of the metal released and two new columns, solid_fraction and h_kg, mass-weighted over the cells released; the size histograms accumulated each flow sub-step; coupled.write_particles reads either form; the element model's rows carry 0 and its film's liquid enthalpy, its other columns and history unchanged to the last bit (sub-plan 22 Task 2)"
+```
+
+---
+
+## The outline (Tasks 3–6, and Tasks 1 and 2 written out above: 1 as Tasks 1a, 1b and 1c)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -632,8 +880,9 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
    > first; the droplets' momentum leaves with them. `--slurry-spray` carries over off. Tests: each mode's release from a
    > prescribed column; books with spraying.
 
-2. **Droplet records**: combined per column, per mode, per macro step; `solid_fraction` and `h_kg` added to the source
-   table. Tests: combining changes no radius; histograms exact.
+2. **Droplet records** -- written out above as Task 2. The outline's item, as it stood:
+   > **Droplet records**: combined per column, per mode, per macro step; `solid_fraction` and `h_kg` added to the source
+   > table. Tests: combining changes no radius; histograms exact.
 3. **Retirement**: element fill fractions, `PHI_DEATH`, deaths and hand-overs, the film and deep accounts, the feed rule
    and gate, the deep runoff, deep surfacing, the molten cascade, freeze-back and the stage-1 return device, removed from
    the skin path; `--surface-model elements` keeps the current model bit for bit. Since sub-plan 20 the skin path is
@@ -653,11 +902,16 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
 
 ## Inputs to settle
 
-Carried from the outline; neither is settled by Task 1, whose spraying is evaluated once a macro step at whatever
-macro step the run takes (Task 1c).
+Carried from the outline, with one Task 2 adds; none is settled by Tasks 1 and 2, whose spraying is evaluated and
+recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the macro step.
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
+- The droplet records' volume (Task 2, ruling 9): a skin flight writes a row per spraying column and mode per macro
+  step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 370 000 to 740 000
+  a second of flight at the 12.5 ms continuum step, 75-150 MB a second in memory; at 0.5 s macro steps, 40 times fewer.
+  If the flights keep the continuum step, Task 5 writes the blocks out as it goes or combines the records over a longer
+  window than the macro step (which spec 8 would then say).
 - The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
   sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step.

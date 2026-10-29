@@ -2,11 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b and 1c (2026-10-28/29).** Task
-> 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c and 2 (2026-10-28/29).**
+> Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
-> and on the slurry cascade. Tasks 2–6 are the outline's, below, and the inputs it listed are carried at the end.
+> and on the slurry cascade. Task 2 makes the droplet records from the skins. Tasks 3–6 are the outline's, below, and the
+> inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -18,7 +19,9 @@ acceptance.
 passes the depth the release can take, so the element model is unchanged. Task 1c evaluates Girin per column once at
 the start of each macro step, from the surface flow the skins' flow already evaluates there and the skins' depths then,
 and hands the rate per column to sub-plan 21 Task 7's release hook, which takes it from the top cells in every flow
-sub-step.
+sub-step. Task 2 books what the release took by the cells it came from, combines it per column, per mode and per macro
+step into the plan's record, and writes it as source-table rows through the shared physics' own row writer, so that one
+coupled writer serves both surface models.
 
 **Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy, scikit-fem for the 3D model, gmsh for its rebuilds.
 
@@ -104,7 +107,22 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
    as the cell that gave it: within a macro step 0.36 g on the heated state where a per-cell evaluation each flow
    sub-step would take up to 1.56 g. Pinned by
    `test_the_cascade_takes_each_cell_at_its_own_phase_s_rate_in_time_order_liquid_first_slurry_only_with_the_flag`.
-
+9. **The release velocity of a skin record** (Task 2, ruling 5) -- the mean velocity of the metal released, the momentum
+   the books lose with the droplets (spec 6.4), not Girin's closure velocity, which stays the gates' (Task 1c): on the
+   test sphere 0.14-0.24 of the closure's, 1.04 against 5.6 m/s by mass. The rows' momentum is the droplets' to 4.7e-17.
+   Confirmed by Asha, 2026-10-29 (option A over the closure velocity). Pinned by
+   `test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_writer_writes_them`.
+10. **The histograms against the records** (Task 2, ruling 2) -- the same bins, to numpy's weighted-histogram round-off,
+    which is the whole step's (1.8e-17 of its droplets), not the bin's (up to 3.4e-11 of a small one): "exact" in spec 8
+    is this. Pinned by the same test and
+    `test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_solid_fraction_enthalpy_and_velocity`.
+11. **The element model's two new columns** (Task 2, ruling 8) -- 0 and its film's liquid enthalpy, the sum of dm h_kg
+    its removed enthalpy to the last bit; its 115 history columns, its other 24 source columns, its results and its
+    summary and size distribution unchanged to the last bit on the short melting case. Pinned by
+    `test_film_spraying_death_and_balances`.
+12. **The skin flight's files** (Task 2, rulings 9 and 10) -- `particles.npz` and `size_distribution.csv` written by the
+    element model's writer from one block of rows a macro step; the summary waits for Task 4's history columns, and the
+    CLI's call for Task 3. The rows' volume at the continuum step is an input to settle (below).
 ## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
 
 > Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
@@ -2296,7 +2314,1133 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
 
 ---
 
-## The outline (Tasks 2–6, and Task 1 written out above as Tasks 1a, 1b and 1c)
+### Task 2: The droplet records from the skins
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SOURCE_COLUMNS` + `solid_fraction`, `h_kg`; `source_block`; `source_rows(...,
+  solid_fraction=None, h_kg=None)`; `source_table`; the module docstring), `reentry_model/skin.py`
+  (`Skins.take_top_mass(..., phase=None)`, `._by_phase`; `ReleaseBook.by_phase`; `release_top`; `FlowBook.phase_mass`,
+  `.phase_H`, `.phase_p`, `.phase_solid`, `.hist_n`, `.hist_m`; `Cascade.histogram`; `flow_substeps`),
+  `reentry_model/skinbody.py` (`SprayPlan.theta`, `.closure`, `.points`, `.state`, `.props`, the record's `enthalpy`,
+  `solid` and `momentum` per mode, `.droplet_mass`, `.histogram`, `.book`, `.source_block`; `girin_plan(..., points=None)`;
+  the slurry's `we_s` and `h_floor`; `SkinBody(..., particles=True)`, `.source_rows`, `.hist_n`, `.hist_m`; the module
+  docstring), `reentry_model/body.py` (the element model's rows' two new columns), `reentry_model/coupled.py`
+  (`write_particles`)
+- Test: `tests/test_reentry_model_spray.py` (one test), `tests/test_reentry_model_skin.py` (two),
+  `tests/test_reentry_model_skinbody.py` (two), `tests/test_reentry_model_melting.py` (one changed),
+  `tests/test_reentry_model_coupled.py` (one changed)
+
+**Interfaces:**
+- Consumes: Task 1c's `girin_plan`, `SprayPlan` and its record, `skin.Cascade`, `cascade_mass`, `release_top` and
+  `FlowBook`; the element model's `spray.source_rows` and `MeltingBody.film_enthalpy`; `coupled.write_particles`.
+- Produces: `spray.SOURCE_COLUMNS` (26: + `solid_fraction`, `h_kg` [J/kg]); `spray.source_block(t, h, V, theta,
+  centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None) -> (k, 26)`, `liquid`'s `rho`, `mu`,
+  `sigma` one value or one per patch; `spray.source_rows(..., solid_fraction=None, h_kg=None)` (its rows as lists);
+  `spray.source_table(rows) -> (N, 26)` from a list of rows or of blocks; `Skins.take_top_mass(dm, admit, phase=None)`
+  leaving `phase_out`; `ReleaseBook.by_phase` (a ReleaseBook of (2, ...) arrays, [0] the fully liquid cells, [1] the
+  others); `FlowBook.phase_mass`, `phase_H`, `phase_solid` [kg, J, kg, (2, n)], `phase_p` [kg m/s, (2, n, 3)],
+  `hist_n`, `hist_m` [(N_BINS,), or None]; `skin.Cascade(..., histogram=None)`; `SprayPlan.book(fb)`,
+  `.histogram(mass) -> (dn, dM)`, `.droplet_mass(rho_liquid) -> (2, n)` [kg], `.source_block(t) -> (k, 26)`,
+  `.enthalpy`, `.enthalpy_slurry` [J], `.solid`, `.solid_slurry` [kg], `.momentum`, `.momentum_slurry` [kg m/s, (n,
+  3)]; `girin_plan(..., points=None)`; `SkinBody(..., particles=True)` with `.source_rows` (one (k, 26) array per macro
+  step), `.hist_n` and `.hist_m` [kg] per size bin; `write_particles` returning only the files it wrote. No history
+  column, frame field, result or command-line setting changes: those are Tasks 3 and 4's.
+
+Spec 8 and 10.2 (the 2026-10-07 design's 7.5): the droplet records are combined per column, per mode, per macro step,
+summing number and mass over the sub-steps; a column's radius is fixed within the macro step by its plan, so combining
+changes no radius; the size histograms accumulate each sub-step; two source columns are added, the droplets' solid
+fraction and the enthalpy per kilogram they carry.
+
+**The records.** Task 1c's cascade takes each top cell at its own phase's rate, so what a flow sub-step released from a
+column's fully liquid cells is the liquid's mode's and what it released from the others the exposed slurry's. The release
+now books that split from its own cells (`Skins.take_top_mass(..., phase=liquid)`, `ReleaseBook.by_phase`): mass,
+enthalpy at each cell's own specific enthalpy, solid by each cell's liquid fraction and momentum at each cell's own
+velocity, a column that took cells of one kind giving that kind its totals to the last bit (ruling 1). The flow's book
+carries it over the flow sub-steps (`FlowBook.phase_*`), and the skin body adds an accepted pass's book to the plan's
+record (`SprayPlan.book`), so the record holds, per column and mode, the macro step's mass, enthalpy, solid and momentum,
+and at the step's end its droplets (`count`, as Task 1c's). The liquid's mode and the slurry's are separate records, each
+at its own radius from the plan, which holds for the macro step: combining changes no radius.
+
+**The histograms.** The plan's `Cascade` carries the plan's `histogram`, which `flow_substeps` calls on every flow
+sub-step's release by mode (`spray.histogram` at the plan's radii and densities), the book summing the bins; the skin body
+adds an accepted pass's bins to its `hist_n` and `hist_m`, so the sub-steps of trial, repeated and rejected passes, whose
+releases are undone, are not counted (ruling 2). With the radius the macro step's, the bins are the records' own
+histogram to round-off.
+
+**The rows.** At the step's end the record becomes rows in the source table's format, written by the shared
+`spray.source_block` that the element model's `source_rows` now is (`SprayPlan.source_block`), one per column and mode
+that released, the liquid's mode's first. On a skin record (rulings 3-8):
+- `time_s`, `altitude_km`, `velocity_kms`: the macro step's end and its aero state, as the element model's;
+- `theta_deg`, `x_m`, `y_m`, `z_m`: the column's top corner on the top surface and its angle to the flight direction where
+  the plan was evaluated, at the macro step's start (`girin_plan(..., points=)`), where its mode and radius come from;
+- `closure`, `branch`, `delta_m_m`, `we_s`, `h_floor_m`, `gamma_tau`, `r_m`: the plan's, for the liquid's mode from the
+  shared model's result and for the slurry's from its own evaluation (whose We_s and floor the slurry's record now keeps);
+- `b_m`: the depth the mode read as Girin's b: for the liquid's mode the flowing depth (spec 6.7), for the slurry's its
+  own layer, from its first cell's top to T_rigid;
+- `dn`, `dm_kg`: the record's droplets and mass;
+- `v_s_ms` and `tx`, `ty`, `tz`: the release velocity relative to the body, as the source table defines it (the 2026-09-20
+  design 9: body velocity + V_s t), the mean velocity of the metal released, its momentum over its mass: the momentum the
+  books lose with the droplets, which leave at the speed of the cells they are made of (spec 6.4 and 8; sub-plan 21 Task
+  7); a zero direction where it is at rest. Girin's closure velocity remains the gates' (Task 1c), in `we_s`;
+- `we_d`, `oh`, `breakup`: at the record's radius, by its phase's density, viscosity and surface tension, the liquid's or
+  the slurry's (its mixture density, its viscosity at its sheared layer's rate, 0.80 N/m: the 2026-10-07 design 8.4);
+- `solid_fraction`, `h_kg`: the record's solid over its mass and its enthalpy over its mass, mass-weighted over the cells
+  released.
+
+The element model's rows carry 0 and its film's own liquid enthalpy `h_p`, which its removed enthalpy books for the
+sprayed film (`MeltingBody.film_enthalpy`: the film is liquid by construction and carries its latent heat): its other 24
+columns and its history are unchanged to the last bit (ruling 8). The skin body keeps one block of rows per macro step
+(`source_rows`, ruling 9) where `particles` (on by default), and `coupled.write_particles` reads either form through
+`spray.source_table`: a skin flight writes the same `particles.npz` and `size_distribution.csv`; the per-step summary,
+whose columns are the element model's history columns, waits for Task 4 (ruling 10).
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task2/`; facts 174–176):
+- *The records against the books* (`body_records.py`, `log_body_records.txt`). Task 1c's spraying run of the 4 mm test
+  sphere (3 MW/m2 from 890 K, the gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step). With slurry
+  spraying on, the second step's block holds 759 rows: 144 of the liquid's mode (the thick branch) and 615 of the
+  slurry's, the 144 liquid columns giving both. Every row's radius is its plan's; the rows' mass is the books' released
+  mass, 5.76888 g, to the last bit printed; their enthalpy, the sum of dm h_kg, is the books' released enthalpy to 1.5e-16
+  and their momentum, dm v_s t summed, the droplets' momentum to 4.7e-17; the histogram accumulated each flow sub-step has
+  the records' 14 bins, the counts within 1.6e-12 droplets of the records' (3.4e-11 of a bin holding 0.065, 1.8e-17 of the
+  89 173 in all: numpy's weighted histogram takes a bin as a difference of running sums over every droplet, so its error is
+  the whole step's, not the bin's) and the mass within 2.4e-14. The liquid's records: solid fraction 0 to 2.3e-11 (the
+  property table's interpolation across the liquidus), h_kg 1.043-1.044 MJ/kg (h(T_liquidus) 1.04302 MJ/kg), radius
+  120/130/2 734 um (minimum, median, maximum), We_d 3.7/4.0/84, Oh 4.0e-4/1.8e-3/1.9e-3. The slurry's: solid fraction
+  8.5e-6/0.0061/0.041, h_kg 1.026/1.041/1.043 MJ/kg, radius 125/187/3 532 um, We_d 3.8/5.7/108 (36 rows above the
+  breakup threshold of 12), Oh 5.2e-4/2.5e-3/9.2e-3. With slurry spraying off: 144 rows, the books to 0, 1.4e-16 and
+  2.6e-16, the histograms in 7 bins to 3.4e-13.
+- *The release velocity* (the same runs). The liquid's records leave at 0.45/1.28/1.62 m/s, 1.04 m/s weighted by mass,
+  within 0.4/3.8/20 degrees of the meridian; Girin's closure velocity on the same columns is 2.7/7.2/9.7 m/s, 5.6 m/s by
+  mass, so the resolved speed is 0.14-0.24 of it (0.14-0.23 with the flag off). The slurry's leave at 0.88 m/s by mass. On
+  sub-plan 21's heated state at 93 s (Task 1's `speed_steady.py`) the top cells ran at 0.48 of the closure's speed with
+  0.15 mm of liquid and fell to 0.06 of it as the liquid ran off.
+- *Nothing else moves.* The skin body's state at the end of both runs -- its 3D field, mesh, skins, every history column
+  but the wall times, its released mass, enthalpy, momentum and droplets -- is Task 1c's to the last bit; with the flag on
+  the plan's record differs from Task 1c's in round-off (1.8e-15 at most, in 97 columns: the split by the released cells
+  against the cascade's slurry share subtracted), no record appearing or vanishing. A skin body without a spray model is
+  Task 1c's in all 147 arrays of Task 1c's three runs (`bitid.py`, `run_bitid.sh`: none of the 147 differs). `--surface-model elements` on the CLI test's
+  short melting case (`runs/line2_short`) is Task 1c's in all 115 history columns (its history file byte for byte), all
+  24 old fields of its 25 266 source rows, its results, its summary and its size distribution; its rows carry a solid
+  fraction of 0 and h_kg 0.94/1.04/1.35 MJ/kg, whose sum of dm h_kg is its removed enthalpy, 540 843 J, to the last bit.
+- *The cost* (`cost_records.py`). On the 100 mm sphere's heated state at 93 s with slurry spraying on, a 1 ms flow
+  sub-step releases 6.9 g, the liquid from 4 618 columns and the slurry from 4 613, all of them both: the release costs
+  0.079 s of processor time without the split and 0.113 s with it, the histogram 1.1 ms and the macro step's 9 231 rows
+  1.4 ms, against about 2 s a flow sub-step; with slurry spraying off no column takes cells of both kinds and the split
+  adds two masks. Each the mean of 20 repeats, measured once.
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *The records split by the cells the release took*, not by the cascade's arithmetic. Why: the cascade gives each cell
+   its phase's rate, so the cell's phase is the mode that took it; booked from the release's own cells a record is exact
+   and a column of one kind keeps its totals to the last bit, where Task 1c's `released - released_slurry` subtracts two
+   sums made differently and could leave a round-off residue as a liquid record with no liquid. Cost: none (the two
+   agree to 1.8e-15 on the test).
+2. *The histograms accumulate in the flow sub-steps through the Cascade, an accepted pass's added to the body.* Why: spec
+   8's "each sub-step", without counting the sub-steps of passes that are undone. `spray.histogram` is unchanged, so the
+   element model's files are. Cost: none; the agreement with the records is numpy's round-off (above).
+3. *Position and angle: the column's top corner and its angle at the plan's evaluation*, the macro step's start. Why:
+   the droplets leave the top, and the mode and radius are from there; the element model's centroid is on its surface.
+   Cost if the base corner was meant: the skin's thickness, about a millimetre on the 100 mm sphere.
+4. *b_m the depth the mode read*: the flowing depth for the liquid's mode, the slurry's layer for the slurry's. Cost:
+   none.
+5. *v_s_ms and t: the mean velocity of the metal released.* Why: the source table's column is the release velocity, and
+   spec 6.4 and 8 have the droplets leave the top cells at the speed of the metal they are made of, the books' sink, so
+   the table's momentum is the momentum the body lost (to 4.7e-17); Girin's closure velocity is a gate's, Task 1c's
+   ruling, and is in We_s. Cost if wrong: the table's release speed is 0.14-0.24 of the closure's on the test sphere
+   (0.06-0.48 on sub-plan 21's heated state), a factor of 4-7 slower than the element model's convention; the
+   alternative is one line (`res.v_s` and the meridian). Confirmed by Asha, 2026-10-29 (option A).
+6. *A slurry droplet's We_d and Oh by its slurry's properties*, its mixture density, its viscosity at its sheared
+   layer's rate (the mode's) and 0.80 N/m (the 2026-10-07 design 8.4). Cost: Oh with another viscosity scales with it.
+7. *solid_fraction and h_kg by the books' cell values*: the solid by the property table's liquid fraction, as
+   `released_solid`, so a liquid record may carry up to 2.3e-11 of solid. Cost: none.
+8. *The element model's rows: 0 and its film's liquid enthalpy.* Why: its film is liquid by construction, booked at
+   `h_p` when it sprays, so the column is what its droplets carry and its books' sprayed enthalpy; nan would hide it.
+   Cost: none (its other columns unchanged to the last bit).
+9. *A skin body keeps one array of rows per macro step*, read by `spray.source_table`. Why: a list of floats costs about
+   0.9 kB a row against 0.2 kB, and a skin flight makes a row per spraying column per macro step (about 4 600 at 93 s,
+   so 370 000 a second of flight at the 12.5 ms continuum step). Cost: `len(source_rows)` counts macro steps on a skin
+   body (Task 4's results count rows).
+10. *No summary for a skin body until Task 4*: `particles_summary.csv`'s columns are the element model's per-step
+    history columns, which a skin history lacks, and its `released_mass_kg` is cumulative (sub-plan 21 Task 7) where the
+    summary's is per step; `write_particles` writes the summary only for a history that has all its columns and returns
+    the paths it wrote. Cost: none until Task 4, which gives the skin history its per-step droplet columns.
+11. *A spraying skin body needs the aero state*, now refused without it: the rows' altitude and speed. Cost: none (every
+    caller gives it).
+
+**What Tasks 3 and 4 add for a skin flight's files.** Task 3: the CLI builds the skin body with `spray=SprayModel(...)`,
+`slurry_spray` from `--slurry-spray` and `particles` from `--particles`, and calls `write_particles` for a skin run (it
+does for the element model's only, `melting` excluding the skins). Task 4: the skin history's per-step droplet columns
+for the summary (released mass and droplets per step, the radius median and maximum, the spraying area) and the results'
+row count, sprayed mass and droplets.
+
+- [ ] **Step 1: The two columns and the per-patch properties** -- append to `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -581,3 +581,37 @@
+     _, lam, tau = spray.rayleigh_taylor_bounded(w_n, np.full(1, 4e-3), np.full(1, 0.05), LIQ)
+     assert pool.branch[0] == spray.BRANCH_RT and pool.growth[0] == tau[0] > whole.growth[0]
+     assert pool.wavelength[0] == lam[0] and pool.mdot[0] == pytest.approx(LIQ.rho * 4e-3 / tau[0], rel=1e-12)
++
++
++def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_takes_their_properties_per_patch():
++    """Spec 8 and 10.2 (sub-plan 22 Task 2): two columns end the source table, `solid_fraction` and `h_kg`, the droplets'
++    solid share and the enthalpy per kilogram they carry, 0 and nan where the caller gives none; the droplets' density,
++    viscosity and surface tension may be one per patch, a slurry droplet's Weber and Ohnesorge numbers being its own
++    phase's (the 2026-10-07 design 8.4); `source_block` is `source_rows` as an array, and `spray.source_table` reads a
++    body's rows or blocks of rows alike. The element model's form is unchanged in every other column."""
++    assert spray.SOURCE_COLUMNS[-2:] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 26
++    flow = FakeFlow(3)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    b = np.full(3, 1e-3)
++    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
++                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
++    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
++             res, b)
++    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
++    plain = np.array(spray.source_rows(*where, LIQ, FakeState()))
++    assert plain.shape == (2, 26) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
++    slurry = material.LiquidProperties(np.array([2400.0, 2500.0, 2550.0]), np.array([1.3e-3, 0.02, 0.05]),
++                                       np.array([0.86, 0.80, 0.80]))
++    block = spray.source_block(*where, slurry, FakeState(), solid_fraction=np.array([0.0, 0.1, 0.03]),
++                               h_kg=np.array([1.1e6, 1.0e6, 0.9e6]))
++    assert block.shape == (2, 26) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
++    assert block[:, C["h_kg"]].tolist() == [1.1e6, 0.9e6]
++    np.testing.assert_array_equal(block[:, :C["we_d"]], plain[:, :C["we_d"]])
++    np.testing.assert_array_equal(block[0, :C["solid_fraction"]], plain[0, :C["solid_fraction"]])   # the liquid's patch
++    r = block[1, C["r_m"]]
++    assert block[1, C["we_d"]] == pytest.approx(8e-5 * 7200.0 ** 2 * 2.0 * r / 0.80, rel=1e-14)
++    assert block[1, C["oh"]] == pytest.approx(0.05 / np.sqrt(2550.0 * 0.80 * 2.0 * r), rel=1e-14)
++    np.testing.assert_array_equal(spray.source_block(*where, LIQ, FakeState()), plain)        # rows as an array
++    table = spray.source_table([block, block[:1]])
++    assert table.shape == (3, 26) and np.array_equal(table[:2], block, equal_nan=True)
++    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 26)
+```
+
+- [ ] **Step 2: The release by the cells it came from, and the histograms** -- append to
+  `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -2184,3 +2184,82 @@
+     flow.release = skin.prescribed_release(rates[0])
+     one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
+     assert one.released.sum() > 0.0 and not one.released_slurry.any()
++
++
++# -- the droplet records: the release by the cells it came from (sub-plan 22 Task 2) ----------------------------------
++def test_a_release_is_split_by_the_cells_it_came_from_and_a_column_of_one_kind_keeps_its_totals_to_the_last_bit():
++    """Spec 8's separate records for the liquid's mode and the slurry's (sub-plan 22 Task 2): `release_top` books what it
++    took by the cells it came from -- [0] the fully liquid ones, [1] the others -- mass, enthalpy, solid and momentum at
++    each cell's own. Five columns of 10 um cells, each kind of cell moving its own way: liquid over slurry, exposed
++    slurry, liquid alone, rigid metal, slurry over liquid. With slurry spraying on, asked for two and a half cells: the
++    first column gives its two liquid cells to [0] and half a slurry cell to [1], the fifth two slurry cells and half a
++    liquid one; a column that took one kind gives that kind its totals to the last bit and the other nothing; the liquid
++    carries no solid. With it off, everything is liquid's."""
++    col, _ = strip_grid(5, 2)
++    temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [SLURRY] * 3 + [RIGID] * 3, [LIQUID] * 4 + [RIGID] * 3,
++             [RIGID] * 4, [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3] * 2
++    for slurry in (True, False):
++        sk = stacked(col, temps)
++        liquid = sk.valid & (sk.T >= sk.material.T_liquidus)
++        sk.U = np.where(liquid[..., None], [2.0, 0.0, 0.0], [0.0, 0.5, 0.0]) * sk.valid[..., None]
++        m, h, U = sk.m[:, 0].copy(), sk.H / np.where(sk.m > 0.0, sk.m, 1.0), sk.U.copy()
++        f_s = 1.0 - sk.props.liquid_fraction(sk.T)
++        book = skin.release_top(sk, 2.5 * m, slurry=slurry)
++        ph = book.by_phase
++        for total, part in ((book.mass, ph.mass), (book.enthalpy, ph.enthalpy), (book.solid, ph.solid),
++                            (book.momentum, ph.momentum)):
++            assert part.shape == (2,) + total.shape
++            np.testing.assert_allclose(part.sum(axis=0), total, rtol=1e-15, atol=1e-30)
++        assert not ph.solid[0].any()
++        one = [1, 2, 3, 6, 7, 8] if slurry else list(range(10))                # one kind taken, or none
++        kind = (ph.mass[1] > 0.0).astype(int)
++        for i in one:
++            for total, part in ((book.mass, ph.mass), (book.enthalpy, ph.enthalpy), (book.momentum, ph.momentum)):
++                assert np.array_equal(part[kind[i], i], total[i]) and not part[1 - kind[i], i].any()
++        if not slurry:
++            assert not ph.mass[1].any() and np.array_equal(ph.mass[0], book.mass)
++            continue
++        for i, (n_liq, n_sl, first) in ((0, (2.0, 0.5, 0)), (4, (0.5, 2.0, 2))):     # the mixed columns, by hand
++            cells = [(0, 1.0), (1, 1.0), (2, 0.5)]
++            liq = [(k, w) for k, w in cells if liquid[i, k]]
++            sl = [(k, w) for k, w in cells if not liquid[i, k]]
++            for j, run in ((0, liq), (1, sl)):
++                np.testing.assert_allclose(ph.mass[j, i], sum(w for _, w in run) * m[i], rtol=1e-14)
++                np.testing.assert_allclose(ph.enthalpy[j, i], sum(w * m[i] * h[i, k] for k, w in run), rtol=1e-14)
++                np.testing.assert_allclose(ph.solid[j, i], sum(w * m[i] * f_s[i, k] for k, w in run), rtol=1e-14,
++                                           atol=1e-30)
++                np.testing.assert_allclose(ph.momentum[j, i], sum(w * m[i] * U[i, k] for k, w in run), rtol=1e-14)
++            assert ph.mass[0, i] == pytest.approx(n_liq * m[i], rel=1e-14) and ph.mass[1, i] == pytest.approx(n_sl * m[i])
++
++
++def test_a_cascade_with_a_histogram_bins_each_flow_sub_step_s_release_and_the_book_keeps_it_by_phase(coarse_sphere_mesh):
++    """Sub-plan 22 Task 2: the flow's book carries every flow sub-step's release by the cells it came from
++    (`phase_mass`, `phase_H`, `phase_p`, `phase_solid`), which add up to the release, and a `skin.Cascade` with a
++    `histogram` has each flow sub-step's release binned by size, the book summing the bins over the sub-steps. On the
++    test sphere's mixed skins at three cycles with slurry spraying on: the histogram is called once a flow sub-step, on
++    that sub-step's release by phase, and the slurry's part is what the cascade took at the slurry's rate (to round-off:
++    the release's own cells against the cascade's arithmetic)."""
++    from test_reentry_model_columns import sphere_columns
++    col, _ = sphere_columns(coarse_sphere_mesh)
++    rng = np.random.default_rng(10)
++    rates = np.vstack([rng.uniform(0.0, 8.0, col.n), rng.uniform(0.0, 4.0, col.n)])
++    seen = []
++
++    def histogram(mass):
++        seen.append(mass.copy())
++        return np.array([mass[0].sum(), mass[1].sum()]), np.array([1.0, 2.0])
++    sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
++    flow = sphere_flow(col, 3, A_top=col.area * 1.01)
++    flow.release, flow.slurry = (lambda s: skin.Cascade(rates[0], rates[1], histogram=histogram)), True
++    book = skin.flow_substeps(sk, flow, 0.01)
++    assert len(seen) == 3 and book.hist_m.tolist() == [3.0, 6.0]
++    np.testing.assert_allclose(book.hist_n, [sum(s[0].sum() for s in seen), sum(s[1].sum() for s in seen)], rtol=1e-15)
++    np.testing.assert_allclose(book.phase_mass, sum(seen), rtol=1e-15)
++    for total, part in ((book.released, book.phase_mass), (book.released_H, book.phase_H),
++                        (book.released_solid, book.phase_solid), (book.released_p, book.phase_p)):
++        np.testing.assert_allclose(part.sum(axis=0), total, rtol=1e-14, atol=1e-25)
++    assert book.phase_mass[1].sum() > 0.0 and book.phase_mass[0].sum() > 0.0 and not book.phase_solid[0].any()
++    np.testing.assert_allclose(book.phase_mass[1], book.released_slurry, rtol=1e-12, atol=1e-22)
++    flow.release = skin.prescribed_release(rates[0])                          # a release of one rate: no histogram
++    one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
++    assert one.hist_n is None and one.phase_mass.sum() > 0.0
+```
+
+- [ ] **Step 3: The plan's records and the body's** -- append to `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1114,3 +1114,168 @@
+     np.testing.assert_allclose(p.number[ok], p.mass[ok] / (4.0 / 3.0 * np.pi * mat.liquid.rho * p.result.r[ok] ** 3),
+                                rtol=1e-12)
+     assert b.droplet_number >= p.number.sum() > 0.0
++
++
++# -- the droplet records (sub-plan 22 Task 2) ---------------------------------------------------------------------------
++def test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_solid_fraction_enthalpy_and_velocity():
++    """Spec 8 and 10.2: the droplet records are combined per column, per mode, per macro step, summing mass and number
++    over the sub-steps; a column's radius is its plan's, so combining changes none; the liquid's mode and the slurry's
++    are separate records; `solid_fraction` and `h_kg` are mass-weighted over the cells each record released, and the
++    droplets leave at the mean velocity of the metal they are made of. Three columns of 10 um cells under Girin's
++    closure, slurry spraying on: liquid alone (the thin branch), exposed slurry three cells of it in the bridge at 907.9 K
++    (the slurry's thick mode), and one liquid cell over that slurry -- the liquid moving at 2 m/s along x, the slurry at
++    0.5 m/s along y. Three flow sub-steps of 12 us: the third column gives its liquid cell in the first two and slurry
++    after it. Four rows, the liquid's mode's first; the size histograms accumulated each sub-step are the records'."""
++    from reentry_model import spray, surface_flow
++    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
++    from test_reentry_model_spray import FakeState
++    col, pts = strip_grid(3, 2, h=20e-3)
++    WARM = 907.9
++    sk = stacked(col, [[LIQUID] * 5 + [RIGID] * 10, [WARM] * 3 + [SLURRY] * 47 + [RIGID] * 10,
++                       [LIQUID] + [WARM] * 3 + [SLURRY] * 46 + [RIGID] * 10, [RIGID] * 10, [RIGID] * 10, [RIGID] * 10])
++    mat = sk.material
++    liquid = sk.valid & (sk.T >= mat.T_liquidus)
++    sk.U = np.where(liquid[..., None], [2.0, 0.0, 0.0], [0.0, 0.5, 0.0]) * sk.valid[..., None]
++    flow = girin_flow(6, [surface_flow.CLOSURE_GIRIN] * 6, [2000.0] * 6, [50.0] * 6)
++
++    class State(FakeState):
++        h = 71e3
++    theta = np.radians([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
++    plan = skinbody.girin_plan(sk, flow, State(), spray.SprayModel(mat.liquid), theta, col.area, col.edges, 0.05, 0.0125,
++                               slurry=True, points=pts)
++    assert plan.result.branch[:3].tolist() == [spray.BRANCH_THIN, spray.BRANCH_THICK, spray.BRANCH_THICK]
++    assert (plan.rate > 0.0).tolist() == [True, False, True] + [False] * 3
++    assert (plan.rate_slurry > 0.0).tolist() == [False, True, True] + [False] * 3
++    hist = np.zeros((2, spray.N_BINS))
++    taken, m0 = np.zeros((2, 6)), sk.m[:, 0].copy()
++    for _ in range(3):
++        cascade = plan.release(sk)
++        dm, _ = skin.cascade_mass(sk, cascade.rate, cascade.rate_slurry, col.area, 12e-6, True, cascade.T_slurry)
++        ph = skin.release_top(sk, dm, slurry=True).by_phase
++        fb = skin.FlowBook.zero(6)
++        fb.phase_mass, fb.phase_H, fb.phase_p, fb.phase_solid = ph.mass, ph.enthalpy, ph.momentum, ph.solid
++        plan.book(fb)
++        hist += cascade.histogram(ph.mass)
++        taken += ph.mass
++    assert taken[0, 2] == pytest.approx(m0[2], rel=1e-12) and 0.0 < taken[1, 2] < m0[2]        # all its liquid
++    plan.count(mat.liquid.rho)
++    rows = plan.source_block(0.0125)
++    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
++    i, mode = np.array([0, 2, 1, 2]), np.array([0, 0, 1, 1])
++    assert rows.shape == (4, 26)
++    np.testing.assert_array_equal(rows[:, C["x_m"]:C["z_m"] + 1], pts[i])
++    np.testing.assert_array_equal(rows[:, C["theta_deg"]], np.degrees(theta[i]))
++    assert (rows[:, C["time_s"]] == 0.0125).all() and (rows[:, C["altitude_km"]] == 71.0).all()
++    s = plan.slurry
++    r = np.where(mode == 0, plan.result.r[i], s["r"][i])
++    np.testing.assert_array_equal(rows[:, C["r_m"]], r)                                  # combining changes no radius
++    np.testing.assert_array_equal(rows[:, C["dm_kg"]], taken[mode, i])
++    rho = np.where(mode == 0, mat.liquid.rho, s["rho"][i])
++    np.testing.assert_allclose(rows[:, C["dn"]], taken[mode, i] / (4.0 / 3.0 * np.pi * rho * r ** 3), rtol=1e-14)
++    for key, liq, sl in (("branch", plan.result.branch, s["branch"]), ("delta_m_m", plan.result.delta_m, s["delta_m"]),
++                         ("we_s", plan.result.we_s, s["we_s"]), ("b_m", plan.flowing, s["depth"]),
++                         ("h_floor_m", plan.result.h_floor, s["h_floor"]), ("gamma_tau", plan.result.gamma_tau,
++                                                                             s["gamma_tau"])):
++        np.testing.assert_array_equal(rows[:, C[key]], np.where(mode == 0, liq[i], sl[i]))
++    # the two new columns: liquid at 950 K carries no solid and its enthalpy; the slurry its cells' at 907.9 K
++    f_s = 1.0 - float(sk.props.liquid_fraction(np.array([WARM]))[0])
++    assert 0.0 < f_s < 0.1
++    np.testing.assert_allclose(rows[:, C["solid_fraction"]], np.where(mode == 0, 0.0, f_s), rtol=1e-12, atol=0.0)
++    np.testing.assert_allclose(rows[:, C["h_kg"]], mat.enthalpy(np.where(mode == 0, LIQUID, WARM)), rtol=1e-12)
++    # leaving at the metal's own velocity, and each phase's Weber and Ohnesorge numbers at its radius
++    np.testing.assert_allclose(rows[:, C["v_s_ms"]], np.where(mode == 0, 2.0, 0.5), rtol=1e-14)
++    np.testing.assert_allclose(rows[:, C["tx"]:C["tz"] + 1], np.where(mode[:, None] == 0, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
++                               atol=1e-15)
++    sigma = np.where(mode == 0, mat.liquid.sigma, skinbody.SLURRY_SIGMA)
++    mu = np.where(mode == 0, mat.liquid.mu, s["mu"][i])
++    np.testing.assert_allclose(rows[:, C["we_d"]], State.freestream.rho * State.V ** 2 * 2.0 * r / sigma, rtol=1e-14)
++    np.testing.assert_allclose(rows[:, C["oh"]], mu / np.sqrt(rho * sigma * 2.0 * r), rtol=1e-14)
++    assert s["mu"][2] > 1.2 * mat.liquid.mu and s["rho"][2] > mat.liquid.rho
++    # the histograms accumulated each sub-step are the records' (in the same bins, to round-off)
++    n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
++    np.testing.assert_array_equal(hist[0] > 0.0, n_rec > 0.0)
++    np.testing.assert_allclose(hist[0], n_rec, rtol=1e-13, atol=0.0)
++    np.testing.assert_allclose(hist[1], m_rec, rtol=1e-13, atol=0.0)
++
++
++def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_writer_writes_them(coarse_sphere_mesh,
++                                                                                            tmp_path, monkeypatch):
++    """The skin body's droplet records (sub-plan 22 Task 2), on Task 1c's spraying test with slurry spraying on: the 4 mm
++    test sphere heated at 3 MW/m2 from 890 K under the 100 mm flight's gas state at 93 s, two 0.25 s steps, one flow
++    sub-step a heat sub-step. The second step sprays the liquid and the slurry under it, and the body keeps one block of
++    rows for it: one row per column and mode, the liquid's mode's first, each at its plan's radius; the rows' mass is
++    what the accepted passes released from each column (the slurry's part what the cascade took at the slurry's rate)
++    and the books' released mass, their enthalpy the books' released enthalpy, and their momentum, mass times speed
++    along their direction, the momentum the droplets took from each column, all to round-off; the size histograms
++    accumulated each flow sub-step are the rows'. The coupled writer writes the rows and their size distribution and
++    reads them back to the last bit; the summary, whose columns are the element model's history, waits for Task 4."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import coupled, spray
++    from reentry_model import trajectory as tj
++    mat = material.Material.from_drama_json("AA7075_scheil")
++    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
++             slurry_spray=True)
++    plans, books = [], []
++    girin, book = skinbody.girin_plan, skinbody.SprayPlan.book
++
++    def planned(*a, **k):
++        plans.append(girin(*a, **k))
++        return plans[-1]
++
++    def booked(plan, fb):
++        books.append((plan, fb.released.copy(), fb.released_slurry.copy()))
++        return book(plan, fb)
++    monkeypatch.setattr(skinbody, "girin_plan", planned)
++    monkeypatch.setattr(skinbody.SprayPlan, "book", booked)
++    state = aero_state_at(93.0)
++    for k in range(2):
++        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
++    assert len(b.source_rows) == 1 and b.particles                      # the first step melts the tops
++    rows = spray.source_table(b.source_rows)
++    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
++    p = plans[-1]
++    index = {tuple(x): i for i, x in enumerate(p.points)}
++    i = np.array([index[tuple(x)] for x in rows[:, C["x_m"]:C["z_m"] + 1]])
++    n_liq, n_sl = int((p.mass > 0.0).sum()), int((p.mass_slurry > 0.0).sum())
++    mode = (np.arange(len(rows)) >= n_liq).astype(int)
++    assert len(rows) == n_liq + n_sl and n_liq > 100 and n_sl > 100 and (rows[:, C["time_s"]] == 0.5).all()
++    assert len(set(i[mode == 0])) == n_liq and len(set(i[mode == 1])) == n_sl
++    assert ((p.mass > 0.0) & (p.mass_slurry > 0.0)).sum() > 10                    # columns with both records
++    np.testing.assert_array_equal(rows[:, C["r_m"]], np.where(mode == 0, p.result.r[i], p.slurry["r"][i]))
++    # the books: the mass each column released and what the cascade took at the slurry's rate, the enthalpy, the momentum
++    mine = [x for x in books if x[0] is p]
++    released, from_slurry = sum(x[1] for x in mine), sum(x[2] for x in mine)
++    by_column = np.bincount(i, rows[:, C["dm_kg"]], b.columns.n)
++    np.testing.assert_allclose(by_column, released, rtol=1e-12, atol=0.0)
++    np.testing.assert_allclose(np.bincount(i[mode == 1], rows[mode == 1, C["dm_kg"]], b.columns.n), from_slurry,
++                               rtol=1e-12, atol=1e-21)
++    assert rows[:, C["dm_kg"]].sum() == pytest.approx(b.released_mass, rel=1e-12)
++    assert (rows[:, C["dm_kg"]] * rows[:, C["h_kg"]]).sum() == pytest.approx(b.released_enthalpy, rel=1e-12)
++    velocity = rows[:, C["v_s_ms"], None] * rows[:, C["tx"]:C["tz"] + 1]
++    momentum = np.stack([np.bincount(i, rows[:, C["dm_kg"]] * velocity[:, k], b.columns.n) for k in range(3)], axis=1)
++    np.testing.assert_allclose(momentum, b.droplet_momentum, rtol=0.0, atol=1e-12 * np.abs(b.droplet_momentum).max())
++    # the two new columns: the liquid carries no solid (to the property table's interpolation at the liquidus), the
++    # slurry less than half its mass, each at its cells' own enthalpy
++    s_f, h = rows[:, C["solid_fraction"]], rows[:, C["h_kg"]]
++    h_rigid, h_liq = mat.enthalpy(np.array([mat.T_rigid, mat.T_liquidus]))
++    assert (s_f[mode == 0] < 1e-9).all() and (s_f[mode == 1] > 0.0).all() and (s_f[mode == 1] < 0.5).all()
++    assert (h[mode == 0] > h_liq * (1.0 - 1e-6)).all() and (h_rigid < h[mode == 1]).all() and (h[mode == 1] < h_liq).all()
++    # the size histograms, accumulated each flow sub-step, are the rows': in the same bins, to the round-off of numpy's
++    # weighted histogram, which takes each bin as a difference of running sums over all the droplets (measured: 1.6e-12
++    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all)
++    n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
++    np.testing.assert_array_equal(b.hist_n > 0.0, n_rec > 0.0)
++    np.testing.assert_allclose(b.hist_n, n_rec, rtol=0.0, atol=1e-15 * n_rec.sum())
++    np.testing.assert_allclose(b.hist_m, m_rec, rtol=0.0, atol=1e-15 * m_rec.sum())
++    # the coupled writer: the same files as the element model's, read back to the last bit; no summary until Task 4
++    history = tj.History({"time_s": np.array([0.0, 0.25, 0.5])}, np.zeros((3, 6)), None)
++    files = coupled.write_particles(str(tmp_path), b, history)
++    assert set(files) == {"particles", "size_distribution"}
++    npz = np.load(files["particles"])
++    assert npz.files == spray.SOURCE_COLUMNS
++    assert all(np.array_equal(npz[name], rows[:, k], equal_nan=True) for k, name in enumerate(spray.SOURCE_COLUMNS))
++    with open(files["size_distribution"]) as fh:
++        total = [line.split(",") for line in fh.read().splitlines()[1:]][-spray.N_BINS:]
++    np.testing.assert_allclose([float(x[4]) for x in total], n_rec, rtol=1e-8)
++    np.testing.assert_allclose([float(x[5]) for x in total], m_rec, rtol=1e-8)
+```
+
+- [ ] **Step 4: The element model's two columns** in `tests/test_reentry_model_melting.py` and
+  `tests/test_reentry_model_coupled.py`:
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -95,7 +95,10 @@
+     assert b.material.h_liquid < h_out <= b.material.enthalpy(b.surface_temperature().max())       # own temperature, superheat and all
+     assert stats["film_T_max_K"] == pytest.approx(b.surface_temperature().max()) and stats["film_T_max_K"] > b.material.T_liquidus
+     rows = np.array(b.source_rows)
+-    assert rows.shape[1] == 24 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
++    assert rows.shape[1] == 26 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
++    # sub-plan 22 Task 2: the film is liquid and leaves at its own enthalpy, the removed enthalpy's
++    assert (rows[:, 24] == 0.0).all() and np.isfinite(rows[:, 25]).all()
++    assert (rows[:, 14] * rows[:, 25]).sum() == pytest.approx(b.removed_enthalpy, rel=1e-12)
+     # 2026-10-22: viscous_film's floor depth and gamma tau*, finite on Girin & Kopyt's branches and nan elsewhere
+     gk = np.isin(rows[:, 8], [1, 2, 4])
+     assert np.isfinite(rows[gk, 22:24]).all() and np.isnan(rows[~gk, 22:24]).all() and (rows[gk, 23] < 1.0).all()
+```
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -141,6 +141,8 @@
+     from reentry_model import spray
+     npz = np.load(files["particles"])
+     assert set(npz.files) == set(spray.SOURCE_COLUMNS) and npz["dm_kg"].sum() == pytest.approx(b.sprayed_mass, rel=1e-9)
++    assert np.array_equal(np.column_stack([npz[k] for k in spray.SOURCE_COLUMNS]), np.array(b.source_rows), equal_nan=True)
++    assert not npz["solid_fraction"].any() and np.isfinite(npz["h_kg"]).all()        # liquid film (sub-plan 22 Task 2)
+     with open(files["size_distribution"]) as fh:
+         lines = fh.read().splitlines()
+     assert lines[0] == "window_start_s,window_end_s,r_lo_m,r_hi_m,dn,dm_kg" and (len(lines) - 1) % spray.N_BINS == 0
+```
+
+- [ ] **Step 5: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py
+  tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py
+  tests/test_reentry_model_coupled.py -q -k "solid_fraction_and_enthalpy or split_by_the_cells or bins_each_flow or
+  records_are_one_per_column or close_on_its_books_and_the_coupled_writer or film_spraying_death_and_balances or
+  coupled_melting_run_and_writers"`. Expected: 7 failed --
+  - `AssertionError: assert (['h_floor_m', 'gamma_tau'] == ['solid_fraction', 'h_kg']` (the source table);
+  - `AttributeError: 'ReleaseBook' object has no attribute 'by_phase'` and `TypeError: Cascade.__init__() got an
+    unexpected keyword argument 'histogram'` (the release and the flow's book);
+  - `TypeError: girin_plan() got an unexpected keyword argument 'points'` and `AttributeError: type object 'SprayPlan'
+    has no attribute 'book'` (the plan's records and the body's);
+  - `assert (24 == 26)` (the melting body's rows) and `KeyError: 'solid_fraction is not a file in the archive'` (the
+    coupled writer's table).
+
+- [ ] **Step 6: The source table's two columns, its blocks and the per-patch properties** in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -95,7 +95,10 @@
+ nose by 1/cos(phi)).
+ 
+ Release per patch and step: dm = min(mdot A dt, m_f) (the film after feed and runoff), dn = dm / (4/3 pi rho_l r^3);
+-one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX].
++one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX]. The layered
++skins' records are one row per column, per mode, per macro step (`skinbody.SprayPlan.source_block`, sub-plan 22 Task 2):
++the same columns, written by the same `source_block`, the two last columns the droplets' solid fraction and the enthalpy
++per kilogram they carry (spec 8 and 10.2; the 2026-10-07 design 7.5).
+ 
+ The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius and by one
+ of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
+@@ -123,10 +126,13 @@
+ BIN_EDGES = np.logspace(np.log10(R_MIN), np.log10(R_MAX), N_BINS + 1)
+ WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected above this droplet Weber number
+ CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
+-# the last two: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22)
++# h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
++# solid_fraction and h_kg: the droplets' solid share of their mass and the enthalpy per kilogram they carry [J/kg, on
++# the material's enthalpy scale] (spec 8 and 10.2, sub-plan 22 Task 2): the element model's film is liquid by
++# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`)
+ SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
+                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup",
+-                  "h_floor_m", "gamma_tau"]
++                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg"]
+ BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
+ #                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
+ BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous medium: Girin & Kopyt's step profile again
+@@ -493,19 +499,45 @@
+                            h_floor, gamma_tau, outside & gk, wavelength)
+ 
+ 
+-def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state):
+-    """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step."""
++def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
++    """Source-table rows, an array (k, len(SOURCE_COLUMNS)), for the patches that released mass (`res.dm` > 0): `h` [m]
++    and `V` [m/s] the altitude and speed, `theta` [rad], `centroids` (n, 3) [m] and `t_hat` (n, 3) per patch, `flow`'s
++    `closure`, `res` a SprayResult (or anything with its per-patch `branch`, `delta_m`, `we_s`, `r`, `dn`, `dm`, `v_s`,
++    `h_floor`, `gamma_tau`), `b` [m] the film thickness, `liquid` the droplets' properties -- each of its `rho`, `mu` and
++    `sigma` one value or one per patch (a slurry droplet's are its slurry's: sub-plan 22 Task 2) -- for their Weber and
++    Ohnesorge numbers at the freestream `state`, and `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given)."""
+     k = np.flatnonzero(res.dm > 0.0)
+     if k.size == 0:
+-        return []
++        return np.zeros((0, len(SOURCE_COLUMNS)))
+     r = res.r[k]
+-    we_d = state.freestream.rho * state.V ** 2 * 2.0 * r / liquid.sigma
+-    oh = liquid.mu / np.sqrt(liquid.rho * liquid.sigma * 2.0 * r)
+-    rows = np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
++    n = len(res.dm)
++    rho, mu, sigma = (np.broadcast_to(np.asarray(x, dtype=float), (n,))[k] for x in (liquid.rho, liquid.mu, liquid.sigma))
++    we_d = state.freestream.rho * state.V ** 2 * 2.0 * r / sigma
++    oh = mu / np.sqrt(rho * sigma * 2.0 * r)
++    s_f = np.zeros(k.size) if solid_fraction is None else np.asarray(solid_fraction, dtype=float)[k]
++    h_d = np.full(k.size, np.nan) if h_kg is None else np.asarray(h_kg, dtype=float)[k]
++    return np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
+                             centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
+-                            res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1], t_hat[k, 2],
+-                            we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k]])
+-    return rows.tolist()
++                            res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1],
++                            t_hat[k, 2], we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k],
++                            s_f, h_d])
++
++
++def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
++    """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step
++    (`source_block`'s, as lists: the element model's form, one row per patch-step)."""
++    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg).tolist()
++
++
++def source_table(rows):
++    """A body's `source_rows` as one array (N, len(SOURCE_COLUMNS)): a list of rows (the element model's, one per
++    patch-step) or of blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about
++    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records)."""
++    if not len(rows):
++        return np.zeros((0, len(SOURCE_COLUMNS)))
++    if isinstance(rows[0], np.ndarray) and rows[0].ndim == 2:
++        return np.concatenate(rows, axis=0)
++    return np.array(rows, dtype=float)
+ 
+ 
+ def histogram(r, dn, dm):
+```
+
+- [ ] **Step 7: The element model's rows** in `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -971,8 +971,9 @@
+         if released > 0.0:
+             if self.spray_onset is None:
+                 self.spray_onset = t
+-            if s.particles:
+-                self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state)
++            if s.particles:                  # the film is liquid and leaves at its own enthalpy (sub-plan 22 Task 2)
++                self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state,
++                                                          solid_fraction=np.zeros(b.size), h_kg=h_p)
+             hn, hm = spray_mod.histogram(res.r, res.dn, res.dm)
+             self.hist_n += hn
+             self.hist_m += hm
+```
+
+- [ ] **Step 8: The release by phase, and the histograms in the flow sub-steps** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -389,13 +389,14 @@
+             self._install(shift(self.m), shift(self.H), self.count - k, S, shift(self.T), U)
+         return mass, H
+ 
+-    def take_top_mass(self, dm, admit):
++    def take_top_mass(self, dm, admit, phase=None):
+         """Remove dm >= 0 [kg] per column from its top down through the run of admissible cells from its top (`admit`,
+         (n, K) bool), at most what that run holds, each cell's metal at its own specific enthalpy and velocity: a partly
+         taken cell keeps both, its temperature and its sensitivity, and the cells beneath are untouched (sub-plan 21 Task
+         7: the release of spec 8, which thins the top cell until it merges). Returns (mass, enthalpy, solid) taken per
+         column, solid the mass of solid in it by the cells' liquid fractions, and leaves the momentum that went in
+-        `momentum_out`."""
++        `momentum_out`. With `phase` ((n, K) bool), what was taken is also split by the cells it came from, those in
++        `phase` and the others, and left in `phase_out` (sub-plan 22 Task 2: each spray mode's droplets)."""
+         dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
+         if not np.all(np.isfinite(dm) & (dm >= 0.0)):
+             raise ValueError("a release from a skin's top must be a finite, non-negative mass")
+@@ -404,14 +405,36 @@
+         taken = np.where(run, np.clip(dm[:, None] - above, 0.0, self.m), 0.0)
+         frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
+         mass, H = taken.sum(axis=1), (self.H * frac).sum(axis=1)
+-        solid = (taken * (1.0 - self.props.liquid_fraction(self.T))).sum(axis=1)
++        f_s = 1.0 - self.props.liquid_fraction(self.T)
++        solid = (taken * f_s).sum(axis=1)
+         momentum = (taken[..., None] * self.U).sum(axis=1)
++        if phase is not None:
++            self.phase_out = self._by_phase(taken, frac, f_s, np.asarray(phase, dtype=bool), (mass, H, solid, momentum))
+         whole = np.cumprod(run & (taken >= self.m), axis=1).sum(axis=1)        # the cells wholly taken, from the top
+         part = (taken > 0.0) & (np.arange(self.m.shape[1])[None, :] >= whole[:, None])
+         self.m, self.H = np.where(part, self.m - taken, self.m), np.where(part, self.H * (1.0 - frac), self.H)
+         self.take_top(whole)
+         self.momentum_out = momentum
+         return mass, H, solid
++
++    def _by_phase(self, taken, frac, f_s, phase, totals):
++        """`take_top_mass`'s (mass, enthalpy, solid, momentum) taken, each with a leading axis of two: [0] from the cells
++        in `phase`, [1] from the others. A column that took from cells of one kind gives that kind its totals to the last
++        bit and the other nothing; one that took from both sums each kind's cells."""
++        got = taken > 0.0
++        inside, outside = (got & phase).any(axis=1), (got & ~phase).any(axis=1)
++        out = [np.zeros((2,) + x.shape) for x in totals]
++        for j, only in ((0, inside & ~outside), (1, outside & ~inside)):
++            for o, x in zip(out, totals):
++                o[j, only] = x[only]
++        both = np.flatnonzero(inside & outside)
++        for j, on in enumerate((phase[both], ~phase[both])):
++            t = taken[both] * on
++            parts = (t.sum(axis=1), (self.H[both] * frac[both] * on).sum(axis=1), (t * f_s[both]).sum(axis=1),
++                     (t[..., None] * self.U[both]).sum(axis=1))
++            for o, x in zip(out, parts):
++                o[j, both] = x
++        return tuple(out)
+ 
+     def add_bottom(self, dm, h, s=1.0, u=None):
+         """Metal dm >= 0 [kg] at specific enthalpy h [J/kg] joins the bottom cell of every column (an emptied column gets
+@@ -1750,7 +1773,9 @@
+     records of its own: what was released is in the pass's FlowBook (`released`, `released_H`, `released_p`,
+     `released_solid`). Since sub-plan 22 Task 1c it may give a `Cascade` instead, the liquid's rate and the exposed
+     slurry's own per column, which the release takes cell by cell in time order (`cascade_mass`; Girin's,
+-    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`)."""
++    `skinbody.SprayPlan.release`), and the book then carries what the slurry's rate took (`released_slurry`). Every
++    release's book carries it by the cells it came from too, liquid and slurry (`phase_mass`, ...), and a Cascade with a
++    `histogram` has each flow sub-step's droplets binned by size (`hist_n`, `hist_m`; sub-plan 22 Task 2)."""
+     columns: object
+     dp_ds: np.ndarray
+     shear: np.ndarray
+@@ -1786,17 +1811,28 @@
+     released_solid: np.ndarray = None  # kg (n,): the solid in it, by its cells' liquid fractions
+     released_slurry: np.ndarray = None  # kg (n,): what the cascade took at the exposed slurry's own rate (sub-plan 22
+                                         # Task 1c; zero for a release given as one rate)
++    # the release by the cells it came from (sub-plan 22 Task 2): [0] fully liquid, at or above the liquidus, [1] the
++    # others (the exposed slurry, only with slurry spraying) -- each spray mode's droplets
++    phase_mass: np.ndarray = None      # kg (2, n)
++    phase_H: np.ndarray = None         # J (2, n): its enthalpy, at its cells' own specific enthalpies
++    phase_p: np.ndarray = None         # kg m/s (2, n, 3): its momentum, at its cells' own velocities
++    phase_solid: np.ndarray = None     # kg (2, n): the solid in it
++    hist_n: np.ndarray = None          # (bins,): the droplets released, binned by size each flow sub-step at the radii of
++    hist_m: np.ndarray = None          # kg (bins,): the Cascade's `histogram`, and their mass (None without one)
+ 
+     @classmethod
+     def zero(cls, n):
+         return cls(*(np.zeros((n, 3)) for _ in range(4)), released=np.zeros(n), released_H=np.zeros(n),
+-                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n))
++                   released_p=np.zeros((n, 3)), released_solid=np.zeros(n), released_slurry=np.zeros(n),
++                   phase_mass=np.zeros((2, n)), phase_H=np.zeros((2, n)), phase_p=np.zeros((2, n, 3)),
++                   phase_solid=np.zeros((2, n)))
+ 
+     def add(self, other):
+         """Add another book's impulses and releases and keep the worst numbers of both."""
+         for key in ("push", "shear", "wall", "carried"):
+             setattr(self, key, getattr(self, key) + getattr(other, key))
+-        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry"):
++        for key in ("released", "released_H", "released_p", "released_solid", "released_slurry", "phase_mass", "phase_H",
++                    "phase_p", "phase_solid", "hist_n", "hist_m"):
+             mine, theirs = getattr(self, key), getattr(other, key)
+             if theirs is not None:
+                 setattr(self, key, theirs.copy() if mine is None else mine + theirs)
+@@ -1885,6 +1921,10 @@
+             rb = release_top(sk, dm, flow.slurry)
+             step.released, step.released_H = rb.mass, rb.enthalpy
+             step.released_p, step.released_solid = rb.momentum, rb.solid
++            ph = rb.by_phase                             # by the cells it came from, and binned by size (Task 2)
++            step.phase_mass, step.phase_H, step.phase_p, step.phase_solid = ph.mass, ph.enthalpy, ph.momentum, ph.solid
++            if isinstance(given, Cascade) and given.histogram is not None:
++                step.hist_n, step.hist_m = given.histogram(ph.mass)
+             clock("release", started)
+         book.add(step)
+     book.cycles = cycles
+@@ -1905,6 +1945,8 @@
+     enthalpy: np.ndarray     # J (n,), at the cells' own specific enthalpies
+     momentum: np.ndarray     # kg m/s (n, 3), at the cells' own velocities: the droplets' momentum, fact 29's sink
+     solid: np.ndarray        # kg (n,): the solid in it, by the cells' liquid fractions (the droplets' solid fraction)
++    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] fully liquid,
++                             # [1] the others (sub-plan 22 Task 2)
+ 
+ 
+ def release_top(sk, dm, slurry=False):
+@@ -1917,11 +1959,14 @@
+     enthalpy and velocity (`Skins.take_top_mass`): the droplets carry momentum away from the top cells at their release
+     speed (spec 6.4), the speed of the metal they are made of, the top of the resolved profile -- fact 29's sink
+     mdot V_s with V_s the sheared layer's surface speed -- so each column's mass, enthalpy and momentum fall by exactly
+-    what the book says left. Updates the cells; returns a ReleaseBook."""
++    what the book says left. Updates the cells; returns a ReleaseBook, with what came from the fully liquid cells and
++    what from the others in `by_phase` (sub-plan 22 Task 2: the liquid's mode's droplets and the slurry's)."""
+     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+-    admit = flowing if slurry else flowing & (sk.T >= sk.material.T_liquidus)
+-    mass, H, solid = sk.take_top_mass(dm, admit)
+-    return ReleaseBook(mass, H, sk.momentum_out.copy(), solid)
++    liquid = flowing & (sk.T >= sk.material.T_liquidus)
++    admit = flowing if slurry else liquid
++    mass, H, solid = sk.take_top_mass(dm, admit, phase=liquid)
++    pm, pH, ps, pp = sk.phase_out
++    return ReleaseBook(mass, H, sk.momentum_out.copy(), solid, ReleaseBook(pm, pH, pp, ps))
+ 
+ 
+ @dataclass
+@@ -1929,10 +1974,13 @@
+     """A release given phase by phase (`Flow.release`; sub-plan 22 Task 1c): per column the liquid's rate and the exposed
+     slurry's own [kg/(m2 s) of top area, (n,)], the slurry's holding for slurry cells at least as warm as `T_slurry` [K,
+     (n,)], the cell whose properties gave it -- a colder slurry cell, more solid and more viscous, ends the column's
+-    cascade -- or for every slurry cell where None."""
++    cascade -- or for every slurry cell where None. `histogram`, if given, bins each flow sub-step's droplets by size:
++    a callable of the release by phase [kg, (2, n): the liquid's mode's, the slurry's] giving (droplets, mass [kg]) per
++    size bin (sub-plan 22 Task 2: `skinbody.SprayPlan.histogram`, at the macro step's radii)."""
+     rate: np.ndarray
+     rate_slurry: np.ndarray
+     T_slurry: np.ndarray = None
++    histogram: object = None
+ 
+ 
+ def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):
+```
+
+- [ ] **Step 9: The plan's records, rows and histogram, and the body's** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -79,11 +79,22 @@
+ capped by one crest of its wave on the depth the release may take (2026-10-24) -- and, with `slurry_spray`, the exposed
+ slurry's own mode by the cascade's properties (spec 8; Asha, 2026-10-29, option i). The plan's two rates per column are
+ the release of every flow sub-step of the macro step (`SprayPlan.release`, through `skin.cascade_mass`); what the
+-accepted passes released is the plan's record, per column and mode (`spray_plan`)."""
++accepted passes released is the plan's record, per column and mode (`spray_plan`).
++
++The droplet records (sub-plan 22 Task 2; spec 8 and 10.2): what the accepted passes released, by the cells it came from
++-- the liquid's mode's from the fully liquid cells, the slurry's from the others -- is combined per column, per mode, per
++macro step (`SprayPlan.book`), summing mass, enthalpy, solid and momentum over the sub-steps; a column's radius is the
++macro step's, from its plan, so combining changes no radius. At the step's end the records become source-table rows
++(`SprayPlan.source_block`, spray.SOURCE_COLUMNS: the element model's columns, the column's top corner and angle where
++the plan was evaluated, b its flowing depth, the droplets leaving at the mean velocity of the metal they are made of --
++the momentum the books lose with them -- and their solid fraction and enthalpy per kilogram, mass-weighted over the
++cells released), kept one block per macro step in `source_rows`; the size histograms (`hist_n`, `hist_m`) accumulate
++each flow sub-step's release at the plan's radii (`SprayPlan.histogram`, through `skin.Cascade.histogram`)."""
+ import copy
+ import dataclasses
+ import math
+ import time
++import types
+ 
+ import numpy as np
+ 
+@@ -169,12 +180,16 @@
+     (the cascade; zero without slurry spraying); `result` the liquid's `spray.SprayResult` (branch, radius, wavelength);
+     `slurry` the exposed slurry's per column -- its `branch`, radius `r` [m], `wavelength` [m], viscosity `mu` [Pa s] at
+     the shear rate `gamma` [1/s] of its own sheared layer, density `rho` [kg/m3], conjugate depth `delta_m` [m], layer
+-    `depth` [m] from its top to T_rigid, the viscous film's `gamma_tau` and the cell's temperature `T` [K] (nan, -1 where
+-    there is none); the depths read
++    `depth` [m] from its top to T_rigid, the viscous film's `gamma_tau` and floor `h_floor` [m], its `we_s` and the
++    cell's temperature `T` [K] (nan, -1 where there is none); the depths read
+     at the start, `flowing`, `liquid` and the cap's `cap_depth` [m], and `on_slurry`, where a flowing cell that is not
+-    fully liquid lies beneath the liquid run. The record the macro step's accepted passes fill: `mass` and
+-    `mass_slurry` [kg] released by each mode, and, at the step's end, `number` and `number_slurry`, the droplets: the mass
+-    over one droplet's at the mode's radius."""
++    fully liquid lies beneath the liquid run. The record the macro step's accepted passes fill (`book`), per column and
++    mode -- the liquid's and the exposed slurry's separate -- from the release by the cells it came from: `mass` and
++    `mass_slurry` [kg], `enthalpy` and `enthalpy_slurry` [J], `solid` and `solid_slurry` [kg] and `momentum` and
++    `momentum_slurry` [kg m/s, (n, 3)]; and, at the step's end, `number` and `number_slurry`, the droplets: the mass over
++    one droplet's at the mode's radius. Where the plan was evaluated, for the records' rows (`source_block`; sub-plan 22
++    Task 2): `theta` [rad], `closure` (the surface flow's), `points` [m, (n, 3)] the top surface's corners, `state` the
++    aero state and `props` the liquid's properties."""
+     rate: np.ndarray
+     rate_slurry: np.ndarray
+     result: object
+@@ -187,13 +202,22 @@
+     mass_slurry: np.ndarray = None
+     number: np.ndarray = None
+     number_slurry: np.ndarray = None
++    theta: np.ndarray = None
++    closure: np.ndarray = None
++    points: np.ndarray = None
++    state: object = None
++    props: object = None
+ 
+     def __post_init__(self):
+         T = self.slurry["T"]
+-        self._cascade = skin_mod.Cascade(self.rate, self.rate_slurry, np.where(np.isfinite(T), T, np.inf))
++        self._cascade = skin_mod.Cascade(self.rate, self.rate_slurry, np.where(np.isfinite(T), T, np.inf),
++                                         histogram=self.histogram)
+         n = len(self.rate)
+         self.mass, self.mass_slurry = np.zeros(n), np.zeros(n)
+         self.number, self.number_slurry = np.zeros(n), np.zeros(n)
++        self.enthalpy, self.enthalpy_slurry = np.zeros(n), np.zeros(n)
++        self.solid, self.solid_slurry = np.zeros(n), np.zeros(n)
++        self.momentum, self.momentum_slurry = np.zeros((n, 3)), np.zeros((n, 3))
+ 
+     def release(self, sk):
+         """`skin.Flow.release`: the liquid's rate and the exposed slurry's (`skin.Cascade`), whatever the skins hold within
+@@ -201,13 +225,72 @@
+         cells at least as warm as the cell that gave it."""
+         return self._cascade
+ 
++    def droplet_mass(self, rho_liquid):
++        """One droplet's mass [kg, (2, n)] at each mode's radius, the liquid's mode's at the density `rho_liquid`, the
++        slurry's at its cell's; nan where the mode has no droplet."""
++        r = np.vstack([self.result.r, self.slurry["r"]])
++        rho = np.vstack([np.broadcast_to(np.asarray(rho_liquid, dtype=float), r[0].shape), self.slurry["rho"]])
++        ok = np.isfinite(r) & (r > 0.0)
++        return np.where(ok, 4.0 / 3.0 * np.pi * rho * np.where(ok, r, 1.0) ** 3, np.nan)
++
+     def count(self, rho_liquid):
+         """The record's droplets: each mode's mass over one droplet's at its radius."""
+-        for mass, r, rho, key in ((self.mass, self.result.r, rho_liquid, "number"),
+-                                  (self.mass_slurry, self.slurry["r"], self.slurry["rho"], "number_slurry")):
+-            ok = (mass > 0.0) & np.isfinite(r) & (r > 0.0)
+-            with np.errstate(invalid="ignore", divide="ignore"):
+-                setattr(self, key, np.where(ok, mass / (4.0 / 3.0 * np.pi * rho * np.where(ok, r, 1.0) ** 3), 0.0))
++        one = self.droplet_mass(rho_liquid)
++        for j, (mass, key) in enumerate(((self.mass, "number"), (self.mass_slurry, "number_slurry"))):
++            ok = (mass > 0.0) & np.isfinite(one[j])
++            setattr(self, key, np.where(ok, mass / np.where(ok, one[j], 1.0), 0.0))
++
++    def histogram(self, mass):
++        """(droplets, mass [kg]) per size bin (spray.BIN_EDGES) of a release by mode [kg, (2, n): the liquid's mode's and
++        the slurry's] at the plan's radii -- each flow sub-step's release (`skin.Cascade.histogram`; sub-plan 22 Task 2),
++        which, a column's radius being the macro step's, is the histogram of the step's combined records to round-off."""
++        mass = np.asarray(mass, dtype=float)
++        one = self.droplet_mass(self.props.rho)
++        ok = (mass > 0.0) & np.isfinite(one)
++        number = np.where(ok, mass / np.where(ok, one, 1.0), 0.0)
++        r = np.vstack([self.result.r, self.slurry["r"]])
++        return spray_mod.histogram(np.where(ok, r, np.nan).ravel(), number.ravel(), mass.ravel())
++
++    def book(self, fb):
++        """Add an accepted pass's release (`skin.FlowBook`, by the cells it came from: the liquid's mode took the fully
++        liquid cells, the slurry's the others) to the record."""
++        self.mass += fb.phase_mass[0]
++        self.mass_slurry += fb.phase_mass[1]
++        self.enthalpy += fb.phase_H[0]
++        self.enthalpy_slurry += fb.phase_H[1]
++        self.solid += fb.phase_solid[0]
++        self.solid_slurry += fb.phase_solid[1]
++        self.momentum += fb.phase_p[0]
++        self.momentum_slurry += fb.phase_p[1]
++
++    def source_block(self, t):
++        """The macro step's records as source-table rows (spray.SOURCE_COLUMNS, by `spray.source_block`), one per column
++        and mode that released, the liquid's mode's first: at the end of the step `t` [s] and the plan's aero state, the
++        column's top corner `points` and angle `theta` where the plan was evaluated, its `closure`; the mode's branch,
++        radius, delta_m, We_s, the viscous film's floor and gamma tau*; b, for the liquid's mode the flowing depth and for
++        the slurry's its own layer, the slurry from its top to T_rigid; the droplets (`count` first) and their mass; their
++        speed and direction the mean velocity of the metal released, its momentum over its mass, the momentum the books
++        lose with the droplets (spec 6.4: they leave at the speed of the cells they are made of; zero direction where it
++        is at rest); We_d, Oh and the breakup flag at their radius, by their phase's density, viscosity and surface tension
++        (the slurry's mixture density, viscosity at its sheared layer's rate and SLURRY_SIGMA, the 2026-10-07 design 8.4);
++        and their solid fraction and enthalpy per kilogram, mass-weighted over the cells released."""
++        st, s = self.state, self.slurry
++        flow = types.SimpleNamespace(closure=self.closure)
++        blocks = []
++        for mass, H, solid, p, number, res, b, props in (
++                (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
++                (self.mass_slurry, self.enthalpy_slurry, self.solid_slurry, self.momentum_slurry, self.number_slurry,
++                 types.SimpleNamespace(**{k: s[k] for k in ("branch", "r", "delta_m", "we_s", "h_floor", "gamma_tau")}),
++                 s["depth"], material_mod.LiquidProperties(s["rho"], s["mu"], SLURRY_SIGMA))):
++            speed = np.linalg.norm(p, axis=1)
++            on = mass > 0.0
++            per = lambda x: np.divide(x, mass, out=np.zeros_like(x), where=on)
++            direction = np.divide(p, speed[:, None], out=np.zeros_like(p), where=speed[:, None] > 0.0)
++            rows = types.SimpleNamespace(branch=res.branch, r=res.r, delta_m=res.delta_m, we_s=res.we_s, h_floor=res.h_floor,
++                                         gamma_tau=res.gamma_tau, dm=mass, dn=number, v_s=per(speed))
++            blocks.append(spray_mod.source_block(t, st.h, st.V, self.theta, self.points, direction, flow, rows, b, props, st,
++                                                 solid_fraction=per(solid), h_kg=per(H)))
++        return np.concatenate(blocks, axis=0)
+ 
+ 
+ def region_extent(edges, selected, areas):
+@@ -241,7 +324,7 @@
+     return out
+ 
+ 
+-def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False):
++def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None):
+     """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
+     the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
+     spray model (`model`) and the skins as they are at its start: a SprayPlan.
+@@ -255,7 +338,8 @@
+     its wave on the depth the release may take, the liquid's, or with `slurry` the flowing depth (2026-10-24); a quarter
+     of `radius` caps it too. Columns on the windward face, theta <= 90 degrees, only; `A_top` [m2] the top areas, `edges`
+     the columns' graph, `dt` [s] the macro step (the nominal release in the result). With `slurry`, the exposed slurry's
+-    own mode too (`slurry_modes`)."""
++    own mode too (`slurry_modes`). The plan keeps where it was evaluated for its records' rows: `theta`, the closure,
++    the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2)."""
+     mat, liq = sk.material, model.liquid
+     n = sk.n
+     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
+@@ -279,12 +363,13 @@
+         rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow)
+     else:
+         rate_s, modes = np.zeros(n), _no_slurry(n)
+-    return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry)
++    return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
++                     points=points, state=state, props=liq)
+ 
+ 
+ def _no_slurry(n):
+     out = {key: np.full(n, np.nan) for key in ("r", "wavelength", "mu", "gamma", "rho", "delta_m", "depth", "gamma_tau",
+-                                               "T")}
++                                               "T", "we_s", "h_floor")}
+     out["branch"] = np.full(n, -1)
+     return out
+ 
+@@ -346,7 +431,7 @@
+                        cap_depth=F[cell])
+         rate[i] = r.mdot[0]
+         out["branch"][i], out["r"][i], out["wavelength"][i] = r.branch[0], r.r[0], r.wavelength[0]
+-        out["gamma_tau"][i] = r.gamma_tau[0]
++        out["gamma_tau"][i], out["we_s"][i], out["h_floor"][i] = r.gamma_tau[0], r.we_s[0], r.h_floor[0]
+     out["mu"][rows], out["gamma"][rows], out["rho"][rows], out["T"][rows] = mu, gamma, rho, T
+     out["delta_m"][rows], out["depth"][rows] = d_m, depth
+     return rate, out
+@@ -388,12 +473,14 @@
+     every flow sub-step (`skin.Flow.release`: a callable of the skins giving a rate [kg/(m2 s)] per unit top area per
+     column; sub-plan 21 Task 7), the exposed slurry released too where `slurry_spray`; or `spray`, a `spray.SprayModel`
+     with the flow on, Girin's spraying from the top cells evaluated at the start of every macro step (`girin_plan`; sub-plan
+-    22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`."""
++    22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`; its
++    droplet records, one block of source-table rows per macro step, in `source_rows` where `particles`, and the size
++    histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer)."""
+ 
+     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+-                 surface_flow=None, release=None, slurry_spray=False, spray=None):
++                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True):
+         if repeat_rule not in REPEAT_RULES:
+             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
+         self.flow_cycles = flow_cycles
+@@ -410,6 +497,9 @@
+             raise ValueError("a skin body sprays by Girin's model or by a release given, not both")
+         self.release, self.slurry_spray = release, bool(slurry_spray)
+         self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
++        self.particles = bool(particles)                     # keep the droplet records' rows (Task 2)
++        self.source_rows = []                                # one block of source-table rows per macro step (Task 2)
++        self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)   # droplets, kg per size bin
+         self._step_release = release                         # what the parts' Flow releases this macro step
+         self.repeat_rule = repeat_rule
+         self.part_max = part_max                             # s, or None: no cap on the parts while melting
+@@ -504,11 +594,12 @@
+             self.flow_passes = self.flow_cycles_max = 0
+             self.droplet_momentum, self.droplet_shear = np.zeros((self.columns.n, 3)), np.zeros((self.columns.n, 3))
+             if self.spray is not None:                       # Girin once, at the macro step's start (sub-plan 22 Task 1c)
+-                if end.result is None:
+-                    raise ValueError("Girin's spraying reads the surface flow's evaluation: give the aero state, or a "
+-                                     "forcing with its result")
++                if end.result is None or state is None:
++                    raise ValueError("Girin's spraying reads the surface flow's evaluation and the aero state (its records' "
++                                     "altitude and speed): give the aero state, with a forcing only if it has its result")
+                 self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, self.surface.areas,
+-                                             self.columns.edges, self.transverse_radius(), dt, self.slurry_spray)
++                                             self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
++                                             points=self.surface.points.copy())
+                 self._step_release = self.spray_plan.release
+         sk, mat = self.skins, self.material
+         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+@@ -532,6 +623,10 @@
+         if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
+             self.spray_plan.count(self.spray.liquid.rho)
+             self.droplet_number += float(self.spray_plan.number.sum() + self.spray_plan.number_slurry.sum())
++            if self.particles:                               # and its records' rows (Task 2)
++                block = self.spray_plan.source_block(t)
++                if len(block):
++                    self.source_rows.append(block)
+ 
+     def flow_forcing(self, state):
+         """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
+@@ -657,9 +752,11 @@
+             self.momentum_lost += fb.released_p.sum(axis=0)  # the droplets' momentum, at their cells' own velocities
+             self.droplet_momentum += fb.released_p
+             self.droplet_shear += fb.shear
+-            if self.spray is not None:                       # the plan's record: each mode's mass (sub-plan 22 Task 1c)
+-                self.spray_plan.mass += np.maximum(fb.released - fb.released_slurry, 0.0)
+-                self.spray_plan.mass_slurry += fb.released_slurry
++            if self.spray is not None:                       # the plan's record per column and mode (sub-plan 22 Task 1c),
++                self.spray_plan.book(fb)                     # by the cells released, and each flow sub-step's droplets
++                if fb.hist_n is not None:                    # binned by size (Task 2)
++                    self.hist_n += fb.hist_n
++                    self.hist_m += fb.hist_m
+         self.iterations.append(res.iterations)
+         self.last = dataclasses.replace(res, Q_conv=E_top / dt, Q_rad=E_rad / dt)    # the gas-side powers, for the history
+         self._move_base(book, m_min, g0)
+```
+
+- [ ] **Step 10: The writer** in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -335,22 +335,30 @@
+ 
+ def write_particles(run_dir, body, history, window=10.0):
+     """particles.npz (the source table, SOURCE_COLUMNS as arrays), particles_summary.csv (per macro step) and
+-    size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths."""
++    size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths.
++
++    The table is the body's `source_rows`, the element model's rows or the layered skins' blocks of them
++    (`spray.source_table`; sub-plan 22 Task 2). The summary's columns are the element model's history columns; a history
++    without them -- the skin body's, until sub-plan 22 Task 4 gives it its droplet columns -- writes no summary, and the
++    paths returned then have none."""
+     import csv
+     from . import spray
+     os.makedirs(run_dir, exist_ok=True)
+-    rows = np.array(body.source_rows, dtype=float) if body.source_rows else np.zeros((0, len(spray.SOURCE_COLUMNS)))
++    rows = spray.source_table(body.source_rows)
+     npz = os.path.join(run_dir, "particles.npz")
+     np.savez_compressed(npz, **{name: rows[:, i] for i, name in enumerate(spray.SOURCE_COLUMNS)})
+     c = history.columns
+     summary = os.path.join(run_dir, "particles_summary.csv")
+-    with open(summary, "w", newline="") as fh:
+-        w = csv.writer(fh)
+-        keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
+-                "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
+-        w.writerow(keys)
+-        for i in range(len(history)):
+-            w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
++    keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
++            "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
++    if not set(keys) <= set(c):
++        summary = None
++    else:
++        with open(summary, "w", newline="") as fh:
++            w = csv.writer(fh)
++            w.writerow(keys)
++            for i in range(len(history)):
++                w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
+     dist = os.path.join(run_dir, "size_distribution.csv")
+     edges = spray.BIN_EDGES
+     t = rows[:, 0] if len(rows) else np.zeros(0)
+@@ -370,4 +378,5 @@
+             for j in range(spray.N_BINS):
+                 w.writerow(["{:.9g}".format(lo), "{:.9g}".format(hi), "{:.9g}".format(edges[j]), "{:.9g}".format(edges[j + 1]),
+                             "{:.9g}".format(n_hist[j]), "{:.9g}".format(m_hist[j])])
+-    return {"particles": npz, "particles_summary": summary, "size_distribution": dist}
++    out = {"particles": npz, "particles_summary": summary, "size_distribution": dist}
++    return {k: v for k, v in out.items() if v is not None}
+```
+
+- [ ] **Step 11: Run them to see them pass.** Expected: `tests/test_reentry_model_spray.py` 25 passed,
+  `tests/test_reentry_model_skin.py` 94, `tests/test_reentry_model_skinbody.py` 34 (2 deselected, the reference tier's;
+  the body's writer test about 130 s); the unit tier 538 passed, 1 skipped.
+
+- [ ] **Step 12: The measurements** (in `measure/task2/`, on mains power): `./run_body_records.sh` (Task 1c's code and
+  this one's, slurry spraying off and on, and their comparison; about 8 minutes); `./run_bitid.sh` (Task 1c's
+  `bitid.py` on this code against `bit_1c.npz`); `"$PY" -B cost_records.py`; and the element model's short case,
+  `../task1/cmp/run_case.sh <code> runs line2_short` and `"$PY" ../task1/cmp/compare_runs.py runs line1c_short
+  line2_short`, with `line1c_short` copied into `runs/`.
+
+- [ ] **Step 13: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skin.py reentry_model/skinbody.py reentry_model/body.py reentry_model/coupled.py tests/test_reentry_model_spray.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_coupled.py
+git commit -m "Skins: the droplet records (spec 8 and 10.2) -- what the accepted passes released, split by the cells it came from, combined per column, per mode (the liquid's and the exposed slurry's), per macro step at the plan's radius, and written by the shared source_block as one block of source-table rows a macro step, the droplets at the mean velocity of the metal released and two new columns, solid_fraction and h_kg, mass-weighted over the cells released; the size histograms accumulated each flow sub-step; coupled.write_particles reads either form; the element model's rows carry 0 and its film's liquid enthalpy, its other columns and history unchanged to the last bit (sub-plan 22 Task 2)"
+```
+
+---
+
+## The outline (Tasks 3–6, and Tasks 1 and 2 written out above: 1 as Tasks 1a, 1b and 1c)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -2305,8 +3449,9 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
    > first; the droplets' momentum leaves with them. `--slurry-spray` carries over off. Tests: each mode's release from a
    > prescribed column; books with spraying.
 
-2. **Droplet records**: combined per column, per mode, per macro step; `solid_fraction` and `h_kg` added to the source
-   table. Tests: combining changes no radius; histograms exact.
+2. **Droplet records** -- written out above as Task 2. The outline's item, as it stood:
+   > **Droplet records**: combined per column, per mode, per macro step; `solid_fraction` and `h_kg` added to the source
+   > table. Tests: combining changes no radius; histograms exact.
 3. **Retirement**: element fill fractions, `PHI_DEATH`, deaths and hand-overs, the film and deep accounts, the feed rule
    and gate, the deep runoff, deep surfacing, the molten cascade, freeze-back and the stage-1 return device, removed from
    the skin path; `--surface-model elements` keeps the current model bit for bit. Since sub-plan 20 the skin path is
@@ -2326,11 +3471,16 @@ git commit -m "Skins: Girin's spraying from each column's top cells (spec 8) -- 
 
 ## Inputs to settle
 
-Carried from the outline; neither is settled by Task 1, whose spraying is evaluated once a macro step at whatever
-macro step the run takes (Task 1c).
+Carried from the outline, with one Task 2 adds; none is settled by Tasks 1 and 2, whose spraying is evaluated and
+recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the macro step.
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
+- The droplet records' volume (Task 2, ruling 9): a skin flight writes a row per spraying column and mode per macro
+  step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 370 000 to 740 000
+  a second of flight at the 12.5 ms continuum step, 75-150 MB a second in memory; at 0.5 s macro steps, 40 times fewer.
+  If the flights keep the continuum step, Task 5 writes the blocks out as it goes or combines the records over a longer
+  window than the macro step (which spec 8 would then say).
 - The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
   sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step.

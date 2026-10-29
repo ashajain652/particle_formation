@@ -536,7 +536,16 @@ the flag off.
 
 Droplet records are combined per column, per mode, per macro step, summing number and mass over the sub-steps; a
 column's radius is fixed within a macro step by that step's gas state and δ_m, so combining changes no radius, and the
-size histograms accumulate each sub-step. Two source columns are added: `solid_fraction` and `h_kg`.
+size histograms accumulate each sub-step. Two source columns are added: `solid_fraction` and `h_kg`. (Built in sub-plan
+22 Task 2, 2026-10-29, facts 174–176: the liquid's mode's record is what the release took from the fully liquid cells
+and the slurry's what it took from the others, a row each per column and macro step at its plan's radius, in the
+element model's columns and written by its row writer. On a skin record the position and angle are the column's top
+corner where the plan was evaluated, b is the depth the mode read — the flowing depth, or the slurry's own layer — the
+release velocity is the mean velocity of the metal released, the droplets' momentum of §6.4, Girin's closure velocity
+staying the gates', and the droplet Weber and Ohnesorge numbers are by the phase's own properties; `solid_fraction` and
+`h_kg` are mass-weighted over the cells released, and the element model's rows carry 0 and its film's liquid enthalpy.
+The histograms accumulated in the sub-steps are the records' to the round-off of numpy's weighted histogram, which is
+the whole step's.)
 
 ## 9. What is retired and what is kept
 
@@ -591,7 +600,9 @@ largest height difference between neighbours over their spacing), worst element 
 (cumulative), shortfall mass (cumulative), base temperature-jump faults (cumulative), interface mismatch and repeats,
 momentum balance residual, the droplet-momentum ratio Π of fact 29, and the wall time split into skins, 3D solve and
 rebuilds. Surface frames gain per corner: top temperature, liquid and flowing depths, skin thickness, top speed and base
-position. Results gain the cumulative quantities; droplet records gain `solid_fraction` and `h_kg`.
+position. Results gain the cumulative quantities; droplet records gain `solid_fraction` and `h_kg` (§8: on a skin
+record mass-weighted over the cells released, on the element model's 0 and its film's liquid enthalpy; sub-plan 22 Task
+2).
 
 ### 10.3 Code
 
