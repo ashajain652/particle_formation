@@ -63,12 +63,15 @@ min(union-of-balls margin, -proj), and `MarginResult.front_limited` says when -p
 plane, the ball emitted at tau = t reaches r0 ahead of the parent and carries full wake gas, so a follower in a
 forward-moving wake (wake_flow "both") could overtake the parent inside its own plume; the parent is not an obstacle
 in this model. A follower that catches the parent would in reality hit it or be pushed aside by its shock, which is
-not modelled; instead the exit through the plane is labelled (`ExitState.through == "front"`) and a first interval
-that ends that way has reason "reached_parent", reporting the time the follower reaches the parent. The wake gas of
+not modelled; instead the exit through the plane is labelled (`ExitState.through == "front"`). A first interval that
+ends that way has reason "reached_parent" when the follower fell behind the parent and later caught it up (the time
+it reaches the parent), and "ahead_of_parent" when the exit is within 2 tol of t_start: the follower never fell behind
+(a body that decelerates less than the parent, or one released on or ahead of the plane). The wake gas of
 `Plume.wake_state` is ramped down to ambient over the last r0 before the plane (see there). A NaN union margin (no
 law) stays NaN: the plane never makes a no-law point inside. At release the follower sits on the plane, so the start
 of `residence` counts as inside when the union margin is non-negative and the follower is less than
-`START_PLANE_TOL_M` (1 mm) ahead of the plane (the round-off of a release built through geodetic coordinates).
+`START_PLANE_TOL_M` (1e-6 m) ahead of the plane: round-off of a release built through geodetic coordinates (3e-9 m
+for the twin), and small even for millimetre bodies.
 
 Units: SI throughout (metres, seconds).
 """
@@ -90,8 +93,9 @@ MAX_TREE_SAMPLES = 200_000         # ... widened to keep at most this many sampl
 SCAN_DT_RANGE = (1e-4, 0.05)       # s: clip of the default finest scan step
 MAX_STEP_S = 0.05                  # s: default largest scan step
 SCAN_MIN_SPEED = 1.0               # m/s: floor on the relative speed used for steps
-REASONS = ("ok", "censored", "starts_outside", "rarefied_no_law", "too_slow_no_law", "reached_parent")
-START_PLANE_TOL_M = 1e-3           # m: a follower this close ahead of the front plane at t_start counts as on it
+REASONS = ("ok", "censored", "starts_outside", "rarefied_no_law", "too_slow_no_law", "reached_parent",
+           "ahead_of_parent")
+START_PLANE_TOL_M = 1e-6           # m: a follower this close ahead of the front plane at t_start counts as on it
 
 _PENALTY = 1e30                    # objective value where no law applies (bounded search minimises -margin)
 _REL_XTOL = 1e-7                   # bounded-search tolerance, as a fraction of the interval length
@@ -173,8 +177,10 @@ class ResidenceResult:
     exits           an `ExitState` per closed interval
     validity        a `ValidityRecord` per interval
     interp_error_m  the follower Track's `interpolation_error()`, m; the parent's is reported separately by callers
-    reason          "ok" (started inside and left through the plume's edge), "reached_parent" (started inside and
-                    the first interval ended at the parent's front plane), "censored" (started inside and never left),
+    reason          "ok" (started inside and left through the plume's edge), "reached_parent" (started inside, fell
+                    behind, and the first interval ended at the parent's front plane later than 2 tol after t_start),
+                    "ahead_of_parent" (the first interval ended at the front plane within 2 tol of t_start: the
+                    follower never fell behind the parent), "censored" (started inside and never left),
                     "starts_outside", "rarefied_no_law" or "too_slow_no_law" (no law at the start point)
     """
     intervals: list
@@ -583,7 +589,12 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
     else:
         first_end = intervals[0][1]
         residence_time = (t_end if first_end is None else first_end) - t_start
-        reason = ("censored" if first_end is None else "reached_parent" if M(first_end).front_limited else "ok")
+        if first_end is None:
+            reason = "censored"
+        elif M(first_end).front_limited:
+            reason = "ahead_of_parent" if first_end - t_start <= 2.0 * tol else "reached_parent"
+        else:
+            reason = "ok"
     total_inside = sum((t_end if e is None else e) - s for s, e in intervals)
 
     exits = []

@@ -91,8 +91,9 @@ def test_follower_identical_to_parent_is_censored():
 def test_follower_ahead_of_parent_has_small_positive_residence():           # Review Focus 4
     t = np.linspace(0, 20, 2001); f = follower(t, np.c_[1.05*U*t, 0*t, 0*t])
     res = residence(Plume(line_parent()), f, t_start=0.0)
-    # Task 6b: the plume ends at the parent's front plane, so a follower moving ahead leaves through it at once
-    assert 0.0 <= res.residence_time < 0.05 and res.reason == "reached_parent" and res.exits[0].through == "front"
+    # Task 6b: the plume ends at the parent's front plane, so a follower moving ahead leaves through it at once, and
+    # since it never fell behind the parent the reason is "ahead_of_parent" (not "reached_parent")
+    assert 0.0 <= res.residence_time < 0.05 and res.reason == "ahead_of_parent" and res.exits[0].through == "front"
 
 def test_window_outside_parent_raises():                                    # Review Focus 2
     t = np.linspace(-5, 20, 101); f = follower(t, np.c_[0*t, 0*t, 0*t])
@@ -222,3 +223,27 @@ def test_wake_gas_is_ramped_to_ambient_at_the_front_plane():
     for e in (1e-9, R0 - 1e-9):                                            # continuous across the plane and at r0
         lo, _ = at(e - 1e-9); hi, _ = at(e + 1e-9)
         assert abs(hi.T - lo.T) < 1e-6 and abs(hi.u[0] - lo.u[0]) < 1e-6 and abs(hi.rho - lo.rho) < 1e-12
+
+
+# ---- Task 6b fix round 1: the release tolerance on the plane, and continuity where the two margin terms meet ----
+
+def test_release_within_the_plane_tolerance_starts_inside_and_leaves_ahead():
+    # START_PLANE_TOL_M is 1e-6 m: 0.5e-6 m ahead of the plane at release counts as on it, 2e-6 m does not
+    t = np.linspace(0, 20, 2001); p = Plume(line_parent())
+    assert overlap.START_PLANE_TOL_M == 1e-6
+    near = residence(p, follower(t, np.c_[0.5e-6 + 1.05*U*t, 0*t, 0*t]), t_start=0.0)
+    assert near.intervals[0][0] == 0.0 and near.exits[0].through == "front" and near.exits[0].t <= 1e-3
+    assert near.reason == "ahead_of_parent" and near.residence_time <= 1e-3
+    far = residence(p, follower(t, np.c_[2e-6 + 1.05*U*t, 0*t, 0*t]), t_start=0.0)
+    assert far.reason == "starts_outside" and far.residence_time == 0.0
+
+def test_margin_is_continuous_where_the_front_and_union_terms_are_equal():
+    # 0.2 m behind the plane, the lateral offset y* at which the union-of-balls margin equals 0.2 m: the margin is
+    # front-limited on the axis side and union-limited outside, and continuous across y*
+    from scipy.optimize import brentq
+    p = Plume(line_parent()); t = 10.0; d = 0.2
+    at = lambda y: p.margin(np.array([U*t - d, y, 0.0]), t)
+    y_star = brentq(lambda y: (at(y).r_b - at(y).distance) - d, 0.0, R0 + 0.5, xtol=1e-12)
+    lo, hi = at(y_star - 1e-9), at(y_star + 1e-9)
+    assert lo.front_limited and not hi.front_limited
+    assert lo.margin == pytest.approx(hi.margin, abs=1e-8) and lo.margin == pytest.approx(d, abs=1e-8)

@@ -110,13 +110,15 @@ def test_sphere_parent_track_carries_the_spheres_own_drag(twin):
     plume = Plume(tr)                                     # a sphere parent's plume can be built and queried
     x = tr.position(t_r + 0.5) - 0.0125 * tr.velocity(t_r + 0.5) / tr.speed(t_r + 0.5)   # half a radius behind it
     m = plume.margin(x, t_r + 0.5)                       # the front plane (Task 6b) limits the margin to 0.0125 m
-    assert m.margin == pytest.approx(0.0125, rel=1e-6) and m.front_limited and m.r_b >= 0.025 * (1 - 1e-6)
+    assert m.margin == pytest.approx(0.0125, rel=1e-6) and m.front_limited
+    at = plume.margin(tr.position(t_r + 0.5), t_r + 0.5)  # at the parent (s = 0) the union radius is r0
+    assert abs(at.r_b - 0.025) <= 1e-6 * 0.025 and at.distance < 1e-9 and at.s_behind == 0.0
 
 
 
-def test_sphere_in_a_forward_wake_never_leaves_through_the_front_unlabelled(twin, capsys):
-    # Task 6b: with wake_flow "both" a 10 mm sphere released at 60 km drifts up to the parent; the plume ends at the
-    # parent's front plane, so the first interval is either still open or ends there, labelled "reached_parent"
+def test_ten_mm_sphere_in_a_forward_wake_falls_behind_then_reaches_the_parent_at_0p79_s(twin, capsys):
+    # Task 6b: with wake_flow "both" a 10 mm sphere released at 60 km falls up to about 1.3 m behind the parent, is
+    # carried forward by the wake and reaches the parent's front plane at about 0.790 s (measured 0.7898 s)
     from reentry_model.wake_residence.adapters import solution_track
     from reentry_model.wake_residence.overlap import residence
     t_r, st = release(twin)
@@ -125,4 +127,26 @@ def test_sphere_in_a_forward_wake_never_leaves_through_the_front_unlabelled(twin
     tr = solution_track(run, t_r)
     res = residence(Plume(twin.track), tr, t_start=t_r, t_end=min(tr.t1, twin.track.t1))
     print("10 mm at 60 km, wake both: residence {:.4f} s, reason {}".format(res.residence_time, res.reason))
-    assert res.censored or (res.exits[0].through == "front" and res.reason == "reached_parent")
+    assert res.reason == "reached_parent" and res.exits[0].through == "front"
+    assert res.residence_time == pytest.approx(0.790, abs=0.05)
+
+
+
+def test_fifty_mm_sphere_ahead_of_the_parent_sees_only_ambient_air(twin):
+    # Task 6b: a 50 mm sphere decelerates less than the parent at 60 km and moves ahead of its front plane at once;
+    # there WakeAtmosphere("both") must hand it exactly the wrapped freestream, so "both" and "off" runs coincide
+    from reentry_model import earth
+    t_r, st = release(twin)
+    base = US76TableAtmosphere()
+    runs = {mode: dense_solve(sphere_simulator(st, 0.05, WakeAtmosphere(base, Plume(twin.track), t_r, mode)), 1.0)
+            for mode in ("off", "both")}
+    assert np.allclose(runs["both"].sol.sol(1.0), runs["off"].sol.sol(1.0), rtol=1e-12, atol=1e-9)
+    w = WakeAtmosphere(base, Plume(twin.track), t_r, "both")
+    for tt in (0.05, 0.5, 1.0):
+        x = runs["both"].sol.sol(tt)[:3]
+        v = twin.track.velocity(t_r + tt)
+        assert np.dot(x - twin.track.position(t_r + tt), v) > 0.0            # ahead of the plane
+        h, lat, lon = earth.ecef_to_geodetic(x)
+        a, b = w.state(tt, h, lat, lon), base.state(tt, h, lat, lon)
+        assert (a.rho, a.T, a.p, a.m_bar) == (b.rho, b.T, b.p, b.m_bar) and np.array_equal(a.wind_enu, b.wind_enu)
+        assert w.last_margin.margin < 0.0 and w.last_margin.front_limited
