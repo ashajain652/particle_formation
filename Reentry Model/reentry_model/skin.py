@@ -694,8 +694,14 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
     base held at T_b1, the 3D model's end-of-step base temperature; returns a SkinBook. The trial pass runs the flow too
     (spec 7.2's sub-steps are spec 7.1's: heat, flow, sideways exchange and spray), the sensitivity S carried with the
     metal the transport moves. Where the flow's count is chosen (`flow.cycles` None, Task 6d), the trial pass leaves the
-    counts it chose in `flow.plan`, and the real pass after it takes the same, so that the base law is made by the pass
-    it predicts; a real pass with no trial before it chooses its own."""
+    counts it took in `flow.plan` (0 where nothing flowed, so it took none), and the real pass after it takes, in each
+    heat sub-step, the larger of the trial's count and the count its own memory chooses, and its own where the trial
+    took none (spec 16, 2026-10-26; sub-plan 21 Task 9): so the base law is made by the pass it predicts wherever the
+    two flow alike (6d), while a real pass whose base melts more than its trial pass's -- held at the start-of-step
+    temperature, a trial can flow slower at a melting onset -- runs at the Courant target rather than at the trial's
+    counts (on Task 8's pushed plate one flow sub-step a heat sub-step at a Courant number of 18.8), and does not replay
+    counts chosen where nothing flowed (380 flow sub-steps there in which nothing moved). A real pass with no trial
+    before it chooses its own."""
     mat = sk.material
     N = max(1, int(math.ceil(dt / sk.settings.substep - 1e-9)))
     h = dt / N
@@ -726,9 +732,15 @@ def advance(sk, dt, q_top, A_top, T_amb, eps, T_b0, m_min, T_b1=None, side=None,
         if trial:
             dEb += res[4]
         if flow is not None:
+            cycles = None
+            if plan is not None:                                  # chosen: the trial's (or the real's own) count
+                cycles = flow_cycles(sk.flow_memory, h)
+                if replay and plan[i]:
+                    cycles = max(plan[i], cycles)
+            fb = flow_substeps(sk, flow, h, cycles=cycles)
             if plan is not None and not replay:
-                plan.append(flow_cycles(sk.flow_memory, h))
-            book.flow.add(flow_substeps(sk, flow, h, cycles=plan[i] if plan is not None else None))
+                plan.append(fb.cycles)                           # 0 where nothing flowed: the real pass takes its own
+            book.flow.add(fb)
         if melting:
             k = np.cumprod(sk.valid & (sk.T >= mat.T_feed), axis=1).sum(axis=1)
             gone, gone_H = sk.take_top(k)
@@ -1130,6 +1142,7 @@ class TransportBook:
     momentum: np.ndarray     # kg m/s (n, 3), as it left the donors, before the projection
     wall: np.ndarray         # N s (n, 3), the normal parts removed, each along its own column's normal
     courant: float           # the largest outflow rate of any cell [1/s] times the sub-step
+    landed: np.ndarray = None   # (n,) bool: the columns metal landed on top of, a new top cell (sub-plan 21 Task 9)
 
 
 def tangent_frames(normals):
@@ -1475,6 +1488,7 @@ def transport(sk, columns, dt, regrid=True, faces=None):
             S = down(S)
             S[tops, 0] = x[~old, 2] / x[~old, 0]
         count = count + new
+        book.landed = new
     sk._install(m, H, count, S, T, U)
     if regrid:
         sk.regrid()
@@ -1644,7 +1658,8 @@ FLOW_COURANT = 6.0                # the adaptive count's target: the largest Cou
 FLOW_GROWTH = 0.02                # and the largest Rayleigh-Taylor growth dt s of one: backward Euler's growth rate is
                                   # then within about dt s / 2 = 1 % (6b's cosine met it within 0.42 % at 0.016)
 FLOW_RELAX = 2.0                  # a flow sub-step at most this many times the last heat sub-step's
-FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0, "release": 0.0}
+FLOW_SECONDS = {"push": 0.0, "momentum": 0.0, "thickness": 0.0, "transport": 0.0, "regrid": 0.0, "release": 0.0,
+                "landing": 0.0}
                                   # wall time, for measuring the cost (as KRYLOV counts the coupled solves)
 
 
@@ -1666,6 +1681,55 @@ def flow_cycles(memory, dt):
     if growth > 0.0:
         h = min(h, length * math.sqrt(FLOW_GROWTH / growth))
     return int(min(max(math.ceil(dt / h - 1e-9), FLOW_CYCLES_MIN), FLOW_CYCLES_MAX))
+
+
+LANDING_DEPTH = 0.4e-3             # m below a landed column's top that the landing conduction takes with it (Task 9)
+
+
+def landing_conduct(sk, landed, dt, depth=None):
+    """Metal that landed on a rigid top loses its heat to the metal beneath it within the flow sub-steps (sub-plan 21
+    Task 9; spec 6.5: runoff landing on cold metal freezes from below in the skin's own heat equation). The cells of
+    each column in `landed` (n,) whose tops lie within `depth` (LANDING_DEPTH) of its top -- the landed metal and the
+    receiver's top cells, at least two cells -- are conducted through the depth for dt [s], implicitly (`_conduct` on
+    those cells alone), with no heat across the block's top, whose heating and radiation are the heat sub-step's
+    conduction's, nor across its bottom: the block's energy is its own, what the Newton iteration leaves (about 1e-10 J
+    a cell) kept by its bottom cell, so the books are exact and the base law the trial pass makes is untouched; the
+    trial pass's sensitivity is carried with the heat. The flow sub-steps conducted no heat before Task 9, so that
+    landed metal stayed liquid and flowed on until the next heat sub-step's conduction: on Task 8's pushed plate a film
+    of 10-20 um at 0.6-1.2 m/s ran 6-12 mm over metal at about 700 K in a 10 ms heat sub-step, where it freezes within
+    some 0.005-0.03 ms (a contact estimate). With it, at 10 ms heat sub-steps 3.0 % of that plate's deposit lands 5-10 mm
+    past the heat against 9.9 % without (0.9 and 0.7 % at 5 and 2.5 ms, where the two agreed), at 2-3 % of the flow's
+    cost (measured 2026-10-26). The block's own cells were conducted with their column in the heat sub-step already, so
+    their diffusion within the block is counted again: LANDING_DEPTH, the fine zone's depth, bounds that, about the
+    depth heat reaches in a flow sub-step (sqrt(alpha dt), 0.33 mm at 2 ms on 700 K metal); at 0.2 and 0.8 mm 3.3 and
+    2.7 % of the deposit land 5-10 mm past the heat. Updates the cells."""
+    rows = np.flatnonzero(landed)
+    if not rows.size:
+        return
+    depth = LANDING_DEPTH if depth is None else depth
+    sub = sk.rows(rows)
+    dz = sub.dz()
+    k = np.maximum((sub.valid & (np.cumsum(dz, axis=1) - dz < depth)).sum(axis=1), np.minimum(2, sub.count))
+    width = int(k.max())
+    valid = np.arange(width)[None, :] < k[:, None]
+    block = object.__new__(Skins)                                       # the blocks alone: the cells beneath hold nothing
+    block.material, block.settings, block.rho_l, block.props = sk.material, sk.settings, sk.rho_l, sk.props
+    block.area, block.count = sub.area, k
+    block.m, block.H = np.where(valid, sub.m[:, :width], 0.0), np.where(valid, sub.H[:, :width], 0.0)
+    block.T = np.where(valid, sub.T[:, :width], 300.0)
+    block.S = None if sub.S is None else np.where(valid, sub.S[:, :width], 0.0)
+    block.U, block.momentum_out, block.flow_memory = sub.U[:, :width], np.zeros((len(rows), 3)), sub.flow_memory
+    zero = np.zeros(len(rows))
+    E_base = _conduct(block, dt, zero, block.area, 0.0, zero, None)[2]  # an adiabatic block: only the iteration's error
+    last = np.maximum(k - 1, 0)
+    r = np.arange(len(rows))
+    block.H[r, last] += E_base                                         # kept by the block, so its energy is its own
+    block.T[r, last] = sk.material.temperature_from_enthalpy(block.H[r, last] / block.m[r, last])
+    cells = np.nonzero(valid)
+    sk.H[rows[cells[0]], cells[1]] = block.H[cells]
+    sk.T[rows[cells[0]], cells[1]] = block.T[cells]
+    if sk.S is not None:
+        sk.S[rows[cells[0]], cells[1]] = block.S[cells]
 
 
 @dataclass
@@ -1775,6 +1839,7 @@ def flow_substeps(sk, flow, dt, cycles=None):
     h = dt / cycles
     col = flow.columns
     clock = lambda key, started: FLOW_SECONDS.__setitem__(key, FLOW_SECONDS[key] + time.perf_counter() - started)
+    landed = np.zeros(n, dtype=bool)                     # the columns metal landed on top of in this heat sub-step
     for k in range(cycles):
         if k:
             started = time.perf_counter()
@@ -1792,6 +1857,12 @@ def flow_substeps(sk, flow, dt, cycles=None):
         started = time.perf_counter()
         tr = transport(sk, col, h, regrid=False, faces=tb.faces)
         clock("transport", started)
+        if tr.landed is not None:
+            landed |= tr.landed
+        if landed.any():                                 # what landed this heat sub-step loses its heat (Task 9)
+            started = time.perf_counter()
+            landing_conduct(sk, landed, h)
+            clock("landing", started)
         step = FlowBook(mb.push + tb.push, mb.shear, mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant, tb.growth,
                         tb.passes, 1)
         if flow.release is not None:
@@ -1879,16 +1950,68 @@ def droplet_momentum_ratio(released, shear):
 
 
 # -- the base (Task 7) -------------------------------------------------------------------------------------------------
-def hand_down(sk, m_min, T_rigid):
-    """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
-    oldest first, as far as the column stays at or above its minimum mass m_min (spec 6.6); a cell may go in part.
-    Returns (mass, enthalpy) handed down per column."""
+def _bottom_run(sk, T_rigid, T_limit=None):
+    """The cells a hand-down may take (`hand_down`), from each column's bottom up: their temperatures, whether each is in
+    the run of rigid cells (no warmer than T_limit, with one) contiguous from the bottom, its mass where it is, and
+    whether the limit stops the run below a rigid cell."""
     n, K = sk.m.shape
     j = np.arange(K)[None, :]
     idx = np.clip(sk.count[:, None] - 1 - j, 0, K - 1)                 # the cells from the bottom up
     rows = np.arange(n)[:, None]
-    rigid = (j < sk.count[:, None]) & (sk.T[rows, idx] <= T_rigid)
+    T_up = sk.T[rows, idx]
+    rigid = (j < sk.count[:, None]) & (T_up <= T_rigid)
+    bound = np.zeros(n, dtype=bool)
+    if T_limit is not None:
+        free = np.cumprod(rigid, axis=1).sum(axis=1)
+        rigid &= T_up <= np.asarray(T_limit, dtype=float)[:, None]
+        bound = np.cumprod(rigid, axis=1).sum(axis=1) < free           # the limit stops the run below a rigid cell
     run = np.cumprod(rigid, axis=1).astype(bool)
-    available = np.where(run, sk.m[rows, idx], 0.0).sum(axis=1)
-    take = np.clip(np.minimum(available, sk.column_mass() - m_min), 0.0, None)
-    return take, sk.take_bottom(take)
+    return T_up, run, np.where(run, sk.m[rows, idx], 0.0), bound
+
+
+def handable(sk, m_min, T_rigid, T_limit=None):
+    """The mass [kg per column] `hand_down` would take with these arguments, taking nothing. With no limit, less what a
+    limited hand-down took, it is the metal the fault tolerance holds in the skin (sub-plan 21 Task 9; the skin body's
+    held mass)."""
+    m_up = _bottom_run(sk, T_rigid, T_limit)[2]
+    return np.clip(np.minimum(m_up.sum(axis=1), sk.column_mass() - m_min), 0.0, None)
+
+
+def hand_down(sk, m_min, T_rigid, T_limit=None, span=False, cap=None):
+    """Rigid cells at the bottom of each column (at or below T_rigid, contiguous from the bottom) pass to the 3D model,
+    oldest first, as far as the column stays at or above its minimum mass m_min (spec 6.6); a cell may go in part. With
+    `T_limit` [K, per column], only cells no warmer than it go: the base node's temperature plus the fault tolerance
+    (spec 6.6, amended 2026-10-26, sub-plan 21 Task 9), so that metal warmer than the node -- a runoff deposit whose heat
+    is still conducting down -- waits in the skin until it has cooled, rather than leaving the node a slab 35-67 K/mm
+    warmer than itself (Task 8's pushed plate) and its move, 1.1-3.2 move allowances a part, rejected. With `cap` [kg,
+    per column], at most that much goes, a cell going in part where the cap ends inside it, and the rest waits: the
+    skin body caps a part's hand-down at its move allowance (spec 6.6 and 7.1, amended 2026-10-27), because the limit
+    releases a held cell whole once it is near the node's temperature, and on the full pushed plate at 1.5 s those cells
+    were up to 0.79 mm of solid metal against a 0.556 mm allowance -- a release that does not shrink with the part, so
+    parts were split in vain and the 12.4 g held came down in 0.039 s. A cap that does not bind changes nothing to the
+    last bit. Returns (mass, enthalpy) handed down per column and, with `span`, the coldest and warmest temperatures [K]
+    of the cells it took from, the one taken in part among them, nan where none went (the fault counter's range for a
+    hand-down)."""
+    n = sk.n
+    T_up, run, m_up, bound = _bottom_run(sk, T_rigid, T_limit)
+    take = np.clip(np.minimum(m_up.sum(axis=1), sk.column_mass() - m_min), 0.0, None)
+    if cap is not None:                                                # at most the part's allowance (2026-10-27)
+        take = np.minimum(take, np.asarray(cap, dtype=float))
+    touched = run & (np.cumsum(m_up, axis=1) - m_up < take[:, None])  # the cells the take reaches, wholly or in part
+    top = np.where(touched, m_up, 0.0)[np.arange(n), np.maximum(touched.sum(axis=1) - 1, 0)]
+    H = sk.take_bottom(take)
+    whole = bound & (take > 0.0) & (take >= m_up.sum(axis=1))         # the limit ends the take at a cell's top: what
+    if whole.any():                                                    # the take's round-off leaves of that cell goes too
+        rest = sk.m[np.arange(n), np.maximum(sk.count - 1, 0)]
+        sliver = np.where(whole & (sk.count > 0) & (rest <= SLIVER * top), rest, 0.0)
+        if sliver.any():
+            momentum = sk.momentum_out
+            H = H + sk.take_bottom(sliver)
+            take = take + sliver
+            sk.momentum_out = momentum + sk.momentum_out                # what both takes took away
+    if not span:
+        return take, H
+    with np.errstate(invalid="ignore"):
+        lo = np.where(touched.any(axis=1), np.where(touched, T_up, np.inf).min(axis=1), np.nan)
+        hi = np.where(touched.any(axis=1), np.where(touched, T_up, -np.inf).max(axis=1), np.nan)
+    return take, H, lo, hi

@@ -21,11 +21,26 @@ after the trajectory and the heating:
    `MovingMesh.move_with_policy` applies (rebuilding when needed), and each column is then reconciled with what its
    corner actually swept: its bottom gains the swept mass less what it already exchanged, and its enthalpy changes by
    the swept enthalpy less what it already exchanged, so mass and energy are exact. A sweep that takes metal out of
-   the 3D model is booked along the same profile as the draws.
+   the 3D model is booked along the same profile as the draws, one that adds metal to it at the enthalpy of what the
+   skins handed down there; and only rigid metal no warmer than the base node by more than the fault tolerance is
+   handed down, warmer metal waiting in the skin until it has cooled (sub-plan 21 Task 9, Asha 2026-10-26, options A
+   and C). Booked at the node's enthalpy, as sub-plan 20 built it, the handed metal's excess over the node stayed in
+   the skin's new bottom cell, often a sliver of a cell that the hand-down took in part: where runoff froze onto cold
+   metal on Task 8's pushed plate the deposit went down 35-67 K/mm warmer than its node, a sliver of 1.4 % of a cell
+   reached 3 709 K and bottom cells 1 253 K, and the deposit's growth, 1.1-3.2 move allowances a 0.0625 s part, had
+   every melting part rejected for its moves down to 0.0104 s. A part hands down at most what moves its base by the
+   move allowance, a cell going in part (Asha, 2026-10-27, option 1 of Task 9's third hand-back): the limit releases a
+   held cell whole once it is near the node's temperature, and the deep cells of the full pushed plate's thick skins
+   were 0.2-0.8 mm of solid metal against its 0.556 mm allowance, a release that did not shrink with the part, so from
+   1.56 s parts were split six times in vain, eight of the last fifteen were kept over the allowance and the 12.4 g
+   held came down in 0.039 s. What the tolerance and the cap keep in the skins is recorded at every base move
+   (`held_mass`; unbounded, Asha 2026-10-26), and the bottom cell, read after the reconciliation, is judged against the
+   metal that crossed, for a hand-down the handed cells and the cell it uncovered (`jump_faults`).
 
 A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part
-(Asha, 2026-10-12): a part whose draws and hand-downs would move a base further is run again as shorter parts, and the
-next macro step starts with as many parts as this one's moves called for. Absorption takes what is left of a part's
+(Asha, 2026-10-12): a part whose draws would move a base further is run again as shorter parts, and the next macro
+step starts with as many parts as this one's moves called for; a hand-down never splits a part, being capped at the
+allowance (HAND_DOWN_SHARE of it, 2026-10-27). Absorption takes what is left of a part's
 allowance after its draws and hand-downs, and the rest of the non-rigid metal waits for the next part (Asha,
 2026-10-14: a cap of a quarter-edge per macro step stranded up to 1.3 mm of non-rigid metal in the 3D model of a plate
 started at 880 K, whose exact non-rigid layer is 1.5-1.7 mm thick, and the plate melted 4-8 % slow). While any skin's top is non-rigid (at or above T_rigid at
@@ -91,9 +106,12 @@ DAMPED_OMEGA_RANGE = (0.02, 1.0)  # Aitken's factor kept within these
 DAMPED_TOL_K = 0.05               # K: converged when no base temperature moves more than this between passes
 # The move limit (2026-10-12). The metal a base sweeps in one step is valued along a straight 3D profile, and the moving
 # mesh refuses moves of more than about half an element (1.3 mm on 2 mm elements, 5.2 mm on 4 mm, measured): a step
-# whose draws and hand-downs would move a base further than this is split.
-MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draws and hand-downs
-                                  # split a part beyond it; absorption takes what they leave)
+# whose draws would move a base further than this is split; a hand-down is capped at it (2026-10-27).
+MOVE_MAX = 0.25                   # of the mean surface edge: the most a base moves in one part (draws split a part
+                                  # beyond it, hand-downs are capped at it, absorption takes what they leave)
+HAND_DOWN_SHARE = 1.0 - 1e-6      # of MOVE_MAX: the most a part's hand-down moves a base (Asha, 2026-10-27): just under
+                                  # the whole allowance, so that the round-off of the move ratio, which divides the
+                                  # capped mass by the area again, never makes a capped hand-down split a part
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
 # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
@@ -123,15 +141,31 @@ class FlowForcing:
                                                              (self.g, other.g))))
 
 
-def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None):
+def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None):
     """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
-    that crossed their base (spec 6.6): between the base node's and the 3D profile's at the depth swept, `T_deep` (equal
-    to T_node where nothing was taken from the 3D model). Metal drawn from below the node is colder than the node by the
-    profile's slope times the depth, which is not a fault (Asha, 2026-10-12: comparing with the node alone counted 812-1
-    694 faults on the level-2 plate at 0.1-0.5 s steps, none at 0.05 s)."""
+    that crossed their base (spec 6.6): where metal was drawn or absorbed (`crossed`), between the base node's and the
+    3D profile's at the depth swept, `T_deep` (equal to T_node where nothing was taken from the 3D model); with `handed`,
+    (mask, coldest, warmest[, uncovered]), where metal was handed down, between the handed cells' coldest and warmest
+    temperatures and that of the cell the hand-down uncovered, as the hand-down left it; a column that did both is a
+    fault only outside both. Metal drawn from below the node is colder than the node by the profile's slope times the
+    depth, which is not a fault (Asha, 2026-10-12: comparing with the node alone counted 812-1 694 faults on the level-2
+    plate at 0.1-0.5 s steps, none at 0.05 s). The body reads the bottom cell after the reconciliation and judges a
+    hand-down by the handed cells and the cell it uncovered (Asha, 2026-10-26, sub-plan 21 Task 9: judged by the node, a
+    hand-down counted the warmer cell it uncovers where runoff deposits, 199 faults on a reduced pushed plate to 1.0 s,
+    rather than the 270 bottom cells the reconciliation then superheated; and judged by the handed cells alone, after the
+    build, it still counted that cell where the skin warms steeply above its base, 1 900 of the 1 942 faults on Task 8's
+    pushed plate to 1.5 s, none of them heated by the reconciliation)."""
     tol = skin_mod.JUMP_TOLERANCE if tol is None else tol
     lo, hi = np.minimum(T_node, T_deep), np.maximum(T_node, T_deep)
-    return crossed & ((T_bottom < lo - tol) | (T_bottom > hi + tol))
+    inside = crossed & (T_bottom >= lo - tol) & (T_bottom <= hi + tol)
+    judged = crossed
+    if handed is not None:
+        mask, coldest, warmest = handed[:3]
+        if len(handed) > 3:                          # the cell it uncovered, as the hand-down left it, widens the range
+            coldest, warmest = np.fmin(coldest, handed[3]), np.fmax(warmest, handed[3])
+        inside = inside | (mask & (T_bottom >= coldest - tol) & (T_bottom <= warmest + tol))
+        judged = judged | mask
+    return judged & ~inside
 
 
 class SkinBody(ThermalBody):
@@ -177,6 +211,7 @@ class SkinBody(ThermalBody):
         self.integrated_heat = self.absorbed_heat = self.radiated_heat = 0.0
         self.removed_mass = self.removed_enthalpy = 0.0
         self.drawn_mass = self.absorbed_mass = self.handed_mass = 0.0
+        self.held_mass = self.held_depth_max = 0.0           # kg, m: what the tolerance and the cap hold at the last move
         self.jump_faults = self.interface_repeats = self.absorb_capped = 0
         self.last_mismatch = self.last_shortfall = 0.0
         self.last_trigger = {"columns_over": 0, "worst_ratio": 0.0, "total_ratio": 0.0}    # the first pass's mismatch
@@ -284,8 +319,9 @@ class SkinBody(ThermalBody):
                            res.deceleration * self.v_hat)
 
     def _advance_part(self, t, dt, dt_macro, loads, depth):
-        """One part of a macro step, ending at t: the passes, then -- if its draws and hand-downs would move a base more
-        than MOVE_MAX of the mean surface edge -- the part again as shorter parts, else the books and the move."""
+        """One part of a macro step, ending at t: the passes, then -- if its draws would move a base more than MOVE_MAX
+        of the mean surface edge (its hand-downs are capped within it) -- the part again as shorter parts, else the
+        books and the move."""
         mat, sk, mm = self.material, self.skins, self.moving
         t0, dt_m, q_start, q_end = self._heating
         frac = ((t - 0.5 * dt) - t0) / dt_m
@@ -427,28 +463,46 @@ class SkinBody(ThermalBody):
         return np.einsum("ij,ij->i", movemesh.nodal_gradient(mesh.points, mesh.tets, T, elements)[mm.corners],
                          self.columns.normal)
 
+    def _hand_cap(self):
+        """The most a part hands down at each column [kg]: the metal that moves its base by HAND_DOWN_SHARE of the move
+        allowance, MOVE_MAX of the mean surface edge (spec 6.6 and 7.1, amended 2026-10-27)."""
+        return HAND_DOWN_SHARE * MOVE_MAX * self.columns.edge_length.mean() * self.material.rho * self.columns.area
+
     def _move_ratio(self, book, m_min):
         """The largest distance a base would move in this part by drawing and handing down, over MOVE_MAX of the mean
-        surface edge (absorption takes what is left, so it never splits a part). The hand-down is found on a copy of
-        the skins."""
+        surface edge (absorption takes what is left and the hand-down is capped within it, so neither splits a part).
+        The hand-down is found on a copy of the skins."""
         mat, sk = self.material, self.skins
         handed = np.zeros(sk.n)
         if mat.melts:
             saved = sk.state()
-            handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid)
+            limit = self.solver.temperature()[self.moving.corners] + skin_mod.JUMP_TOLERANCE
+            handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid, limit, cap=self._hand_cap())
             sk.set_state(saved)
         d = np.abs(book.drawn - handed) / (mat.rho * self.columns.area)
         return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
 
     def _move_base(self, book, m_min, g0):
         """Draw (already in the skins), absorb and hand down become one corner displacement; the move's actual sweep
-        is then reconciled on every column's bottom (module docstring, step 4). Absorption takes what the draws and
-        hand-downs leave of MOVE_MAX of the mean edge. Metal swept out of the 3D model is booked along the profile
-        T(s) = T_node - g0 s that the draws used."""
+        is then reconciled on every column's bottom (module docstring, step 4). A hand-down moves a base by at most
+        the allowance, MOVE_MAX of the mean edge (`_hand_cap`, amended 2026-10-27), and absorption takes what the draws
+        and hand-downs leave of it. Metal swept out of the 3D model is booked along the profile T(s) = T_node - g0 s
+        that the draws used; metal swept into it at the mean enthalpy of what the column handed down, which is only
+        metal within the fault tolerance of the node (spec 6.6, amended 2026-10-26); what the tolerance and the cap keep
+        back, against a hand-down with neither, is recorded (`held_mass`). The bottom cell is then judged against the
+        metal that crossed and, for a hand-down, the cell it uncovered -- the rest of a cell the cap took in part, at its
+        own temperature, where the cap ends inside one (`jump_faults`)."""
         mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
         started = time.perf_counter()
         T_node = self.solver.temperature()[mm.corners]
-        handed, handed_H = skin_mod.hand_down(sk, m_min, mat.T_rigid) if mat.melts else (np.zeros(sk.n), np.zeros(sk.n))
+        none = np.full(sk.n, np.nan)
+        able = skin_mod.handable(sk, m_min, mat.T_rigid) if mat.melts else np.zeros(sk.n)     # with no limit or cap
+        handed, handed_H, coldest, warmest = (
+            skin_mod.hand_down(sk, m_min, mat.T_rigid, T_node + skin_mod.JUMP_TOLERANCE, span=True, cap=self._hand_cap())
+            if mat.melts else (np.zeros(sk.n), np.zeros(sk.n), none, none))
+        uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
+        held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
+        self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
         if mat.melts:
             self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
         moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
@@ -457,15 +511,16 @@ class SkinBody(ThermalBody):
         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
         rebuilds = mm.rebuilds
         h_inward = lambda d: skin_mod.profile_enthalpy(mat, T_node, g0, 0.0, d)
-        r = mm.move_with_policy(u, h_inward)
+        h_outward = np.where(handed > 0.0, handed_H / np.where(handed > 0.0, handed, 1.0), np.nan)
+        r = mm.move_with_policy(u, h_inward, h_outward)
         if mm.rebuilds > rebuilds:
             self.wall["rebuild"] += mm.last_rebuild.seconds
-        crossed = (book.drawn > 0.0) | (depth > 0.0) | (handed > 0.0)
-        T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]
-        T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
-        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed).sum())
         sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
         self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
+        T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
+        T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, (book.drawn > 0.0) | (depth > 0.0),
+                                            handed=(handed > 0.0, coldest, warmest, uncovered)).sum())
         sk.regrid()
         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
         self.handed_mass += float(handed.sum())
@@ -570,7 +625,11 @@ class SkinBody(ThermalBody):
                 # the droplet momentum sink (Task 7): the mass released from the top cells since time zero, fact 29's
                 # droplet-momentum ratio Pi over this macro step and the columns whose own Pi exceeds skin.PI_FLAG
                 "released_mass_kg": self.released_mass, "droplet_momentum_ratio": Pi,
-                "droplet_momentum_flagged": flagged}
+                "droplet_momentum_flagged": flagged,
+                # what the fault tolerance, and the cap on a part's hand-down, hold in the skins at the last base move
+                # (Task 9, spec 6.6, 2026-10-26 and 2026-10-27): unbounded (Asha, 2026-10-26), its mass and its deepest
+                # column's depth recorded for sub-plan 22's flow-on flight to report
+                "held_mass_kg": self.held_mass, "held_depth_max_mm": self.held_depth_max * 1e3}
 
     def _recession(self):
         """How far each corner's top has moved inward along its starting direction since time zero [m]."""
