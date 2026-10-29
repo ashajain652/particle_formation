@@ -148,3 +148,33 @@ def test_too_slow_parent_reports_no_law():
                             flow={k: np.full(n, v) for k, v in TURB.items()})       # 0.5 m/s, below u_min_parent
     res = residence(Plume(par), follower(t, np.c_[0.5*t, 0*t, 0*t]), t_start=0.0)
     assert math.isnan(res.residence_time) and res.reason == "too_slow_no_law" and res.intervals == []
+
+
+# ---- controller rulings after the first review: the release-anchored window and the capped tree ----
+
+def test_window_is_anchored_at_release_so_a_lingering_follower_stays_inside():
+    # A follower parked 1 m off the track at the release point (x = 0) for 100 s. Taylor's radius of the ball emitted
+    # at release only grows (r0 = 1.41 m at release, about 10.6 t^(1/3) m after t seconds), so with the window anchored
+    # at release the follower is inside throughout. A window sliding with t would drop the release point at t = 60 s
+    # and give a false exit about 0.2 ms later (the parent is then 360 km away).
+    n = 1001; t = np.linspace(0, 100, n); par = line_parent(T=100.0, n=n)
+    f = follower(t, np.tile([0.0, 1.0, 0.0], (n, 1)))
+    p = Plume(par)                                                                # tau_pre = 60 s
+    assert p.margin(f.position(61.0), 61.0, t_release=0.0).margin > 0.0
+    assert p.margin(f.position(61.0), 61.0).margin < 0.0                          # the sliding default
+    res = residence(p, f, t_start=0.0, max_step=0.5)
+    assert res.intervals == [(0.0, None)] and res.censored and res.reason == "censored" and not res.exits
+
+def test_fast_margin_matches_bruteforce_on_a_long_track_with_a_capped_tree():
+    # A 25 mm parent (r0 = 0.025 m) over 100 km: r0/2 would give 8 million tree samples; the cap widens the spacing to
+    # 100 km / 200,000 = 0.5 m, 20 radii, and the exact refinement must still find the same margin.
+    T = 1e5 / U; n = 1001; t = np.linspace(0, T, n)
+    small = dict(TURB, d=0.05, cda=1.8e-3, r0=0.025)                              # transitional: Feldman and Taylor
+    par = Track.from_arrays(t, np.c_[U*t, 0*t, 0*t], v=np.tile([U, 0, 0], (n, 1)),
+                            flow={k: np.full(n, v) for k, v in small.items()})
+    p = Plume(par)
+    assert p.spacing == pytest.approx(0.5, rel=1e-6)
+    rng = np.random.default_rng(3)
+    for _ in range(30):
+        tt = rng.uniform(1, T); x = np.array([U*tt - rng.uniform(0, 5000), *rng.uniform(-0.1, 0.1, 2)])
+        assert p.margin(x, tt).margin == pytest.approx(p.margin_bruteforce(x, tt).margin, abs=1e-6)

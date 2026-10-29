@@ -3,7 +3,7 @@
 The plume is the union of balls of radius r_b centred on every point P(tau) of the parent's track, each ball growing
 as the parent moves on (design spec section 4.4). A follower at position x at time t is inside if
 
-    there is an emission time tau in [max(t0, t - tau_pre), t] with  |x - P(tau)| <= r_b(s(tau, t)),
+    there is an emission time tau in [max(t0, t_r - tau_pre), t] with  |x - P(tau)| <= r_b(s(tau, t)),
 
 where s(tau, t) is the parent's (air-relative) path length from tau to t and r_b comes from `laws.plume_radius`, with
 the law chosen per emission point from the parent's own flow state (spec section 4.2). The **margin** is the largest
@@ -11,12 +11,16 @@ value over admissible tau of r_b - |x - P(tau)|: positive inside, zero on the ed
 takes or knows an altitude, and nothing is imported from the trajectory, droplet, body, aero or atmosphere modules
 (spec section 4.0); a test inspects the imports.
 
-The admissible window slides with t ([max(t0, t - tau_pre), t], a controller ruling for the build). The spec's
-section 4.4 writes the window as [t_r - tau_pre, t] with t_r the release time; the two differ only in emission times
-more than tau_pre (60 s) before t, which lie hundreds of kilometres behind the parent.
+The window is anchored at the follower's release time t_r (spec section 4.4): every point of track emitted from
+tau_pre (60 s) before release up to now counts, however long the follower lingers. `Plume.margin(x, t, t_release)`
+takes t_r, and `residence` passes its t_start as t_r on every call. Without t_release the window slides with t,
+[max(t0, t - tau_pre), t]: the plume of the last tau_pre seconds, for single queries with no release in view. A
+follower that stays near its release point longer than tau_pre would see a false exit with the sliding window.
 
 Margin search (`Plume.margin`). The parent track is sampled once per Plume at a spacing of min(r0/2, 50 m) of path
-(the smallest r0 on the track) and the samples go into a k-d tree. For a query, the 16 nearest samples whose times are
+(the smallest r0 on the track), widened if needed so that there are at most 200,000 samples (a 50 mm parent over
+100 km would otherwise need 8 million), and the samples go into a k-d tree. The spacing only chooses candidates;
+the refinement between neighbouring samples is exact whatever it is. For a query, the 16 nearest samples whose times are
 admissible are taken (k doubles until at least one is admissible, or every sample has been tried). Each candidate's
 neighbouring sample intervals are refined with a bounded scalar search on -(r_b - |x - P(tau)|), using the exact
 `parent.position` (for a Track built from a callable this is the callable, not the spline the samples came from), and
@@ -67,7 +71,8 @@ from reentry_model.wake_residence.laws import (EmissionState, LawSettings, Radiu
 from reentry_model.wake_residence.track import Track
 
 K_NEAREST = 16                     # admissible samples refined per margin query (brief, Task 3)
-MAX_SPACING_M = 50.0               # tree sample spacing is min(r0 / 2, this)
+MAX_SPACING_M = 50.0               # tree sample spacing is min(r0 / 2, this) ...
+MAX_TREE_SAMPLES = 200_000         # ... widened to keep at most this many samples
 SCAN_DT_RANGE = (1e-4, 0.05)       # s: clip of the default finest scan step
 MAX_STEP_S = 0.05                  # s: default largest scan step
 SCAN_MIN_SPEED = 1.0               # m/s: floor on the relative speed used for steps
@@ -207,12 +212,14 @@ class Plume:
 
     @property
     def spacing(self) -> float:
-        """Tree sample spacing in metres: min(smallest r0 on the track / 2, 50 m)."""
+        """Tree sample spacing in metres: min(smallest r0 on the track / 2, 50 m), but at least the track's path
+        length / 200,000."""
         if "spacing" not in self._cache:
             tt = np.linspace(self.parent.t0, self.parent.t1, 2001)
             r0 = (np.asarray(self.parent.emission_state(tt).r0) if self.r0 is None
                   else np.array([self._r0_at(float(x)) for x in tt]))
-            self._cache["spacing"] = float(min(np.min(r0) / 2.0, MAX_SPACING_M))
+            total = self.parent.path_length(self.parent.t1)
+            self._cache["spacing"] = float(max(min(np.min(r0) / 2.0, MAX_SPACING_M), total / MAX_TREE_SAMPLES))
         return self._cache["spacing"]
 
     def _index(self):
@@ -224,13 +231,18 @@ class Plume:
 
     # ---- margin ----
 
-    def _window(self, x, t):
+    def _window(self, x, t, t_release):
         x = np.asarray(x, dtype=float).reshape(3)
         if not np.all(np.isfinite(x)):
             raise ValueError(f"follower position {x!r} is not finite")
         S_t = self.parent.path_length(float(t))          # raises ValueError outside the parent's time range
         t = min(max(float(t), self.parent.t0), self.parent.t1)
-        return x, t, S_t, max(self.parent.t0, t - self.tau_pre)
+        if t_release is None:
+            return x, t, S_t, max(self.parent.t0, t - self.tau_pre)
+        t_release = float(t_release)
+        if not (math.isfinite(t_release) and t_release <= t + 1e-9 * (self.parent.t1 - self.parent.t0)):
+            raise ValueError(f"t_release = {t_release!r} must be finite and not after the query time t = {t!r}")
+        return x, t, S_t, max(self.parent.t0, min(t_release, t) - self.tau_pre)
 
     def _values(self, x, S_t, taus):
         """At an array of emission times: positions (M, 3), distances, radii and the RadiusResults."""
@@ -271,9 +283,13 @@ class Plume:
             return self._result(x, t, S_t, float(nodes[int(np.argmin(dist))]), margin_nan=True)
         return self._result(x, t, S_t, float(nodes[int(np.nanargmax(g))]))
 
-    def margin(self, x, t) -> MarginResult:
-        """Margin of the point x (3,) at time t: the k-d tree search described in the module docstring."""
-        x, t, S_t, lo = self._window(x, t)
+    def margin(self, x, t, t_release=None) -> MarginResult:
+        """Margin of the point x (3,) at time t: the k-d tree search described in the module docstring.
+
+        Admissible emission times are [max(t0, t_release - tau_pre), t] for a follower released at t_release (spec
+        section 4.4), or [max(t0, t - tau_pre), t] (a window sliding with t) when t_release is None.
+        """
+        x, t, S_t, lo = self._window(x, t, t_release)
         tau_s, tree = self._index()
         n = len(tau_s)
         # k starts at half the k the last query needed (a follower far ahead of the parent needs thousands of
@@ -329,10 +345,10 @@ class Plume:
         cand_d = np.concatenate([dist, np.full(len(cand_tau) - len(nodes), math.inf)])   # nearest: nodes only
         return self._best(x, t, S_t, np.array(cand_tau), np.array(cand_g), cand_d)
 
-    def margin_bruteforce(self, x, t, n: int = 20001) -> MarginResult:
+    def margin_bruteforce(self, x, t, n: int = 20001, t_release=None) -> MarginResult:
         """Reference margin (for tests): n evenly spaced emission times over the whole window, the best one then
-        refined over its two neighbouring grid intervals by the same bounded search."""
-        x, t, S_t, lo = self._window(x, t)
+        refined over its two neighbouring grid intervals by the same bounded search. Window as in `margin`."""
+        x, t, S_t, lo = self._window(x, t, t_release)
         taus = np.linspace(lo, t, int(n)) if t > lo else np.array([t])
         _, dist, r = self._values(x, S_t, taus)
         g = r - dist
@@ -372,7 +388,9 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
               max_step=None) -> ResidenceResult:
     """Every interval during which `follower` is inside `plume`, over [t_start, t_end] (default: the follower's range).
 
-    Raises ValueError, naming both ranges, when the window is not inside the parent's time range or the follower's.
+    t_start is the follower's release time: every margin is taken over emission times [max(t0, t_start - tau_pre), t]
+    (spec section 4.4). Raises ValueError, naming both ranges, when the window is not inside the parent's time range
+    or the follower's.
     `scan_dt` is the finest scan step and `max_step` the largest (default 0.05 s, never below scan_dt); see the module
     docstring for the search.
     """
@@ -401,7 +419,7 @@ def residence(plume: Plume, follower: Track, t_start=None, t_end=None, tol: floa
     def M(tt):
         tt = float(tt)
         if tt not in evals:
-            evals[tt] = plume.margin(follower.position(tt), tt)
+            evals[tt] = plume.margin(follower.position(tt), tt, t_release=t_start)
         return evals[tt]
 
     def rate(tt, m):
