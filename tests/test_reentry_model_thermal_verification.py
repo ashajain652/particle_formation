@@ -31,7 +31,8 @@ def test_a_skin_run_is_the_element_run_with_skins_and_its_own_label():
     assert elements[elements.index("--name") + 1] == "d100__sesam"
     assert skins[skins.index("--name") + 1] == "d100__sesam__skin"
     drop = lambda a: a[:a.index("--name")] + a[a.index("--name") + 2:]
-    assert drop(skins) == drop(elements) + ["--surface-model", "skin"]
+    # each names its surface model, the skins being the model's default since sub-plan 22 Task 3
+    assert elements[-2:] == ["--surface-model", "elements"] and drop(skins) == drop(elements)[:-1] + ["skin"]
     smoke = tv.argv_of("d050", "physics", "out", surface="skin", t_max=2.0)
     assert smoke[smoke.index("--name") + 1] == "d050__physics__skin__t2" and smoke[-2:] == ["--t-max", "2"]
 

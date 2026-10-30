@@ -792,3 +792,23 @@ def test_freeze_back_of_film_and_deep_liquid_leaves_neither_negative(layered_mes
     assert b.m_f[i] == 0.0 and b.m_d[i] == 0.0
     assert frozen == pytest.approx(before, rel=1e-15)
     assert (b.phi[owner] - 0.5) * b.element_mass[owner] == pytest.approx(before, rel=1e-9)
+
+
+def test_the_one_dimensional_skins_are_retired():
+    """Sub-plan 22 Task 3 (spec 9): stage 1's one-dimensional skins are gone -- the module, the element model's setting
+    that chose them and its skin columns -- and nothing in the package, its tests or its analysis scripts imports them;
+    the regime test's depth over the wet windward patches (fact 94), which every element run fills, stays."""
+    import dataclasses
+    import importlib.util
+    import pathlib
+    import re
+    from reentry_model import coupled
+    assert importlib.util.find_spec("reentry_model.skin1d") is None and not hasattr(body, "SURFACE_MODEL_NAMES")
+    assert {f.name for f in dataclasses.fields(body.MeltSettings)}.isdisjoint({"surface_model", "skin"})
+    assert not hasattr(coupled, "SKIN_COLUMNS") and not any(k.startswith("skin_") for k in coupled.MELT_COLUMNS)
+    assert coupled.MELT_COLUMNS[-1] == "nonrigid_depth_wet_median_um"
+    imports = re.compile(r"^\s*(from\s+\S*skin1d\S*\s+import|from\s+\S+\s+import\s+[^\n]*\bskin1d\b|import\s+\S*skin1d)", re.M)
+    root = pathlib.Path(__file__).resolve().parent.parent
+    users = [str(p.relative_to(root)) for d in ("reentry_model", "tests", "analysis") for p in sorted((root / d).rglob("*.py"))
+             if imports.search(p.read_text())]
+    assert users == []
