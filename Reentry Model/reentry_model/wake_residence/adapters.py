@@ -52,6 +52,27 @@ Followers in the wake (spec 4.3 and 4.3a)
   * `solution_track` samples a dense run every `cadence` seconds (default 0.002 s, plus the end time) into a Track on
     the parent's clock; `sphere_parent_track` adds the flow arrays a sphere parent's plume needs, with
     C_D A = C_D(Kn, Ma) times the sphere's area from the simulator's own drag tables and bridging.
+
+Rarefied followers in the parent's shock layer (spec 4.3d)
+---------------------------------------------------------
+  * `WakeAtmosphere(..., shock_layer=field)` also applies a `shock_layer.ShockLayerField`, in any mode (mode "off"
+    applies the field and no wake). The field lives in the parent frame (`parent_frame`: x along the parent's
+    velocity at the parent time, y the distance from the axis) and moves and turns with the twin track; its gas is
+    blended with the wake-or-ambient gas by the field's weight w: rho, T, p and m_bar linearly, and the Earth-fixed
+    gas velocity as w (parent velocity + field velocity) + (1 - w) (wind + wake velocity). `pressure_gradient(t, x)` is
+    the gradient of the field's excess pressure in ECEF (zeros without a field); `last_field_weight` is w at the last
+    `state()` call.
+  * `RarefiedSphereSimulator` (`rarefied_sphere_simulator`) is a sphere follower whose drag is the composed law of
+    `droplet_reentry.particle_trajectory.drag_coefficient` (Schaaf and Chambre free-molecular, a continuum
+    correlation, Cunningham slip, blended on the speed ratio) relative to the local gas, with the wall-to-gas
+    temperature ratio from a named wall temperature (300 K, assumed), zero at zero relative speed, plus the
+    pressure-gradient acceleration -grad(p) / rho_f. Its AeroState's `a_drag` is the sum of the two (the whole
+    aerodynamic acceleration the integrator uses); `max_a_drag` and `max_a_pressure` record the largest of each seen
+    inside the field (weight above 0.5), counting trial evaluations of the integrator.
+  * `parent_collision_event` stops a run when the follower's distance from the parent's centroid falls below R (the
+    parent as an obstacle); `shock_layer_exit` classifies the run: the first of `through_shock` (x >= x_s(y)) and
+    `past_base_plane` (x < 0 inside the envelope) on the dense output, else `hit_parent` if the collision event ended
+    the run, else `inside_at_end`.
 """
 import json
 import math
@@ -69,8 +90,9 @@ from reentry_model.body import ConstantBody
 from reentry_model.constants import G0
 from reentry_model.droplet_reentry import parent_trajectory
 from reentry_model.droplet_reentry.model import parent_release
+from reentry_model.droplet_reentry.particle_trajectory import drag_coefficient as composed_drag_coefficient
 from reentry_model.droplet_reentry.particle_trajectory import viscosity
-from reentry_model.trajectory import InitialState, Settings, Simulator
+from reentry_model.trajectory import AeroState, InitialState, Settings, Simulator
 from reentry_model.wake_residence.track import FLOW_KEYS, Track
 from reentry_model.wake_residence.wake_gas import Ambient, check_mode
 
@@ -79,6 +101,8 @@ AA7075_DENSITY = 2813.0         # kg/m3, AA7075 solid (DRAMA Sphere Experiments/
 SOLUTION_CADENCE = 0.002        # s, default sampling of a follower's dense run into a Track
 LOAD_FACTOR_MIN = 1e-4          # rows with a smaller loadFactor (g) are dropped from the beta table
 TWIN_T_MAX = 3600.0             # s, integration limit for the twin (the flight to 45 km takes about 950 s)
+HIT_DEPTH = 1e-9                # the collision event fires below a distance R (1 - HIT_DEPTH) from the centroid, so a
+                                # follower released exactly on the surface is caught by any inward motion
 
 
 # ---------------------------------------------------------------- the ballistic coefficient from the DRAMA file
@@ -340,19 +364,22 @@ def twin_vs_drama(twin, parent):
 # ---------------------------------------------------------------- followers in the wake (spec 4.3a)
 
 class WakeAtmosphere:
-    """An atmosphere whose `state()` is the wrapped atmosphere's, with the parent's wake gas inside the plume.
+    """An atmosphere whose `state()` is the wrapped atmosphere's, with the parent's wake gas inside the plume and,
+    optionally, the parent's shock-layer gas around it.
 
-    base      the atmosphere wrapped (anything with `state(t, h, lat, lon) -> Freestream`)
-    plume     the parent's `overlap.Plume`
-    t_offset  the follower's release time on the parent's clock [s]: follower time t is parent time t + t_offset, and
-              the plume's emission window is anchored there (spec 4.4)
-    mode      `wake_flow`: "off", "velocity", "density" or "both" (spec 4.3a)
-    k_E       scale on the line-blast radius of the energy profile (`wake_gas.gas_state`)
+    base         the atmosphere wrapped (anything with `state(t, h, lat, lon) -> Freestream`)
+    plume        the parent's `overlap.Plume`
+    t_offset     the follower's release time on the parent's clock [s]: follower time t is parent time t + t_offset,
+                 and the plume's emission window is anchored there (spec 4.4)
+    mode         `wake_flow`: "off", "velocity", "density" or "both" (spec 4.3a)
+    k_E          scale on the line-blast radius of the energy profile (`wake_gas.gas_state`)
+    shock_layer  None, or the `shock_layer.ShockLayerField` of this release (spec 4.3d), applied in every mode
 
-    `n_calls` counts `state()` calls; `last_margin` is the `MarginResult` of the last plume query (None in mode "off").
+    `n_calls` counts `state()` calls; `last_margin` is the `MarginResult` of the last plume query (None in mode "off");
+    `last_field_weight` is the shock-layer field's weight at the last `state()` call (0 without a field).
     """
 
-    def __init__(self, base, plume, t_offset, mode, k_E=1.0):
+    def __init__(self, base, plume, t_offset, mode, k_E=1.0, shock_layer=None):
         check_mode(mode)
         t_offset, k_E = float(t_offset), float(k_E)
         if not math.isfinite(t_offset):
@@ -360,19 +387,18 @@ class WakeAtmosphere:
         if not (math.isfinite(k_E) and k_E > 0.0):
             raise ValueError(f"k_E must be a finite positive number, got {k_E!r}")
         self.base, self.plume, self.t_offset, self.mode, self.k_E = base, plume, t_offset, mode, k_E
+        self.shock_layer = shock_layer
         self.n_calls = 0
         self.last_margin = None
+        self.last_field_weight = 0.0
 
     @property
     def follower_t_max(self):
         """Longest follower time [s] for which the parent's track defines the plume (parent t1 - t_offset)."""
         return self.plume.parent.t1 - self.t_offset
 
-    def state(self, t, h, lat, lon):
-        self.n_calls += 1
-        fs = self.base.state(t, h, lat, lon)
-        if self.mode == "off":
-            return fs
+    def _parent_time(self, t):
+        """Parent time of follower time t; ValueError naming both ranges outside the parent's track."""
         tp = float(t) + self.t_offset
         par = self.plume.parent
         slack = 1e-9 * (par.t1 - par.t0)
@@ -380,6 +406,66 @@ class WakeAtmosphere:
             raise ValueError(f"follower time {float(t)!r} s is parent time {tp!r} s, outside the parent track's range "
                              f"[{par.t0!r}, {par.t1!r}] s (follower range [{par.t0 - self.t_offset!r}, "
                              f"{self.follower_t_max!r}] s)")
+        return tp
+
+    def parent_frame(self, t, x_ecef):
+        """(x, y, e_x, e_y) of the ECEF point x_ecef at follower time t: x [m] along the parent's velocity from its
+        centroid, y [m] the distance from that axis, e_x the parent's direction of flight and e_y the unit lateral
+        vector towards the point (any perpendicular to e_x on the axis)."""
+        tp = self._parent_time(t)
+        par = self.plume.parent
+        v = par.velocity(tp)
+        e_x = v / np.linalg.norm(v)
+        d = np.asarray(x_ecef, dtype=float) - par.position(tp)
+        x = float(d @ e_x)
+        perp = d - x * e_x
+        y = float(np.linalg.norm(perp))
+        if y > 0.0:
+            e_y = perp / y
+        else:
+            a = np.cross(e_x, [0.0, 0.0, 1.0])
+            if not np.linalg.norm(a) > 1e-6:
+                a = np.cross(e_x, [1.0, 0.0, 0.0])
+            e_y = a / np.linalg.norm(a)
+        return x, y, e_x, e_y
+
+    def pressure_gradient(self, t, x_ecef):
+        """Gradient [Pa/m] in ECEF of the shock-layer field's excess pressure, weight * (p - p_inf), at the ECEF point
+        x_ecef and follower time t (zeros without a field)."""
+        if self.shock_layer is None:
+            return np.zeros(3)
+        x, y, e_x, e_y = self.parent_frame(t, x_ecef)
+        gx, gy = self.shock_layer.excess_pressure_gradient(x, y)
+        return gx * e_x + gy * e_y
+
+    def state(self, t, h, lat, lon):
+        self.n_calls += 1
+        fs = self.base.state(t, h, lat, lon)
+        gas = fs if self.mode == "off" else self._wake_state(t, h, lat, lon, fs)
+        if self.shock_layer is None:
+            return gas
+        return self._with_shock_layer(t, h, lat, lon, gas)
+
+    def _with_shock_layer(self, t, h, lat, lon, gas):
+        """`gas` (wake or ambient) blended with the shock-layer field by the field's weight w: rho, T, p and m_bar
+        linearly, the Earth-fixed velocity as w (parent velocity + field velocity) + (1 - w) (gas velocity)."""
+        x, y, e_x, e_y = self.parent_frame(t, earth.geodetic_to_ecef(h, lat, lon))
+        st = self.shock_layer.state(x, y)
+        w = st.weight
+        self.last_field_weight = w
+        if w == 0.0:
+            return gas
+        e, n, up = earth.enu_basis(lat, lon)
+        v_field = self.plume.parent.velocity(float(t) + self.t_offset) + st.w_x * e_x + st.w_y * e_y
+        v_gas = gas.wind_enu[0] * e + gas.wind_enu[1] * n + gas.wind_enu[2] * up
+        v = w * v_field + (1.0 - w) * v_gas
+        mix = lambda a, b: w * a + (1.0 - w) * b
+        return Freestream(mix(st.rho, gas.rho), mix(st.T, gas.T), mix(st.p, gas.p), mix(st.m_bar, gas.m_bar),
+                          np.array([v @ e, v @ n, v @ up]))
+
+    def _wake_state(self, t, h, lat, lon, fs):
+        """The wake gas at the point (Task 6), or `fs` itself where the gas there is plain ambient air."""
+        tp = self._parent_time(t)
         x = earth.geodetic_to_ecef(h, lat, lon)
         gas, m = self.plume.wake_state(x, tp, Ambient(fs.p, fs.T, fs.rho), self.mode, self.k_E,
                                        t_release=self.t_offset)
@@ -402,6 +488,120 @@ def sphere_simulator(initial, d_m, atmosphere, density=AA7075_DENSITY, bridging=
     settings = Settings(diameter=d_m, gravity="j2", rotating_frame=True, t_max=float(t_max))
     return Simulator(initial, ConstantBody(body.sphere_mass(d_m, density)), atmosphere,
                      aero.SphereDragTables.from_json(), aero.bridging_by_name(bridging), settings)
+
+
+class RarefiedSphereSimulator(Simulator):
+    """A solid sphere follower for the shock layer (spec 4.3d): `trajectory.Simulator` with the drag replaced by
+    -(1/2) rho V v_rel C_D A / m, C_D from the composed law `particle_trajectory.drag_coefficient` with the local gas
+    and the wall-to-gas temperature ratio wall_T_K / T (zero force at zero relative speed), plus the pressure-gradient
+    acceleration -grad(p) / density read from `atmosphere.pressure_gradient(t, r)` when `pressure_gradient` is on and
+    the atmosphere has that method. The AeroState's `a_drag` is their sum (the whole aerodynamic acceleration), `cd` the
+    composed C_D (infinite at zero relative speed) and `kn` the hard-sphere Knudsen number. `max_a_drag` and
+    `max_a_pressure` [m/s2] are the largest drag and pressure-gradient accelerations seen where the field's weight
+    exceeds 0.5 (trial evaluations of the integrator included). The SESAM drag tables are kept on the simulator
+    (`tables`, `bridging`) for consistency checks only.
+    """
+
+    def __init__(self, initial, d_m, atmosphere, density=AA7075_DENSITY, wall_T_K=300.0, pressure_gradient=True,
+                 t_max=600.0):
+        d_m, density, wall_T_K = float(d_m), float(density), float(wall_T_K)
+        for name, val in (("d_m", d_m), ("density", density), ("wall_T_K", wall_T_K)):
+            if not (math.isfinite(val) and val > 0.0):
+                raise ValueError(f"{name} must be a finite positive number, got {val!r}")
+        settings = Settings(diameter=d_m, gravity="j2", rotating_frame=True, t_max=float(t_max))
+        super().__init__(initial, ConstantBody(body.sphere_mass(d_m, density)), atmosphere,
+                         aero.SphereDragTables.from_json(), aero.bridging_by_name("sesam-table"), settings)
+        self.density, self.wall_T_K, self.pressure_gradient = density, wall_T_K, bool(pressure_gradient)
+        self.max_a_drag = 0.0
+        self.max_a_pressure = 0.0
+
+    def aero_state(self, t, r, v):
+        s = self.settings
+        h, lat, lon = earth.ecef_to_geodetic(r)
+        fs = self.atmosphere.state(t, min(max(h, s.ground_altitude), s.escape_altitude), lat, lon)
+        in_field = getattr(self.atmosphere, "last_field_weight", 0.0) > 0.5
+        e, n, u = earth.enu_basis(lat, lon)
+        v_rel = v - (fs.wind_enu[0] * e + fs.wind_enu[1] * n + fs.wind_enu[2] * u)
+        V = float(np.linalg.norm(v_rel))
+        if V > 0.0 and fs.rho > 0.0:
+            cd = composed_drag_coefficient(V, fs.rho, fs.T, fs.p, s.diameter,
+                                           temperature_ratio=self.wall_T_K / fs.T)[0]
+            a_drag = -0.5 * fs.rho * V * v_rel * cd * self.area / self.body.mass(t)
+        else:
+            cd, a_drag = math.inf, np.zeros(3)
+        a_aero = a_drag
+        if self.pressure_gradient and hasattr(self.atmosphere, "pressure_gradient"):
+            a_p = -np.asarray(self.atmosphere.pressure_gradient(t, r), dtype=float) / self.density
+            a_aero = a_drag + a_p
+            if in_field:
+                self.max_a_pressure = max(self.max_a_pressure, float(np.linalg.norm(a_p)))
+        if in_field:
+            self.max_a_drag = max(self.max_a_drag, float(np.linalg.norm(a_drag)))
+        kn = aero.knudsen(fs.rho, fs.m_bar, s.diameter) if fs.rho > 0.0 else math.inf
+        return AeroState(h, lat, lon, fs, v_rel, V, kn, aero.mach(V, fs.T, fs.m_bar), cd, a_aero,
+                         0.5 * fs.rho * V * V)
+
+
+def rarefied_sphere_simulator(initial, d_m, atmosphere, density=AA7075_DENSITY, wall_T_K=300.0,
+                              pressure_gradient=True, t_max=600.0):
+    """A `RarefiedSphereSimulator` of diameter d_m [m] and density [kg/m3] from `initial`."""
+    return RarefiedSphereSimulator(initial, d_m, atmosphere, density=density, wall_T_K=wall_T_K,
+                                   pressure_gradient=pressure_gradient, t_max=t_max)
+
+
+def parent_collision_event(wake_atmosphere, R):
+    """solve_ivp event `hit_parent`: the follower's distance from the parent's centroid minus R (1 - HIT_DEPTH),
+    terminal, on inward crossings only. A run it ends has `end_reason` "hit_parent"."""
+    track, t_offset, R = wake_atmosphere.plume.parent, wake_atmosphere.t_offset, float(R)
+
+    def hit_parent(t, y):
+        return float(np.linalg.norm(y[:3] - track.position(t + t_offset))) - R * (1.0 - HIT_DEPTH)
+    hit_parent.terminal, hit_parent.direction = True, -1
+    return hit_parent
+
+
+@dataclass
+class ShockLayerExit:
+    kind: str       # "through_shock", "past_base_plane", "hit_parent" or "inside_at_end"
+    t: float        # follower time [s]
+    x: float        # parent frame: along the flight direction from the centroid [m]
+    y: float        # parent frame: distance from the axis [m]
+    v_rel: float    # follower speed relative to the parent [m/s]
+
+
+def shock_layer_exit(run, wake_atmosphere, field, hit=False, tol=1e-3):
+    """How the follower of a dense run left the parent's shock layer (spec 4.3d): the first of `through_shock`
+    (x >= x_s(y)) or `past_base_plane` (x < 0 inside the envelope), found on the dense output sampled at most `tol`
+    seconds apart and refined by root-finding; else `hit_parent` if `hit` (the collision event ended the run); else
+    `inside_at_end`. An exit followed by a hit is reported as the exit (the integration continues after an exit)."""
+    wa, shape = wake_atmosphere, field.shape
+    track = wa.plume.parent
+    t0 = float(run.sol.t[0])
+    ts = np.linspace(t0, run.t_end, max(int(math.ceil((run.t_end - t0) / tol)), 1) + 1)
+    states = np.atleast_2d(run.sol.sol(ts).T)[:, :6]
+    v_par = track.velocity(ts + wa.t_offset)
+    e_x = v_par / np.linalg.norm(v_par, axis=1)[:, None]
+    d = states[:, :3] - track.position(ts + wa.t_offset)
+    xs = np.einsum("ij,ij->i", d, e_x)
+    ys = np.linalg.norm(d - xs[:, None] * e_x, axis=1)
+
+    def frame(t):
+        st = run.sol.sol(t)[:6]
+        x, y, _, _ = wa.parent_frame(t, st[:3])
+        return x, y, float(np.linalg.norm(st[3:] - track.velocity(t + wa.t_offset)))
+
+    def found(kind, t):
+        return ShockLayerExit(kind, float(t), *frame(t))
+
+    for i in range(len(ts)):
+        if xs[i] >= shape.x_s(ys[i]):
+            kind, f = "through_shock", lambda t: (lambda x, y, _: x - shape.x_s(y))(*frame(t))
+        elif xs[i] < 0.0:
+            kind, f = "past_base_plane", lambda t: -frame(t)[0]
+        else:
+            continue
+        return found(kind, ts[0] if i == 0 else brentq(f, ts[i - 1], ts[i], xtol=1e-9))
+    return found("hit_parent" if hit else "inside_at_end", run.t_end)
 
 
 def _solution_samples(run, cadence):
