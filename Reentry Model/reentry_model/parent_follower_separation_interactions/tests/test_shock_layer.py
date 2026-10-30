@@ -1,9 +1,10 @@
 """The parent's shock-layer field (Task 7b, spec 4.3d): oblique jumps, Lighthill's nose solution, Billig's shape and
 the tabulated field with its smoothed edges and pressure gradient."""
 import math, numpy as np, pytest
+from reentry_model import aero
 from reentry_model.gas import EquilibriumAir
 from reentry_model.parent_follower_separation_interactions.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
-    lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField)
+    lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField, newtonian_prandtl_meyer)
 
 R, R0 = 1.4065, 1.4065
 FS = FreeStream(rho=1.85e-5, T=199.0, p=1.05, U=7400.0, mfp=4e-3, m_bar=4.81e-26)   # about 80 km
@@ -89,7 +90,9 @@ def test_outside_is_ambient_and_edges_are_continuous(field):
     x_far = field.shape.x_s(0.0) + 20 * FS.mfp
     assert field.state(x_far, 0.0).weight == 0.0
     assert field.state(-1.01 * R0, 0.5 * R).weight == 0.0
-    ws = [field.state(x, 1.2 * R).weight for x in np.linspace(0.05, -0.05, 41)]   # across the base plane
+    y_mid = R + 0.5 * (field.shape.r_s(math.pi / 2) - R)    # half-way through the layer at the shoulder (a fixed 1.2 R
+    # was inside the layer when the shoulder shock lay at 1.23 R; it now lies at 1.207 R, in the shock's smoothing band)
+    ws = [field.state(x, y_mid).weight for x in np.linspace(0.05, -0.05, 41)]   # across the base plane
     assert max(abs(a - b) for a, b in zip(ws[:-1], ws[1:])) < 0.05
     xs = field.shape.x_s(0.0); d = FS.mfp * 3
     ws = [field.state(x, 0.0).weight for x in np.linspace(xs - 2 * d, xs + 2 * d, 81)]
@@ -162,3 +165,60 @@ def test_surface_state_rejects_angles_outside_0_to_180(field):
     for bad in (-1.0, 180.5):
         with pytest.raises(ValueError, match="theta_deg"):
             field.surface_state(bad)
+
+
+# ---- the Newtonian-Prandtl-Meyer surface pressure (Task 7c, spec 4.3d "State at the body surface") ----
+
+def _perfect_gas_isentrope(gamma, p_inf_over_p0=1e-6, n=4000):
+    p = np.geomspace(1.0, p_inf_over_p0, n)                       # p0 = rho0 = 1
+    rho = p ** (1.0 / gamma)
+    h = gamma / (gamma - 1.0) * p / rho
+    w = np.sqrt(np.maximum(2.0 * (h[0] - h), 0.0))
+    a = np.sqrt(gamma * p / rho)
+    return p, rho, w, a
+
+@pytest.mark.parametrize("gamma, phi_q, mach_q, shoulder", [(1.4, 54.58, 1.352, 0.0447), (1.15, 49.82, 1.271, 0.0695)])
+def test_npm_matches_perfect_gas_theory(gamma, phi_q, mach_q, shoulder):
+    p, rho, w, a = _perfect_gas_isentrope(gamma)
+    phi = np.radians(np.linspace(0.0, 90.0, 901))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    assert not r.no_match and not r.below_p_inf
+    assert math.degrees(r.phi_q) == pytest.approx(phi_q, abs=0.1)
+    assert r.mach_q == pytest.approx(mach_q, abs=0.005)
+    assert r.p_b[-1] == pytest.approx(shoulder, rel=0.02)
+
+def test_npm_is_newtonian_to_the_match_then_falls_with_a_continuous_slope():
+    p, rho, w, a = _perfect_gas_isentrope(1.4)
+    phi = np.radians(np.linspace(0.0, 90.0, 901))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    newton = p[-1] + (1.0 - p[-1]) * np.cos(phi) ** 2
+    before = phi <= r.phi_q
+    assert np.allclose(r.p_b[before], newton[before], rtol=1e-9)
+    assert np.all(np.diff(r.p_b) <= 0.0)
+    i = int(np.searchsorted(phi, r.phi_q))
+    left = (r.p_b[i - 1] - r.p_b[i - 3]) / (phi[i - 1] - phi[i - 3])
+    right = (r.p_b[i + 3] - r.p_b[i + 1]) / (phi[i + 3] - phi[i + 1])
+    assert right == pytest.approx(left, rel=0.02)
+
+def test_npm_without_a_supersonic_part_is_newtonian_and_flagged():
+    p, rho, w, a = _perfect_gas_isentrope(1.4, p_inf_over_p0=0.6)   # never sonic (p*/p0 = 0.528)
+    phi = np.radians(np.linspace(0.0, 90.0, 91))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    assert r.no_match and math.isnan(r.phi_q)
+    assert np.allclose(r.p_b, p[-1] + (1.0 - p[-1]) * np.cos(phi) ** 2, rtol=1e-12)
+
+def test_field_shoulder_pressure_in_equilibrium_air(field):
+    assert 47.0 <= field.surface_match_phi_deg <= 52.0
+    assert 50.0 <= field.shoulder_pressure_ratio <= 90.0
+    assert field.surface_state(90.0).p == pytest.approx(field.shoulder_pressure_ratio * FS.p, rel=1e-6)
+    assert not field.flags["npm_no_match"] and not field.flags["surface_below_p_inf"]
+
+def test_modified_newtonian_keeps_the_previous_surface_state_and_thins_the_shoulder(field, air):
+    old = ShockLayerField.build(FS, R, R0, ShockLayerSettings(surface_pressure="modified_newtonian"), air=air)
+    p_stag = old.state(R, 0.0).p
+    for theta in (180.0, 150.0, 120.0, 90.0):
+        c = math.cos(math.radians(180.0 - theta))
+        assert old.surface_state(theta).p == pytest.approx(FS.p + (p_stag - FS.p) * c * c, rel=1e-6)
+    assert math.isnan(old.surface_match_phi_deg) and old.shoulder_pressure_ratio == pytest.approx(1.0, rel=1e-6)
+    kn = lambda f: aero.mean_free_path(f.surface_state(90.0).rho, f.surface_state(90.0).m_bar)
+    assert kn(old) / kn(field) > 10.0

@@ -10,7 +10,7 @@ each at both bounds. The variations (`variations`) are Taylor's K by the factors
 Feldman hot-axis temperature 2000 and 5000 K and core-speed fraction 0.75, the parent frontal area 3.1 and 12.4 m2
 (the spec's 6.2 m2 is the baseline 6.215 m2), the ballistic-coefficient table scaled by 0.9 and 1.1, the sphere density
 2700 and 2900 kg/m3, and `wake_flow` `velocity`, `density` and `both` against the baseline `off` (so each effect's share of the change can be read). The rarefied set (`rarefied_variations`) is 10 mm at
-90 km at theta 180 and 120 degrees with `shock_standoff="billig"`, `pressure_gradient` off, `follower_wall_T_K` 1000 K
+90 km at theta 180 and 120 degrees with `shock_standoff="billig"`, `surface_pressure="modified_newtonian"`, `pressure_gradient` off, `follower_wall_T_K` 1000 K
 and `shock_thickness_mfp` 1 and 10; where 10 mm is not a rarefied follower at that theta the largest default diameter
 that is takes its place (`rarefied_diameter`; the choice is printed and is in the `case` name).
 
@@ -82,6 +82,7 @@ def variations():
 def rarefied_variations():
     """The variations of the rarefied follower's shock-layer model (without the baseline)."""
     return [Variation("shock_standoff", "billig", _shock(shock_standoff="billig")),
+            Variation("surface_pressure", "modified_newtonian", _shock(surface_pressure="modified_newtonian")),
             Variation("pressure_gradient", False, _shock(pressure_gradient=False)),
             Variation("follower_wall_T_K", 1000.0, _shock(follower_wall_T_K=1000.0)),
             Variation("shock_thickness_mfp", 1.0, _shock(shock_thickness_mfp=1.0)),

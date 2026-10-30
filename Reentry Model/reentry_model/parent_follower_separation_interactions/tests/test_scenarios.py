@@ -25,16 +25,20 @@ def test_run_names_differ_for_every_setting():
     assert run_name("sphere", 50, 80, ScenarioSettings(), theta_deg=130.0) != base     # far wake, another theta
 
 def test_far_wake_case_runs_and_writes(twin, tmp_path):
-    # The brief released at theta = 90 degrees. There the shoulder gas (Newtonian pressure p_inf, expanded from the
-    # stagnation state) is hot and thin: its mean free path at 60 km is 2.4 mm (measured), so a 10 mm follower has
-    # Kn_f = 0.24 and is transitional, and spec 4.3c sends it to the surface path, not the far wake. At 120 degrees the
-    # mean free path is 0.059 mm, Kn_f = 0.0059 (continuum), and AFFIx's zone is still the far wake (theta_bif 139.4).
+    # The brief released at theta = 90 degrees. There the shoulder gas is hot and thin: its mean free path at 60 km is
+    # 0.19 mm (measured with the Newtonian-Prandtl-Meyer surface pressure, which puts the shoulder at 15.5 times the
+    # free-stream pressure; modified Newtonian theory put it at the free-stream pressure and gave 2.4 mm), so a 10 mm
+    # follower has Kn_f = 0.019 and is still transitional (the continuum limit is 0.01), and spec 4.3c sends it to the
+    # surface path, not the far wake. At 120 degrees the mean free path is 0.055 mm, Kn_f = 0.0055 (continuum), and
+    # AFFIx's zone is still the far wake (theta_bif 139.4).
     c = sphere_in_spacecraft_plume(10, 60, 120.0, ScenarioSettings(wake_flow="both"), twin=twin)
     csv_path, json_path = write_case(c, tmp_path)
     s = json.load(open(json_path))
     assert s["affix_zone"] == "far_wake" and s["t_fz"] > 0
     assert s["reason"] in ("ok", "censored", "reached_parent") and s["residence_time"] >= 0
     assert s["parent_sha256"] and "git_commit" in s and s["regime_at_release"] and s["follower_t_end"] > 0
+    assert 45.0 < s["surface_match_phi_deg"] < 60.0 and s["shoulder_pressure_ratio"] > 5.0      # the surface pressure
+    assert s["surface_npm_no_match"] is False and s["surface_below_p_inf"] is False
     h = c.history                                      # starts on the axis, two parent diameters behind
     gap = np.linalg.norm([h[0]["follower_x"] - h[0]["parent_x"], h[0]["follower_y"] - h[0]["parent_y"],
                           h[0]["follower_z"] - h[0]["parent_z"]])

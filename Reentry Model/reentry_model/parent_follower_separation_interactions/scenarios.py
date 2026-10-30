@@ -464,7 +464,11 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
     summary.update({"kn_f_release": kn_f, "follower_regime": regime, "affix_status": AFFIX_STATUS[regime],
                     "affix_zone": af.zone, "affix_r": af.r, "theta_inn": af.theta_inn, "theta_bif": af.theta_bif,
                     "t_hat": af.t_hat, "t_fz": af.t_fz, "transitional_follower": regime == "transitional",
-                    "residence_exceeds_t_fz": False, **{f"affix_{k}": v for k, v in af.flags.items()}})
+                    "residence_exceeds_t_fz": False, **{f"affix_{k}": v for k, v in af.flags.items()},
+                    "surface_match_phi_deg": field.surface_match_phi_deg,
+                    "shoulder_pressure_ratio": field.shoulder_pressure_ratio,
+                    "surface_npm_no_match": field.flags["npm_no_match"],
+                    "surface_below_p_inf": field.flags["surface_below_p_inf"]})
 
     cached = None                  # the far-wake memo entry this case reuses, if any
     if regime != "continuum":

@@ -225,6 +225,7 @@ def test_sensitivity_set_is_the_spec_set():
     assert sensitivity.TAYLOR_K == sweep.ScenarioSettings().law.taylor_K
     rare = {(v.parameter, v.value): v.apply(base) for v in sensitivity.rarefied_variations()}
     assert rare[("shock_standoff", "billig")].shock.shock_standoff == "billig"
+    assert rare[("surface_pressure", "modified_newtonian")].shock.surface_pressure == "modified_newtonian"
     assert rare[("pressure_gradient", False)].shock.pressure_gradient is False
     assert rare[("follower_wall_T_K", 1000.0)].shock.follower_wall_T_K == 1000.0
     assert rare[("shock_thickness_mfp", 1.0)].shock.shock_thickness_mfp == 1.0

@@ -31,9 +31,15 @@ The model, piece by piece (each named in the spec as an assumption):
   * Just behind the shock: equilibrium Rankine-Hugoniot on the normal component U sin(sigma) of the free stream, sigma
     the local shock angle from the slope of x_s, by the damped fixed point of `gas.EquilibriumAir.stagnation`; the
     tangential component U cos(sigma) is unchanged (`oblique_jump`).
-  * At the surface: modified Newtonian pressure p_b = p_inf + (p_stag - p_inf) cos^2(phi), temperature and density by
-    isentropic equilibrium expansion from the stagnation state to p_b, and a gas speed tangent to the surface from the
-    total enthalpy, (2 (h_0 - h))^(1/2). Inviscid (no boundary layer).
+  * At the surface: the pressure is the Newtonian-Prandtl-Meyer method (`surface_pressure="newtonian_prandtl_meyer"`,
+    the default; Lees and Kubota 1957, Wagner 1959, Kaufman 1963): modified Newtonian, p_N = p_inf + (p_stag - p_inf)
+    cos^2(phi), from the stagnation point to the matching point phi_q where its slope equals that of the expansion, and
+    a Prandtl-Meyer expansion of the stagnation isentrope from there to the shoulder (`newtonian_prandtl_meyer`).
+    Modified Newtonian alone puts the shoulder at p_inf, so its gas is about a tenth of the free-stream density and
+    every release near theta = 90 degrees comes out rarefied; the expansion leaves it at tens of p_inf
+    (`surface_pressure="modified_newtonian"` is the previous model, a sensitivity variation). The temperature and
+    density are then the isentropic equilibrium expansion from the stagnation state to the surface pressure, and the
+    gas speed tangent to the surface comes from the total enthalpy, (2 (h_0 - h))^(1/2). Inviscid (no boundary layer).
   * Between: eta = (r - R) / (r_s(phi) - R), 0 at the body and 1 at the shock. p and T linear in eta, density (and
     mean molecular mass) the equilibrium values at that p and T. Velocity: Lighthill's (1957) constant-density solution
     near the nose (phi up to `phi_nose_deg`), evaluated at r_L = R + eta (R_s - R) (stretched to the local layer);
@@ -69,6 +75,8 @@ GAS_CONSTANT = 8314.462618           # J/(kmol K), universal gas constant (Cante
 BILLIG_MACH_RANGE = (2.0, 25.0)      # Mach numbers covered by Billig's sphere correlation
 STANDOFF_MODELS = ("lighthill", "billig")
 SHAPE_MODELS = ("flux_matched", "billig")
+SURFACE_PRESSURE_MODELS = ("newtonian_prandtl_meyer", "modified_newtonian")
+ISENTROPE_NODES = 400                # pressures (log-spaced, stagnation to free stream) of the stagnation isentrope table
 N_MIRROR = 3                         # grid nodes mirrored across the axis for the splines
 
 
@@ -77,6 +85,7 @@ class ShockLayerSettings:
     """Named, overridable choices of the shock-layer model (spec 4.3d)."""
     shock_standoff: str = "lighthill"          # "lighthill" (equilibrium epsilon) or "billig" (perfect gas)
     shock_shape: str = "flux_matched"          # "flux_matched" (mass balance) or "billig" (Billig's shape)
+    surface_pressure: str = "newtonian_prandtl_meyer"   # or "modified_newtonian" (the shoulder is then at p_inf)
     phi_nose_deg: float = 40.0                 # Lighthill's velocities up to this angle from the stagnation line
     phi_blend_deg: float = 20.0                # width of the smoothstep blend to the linear-in-eta velocities
     shock_thickness_mfp: float = 3.0           # shock smoothing thickness, free-stream mean free paths
@@ -92,6 +101,9 @@ class ShockLayerSettings:
             raise ValueError(f"shock_standoff must be one of {STANDOFF_MODELS}, got {self.shock_standoff!r}")
         if self.shock_shape not in SHAPE_MODELS:
             raise ValueError(f"shock_shape must be one of {SHAPE_MODELS}, got {self.shock_shape!r}")
+        if self.surface_pressure not in SURFACE_PRESSURE_MODELS:
+            raise ValueError(f"surface_pressure must be one of {SURFACE_PRESSURE_MODELS}, got "
+                             f"{self.surface_pressure!r}")
         for name in ("phi_nose_deg", "phi_blend_deg", "shock_thickness_mfp", "follower_wall_T_K",
                      "kn_shock_layer_flag", "q_change_flag"):
             v = getattr(self, name)
@@ -359,6 +371,81 @@ class FluxMatchedShape(_ShockCurve):
         return -self._excess / self._L * self._behind(y)
 
 
+# ---------------------------------------------------------------- the surface pressure
+
+@dataclass(frozen=True)
+class SurfacePressure:
+    """Result of `newtonian_prandtl_meyer`: the surface pressure p_b [Pa] at each requested angle, the matching
+    point's angle phi_q [rad] and Mach number mach_q (both nan when `no_match`), and the two flags."""
+    p_b: np.ndarray
+    phi_q: float
+    mach_q: float
+    no_match: bool      # no supersonic part, or no root of the slope balance: Newtonian everywhere
+    below_p_inf: bool   # the expansion would take the pressure below p_inf somewhere: held at p_inf there
+
+
+def newtonian_prandtl_meyer(p_stag, p_inf, p, rho, w, a, phi):
+    """Surface pressure of a sphere by the Newtonian-Prandtl-Meyer method (spec 4.3d, "State at the body surface").
+
+    `p, rho, w, a` tabulate the stagnation isentrope (pressure strictly decreasing from p_stag to p_inf, density,
+    gas speed, equilibrium sound speed); `phi` are angles from the stagnation point [rad], 0 to pi/2. Modified
+    Newtonian, p_N = p_inf + (p_stag - p_inf) cos^2(phi), holds up to the matching point phi_q; beyond it the turning
+    of the Prandtl-Meyer expansion sets the pressure, nu(p_b) = nu(p_q) + (phi - phi_q), because the body inclination
+    delta = pi/2 - phi falls as fast as phi rises. With M = w / a, d nu = -(M^2 - 1)^(1/2) dp / (rho w^2) from the
+    sonic point (trapezoidal in p), valid for any gas. At the matching point the pressures agree by construction and
+    the slopes dp/d(delta) must too: 2 ((p - p_inf)(p_stag - p))^(1/2) for p_N against rho w^2 / (M^2 - 1)^(1/2) for
+    the expansion, which is infinite at the sonic point. Their difference is negative there, so the root sought is
+    the first sign change walking down in pressure from the sonic point, refined by brentq on linear interpolants of
+    rho, w and a in log p. No supersonic node or no sign change: Newtonian everywhere and `no_match`; where the
+    turning exceeds that to p_inf, p_b = p_inf and `below_p_inf`."""
+    p, rho, w, a, phi = (np.asarray(x, float) for x in (p, rho, w, a, phi))
+    newton = p_inf + (p_stag - p_inf) * np.cos(phi) ** 2
+    mach = w / a
+    supersonic = np.nonzero(mach > 1.0)[0]
+    if p_stag <= p_inf or not supersonic.size:
+        return SurfacePressure(newton, math.nan, math.nan, True, False)
+    i0 = int(supersonic[0])
+    lp = np.log(p)
+    lps, rs, ws, as_ = lp[i0:], rho[i0:], w[i0:], a[i0:]
+    if i0 > 0:                                     # the sonic point, between nodes i0 - 1 and i0, becomes the first node
+        f = (1.0 - mach[i0 - 1]) / (mach[i0] - mach[i0 - 1])
+        lerp = lambda x: x[i0 - 1] + f * (x[i0] - x[i0 - 1])
+        lps, rs, ws, as_ = (np.concatenate([[v], x]) for v, x in
+                            ((lerp(lp), lps), (lerp(rho), rs), (lerp(w), ws), (lerp(w), as_)))
+    ps = np.exp(lps)
+    m2m1 = np.maximum((ws / as_) ** 2 - 1.0, 0.0)
+    with np.errstate(divide="ignore"):
+        g_pm = np.where(m2m1 > 0.0, rs * ws * ws / np.sqrt(m2m1), np.inf)
+    g_n = 2.0 * np.sqrt(np.maximum((ps - p_inf) * (p_stag - ps), 0.0))
+    rate = np.sqrt(m2m1) / (rs * ws * ws)                          # -d nu / dp
+    nu = np.concatenate([[0.0], np.cumsum(0.5 * (rate[1:] + rate[:-1]) * (ps[:-1] - ps[1:]))])
+    diff = g_n - g_pm
+    crossing = np.nonzero((diff[:-1] < 0.0) & (diff[1:] >= 0.0))[0]
+    if not crossing.size:
+        return SurfacePressure(newton, math.nan, math.nan, True, False)
+    j = int(crossing[0])
+
+    def balance(x):
+        r_, w_, a_ = (float(np.interp(x, lps[::-1], v[::-1])) for v in (rs, ws, as_))
+        p_ = math.exp(x)
+        return (2.0 * math.sqrt(max((p_ - p_inf) * (p_stag - p_), 0.0))
+                - r_ * w_ * w_ / math.sqrt(max((w_ / a_) ** 2 - 1.0, 1e-300)))
+
+    lo, hi = lps[j + 1], lps[j]                    # log p falls with the index; hi may be the sonic point (infinite)
+    lq = lo if diff[j + 1] == 0.0 else brentq(balance, lo, lo + (1.0 - 1e-9) * (hi - lo), xtol=1e-14, rtol=1e-14)
+    p_q = math.exp(lq)
+    mach_q = float(np.interp(lq, lps[::-1], (ws / as_)[::-1]))
+    phi_q = math.acos(math.sqrt((p_q - p_inf) / (p_stag - p_inf)))
+    nu_q = float(np.interp(lq, lps[::-1], nu[::-1]))
+    beyond = phi > phi_q
+    target = nu_q + (phi - phi_q)
+    beyond_inf = beyond & (target > nu[-1])
+    p_b = newton.copy()
+    p_b[beyond] = np.exp(np.interp(target[beyond], nu, lps))
+    p_b[beyond_inf] = p_inf
+    return SurfacePressure(p_b, phi_q, mach_q, False, bool(beyond_inf.any()))
+
+
 # ---------------------------------------------------------------- the tabulated field
 
 @dataclass
@@ -453,7 +540,9 @@ class ShockLayerField:
     Attributes: fs, R, r0, settings, mach, eps, lighthill (the nose solution), standoff (used on the axis),
     standoff_billig (for comparison), shape (`FluxMatchedShape` or Billig's `ShockShape`), flags, flux_mismatch (the
     largest |layer flux / inflow - 1| on the grid rays from 10 to 90 degrees, for either shape), flux_iterations (0
-    for Billig's shape), build_time_s.
+    for Billig's shape), build_time_s, surface_match_phi_deg and surface_match_mach (the Newtonian-Prandtl-Meyer
+    matching point; nan for modified Newtonian or no match), shoulder_pressure_ratio (surface pressure at phi = 90
+    degrees over p_inf, either model).
     """
 
     @classmethod
@@ -472,14 +561,18 @@ class ShockLayerField:
         self.flags = {
             "mach_outside_billig": not BILLIG_MACH_RANGE[0] <= self.mach <= BILLIG_MACH_RANGE[1],
             "kn_parent_above_flag": fs.mfp / (2.0 * self.R) > settings.kn_shock_layer_flag,
+            "npm_no_match": False, "surface_below_p_inf": False,
         }
+        self.surface_match_phi_deg = self.surface_match_mach = math.nan
         self._air = air
         stag = air.stagnation(fs.rho, fs.T, fs.U)
         self._s0, self._h0, self._p_stag = float(air.gas.entropy_mass), stag.h, stag.p   # stagnation() leaves the gas there
         self._equilibrate = max(fs.T, T_FLOOR) + 0.5 * fs.U ** 2 / CP_AIR > T_EQUILIBRATE
         self._phi = np.linspace(0.0, 0.5 * math.pi, settings.n_phi)
         self._eta = np.linspace(0.0, 1.0, settings.n_eta)
-        self._surface = [self._surface_state(ph) for ph in self._phi]
+        self._p_surface = self._surface_pressure()
+        self._surface = [self._surface_state(ph, p_b) for ph, p_b in zip(self._phi, self._p_surface)]
+        self.shoulder_pressure_ratio = float(self._p_surface[-1] / fs.p)
 
         billig = ShockShape(self.R, self.mach, self.standoff)
         r_s = np.array([billig.r_s(ph) for ph in self._phi])
@@ -506,12 +599,33 @@ class ShockLayerField:
 
     # ---- construction ----
 
-    def _surface_state(self, ph):
-        """(p_b, T_b, w_b) on the body at phi: modified Newtonian pressure, isentropic equilibrium expansion from the
-        stagnation state, tangential speed from the total enthalpy."""
-        g, fs = self._air.gas, self.fs
+    def _surface_pressure(self):
+        """Surface pressure [Pa] at every node of `self._phi`: modified Newtonian, or the Newtonian-Prandtl-Meyer method
+        on the stagnation isentrope (equilibrium air at the stagnation entropy, 400 pressures log-spaced from p_stag
+        to p_inf; gas speed from the total enthalpy, sound speed a^2 = dp/drho along it). Sets
+        `surface_match_phi_deg`, `surface_match_mach` and the two flags."""
+        g, fs, phi = self._air.gas, self.fs, self._phi
+        if self.settings.surface_pressure == "modified_newtonian" or self._p_stag <= fs.p:
+            return fs.p + (self._p_stag - fs.p) * np.cos(phi) ** 2
+        p = np.geomspace(self._p_stag, fs.p, ISENTROPE_NODES)
+        rho, h = np.empty(p.size), np.empty(p.size)
+        for i, pk in enumerate(p):
+            g.SPX = self._s0, pk, AIR
+            if self._equilibrate:
+                g.equilibrate("SP")
+            rho[i], h[i] = float(g.density), float(g.enthalpy_mass)
+        w = np.sqrt(np.maximum(2.0 * (self._h0 - h), 0.0))
+        r = newtonian_prandtl_meyer(self._p_stag, fs.p, p, rho, w, np.sqrt(np.gradient(p, rho)), phi)
+        self.surface_match_phi_deg = math.degrees(r.phi_q)
+        self.surface_match_mach = r.mach_q
+        self.flags["npm_no_match"], self.flags["surface_below_p_inf"] = r.no_match, r.below_p_inf
+        return r.p_b
+
+    def _surface_state(self, ph, p_b):
+        """(p_b, T_b, w_b) on the body at phi, given the surface pressure p_b: isentropic equilibrium expansion from
+        the stagnation state, tangential speed from the total enthalpy."""
+        g = self._air.gas
         c, s = math.cos(ph), math.sin(ph)
-        p_b = fs.p + (self._p_stag - fs.p) * c * c
         g.SPX = self._s0, p_b, AIR
         if self._equilibrate:
             g.equilibrate("SP")

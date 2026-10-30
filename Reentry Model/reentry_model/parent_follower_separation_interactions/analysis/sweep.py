@@ -58,6 +58,7 @@ SUMMARY_COLUMNS = (
     "plume_distance_out_of_range", "plume_speed_out_of_range", "plume_feldman_extrapolation",
     "kn_f_free_stream", "kn_f_release", "kn_f_min_in_layer", "kn_f_exit", "kn_f_end", "follower_continuum_in_layer",
     "shock_layer_exit", "t_shock_layer_exit", "flux_mismatch", "flux_mismatch_above_tol",
+    "surface_match_phi_deg", "shoulder_pressure_ratio",
     "t_hat", "t_fz", "theta_inn", "theta_bif", "affix_r")
 SUMMARY_EXCLUDED = frozenset({"kind", "config", "limitation", "wall_time_s", "field_build_time_s",
                               "git_commit", "git_dirty", "parent_sha256"})     # wall-clock values and git state
