@@ -502,10 +502,12 @@ the layer widen too fast away from the nose. So ahead of the base plane the shoc
 balance, as in classical thin-shock-layer theory: on every ray, the mass flux through the layer between the body and
 the shock, the integral of rho |u_phi| 2 pi r sin(phi) dr from R to r_s(phi), equals the free-stream flux through
 the shock disc of the same lateral radius, rho_inf U pi (r_s(phi) sin(phi))^2. The layer's profiles depend on the
-local shock angle, which depends on the shape, so r_s(phi) is found by a relaxed fixed-point iteration: start from
-the Billig shape with the chosen standoff, compute the shock angles from the current r_s(phi), rebuild the
-post-shock states, solve each ray for its flux-matched r_s, smooth (keeping the slope continuous), and repeat until
-the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. On the axis the distance stays the chosen
+local shock angle, which depends on the shape, so r_s(phi) is found iteratively, starting from the Billig shape with
+the chosen standoff, until the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. (Amended after
+Task 7b: a plain relaxed fixed point, solving each ray in turn, was unstable at the shoulder; the build uses a damped
+Gauss-Newton solve for r_s(phi) as a cubic spline with knots every 3 degrees, which keeps the slope continuous and
+reached a mismatch of 0.40 percent at 80 km in 10 iterations and 0.84 percent at 90 km in 13. A case that does not
+reach 2 percent is flagged `flux_mismatch_above_tol`, not refused.) On the axis the distance stays the chosen
 standoff (Lighthill's solution already conserves mass there). The shock angle may not fall below the Mach angle.
 Beyond the 90-degree ray (behind the base plane, where the field fades out over r0) the envelope is continued with
 a smooth (continuous-slope) curve tending to the Mach angle. `shock_shape` setting: `"flux_matched"` (default) or
