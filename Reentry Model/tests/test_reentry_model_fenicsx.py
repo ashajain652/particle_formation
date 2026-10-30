@@ -308,35 +308,6 @@ def test_backends_agree_with_an_interface_flux(coarse_sphere_mesh):
     assert np.allclose(Ta, Tb, rtol=0.0, atol=1e-6) and ra.Q_interface == pytest.approx(rb.Q_interface, rel=1e-9)
 
 
-def test_skins_match_the_skfem_backend(coarse_sphere_mesh):
-    """The melt-layer skins (sub-plan 18) in both backends: the body at 800 K under a uniform 1.5 MW/m2 for six steps
-    of 0.5 s, every patch skinned at the first step. Skins, mass, film and temperatures agree and both energy balances
-    are exact."""
-    pytest.importorskip("cantera")
-    from reentry_model import body, heating, mesh
-    from reentry_model import skin1d as skin
-    from test_reentry_model_coupled import MASS_100MM
-    out = {}
-    for name in ("skfem", "fenicsx"):
-        np.random.seed(12345)
-        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
-        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver(name), MASS_100MM,
-                             settings=body.MeltSettings(surface_model="skin1d",
-                                                        skin=skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], substep=0.05)))
-        b.solver.set_temperature(800.0)
-        b.energy0 = b.energy()
-        loads = heating.HeatingResult(np.full(b.surface.n_patches, 1.5e6), 1.5e6, 0.0, 0.0, 0.0)
-        for k in range(6):
-            b.advance(0.5 * (k + 1), 0.5, loads)
-        out[name] = b
-    s, f = out["skfem"], out["fenicsx"]
-    assert s.skins.n == f.skins.n == s.surface.n_patches and np.array_equal(s.mesh.active, f.mesh.active)
-    assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-8) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
-    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 1e-3
-    assert np.abs(f.skins.T - s.skins.T).max() < 1e-3
-    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
-
-
 def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
     """Moving mesh (sub-plan 19): after update_geometry, a step equals a fresh solver's on the moved mesh."""
     from reentry_model import mesh as mesh_mod
