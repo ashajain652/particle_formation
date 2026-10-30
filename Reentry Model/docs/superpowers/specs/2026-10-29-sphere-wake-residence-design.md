@@ -495,6 +495,23 @@ ratio of specific heats of 1.4, where epsilon is about 1/6, whereas equilibrium 
 about 0.06 to 0.1, and the standoff scales roughly with epsilon, so Billig's standoff would be about 2 to 3 times
 too large. Billig's correlation is fitted for Mach 2 to about 25; use beyond that is flagged.
 
+**Flux-matched shock distance (Asha, 2026-10-29, option 2 of three; replaces Billig's shape ahead of the base
+plane).** Built as above, the layer carried 1.27 times the inflowing gas at 30 degrees and 1.73 times at 60 degrees
+(Task 7b, measured once at 80 km): Billig's perfect-gas curvature with the much smaller equilibrium standoff makes
+the layer widen too fast away from the nose. So ahead of the base plane the shock distance r_s(phi) is set by mass
+balance, as in classical thin-shock-layer theory: on every ray, the mass flux through the layer between the body and
+the shock, the integral of rho |u_phi| 2 pi r sin(phi) dr from R to r_s(phi), equals the free-stream flux through
+the shock disc of the same lateral radius, rho_inf U pi (r_s(phi) sin(phi))^2. The layer's profiles depend on the
+local shock angle, which depends on the shape, so r_s(phi) is found by a relaxed fixed-point iteration: start from
+the Billig shape with the chosen standoff, compute the shock angles from the current r_s(phi), rebuild the
+post-shock states, solve each ray for its flux-matched r_s, smooth (keeping the slope continuous), and repeat until
+the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. On the axis the distance stays the chosen
+standoff (Lighthill's solution already conserves mass there). The shock angle may not fall below the Mach angle.
+Beyond the 90-degree ray (behind the base plane, where the field fades out over r0) the envelope is continued with
+a smooth (continuous-slope) curve tending to the Mach angle. `shock_shape` setting: `"flux_matched"` (default) or
+`"billig"` (the shape above, for the sensitivity set). The summary records the converged mismatch and the number of
+iterations.
+
 **State just behind the shock.** At each shock point, the local shock angle sigma (between the shock surface and
 the free-stream direction) follows from the slope of x_s(y): 90 degrees on the axis, falling towards beta far out.
 The jump is the equilibrium Rankine-Hugoniot relation applied to the normal velocity component U sin(sigma), with
@@ -587,6 +604,20 @@ recorded: epsilon, the standoff used and Billig's for comparison, the Mach numbe
 (default 1e-3, assumed), where the shock layer is likely out of chemical equilibrium and thickened by viscosity, so
 equilibrium air overstates dissociation and the thin-layer picture weakens; the transitional-follower flag of §4.3c;
 the dynamic-pressure change above.
+
+**The follower's regime along its path (Asha's question, 2026-10-29).** Kn_f is decided at release, but the gas
+changes along the path. Approaching the shock from inside, the gas does not get denser (the post-shock density is at
+most about the stagnation density, and it falls towards the shoulder); crossing the shock outward it becomes about
+15 to 20 times thinner, so a rarefied follower becomes more rarefied, not continuum. The composed drag law already
+follows the local Knudsen number continuously. What one-way coupling cannot represent is a follower that turns
+continuum inside the layer and forms its own shock, so the summary records the smallest local Kn_f along the path
+while inside the field (weight above 0.5), and flags `follower_continuum_in_layer` if it falls below `kn_continuum`.
+
+**No reflection at the shock.** The shock is a few mean free paths thick, not a wall; a follower crosses it with its
+momentum almost unchanged, because its velocity-relaxation distance is metres to kilometres. What turns it back is
+the drag after crossing: outside, the gas is at rest while the follower moves at nearly the parent's speed, so it
+decelerates strongly and the parent may catch it up (`hit_parent`) or pass it. The pressure jump across the
+smoothed shock gives a brief outward push. The integration represents both; nothing reflects the follower.
 
 ### 4.4 In the plume, and residence time
 
@@ -741,8 +772,9 @@ Shock-layer field and rarefied-follower tests (§4.3d):
   within 10 percent for epsilon from 0.05 to 0.2.
 - Field: at the stagnation point the state equals `EquilibriumAir.stagnation` within 1 percent and w = 0; at the
   body the normal velocity is zero and the pressure is the Newtonian value; at eta = 1 the state is the post-shock
-  state; the mass flux through the layer at phi = 30 and 60 degrees equals the free-stream flux through the shock
-  disc, pi y_s^2 rho_inf U, within 25 percent; beyond the smoothing thickness outside the shock the state is exactly
+  state; with `shock_shape="flux_matched"` the mass flux through the layer at phi = 30, 60 and 89 degrees equals the
+  free-stream flux through the shock disc, pi y_s^2 rho_inf U, within 2 percent, the axis standoff equals the chosen
+  standoff, the shock angle is never below the Mach angle and r_s(phi) has a continuous slope; beyond the smoothing thickness outside the shock the state is exactly
   the ambient (or wake) state; the state is continuous across the base plane and the shock.
 - Pressure gradient: the spline gradient matches a finite difference of the field; on the axis a_p points away from
   the body.
@@ -803,7 +835,11 @@ the windward surface point, shock-band cases flagged and not integrated (§4.3b)
 free-molecular followers start at their surface point at theta and are checked for crossing the parent's bow shock
 along their ballistic trajectory (§4.3c). Then (option 1 of three offered: engineering model, tabulated continuum
 CFD, DSMC): rarefied followers are integrated through an engineering model of the parent's shock-layer flow, which
-replaces the ballistic bow-shock check (§4.3d); CFD and DSMC stay as later validation for a few cases.
+replaces the ballistic bow-shock check (§4.3d); CFD and DSMC stay as later validation for a few cases. Then (option 2 of
+three offered after Task 7b measured a 27 to 73 percent mass-flux excess with Billig's shape): the shock distance
+ahead of the base plane is set by mass balance (flux-matched), Billig's shape kept as the sensitivity case (§4.3d).
+Asha also asked whether a rarefied follower turns continuum near the shock or bounces off it; the answers (it
+becomes more rarefied when crossing outward; a shock does not reflect it) and the smallest-Kn_f record are in §4.3d.
 
 Calls made by the author (not decided by Asha; the final handover lists them again):
 - Union-of-balls definition of "in the plume" (§4.4).
@@ -824,7 +860,8 @@ Calls made by the author (not decided by Asha; the final handover lists them aga
 - Default diameter and altitude lists (§4.5) and the sensitivity ranges (§4.6).
 - Shock-layer surface state (§4.3c): modified Newtonian surface pressure with isentropic equilibrium expansion
   from the stagnation state; the equal-area sphere for the hollow parent; `kn_free_molecular` default 10.
-- Shock-layer field (§4.3d): Billig's shape with the standoff from Lighthill's constant-density solution at the
+- Shock-layer field (§4.3d): the flux-matching iteration (2 percent, smoothing, Mach-angle floor, continuation behind
+  the base plane); Billig's shape with the standoff from Lighthill's constant-density solution at the
   equilibrium density ratio (Billig's own standoff as the sensitivity); Lighthill velocities near the nose (to 40
   degrees, blended over 20 degrees) and linear interpolation across the layer towards the shoulder; pressure and
   temperature linear across the layer; the field frozen at its release free stream; the shock smoothed over 3 mean
