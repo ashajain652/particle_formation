@@ -437,10 +437,11 @@ changes below).
 surface (theta 90 to 180 degrees), inside the parent's shock layer, so Kn_f uses the shock-layer gas there, not the
 free stream. Model (new adapter, using `reentry_model.gas.EquilibriumAir`, Cantera equilibrium air): the stagnation
 state behind the parent's normal shock (`EquilibriumAir.stagnation(rho_inf, T_inf, U)`); the local surface pressure
-by modified Newtonian theory, p(phi) = p_inf + (p_stag - p_inf) cos^2(phi), phi = 180 - theta the angle from the
-stagnation point; the local state by isentropic (equilibrium) expansion from the stagnation entropy to p(phi); the
+p(phi) of §4.3d (the Newtonian-Prandtl-Meyer pressure since 2026-10-30; modified Newtonian before), phi = 180 - theta
+the angle from the stagnation point; the local state by isentropic (equilibrium) expansion from the stagnation
+entropy to p(phi); the
 mean free path from that local density and mean molecular mass (`aero.mean_free_path`). Requires the parent in
-continuum (step 1). Recorded as assumed: Newtonian pressure under-predicts near the shoulder (theta near 90), and
+continuum (step 1). Recorded as assumed: the surface pressure is an engineering method (§4.3d), and
 the hollow-shell parent is treated as a sphere of its equal-area diameter. Kn_f at the exit (or end) uses the local
 gas there (the `WakeAtmosphere` state: wake core or ambient), so a follower inside the hot core is classified more
 rarefied than in ambient air at the same point.
@@ -520,10 +521,39 @@ The jump is the equilibrium Rankine-Hugoniot relation applied to the normal velo
 Cantera equilibrium air by the same fixed-point iteration as `gas.EquilibriumAir.stagnation`; the tangential
 component U cos(sigma) is unchanged. This gives the post-shock density, temperature, pressure and gas velocity.
 
-**State at the body surface.** Pressure by modified Newtonian theory, p_b(phi) = p_inf + (p_stag - p_inf)
-cos^2(phi) (§4.3c); temperature and density by isentropic equilibrium expansion from the stagnation state to p_b;
-gas speed tangent to the surface from the total enthalpy, |w| = (2 (h_0 - h))^(1/2), h_0 the stagnation enthalpy.
+**State at the body surface (amended 2026-10-30; Asha, option 2 of three: the Newtonian-Prandtl-Meyer pressure).**
+Modified Newtonian theory alone puts the shoulder (phi = 90) at p_inf, so the shoulder gas came out about a tenth of
+the free-stream density and every follower released near theta = 90 was rarefied. The pressure is now the
+Newtonian-Prandtl-Meyer method (Lees and Kubota 1957; Wagner 1959; Kaufman 1963): modified Newtonian,
+p_N(phi) = p_inf + (p_stag - p_inf) cos^2(phi), from the stagnation point to a matching point phi_q, and a
+Prandtl-Meyer expansion from phi_q to the shoulder.
+- The stagnation isentrope. Equilibrium air at the stagnation entropy s_0, tabulated in pressure from p_stag down to
+  p_inf: density rho(p), enthalpy h(p), gas speed w(p) = (2 (h_0 - h))^(1/2), the equilibrium sound speed
+  a(p) = (dp/drho at s_0)^(1/2), and M = w/a.
+- Prandtl-Meyer for any gas: d nu = -(M^2 - 1)^(1/2) dp / (rho w^2) on the supersonic part (M > 1). On the sphere
+  the body inclination is delta = 90 - phi, and beyond the matching point the turning sets the pressure:
+  nu(p_b(phi)) = nu(p_q) + (phi - phi_q).
+- The matching point is where the two pressures and their slopes agree: on p_N, 2 (p_stag - p_inf) sin(delta)
+  cos(delta) = rho w^2 / (M^2 - 1)^(1/2). Of its roots on the supersonic part, the one nearest the sonic point.
+- No root (a parent too slow for the method): Newtonian everywhere, flag `npm_no_match`. An expansion that would
+  take p_b below p_inf: p_b = p_inf there, flag `surface_below_p_inf`.
+- Temperature and density from the same isentrope at p_b; gas speed tangent to the surface from the total enthalpy,
+  |w| = (2 (h_0 - h))^(1/2), h_0 the stagnation enthalpy.
+- `surface_pressure` = `"newtonian_prandtl_meyer"` (default) or `"modified_newtonian"` (the previous model, kept as a
+  sensitivity variation). The field records `surface_match_phi_deg` (phi_q) and `shoulder_pressure_ratio`
+  (p_b(90) / p_inf).
+
+Measured by the author's prototype (2026-10-30; 7.4 km/s, US76-like free streams at 60, 80 and 90 km): matching at
+phi_q = 49.0 to 49.5 degrees, M_q = 1.26 to 1.27, p_q = 0.42 to 0.43 p_stag; at the shoulder 0.074 to 0.076 p_stag,
+which is 55 to 76 p_inf, with a density of 1.7 to 2.0 rho_inf and a temperature of 4,550 to 5,380 K (modified
+Newtonian: p_inf, about 0.1 rho_inf, about 2,300 K). Check against perfect-gas theory (author's closed-form
+computation; the published matching values were not reachable on 2026-10-30, so check them against Kaufman 1963
+when the paper is in hand): gamma = 1.4 gives phi_q = 54.6 degrees, M_q = 1.352, p_q = 0.336 p_0 and a shoulder
+pressure of 0.0447 p_0; gamma = 1.15 gives 49.8 degrees, 1.271, 0.416 p_0 and 0.0695 p_0. Equilibrium air here behaves
+like a perfect gas of gamma about 1.13, as dissociating air should. The Newtonian sonic point falls at 40.3 to 40.7
+degrees.
 Inviscid: no boundary layer (named; at 80 km it is roughly a tenth of the layer's thickness, and thicker higher up).
+The method ignores the centrifugal pressure gradient across the layer (named).
 
 **Between body and shock.** A layer coordinate eta = (r - R)/(r_s(phi) - R), 0 at the body and 1 at the shock,
 where r_s(phi) is the shock's distance from the centroid along the ray at phi. Pressure and temperature vary
@@ -546,9 +576,9 @@ temperature. The velocity:
   eta between the surface velocity and the post-shock velocity;
 - between the two, a cubic-smoothstep blend in phi.
 
-Lighthill's solution is the classical one for the nose and is weakest at the shoulder; Newtonian pressure
-under-predicts near the shoulder (theta near 90); most windward releases between 90 and 135 degrees lie there.
-Both are named as assumptions.
+Lighthill's solution is the classical one for the nose and is weakest at the shoulder, where most windward releases
+between 90 and 135 degrees lie; the surface pressure there rests on the Prandtl-Meyer expansion above. Both are named
+as assumptions.
 
 **Edges and smoothing.** The field applies inside the envelope, outside the body and ahead of the base plane
 (x > 0). Across the shock, the state passes from the ambient (or wake) gas to the field over a thickness of
@@ -678,8 +708,8 @@ instead of Taylor), the Feldman hot-axis temperature (2000, 3000, 5000 K) and co
 0.8), the parent frontal area (3.1, 6.2, 12.4 m2), the parent's ballistic-coefficient table scaled by 0.9 and
 1.1, the sphere density (2700, 2813, 2900 kg/m3), and `wake_flow` (`velocity` and `density` alone); and, for a
 rarefied follower (10 mm at 90 km, theta 180 and 120 degrees), `shock_standoff="billig"`, `pressure_gradient` off,
-`follower_wall_T_K` 1000 K and `shock_thickness_mfp` 1 and 10, with the shock-layer outcome reported beside the
-residence. Report
+`follower_wall_T_K` 1000 K and `shock_thickness_mfp` 1 and 10, and `surface_pressure="modified_newtonian"`, with the shock-layer outcome
+reported beside the residence. Report
 each residence time and which parameter moves it most. (Amended 2026-10-29 when Taylor replaced Park as the
 baseline: the original set varied Park's C and n at 80 km only, which the regime criteria now place in the
 laminar regime.)
@@ -773,11 +803,18 @@ Shock-layer field and rarefied-follower tests (§4.3d):
   interior points; the standoff agrees with the approximation Delta/R_s = epsilon / (1 + (8 epsilon/3)^(1/2)) to
   within 10 percent for epsilon from 0.05 to 0.2.
 - Field: at the stagnation point the state equals `EquilibriumAir.stagnation` within 1 percent and w = 0; at the
-  body the normal velocity is zero and the pressure is the Newtonian value; at eta = 1 the state is the post-shock
+  body the normal velocity is zero and the pressure is the surface pressure; at eta = 1 the state is the post-shock
   state; with `shock_shape="flux_matched"` the mass flux through the layer at phi = 30, 60 and 89 degrees equals the
   free-stream flux through the shock disc, pi y_s^2 rho_inf U, within 2 percent, the axis standoff equals the chosen
   standoff, the shock angle is never below the Mach angle and r_s(phi) has a continuous slope; beyond the smoothing thickness outside the shock the state is exactly
   the ambient (or wake) state; the state is continuous across the base plane and the shock.
+- Surface pressure (Newtonian-Prandtl-Meyer, amended 2026-10-30): on a perfect-gas (gamma = 1.4) isentrope with
+  p_inf/p_0 = 0 the matching point is phi_q = 54.58 +/- 0.1 degrees, M_q = 1.352 +/- 0.005 and the shoulder pressure
+  0.0447 p_0 within 2 percent; in equilibrium air at 80 km phi_q lies between 47 and 52 degrees and the shoulder
+  pressure between 50 and 90 p_inf; p_b equals p_N up to phi_q, decreases monotonically in phi, and its slope is
+  continuous at phi_q (relative jump under 2 percent); `"modified_newtonian"` reproduces the previous surface state
+  exactly; the follower's Knudsen number at theta = 90 at 80 km is more than 10 times smaller than with
+  `"modified_newtonian"`.
 - Pressure gradient: the spline gradient matches a finite difference of the field; on the axis a_p points away from
   the body.
 - Follower: with the field and the pressure gradient switched off, the rarefied-follower simulator gives the same
@@ -860,8 +897,8 @@ Calls made by the author (not decided by Asha; the final handover lists them aga
   sphere parent settling at terminal speed cannot make Feldman's x/(f U) blow up.
 - Defaults `T_axis_hot` = 3000 K and f = 0.8 for the Feldman law (§4.2).
 - Default diameter and altitude lists (§4.5) and the sensitivity ranges (§4.6).
-- Shock-layer surface state (§4.3c): modified Newtonian surface pressure with isentropic equilibrium expansion
-  from the stagnation state; the equal-area sphere for the hollow parent; `kn_free_molecular` default 10.
+- Shock-layer surface state (§4.3c, §4.3d): the Newtonian-Prandtl-Meyer surface pressure in equilibrium air
+  (Asha, 2026-10-30, replacing modified Newtonian) with isentropic equilibrium expansion from the stagnation state; the equal-area sphere for the hollow parent; `kn_free_molecular` default 10.
 - Shock-layer field (§4.3d): the flux-matching iteration (2 percent, smoothing, Mach-angle floor, continuation behind
   the base plane); Billig's shape with the standoff from Lighthill's constant-density solution at the
   equilibrium density ratio (Billig's own standoff as the sensitivity); Lighthill velocities near the nose (to 40

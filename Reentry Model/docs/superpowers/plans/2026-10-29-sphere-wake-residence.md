@@ -41,7 +41,8 @@ cites its sections as §n).
   flagged. Free-molecular: AFFIx `not_applicable`. Rarefied (transitional and free-molecular) followers start at the
   windward surface point at theta and are integrated through the shock-layer field (§4.3d) with the composed drag
   law, the pressure-gradient force and the parent as an obstacle (`hit_parent`).
-- Shock-layer field (§4.3d) defaults: `shock_standoff` "lighthill", `phi_nose_deg` 40, `phi_blend_deg` 20,
+- Shock-layer field (§4.3d) defaults: `surface_pressure` "newtonian_prandtl_meyer" (amended 2026-10-30; "modified_newtonian"
+  the alternative), `shock_standoff` "lighthill", `phi_nose_deg` 40, `phi_blend_deg` 20,
   `shock_thickness_mfp` 3, `pressure_gradient` on, `follower_wall_T_K` 300, `kn_shock_layer_flag` 1e-3, dynamic-pressure
   change flag 0.10; the field is frozen at the release free stream and faded over r0 behind the base plane.
 - `overlap.py`, `laws.py`, `track.py`, `wake_gas.py` and `affix.py` must not import `trajectory`, `droplet_reentry`,
@@ -1284,7 +1285,7 @@ git commit -m "parent_follower_separation_interactions: scenarios -- sphere in t
   - `sensitivity.main(argv=None)` — the §4.6 set at theta = 90 (far wake) (spheres 10, 50, 200 mm at 80 and 60 km;
     each variation one at a time against the baseline), plus the rarefied set of §4.6 (10 mm at 90 km, theta 180 and
     120: `shock_standoff="billig"`, `pressure_gradient=False`, `follower_wall_T_K=1000`, `shock_thickness_mfp` 1 and
-    10; if 10 mm is continuum there, use the largest default diameter that is rarefied and say so),
+    10, `surface_pressure="modified_newtonian"` (added by Task 7c); if 10 mm is continuum there, use the largest default diameter that is rarefied and say so),
     `<out>/sensitivity.csv` with columns case, parameter, value, bound, residence_time, change_vs_baseline,
     shock_layer_exit, t_shock_layer_exit.
   - `tables.main(argv=None)` — writes:
@@ -1404,6 +1405,149 @@ git commit -m "parent_follower_separation_interactions: plots of plume size, tra
 
 ---
 
+### Task 7c: Newtonian-Prandtl-Meyer surface pressure (amendment 2026-10-30, §4.3d "State at the body surface")
+
+Asha chose option 2 on 2026-10-30: the surface pressure becomes the Newtonian-Prandtl-Meyer method, because modified
+Newtonian theory puts the shoulder at p_inf and makes every theta = 90 release rarefied. Built after Tasks 8-10; it
+changes `shock_layer.py` and adds keys downstream.
+
+**Files:**
+- Modify: `reentry_model/parent_follower_separation_interactions/shock_layer.py`
+- Modify: `reentry_model/parent_follower_separation_interactions/scenarios.py` (summary keys, step 2 of the sphere case)
+- Modify: `reentry_model/parent_follower_separation_interactions/analysis/sweep.py` (summary columns)
+- Modify: `reentry_model/parent_follower_separation_interactions/analysis/sensitivity.py` (rarefied variation)
+- Test: `reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py`, and any existing test whose
+  premise was the thin shoulder gas (`test_scenarios.py::test_far_wake_case_runs_and_writes` says so in a comment:
+  update the comment's numbers to what the new model gives, and keep the assertion's intent)
+
+**Interfaces:**
+- Consumes: `ShockLayerField.build` and its `_surface_state`, `_s0`, `_h0`, `_p_stag`, `_equilibrate`, `_air`
+  (Task 7b); `reentry_model.gas.AIR`.
+- Produces:
+  - `SURFACE_PRESSURE_MODELS = ("newtonian_prandtl_meyer", "modified_newtonian")`;
+    `ShockLayerSettings.surface_pressure: str = "newtonian_prandtl_meyer"`, validated in `__post_init__` like
+    `shock_shape`. `non_default()` then puts it in run names with no further change.
+  - Pure function (no Cantera) `newtonian_prandtl_meyer(p_stag, p_inf, p, rho, w, a, phi) -> SurfacePressure`.
+    `p, rho, w, a` are arrays along the stagnation isentrope, `p` strictly decreasing from p_stag to p_inf; `phi` an
+    array of angles from the stagnation point [rad], 0 to pi/2. `@dataclass(frozen=True) SurfacePressure(p_b:
+    ndarray, phi_q: float, mach_q: float, no_match: bool, below_p_inf: bool)`; `phi_q` and `mach_q` are nan when
+    `no_match`.
+  - `ShockLayerField` attributes `surface_match_phi_deg` (nan under "modified_newtonian" or no match),
+    `surface_match_mach`, `shoulder_pressure_ratio` (surface pressure at phi = 90 over p_inf, both models), and
+    `flags["npm_no_match"]`, `flags["surface_below_p_inf"]` (False under "modified_newtonian").
+  - Summary keys for every sphere case that builds a field (step 2 of `sphere_in_spacecraft_plume`):
+    `surface_match_phi_deg`, `shoulder_pressure_ratio`, `surface_npm_no_match`, `surface_below_p_inf`. The two
+    numeric ones join `sweep.SUMMARY_COLUMNS` after `flux_mismatch_above_tol`.
+
+- [ ] **Step 1: Write the failing tests** in `test_shock_layer.py`:
+
+```python
+def _perfect_gas_isentrope(gamma, p_inf_over_p0=1e-6, n=4000):
+    p = np.geomspace(1.0, p_inf_over_p0, n)                       # p0 = rho0 = 1
+    rho = p ** (1.0 / gamma)
+    h = gamma / (gamma - 1.0) * p / rho
+    w = np.sqrt(np.maximum(2.0 * (h[0] - h), 0.0))
+    a = np.sqrt(gamma * p / rho)
+    return p, rho, w, a
+
+@pytest.mark.parametrize("gamma, phi_q, mach_q, shoulder", [(1.4, 54.58, 1.352, 0.0447), (1.15, 49.82, 1.271, 0.0695)])
+def test_npm_matches_perfect_gas_theory(gamma, phi_q, mach_q, shoulder):
+    p, rho, w, a = _perfect_gas_isentrope(gamma)
+    phi = np.radians(np.linspace(0.0, 90.0, 901))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    assert not r.no_match and not r.below_p_inf
+    assert math.degrees(r.phi_q) == pytest.approx(phi_q, abs=0.1)
+    assert r.mach_q == pytest.approx(mach_q, abs=0.005)
+    assert r.p_b[-1] == pytest.approx(shoulder, rel=0.02)
+
+def test_npm_is_newtonian_to_the_match_then_falls_with_a_continuous_slope():
+    p, rho, w, a = _perfect_gas_isentrope(1.4)
+    phi = np.radians(np.linspace(0.0, 90.0, 901))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    newton = p[-1] + (1.0 - p[-1]) * np.cos(phi) ** 2
+    before = phi <= r.phi_q
+    assert np.allclose(r.p_b[before], newton[before], rtol=1e-9)
+    assert np.all(np.diff(r.p_b) <= 0.0)
+    i = int(np.searchsorted(phi, r.phi_q))
+    left = (r.p_b[i - 1] - r.p_b[i - 3]) / (phi[i - 1] - phi[i - 3])
+    right = (r.p_b[i + 3] - r.p_b[i + 1]) / (phi[i + 3] - phi[i + 1])
+    assert right == pytest.approx(left, rel=0.02)
+
+def test_npm_without_a_supersonic_part_is_newtonian_and_flagged():
+    p, rho, w, a = _perfect_gas_isentrope(1.4, p_inf_over_p0=0.6)   # never sonic (p*/p0 = 0.528)
+    phi = np.radians(np.linspace(0.0, 90.0, 91))
+    r = newtonian_prandtl_meyer(1.0, p[-1], p, rho, w, a, phi)
+    assert r.no_match and math.isnan(r.phi_q)
+    assert np.allclose(r.p_b, p[-1] + (1.0 - p[-1]) * np.cos(phi) ** 2, rtol=1e-12)
+
+def test_field_shoulder_pressure_in_equilibrium_air(field):
+    assert 47.0 <= field.surface_match_phi_deg <= 52.0
+    assert 50.0 <= field.shoulder_pressure_ratio <= 90.0
+    assert field.surface_state(90.0).p == pytest.approx(field.shoulder_pressure_ratio * FS.p, rel=1e-6)
+    assert not field.flags["npm_no_match"] and not field.flags["surface_below_p_inf"]
+
+def test_modified_newtonian_keeps_the_previous_surface_state_and_thins_the_shoulder(field, air):
+    old = ShockLayerField.build(FS, R, R0, ShockLayerSettings(surface_pressure="modified_newtonian"), air=air)
+    p_stag = old.state(R, 0.0).p
+    for theta in (180.0, 150.0, 120.0, 90.0):
+        c = math.cos(math.radians(180.0 - theta))
+        assert old.surface_state(theta).p == pytest.approx(FS.p + (p_stag - FS.p) * c * c, rel=1e-6)
+    assert math.isnan(old.surface_match_phi_deg) and old.shoulder_pressure_ratio == pytest.approx(1.0, rel=1e-6)
+    kn = lambda f: aero.mean_free_path(f.surface_state(90.0).rho, f.surface_state(90.0).m_bar)
+    assert kn(old) / kn(field) > 10.0
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py -q -k "npm or shoulder or modified_newtonian"`
+Expected: FAIL (`newtonian_prandtl_meyer` not defined).
+
+- [ ] **Step 3: Implement `newtonian_prandtl_meyer` and wire it into `ShockLayerField`**
+
+The algorithm (spec §4.3d "State at the body surface"):
+- Newtonian: p_N(phi) = p_inf + (p_stag - p_inf) cos^2(phi); its slope in body inclination delta = 90 - phi is
+  G_N(p) = 2 (p_stag - p_inf) sin(delta) cos(delta) = 2 ((p - p_inf)(p_stag - p))^(1/2).
+- Prandtl-Meyer on the supersonic nodes (M = w/a > 1): G_PM(p) = rho w^2 / (M^2 - 1)^(1/2), and
+  nu(p) = integral from the sonic node of (M^2 - 1)^(1/2) / (rho w^2) (-dp), trapezoidal.
+- Matching: F(p) = G_N(p) - G_PM(p) on the supersonic nodes, which is negative at the sonic node (G_PM infinite).
+  Walking down in p from the sonic node, the first sign change (negative to positive) brackets p_q; refine by
+  `brentq` on linear interpolants of rho, w and a in log p. phi_q from p_N(phi_q) = p_q; mach_q = M(p_q).
+- p_b(phi) = p_N(phi) for phi <= phi_q; beyond, p_b solves nu(p_b) = nu(p_q) + (phi - phi_q) by interpolation of
+  the monotone nu(p) table; where that target exceeds nu(p_inf), p_b = p_inf and `below_p_inf` is True.
+- No supersonic node or no sign change: `no_match`, p_b = p_N everywhere.
+
+In `ShockLayerField.build`, before `_surface_state` is used: under "newtonian_prandtl_meyer", tabulate the
+stagnation isentrope at 400 pressures log-spaced from p_stag to p_inf (`g.SPX = s0, p, AIR`, equilibrated when
+`_equilibrate`), rho and h from Cantera, w from the total enthalpy, a^2 = dp/drho by `np.gradient(p, rho)`; call
+`newtonian_prandtl_meyer` on `self._phi`; `_surface_state(ph)` takes p_b from that result (by index, since it is
+called on `self._phi`) instead of the Newtonian formula. Everything after (temperature and density from the
+isentrope at p_b, the speed from the total enthalpy, the flux matching, the splines) is unchanged.
+Set the attributes and flags listed under Interfaces. Update the module docstring's "At the surface" bullet.
+
+- [ ] **Step 4: Downstream keys and the sensitivity variation**
+
+In `scenarios.sphere_in_spacecraft_plume` step 2, add the four summary keys from the field. In `sweep.py` add the two
+numeric columns. In `sensitivity.py` add `Variation("surface_pressure", "modified_newtonian",
+_shock(surface_pressure="modified_newtonian"))` to the rarefied set. In `test_shock_layer.py` keep every existing
+test passing under the new default; in particular the flux-matching tests (2 percent) must hold. If one fails, report
+the measured value rather than loosening its tolerance.
+
+- [ ] **Step 5: Run the whole package's tests**
+
+Run: `"$PY" -m pytest reentry_model/parent_follower_separation_interactions -q`
+Expected: all pass. Report the new 80 km values of `surface_match_phi_deg`, `shoulder_pressure_ratio`,
+`flux_mismatch`, `flux_iterations` and `build_time_s`, and Kn_f at theta = 90 for a 10 mm follower at 60 km under
+both models.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add reentry_model/parent_follower_separation_interactions/shock_layer.py reentry_model/parent_follower_separation_interactions/scenarios.py reentry_model/parent_follower_separation_interactions/analysis/sweep.py reentry_model/parent_follower_separation_interactions/analysis/sensitivity.py reentry_model/parent_follower_separation_interactions/tests/test_shock_layer.py reentry_model/parent_follower_separation_interactions/tests/test_scenarios.py
+git commit -m "parent_follower_separation_interactions: the parent's surface pressure is the Newtonian-Prandtl-Meyer method in equilibrium air (modified Newtonian to the matching point, a Prandtl-Meyer expansion to the shoulder), so the shoulder gas is about 60-75 times the free-stream pressure instead of equal to it; modified Newtonian kept as a sensitivity variation"
+```
+
+---
+
 ### Task 11: Documentation and final checks
 
 **Files:**
@@ -1426,7 +1570,7 @@ git commit -m "parent_follower_separation_interactions: plots of plume size, tra
   classifier, the windward-only release angles, the far-wake start two parent diameters behind (Asha's estimate from
   Register et al.) and the extrapolation below r = 1/16; the follower-regime gate (Kn from the shock-layer surface
   gas); the shock-layer field of §4.3d item by item (Billig shape, Lighthill standoff and nose velocities, equilibrium
-  oblique jump, Newtonian surface state, linear interpolation across the layer, frozen free stream, smoothing, the
+  oblique jump, Newtonian-Prandtl-Meyer surface state (Task 7c), linear interpolation across the layer, frozen free stream, smoothing, the
   composed drag law with the 300 K wall, the pressure-gradient force, the parent as an obstacle) with the measured
   epsilon, standoffs and field build time from Task 7b; the non-goals (no melting of the sphere, no integrated
   shock forces on continuum followers, no plume drift, no shock-layer path for droplets); the measured cost of a
