@@ -20,9 +20,9 @@ plots it wrote or skipped.
                              altitude against the follower's lag behind the parent (right), for one wake_flow
                              (`--trajectory-wake-flow`, default off) and one bound.
   residence_map.png          over diameter and altitude at one release angle (`--theta`, or the nearest in the sweep),
-                             one panel per wake_flow and bound. A continuum follower (far-wake or escape release) shows
-                             the residence time; a rarefied follower (surface release) shows the first interval inside
-                             the plume. The release kind is hatched and each cell's special outcome is a letter.
+                             one panel per wake_flow and bound. A far-wake release (it starts inside the plume) shows the
+                             residence time; an escape or surface release (it starts outside) shows the total time spent
+                             in the plume. The release kind is hatched and each cell's special outcome is a letter.
   affix_zones.png            the AFFIx zone over diameter and release angle with theta_bif drawn; one panel per altitude
                              when the validity flags differ between altitudes, otherwise one panel.
   shock_layer_paths_<h>km.png  for each altitude with rarefied followers: their paths in the parent's frame (x forward, y
@@ -46,6 +46,7 @@ from matplotlib.patches import Circle, Patch, Rectangle
 
 from reentry_model import DRAMA_DIR, earth
 from reentry_model.parent_follower_separation_interactions import OUTPUT
+from reentry_model.parent_follower_separation_interactions.adapters import PARENT_FRONTAL_AREA
 from reentry_model.parent_follower_separation_interactions.wake_gas import WAKE_FLOW_MODES
 
 sys.path.insert(0, os.path.join(DRAMA_DIR, "analysis"))           # plot_style lives with the sweep plots
@@ -62,7 +63,7 @@ except ImportError:                                    # DRAMA Sphere Experiment
         return None
 
 INTEGRATED = ("far_wake", "escape", "surface")            # release kinds whose follower was integrated
-CONTINUUM_KINDS = ("far_wake", "escape")                  # shown by their residence time; a surface release by first_interval
+RESIDENCE_KINDS = ("far_wake",)                           # start inside the plume: shown by residence_time (the others by total_inside)
 KIND_STYLE = {"far_wake": "-", "escape": "-.", "surface": ":"}
 KIND_HATCH = {"far_wake": "", "escape": "///", "surface": "xxx"}
 ZONE_COLOR = {"far_wake": "#256abf", "shock_band": "#e69f00", "escape": "#2a9d6f"}
@@ -78,9 +79,9 @@ CELL_FLAG_TEXT = {"c": "censored (still inside when the integration ended)", "r"
 AFFIX_FLAG_CODES = {"flag_not_hypersonic": "H", "flag_r_below_fit": "F", "flag_r_above_rstar": "R",
                     "flag_rarefied_follower": "f", "flag_rarefied_parent": "P", "flag_unequal_density": "U"}
 VALUE_FLOOR_S = 1e-3          # s, the lowest value of the residence map's log colour scale (a zero is drawn at this floor)
-LATE_ENTRY_S = 1e-3           # s, an entry into the plume later than this after release is marked with a dagger
 SHOCK_VIEW_RADII = (-3.0, 2.2, 3.0)       # shock-layer panel: x from -3 R to 2.2 R, y from 0 to 3 R
 PATH_WINDOW_S = 1.0           # s, a shock-layer path is drawn over this time after release, or to its exit if later
+MARKERS = ("o", "s", "^", "D", "v", "P")      # one per release angle, to tell the lines of one diameter and kind apart
 MAX_POINTS = 300              # points of a history drawn in the trajectory plot
 
 
@@ -112,7 +113,7 @@ def load_summary(out):
     rows = read_rows(path)
     for r in rows:
         for k in ("diameter_mm", "altitude_km", "theta_deg", "residence_time", "first_interval", "t_first_entry",
-                  "t_shock_layer_exit", "x_exit_parent_frame", "y_exit_parent_frame"):
+                  "total_inside", "t_shock_layer_exit", "x_exit_parent_frame", "y_exit_parent_frame"):
             if k in r:
                 r[k] = num(r[k])
         r["censored"] = is_true(r.get("censored"))
@@ -120,12 +121,15 @@ def load_summary(out):
 
 
 def load_history(out, name):
-    """{column: array} of runs/<name>.csv (the numeric columns), or None when the file is missing."""
+    """{column: array} of runs/<name>.csv (the numeric columns), or None (with a printed note) when the file is missing
+    or empty."""
     path = os.path.join(out, "runs", name + ".csv")
     if not os.path.exists(path):
+        print(f"note: runs/{name}.csv not found; that case is left out of the plot")
         return None
     rows = read_rows(path)
     if not rows:
+        print(f"note: runs/{name}.csv has no rows; that case is left out of the plot")
         return None
     return {k: np.array([num(r[k]) for r in rows]) for k in rows[0] if k != "regime"}
 
@@ -162,11 +166,10 @@ def groups_by_kind(rows):
         if r["release_kind"] == "far_wake":
             key = (r["diameter_mm"], r["bound"], r["wake_flow"])
             if key in seen:
-                groups.setdefault((r["diameter_mm"], "far_wake"), [])
                 continue
             seen.add(key)
         groups.setdefault((r["diameter_mm"], r["release_kind"]), []).append(r)
-    return {k: v for k, v in groups.items() if v}
+    return groups
 
 
 def thetas_text(rows):
@@ -245,7 +248,7 @@ def plot_plume_size(out):
         ax.grid(alpha=0.3, which="both", lw=0.4)
     handles, labels = ax_s.get_legend_handles_labels()
     handles += [Line2D([], [], color=INK, ls="-"), Line2D([], [], color=INK, ls="--"),
-                Line2D([], [], color=INK, marker="v", ls="", mec=INK, label="x"),
+                Line2D([], [], color=INK, marker="v", ls="", mec=INK),
                 Line2D([], [], color=INK, marker="D", ls="", mec=INK)]
     labels += ["low bound", "high bound", "Taylor fit limit, 1200 (C_D A)^(1/2)", "Park limit, 30 km (dotted line, left)"]
     ax_s.legend(handles, labels, fontsize=8, loc="upper left", frameon=False)
@@ -263,6 +266,7 @@ def plot_margin(out, rows, h, bound):
         return None
     flows = [f for f in WAKE_FLOW_MODES if any(r["wake_flow"] == f for r in cases)]
     colors = diameter_colors(r["diameter_mm"] for r in cases)
+    thetas = sorted({r["theta_deg"] for r in cases})
     fig, axes = new_axes(1, len(flows), figsize=(6.2 * len(flows) + 2.6, 5.0), squeeze=False)
     used = {}
     for ax, flow in zip(axes[0], flows):
@@ -275,7 +279,9 @@ def plot_margin(out, rows, h, bound):
                     continue
                 t = hist["t_since_release"]
                 ok = t > 0
-                ax.plot(t[ok], hist["distance_m"][ok], KIND_STYLE[kind], color=colors[d], lw=1.6)
+                mark = MARKERS[thetas.index(r["theta_deg"]) % len(MARKERS)]      # one marker per release angle
+                ax.plot(t[ok], hist["distance_m"][ok], KIND_STYLE[kind], color=colors[d], lw=1.6, marker=mark,
+                        ms=4, markevery=max(int(ok.sum()) // 12, 1))
                 ax.plot(t[ok], np.where(hist["r_b"][ok] > 0, hist["r_b"][ok], np.nan), KIND_STYLE[kind],
                         color=colors[d], lw=0.7, alpha=0.8)
         ax.set_xscale("log"); ax.set_yscale("log")
@@ -289,6 +295,9 @@ def plot_margin(out, rows, h, bound):
         if ks:
             handles.append(Line2D([], [], color=INK, ls=KIND_STYLE[kind]))
             labels.append(f"{kind} (theta {thetas_text([r for _, rs in ks for r in rs])})")
+    for i, th in enumerate(thetas):
+        handles.append(Line2D([], [], color=INK, marker=MARKERS[i % len(MARKERS)], ms=4, ls=""))
+        labels.append(f"marker: theta {th:g} degrees")
     axes[0][-1].legend(handles, labels, fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
     fig.suptitle(f"Distance to the parent's track against plume radius, {h:g} km release, {bound} bound "
                  f"(a far-wake run is shared by all its release angles)", color=INK)
@@ -358,23 +367,23 @@ def plot_trajectories(out, rows, h, bound, wake_flow):
 # --------------------------------------------------------------------------------------------- residence map
 
 def map_cell(r):
-    """The residence map's cell of a summary row: {"value": seconds or NaN (not integrated), "kind", "flags": [letters],
-    "late": entered the plume after release}. A continuum follower's value is its residence time, a rarefied
-    (surface) follower's the first interval inside the plume (0 when it never entered)."""
+    """The residence map's cell of a summary row: {"value": seconds or NaN (not integrated), "kind", "flags": [letters]}.
+    A far-wake release starts inside the plume and shows its residence time. An escape or surface release starts outside
+    it, so its residence time is 0 and its first interval can begin long after release; it shows the total time spent in
+    the plume instead (0 when it never entered)."""
     kind = r.get("release_kind") or ""
     flags = []
     if r.get("censored"):
         flags.append(CELL_FLAGS["censored"])
     if r.get("reason") in CELL_FLAGS:
         flags.append(CELL_FLAGS[r["reason"]])
-    if kind in CONTINUUM_KINDS:
+    if kind in RESIDENCE_KINDS:
         value = r["residence_time"]
-    elif kind == "surface":
-        value = 0.0 if math.isnan(r["first_interval"]) else r["first_interval"]
+    elif kind in INTEGRATED:
+        value = 0.0 if math.isnan(r["total_inside"]) else r["total_inside"]
     else:
         value = math.nan
-    late = kind in INTEGRATED and r["t_first_entry"] > LATE_ENTRY_S
-    return {"value": value, "kind": kind, "flags": sorted(set(flags)), "late": late}
+    return {"value": value, "kind": kind, "flags": sorted(set(flags))}
 
 
 def nearest_theta(rows, theta):
@@ -412,7 +421,7 @@ def plot_residence_map(out, rows, theta):
                     face = "#d9d8d2" if nan else SEQ_BLUE(norm(max(c["value"], VALUE_FLOOR_S)))
                     ax.add_patch(Rectangle((xi - 0.5, yi - 0.5), 1, 1, fc=face, ec="white", lw=1.0,
                                            hatch=KIND_HATCH.get(c["kind"], "")))
-                    text = "" if nan else (f"{c['value']:.2g}" + ("†" if c["late"] else ""))
+                    text = "" if nan else f"{c['value']:.2g}"
                     dark = (not nan) and norm(max(c["value"], VALUE_FLOOR_S)) > 0.55
                     ax.text(xi, yi, text, ha="center", va="center", fontsize=8, color="white" if dark else INK,
                             bbox=None if nan else dict(boxstyle="round,pad=0.1", fc=face, ec="none", alpha=0.75))
@@ -428,19 +437,18 @@ def plot_residence_map(out, rows, theta):
             if j == 0:
                 ax.set_ylabel("release altitude [km]")
     cbar = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=SEQ_BLUE), ax=axes.ravel().tolist(), shrink=0.7, pad=0.02)
-    cbar.set_label("time inside the plume [s], log scale\n(a zero is drawn at the floor)", fontsize=9)
+    cbar.set_label("time in the plume [s], log scale\n(a zero is drawn at the floor)", fontsize=9)
     kinds_present = [k for k in INTEGRATED if any(c["kind"] == k for c in cells.values())]
     handles = [Patch(fc="#e9e8e2", ec=MUTED, hatch=KIND_HATCH[k] or None, label=lbl) for k, lbl in (
-        ("far_wake", "far_wake release: residence time"), ("escape", "escape release: residence time"),
-        ("surface", "surface release (rarefied follower): first interval inside the plume")) if k in kinds_present]
+        ("far_wake", "far_wake release: residence time (time to the first exit)"),
+        ("escape", "escape release: total time inside the plume"),
+        ("surface", "surface release (rarefied follower): total time inside the plume")) if k in kinds_present]
     handles.append(Patch(fc="#d9d8d2", ec=MUTED, label="not integrated"))
     present = sorted({f for c in cells.values() for f in c["flags"]})
     handles += [Patch(fc="none", ec="none", label=f"{f}: {CELL_FLAG_TEXT[f]}") for f in present]
-    if any(c["late"] for c in cells.values()):
-        handles.append(Patch(fc="none", ec="none", label="†: the follower first entered the plume after release"))
     fig.legend(handles=handles, loc="lower center", ncol=2, fontsize=8, frameon=False, bbox_to_anchor=(0.45, -0.02 - 0.03 * len(handles)))
     fig.suptitle(f"Time spent in the parent's plume, release angle {use:g} degrees\n"
-                 f"(residence time for continuum followers, first interval for rarefied ones)", color=INK, fontsize=11, y=1.06)
+                 f"(far-wake releases: residence time; escape and surface releases: total time inside)", color=INK, fontsize=11, y=1.06)
     return save(fig, out, "residence_map.png")
 
 
@@ -471,6 +479,9 @@ def plot_affix_zones(out):
         print("affix_zones.png skipped: affix_regimes.csv not found (run tables first)")
         return None
     rows = read_rows(path)
+    if not rows:
+        print("affix_zones.png skipped: affix_regimes.csv has a header and no rows")
+        return None
     flags = affix_flag_names(rows)
     varying = [k for k in flags if len({r[k] for r in rows}) > 1]
     panels = affix_panels(rows)
@@ -542,9 +553,10 @@ def rebuild_shock_curve(out, name, h_km):
     """(R [m], shock shape or None, note): the body radius from the case's frontal area and, rebuilt with
     `ShockLayerField.build` from the parent's free stream at release and the case's own shock-layer settings, the
     field's shock curve x_s(y). The shape is None, with the reason in the note, when the rebuild fails."""
-    cfg = load_case_json(out, name)["config"]["settings"]
-    R = 0.5 * math.sqrt(4.0 * cfg["frontal_area"] / math.pi)
+    R = 0.5 * math.sqrt(4.0 * PARENT_FRONTAL_AREA / math.pi)      # the default parent, until the case's own is read
     try:
+        cfg = load_case_json(out, name)["config"]["settings"]
+        R = 0.5 * math.sqrt(4.0 * cfg["frontal_area"] / math.pi)
         from reentry_model.parent_follower_separation_interactions import scenarios
         from reentry_model.parent_follower_separation_interactions.analysis.sweep import get_twin
         from reentry_model.parent_follower_separation_interactions.shock_layer import (
@@ -602,6 +614,7 @@ def plot_shock_layer_paths(out, rows, h, bound, wake_flow):
     ax_near.set_aspect("equal", adjustable="box")
     ax_near.set_title("near the body", color=SECOND, fontsize=10)
     ax_far.set_ylim(bottom=0.0)
+    ax_far.set_aspect("equal", adjustable="box")
     ax_far.set_title("over the first second after release (or to the shock-layer exit)", color=SECOND, fontsize=10)
     handles = [Line2D([], [], color=colors[d], lw=2) for d in sorted(colors)]
     labels = [f"{d:g} mm" for d in sorted(colors)]
@@ -637,15 +650,28 @@ def main(argv=None):
         print(f"no summary.csv under {out}: run sweep first")
         return 1
     print(f"{len(rows)} runs found in {os.path.join(out, 'summary.csv')}")
-    plot_plume_size(out)
+    failures = []
+
+    def run(label, fn, *a):
+        """One plot; an exception is reported and the other plots are still written."""
+        try:
+            fn(*a)
+        except Exception as exc:
+            failures.append(label)
+            print(f"FAILED {label}: {type(exc).__name__}: {exc}")
+
+    run("plume_size.png", plot_plume_size, out)
     altitudes = sorted({r["altitude_km"] for r in rows}, reverse=True)
     bound = pick(sorted({r["bound"] for r in rows}), args.bound)
     for h in altitudes:
-        plot_margin(out, rows, h, bound)
-        plot_trajectories(out, rows, h, bound, args.trajectory_wake_flow)
-        plot_shock_layer_paths(out, rows, h, bound, args.trajectory_wake_flow)
-    plot_residence_map(out, rows, args.theta)
-    plot_affix_zones(out)
+        run(f"margin_{h:g}km.png", plot_margin, out, rows, h, bound)
+        run(f"trajectories_{h:g}km.png", plot_trajectories, out, rows, h, bound, args.trajectory_wake_flow)
+        run(f"shock_layer_paths_{h:g}km.png", plot_shock_layer_paths, out, rows, h, bound, args.trajectory_wake_flow)
+    run("residence_map.png", plot_residence_map, out, rows, args.theta)
+    run("affix_zones.png", plot_affix_zones, out)
+    if failures:
+        print(f"{len(failures)} plot(s) failed: {', '.join(failures)}")
+        return 1
     return 0
 
 

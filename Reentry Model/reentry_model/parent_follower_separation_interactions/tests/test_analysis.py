@@ -1,6 +1,6 @@
 """Sweep, sensitivity and tables (Task 9, spec 4.5, 4.6 and 5): the resumable sweep and its summary file, the
 sensitivity set, and the supporting tables."""
-import concurrent.futures, csv, filecmp, glob, json, os
+import concurrent.futures, csv, filecmp, glob, json, math, os
 import pytest
 from reentry_model.parent_follower_separation_interactions import scenarios
 from reentry_model.parent_follower_separation_interactions.analysis import plots, sensitivity, sweep, tables
@@ -384,7 +384,7 @@ def test_plots_are_written_from_a_short_sweep(tmp_path, capsys):
     capsys.readouterr()
     plots.main(["--out", str(tmp_path)])
     out = capsys.readouterr().out
-    assert "2 runs found" in out
+    assert "2 runs found" in out and "shock curve not drawn" not in out and "FAILED" not in out
     # ARGS: 10 mm at 60 km is a rarefied (surface) follower at 90 degrees and a continuum escape release at 180, with no
     # far-wake case, and no case at the map's default 120 degrees (the nearest, 90, is used and said so)
     for name in ("plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png",
@@ -395,27 +395,31 @@ def test_plots_are_written_from_a_short_sweep(tmp_path, capsys):
 
 def _row(**kw):
     base = {"release_kind": "far_wake", "residence_time": 2.0, "first_interval": 2.0, "t_first_entry": 0.0,
-            "censored": False, "reason": "ok", "diameter_mm": 10.0, "altitude_km": 60.0, "theta_deg": 120.0,
-            "bound": "low", "wake_flow": "off"}
+            "total_inside": 2.0, "censored": False, "reason": "ok", "diameter_mm": 10.0, "altitude_km": 60.0,
+            "theta_deg": 120.0, "bound": "low", "wake_flow": "off"}
     base.update(kw)
     return base
 
 
-def test_map_cell_shows_residence_for_continuum_and_first_interval_for_surface():
+def test_map_cell_shows_residence_for_far_wake_and_total_inside_for_releases_that_start_outside():
+    nan = float("nan")
     assert plots.map_cell(_row())["value"] == 2.0
-    assert plots.map_cell(_row(release_kind="escape", residence_time=0.0, first_interval=5.0,
-                               t_first_entry=0.4, reason="starts_outside")) == {
-        "value": 0.0, "kind": "escape", "flags": [], "late": True}
-    surf = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=1.1, t_first_entry=17.0))
-    assert surf["value"] == 1.1 and surf["kind"] == "surface" and surf["late"]
-    never = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=float("nan"),
-                                t_first_entry=float("nan")))
-    assert never["value"] == 0.0 and not never["late"]
+    # an escape or surface release starts outside the plume: residence_time is 0 and the first interval may begin late,
+    # so the total time inside is shown
+    escape = plots.map_cell(_row(release_kind="escape", residence_time=0.0, first_interval=5.0, t_first_entry=0.4,
+                                 total_inside=6.5, reason="starts_outside"))
+    assert escape == {"value": 6.5, "kind": "escape", "flags": []}
+    surf = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=1.1, t_first_entry=17.0,
+                               total_inside=3.0))
+    assert surf["value"] == 3.0 and surf["kind"] == "surface"
+    never = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=nan, t_first_entry=nan,
+                                total_inside=nan))
+    assert never["value"] == 0.0
     assert plots.map_cell(_row(reason="reached_parent", censored=True))["flags"] == ["c", "r"]
     assert plots.map_cell(_row(reason="hit_parent", release_kind="surface"))["flags"] == ["h"]
-    assert plots.map_cell(_row(release_kind="", reason="rarefied_no_law", residence_time=float("nan")))["flags"] == ["n"]
-    assert plots.map_cell(_row(release_kind="", reason="shock_band", residence_time=float("nan")))["flags"] == ["b"]
-    assert not (plots.map_cell(_row(release_kind="", residence_time=float("nan")))["value"] == 0.0)   # not integrated: NaN
+    assert plots.map_cell(_row(release_kind="", reason="rarefied_no_law", residence_time=nan))["flags"] == ["n"]
+    assert plots.map_cell(_row(release_kind="", reason="shock_band", residence_time=nan))["flags"] == ["b"]
+    assert math.isnan(plots.map_cell(_row(release_kind="", residence_time=nan))["value"])      # not integrated: NaN
 
 
 def test_parent_frame_path_recovers_x_forward_and_y_from_the_axis():
@@ -457,3 +461,77 @@ def test_affix_zones_has_one_panel_unless_the_flags_differ_by_altitude():
     differ = plots.affix_panels(rows(True))
     assert [title for title, _ in differ] == ["80 km", "50 km"] and all(len(rs) == 2 for _, rs in differ)
     assert plots.affix_flag_names(rows(True)) == ["flag_not_hypersonic"]       # a numeric column is not a flag
+
+
+SUMMARY_FIELDS = ["name", "diameter_mm", "altitude_km", "theta_deg", "bound", "wake_flow", "release_kind", "reason",
+                  "residence_time", "first_interval", "t_first_entry", "total_inside", "censored"]
+
+
+def _fake_output(folder, affix_rows=True, history=False):
+    """A folder with a summary of one far-wake and one not-integrated case, a plume_size.csv and an affix_regimes.csv
+    (header only unless affix_rows); the far-wake case has a history file only if `history`."""
+    folder.mkdir(parents=True, exist_ok=True)
+    rows = [dict(zip(SUMMARY_FIELDS, ["ghost_far", 10.0, 60.0, 120.0, "low", "off", "far_wake", "ok", 2.0, 2.0, 0.0,
+                                      2.0, False])),
+            dict(zip(SUMMARY_FIELDS, ["ghost_band", 100.0, 60.0, 135.0, "low", "off", "", "shock_band", "", "", "", "",
+                                      False]))]
+    with open(folder / "summary.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, SUMMARY_FIELDS); w.writeheader(); w.writerows(rows)
+    with open(folder / "plume_size.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["altitude_km", "regime", "s_m", "t_since_passage_s", "parent_speed_ms", "r_b_low_m", "r_b_high_m"])
+        for s_m in (10.0, 100.0, 1000.0):
+            w.writerow([60.0, "turbulent", s_m, s_m / 4000.0, 4000.0, 1.4 + s_m / 500.0, 1.5 + s_m / 400.0])
+    with open(folder / "affix_regimes.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["diameter_mm", "altitude_km", "theta_deg", "zone", "theta_bif", "flag_not_hypersonic"])
+        if affix_rows:
+            w.writerow([10.0, 60.0, 120.0, "far_wake", 139.0, "False"])
+    if history:
+        (folder / "runs").mkdir()
+        with open(folder / "runs" / "ghost_far.csv", "w") as fh:
+            fh.write("t,t_since_release,follower_x,follower_y,follower_z,parent_x,parent_y,parent_z,lag_m,distance_m,r_b,margin,regime\n")
+            for i in range(5):
+                t = 0.1 * i
+                fh.write(f"{t},{t},{6.5e6 + 4000 * t},0,0,{6.5e6 + 4000 * t + 5},0,0,5,{1.4 + t},{1.4 + 2 * t},1,turbulent\n")
+
+
+def test_a_missing_summary_returns_one(tmp_path, capsys):
+    assert plots.main(["--out", str(tmp_path)]) == 1
+    assert "no summary.csv" in capsys.readouterr().out and not (tmp_path / "plots").exists()
+
+
+def test_a_header_only_affix_table_skips_that_plot_only(tmp_path, capsys):
+    _fake_output(tmp_path, affix_rows=False)
+    assert plots.main(["--out", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "affix_zones.png skipped" in out and "header and no rows" in out
+    names = {f.name for f in (tmp_path / "plots").iterdir()}
+    assert names == {"plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png"}
+
+
+def test_a_missing_run_history_is_named_and_the_other_plots_are_written(tmp_path, capsys):
+    _fake_output(tmp_path)
+    assert plots.main(["--out", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "runs/ghost_far.csv not found" in out
+    assert {"plume_size.png", "residence_map.png", "affix_zones.png", "margin_60km.png"} <= {
+        f.name for f in (tmp_path / "plots").iterdir()}
+
+
+def test_a_failing_plot_is_reported_and_the_others_still_written(tmp_path, capsys, monkeypatch):
+    _fake_output(tmp_path, history=True)
+    def broken(*a, **k):
+        raise RuntimeError("deliberate")
+    monkeypatch.setattr(plots, "plot_margin", broken)
+    assert plots.main(["--out", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "FAILED margin_60km.png: RuntimeError: deliberate" in out and "1 plot(s) failed" in out
+    names = {f.name for f in (tmp_path / "plots").iterdir()}
+    assert {"plume_size.png", "trajectories_60km.png", "residence_map.png", "affix_zones.png"} <= names
+    assert "margin_60km.png" not in names
+
+
+def test_shock_curve_rebuild_failure_is_a_note_not_an_exception(tmp_path):
+    R, shape, note = plots.rebuild_shock_curve(str(tmp_path), "no_such_case", 60.0)     # no JSON to read
+    assert shape is None and note.startswith("shock curve not drawn") and R == pytest.approx(1.4065, abs=1e-3)
