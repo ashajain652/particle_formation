@@ -116,6 +116,63 @@ def test_stale_cases_are_rerun_and_force_reruns_everything(tmp_path, capsys, mon
     assert os.stat(path).st_mtime_ns != stamp and "stale case" in capsys.readouterr().out
 
 
+def _plant_orphan(folder, release, theta=180.0, commit="test-commit"):
+    """A JSON and a history CSV for the 10 mm, 60 km, low, off case under another release kind than the real one."""
+    name = scenarios.run_name("sphere", 10.0, 60.0, scenarios.ScenarioSettings(), release=release, theta_deg=theta)
+    (folder / "runs").mkdir(parents=True, exist_ok=True)
+    json.dump({"name": name, "git_commit": commit, "git_dirty": False, "residence_time": 99.0,
+               "diameter_mm": 10.0, "altitude_km": 60.0, "theta_deg": theta, "bound": "low", "wake_flow": "off",
+               "release_kind": release}, open(folder / "runs" / (name + ".json"), "w"))
+    (folder / "runs" / (name + ".csv")).write_text("t_since_release,lag_m\n0.0,1.0\n")
+    return name
+
+
+def test_orphans_of_an_earlier_release_kind_are_deleted_and_never_summarised(tmp_path, capsys):
+    args = ["--diameters", "10", "--altitudes", "60", "--thetas", "180", "--bounds", "low", "--wake-flow", "off",
+            "--workers", "1", "--out", str(tmp_path)]
+    real = scenarios.run_name("sphere", 10.0, 60.0, scenarios.ScenarioSettings(), release="escape", theta_deg=180.0)
+    # (1) a stale orphan of an earlier classification and no real file: the case is run and the orphan removed
+    stale = _plant_orphan(tmp_path, "far_wake", commit="old-commit")
+    sweep.main(args)
+    assert f"removed orphaned case {stale}" in capsys.readouterr().out
+    left = sorted(os.path.basename(f) for f in glob.glob(str(tmp_path / "runs" / "*")))
+    assert left == [real + ".csv", real + ".json"]
+    (row,) = csv.DictReader(open(tmp_path / "summary.csv"))
+    assert row["name"] == real and row["residence_time"] != "99.0"
+    # (2) a current-looking orphan beside the current real file (a partly failed earlier run): it cannot be told from the
+    # real result, so the case is rerun, and the orphan removed
+    orphan = _plant_orphan(tmp_path, "surface")
+    stamp = mtimes(tmp_path)[str(tmp_path / "runs" / (real + ".json"))]
+    capsys.readouterr()
+    sweep.main(args)
+    out = capsys.readouterr().out
+    assert "several release kinds" in out and f"removed orphaned case {orphan}" in out
+    assert not glob.glob(str(tmp_path / "runs" / (orphan + "*")))
+    assert os.stat(tmp_path / "runs" / (real + ".json")).st_mtime_ns != stamp
+    text = open(tmp_path / "summary.csv").read()
+    assert orphan not in text and "99.0" not in text and real in text
+    # (3) a case with files under two release kinds is ambiguous and is left out of summary_rows
+    _plant_orphan(tmp_path, "shock_band")
+    assert sweep.summary_rows(str(tmp_path), [(10.0, 60.0, 180.0, "low", "off")]) == []
+
+
+def test_a_dirty_tree_warns_once_and_reruns_everything_but_still_summarises(tmp_path, capsys, monkeypatch):
+    args = ["--diameters", "10", "--altitudes", "60", "--thetas", "180", "--bounds", "low", "--wake-flow", "off",
+            "--workers", "1", "--out", str(tmp_path)]
+    monkeypatch.setattr(scenarios, "_git_dirty", lambda: True)
+    outs = []
+    for _ in range(2):
+        capsys.readouterr()
+        sweep.main(args)
+        outs.append(capsys.readouterr().out)
+    assert [o.count("WARNING: the working tree is dirty") for o in outs] == [1, 1]
+    assert "stale case" not in outs[0] and "1 cases run, 0 resumed" in outs[0]
+    assert "stale case" in outs[1] and "1 cases run, 0 resumed" in outs[1]     # the second run reran what the first wrote
+    (path,) = _case_files(tmp_path)
+    assert json.load(open(path))["git_dirty"] is True                          # stamped with the state of the run
+    assert len(list(csv.DictReader(open(tmp_path / "summary.csv")))) == 1      # and its own case is summarised
+
+
 def test_far_wake_angles_share_one_integration_and_resume(tmp_path, monkeypatch):
     twin = sweep.get_twin()
     for theta in (120.0, 130.0):                                           # both classify as far wake for 25 mm at 60 km
@@ -175,8 +232,14 @@ def test_sensitivity_set_is_the_spec_set():
 
 
 def test_short_sensitivity_reports_change_against_the_baseline(tmp_path):
+    # an orphan of an earlier classification of the baseline case (10 mm, 60 km, 120 degrees is a far-wake release)
+    orphan = scenarios.run_name("sphere", 10.0, 60.0, scenarios.ScenarioSettings(), release="escape", theta_deg=120.0)
+    runs = tmp_path / "sensitivity" / "runs"
+    runs.mkdir(parents=True)
+    json.dump({"name": orphan, "git_commit": "old-commit", "git_dirty": False}, open(runs / (orphan + ".json"), "w"))
     sensitivity.main(["--diameters", "10", "--altitudes", "60", "--theta", "120", "--parameters", "density",
                       "--no-rarefied", "--bounds", "low", "--workers", "1", "--out", str(tmp_path)])
+    assert not os.path.exists(runs / (orphan + ".json"))
     with open(tmp_path / "sensitivity.csv") as fh:
         reader = csv.DictReader(fh)
         rows = list(reader)
@@ -225,7 +288,7 @@ def test_failed_rarefied_baseline_skips_the_rarefied_set(tmp_path, monkeypatch, 
 
 def test_rarefied_diameter_names_why_ten_mm_was_not_used(monkeypatch, tmp_path):
     def fake(regime, reason):
-        def run_or_load(out_dir, d, h, theta, settings, force=False):
+        def run_or_load(out_dir, d, h, theta, settings, force=False, git=None):
             return {"follower_regime": regime if d >= 10 else "transitional", "reason": reason}, True
         return run_or_load
     monkeypatch.setattr(sensitivity, "run_or_load", fake("continuum", "ok"))
@@ -235,6 +298,26 @@ def test_rarefied_diameter_names_why_ten_mm_was_not_used(monkeypatch, tmp_path):
     assert d == 5.0 and "no plume law" in why and "rarefied_no_law" in why and "continuum" not in why
     monkeypatch.setattr(sensitivity, "run_or_load", lambda *a, **k: ({"follower_regime": "transitional"}, True))
     assert sensitivity.rarefied_diameter(90.0, 180.0, out_dir=str(tmp_path)) == (10.0, None)
+
+
+def test_twin_time_lag_recovers_a_known_shift_below_90_km():
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    t0 = datetime(2026, 1, 1)
+    times = [100.0 + 5.0 * i for i in range(60)]                   # DRAMA rows 5 s apart
+    def drama_h(T):                                                # km, falling 0.1 km/s from 111 km
+        return 111.0 - 0.1 * (T - 100.0)
+    lag, offset = 6.3, 20.0                                        # the twin starts 20 s after DRAMA's epoch
+    parent = SimpleNamespace(epoch=t0, branch=[{"time": T, "altitude": drama_h(T)} for T in times])
+    def altitude_m(t):                                             # twin time t is DRAMA time t + offset; it lags by `lag`
+        h = drama_h(t + offset - lag)
+        return 1e3 * (h + 5.0 if h > 92.0 else h)                  # distorted above 90 km: the fit must ignore those rows
+    twin = SimpleNamespace(epoch=t0 + timedelta(seconds=offset), altitude=altitude_m,
+                           track=SimpleNamespace(t0=-offset + times[0], t1=1e6))
+    got, resid = tables.twin_time_lag(twin, parent)
+    assert got == pytest.approx(lag, abs=1e-4) and resid < 1e-6
+    whole, _ = tables.twin_time_lag(twin, parent, h_max_km=1e3)    # fitted over the whole branch it is another number
+    assert abs(whole - lag) > 0.1
 
 
 def test_tables_report_regimes_as_outputs(tmp_path):
@@ -262,6 +345,11 @@ def test_table_contents_are_physically_consistent(tmp_path):
     rows = list(csv.DictReader(drama))
     first = rows[0]
     assert float(first["twin_downrange_km"]) == pytest.approx(0.0, abs=1e-6)
+    assert float(first["twin_lag_s"]) == pytest.approx(0.0, abs=1e-6)         # the twin starts at the branch top
+    lags = [float(r["twin_lag_s"]) for r in rows if r["twin_lag_s"] and float(r["drama_altitude_km"]) <= 90.0]
+    assert lags and all(6.0 < lag < 7.0 for lag in lags)
+    header = "".join(l for l in open(tmp_path / "twin_vs_drama.csv") if l.startswith("#"))
+    assert "at and below 90 km" in header and "twin_lag_s" in header
     beta = list(csv.DictReader(open(tmp_path / "ballistic_coefficient.csv")))
     assert all(float(r["sphere_beta_kg_m2"]) > 0 and float(r["parent_beta_kg_m2"]) > 0 for r in beta)
     ratio = list(csv.DictReader(open(tmp_path / "drag_ratio_check.csv")))

@@ -8,7 +8,7 @@
   ballistic_coefficient.csv  the twin's ballistic coefficient and C_D A at each altitude, and each default sphere's, so
                            the direction of the lag is visible (a sphere with the larger coefficient falls behind less).
   twin_vs_drama.csv        `adapters.twin_vs_drama` plus the twin's downrange at the DRAMA time and its difference from
-                           DRAMA's downrange since the top of the descending branch.
+                           DRAMA's downrange since the top of the descending branch, and the lag of the twin behind DRAMA at each altitude.
   affix_regimes.csv        the AFFIx classification of every (diameter, altitude, theta): zone, angles, times, flags.
   drag_ratio_check.csv     per altitude and bound: rho_w |V - u|^2 / (rho_inf |V|^2) (vectors) at the far-wake start point from
                            the wake gas model (`wake_flow` "both"), next to Register et al.'s 0.14.
@@ -45,6 +45,7 @@ CORE_SPEED_DISTANCE_M = 30e3         # m behind the parent, where the core gas s
 CORE_TEMPERATURE_DISTANCE_M = 300.0  # m behind the parent, where the core temperature is read
 ASSUMED_CORE_SPEED_MS = 10.0         # m/s, spec 4.3a
 ASSUMED_CORE_T_K = "1000-2000"       # K, spec 4.3a
+LAG_FIT_H_MAX_KM = 90.0              # km, the twin-versus-DRAMA lag is fitted over the rows at or below this altitude
 
 
 def plume_size_rows(twin, altitudes, law=LawSettings()):
@@ -98,20 +99,26 @@ def drama_rows(twin, parent):
             down = earth.great_circle_distance(lat0, lon0, lat, lon) / 1e3
         else:
             down = math.nan
-        rows.append({**row, "drama_downrange_from_top_km": r["downrange"] - top, "twin_downrange_km": down,
+        try:
+            lag_s = twin.t_at_altitude(r["altitude"]) + offset - r["time"]       # twin's arrival time minus DRAMA's
+        except ValueError:
+            lag_s = math.nan
+        rows.append({**row, "twin_lag_s": lag_s, "drama_downrange_from_top_km": r["downrange"] - top, "twin_downrange_km": down,
                      "downrange_diff_km": down - (r["downrange"] - top)})
     return rows
 
 
-def twin_time_lag(twin, parent):
+def twin_time_lag(twin, parent, h_max_km=LAG_FIT_H_MAX_KM):
     """(lag [s], rms altitude residual [km]): the time by which the twin reaches each altitude later than DRAMA, found as
-    the L that best aligns the twin's altitude at DRAMA time T with DRAMA's altitude at T - L over the descending branch
-    (least squares, DRAMA's altitude linearly interpolated between its rows, rows inside the twin's range only)."""
+    the L that best aligns the twin's altitude at DRAMA time T with DRAMA's altitude at T - L (least squares, DRAMA's
+    altitude linearly interpolated between its rows) over the descending-branch rows at or below `h_max_km` that lie in
+    the twin's range. The twin starts at the branch top and falls behind DRAMA gradually, so a fit over the whole branch
+    describes no altitude; the per-altitude lag is the `twin_lag_s` column of twin_vs_drama.csv."""
     offset = (twin.epoch - parent.epoch).total_seconds()
     t_d = np.array([r["time"] for r in parent.branch])
     h_d = np.array([r["altitude"] for r in parent.branch])
     tt = t_d - offset
-    ok = (tt >= twin.track.t0) & (tt <= twin.track.t1)
+    ok = (tt >= twin.track.t0) & (tt <= twin.track.t1) & (h_d <= h_max_km)
     h_twin = np.array([twin.altitude(t) / 1e3 for t in tt[ok]])
 
     def rms(lag):
@@ -222,10 +229,13 @@ def main(argv=None):
     parent = parent_trajectory.load_parent()
     rows = drama_rows(twin, parent)
     lag, resid = twin_time_lag(twin, parent)
-    print(f"the twin reaches each altitude {lag:.3f} s after DRAMA (rms altitude residual {resid:.4f} km)")
+    print(f"the twin reaches each altitude at or below {LAG_FIT_H_MAX_KM:g} km {lag:.3f} s after DRAMA "
+          f"(rms altitude residual {resid:.4f} km)")
     write_csv(os.path.join(out, "twin_vs_drama.csv"), rows, _columns(rows, ("time_s",)), comment=[
-        f"Measured: the twin reaches each altitude {lag:.2f} s after DRAMA (the lag that best aligns its altitude with",
-        f"DRAMA's over the descending branch; rms altitude residual {resid:.3f} km). The engine uses the twin's own clock and track.",
+        f"Measured: at and below {LAG_FIT_H_MAX_KM:g} km the twin reaches each altitude {lag:.2f} s after DRAMA (the lag that best",
+        f"aligns its altitude with DRAMA's over those rows; rms altitude residual {resid:.3f} km). Above that the lag builds up from",
+        "0 at the branch top, where the twin starts: twin_lag_s is the twin's arrival time at the row's altitude minus DRAMA's.",
+        "The engine uses the twin's own clock and track.",
         "twin_downrange_km is the great-circle distance from the twin's start point at the DRAMA time (time_s minus the",
         "twin's start time); downrange_diff_km is that minus DRAMA's downrange since the top of the descending branch."])
     rows = affix_rows(twin, args.diameters, altitudes, args.thetas)

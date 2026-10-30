@@ -89,49 +89,89 @@ def write_csv(path, rows, fieldnames, comment=None):
             w.writerow({k: csv_value(row.get(k)) for k in fieldnames})
 
 
-def existing_case(out_dir, d_mm, h_km, theta_deg, settings):
-    """Path of the JSON of this case if it was already run, else None. The release kind in the name is only known
-    after the case is classified, so every kind that can have a theta in its name is tried."""
+def case_files(out_dir, d_mm, h_km, theta_deg, settings):
+    """{release kind: JSON path} of the files that exist for this case. The release kind is part of a case's name and is
+    only known once the case is classified, so a case may have left files under several kinds (an earlier run whose
+    classification differed); every kind that can have a theta in its name is looked for."""
+    found = {}
     for release in RELEASES:
         if release in NO_THETA_RELEASES:
             continue
         path = os.path.join(out_dir, "runs", run_name("sphere", d_mm, h_km, settings, release=release,
                                                       theta_deg=theta_deg) + ".json")
         if os.path.exists(path):
-            return path
-    return None
+            found[release] = path
+    return found
+
+
+def remove_other_kinds(out_dir, keep_path, d_mm, h_km, theta_deg, settings):
+    """Delete the JSON and history CSV of this case under every release kind except the one whose JSON is `keep_path`
+    (orphans of an earlier classification, which would otherwise be rerun, and summarised, forever)."""
+    for path in case_files(out_dir, d_mm, h_km, theta_deg, settings).values():
+        if path != keep_path:
+            os.remove(path)
+            if os.path.exists(path[:-5] + ".csv"):
+                os.remove(path[:-5] + ".csv")
+            print(f"removed orphaned case {os.path.basename(path)[:-5]} (its release kind changed)", flush=True)
 
 
 def git_state():
-    """(HEAD commit, working tree dirty) as `scenarios` records them in a case's JSON."""
+    """(HEAD commit, working tree dirty) as `scenarios` records them in a case's JSON. A sweep reads it once and passes
+    it to every worker, so every case of a run is compared with, and stamped with, the same state."""
     return scenarios._git_commit(), scenarios._git_dirty()
 
 
-def stale_reason(summary):
-    """Why a case's JSON cannot be trusted for the current code, or None: it was made by another commit, or from a tree
-    with uncommitted changes (or git could not say), so its numbers may not be those the current code gives."""
-    commit, dirty = git_state()
+def stale_reason(summary, git):
+    """Why a case's JSON cannot be trusted for the current code (`git` = (commit, dirty)), or None. It cannot if the
+    current tree has uncommitted changes (or git cannot say), or the JSON was made from such a tree or by another commit."""
+    commit, dirty = git
+    if dirty is not False or commit is None:
+        return f"the current working tree is dirty or git cannot say (commit {str(commit)[:10]}, dirty {dirty!r})"
     if summary.get("git_dirty") is not False:
         return f"made from a dirty or unknown working tree (git_dirty = {summary.get('git_dirty')!r})"
-    if commit is None or summary.get("git_commit") != commit:
+    if summary.get("git_commit") != commit:
         return f"made by commit {str(summary.get('git_commit'))[:10]}, not {str(commit)[:10]}"
     return None
 
 
-def run_or_load(out_dir, d_mm, h_km, theta_deg, settings, force=False):
-    """(summary dict, ran): the case's summary from its JSON file if it exists and is current, else run it (in this
-    process, with this process's twin for the settings), write it, and read it back, so that a fresh and a resumed case
-    look the same. A stale JSON (`stale_reason`) is rerun with a printed line; `force` reruns every case."""
-    path = existing_case(out_dir, d_mm, h_km, theta_deg, settings)
-    if path is not None and not force:
-        with open(path) as fh:
-            summary = json.load(fh)
-        why = stale_reason(summary)
-        if why is None:
-            return summary, False
-        print(f"stale case {os.path.basename(path)[:-5]}: {why}; rerun", flush=True)
+def _current_case(path, git, resume=True):
+    """(summary, None) if the JSON at `path` is current, else (None, reason). Its name must be its file name. For a
+    resume (`resume` True) it must also not be stale (`stale_reason`); for a summary it must have been recorded in
+    exactly the state `git` of this run, which is what every case of the run was run or resumed in, so a run from a
+    dirty tree still summarises its own cases."""
+    with open(path) as fh:
+        summary = json.load(fh)
+    if summary.get("name") != os.path.basename(path)[:-5]:
+        return None, f"its name {summary.get('name')!r} is not its file name"
+    if resume:
+        why = stale_reason(summary, git)
+    else:
+        why = None if (summary.get("git_commit"), summary.get("git_dirty")) == tuple(git) else "recorded in another state"
+    return (summary, None) if why is None else (None, why)
+
+
+def run_or_load(out_dir, d_mm, h_km, theta_deg, settings, force=False, git=None):
+    """(summary dict, ran): the case's summary from its JSON file if one exists under any release kind and is current,
+    else run it (in this process, with this process's twin for the settings), write it, and read it back, so that a
+    fresh and a resumed case look the same. A stale JSON (`stale_reason`) is rerun with a printed line; `force` reruns
+    every case, as does a case with files under more than one release kind. After a run, the files of the case under other
+    release kinds are deleted (`remove_other_kinds`). `git` is the
+    (commit, dirty) of the run (default: read now); it decides what is stale and is what the new JSON records."""
+    git = git if git is not None else git_state()
+    files = case_files(out_dir, d_mm, h_km, theta_deg, settings)
+    if not force and len(files) > 1:                  # one case, files under several kinds: which is right is unknowable
+        print(f"case has files under several release kinds ({', '.join(files)}); rerun", flush=True)
+    elif not force:
+        for path in files.values():
+            summary, why = _current_case(path, git)
+            if summary is not None:
+                return summary, False
+            print(f"stale case {os.path.basename(path)[:-5]}: {why}; rerun", flush=True)
     twin = get_twin(settings.frontal_area, settings.beta_scale)
-    _, path = write_case(sphere_in_spacecraft_plume(d_mm, h_km, theta_deg, settings, twin=twin), out_dir)
+    case = sphere_in_spacecraft_plume(d_mm, h_km, theta_deg, settings, twin=twin)
+    case.summary["git_commit"], case.summary["git_dirty"] = git
+    _, path = write_case(case, out_dir)
+    remove_other_kinds(out_dir, path, d_mm, h_km, theta_deg, settings)
     with open(path) as fh:
         return json.load(fh), True
 
@@ -139,12 +179,12 @@ def run_or_load(out_dir, d_mm, h_km, theta_deg, settings, force=False):
 def _run_unit(unit):
     """One work unit: all thetas of one (diameter, altitude, bound, wake_flow), run consecutively in this process so the
     far-wake integration is shared. Returns [(theta, status, message)], status "ran", "resumed" or "failed"."""
-    d_mm, h_km, bound, wake_flow, thetas, out_dir, force = unit
+    d_mm, h_km, bound, wake_flow, thetas, out_dir, force, git = unit
     settings = ScenarioSettings(bound=bound, wake_flow=wake_flow)
     result = []
     for theta in thetas:
         try:
-            _, ran = run_or_load(out_dir, d_mm, h_km, theta, settings, force)
+            _, ran = run_or_load(out_dir, d_mm, h_km, theta, settings, force, git)
             result.append((theta, "ran" if ran else "resumed", ""))
         except Exception as exc:                                   # one bad case must not stop the sweep
             result.append((theta, "failed", f"{type(exc).__name__}: {exc}"))
@@ -158,17 +198,19 @@ def _sort_key(row):
             WAKE_FLOW_MODES.index(row["wake_flow"]))
 
 
-def summary_rows(out_dir, cases):
-    """Rows of summary.csv for the (diameter, altitude, theta, bound, wake_flow) tuples in `cases` whose JSON exists,
-    sorted by those five fields in that order."""
+def summary_rows(out_dir, cases, git=None):
+    """Rows of summary.csv for the (diameter, altitude, theta, bound, wake_flow) tuples in `cases`, sorted by those five
+    fields in that order. Only a current JSON is summarised (`_current_case`: its name is its file name and it was recorded in
+    the state `git` of this run), so an orphan or stale file never reaches the table (a case with files under several release kinds is left out)."""
+    git = git if git is not None else git_state()
     rows = []
     for d_mm, h_km, theta, bound, wake_flow in cases:
-        path = existing_case(out_dir, d_mm, h_km, theta, ScenarioSettings(bound=bound, wake_flow=wake_flow))
-        if path is None:
+        files = case_files(out_dir, d_mm, h_km, theta, ScenarioSettings(bound=bound, wake_flow=wake_flow))
+        if len(files) != 1:                          # none, or several release kinds (ambiguous): not summarised
             continue
-        with open(path) as fh:
-            summary = json.load(fh)
-        rows.append({k: v for k, v in summary.items() if k not in SUMMARY_EXCLUDED})
+        summary, _ = _current_case(next(iter(files.values())), git, resume=False)
+        if summary is not None:
+            rows.append({k: v for k, v in summary.items() if k not in SUMMARY_EXCLUDED})
     rows.sort(key=_sort_key)
     return rows
 
@@ -275,8 +317,12 @@ def main(argv=None):
     out = os.fspath(args.out)
     os.makedirs(os.path.join(out, "runs"), exist_ok=True)
     altitudes = kept_altitudes(args.altitudes, get_twin())
+    git = git_state()
+    if git[1] is not False:
+        print(f"WARNING: the working tree is dirty or git cannot say (dirty = {git[1]!r}): every existing case counts as "
+              f"stale and is rerun, and the new cases are recorded as made from an unclean tree", flush=True)
     thetas = sorted(args.thetas)
-    units = [(d, h, b, f, tuple(thetas), out, args.force)
+    units = [(d, h, b, f, tuple(thetas), out, args.force, git)
              for d in sorted(args.diameters) for h in altitudes for b in args.bounds for f in args.wake_flow]
     print(f"{len(units)} work units, {len(units) * len(thetas)} cases, {args.workers} worker(s), output {out}")
     failures, n_ran, n_resumed = [], 0, 0
@@ -307,7 +353,7 @@ def main(argv=None):
     failed = {c for c, _ in failures}                  # a failed case may leave a stale JSON: it is not summarised
     cases = [(d, h, t, b, f) for d in args.diameters for h in altitudes for t in thetas for b in args.bounds
              for f in args.wake_flow if (d, h, b, f, t) not in failed]
-    rows = summary_rows(out, cases)
+    rows = summary_rows(out, cases, git)
     write_csv(os.path.join(out, "summary.csv"), rows, summary_columns(rows))
     write_csv(os.path.join(out, "crossover.csv"), crossover_rows(out, rows),
               ["altitude_km", "wake_flow", "bound", "lag_time_s", "largest_diameter_positive_lag_mm", "lag_there_m",

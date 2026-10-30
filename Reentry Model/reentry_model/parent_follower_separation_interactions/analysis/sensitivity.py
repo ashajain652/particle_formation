@@ -30,7 +30,7 @@ from typing import Callable
 
 from reentry_model.parent_follower_separation_interactions import OUTPUT
 from reentry_model.parent_follower_separation_interactions.analysis.sweep import (
-    DEFAULT_BOUNDS, DEFAULT_DIAMETERS, get_twin, run_or_load, write_csv)
+    DEFAULT_BOUNDS, DEFAULT_DIAMETERS, get_twin, git_state, run_or_load, write_csv)
 from reentry_model.parent_follower_separation_interactions.laws import LawSettings
 from reentry_model.parent_follower_separation_interactions.scenarios import ScenarioSettings
 
@@ -88,7 +88,7 @@ def rarefied_variations():
             Variation("shock_thickness_mfp", 10.0, _shock(shock_thickness_mfp=10.0))]
 
 
-def rarefied_diameter(h_km, theta_deg, bound="low", out_dir=None, candidates=DEFAULT_DIAMETERS, force=False):
+def rarefied_diameter(h_km, theta_deg, bound="low", out_dir=None, candidates=DEFAULT_DIAMETERS, force=False, git=None):
     """(diameter, why) for the rarefied set at this altitude and theta. The diameter [mm] is RAREFIED_DIAMETER if its
     follower is rarefied (transitional or free-molecular) there, else the largest of `candidates` that is, else None.
     `why` says what RAREFIED_DIAMETER was instead (None when it is used): "a continuum follower" or "a case with no plume
@@ -97,7 +97,7 @@ def rarefied_diameter(h_km, theta_deg, bound="low", out_dir=None, candidates=DEF
     base = ScenarioSettings(bound=bound)
     why = None
     for d in [RAREFIED_DIAMETER] + sorted(candidates, reverse=True):
-        s, _ = run_or_load(out_dir, d, h_km, theta_deg, base, force)
+        s, _ = run_or_load(out_dir, d, h_km, theta_deg, base, force, git)
         regime = s.get("follower_regime")
         if regime in ("transitional", "free_molecular"):
             return d, why
@@ -115,22 +115,22 @@ def _run_job(job):
     """(job, summary or None, error message): one case in this process."""
     out_dir, d_mm, h_km, theta, settings = job[:5]
     try:
-        summary, _ = run_or_load(out_dir, d_mm, h_km, theta, settings, job[8])
+        summary, _ = run_or_load(out_dir, d_mm, h_km, theta, settings, job[8], job[9])
         return job, summary, ""
     except Exception as exc:
         return job, None, f"{type(exc).__name__}: {exc}"
 
 
-def _jobs(out_dir, diameters, altitudes, theta, bounds, variation_list, rarefied, force=False):
-    """Job tuples (out_dir, d, h, theta, settings, set, parameter, value, force) for the baseline and each variation of every
+def _jobs(out_dir, diameters, altitudes, theta, bounds, variation_list, rarefied, force=False, git=None):
+    """Job tuples (out_dir, d, h, theta, settings, set, parameter, value, force, git) for the baseline and each variation of every
     reference case, and of every rarefied case."""
     jobs = []
     def add(d, h, th, vs, name):
         for b in bounds:
             base = ScenarioSettings(bound=b)
-            jobs.append((out_dir, d, h, th, base, name, "baseline", "", force))
+            jobs.append((out_dir, d, h, th, base, name, "baseline", "", force, git))
             for v in vs:
-                jobs.append((out_dir, d, h, th, v.apply(base), name, v.parameter, v.value, force))
+                jobs.append((out_dir, d, h, th, v.apply(base), name, v.parameter, v.value, force, git))
     for d in diameters:
         for h in altitudes:
             add(d, h, theta, variation_list, "reference")
@@ -147,7 +147,7 @@ def _rows(results):
             base[(job[1:4], job[4].bound)] = summary["residence_time"]
     rows = []
     for job, summary, error in results:
-        _, d, h, th, settings, name, parameter, value, _ = job
+        _, d, h, th, settings, name, parameter, value, _, _ = job
         if summary is None:
             continue
         b = base.get(((d, h, th), settings.bound))
@@ -198,11 +198,15 @@ def main(argv=None):
     os.makedirs(case_dir, exist_ok=True)
     keep = (lambda p: True) if args.parameters is None else (lambda p: p in args.parameters)
     var = [v for v in variations() if keep(v.parameter)]
+    git = git_state()
+    if git[1] is not False:
+        print(f"WARNING: the working tree is dirty or git cannot say (dirty = {git[1]!r}): every existing case counts as "
+              f"stale and is rerun", flush=True)
     rare = []
     if not args.no_rarefied:
         for th in RAREFIED_THETAS:
             try:
-                d, why = rarefied_diameter(RAREFIED_ALTITUDE, th, args.bounds[0], case_dir, force=args.force)
+                d, why = rarefied_diameter(RAREFIED_ALTITUDE, th, args.bounds[0], case_dir, force=args.force, git=git)
             except Exception as exc:                       # the rarefied set is skipped, the reference set still runs
                 print(f"rarefied set at {RAREFIED_ALTITUDE:g} km, theta {th:g} skipped: {type(exc).__name__}: {exc}")
                 continue
@@ -213,7 +217,7 @@ def main(argv=None):
                     print(f"{RAREFIED_DIAMETER:g} mm is {why} at {RAREFIED_ALTITUDE:g} km, theta {th:g}; "
                           f"the rarefied set uses {d:g} mm there")
                 rare.append((RAREFIED_ALTITUDE, th, d))
-    jobs = _jobs(case_dir, args.diameters, args.altitudes, args.theta, args.bounds, var, rare, args.force)
+    jobs = _jobs(case_dir, args.diameters, args.altitudes, args.theta, args.bounds, var, rare, args.force, git)
     if args.parameters is not None:                                  # keep the rarefied variations out unless asked for
         jobs = [j for j in jobs if j[5] == "reference" or j[6] == "baseline" or keep(j[6])]
     get_twin()
