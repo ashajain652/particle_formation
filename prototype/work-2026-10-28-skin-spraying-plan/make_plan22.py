@@ -5,8 +5,9 @@ The base is prototype/work-2026-10-18-column-flow-plan/code, sub-plan 21's teste
 tracked files must be unchanged in the working tree. Every {{NAME}} in part_22.md becomes a fenced block cut from the
 tested files: a task's diff of a file runs from the state the tasks before it left (the base for the first) to its own
 end state, kept in states/task<N>/ for every file a later task changes again (the build repository's commit of that
-task) and read from code/ otherwise. The checks then replay the tasks in order on a copy of the base -- each diff applied
-with `patch` -- and compare every file byte for byte with code/. Tasks are added here as they are written at code level.
+task) and read from code/ otherwise; a file a task deletes is named in its third entry, and the plan says `git rm` for
+it rather than printing it. The checks then replay the tasks in order on a copy of the base -- each diff applied with
+`patch`, each deletion made -- and compare every file byte for byte with code/. Tasks are added here as they are written at code level.
 The generated document replaces the outline of the same name, so part_22.md carries everything the outline held. Run:
 
     "$PY" make_plan22.py            # writes the sub-plan and prints the checks
@@ -26,7 +27,8 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(HERE)), "docs", "superpowers"
                    "22-skin-spraying-flight.md")
 STATES = os.path.join(HERE, "states")
 SKIP = ("__pycache__", ".pytest_cache", "reentry_model_output", ".git")
-# The tasks written at code level so far, in order, and the files each changes ({{key}} in part_22.md, path)
+# The tasks written at code level so far, in order, the files each changes ({{key}} in part_22.md, path) and, third, the
+# files it deletes
 TASKS = (
     ("1a", (("DIFF_TEST_SPRAY_T1A", "tests/test_reentry_model_spray.py"),
             ("DIFF_TEST_MELTING_T1A", "tests/test_reentry_model_melting.py"),
@@ -48,6 +50,16 @@ TASKS = (
            ("DIFF_SPRAY_T2", "reentry_model/spray.py"), ("DIFF_BODY_T2", "reentry_model/body.py"),
            ("DIFF_SKIN_T2", "reentry_model/skin.py"), ("DIFF_SKINBODY_T2", "reentry_model/skinbody.py"),
            ("DIFF_COUPLED_T2", "reentry_model/coupled.py"))),
+    ("3", (("DIFF_TEST_CLI_T3", "tests/test_reentry_model_cli.py"),
+           ("DIFF_TEST_MELTING_T3", "tests/test_reentry_model_melting.py"),
+           ("DIFF_TEST_THERMAL_VERIFICATION_T3", "tests/test_reentry_model_thermal_verification.py"),
+           ("DIFF_TEST_FENICSX_T3", "tests/test_reentry_model_fenicsx.py"),
+           ("DIFF_BODY_T3", "reentry_model/body.py"), ("DIFF_COUPLED_T3", "reentry_model/coupled.py"),
+           ("DIFF_CLI_T3", "reentry_model/cli.py"),
+           ("DIFF_THERMAL_VERIFICATION_T3", "analysis/reentry_model_thermal_verification.py"),
+           ("DIFF_MELT_VERIFICATION_T3", "analysis/melt_verification.py"),
+           ("DIFF_MELT_SENSITIVITY_T3", "analysis/melt_sensitivity.py")),
+     ("reentry_model/skin1d.py", "tests/test_reentry_model_skin1d.py", "tests/test_reentry_model_melting_skin.py")),
 )
 
 
@@ -87,7 +99,7 @@ def main():
     blocks, steps = {}, []                # steps: (kind, rel, payload) replayed on a copy of the base, in task order
 
     current = {}                          # each file's text as the tasks so far leave it
-    for task, changes in TASKS:
+    for task, changes, *deleted in TASKS:
         for key, rel in changes:
             snapshot = os.path.join(STATES, "task{}".format(task), rel)
             after = read(STATES, os.path.join("task{}".format(task), rel)) if os.path.exists(snapshot) else read(NEW, rel)
@@ -103,8 +115,13 @@ def main():
             blocks[key] = fence(d, "diff")
             steps.append(("patch", rel, d))
             current[rel] = after
+        for rel in (deleted[0] if deleted else ()):
+            if os.path.exists(os.path.join(NEW, rel)) or not (rel in current or os.path.exists(os.path.join(BASE, rel))):
+                raise SystemExit("task {} deletes {}, which must exist before it and not after".format(task, rel))
+            steps.append(("delete", rel, None))
+            current.pop(rel, None)
     kept = files(STATES)
-    named = {os.path.join("task{}".format(task), rel) for task, changes in TASKS for _, rel in changes}
+    named = {os.path.join("task{}".format(task), rel) for task, changes, *_ in TASKS for _, rel in changes}
     if kept - named:
         raise SystemExit("states/ holds files no task changes: {}".format(sorted(kept - named)))
 
@@ -118,6 +135,8 @@ def main():
                 done = subprocess.run(["patch", "-p1", "-s", "-d", work], input=payload, text=True, capture_output=True)
                 if done.returncode:
                     raise SystemExit("a diff for {} does not apply: {}".format(rel, done.stderr or done.stdout))
+            elif kind == "delete":
+                os.remove(os.path.join(work, rel))
             else:
                 write(work, rel, payload)
         differ = sorted(rel for rel in files(NEW) | files(work)
@@ -138,8 +157,8 @@ def main():
         raise SystemExit("unfilled marker in part_22.md")
     with open(OUT, "w") as fh:
         fh.write(text)
-    print("checks passed: the {} steps written so far, replayed on sub-plan 21's tested copy, reproduce every file of "
-          "code/ byte for byte".format(len(steps)))
+    print("checks passed: the {} steps written so far ({} deletions), replayed on sub-plan 21's tested copy, reproduce "
+          "every file of code/ byte for byte".format(len(steps), sum(kind == "delete" for kind, _, _ in steps)))
     print("wrote", OUT)
 
 

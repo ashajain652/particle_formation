@@ -30,14 +30,10 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
                 "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
                 "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg",
-                "thin_invalid_patches", "thin_invalid_mass_kg"]
-SKIN_COLUMNS = ["skin_count", "skin_mass_kg", "skin_thickness_min_mm", "skin_thickness_median_mm", "skin_drawn_mass_kg",
-                "skin_handover_mass_kg", "skin_short_events", "interface_mismatch_J", "interface_repeats",
-                "liquid_depth_mean_um", "liquid_depth_max_um", "nonrigid_depth_skin_mean_um", "skin_wall_s",
-                "skin_thickness_max_mm", "skin_thick_count", "skin_shortfall_kg", "nonrigid_depth_wet_median_um",
-                "skin_frozen_mass_kg", "skin_returned_mass_kg", "skin_full_events", "skin_thick_feeding_count",
-                "skin_thick_feeding_max_mm", "skin_thick_feed_events"]   # sub-plan 18
-MELT_COLUMNS = MELT_COLUMNS + SKIN_COLUMNS
+                "thin_invalid_patches", "thin_invalid_mass_kg",
+                # the regime test's depth over the wet windward patches (fact 94); sub-plan 18's skin columns, which held
+                # 0 or nan in every run of the element model, went with its one-dimensional skins (sub-plan 22 Task 3)
+                "nonrigid_depth_wet_median_um"]
 # the layered skins on the corner columns (sub-plan 20): skinbody.SkinBody.skin_stats(), every macro step
 SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
@@ -175,10 +171,6 @@ class CoupledRun:
                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
                 "removed_enthalpy_J": body.removed_enthalpy, "frozen_mass_kg": body.frozen_mass,
-                "skins_created": body.skins_created, "skin_drawn_mass_kg": body.skin_drawn_mass,
-                "skin_handover_mass_kg": body.skin_handover_mass, "interface_repeats": body.interface_repeats,
-                "skin_wall_s": body.skin_wall, "skin_frozen_mass_kg": body.skin_frozen_mass,
-                "skin_returned_mass_kg": body.skin_returned_mass, "skin_thick_feed_events": body.skin_thick_feed_events,
                 "melt_energy_balance_residual": body.energy_balance_residual()}
 
     def skin_results(self, history):
@@ -293,19 +285,6 @@ def write_vtk_frame(output_dir, k, body, loads):
         # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
         # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
         poly.cell_data["nonrigid_depth"] = carry(body.last_nonrigid, np.nan)
-        # the skins (sub-plan 18): top temperature, resolved liquid and non-rigid depths, thickness; nan without a skin
-        sk = getattr(body, "skins", None)
-        if sk is not None:
-            on = body.skin_of_patch >= 0
-            r = body.skin_of_patch[on]
-            d_liq, _ = sk.depth_above(body.material.T_feed)
-            d_nr, _ = sk.depth_above(body.material.T_rigid)
-            for key, v in (("skin_T_top", sk.T[:, 0] if sk.n else None), ("skin_liquid_depth", d_liq),
-                           ("skin_nonrigid_depth", d_nr), ("skin_thickness", sk.thickness())):
-                out = np.full(surface.n_patches, np.nan)
-                if sk.n:
-                    out[on] = v[r]
-                poly.cell_data[key] = out
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
 
 

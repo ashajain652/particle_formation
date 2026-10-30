@@ -2766,6 +2766,78 @@ of one comment in `spray.py`, both changed after.
      distribution are Task 1c's to the last bit; h_kg is 0.94/1.04/1.35 MJ/kg (minimum, median, maximum: films on patches
      below the liquidus carry less), and the sum of dm h_kg is its removed enthalpy, 540 843 J, to the last bit.
 
+## Amendment of 2026-10-29 — sub-plan 22 Task 3: stage 1's skins retired, the skins the default surface model, and the spraying skin flight from the command line (facts 177–179)
+
+> Written within the spec (§9, §10.1 as amended that day); no decision of Asha's was needed to build it. Two decisions
+> are left open for her, in sub-plan 22's "Inputs to settle": the flow's default (`--skin-flow`, off), and the macro step
+> of a spraying skin flight (the continuum step, 12.5 ms, that Girin's removal brings). Facts 1–176 stand.
+
+177. **Stage 1's skins retired (sub-plan 22 Task 3, 2026-10-29; `element_files.py`, `runs/line3_short`).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task3/`. What used `skin1d`, found before anything was removed: the
+     module (503 lines); `body.py`'s `SURFACE_MODEL_NAMES`, `DEATH_TOLERANCE` and `MeltSettings`'s `surface_model` and
+     `skin`, and in `MeltingBody` the skins with thirteen counters, `_advance_with_skins`, skin branches in `melt_step`,
+     `_defer_to_patches`, `_film_nodal`, `_film_and_spray` and `_kill`, nine skin methods and seven skin-aware readers
+     (`body.py` 1 671 lines, 1 251 after); `coupled.py`'s 23 `SKIN_COLUMNS`, eight results and four frame fields; a
+     comment in `cli.py`; the tests `test_reentry_model_skin1d.py` (21), `test_reentry_model_melting_skin.py` (14) and
+     the FEniCSx tier's `test_skins_match_the_skfem_backend` (the tier 19 becomes 18); no analysis script. Kept: the
+     thermal backends' facet interface law (`step(..., interface=)`), which only sub-plan 18 called and which their own
+     tests check, and `nonrigid_depth_wet_median_um` (fact 94), which every element run fills, now last in
+     `MELT_COLUMNS`. On the CLI test's short melting case (fact 169) `--surface-model elements` is Task 2's to the last
+     bit: the text of the 93 history columns kept, in their order, in all 76 rows; the 26 fields of `particles.npz`'s
+     25 266 rows; `particles_summary.csv` and `size_distribution.csv` byte for byte; the run's settings, and its 61
+     results kept but the run time. The 22 history columns and eight results removed held 0 or nan in every row. The
+     FEniCSx tier (now 18 tests) has one failure that is not Task 3's: `test_the_thick_film_flux_matches_the_skfem_backend`
+     ends with an energy balance of 1.0496e-8 against its 1e-8 bound, the same to the last digit on Task 1a's, 1b's, 2's
+     and 3's code, and passes on sub-plan 21's (602b262).
+178. **The skins the default surface model, and the run names (sub-plan 22 Task 3, 2026-10-29).** `--surface-model`
+     not given is the skins with `--thermal fem` (`cli.surface_model_of`; none without a thermal model, and `skin` given
+     without one exits 2 as before). Run names (`cli.run_name_of`, `model_run_name(..., surface_model="skin")`): a skin
+     run loses `_surface-skin` and keeps its non-default settings' suffixes (`_skin-dev`, `_skinflow-on`,
+     `_flowcycles<n>`, then the new `_slurryspray-on`); an element-model thermal run gains `_surface-elements`, after the
+     removal's and its own suffixes (`_deeprunoff-off`, `_moltencascade-off`, `_rigidsubstrate-off`, `_dtcontinuum-…`)
+     and before `_seed-<n>`; a run without a thermal model has no surface suffix. `--removal` not given
+     (`cli.removal_of`) is Girin's, except for the heat-only skins (`--skin-flow off`, the default), where it is instant
+     removal: with the skins Girin's removal is required with the flow (spec 10.1) and is the flow run's, so a melting
+     run with no flags is the heat-only skins, `_melt-instant`, on 0.5 s macro steps. Exit 2 for `--removal girin`
+     without the flow, `--removal instant` with it, `--slurry-spray on` without the flow or with the element model, and
+     the element model's `--runoff off`, `--deep-runoff off`, `--molten-cascade off`, `--rigid-substrate off` and
+     `--size-feedback` given to the skins. In the planning copy the old names or default were assumed by three name
+     assertions of the CLI tests and its element-model tests, the thermal verification test, and
+     `analysis/reentry_model_thermal_verification.py`, `melt_verification.py` and `melt_sensitivity.py` (named by
+     `--name`, but they would have run the skins); each now names its surface model. A Step 2 thermal run with no flags
+     now runs the skins, heat only: 71.9 s a macro step on the 100 mm sphere before option A, against 32 s for the
+     element model's whole flight (fact 147); and on the CLI tests' coarse mesh (4 mm surface) the default fine band
+     (0.7 mm asked) makes the skins' first move fail, exit 1 ("a corner move of up to 0.0008 m degrades the mesh even
+     after a rebuild"), unless `--fine-size 2` is given, as the skin tests do.
+179. **The spraying skin flight from the command line (sub-plan 22 Task 3, 2026-10-29; `run_smoke.sh`,
+     `smoke_check.py`).** With `--skin-flow on` the CLI gives the skin body `spray.SprayModel` with `--kr`, `--kt`,
+     `--we-critical`, `--rt-spray`, and `--slurry-spray`, `--particles`, and writes `coupled.write_particles`'s
+     `particles.npz` and `size_distribution.csv`; the summary, recorded as null, waits for Task 4. Smoke flights: the
+     100 mm sphere on the CLI tests' coarse mesh (4 mm surface, 20 mm core; 2 367 columns of the dev preset's 20 um
+     cells), 125 ms from 65 km at 7.24 km/s (body Knudsen number 0.005, Girin's closure; q_stag 4.57 MW/m2), the body at
+     893 K, the flow's sub-steps chosen each skin sub-step, a 25 ms first step and then Girin's continuum step of
+     12.5 ms. The nose's liquid appears in the third step (0.084 mm at 50 ms, 0.31 mm at 125 ms) and the next six steps
+     spray. Slurry spraying off: 1.956 g as 76 300 droplets in 1 196 rows, all thick, radius 108/133/1 808 um
+     (minimum/median/maximum), solid fraction under 1.1e-11; the rows' mass is the released mass exactly, the initial
+     less the final mass less the released 6e-17 of the mass, energy residual 4.3e-11, momentum 4.0e-17;
+     `size_distribution.csv` the rows' histogram within 5e-10 (it prints nine digits). On: 2.983 g, 915 liquid rows
+     (1.246 g) and 1 308 slurry rows (1.737 g; solid fraction up to 0.063, radius median 289 um, largest 7.97 mm), books
+     1.3e-16, 4.2e-11, 5.6e-18. Cost (laptop, mains power): 84 s and 68 s beside the unit tests; the first run again
+     alone 61 s, 1.5–6.2 s of skins a 12.5 ms macro step once melting (three quarters in the flow), 0.09–0.13 s in the
+     3D solve, 0.46–0.61 s in the moves; peak memory 744 and 824 MB. The same 125 ms at 62.5 ms macro steps with the
+     continuum step off (a 0.5 s melting macro step runs as eight such parts): 116 s alone, 45.6 and 67.5 s of skins
+     with three repeated passes and up to ten flow sub-steps a heat sub-step (Courant number 9.0), 1.947 g released
+     against 1.956 g, 74 600 droplets against 76 300, 210 rows against 1 196; on this case the continuum step cost about
+     half as much a second of flight. Each measured once. The loop's last macro step is 1.4e-17 s long (the steps' floating-point sum
+     falls short of t_max), and its droplet-momentum ratio reads 5.5 and 8.6 against at most 0.083 before: an artefact
+     of a vanishing step, for Task 4's history columns. The CLI test's shorter case (62.5 ms, two flow sub-steps a skin
+     sub-step) sprays 0.24 g in its last step in about 20 s. At the CLI tests' 71 km instead (body Knudsen number 0.011,
+     above Girin's closure), two 0.25 s steps from 880 K made 0.23 mm of liquid over 1.3 mm of flowing metal at the nose
+     and sprayed nothing: off Girin's closure a liquid on slurry is held from the shear modes (option B), as in the
+     element model. Tests: command line five added (one parametrized eleven times), one replaced, five changed; melting
+     one; unit tier 519 passed, 1 skipped (Task 2's 538 less stage 1's 35 skin tests, plus 16), 58 minutes on mains
+     power beside another session's eight-worker sweep.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

@@ -2,12 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c and 2 (2026-10-28/29).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2 and 3 (2026-10-28/29).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
-> and on the slurry cascade. Task 2 makes the droplet records from the skins. Tasks 3–6 are the outline's, below, and the
-> inputs it listed are carried at the end.
+> and on the slurry cascade. Task 2 makes the droplet records from the skins. Task 3 retires stage 1's one-dimensional
+> skins, makes the layered skins the default surface model and puts the spraying skin flight on the command line; it
+> leaves two decisions to Asha, the flow's default and the macro step of a spraying flight (Inputs to settle). Tasks
+> 4–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -21,7 +23,10 @@ the start of each macro step, from the surface flow the skins' flow already eval
 and hands the rate per column to sub-plan 21 Task 7's release hook, which takes it from the top cells in every flow
 sub-step. Task 2 books what the release took by the cells it came from, combines it per column, per mode and per macro
 step into the plan's record, and writes it as source-table rows through the shared physics' own row writer, so that one
-coupled writer serves both surface models.
+coupled writer serves both surface models. Task 3 removes the element model's dead branches for stage 1's skins, so
+that the element model is unchanged in everything it still writes, and changes only the command line otherwise: the
+skins become the default surface model, and with their flow on the command line gives them the shared spray model and
+writes their droplets with the element model's writer.
 
 **Tech Stack:** Python 3.12 (`drama_env`), numpy, scipy, scikit-fem for the 3D model, gmsh for its rebuilds.
 
@@ -123,6 +128,26 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
 12. **The skin flight's files** (Task 2, rulings 9 and 10) -- `particles.npz` and `size_distribution.csv` written by the
     element model's writer from one block of rows a macro step; the summary waits for Task 4's history columns, and the
     CLI's call for Task 3. The rows' volume at the continuum step is an input to settle (below).
+13. **The element model without stage 1's skins** (Task 3, rulings 1 and 2) -- every branch removed was dead without
+    skins, so on the CLI test's short melting case the 93 history columns kept, the source table, the summary, the size
+    distribution, the settings and the 61 results kept are Task 2's to the last bit; the 22 history columns and eight
+    results removed held 0 or nan in every row (fact 177). Pinned by `test_the_one_dimensional_skins_are_retired` and
+    the element model's own tests.
+14. **The default flips** (Task 3) -- a thermal run with no flags now runs the skins: its name loses `_surface-skin` and
+    an element run's gains `_surface-elements` (fact 178), and every script or test of the element model names it. A
+    Step 2 run with no flags now costs the skins' price (fact 147), and on the CLI tests' coarse mesh exits 1 at the
+    first move unless the fine band is coarsened (`--fine-size 2`, as the skin tests give). Pinned by
+    `test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings`.
+15. **The removal follows the flow on the skins** (Task 3, ruling 3) -- instant removal with the flow off, Girin's with
+    it on, so a melting run with no flags runs the heat-only skins while the flow's default is off (an input to settle).
+    Pinned by `test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow`.
+16. **Contradictions exit 2** (Task 3, ruling 4) -- Girin's removal without the flow, `--slurry-spray on` without it,
+    and the element model's settings given to the skins, which would otherwise run the skins silently. Pinned by
+    `test_contradictory_skin_settings_exit_2`.
+17. **The spraying skin flight from the command line** (Task 3) -- the shared spray model with the command line's
+    constants, the droplet files and a summary recorded as not written; the books close (fact 179). Pinned by
+    `test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_files` and
+    `test_the_command_line_builds_the_skins_with_the_shared_spray_model`.
 ## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
 
 > Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
@@ -3440,7 +3465,1688 @@ git commit -m "Skins: the droplet records (spec 8 and 10.2) -- what the accepted
 
 ---
 
-## The outline (Tasks 3–6, and Tasks 1 and 2 written out above: 1 as Tasks 1a, 1b and 1c)
+### Task 3: Stage 1's skins retired, the skins the default surface model, and the spraying skin flight from the command line
+
+**Files:**
+- Delete: `reentry_model/skin1d.py`, `tests/test_reentry_model_skin1d.py`, `tests/test_reentry_model_melting_skin.py`
+- Modify: `reentry_model/body.py` (`SURFACE_MODEL_NAMES`, `DEATH_TOLERANCE`, `MeltSettings.surface_model` and `.skin`
+  removed; `MeltingBody`'s skins: their counters, `_advance_with_skins` (`advance` is the element step), the branches in
+  `melt_step`, `_defer_to_patches`, `_film_nodal`, `_film_and_spray` and `_kill`, the nine skin methods, the
+  `surface_temperature` and `radiated_power` overrides, `film_enthalpy`, `film_frozen_fraction`, `mass`, `energy`,
+  `demised` and `_skin_stats`), `reentry_model/coupled.py` (`SKIN_COLUMNS` removed, `MELT_COLUMNS` ending in
+  `nonrigid_depth_wet_median_um`; eight results and four frame fields removed), `reentry_model/cli.py`
+  (`SURFACE_MODELS`, `DEFAULT_SURFACE_MODEL`; `surface_model_of`, `removal_of`, `spray_model_of`, `run_name_of`;
+  `model_run_name(..., surface_model="skin")`, `skin_name_suffix(..., slurry_spray=False)`; `--surface-model` and
+  `--removal` defaulting to the run's own, `--slurry-spray`; `build_thermal`'s spraying skins; `cmd_run`'s checks and
+  the skin run's droplet files), `analysis/reentry_model_thermal_verification.py`, `analysis/melt_verification.py`,
+  `analysis/melt_sensitivity.py` (the element model named)
+- Test: `tests/test_reentry_model_cli.py` (five tests added, one replaced, five changed),
+  `tests/test_reentry_model_melting.py` (one added), `tests/test_reentry_model_thermal_verification.py` (one changed),
+  `tests/test_reentry_model_fenicsx.py` (`test_skins_match_the_skfem_backend` removed: the FEniCSx tier is 18)
+
+**Interfaces:**
+- Consumes: Task 2's `SkinBody(..., spray=, slurry_spray=, particles=)`, `.source_rows`, `.hist_n`, `.hist_m`,
+  `.released_mass`, `.droplet_number` and `coupled.write_particles` (no summary without the element model's history
+  columns); `spray.SprayModel`; sub-plan 21's `--skin-flow`, `--skin-flow-cycles` and the continuum step.
+- Produces: `cli.SURFACE_MODELS` (`skin`, `elements`), `cli.DEFAULT_SURFACE_MODEL` (`skin`);
+  `cli.surface_model_of(args)` (the skins for a thermal run, None without one), `cli.removal_of(args)` (Girin's, but
+  instant removal for the heat-only skins); `cli.spray_model_of(args, mat)`; `cli.run_name_of(args, diameter_m,
+  velocity_ms, altitude_m, atmosphere_name, dt_continuum)`; `model_run_name(..., surface_model="skin")` ending an
+  element-model thermal run in `_surface-elements`; `skin_name_suffix(..., slurry_spray=False)` adding
+  `_slurryspray-on`; `--slurry-spray on|off` (off); the skin run's settings `skin.slurry_spray` and, spraying, `rt_spray`,
+  `rarefied_shear`, `we_critical`, `k_r`, `k_t`, `gamma_pm`, `kn_body_shock`, `particles`, `liquid`; its files
+  `particles` and `size_distribution`, and `particles_summary` null. Removed: `skin1d`, `body.SURFACE_MODEL_NAMES`,
+  `body.DEATH_TOLERANCE`, `MeltSettings.surface_model`, `.skin`, `coupled.SKIN_COLUMNS`, and the element model's 22
+  history columns and eight results of sub-plan 18's skins. No skin-body history column, frame field or result changes:
+  those are Task 4's.
+
+Spec 9 retires the element model's mechanisms from the skin path and keeps `--surface-model elements` unchanged for
+comparison; 10.1 makes `skin` the default surface model, `_surface-elements` the suffix when not, and adds
+`--slurry-spray on|off` (off, `_slurryspray-on`); 11.2's stage 4 removes "the old film, deep account and their rules".
+Since sub-plan 20 the skin path is `skinbody.SkinBody`, which never had the element model's film, deep account, fill
+fractions, deaths, feed rule, freeze-back or the stage-1 return device, so what remains to retire is stage 1's
+one-dimensional skins of sub-plan 18.
+
+**What used them** (found before anything was removed): `reentry_model/skin1d.py` (503 lines); in `body.py`,
+`SURFACE_MODEL_NAMES`, `DEATH_TOLERANCE` and `MeltSettings`'s `surface_model` and `skin`, and in `MeltingBody` the skins
+and their thirteen counters, the macro step with skins (`_advance_with_skins`), skin branches in `melt_step` (the step's
+own flow evaluation, the draws, the return device, the feed and freeze-back masks, three refreshes of the film's
+enthalpy, the death level and the hand-over to skins), `_defer_to_patches`, `_film_nodal`, `_film_and_spray` (the
+composed depths, a refresh of the enthalpy, three skin depths), `_kill`, nine methods (`_refresh_skin_index`,
+`_skin_available`, `_create_skins`, `_compose_depth`, `_defer_to_facets`, `_return_from_skins`, `_death_to_skins`,
+`_hand_over_targets`, `_hand_over_skins`), the skin-aware `surface_temperature`, `radiated_power`, `film_enthalpy`,
+`film_frozen_fraction`, `mass`, `energy` and `demised`, and `_skin_stats`; in `coupled.py`, `SKIN_COLUMNS` (23 history
+columns), eight results in `melt_results` and four frame fields in `write_vtk_frame`; a comment in `cli.py`; the tests
+`test_reentry_model_skin1d.py` (21), `test_reentry_model_melting_skin.py` (14) and the FEniCSx tier's
+`test_skins_match_the_skfem_backend`. No analysis script used them. Each branch was dead without skins, so removing it
+removes arithmetic the element model never ran: `body.py` falls from 1 671 to 1 251 lines. Kept (ruling 1): the thermal
+backends' facet interface law (`step(..., interface=)`, `StepResult.Q_interface`), which only sub-plan 18 called and
+which their own tests check, and `nonrigid_depth_wet_median_um`, fact 94's statistic of the regime test's depth over
+the wet windward patches, which every element run fills and which now ends `MELT_COLUMNS`. The other 22 of
+`SKIN_COLUMNS` and the eight results held 0 or nan in every element run, and go with the skins (ruling 2).
+
+**The skins the default** (spec 10.1). `--surface-model` not given is the skins for a thermal run (`surface_model_of`);
+a run without a thermal model has no surface model, and `--surface-model skin` given to such a run is refused as
+before. The
+run names then follow the rule of 10.1 (`model_run_name`, built from the command line by `run_name_of`):
+
+| Run | Before (Task 2) | After |
+|---|---|---|
+| `--thermal none` | no surface suffix | no surface suffix |
+| thermal, the skins (no melting, or heat-only melting) | `_surface-skin` + the skins' settings | the skins' settings only |
+| melting, the skins with the flow | `_melt-girin_surface-skin…_skinflow-on` | `_melt-girin…_skinflow-on` (+ `_flowcycles<n>`, `_slurryspray-on`) |
+| thermal, the element model | no surface suffix | `_surface-elements` |
+| melting, the element model | `_melt-girin` (and its own suffixes) | `_melt-girin`, its own suffixes, `_surface-elements` |
+
+So a skin run's name loses `_surface-skin` and an element run's gains `_surface-elements`, after the removal's and the
+element model's own suffixes and before the seed's. Pinned by
+`test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings` and the sub-plan 20 and 21 name tests.
+What assumed the old names or the old default in the planning copy, and is changed: three name assertions of
+`tests/test_reentry_model_cli.py` (and its element-model tests, which now name `--surface-model elements` in `FEM` and
+the physics-mode thermal run); `tests/test_reentry_model_thermal_verification.py`'s command line; and the element
+model's verification and sensitivity scripts, `analysis/reentry_model_thermal_verification.py`,
+`analysis/melt_verification.py` and `analysis/melt_sensitivity.py`, which name their runs with `--name` but, without the
+flag, would have run the skins: each now names its surface model. No document inside the copy names a surface model.
+Outside it, unchanged here: the worktree's README, CLAUDE.md and `docs/model_assumptions.md` (no surface model yet:
+the package at the repository root has no skins, Task 6), sub-plan 20's level-3 flight plan (it gives `--surface-model
+skin`, which still holds), and the wrapper scripts, which drive Step 1 alone.
+
+**The removal follows the flow on the skins** (ruling 3). `--removal` not given is the run's own (`removal_of`):
+Girin's for the element model, and for the skins with the flow on, where spec 10.1 has `--skin-flow on` need `--removal
+girin` and only spraying removes the liquid; instant removal for the heat-only skins, whose liquid leaves as it forms
+(stage 2's stand-in for flow and spray, 11.2). So for the skins Girin's removal is required with the flow, and is the
+removal of a flow run, not of every skin melting run: with the flow off by default (10.1, `skinbody.FLOW_DEFAULT`), a
+melting run with no flags runs the heat-only skins (`_melt-instant`). A contradiction exits 2: `--removal girin`
+without the flow, `--removal instant` with it, `--slurry-spray on` without the flow or with the element model, and the
+element model's own settings given to the skins (`--runoff off`, `--deep-runoff off`, `--molten-cascade off`,
+`--rigid-substrate off`, `--size-feedback`), which the skins have no use for and would otherwise ignore silently now
+that they are the default (ruling 4). The continuum step follows Girin's removal as before (`continuum_step`), so a
+spraying skin run takes 0.0125 s once the body's Knudsen number is below 0.01.
+
+**The spraying skin flight.** With `--skin-flow on`, `build_thermal` gives the skin body the shared spray physics with
+the command line's constants (`spray_model_of`, the element model's `--kr`, `--kt`, `--we-critical`, `--rt-spray`),
+`--slurry-spray` and `--particles`, and records them in the run's settings; and `cmd_run` writes its droplets with the
+element model's writer, `coupled.write_particles`: `particles.npz` and `size_distribution.csv`. Its per-step summary,
+whose columns are the element model's history columns, waits for Task 4: the run's files record `particles_summary`
+as null, and the printed summary says so with the mass, droplets and rows released (ruling 5). The heat-only skins
+write no droplet files, having none.
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task3/`; facts 177–179):
+- *The element model unchanged* (`element_files.py`; `../task1/cmp/compare_runs.py`; `runs/line3_short` against Task 2's
+  `line2_short`). The CLI test's short melting case (fact 169) with `--surface-model elements`: the text of the 93
+  history columns kept, in their order, is Task 2's in all 76 rows; `particles.npz`'s 26 fields over its 25 266 rows,
+  `particles_summary.csv` and `size_distribution.csv` byte for byte; the settings, and the 61 results kept but the run
+  time. The 22 history columns removed held 0 (15) or nan (7) in every row, the eight results 0.
+- *The spraying skin flight from the command line* (`run_smoke.sh`, `smoke_check.py`; fact 179). The 100 mm sphere on
+  the CLI tests' coarse mesh (2 367 columns, the dev preset's 20 um cells), 125 ms from 65 km at 7.24 km/s (body
+  Knudsen number 0.005; q_stag 4.57 MW/m2), the body at 893 K, the flow's sub-steps chosen each skin sub-step, a 25 ms
+  first step, then Girin's continuum step of 12.5 ms. The nose's liquid appears in the third step and the last six
+  spray. Slurry spraying off: 1.956 g as 76 300 droplets in 1 196 rows, all thick, radius 108/133/1 808 um; the rows'
+  mass the released mass exactly, mass 6e-17, energy 4.3e-11, momentum 4.0e-17; `size_distribution.csv` the rows'
+  histogram to its nine printed digits; `particles_summary` null and no such file. On: 2.983 g, 915 liquid rows
+  (1.246 g) and 1 308 slurry rows (1.737 g, solid fraction up to 0.063, radius median 289 um and largest 7.97 mm); books
+  1.3e-16, 4.2e-11, 5.6e-18. The loop's last step is 1.4e-17 s (the steps' sum falls short of t_max), where Pi reads
+  5.5 and 8.6: Task 4's. At the CLI tests' 71 km (body Knudsen number 0.011) two 0.25 s steps from 880 K made 0.23 mm
+  of liquid over 1.3 mm of flowing metal at the nose and sprayed nothing: off Girin's closure a liquid on slurry is held
+  (option B), as in the element model (ruling 7).
+- *The cost* (the same runs; `run_cost.sh`). Run alone on mains power, the smoke flight with slurry spraying off took
+  61 s (84 s beside the unit tests): 1.5–6.2 s of skins a 12.5 ms macro step once melting (three quarters in the flow;
+  12.7 s for the 25 ms first step), 0.09–0.13 s in the 3D solve and 0.46–0.61 s in the moves; peak memory about 740 MB. The same 125 ms at
+  62.5 ms macro steps with the continuum step off -- a 0.5 s macro step while melting runs as eight parts of that
+  length -- took 116 s: 45.6 and 67.5 s of skins, its passes repeated three times and its flow sub-steps up to ten a
+  heat sub-step (the largest Courant number 9.0 against the target 6); it released 1.947 g against 1.956 g (0.5 % less,
+  from one plan at 62.5 ms against six), 74 600 droplets against 76 300, in 210 rows against 1 196. So on this case the
+  continuum step cost about half as much a second of flight and wrote 5.7 times the rows; measured once, on a coarse
+  case, for Task 5's study.
+- *The FEniCSx tier* (`fenicsx_tier.txt`, `log_fenicsx_thick_*.txt`): 17 passed and 1 failed,
+  `test_the_thick_film_flux_matches_the_skfem_backend`, an element-model energy balance of 1.0496e-8 against the test's
+  bound of 1e-8. The same test gives the same residual to the last digit on Tasks 1a, 1b and 2's code and passes on
+  sub-plan 21's (602b262): Task 1a's spraying amendments moved it over the bound, and Task 3 leaves it unchanged. Not
+  fixed here (the bound is the element model's test's); for the coordinator.
+- *A thermal run with no flags on the coarse mesh* (`spike/run_cli.sh`): the CLI tests' physics-mode Step 2 run without
+  `--surface-model elements`, now the skins with the default 0.7 mm fine band under 4 mm surface elements, exits 1 at
+  the skins' first move ("a corner move of up to 0.0008 m degrades the mesh even after a rebuild"); the skin tests give
+  `--fine-size 2`, and the production surface (2 mm) passed level 3 (fact 149).
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *The thermal backends' facet interface law stays* (`step(..., interface=)`, `StepResult.Q_interface`), though only
+   sub-plan 18 called it. Why: it is the backends' own capability, checked by their own tests in both backends, not the
+   skins'; the retirement is the brief's three items. Cost: about twenty unused lines in each backend.
+2. *The element model's 22 history columns and eight results of sub-plan 18's skins go*, rather than staying as
+   constants. Why: they were the retired skins' diagnostics and held 0 or nan in every element run; kept, every element
+   history would carry a retired model's names. `nonrigid_depth_wet_median_um`, which every run fills, stays. Cost: an
+   element history is 22 columns narrower than Task 2's, so it is the same to the last bit column by column, not as a
+   file; nothing in the planning copy reads the columns removed.
+3. *On the skins `--removal` not given follows the flow*: instant removal with it off, Girin's with it on. Why: spec 10.1
+   pairs the flow with Girin's removal and leaves the flow off by default, so with Girin's removal always the default a
+   melting run with no flags would exit 2; this way the default run runs, and if the flow's default changes the removal
+   follows it. Cost: a default skin melting run is named `_melt-instant` and runs no droplets while the flow is off.
+4. *The element model's settings given to the skins exit 2* (`--runoff off`, `--deep-runoff off`, `--molten-cascade off`,
+   `--rigid-substrate off`, any `--size-feedback`). Why: with the skins the default, such a setting given without
+   `--surface-model elements` would run the skins and ignore it silently; spec 10.1 refuses contradictory settings. The
+   parser cannot tell a default given from none, so only values other than the default are refused. Cost: none; of the
+   skins' settings given to the element model only `--skin-flow on` and `--slurry-spray on` are refused, the rest
+   ignored as before.
+5. *A skin run's summary is recorded as not written* (`particles_summary` null in the run's files, and said in the
+   printed summary). Why: Task 2's ruling 10, the summary's columns are the element model's history; Task 4 gives the
+   skin history its droplet columns. Cost: none.
+6. *The run name is built by `run_name_of`*, taken out of `cmd_run`, so that the rule can be tested from command lines.
+   Cost: none (the names of every CLI test are unchanged but for the rule's own change).
+7. *The smoke flight's case*: the CLI tests' coarse mesh and the dev preset, 65 km, the body at 893 K, a 25 ms first
+   step. Why: the smallest case that melts and sprays within minutes; at the CLI tests' 71 km the body Knudsen number is
+   0.011, Girin's closure does not hold, and a liquid on slurry is held from the shear modes (option B), so two 0.25 s
+   steps from 880 K sprayed nothing. Cost: not the flight's conditions, which Task 5 flies.
+
+**Open for Asha** (Inputs to settle, below): the flow's default, and the macro step of a spraying skin flight.
+
+- [ ] **Step 1: The run names, the defaults, the checks and the spraying flight's files** -- in
+  `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -99,7 +99,10 @@
+ 
+ 
+ US76_100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv")
+-FEM = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "sesam", "--h-surface", "4", "--h-core", "20", "--quiet"]
++# a thermal run, with the layered skins, the default surface model since sub-plan 22 Task 3; FEM is the element model, named,
++# and the skins' tests below that start from it give --surface-model skin after it, which overrides it
++THERMAL = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "sesam", "--h-surface", "4", "--h-core", "20", "--quiet"]
++FEM = THERMAL + ["--surface-model", "elements"]
+ 
+ 
+ def test_run_name_with_heating():
+@@ -158,7 +161,8 @@
+ 
+ def test_thermal_run_physics_mode(tmp_path):
+     rc = cli.main(BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
+-                         "--t-max", "5", "--dt", "0.5", "--outdir", str(tmp_path), "--name", "fem_physics", "--quiet"])
++                         "--t-max", "5", "--dt", "0.5", "--outdir", str(tmp_path), "--name", "fem_physics", "--quiet",
++                         "--surface-model", "elements"])
+     assert rc == 0
+     doc = json.load(open(tmp_path / "fem_physics.json"))
+     s = doc["settings"]
+@@ -189,7 +193,7 @@
+ 
+     monkeypatch.setattr(coupled.CoupledRun, "run", run_and_keep)
+     argv = FEM + ["--t-max", "5", "--dt", "0.5"]
+-    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam")
++    name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "sesam", surface_model="elements")
+     np.random.seed(1)
+     assert cli.main(argv + ["--outdir", str(tmp_path / "a")]) == 0
+     np.random.seed(2)
+@@ -338,10 +342,10 @@
+ def test_skin_settings_reach_the_run_name():
+     name = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics")
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics",
+-                              surface_model="skin") == name + "_surface-skin"
++                              surface_model="skin") == name                    # the default since sub-plan 22 Task 3
+     melt = cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "instant")
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", "physics", "instant", surface_model="skin",
+-                              skin_suffix="_skin-dev", seed=7) == melt + "_surface-skin_skin-dev_seed-7"
++                              skin_suffix="_skin-dev", seed=7) == melt + "_skin-dev_seed-7"
+     assert cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table", "none", None,
+                               surface_model="skin") == cli.model_run_name(0.1, 7500.0, 77500.133, "us76", "sesam-table",
+                                                                           "none", None)        # no thermal model, no skins
+@@ -374,12 +378,12 @@
+     assert cli.main(argv) == 0
+     (path,) = glob.glob(str(tmp_path / "*.json"))
+     doc = json.load(open(path))
+-    assert doc["run_name"].endswith("_melt-instant_surface-skin_skin-dev_fine4x2mm")
++    assert doc["run_name"].endswith("_fem-sesam_melt-instant_skin-dev_fine4x2mm")
+     s, r = doc["settings"], doc["results"]
+     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
+     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
+                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
+-                         "swell": True, "flow": "off", "flow_cycles": "adaptive"}
++                         "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off"}
+     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
+     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+@@ -400,7 +404,7 @@
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
+-    MELT + ["--surface-model", "skin"],                                     # Girin's removal needs the flow (and spraying)
++    MELT + ["--removal", "girin", "--surface-model", "skin"],               # Girin's spraying needs the flow
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
+     MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
+     ["run", "--surface-model", "skin"],                                     # no thermal model
+@@ -441,27 +445,51 @@
+     assert args.skin_flow == "off" and args.skin_flow_cycles is None
+ 
+ 
+-def test_a_skin_run_with_flow_keeps_its_liquid_and_writes_the_flow_s_columns_and_frames(tmp_path):
+-    """0.5 s from 71 km with a warm body, the layered skins (dev preset) and the flow on at two flow sub-steps a skin
+-    sub-step: the liquid stays and flows -- no removal, the spraying that will take it is stage 4's -- the run name ends
+-    in _skinflow-on_flowcycles2 after the removal's _melt-girin, the settings record the flow and its sub-cycles, and the
+-    history's flow columns and the frames' top speed are written."""
++def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_files(tmp_path):
++    """The spraying skin flight from the command line (sub-plan 22 Task 3). 62.5 ms from 65 km, where the body Knudsen
++    number is 0.005 and Girin's closure holds, of a body at 893 K (2 K below T_rigid) under physics heating, with the
++    layered skins (dev preset) and the flow on at two flow sub-steps a skin sub-step: Girin's removal is the default with
++    the flow, and so is its continuum step, so a 25 ms first step is followed by three of 12.5 ms. The tops melt by the
++    last step's start and its plan sprays them. The run name ends in _melt-girin and the skins' own suffixes, with no
++    surface suffix (the skins are the default); the settings record the flow and the spray model's constants; mass,
++    energy and momentum close; the droplets are written by the element model's writer -- particles.npz, whose rows carry
++    the mass released, and size_distribution.csv, their histogram -- and the per-step summary, which waits for Task 4's
++    history columns, is recorded as not written; the history's flow columns and the frames' top speed are written."""
++    pytest.importorskip("cantera")
+     import glob
+     import pyvista as pv
+-    argv = MELT + ["--altitude", "71", "--velocity", "7.24", "--temperature", "880", "--t-max", "0.5",
+-                   "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1", "--fine-size", "2",
+-                   "--skin-flow", "on", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
++    from reentry_model import spray
++    argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
++                   "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
++                   "--fine-size", "2", "--skin-flow", "on", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+     assert cli.main(argv) == 0
+     (path,) = glob.glob(str(tmp_path / "*.json"))
+     doc = json.load(open(path))
+-    assert doc["run_name"].endswith("_melt-girin_surface-skin_skin-dev_fine4x2mm_skinflow-on_flowcycles2")
+-    s, r = doc["settings"], doc["results"]
+-    assert s["skin"]["flow"] == "on" and s["skin"]["flow_cycles"] == 2
+-    assert r["removed_mass_kg"] == 0.0 and abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
++    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_skinflow-on_flowcycles2")
++    s, r, f = doc["settings"], doc["results"], doc["files"]
++    assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
++    assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
++    assert s["we_critical"] == 3.08 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["rt_spray"] == "on"
++    assert s["dt_continuum_s"] == 0.0125 and r["dt_switch_time_s"] == pytest.approx(0.025)
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+-    assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS)
++    assert len(rows) == 5 and all(k in rows[0] for k in coupled.SKINBODY_COLUMNS)
++    released = r["released_mass_kg"]
++    assert released > 0.0 and float(rows[-2]["released_mass_kg"]) == 0.0 and r["removed_mass_kg"] == 0.0
++    # the books: mass, energy and momentum
++    assert r["initial_mass_kg"] - r["final_mass_kg"] == pytest.approx(released, rel=1e-9)
++    assert abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
++    # the droplet files, the element model's, and no summary until Task 4
++    assert f["particles_summary"] is None and not os.path.exists(os.path.join(os.path.dirname(f["particles"]),
++                                                                                  "particles_summary.csv"))
++    table = np.load(f["particles"])
++    assert table.files == spray.SOURCE_COLUMNS and len(table["dm_kg"]) > 0 and (table["time_s"] == 0.0625).all()
++    assert table["dm_kg"].sum() == pytest.approx(released, rel=1e-12)
++    dist = [row for row in csv.DictReader(open(f["size_distribution"])) if float(row["window_end_s"]) == 0.0625]
++    n_hist, m_hist = spray.histogram(table["r_m"], table["dn"], table["dm_kg"])
++    np.testing.assert_allclose([float(row["dn"]) for row in dist], n_hist, rtol=1e-8)
++    np.testing.assert_allclose([float(row["dm_kg"]) for row in dist], m_hist, rtol=1e-8, atol=1e-30)
+     surf = sorted(glob.glob(str(tmp_path / "**" / "surface_*.vtp"), recursive=True))
+-    assert len(surf) == 2 and "top_speed" in pv.read(surf[-1]).point_data
++    assert len(surf) >= 2 and "top_speed" in pv.read(surf[-1]).point_data
+ 
+ 
+ @pytest.mark.parametrize("argv", [
+@@ -477,3 +505,106 @@
+     with pytest.raises(SystemExit) as exc:
+         cli.main(argv + ["--outdir", str(tmp_path)])
+     assert exc.value.code == 2
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Sub-plan 22 Task 3: the layered skins the default surface model, the run names, the spraying flight's settings
++
++def test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow():
++    """Spec 10.1: --surface-model defaults to the skins for a thermal run (a run without a thermal model has no surface
++    model). --removal not given is the run's own: Girin's for the element model and for the skins with the flow on (spec
++    10.1, --skin-flow on needs --removal girin), instant removal for the heat-only skins (the flow off, its default), whose
++    liquid leaves as it forms; the continuum step (0.0125 s) follows Girin's removal, so a spraying skin run takes it."""
++    p = cli.build_parser()
++    melt = THERMAL + ["--melt", "on"]
++    resolved = lambda argv: (lambda a: (cli.surface_model_of(a), cli.removal_of(a), cli.continuum_step(a)))(p.parse_args(argv))
++    assert cli.DEFAULT_SURFACE_MODEL == "skin" and p.parse_args(THERMAL).surface_model is None
++    assert resolved(BASE) == (None, "girin", None)                               # no thermal model, no surface model
++    assert resolved(THERMAL) == ("skin", "instant", None)                        # nothing melts: the removal is unused
++    assert resolved(melt) == ("skin", "instant", None)                           # the heat-only skins
++    assert resolved(melt + ["--skin-flow", "on"]) == ("skin", "girin", 0.0125)   # the spraying skins
++    assert resolved(melt + ["--surface-model", "elements"]) == ("elements", "girin", 0.0125)
++    assert resolved(melt + ["--surface-model", "elements", "--removal", "instant"]) == ("elements", "instant", None)
++
++
++def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings():
++    """The run-name rule after the skins became the default (spec 10.1): a thermal run with the element model ends in
++    _surface-elements, after its removal's and its own settings' suffixes and before the seed's; a skin run carries only
++    its non-default settings, the flow's _skinflow-on followed by _flowcycles<n> and _slurryspray-on; a run without a
++    thermal model has no surface suffix. Built from the command line as cmd_run builds it (`run_name_of`)."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert name(BASE) == base
++    assert name(THERMAL) == base + "_fem-sesam"
++    assert name(FEM) == base + "_fem-sesam_surface-elements"
++    assert name(melt) == base + "_fem-sesam_melt-instant"
++    assert name(melt + ["--skin-preset", "dev"]) == base + "_fem-sesam_melt-instant_skin-dev"
++    assert name(melt + ["--skin-flow", "on"]) == base + "_fem-sesam_melt-girin_skinflow-on"
++    assert name(melt + ["--skin-flow", "on", "--slurry-spray", "on"]) == base + "_fem-sesam_melt-girin_skinflow-on_slurryspray-on"
++    assert (name(melt + ["--skin-flow", "on", "--skin-flow-cycles", "2", "--slurry-spray", "on", "--seed", "7"])
++            == base + "_fem-sesam_melt-girin_skinflow-on_flowcycles2_slurryspray-on_seed-7")
++    assert name(melt + ["--skin-flow", "on", "--dt-continuum", "off"]) == base + "_fem-sesam_melt-girin_dtcontinuum-off_skinflow-on"
++    elements = melt + ["--surface-model", "elements"]
++    assert name(elements) == base + "_fem-sesam_melt-girin_surface-elements"
++    assert name(elements + ["--removal", "instant"]) == base + "_fem-sesam_melt-instant_surface-elements"
++    assert (name(elements + ["--deep-runoff", "off", "--rigid-substrate", "off", "--dt-continuum", "off", "--seed", "7"])
++            == base + "_fem-sesam_melt-girin_deeprunoff-off_rigidsubstrate-off_dtcontinuum-off_surface-elements_seed-7")
++    assert name(elements + ["--skin-preset", "dev"]) == name(elements)          # the skins' settings name skin runs only
++    assert name(melt + ["--name", "mine"]) == "mine"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, slurry_spray=True) == \
++        "_skinflow-on_slurryspray-on"
++
++
++@pytest.mark.parametrize("argv", [
++    THERMAL + ["--melt", "on", "--removal", "girin"],                                  # Girin's spraying needs the flow
++    THERMAL + ["--melt", "on", "--slurry-spray", "on"],                                # the slurry sprays by the flow's spraying
++    THERMAL + ["--melt", "on", "--skin-flow", "on", "--slurry-spray", "maybe"],
++    FEM + ["--melt", "on", "--slurry-spray", "on"],                                    # the element model has no cascade
++    THERMAL + ["--slurry-spray", "on"],                                                # nothing melts
++    THERMAL + ["--melt", "on", "--runoff", "off"],                                     # the element model's settings ...
++    THERMAL + ["--melt", "on", "--skin-flow", "on", "--deep-runoff", "off"],
++    THERMAL + ["--melt", "on", "--molten-cascade", "off"],
++    THERMAL + ["--melt", "on", "--skin-flow", "on", "--rigid-substrate", "off"],
++    THERMAL + ["--melt", "on", "--size-feedback", "initial"],                         # ... refused with the skins
++    THERMAL + ["--stills"],                                                            # the element model's frames
++])
++def test_contradictory_skin_settings_exit_2(argv, tmp_path):
++    with pytest.raises(SystemExit) as exc:                    # 1 s of flight, were a setting accepted
++        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2
++
++
++def test_an_element_model_setting_given_to_the_default_skins_names_the_surface_model(tmp_path, capsys):
++    """With the skins the default, an element-model setting given without --surface-model elements would otherwise be
++    ignored silently: it is refused, and the message says which surface model it belongs to."""
++    with pytest.raises(SystemExit) as exc:
++        cli.main(THERMAL + ["--melt", "on", "--deep-runoff", "off", "--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2 and "--surface-model elements" in capsys.readouterr().err
++
++
++class _Built(Exception):
++    pass
++
++
++def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path, monkeypatch):
++    """--skin-flow on gives the skin body the shared spray physics with the command line's constants (the element model's
++    --kr, --kt, --we-critical, --rt-spray), --slurry-spray and --particles; the heat-only skins get none of them and
++    remove their liquid as it forms. The body is not built: its arguments are."""
++    from reentry_model import skinbody
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    with pytest.raises(_Built) as got:
++        cli.main(melt + ["--skin-flow", "on", "--slurry-spray", "on", "--kr", "0.2", "--kt", "0.9", "--we-critical", "4.62",
++                         "--rt-spray", "off", "--no-particles"])
++    k = got.value.args[0]
++    assert k["flow"] and not k["remove"] and k["surface_flow"] is not None and k["slurry_spray"] and not k["particles"]
++    assert (k["spray"].k_r, k["spray"].k_t, k["spray"].we_critical, k["spray"].rt_spray) == (0.2, 0.9, 4.62, False)
++    with pytest.raises(_Built) as got:
++        cli.main(melt)
++    k = got.value.args[0]
++    assert not k["flow"] and k["remove"] and k["spray"] is None and k["surface_flow"] is None and not k["slurry_spray"]
+```
+
+- [ ] **Step 2: Nothing imports the retired skins** -- append to `tests/test_reentry_model_melting.py`; the
+  verification script's command line names its surface model, in `tests/test_reentry_model_thermal_verification.py`:
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -792,3 +792,23 @@
+     assert b.m_f[i] == 0.0 and b.m_d[i] == 0.0
+     assert frozen == pytest.approx(before, rel=1e-15)
+     assert (b.phi[owner] - 0.5) * b.element_mass[owner] == pytest.approx(before, rel=1e-9)
++
++
++def test_the_one_dimensional_skins_are_retired():
++    """Sub-plan 22 Task 3 (spec 9): stage 1's one-dimensional skins are gone -- the module, the element model's setting
++    that chose them and its skin columns -- and nothing in the package, its tests or its analysis scripts imports them;
++    the regime test's depth over the wet windward patches (fact 94), which every element run fills, stays."""
++    import dataclasses
++    import importlib.util
++    import pathlib
++    import re
++    from reentry_model import coupled
++    assert importlib.util.find_spec("reentry_model.skin1d") is None and not hasattr(body, "SURFACE_MODEL_NAMES")
++    assert {f.name for f in dataclasses.fields(body.MeltSettings)}.isdisjoint({"surface_model", "skin"})
++    assert not hasattr(coupled, "SKIN_COLUMNS") and not any(k.startswith("skin_") for k in coupled.MELT_COLUMNS)
++    assert coupled.MELT_COLUMNS[-1] == "nonrigid_depth_wet_median_um"
++    imports = re.compile(r"^\s*(from\s+\S*skin1d\S*\s+import|from\s+\S+\s+import\s+[^\n]*\bskin1d\b|import\s+\S*skin1d)", re.M)
++    root = pathlib.Path(__file__).resolve().parent.parent
++    users = [str(p.relative_to(root)) for d in ("reentry_model", "tests", "analysis") for p in sorted((root / d).rglob("*.py"))
++             if imports.search(p.read_text())]
++    assert users == []
+```
+
+```diff
+--- a/tests/test_reentry_model_thermal_verification.py
++++ b/tests/test_reentry_model_thermal_verification.py
+@@ -31,7 +31,8 @@
+     assert elements[elements.index("--name") + 1] == "d100__sesam"
+     assert skins[skins.index("--name") + 1] == "d100__sesam__skin"
+     drop = lambda a: a[:a.index("--name")] + a[a.index("--name") + 2:]
+-    assert drop(skins) == drop(elements) + ["--surface-model", "skin"]
++    # each names its surface model, the skins being the model's default since sub-plan 22 Task 3
++    assert elements[-2:] == ["--surface-model", "elements"] and drop(skins) == drop(elements)[:-1] + ["skin"]
+     smoke = tv.argv_of("d050", "physics", "out", surface="skin", t_max=2.0)
+     assert smoke[smoke.index("--name") + 1] == "d050__physics__skin__t2" and smoke[-2:] == ["--t-max", "2"]
+ 
+```
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_cli.py
+  tests/test_reentry_model_melting.py tests/test_reentry_model_thermal_verification.py -q -k "default_and_girin or
+  run_names_mark or contradictory or element_model_setting or builds_the_skins or sprays_from_its_top or
+  skin_settings_reach or writes_its_columns_frames or seed_makes or retired or element_run_with_skins"`. Expected: 14
+  failed, 7 passed (about 2.5 minutes) --
+  - the names: `AssertionError: assert 'model_d100.0..._surface-skin' == 'model_d100.0...e_fem-physics'`, and the two
+    skin runs' names ending in `_surface-skin_skin-dev_fine4x2mm...`;
+  - `AttributeError: module 'reentry_model.cli' has no attribute 'DEFAULT_SURFACE_MODEL'`, `... 'run_name_of'`;
+  - `Failed: DID NOT RAISE SystemExit` (five of `test_contradictory_skin_settings_exit_2`, and the element-model setting
+    given to the default: the element model was the default), and `SystemExit: 2` where the skin body was to be built;
+  - `AssertionError: assert (ModuleSpec(name='reentry_model.skin1d', ...` (the retirement);
+  - `AssertionError: assert (['d100__sesam', '--quiet'] == ['--surface-m...', 'elements']` (the verification script).
+
+- [ ] **Step 4: Remove stage 1's skins.**
+
+```bash
+git rm reentry_model/skin1d.py tests/test_reentry_model_skin1d.py tests/test_reentry_model_melting_skin.py
+```
+
+  and their test in the FEniCSx tier, `tests/test_reentry_model_fenicsx.py`:
+
+```diff
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -308,35 +308,6 @@
+     assert np.allclose(Ta, Tb, rtol=0.0, atol=1e-6) and ra.Q_interface == pytest.approx(rb.Q_interface, rel=1e-9)
+ 
+ 
+-def test_skins_match_the_skfem_backend(coarse_sphere_mesh):
+-    """The melt-layer skins (sub-plan 18) in both backends: the body at 800 K under a uniform 1.5 MW/m2 for six steps
+-    of 0.5 s, every patch skinned at the first step. Skins, mass, film and temperatures agree and both energy balances
+-    are exact."""
+-    pytest.importorskip("cantera")
+-    from reentry_model import body, heating, mesh
+-    from reentry_model import skin1d as skin
+-    from test_reentry_model_coupled import MASS_100MM
+-    out = {}
+-    for name in ("skfem", "fenicsx"):
+-        np.random.seed(12345)
+-        m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
+-        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_scheil"), thermal.thermal_solver(name), MASS_100MM,
+-                             settings=body.MeltSettings(surface_model="skin1d",
+-                                                        skin=skin.SkinSettings(cell=skin.SKIN_PRESETS["dev"], substep=0.05)))
+-        b.solver.set_temperature(800.0)
+-        b.energy0 = b.energy()
+-        loads = heating.HeatingResult(np.full(b.surface.n_patches, 1.5e6), 1.5e6, 0.0, 0.0, 0.0)
+-        for k in range(6):
+-            b.advance(0.5 * (k + 1), 0.5, loads)
+-        out[name] = b
+-    s, f = out["skfem"], out["fenicsx"]
+-    assert s.skins.n == f.skins.n == s.surface.n_patches and np.array_equal(s.mesh.active, f.mesh.active)
+-    assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-8) and f.m_f.sum() == pytest.approx(s.m_f.sum(), rel=1e-4)
+-    assert np.abs(f.solver.temperature() - s.solver.temperature()).max() < 1e-3
+-    assert np.abs(f.skins.T - s.skins.T).max() < 1e-3
+-    assert abs(s.energy_balance_residual()) < 1e-8 and abs(f.energy_balance_residual()) < 1e-8
+-
+-
+ def test_moved_geometry_steps_like_a_fresh_solver(coarse_sphere_mesh):
+     """Moving mesh (sub-plan 19): after update_geometry, a step equals a fresh solver's on the moved mesh."""
+     from reentry_model import mesh as mesh_mod
+```
+
+- [ ] **Step 5: The element model without them** in `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -6,8 +6,6 @@
+ from typing import Protocol
+ 
+ import numpy as np
+-
+-from .thermal import SIGMA_SB
+ 
+ 
+ class Body(Protocol):
+@@ -146,13 +144,12 @@
+ PHI_DEATH = 0.05                 # a patch owner below this fraction dies (its remainder goes to the film): keeps the surface
+                                  # nodes' thermal mass above 5 % of an element's, which the Newton iteration needs (measured
+                                  # 2026-09-20: owners at 1e-3 made surface nodes swing by hundreds of K between iterates)
+-DEATH_TOLERANCE = 1.0e-9           # skins drain an element to PHI_DEATH only to rounding: within this it dies (sub-plan 18)
+ MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in one macro step; what it leaves waits for the
+                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
+ NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
+ REMOVAL_NAMES = ("girin", "instant")
+-SURFACE_MODEL_NAMES = ("elements", "skin1d")  # skin1d: a one-dimensional skin under every melting patch (sub-plan 18, failed
+-                                              # its box test; retired in sub-plan 22). The layered skins are skinbody.SkinBody
++# Sub-plan 18's one-dimensional skins under the melting patches (MeltSettings(surface_model="skin1d"), skin1d.py) failed
++# their box test and are retired (sub-plan 22 Task 3, spec 9); the layered skins are skinbody.SkinBody.
+ 
+ 
+ @dataclass
+@@ -171,13 +168,8 @@
+     rigid_substrate: bool = True      # the thin branch needs a rigid substrate: the regime test reads the film plus the slurry
+                                       # (above 50 % liquid) beneath it, and off Girin's closure a film on slurry does not
+                                       # spray (amendment of 2026-10-06)
+-    surface_model: str = "elements"   # skin1d: a one-dimensional skin of fine cells under every melting patch resolves the
+-                                      # melt layer and feeds the film continuously (sub-plan 18); elements: as before
+-    skin: object = None               # skin1d.SkinSettings for surface_model "skin1d"; None: its defaults
+ 
+     def __post_init__(self):
+-        if self.surface_model not in SURFACE_MODEL_NAMES:
+-            raise ValueError("surface_model must be one of {}, got {!r}".format(SURFACE_MODEL_NAMES, self.surface_model))
+         if self.removal not in REMOVAL_NAMES:
+             raise ValueError("removal must be one of {}, got {!r}".format(REMOVAL_NAMES, self.removal))
+         if self.size_feedback not in SIZE_FEEDBACK_NAMES:
+@@ -186,8 +178,6 @@
+             raise ValueError("feed_depth must be one of {}, got {!r}".format(FEED_DEPTH_NAMES, self.feed_depth))
+         if not 0.0 < self.demise_fraction < 1.0:
+             raise ValueError("demise_fraction must be within (0, 1)")
+-        if self.surface_model == "skin1d" and self.removal == "instant":
+-            raise ValueError("surface_model 'skin1d' needs removal 'girin'")
+ 
+ 
+ def fit_sphere(points):
+@@ -283,22 +273,6 @@
+         self.consumed = False
+         self._refresh_geometry()
+         self.newtonian_drag_sphere = self.newtonian_drag()[0]      # the meshed sphere's own value: the normalisation
+-        self.skins = None                                          # sub-plan 18: the skins, with surface_model "skin1d"
+-        if self.settings.surface_model == "skin1d" and self.settings.removal != "instant":
+-            from . import skin1d as skin_mod
+-            self.skins = skin_mod.SkinField(material, self.settings.skin or skin_mod.SkinSettings())
+-        self._draw_m, self._draw_H = np.zeros(mesh.n_elements), np.zeros(mesh.n_elements)   # metal the skins drew this step
+-        self.skins_created = self.skin_short_events = self.interface_repeats = 0
+-        self.skin_drawn_mass = self.skin_handover_mass = self.last_mismatch = 0.0
+-        self.skin_frozen_mass = 0.0                                # kg of liquid frozen into skins (spec 5.4, freeze-back)
+-        self.skin_returned_mass = 0.0                              # kg of metal skins above 2s returned to their elements
+-        self.skin_full_events = 0                                  # skin-steps above 2s whose element had too little room
+-        self.skin_thick_feed_events = 0                            # skin-steps that began above 2s and handed liquid on (cumulative)
+-        self.last_thick_feeding = (0, float("nan"))                # the step's (count, start-of-step thickness max [m])
+-        self.skin_wall = 0.0                                       # s of wall time in the skins' passes (trial and real)
+-        self.last_skin_shortfall = 0.0                             # kg of metal the skins lack below their target
+-        self._step_flow = None
+-        self._refresh_skin_index()
+ 
+     # -- geometry -----------------------------------------------------------------------------------------------
+     def _refresh_geometry(self):
+@@ -315,7 +289,6 @@
+         self.patch_of_face = np.full(len(self.mesh._face_nodes), -1, dtype=np.int64)     # face id -> patch index (-1: not a patch)
+         self.patch_of_face[self.surface.face_ids] = np.arange(self.surface.n_patches)
+         self._fit_nose()
+-        self._refresh_skin_index()
+ 
+     def _fit_nose(self):
+         """Mass centre, transverse radius and the windward-cap radius of the current surface (module docstring)."""
+@@ -381,8 +354,7 @@
+         return 2.0 * self.equivalent_radius()
+ 
+     def mass(self, t):
+-        m = float((self.phi * self.element_mass).sum() + self.m_f.sum() + self.m_d.sum())
+-        return m + self.skins.mass() if getattr(self, "skins", None) is not None else m
++        return float((self.phi * self.element_mass).sum() + self.m_f.sum() + self.m_d.sum())
+ 
+     def reference_area(self):
+         """Drag reference area: the hull's projected area, paired with the C_D of drag_shape_factor (the raw surface's
+@@ -395,8 +367,7 @@
+         return (3.0 * self.mass(0.0) / (4.0 * math.pi * self.material.rho)) ** (1.0 / 3.0)
+ 
+     def energy(self):
+-        E = self.solver.energy() + self.film_energy()
+-        return E + self.skins.energy() if getattr(self, "skins", None) is not None else E
++        return self.solver.energy() + self.film_energy()
+ 
+     def mean_temperature(self):
+         m = self.mass(0.0)
+@@ -413,109 +384,6 @@
+ 
+     # -- the step --------------------------------------------------------------------------------------------------
+     def advance(self, t, dt, loads, state=None):
+-        if self.skins is None:
+-            return self._advance_elements(t, dt, loads, state)
+-        return self._advance_with_skins(t, dt, loads, state)
+-
+-    def _advance_with_skins(self, t, dt, loads, state):
+-        """The macro step with skins (sub-plan 18; spec sections 4 and 6): create skins; the trial pass gives each skin's
+-        base law; the 3D step takes that law on the skins' facets (no heating, no radiation there) with the deferred
+-        loads; the real pass, base held at the new facet temperature, feeds, draws and books; the mismatch goes to the 3D
+-        nodes, and a step whose mismatch exceeds the tolerance repeats once, re-linearised about that temperature. Then
+-        the rest of the melt step. Until the first skin exists this is the element model's step exactly."""
+-        import dataclasses
+-        import time
+-        from . import skin1d as skin_mod
+-        from . import spray as spray_mod
+-        mat, liq, sk = self.material, self.liquid, self.skins
+-        self._create_skins(self.solver.temperature())
+-        if not sk.n:
+-            self._step_flow = None
+-            self.last_thick_feeding = (0, float("nan"))
+-            return self._advance_elements(t, dt, loads, state)
+-        # the skins above 2s at the start of the step (skin_thick_count's margin): which of them feed this step
+-        th0 = sk.thickness().copy()
+-        thick0 = th0 > skin_mod.MAX_THICKNESS_FACTOR * sk.settings.thickness * (1.0 + 1e-9)
+-        on = self.skin_of_patch >= 0
+-        p = self.patch_of_skin
+-        flow = delta_m = None
+-        if state is not None:                     # evaluated before the passes: the feed's reach needs delta_m
+-            flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
+-            delta_m, _ = spray_mod.melt_layer(flow, liq)
+-        self._step_flow = (flow, delta_m)
+-        dm_p = delta_m[p] if delta_m is not None else np.full(sk.n, np.nan)
+-        room = np.where(np.isfinite(dm_p), mat.rho * sk.area * np.nan_to_num(dm_p), np.inf)
+-        avail = self._skin_available(p)
+-        L = (self.m_f + self.m_d)[p]
+-        q_top = loads.q_conv[p]
+-        eps = np.full(sk.n, self.emissivity)
+-        T_b0 = self.surface.facet_mean(self.solver.temperature())[p]
+-        q3 = np.where(on, 0.0, loads.q_conv)
+-        capacity = LOAD_DT_MAX * self.solver.nodal_capacity()
+-        applied = np.clip(self.pending_load, -capacity, capacity)
+-        solver_state, skin_state = self.solver.state(), sk.state()
+-        T_lin = T_b0
+-        for attempt in (0, 1):
+-            started = time.perf_counter()
+-            a, b = sk.advance(dt, q_top, self.T_ambient, eps, T_lin, L, room, avail)
+-            self.skin_wall += time.perf_counter() - started
+-            A_f, B_f = np.zeros(self.surface.n_patches), np.zeros(self.surface.n_patches)
+-            A_f[p], B_f[p] = a, b
+-            res = self.solver.step(dt, q3, self.T_ambient, nodal_load=applied / dt, interface=(on, A_f, B_f))
+-            T_b1 = self.surface.facet_mean(self.solver.temperature())[p]
+-            started = time.perf_counter()
+-            book = sk.advance(dt, q_top, self.T_ambient, eps, T_b0, L, room, avail, T_b1=T_b1)
+-            self.skin_wall += time.perf_counter() - started
+-            mismatch = book.E_base - (a + b * T_b1) * sk.area * dt
+-            scale = np.abs(book.E_top) + np.abs(book.E_base) + 1e-30
+-            if attempt == 0 and (np.abs(mismatch) > skin_mod.INTERFACE_TOLERANCE * scale).any():
+-                self.solver.set_state(solver_state)
+-                sk.set_state(skin_state)
+-                T_lin = T_b1
+-                self.interface_repeats += 1
+-                continue
+-            break
+-        # a skin that began the step above 2s and handed liquid to the film or the deep account: the thick skins that melt
+-        fed = (book.to_film + book.to_deep) > 0.0
+-        sel = thick0 & fed
+-        self.last_thick_feeding = (int(sel.sum()), float(th0[sel].max()) if sel.any() else float("nan"))
+-        self.skin_thick_feed_events += int(sel.sum())
+-        self.last_skin_shortfall = float(np.maximum(mat.rho * sk.area * sk.settings.thickness - sk.m.sum(axis=1), 0.0).sum())
+-        self.pending_load = self.pending_load - applied
+-        full = np.zeros(self.surface.n_patches)
+-        full[p] = mismatch
+-        self._defer_to_facets(full)
+-        self.last_mismatch = float(np.abs(mismatch).sum())
+-        E_top, E_rad = float(book.E_top.sum()), float(book.E_rad.sum())
+-        self.integrated_heat += res.Q_conv * dt + E_top
+-        self.absorbed_heat += (res.Q_conv - res.Q_rad) * dt + E_top - E_rad
+-        self.radiated_heat += res.Q_rad * dt + E_rad
+-        self.iterations.append(res.iterations)
+-        self.last = dataclasses.replace(res, Q_conv=res.Q_conv + E_top / dt, Q_rad=res.Q_rad + E_rad / dt)
+-        self._applied_total = getattr(self, "_applied_total", 0.0) + res.Q_extra * dt
+-        self._dropped_total = getattr(self, "_dropped_total", 0.0) + res.Q_dropped * dt
+-        self.m_f[p] = self.m_f[p] + book.to_film
+-        self.m_d[p] = self.m_d[p] + book.to_deep
+-        # the liquid the sub-steps froze into the skins leaves the patch's accounts (spec 5.4): the deep liquid, which
+-        # lies against the solid, first, then the film; both ride the same top node, so the split books nothing
+-        from_deep = np.minimum(self.m_d[p], book.frozen)
+-        from_film = np.minimum(self.m_f[p], book.frozen - from_deep)
+-        self.m_d[p] = np.maximum(self.m_d[p] - from_deep, 0.0)
+-        self.m_f[p] = np.maximum(self.m_f[p] - from_film, 0.0)
+-        frozen = float(book.frozen.sum())
+-        self.skin_frozen_mass += frozen
+-        self.frozen_mass += frozen                                 # the model's one re-solidified counter, as with elements
+-        e = self.surface.owner[p]
+-        np.add.at(self._draw_m, e, book.drawn)
+-        np.add.at(self._draw_H, e, book.drawn_H)
+-        self.skin_drawn_mass += float(book.drawn.sum())
+-        # skin-steps below s/2: a skin thin for ten steps counts ten times
+-        self.skin_short_events += int((sk.thickness() < 0.5 * sk.settings.thickness).sum())
+-        if book.to_film.sum() + book.to_deep.sum() > 0.0 and self.melt_onset is None:
+-            self.melt_onset = t
+-        self.melt_step(t, dt, state)
+-
+-    def _advance_elements(self, t, dt, loads, state=None):
+         # A deferred melt load is energy the transferred mass delivered to the nodes it arrived at; a node that has
+         # since melted away has nothing to heat with it, so no node is asked to move more than LOAD_DT_MAX in one
+         # step and the remainder waits (it is applied as soon as the node has the capacity, dropped into Q_dropped
+@@ -558,12 +426,7 @@
+         # receded to it. Feeding from any depth let the interior drain through an intact skin -- by 82 s of the 100 mm
+         # flight the core was being consumed faster than the outermost shell (measured 2026-09-22).
+         flow = delta_m = None
+-        if self.skins is not None and self._step_flow is not None:      # with skins: the step's own evaluation
+-            flow, delta_m = self._step_flow
+-            self._step_flow = None
+-            if flow is not None:
+-                self.last_face_ids = self.surface.face_ids.copy()
+-        elif state is not None and s.removal != "instant" and self.surface.n_patches and self.m_f.size:
++        if state is not None and s.removal != "instant" and self.surface.n_patches and self.m_f.size:
+             flow = self.flow.evaluate(state, self.theta, self.nose_radius(), liq.rho, self.surface_temperature())
+             delta_m, _ = spray_mod.melt_layer(flow, liq)
+             self.last_face_ids = self.surface.face_ids.copy()      # the surface delta_m belongs to (the deaths come later)
+@@ -572,12 +435,6 @@
+         h_e = h_node[tets].mean(axis=1)                          # as solver.energy() weighs the solid
+         h_liq = mat.enthalpy_liquid(T)
+         h_p = self.film_enthalpy(h_liq)                          # as film_energy() weighs the film: liquid, with L_f
+-        if self.skins is not None and self._draw_m.any():        # the metal the skins drew leaves its elements
+-            self.phi = self.phi - self._draw_m / self.element_mass
+-            self._defer_to_elements(self._draw_m * h_e - self._draw_H)     # the element keeps what the drawn metal left
+-            self._draw_m[:], self._draw_H[:] = 0.0, 0.0
+-        if self.skins is not None and self.skins.n:              # skins above 2s give their bottom metal back
+-            self._return_from_skins(h_e)
+         # (i) feed and (iv) re-solidification, netted. The feed hands the molten fraction of what each element still
+         # holds to the film (f_feed of phi_e, so an element that is a quarter molten hands over a quarter of its
+         # remainder); the mirror rule hands back the fraction of the film that has fallen below the ramp. What stops
+@@ -593,17 +450,11 @@
+         reach = self._shear_reaches(delta_m) if s.feed_depth == "conjugate" and s.removal != "instant" else None
+         if reach is not None:
+             f = f * reach
+-        if self.skins is not None and self.skins.n:              # a patch's skin feeds its film: its element does not
+-            skin_owner = np.zeros(self.mesh.n_elements, dtype=bool)
+-            skin_owner[self.surface.owner[self.skin_of_patch >= 0]] = True
+-            f = np.where(skin_owner, 0.0, f)
+         h_hot = (fn * h_node[tets]).mean(axis=1) * self.mesh.active     # what the molten part carries, per kg of element
+         cap = np.where(self.owner_area > 0.0, self.phi, np.maximum(self.phi - PHI_MIN, 0.0))
+         gross = np.minimum(f * self.phi, cap) * self.element_mass
+         # the liquid on each patch below the ramp re-solidifies: the film and the deep liquid beneath it alike
+         solid = (1.0 - mat.feed_fraction(self.film_temperature())) * (self.m_f + self.m_d) if s.removal != "instant" else np.zeros(0)
+-        if self.skins is not None and self.skins.n and solid.size:      # on a skin it freezes in the skins' sub-steps
+-            solid = np.where(self.skin_of_patch >= 0, 0.0, solid)          # (spec 5.4), never into the element
+         want = np.bincount(self.surface.owner, solid, self.mesh.n_elements) if solid.size else np.zeros(self.mesh.n_elements)
+         net = gross - want
+         fed, want = np.maximum(net, 0.0), np.maximum(-net, 0.0)
+@@ -629,11 +480,7 @@
+             delta, carried = self._add_to_film(fed, fed_h)
+             self._defer_to_patches(carried - delta * h_p)        # ... and the melt arrives at its patch's temperature
+             if s.deep_runoff and flow is not None:
+-                if self.skins is not None:                       # a skin's top moves when energy is booked on it
+-                    h_p = self.film_enthalpy(h_liq)
+                 deep_liquid = self._deep_runoff(dt, flow, delta_m, reach, T, h_node, h_e, h_p)
+-            if self.skins is not None:
+-                h_p = self.film_enthalpy(h_liq)
+             released = self._film_and_spray(t, dt, state, h_p, flow, delta_m)
+         frozen = 0.0 if s.removal == "instant" else self._freeze_back(want, solid, h_e, h_p)
+         # (v) death of consumed patch owners; a death exposes its neighbours, which die in turn if they are consumed --
+@@ -642,10 +489,9 @@
+         n_dead, passes, cascade, capped = 0, 0, 0.0, False
+         # fully molten as `molten_depth` has it -- the element's mean nodal temperature at or above T_feed -- so the cascade
+         # removes exactly the contiguous molten layer the branch test reads, wherever a death exposes it
+-        full = T[tets].mean(axis=1) >= mat.T_feed if s.molten_cascade and s.removal != "instant" and (self.skins is None or not self.skins.n) else None
+-        death_level = PHI_DEATH if self.skins is None or not self.skins.n else PHI_DEATH * (1.0 + DEATH_TOLERANCE)
++        full = T[tets].mean(axis=1) >= mat.T_feed if s.molten_cascade and s.removal != "instant" else None
+         while not self.consumed:
+-            dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= death_level))
++            dead = np.flatnonzero((self.owner_area > 0.0) & self.mesh.active & (self.phi <= PHI_DEATH))
+             if dead.size == 0:
+                 break
+             rest = self.phi[dead] * self.element_mass[dead]
+@@ -654,15 +500,11 @@
+                 self.removed_enthalpy += float(rest.sum()) * mat.h_liquid
+                 self._defer_to_elements(rest * (h_e[dead] - mat.h_liquid), dead)
+             else:
+-                # with skins, an element under a skin passes its remainder to that skin's base (spec section 9)
+-                went = self._death_to_skins(dead, rest, h_e) if self.skins is not None and self.skins.n else np.zeros(dead.size, dtype=bool)
+                 extra, extra_h = np.zeros(self.mesh.n_elements), np.zeros(self.mesh.n_elements)
+-                extra[dead[~went]], extra_h[dead[~went]] = rest[~went], rest[~went] * h_e[dead[~went]]
++                extra[dead], extra_h[dead] = rest, rest * h_e[dead]
+                 delta, carried = self._add_to_film(extra, extra_h)
+                 self._defer_to_patches(carried - delta * h_p)
+             self.phi[dead] = 0.0
+-            if self.skins is not None:
+-                h_p = self.film_enthalpy(h_liq)
+             before = float(((self.m_f + self.m_d) * h_p).sum())
+             was_owner = self.owner_area > 0.0
+             self._kill(dead)                                     # the liquid of a dead patch moves to another patch...
+@@ -769,17 +611,8 @@
+             self._defer_to_patches(energy * weights / total)
+ 
+     def _defer_to_patches(self, energy):
+-        """Book a per-patch energy [J]: on the nodes of a patch without a skin, to be applied over the next step; on a
+-        skin's top node at once (sub-plan 18), shared with the liquid that node carries."""
++        """Book a per-patch energy [J] on the nodes of the patches' facets, to be applied over the next step."""
+         e = np.asarray(energy, dtype=float)
+-        if not e.any():
+-            return
+-        if getattr(self, "skins", None) is not None and self.skins.n:
+-            on = (self.skin_of_patch >= 0) & (e != 0.0)
+-            if on.any():
+-                p = np.flatnonzero(on)
+-                self.skins.book_top(self.skin_of_patch[p], e[p], (self.m_f + self.m_d)[p])
+-                e = np.where(self.skin_of_patch >= 0, 0.0, e)
+         if e.any():
+             np.add.at(self.pending_load, self.surface.faces.ravel(), np.repeat(e / 3.0, 3))
+ 
+@@ -790,8 +623,6 @@
+         if not self.m_f.size:
+             return np.zeros(self.mesh.n_nodes)
+         lm = self.m_f + self.m_d
+-        if getattr(self, "skins", None) is not None:              # liquid on a skin rides the skin's top, not the nodes
+-            lm = np.where(self.skin_of_patch >= 0, 0.0, lm)
+         return np.bincount(self.surface.faces.ravel(), np.repeat(lm / 3.0, 3), self.mesh.n_nodes)
+ 
+     def _deep_runoff(self, dt, flow, delta_m, reach, T, h_node, h_e, h_p):
+@@ -905,13 +736,11 @@
+         return self.m_f - before, got
+ 
+     def _film_and_spray(self, t, dt, state, h_p, flow=None, delta_m=None):
+-        liq, s, mat = self.liquid, self.settings, self.material
++        liq, s = self.liquid, self.settings
+         from . import spray as spray_mod
+         if state is None or self.m_f.sum() <= 0.0 or flow is None:
+             self.last_flow = self.last_spray = self.last_nonrigid = None
+-            nan = float("nan")
+-            self.last_melt.update({"liquid_depth_mean_um": nan, "liquid_depth_max_um": nan,
+-                                   "nonrigid_depth_skin_mean_um": nan, "nonrigid_depth_wet_median_um": nan})
++            self.last_melt.update({"nonrigid_depth_wet_median_um": float("nan")})
+             return 0.0
+         areas = self.surface.areas
+         # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
+@@ -924,10 +753,6 @@
+         # instead of the fully molten material alone. The Rayleigh-Taylor criteria and the molten region the wave-fits
+         # test measures against keep the liquid.
+         nonrigid = self.nonrigid_depth() if s.rigid_substrate else None
+-        if self.skins is not None and self.skins.n:              # the skins resolve both depths (spec section 5.5)
+-            molten = self._compose_depth(mat.T_feed, molten)
+-            if nonrigid is not None:
+-                nonrigid = self._compose_depth(mat.T_rigid, nonrigid)
+         under = molten if nonrigid is None else nonrigid
+         # (ii) lubrication and runoff
+         n_sub, moved = 0, 0.0
+@@ -941,8 +766,6 @@
+             # over the patches that gained film, which is exact in total and second order in the attribution)
+             d = self.m_f - before
+             self._spread_to_patches(-float((d * h_p).sum()), np.maximum(d, 0.0))
+-            if self.skins is not None and self.skins.n:          # the booking moved skin tops: the droplets leave at theirs
+-                h_p = self.film_enthalpy()
+         b = self.m_f / (liq.rho * areas)
+         layer = b + molten + deep
+         regime_layer = layer if nonrigid is None else b + nonrigid + deep
+@@ -998,16 +821,8 @@
+             slurry_thick = float((thick & ~liquid_thick)[girin_wet].mean())
+             rigid_thin = float((liquid_thick & ~thick)[girin_wet].mean())
+         nonrigid_mean = float(nonrigid[wet_w].mean() * 1e3) if nonrigid is not None and wet_w.any() else float("nan")
+-        # the resolved depths, at evaluation time on the surface they were evaluated on (final review ruling): over the
+-        # skin patches the composed skin + 3D depths [um]; for every run the regime test's depth over the wet windward
+-        # patches (fact 94's statistic)
+-        nan = float("nan")
+-        skinned = self.skin_of_patch >= 0 if self.skins is not None and self.skins.n else np.zeros(molten.shape, dtype=bool)
+-        depths = {"liquid_depth_mean_um": float(molten[skinned].mean() * 1e6) if skinned.any() else nan,
+-                  "liquid_depth_max_um": float(molten[skinned].max() * 1e6) if skinned.any() else nan,
+-                  "nonrigid_depth_skin_mean_um": float(nonrigid[skinned].mean() * 1e6)
+-                  if nonrigid is not None and skinned.any() else nan,
+-                  "nonrigid_depth_wet_median_um": float(np.median(under[wet_w]) * 1e6) if wet_w.any() else nan}
++        # the regime test's depth over the wet windward patches (fact 94's statistic), at evaluation time
++        depths = {"nonrigid_depth_wet_median_um": float(np.median(under[wet_w]) * 1e6) if wet_w.any() else float("nan")}
+         # The Rayleigh-Taylor criterion is reported, never applied, so report it usefully: a body-level "any patch"
+         # boolean says nothing about how much melt is involved or whether the unstable wave even fits on the nose.
+         # `rt_mass_fraction` is the share of the film on unstable patches; `rt_wavelength_over_nose` is the shortest
+@@ -1059,20 +874,13 @@
+             self.consumed = True                                 # the liquid still on it leaves with the body
+             self.removed_mass += float(self.m_f.sum() + self.m_d.sum())
+             self.removed_enthalpy += float(((self.m_f + self.m_d) * self.film_enthalpy()).sum())
+-            if self.skins is not None and self.skins.n:          # ... and so does the skins' metal
+-                self.removed_mass += self.skins.mass()
+-                self.removed_enthalpy += self.skins.energy()
+-                self.skins.keep(np.zeros(0, dtype=np.int64))
+             self.m_f, self.m_d = np.zeros(0), np.zeros(0)
+-            self.skin_of_patch, self.patch_of_skin = np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+             return
+         self._refresh_geometry()
+         keep = self.patch_of_face[old_surface.face_ids]
+         kept = keep >= 0
+         self.m_f = self._hand_over(old_surface, old_m_f, keep, kept)
+         self.m_d = self._hand_over(old_surface, old_m_d, keep, kept)   # the deep liquid beneath it goes the same way
+-        if self.skins is not None and self.skins.n:
+-            self._hand_over_skins(old_surface)
+ 
+     def _hand_over(self, old_surface, old, keep, kept):
+         """A per-patch liquid mass of the surface before the deaths, carried onto the current surface: kept patches keep
+@@ -1113,177 +921,6 @@
+                 np.add.at(m_f, self._patch_tree.query(old_surface.centroids[orphan])[1], old[orphan])
+         return m_f
+ 
+-    # -- skins (sub-plan 18) -----------------------------------------------------------------------------------------
+-    def _refresh_skin_index(self):
+-        """skin_of_patch: the skin row under each patch of the current surface (-1: none); patch_of_skin the reverse
+-        (-1 for a skin whose patch has vanished, until the death loop hands it over)."""
+-        self.skin_of_patch = np.full(self.surface.n_patches, -1, dtype=np.int64)
+-        sk = getattr(self, "skins", None)
+-        if sk is None or not sk.n:
+-            self.patch_of_skin = np.zeros(0, dtype=np.int64)
+-            return
+-        self.patch_of_skin = self.patch_of_face[sk.face_id]
+-        ok = self.patch_of_skin >= 0
+-        self.skin_of_patch[self.patch_of_skin[ok]] = np.flatnonzero(ok)
+-
+-    def _skin_available(self, patches):
+-        """Metal [kg] a skin on each of `patches` may take from its element: its share, by area among the element's
+-        patches, of what the element holds above PHI_DEATH."""
+-        e = self.surface.owner[patches]
+-        share = self.surface.areas[patches] / self.owner_area[e]
+-        return np.maximum(self.phi[e] - PHI_DEATH, 0.0) * self.element_mass[e] * share
+-
+-    def _create_skins(self, T):
+-        """Patches whose surface has reached the solidus, or that hold liquid, get a skin (spec 5.2): a slab of the
+-        target thickness -- less where the element cannot give that above PHI_DEATH -- taken from the patch's element,
+-        its cells filled from the P1 field along the inward normal. The element's mass leaves at its own mean nodal
+-        enthalpy and the difference to what the cells hold is booked on its nodes; liquid already on the patch moves
+-        onto the skin's top with its energy. Returns how many skins were made."""
+-        sk, s, mat = self.skins, self.surface, self.material
+-        if sk is None or not s.n_patches:
+-            return 0
+-        Tf = s.facet_mean(T)
+-        idx = np.flatnonzero((self.skin_of_patch < 0) & ((Tf >= mat.T_solidus) | (self.m_f + self.m_d > 0.0)))
+-        if not idx.size:
+-            return 0
+-        thick = np.minimum(sk.settings.thickness, self._skin_available(idx) / (mat.rho * s.areas[idx]))
+-        idx, thick = idx[thick > 0.0], thick[thick > 0.0]
+-        if not idx.size:
+-            return 0
+-        e = s.owner[idx]
+-        z = (np.arange(sk.nc) + 0.5)[None, :] * (thick / sk.nc)[:, None]
+-        x = s.centroids[idx][:, None, :] - s.normals[idx][:, None, :] * z[:, :, None]
+-        P = self.mesh.points[self.mesh.tets[e]]
+-        inv = np.linalg.inv(np.stack([P[:, 1] - P[:, 0], P[:, 2] - P[:, 0], P[:, 3] - P[:, 0]], axis=2))
+-        lam = np.einsum("kij,kcj->kci", inv, x - P[:, None, 0])
+-        lam = np.concatenate([1.0 - lam.sum(axis=2, keepdims=True), lam], axis=2)
+-        lam = np.clip(lam, 0.0, None)
+-        lam = lam / lam.sum(axis=2, keepdims=True)            # a point past the element takes its nearest face's value
+-        Tp = np.einsum("kci,ki->kc", lam, T[self.mesh.tets[e]])
+-        L = (self.m_f + self.m_d)[idx]
+-        h_nodes = self.film_enthalpy()[idx]                   # the liquid's enthalpy on the 3D nodes, before the skins
+-        mass, H = sk.add(s.face_ids[idx], s.areas[idx], Tp, thick)
+-        h_e = mat.enthalpy(T)[self.mesh.tets[e]].mean(axis=1)
+-        np.subtract.at(self.phi, e, mass / self.element_mass[e])
+-        self._defer_to_elements(np.bincount(e, mass * h_e - H, self.mesh.n_elements))
+-        self._refresh_skin_index()
+-        if (L > 0.0).any():
+-            rows = self.skin_of_patch[idx]
+-            sk.book_top(rows, L * (h_nodes - mat.enthalpy_liquid(sk.T[rows, 0])), L)
+-        self.solver.set_fractions(self.phi)
+-        self.solver.set_film_mass(self._film_nodal())
+-        self.skins_created += int(idx.size)
+-        return int(idx.size)
+-
+-    def _compose_depth(self, level, depth3d):
+-        """Per patch: the depth of the layer above `level` read from the skin where there is one, continued into the 3D
+-        model's own depth (measured from the skin's base) when the whole skin is above it (spec 5.5)."""
+-        out = np.array(depth3d, dtype=float, copy=True)
+-        if self.skins is None or not self.skins.n:
+-            return out
+-        d, through = self.skins.depth_above(level)
+-        on = self.skin_of_patch >= 0
+-        r = self.skin_of_patch[on]
+-        out[on] = d[r] + np.where(through[r], out[on], 0.0)
+-        return out
+-
+-    def _defer_to_facets(self, energy):
+-        """Book a per-patch energy [J] on the 3D nodes of the patches' facets, skins or not (the interface mismatch)."""
+-        e = np.asarray(energy, dtype=float)
+-        if e.any():
+-            np.add.at(self.pending_load, self.surface.faces.ravel(), np.repeat(e / 3.0, 3))
+-
+-    def _return_from_skins(self, h_e):
+-        """The resolution device (spec 5.4, "Thickness bounds"): a skin above MAX_THICKNESS_FACTOR times its target
+-        thickness has cells too coarse for the melt layer, so it returns its bottom metal in excess of that to its
+-        element where the element has room (phi_e < 1), the room shared among the element's skin patches by area. The
+-        metal leaves at the enthalpy of the bottom cells and arrives in the element at its mean nodal enthalpy h_e [J/kg];
+-        the difference is booked to the element's nodes, as with the draw. Where the element is full the skin keeps the
+-        metal and the event is counted. It moves metal between two accounts of the same solid and changes neither how
+-        much freezes nor how much melts."""
+-        from .skin1d import MAX_THICKNESS_FACTOR
+-        sk, s = self.skins, self.surface
+-        p = np.flatnonzero(self.skin_of_patch >= 0)
+-        r, e = self.skin_of_patch[p], s.owner[p]
+-        bound = self.material.rho * sk.area[r] * MAX_THICKNESS_FACTOR * sk.settings.thickness
+-        excess = sk.m[r].sum(axis=1) - bound
+-        # a skin returned to the bound sits at it only to rounding (up to about 4e-16 of it above): an excess below 1e-9
+-        # of the bound, skin_thick_count's margin, is none -- else the next step returns 1e-21 kg, or counts a full
+-        # event on a full element. What is given is still measured from the bound itself.
+-        excess = np.where(excess > 1e-9 * bound, excess, 0.0)
+-        if not excess.any():
+-            return
+-        skin_area = np.bincount(e, s.areas[p], self.mesh.n_elements)
+-        room = np.maximum(1.0 - self.phi[e], 0.0) * self.element_mass[e] * s.areas[p] / skin_area[e]
+-        give = np.minimum(excess, room)
+-        self.skin_full_events += int(((excess > 0.0) & (give < excess)).sum())
+-        some = give > 0.0
+-        if not some.any():
+-            return
+-        p, r, e, give = p[some], r[some], e[some], give[some]
+-        H = sk.take_bottom(r, give, (self.m_f + self.m_d)[p])
+-        # a new array, as with the draw (the solver may hold the old one until set_fractions); the shares of an
+-        # element's room add up to it only to rounding, so phi is held at 1
+-        self.phi = np.minimum(self.phi + np.bincount(e, give / self.element_mass[e], self.mesh.n_elements), 1.0)
+-        self._defer_to_elements(np.bincount(e, H - give * h_e[e], self.mesh.n_elements))
+-        self.skin_returned_mass += float(give.sum())
+-
+-    def _death_to_skins(self, dead, rest, h_e):
+-        """Dying elements under skins pass their remainder `rest` [kg] into those skins' bottoms, shared by area among
+-        the element's skin patches, at the element's own mean nodal enthalpy (spec 9). Returns which of `dead` did."""
+-        on = self.skin_of_patch >= 0
+-        p = np.flatnonzero(on & np.isin(self.surface.owner, dead))
+-        went = np.isin(dead, self.surface.owner[p])
+-        if p.size:
+-            e = self.surface.owner[p]
+-            skin_area = np.bincount(e, self.surface.areas[p], self.mesh.n_elements)
+-            full = np.zeros(self.mesh.n_elements)
+-            full[dead] = rest
+-            mass = full[e] * self.surface.areas[p] / skin_area[e]
+-            self.skins.add_bottom(self.skin_of_patch[p], mass, mass * h_e[e], (self.m_f + self.m_d)[p])
+-        return went
+-
+-    def _hand_over_targets(self, old_surface, idx):
+-        """For vanished patches `idx` of `old_surface`: (targets (k, 4), patch indices of the current surface or -1;
+-        weights (k, 4)) -- the faces their own element exposed, weighted by area projected on the vanished patch's
+-        normal (raw area where none faces that way), or the nearest patch where the element exposed nothing. The rule
+-        of `_hand_over`, kept apart so that the liquid's hand-over keeps its exact arithmetic."""
+-        targets = self.patch_of_face[self.mesh.element_faces(old_surface.owner[idx])]
+-        ok = targets >= 0
+-        safe = np.where(ok, targets, 0)
+-        cosine = np.clip(np.einsum("nij,nj->ni", self.surface.normals[safe], old_surface.normals[idx]), 0.0, None)
+-        area = np.where(ok, self.surface.areas[safe] * cosine, 0.0)
+-        total = area.sum(axis=1)
+-        flat = ok & (total[:, None] <= 0.0)
+-        if flat.any():
+-            area = np.where(flat, self.surface.areas[safe], area)
+-            total = area.sum(axis=1)
+-        has = total > 0.0
+-        weights = np.where(has[:, None], area / np.where(has, total, 1.0)[:, None], 0.0)
+-        targets = np.where(ok & has[:, None], targets, -1)
+-        if (~has).any():
+-            orphan = np.flatnonzero(~has)
+-            targets[orphan, 0] = self._patch_tree.query(old_surface.centroids[idx[orphan]])[1]
+-            weights[orphan, 0] = 1.0
+-        return targets, weights
+-
+-    def _hand_over_skins(self, old_surface):
+-        """Skins whose patch vanished pass to the faces the deaths exposed, layer by layer (spec 9); empty skins go."""
+-        sk = self.skins
+-        lost = np.flatnonzero(self.patch_of_face[sk.face_id] < 0)
+-        if lost.size:
+-            old_patch = np.full(len(self.patch_of_face), -1, dtype=np.int64)
+-            old_patch[old_surface.face_ids] = np.arange(old_surface.n_patches)
+-            targets, weights = self._hand_over_targets(old_surface, old_patch[sk.face_id[lost]])
+-            tgt_faces = np.where(targets >= 0, self.surface.face_ids[np.maximum(targets, 0)], -1)
+-            _, handed = sk.hand_over(lost, tgt_faces, weights, lambda f: self.surface.areas[self.patch_of_face[f]])
+-            self.skin_handover_mass += handed
+-        keep = np.ones(sk.n, dtype=bool)
+-        keep[lost] = False
+-        keep &= sk.m.sum(axis=1) > 0.0
+-        sk.keep(np.flatnonzero(keep))
+-        self._refresh_skin_index()
+-
+     # -- reporting -----------------------------------------------------------------------------------------------
+     def on_current_surface(self, values, fill):
+         """A per-patch array from the last flow and spray evaluation (`last_flow`, `last_spray`), carried onto the
+@@ -1300,27 +937,6 @@
+         j = index[self.surface.face_ids]
+         return np.where(j >= 0, np.asarray(values, dtype=float)[np.maximum(j, 0)], fill)
+ 
+-    def surface_temperature(self):
+-        """Wall temperature per patch: the skin's top cell where a patch has a skin (sub-plan 18), else the facet's."""
+-        Tf = self.surface.facet_mean(self.solver.temperature())
+-        if getattr(self, "skins", None) is not None and self.skins.n:
+-            on = self.skin_of_patch >= 0
+-            Tf[on] = self.skins.T[self.skin_of_patch[on], 0]
+-        return Tf
+-
+-    def radiated_power(self):
+-        """Radiated power [W]. With skins (sub-plan 18) the facets under skins do not radiate -- their skins' tops do,
+-        at patch area -- read from the current skin index rather than from the solver's mask of its last step, which
+-        the surface refresh at the end of every melt step clears."""
+-        sk = getattr(self, "skins", None)
+-        if sk is None or not sk.n:
+-            return self.solver.radiated_power(self.T_ambient)
+-        Tf = self.surface.facet_mean(self.solver.temperature())
+-        bare = self.skin_of_patch < 0
+-        P = float((self.emissivity * SIGMA_SB * (Tf[bare] ** 4 - self.T_ambient ** 4) * self.surface.areas[bare]).sum())
+-        T0 = sk.T[:, 0]
+-        return P + float((self.emissivity * SIGMA_SB * (T0 ** 4 - self.T_ambient ** 4) * sk.area).sum())
+-
+     def film_temperature(self):
+         """The film's temperature per patch: the surface's own (the film is thermally thin, class docstring)."""
+         return self.surface_temperature()
+@@ -1335,11 +951,7 @@
+             h_node = self.material.enthalpy_liquid(self.solver.temperature())
+         if not self.m_f.size:
+             return np.zeros(0)
+-        h = h_node[self.surface.faces].mean(axis=1)
+-        if getattr(self, "skins", None) is not None and self.skins.n:   # liquid on a skin shares its top cell's temperature
+-            on = self.skin_of_patch >= 0
+-            h[on] = self.material.enthalpy_liquid(self.skins.T[self.skin_of_patch[on], 0])
+-        return h
++        return h_node[self.surface.faces].mean(axis=1)
+ 
+     def film_energy(self):
+         """Enthalpy held by the film [J]. Identical to the nodal sum the solver carries (`set_film_mass` gives each
+@@ -1350,13 +962,8 @@
+     def film_frozen_fraction(self):
+         """Fraction of the film sitting on patches below the feed ramp: mass the enthalpy calls solid but the model
+         still treats as liquid, because the mesh cannot grow a crust outside itself and its own element may be gone
+-        (section 9.5). It is the honest measure of that limitation, so it is recorded every step. Skin patches are left
+-        out of both sums (sub-plan 18): their liquid freezes in the skins' sub-steps as far as the top node's energy
+-        allows, and what is left waits at T_low -- where the feed fraction is zero -- to freeze in the next ones, so it
+-        is not film the model cannot freeze."""
++        (section 9.5). It is the honest measure of that limitation, so it is recorded every step."""
+         m_f = self.m_f
+-        if getattr(self, "skins", None) is not None and self.skins.n:
+-            m_f = np.where(self.skin_of_patch >= 0, 0.0, m_f)
+         total = float(m_f.sum())
+         if total <= 0.0:
+             return 0.0
+@@ -1577,7 +1184,7 @@
+ 
+     def demised(self):
+         """True once the body's material (film excluded) is below the demise fraction of the initial mass."""
+-        metal = float((self.phi * self.element_mass).sum()) + (self.skins.mass() if self.skins is not None else 0.0)
++        metal = float((self.phi * self.element_mass).sum())
+         return self.consumed or metal < self.settings.demise_fraction * self.mass0
+ 
+     def energy_balance_residual(self):
+@@ -1640,32 +1247,5 @@
+                 "film_thickness_max_mm": self.film_thickness_max() * 1e3, "film_thickness_mean_mm": self.film_thickness_mean() * 1e3,
+                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
+                 "fitted_nose_radius_mm": self.fitted_nose_radius * 1e3,
+-                "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active), **self._skin_stats()}
+-
+-    def _skin_stats(self):
+-        """The skins' history columns (sub-plan 18); zero or nan without skins. The resolved depths are the step's, taken
+-        in `_film_and_spray` on the surface they were evaluated on."""
+-        from .skin1d import MAX_THICKNESS_FACTOR
+-        sk, lm, nan = self.skins, self.last_melt, float("nan")
+-        th = sk.thickness() if sk is not None and sk.n else np.zeros(0)
+-        return {"skin_count": float(sk.n) if sk is not None else 0.0, "skin_mass_kg": sk.mass() if sk is not None else 0.0,
+-                "skin_thickness_min_mm": float(th.min() * 1e3) if th.size else float("nan"),
+-                "skin_thickness_median_mm": float(np.median(th) * 1e3) if th.size else float("nan"),
+-                "skin_drawn_mass_kg": self.skin_drawn_mass, "skin_handover_mass_kg": self.skin_handover_mass,
+-                "skin_short_events": float(self.skin_short_events), "interface_mismatch_J": self.last_mismatch,
+-                "interface_repeats": float(self.interface_repeats),
+-                "liquid_depth_mean_um": lm.get("liquid_depth_mean_um", nan),
+-                "liquid_depth_max_um": lm.get("liquid_depth_max_um", nan),
+-                "nonrigid_depth_skin_mean_um": lm.get("nonrigid_depth_skin_mean_um", nan),
+-                "skin_wall_s": self.skin_wall,
+-                "skin_thickness_max_mm": float(th.max() * 1e3) if th.size else nan,
+-                # beyond rounding: a skin that returned its metal down to 2s sits at it to an ulp or two either side
+-                "skin_thick_count": float((th > MAX_THICKNESS_FACTOR * sk.settings.thickness * (1.0 + 1e-9)).sum())
+-                if th.size else 0.0,
+-                "skin_shortfall_kg": self.last_skin_shortfall,
+-                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", nan),
+-                "skin_frozen_mass_kg": self.skin_frozen_mass, "skin_returned_mass_kg": self.skin_returned_mass,
+-                "skin_full_events": float(self.skin_full_events),
+-                "skin_thick_feeding_count": float(self.last_thick_feeding[0]),
+-                "skin_thick_feeding_max_mm": self.last_thick_feeding[1] * 1e3,
+-                "skin_thick_feed_events": float(self.skin_thick_feed_events)}
++                "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active),
++                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", float("nan"))}
+```
+
+- [ ] **Step 6: Its history, results and frames without them** in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -30,14 +30,10 @@
+                 "delta_m_mean_um", "thick_branch_fraction", "n_dead_elements", "deep_liquid_kg", "deep_mass_kg",
+                 "deep_runoff_mass_kg", "deep_surfaced_mass_kg", "deep_blob_fraction", "cascade_passes", "cascade_mass_kg",
+                 "nonrigid_depth_mean_mm", "slurry_thick_fraction", "rigid_thin_fraction", "slurry_held_mass_kg",
+-                "thin_invalid_patches", "thin_invalid_mass_kg"]
+-SKIN_COLUMNS = ["skin_count", "skin_mass_kg", "skin_thickness_min_mm", "skin_thickness_median_mm", "skin_drawn_mass_kg",
+-                "skin_handover_mass_kg", "skin_short_events", "interface_mismatch_J", "interface_repeats",
+-                "liquid_depth_mean_um", "liquid_depth_max_um", "nonrigid_depth_skin_mean_um", "skin_wall_s",
+-                "skin_thickness_max_mm", "skin_thick_count", "skin_shortfall_kg", "nonrigid_depth_wet_median_um",
+-                "skin_frozen_mass_kg", "skin_returned_mass_kg", "skin_full_events", "skin_thick_feeding_count",
+-                "skin_thick_feeding_max_mm", "skin_thick_feed_events"]   # sub-plan 18
+-MELT_COLUMNS = MELT_COLUMNS + SKIN_COLUMNS
++                "thin_invalid_patches", "thin_invalid_mass_kg",
++                # the regime test's depth over the wet windward patches (fact 94); sub-plan 18's skin columns, which held
++                # 0 or nan in every run of the element model, went with its one-dimensional skins (sub-plan 22 Task 3)
++                "nonrigid_depth_wet_median_um"]
+ # the layered skins on the corner columns (sub-plan 20): skinbody.SkinBody.skin_stats(), every macro step
+ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
+                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
+@@ -175,10 +171,6 @@
+                 "r_median_um": float(np.nanmedian(c["r_median_um"])) if np.isfinite(c["r_median_um"]).any() else None,
+                 "n_dead_elements": int(body.mesh.n_elements - body.mesh.n_active), "n_source_rows": len(body.source_rows),
+                 "removed_enthalpy_J": body.removed_enthalpy, "frozen_mass_kg": body.frozen_mass,
+-                "skins_created": body.skins_created, "skin_drawn_mass_kg": body.skin_drawn_mass,
+-                "skin_handover_mass_kg": body.skin_handover_mass, "interface_repeats": body.interface_repeats,
+-                "skin_wall_s": body.skin_wall, "skin_frozen_mass_kg": body.skin_frozen_mass,
+-                "skin_returned_mass_kg": body.skin_returned_mass, "skin_thick_feed_events": body.skin_thick_feed_events,
+                 "melt_energy_balance_residual": body.energy_balance_residual()}
+ 
+     def skin_results(self, history):
+@@ -293,19 +285,6 @@
+         # the depth the regime test read under each patch: down to the first rigid point, slurry included (amendment of
+         # 2026-10-06); the spray step's own, carried like delta_m, nan where it was not evaluated
+         poly.cell_data["nonrigid_depth"] = carry(body.last_nonrigid, np.nan)
+-        # the skins (sub-plan 18): top temperature, resolved liquid and non-rigid depths, thickness; nan without a skin
+-        sk = getattr(body, "skins", None)
+-        if sk is not None:
+-            on = body.skin_of_patch >= 0
+-            r = body.skin_of_patch[on]
+-            d_liq, _ = sk.depth_above(body.material.T_feed)
+-            d_nr, _ = sk.depth_above(body.material.T_rigid)
+-            for key, v in (("skin_T_top", sk.T[:, 0] if sk.n else None), ("skin_liquid_depth", d_liq),
+-                           ("skin_nonrigid_depth", d_nr), ("skin_thickness", sk.thickness())):
+-                out = np.full(surface.n_patches, np.nan)
+-                if sk.n:
+-                    out[on] = v[r]
+-                poly.cell_data[key] = out
+     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
+ 
+ 
+```
+
+- [ ] **Step 7: The skins the default, the run names, and the spraying skin flight** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -4,6 +4,9 @@
+         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
++        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
++                                     (the layered skins, the default with --thermal fem, their flow and spraying with
++                                      --skin-flow on; the element model with --surface-model elements)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+@@ -47,10 +50,12 @@
+ # seeds, the droplet count within 2.7 % of the 0.00625 s step's (plan facts 92-94) -- while the default 0.5 s step makes
+ # six times fewer droplets. Before the switch the default step serves.
+ DEFAULT_DT_CONTINUUM = 0.0125
+-# The surface models a run can choose (sub-plan 20): the element model, or the layered skins on the corners of a moving
+-# mesh (skinbody.SkinBody). The default stays the element model until sub-plan 22 gives the skins their flow and spraying;
+-# sub-plan 18's one-dimensional skins are reachable only from Python (body.MeltSettings(surface_model="skin1d")).
+-SURFACE_MODELS = ("elements", "skin")
++# The surface models a run can choose (sub-plan 20): the layered skins on the corners of a moving mesh
++# (skinbody.SkinBody), the default of a thermal run since sub-plan 22 Task 3 gave them Girin's spraying (spec 10.1), or
++# the element model, kept unchanged for comparison (spec 9 and 11.1 level 3), whose runs end in `_surface-elements`.
++# Sub-plan 18's one-dimensional skins are retired (sub-plan 22 Task 3).
++SURFACE_MODELS = ("skin", "elements")
++DEFAULT_SURFACE_MODEL = "skin"
+ # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
+ # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
+ # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
+@@ -97,19 +102,37 @@
+     (no film; its SESAM thresholds were measured at the default step) or a run that does not melt."""
+     if args.dt_continuum is not None:
+         return None if args.dt_continuum == "off" else args.dt_continuum
+-    return DEFAULT_DT_CONTINUUM if (args.thermal == "fem" and args.melt == "on" and args.removal == "girin") else None
++    return DEFAULT_DT_CONTINUUM if (args.thermal == "fem" and args.melt == "on" and removal_of(args) == "girin") else None
++
++
++def surface_model_of(args):
++    """The run's surface model: --surface-model if given, else the layered skins for a thermal run (spec 10.1; sub-plan
++    22 Task 3); None without a thermal model, which has no surface to model."""
++    if args.surface_model is not None:
++        return args.surface_model
++    return DEFAULT_SURFACE_MODEL if args.thermal == "fem" else None
++
++
++def removal_of(args):
++    """--removal if given, else the run's own (sub-plan 22 Task 3): Girin's, for the element model and for the skins with
++    the flow on, whose liquid only spraying removes (spec 10.1: --skin-flow on needs --removal girin); instant removal for
++    the heat-only skins, whose liquid leaves as it forms (stage 2's stand-in for flow and spray, spec 11.2)."""
++    if args.removal is not None:
++        return args.removal
++    return "instant" if surface_model_of(args) == "skin" and args.skin_flow == "off" else "girin"
+ 
+ 
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+                    deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default",
+-                   surface_model="elements", skin_suffix=""):
++                   surface_model=DEFAULT_SURFACE_MODEL, skin_suffix=""):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
+     `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
+-    `_dtcontinuum-off` or `_dtcontinuum-<s>`, a thermal run with the layered skins (sub-plan 20) in `_surface-skin`
+-    followed by `skin_suffix` (the skins' non-default settings, `skin_name_suffix`), and any run with a seed other than
+-    DEFAULT_SEED (amendment of 2026-10-05) in `_seed-<n>`; the defaults keep the old name."""
++    `_dtcontinuum-off` or `_dtcontinuum-<s>`; a thermal run with the element model in `_surface-elements`, the layered
++    skins being the default (spec 10.1; sub-plan 22 Task 3), and one with the skins in `skin_suffix`, their non-default
++    settings (`skin_name_suffix`, empty for the defaults); and any run with a seed other than DEFAULT_SEED (amendment of
++    2026-10-05) in `_seed-<n>`. Without a thermal model there is no surface model and no suffix for it."""
+     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
+     dtc = dtc_default if dt_continuum == "default" else dt_continuum
+     name = "model_d{:06.2f}mm_v{:08.5f}kms_h{:07.3f}km_{}_{}_{}".format(
+@@ -118,19 +141,21 @@
+             + ("_deeprunoff-off" if melt and not deep_runoff else "") + ("_moltencascade-off" if melt and not molten_cascade else "")
+             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
+             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
+-            + ("_surface-skin" + skin_suffix if heating_name and surface_model == "skin" else "")
++            + (("_surface-elements" if surface_model == "elements" else skin_suffix) if heating_name else "")
+             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+-                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=False, flow_cycles=None):
++                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=False, flow_cycles=None,
++                     slurry_spray=False):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
+     `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none), and,
+     with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` where the flow sub-steps in each
+-    heat sub-step are fixed at n rather than chosen each heat sub-step (Task 6d); empty for the defaults."""
++    heat sub-step are fixed at n rather than chosen each heat sub-step (Task 6d) and by `_slurryspray-on` where the
++    exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3); empty for the defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -154,6 +179,8 @@
+         out += "_skinflow-on"
+         if flow_cycles is not None:
+             out += "_flowcycles{}".format(flow_cycles)
++    if slurry_spray:
++        out += "_slurryspray-on"
+     return out
+ 
+ 
+@@ -261,9 +288,11 @@
+     th.add_argument("--stills", action="store_true", help="only the stills (start, peak heating, peak surface T, end; surface and section)")
+     me = r.add_argument_group("melting and spraying (Step 3)")
+     me.add_argument("--melt", choices=MELT_MODES, default="off", help="off: Step 2 behaviour (default); on: melting, melt film, spraying")
+-    me.add_argument("--removal", choices=body.REMOVAL_NAMES, default="girin",
+-                    help="girin: film + runoff + Girin spraying (default); instant: liquid removed as it forms -- the lumped-melting "
+-                         "verification device, not physical")
++    me.add_argument("--removal", choices=body.REMOVAL_NAMES, default=None,
++                    help="girin: Girin's spraying -- the element model's film, runoff and spraying, or the skins' flow and "
++                         "spraying from their top cells (default, except for the heat-only skins); instant: liquid removed "
++                         "as it forms -- the lumped-melting verification device, not physical (the default of the "
++                         "heat-only skins, --skin-flow off)")
+     me.add_argument("--runoff", choices=("on", "off"), default="on", help="film runoff transport along the surface (default on)")
+     me.add_argument("--deep-runoff", choices=("on", "off"), default="on",
+                     help="move the contiguous liquid below Girin's conjugate depth along the surface by the pressure-gradient and "
+@@ -282,11 +311,11 @@
+                          "with the film plus everything more than half liquid beneath it (slurry included), and where there "
+                          "is no conjugate depth a film on slurry does not spray (default on). off: the regime test reads the "
+                          "film plus the fully molten material, as in every run before the amendment of 2026-10-06")
+-    me.add_argument("--surface-model", choices=SURFACE_MODELS, default="elements",
++    me.add_argument("--surface-model", choices=SURFACE_MODELS, default=None,
+                     help="skin: a layered skin on every corner of the surface holds the outer metal in fine cells above a "
+-                         "moving 3D mesh (layered-skin design, sub-plan 20: heat only, so with --melt on it needs --removal "
+-                         "instant, liquid leaving as it forms). elements: the surface elements melt and feed the film, as "
+-                         "in every run before it (default)")
++                         "moving 3D mesh (the layered-skin design; default with --thermal fem since sub-plan 22). elements: "
++                         "the surface elements melt and feed the film, as in every run before it, kept for comparison; "
++                         "its runs end in _surface-elements")
+     me.add_argument("--skin-min-thickness", type=float, default=0.8,
+                     help="the skins' minimum thickness [mm of solid]: where the non-rigid layer is thinner, a skin's bottom "
+                          "is rigid metal (default %(default)s)")
+@@ -309,9 +338,13 @@
+                          "one density")
+     me.add_argument("--skin-flow", choices=("on", "off"), default="off",
+                     help="with --surface-model skin and --melt on: on, the skins' liquid and slurry flow over the surface "
+-                         "(sub-plan 21) and stay -- the spraying that will take them is sub-plan 22's, so give --removal "
++                         "(sub-plan 21) and Girin's model sprays them from the top cells (sub-plan 22), with --removal "
+                          "girin, whose continuum step (--dt-continuum) follows; off: the heat-only skins, liquid removed "
+                          "as it forms with --removal instant (default)")
++    me.add_argument("--slurry-spray", choices=("on", "off"), default="off",
++                    help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
++                         "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
++                         "liquidus, on a viscosity law with no data there (default off)")
+     me.add_argument("--skin-flow-cycles", type=int, default=None,
+                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+@@ -348,7 +381,8 @@
+     me.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                     help="current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap "
+                          "(default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with --removal instant)")
+-    me.add_argument("--particles", dest="particles", action="store_true", default=True, help="write the particle source table (default)")
++    me.add_argument("--particles", dest="particles", action="store_true", default=True,
++                    help="write the particle source table and the size distribution of a spraying run (default)")
+     me.add_argument("--no-particles", dest="particles", action="store_false")
+ 
+     c = sub.add_parser("compare", help="metrics and plots for an existing model history")
+@@ -382,17 +416,20 @@
+         mat.k_table = mat.k_table * args.k_scale                  # verification device (near-isothermal body), not physical
+     solver = thermal.thermal_solver(args.thermal_solver, linear_solver=args.linear_solver, lumped_mass=not args.consistent_mass)
+     if skins:
+-        flow = args.skin_flow == "on"                       # the liquid stays and flows; instant removal is instead of it
++        # with the flow on the liquid stays, flows and is sprayed from the top cells by Girin's model (sub-plan 22), the
++        # exposed slurry too with --slurry-spray on; instant removal is instead of both
++        flow = args.skin_flow == "on"
+         flow_model = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm,
+                                               kn_body_shock=args.kn_body_shock) if flow else None
+         the_body = skinbody.SkinBody(the_mesh, mat, solver, mass, skin_settings(args), T0=args.temperature,
+                                      emissivity=args.emissivity, T_ambient=args.t_ambient, deform_depth=args.deform_depth * 1e-3,
+                                      remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
+-                                     flow_cycles=args.skin_flow_cycles, surface_flow=flow_model)
++                                     flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
++                                     spray=spray_model_of(args, mat) if flow else None,
++                                     slurry_spray=args.slurry_spray == "on", particles=args.particles)
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+-        spray_model = spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical,
+-                                       rt_spray=args.rt_spray == "on")
++        spray_model = spray_model_of(args, mat)
+         size_feedback = args.size_feedback or ("current" if args.removal == "girin" else "initial")
+         melt_settings = body.MeltSettings(removal=args.removal, runoff=args.runoff == "on", demise_fraction=args.demise_fraction,
+                                           particles=args.particles, size_feedback=size_feedback,
+@@ -420,13 +457,19 @@
+                         "deform_depth_mm": args.deform_depth, "n_columns": the_body.columns.n,
+                         "fine_band_mm": args.fine_band, "fine_size_mm": min(args.fine_size, h_surface * 1e3),
+                         "swell": args.skin_swell == "on", "flow": args.skin_flow,
+-                        "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles}
++                        "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles,
++                        "slurry_spray": args.slurry_spray}
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+     if melting and skins:
+         info.update({"removal": args.removal, "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus,
+                      "latent_heat_Jkg": mat.latent_heat})
++        if the_body.spray is not None:                  # Girin's spraying from the top cells (sub-plan 22)
++            info.update({"rt_spray": args.rt_spray, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
++                         "k_r": args.kr, "k_t": args.kt, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
++                         "particles": args.particles,
++                         "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma}})
+     elif melting:
+         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
+                      "molten_cascade": args.molten_cascade, "rigid_substrate": args.rigid_substrate, "rt_spray": args.rt_spray,
+@@ -438,6 +481,11 @@
+     return the_body, heating_model, info
+ 
+ 
++def spray_model_of(args, mat):
++    """The shared spray physics with the command line's constants, for either surface model."""
++    return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on")
++
++
+ def skin_settings(args):
+     """The layered skins' settings from the command line (sub-plan 20)."""
+     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
+@@ -446,11 +494,32 @@
+                              fine_zone=args.skin_fine_zone * 1e-3)
+ 
+ 
++def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_continuum):
++    """The run's name (`model_run_name`) from its command line, its surface model and removal resolved (`surface_model_of`,
++    `removal_of`) and its continuum step (`continuum_step`); --name overrides it."""
++    return args.name or model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, args.bridging, args.wind,
++                                       args.heating if args.thermal == "fem" else None,
++                                       removal_of(args) if args.melt == "on" else None,
++                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on",
++                                       seed=args.seed, rigid_substrate=args.rigid_substrate == "on",
++                                       dt_continuum=dt_continuum, surface_model=surface_model_of(args),
++                                       skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
++                                                                    args.skin_substep, args.skin_preset, args.deform_depth,
++                                                                    args.skin_swell == "on", args.fine_band, args.fine_size,
++                                                                    args.skin_fine_zone, args.skin_flow == "on",
++                                                                    args.skin_flow_cycles, args.slurry_spray == "on"))
++
++
+ def cmd_run(args, parser):
+     # first, before anything that could draw from it (amendment of 2026-10-05; plan facts 52 and 62): the only draws in a
+     # run are pyamg's, at every hierarchy the skfem backend builds, and with the generator seeded here two runs of one
+     # build agree bit for bit
+     np.random.seed(args.seed)
++    if args.surface_model == "skin" and args.thermal != "fem":
++        parser.error("--surface-model skin needs --thermal fem")
++    # the surface model and the removal not given take the run's own (sub-plan 22 Task 3): the skins for a thermal run,
++    # and Girin's removal except for the heat-only skins
++    args.surface_model, args.removal = surface_model_of(args), removal_of(args)
+     for label, value in (("--diameter", args.diameter), ("--velocity", args.velocity), ("--material-density", args.material_density),
+                          ("--cadence", args.cadence), ("--t-max", args.t_max)):
+         if value <= 0.0:
+@@ -496,8 +565,6 @@
+     cell_um = args.skin_cell if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset] * 1e6
+     if 2.0 * cell_um * 1e-3 > min(args.skin_min_thickness, args.skin_fine_zone) * (1.0 + 1e-12):
+         parser.error("--skin-cell must be at most half of --skin-min-thickness and of --skin-fine-zone")
+-    if args.surface_model == "skin" and args.thermal != "fem":
+-        parser.error("--surface-model skin needs --thermal fem")
+     if args.skin_flow == "on" and not (args.surface_model == "skin" and args.melt == "on"):
+         parser.error("--skin-flow on needs --surface-model skin and --melt on: it moves the skins' molten metal")
+     if args.skin_flow_cycles is not None and args.skin_flow != "on":
+@@ -508,8 +575,20 @@
+         parser.error("--skin-flow on keeps the liquid, which only spraying removes: it needs --removal girin, not instant "
+                      "removal, which stands in for flow and spraying in the heat-only skins (spec 11.2)")
+     if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "off" and args.removal != "instant":
+-        parser.error("--surface-model skin with --melt on needs --removal instant, or --skin-flow on with Girin's removal "
+-                     "(sub-plan 21: the skins' spraying is sub-plan 22's)")
++        parser.error("Girin's spraying from the skins needs --skin-flow on: the heat-only skins (--skin-flow off, the "
++                     "default) remove their liquid as it forms, --removal instant")
++    if args.slurry_spray == "on" and args.skin_flow != "on":
++        parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
++                     "sprays by the skins' spraying from their top cells")
++    if args.surface_model == "skin":
++        for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
++                            ("--molten-cascade off", args.molten_cascade == "off"),
++                            ("--rigid-substrate off", args.rigid_substrate == "off"),
++                            ("--size-feedback", args.size_feedback is not None)):
++            if given:
++                parser.error("{} is the element model's setting: give --surface-model elements (the layered skins, the "
++                             "default since sub-plan 22, have no film, runoff, deep account or element deaths, and their "
++                             "regime test always reads their own depths)".format(flag))
+     if args.surface_model == "skin" and (args.animate or args.stills):
+         parser.error("--animate/--stills read the element model's frames; with --surface-model skin use --frames-every")
+     if args.surface_model == "skin" and args.prism_layers is not None and args.prism_layers > 0:
+@@ -524,16 +603,7 @@
+     mass = body.sphere_mass(settings.diameter, args.material_density)
+     atm, atm_name, atm_info = make_atmosphere(args.atmosphere, args.epoch, args.wind)
+     reference = sesam_io.load_reference(args.reference) if args.reference else None
+-    name = args.name or model_run_name(settings.diameter, initial.velocity, initial.altitude, atm_name, args.bridging, args.wind,
+-                                       args.heating if args.thermal == "fem" else None, args.removal if args.melt == "on" else None,
+-                                       deep_runoff=args.deep_runoff == "on", molten_cascade=args.molten_cascade == "on", seed=args.seed,
+-                                       rigid_substrate=args.rigid_substrate == "on", dt_continuum=dt_continuum,
+-                                       surface_model=args.surface_model,
+-                                       skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
+-                                                                    args.skin_substep, args.skin_preset, args.deform_depth,
+-                                                                    args.skin_swell == "on", args.fine_band, args.fine_size,
+-                                                                    args.skin_fine_zone, args.skin_flow == "on",
+-                                                                    args.skin_flow_cycles))
++    name = run_name_of(args, settings.diameter, initial.velocity, initial.altitude, atm_name, dt_continuum)
+     run_dir = os.path.join(args.outdir, name)
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+@@ -575,10 +645,16 @@
+         "files": {"csv": os.path.abspath(csv_path)},
+     }
+     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
++    # the skins' spraying flight (sub-plan 22 Task 3): the element model's droplet files, from the same writer; the
++    # per-step summary waits for Task 4, which gives the skin history its droplet columns, and is recorded as not written
++    spraying_skins = args.thermal == "fem" and args.melt == "on" and args.surface_model == "skin" and args.skin_flow == "on"
+     if melting:
+         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
+                             else {})
+         doc["files"]["melt_plots"] = [os.path.abspath(p) for p in compare.plot_melt(history, run_dir, name, reference if compare.has_melt(history, reference) else None)]
++    elif spraying_skins and args.particles:
++        doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()})
++        doc["files"]["particles_summary"] = None
+     if reference is not None:
+         plots = compare.plot_all(history, reference, run_dir, name)
+         doc["comparison"] = {"reference": reference.name, "reference_csv": reference.csv_path,
+@@ -617,6 +693,11 @@
+                   "wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
+                       res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
+                       res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
++        if spraying_skins:
++            print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}; no particles_summary.csv until "
++                  "sub-plan 22 Task 4 gives the skin history its droplet columns".format(
++                      the_body.released_mass, the_body.droplet_number, sum(len(b) for b in the_body.source_rows),
++                      " (particles.npz, size_distribution.csv)" if args.particles else ""))
+         if melting:
+             print("  melt: onset {} km, spraying onset {} km, demise {} km at t = {} s; sprayed {:.4f} kg of {:.4f}, film left {:.4f} kg, "
+                   "{:.3g} droplets (median r {} um), {} source rows, melt balance {:.1e}".format(
+```
+
+- [ ] **Step 8: The element model's scripts name it** in `analysis/reentry_model_thermal_verification.py`,
+  `analysis/melt_verification.py` and `analysis/melt_sensitivity.py`:
+
+```diff
+--- a/analysis/reentry_model_thermal_verification.py
++++ b/analysis/reentry_model_thermal_verification.py
+@@ -54,9 +54,7 @@
+     ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
+     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+                              "--heating", mode, "--reference", ref, "--outdir", outdir, "--name", label_of(key, mode, surface, t_max),
+-                             "--quiet"]
+-    if surface == "skin":
+-        argv += ["--surface-model", "skin"]
++                             "--quiet", "--surface-model", surface]       # named: the skins are the model's default
+     if t_max:
+         argv += ["--t-max", "{:g}".format(t_max)]
+     if animate:
+```
+
+```diff
+--- a/analysis/melt_verification.py
++++ b/analysis/melt_verification.py
+@@ -45,7 +45,8 @@
+     ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
+     label = "{}__{}".format(key, mode)
+     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+-                             "--melt", "on"] + MODES[mode] + ["--reference", ref, "--outdir", outdir, "--name", label, "--quiet"]
++                             "--melt", "on", "--surface-model", "elements"] + MODES[mode] + ["--reference", ref, "--outdir",
++                                                                                            outdir, "--name", label, "--quiet"]
+     if animate:
+         argv.append("--animate")
+     rc = cli.main(argv)
+```
+
+```diff
+--- a/analysis/melt_sensitivity.py
++++ b/analysis/melt_sensitivity.py
+@@ -47,7 +47,8 @@
+ 
+ def argv_for(key, variant, outdir):
+     return ["run"] + CASES[key] + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
+-                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_scheil", "--no-particles",
++                                   "--melt", "on", "--surface-model", "elements", "--heating", "physics", "--material",
++                                   "AA7075_scheil", "--no-particles",
+                                    "--outdir", outdir, "--name", "{}__{}".format(key, variant), "--quiet"] + VARIANTS[variant]
+ 
+ 
+```
+
+- [ ] **Step 9: Run them to see them pass.** Expected: `tests/test_reentry_model_cli.py` 81 passed (the spraying run about 20–30 s),
+  `tests/test_reentry_model_melting.py` 27, `tests/test_reentry_model_thermal_verification.py` 6; the unit tier 519
+  passed, 1 skipped (Task 2's 538 less the 35 tests of stage 1's skins, plus 16); the FEniCSx tier 17 passed and 1 failed
+  (`test_the_thick_film_flux_matches_the_skfem_backend`, below).
+
+- [ ] **Step 10: The measurements** (in `measure/task3/`, on mains power): the element model's short case,
+  `../task1/cmp/run_case.sh <code> runs line3_short --surface-model elements`, against Task 2's `line2_short` copied into
+  `runs/`: `"$PY" -B ../task1/cmp/compare_runs.py runs line2_short line3_short` and `"$PY" -B element_files.py runs
+  line2_short line3_short`; the smoke flights, `./run_smoke.sh` (two runs, about a minute and a half each), and
+  `"$PY" -B smoke_check.py smoke/<run>.json smoke/<log>` for each; the macro step's cost, `./run_cost.sh` (about three
+  minutes, alone) and `smoke_check.py` on its two runs; and the FEniCSx tier.
+
+- [ ] **Step 11: Commit.**
+
+```bash
+git add -A reentry_model/body.py reentry_model/coupled.py reentry_model/cli.py reentry_model/skin1d.py analysis/reentry_model_thermal_verification.py analysis/melt_verification.py analysis/melt_sensitivity.py tests/test_reentry_model_cli.py tests/test_reentry_model_melting.py tests/test_reentry_model_thermal_verification.py tests/test_reentry_model_fenicsx.py tests/test_reentry_model_skin1d.py tests/test_reentry_model_melting_skin.py
+git commit -m "Skins: stage 1's one-dimensional skins retired and the layered skins the default surface model (spec 9 and 10.1) -- skin1d.py, its tests and the element model's branches, history columns and results for it removed, the element model unchanged to the last bit in everything it still writes; a thermal run's surface model the skins unless --surface-model elements, whose runs end in _surface-elements, a skin run's name its non-default settings only; --removal not given Girin's but for the heat-only skins; contradictory settings, the element model's own given to the skins among them, exit 2; with --skin-flow on the command line gives the skins the shared spray model, --slurry-spray (_slurryspray-on) and --particles and writes their particles.npz and size distribution, the summary waiting for Task 4 (sub-plan 22 Task 3)"
+```
+
+---
+
+## The outline (Tasks 4–6, and Tasks 1–3 written out above: 1 as Tasks 1a, 1b and 1c)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -3452,14 +5158,18 @@ git commit -m "Skins: the droplet records (spec 8 and 10.2) -- what the accepted
 2. **Droplet records** -- written out above as Task 2. The outline's item, as it stood:
    > **Droplet records**: combined per column, per mode, per macro step; `solid_fraction` and `h_kg` added to the source
    > table. Tests: combining changes no radius; histograms exact.
-3. **Retirement**: element fill fractions, `PHI_DEATH`, deaths and hand-overs, the film and deep accounts, the feed rule
-   and gate, the deep runoff, deep surfacing, the molten cascade, freeze-back and the stage-1 return device, removed from
-   the skin path; `--surface-model elements` keeps the current model bit for bit. Since sub-plan 20 the skin path is
-   `skinbody.SkinBody`, which never had those mechanisms, and stage 1's skins are `skin1d.py` behind
-   `MeltSettings(surface_model="skin1d")`: the retirement is deleting `skin1d.py`, its tests and `MeltingBody`'s
-   `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
-   `--removal girin`.
-4. **Outputs**: the history columns, frame fields and results of spec §10.2.
+3. **Retirement** -- written out above as Task 3, with the skins the default surface model and the spraying skin flight
+   from the command line. The outline's item, as it stood:
+   > **Retirement**: element fill fractions, `PHI_DEATH`, deaths and hand-overs, the film and deep accounts, the feed
+   > rule and gate, the deep runoff, deep surfacing, the molten cascade, freeze-back and the stage-1 return device,
+   > removed from the skin path; `--surface-model elements` keeps the current model bit for bit. Since sub-plan 20 the
+   > skin path is `skinbody.SkinBody`, which never had those mechanisms, and stage 1's skins are `skin1d.py` behind
+   > `MeltSettings(surface_model="skin1d")`: the retirement is deleting `skin1d.py`, its tests and `MeltingBody`'s
+   > `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
+   > `--removal girin`.
+4. **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
+   history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
+   mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).
 5. **Flights**: the 100 mm flight to 120 s and the 50 mm flight; convergence under halving of the macro step, 10 against
    20 µm cells, and a skin surface at 2 against 1 mm spacing; the acceptance criterion (droplet count, thick share,
    medians by number and mass, sprayed mass and mass at 120 s within the scatter between seeds under halving and
@@ -3471,8 +5181,9 @@ git commit -m "Skins: the droplet records (spec 8 and 10.2) -- what the accepted
 
 ## Inputs to settle
 
-Carried from the outline, with one Task 2 adds; none is settled by Tasks 1 and 2, whose spraying is evaluated and
-recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the macro step.
+Carried from the outline, with one Task 2 adds and one Task 3 adds; none is settled by Tasks 1–3, whose spraying is
+evaluated and recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the
+macro step.
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
@@ -3483,4 +5194,14 @@ recorded once a macro step at whatever macro step the run takes (Task 1c). The r
   window than the macro step (which spec 8 would then say).
 - The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
-  sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step.
+  sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step. What the
+  code does (Task 3): a skin run with the flow takes Girin's removal and so its continuum step, the `--dt` step (0.5 s)
+  before the switch, and Girin's plan, the droplets' radius and the records once a macro step. Task 5 measures; Asha
+  decides.
+- The flow's default (Task 3): `--skin-flow` is off (spec 10.1; `skinbody.FLOW_DEFAULT`, sub-plan 21 Task 6c's ruling
+  that the flow is off until stage 4's spraying gives the liquid a sink, which it now does). Off, a melting run with no
+  flags runs the heat-only skins, its liquid removed as it forms, and writes no droplets; on, it would run the flow and
+  Girin's spraying from the top cells at the continuum step and write the droplet files. On the 100 mm sphere a 0.5 s
+  melting macro step costs about an hour of processor time with the flow (fact 157: eight 0.0625 s parts, each run by
+  both passes 1.8 times on average, at about 239 s) and, by the same count from Task 6d's timings without it (about
+  30 s a part's two passes), about seven minutes without. Asha decides; Task 3's report gives the options.

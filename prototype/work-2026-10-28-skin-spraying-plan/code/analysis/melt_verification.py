@@ -45,7 +45,8 @@ def run_case(key, mode, outdir, animate):
     ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
     label = "{}__{}".format(key, mode)
     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
-                             "--melt", "on"] + MODES[mode] + ["--reference", ref, "--outdir", outdir, "--name", label, "--quiet"]
+                             "--melt", "on", "--surface-model", "elements"] + MODES[mode] + ["--reference", ref, "--outdir",
+                                                                                            outdir, "--name", label, "--quiet"]
     if animate:
         argv.append("--animate")
     rc = cli.main(argv)

@@ -563,7 +563,12 @@ the whole step's.)
 | Surface flow and heating once per macro step | kept, per corner | the gas state changes over seconds |
 | Dense band size field, gmsh generation, validity gate | kept from the remeshing design | measured there |
 
-`--surface-model elements` keeps the current element model, unchanged, for comparison (§11, level 3).
+`--surface-model elements` keeps the current element model, unchanged, for comparison (§11, level 3). (Built in sub-plan
+22 Task 3, 2026-10-29, fact 177: what remained of these mechanisms on this line was stage 1's one-dimensional skins of
+sub-plan 18 under the element model's patches — `skin1d.py`, `MeltSettings(surface_model="skin1d")` and `MeltingBody`'s
+branches for them, with 22 history columns and eight results that held 0 or nan in every element run — and they are
+removed; on the command-line test's short melting case every remaining output of the element model is unchanged to the
+last bit.)
 
 ## 10. Settings, outputs and code layout
 
@@ -589,6 +594,19 @@ Constants in code with their measurement or reason: the split and merge bounds (
 (50 µm), the rebuild threshold (radius ratio 0.05) and gap (20 steps), the base temperature-jump tolerance (5 K), the
 interface tolerance (10⁻³). Defaults marked provisional are fixed by stage measurements and recorded with them. A
 malformed value exits with code 2.
+
+(Built in sub-plan 22 Task 3, 2026-10-29, facts 178–179.) With `--thermal fem` the surface model is the skins unless
+`--surface-model elements` is given; an element-model thermal run's name ends in `_surface-elements`, after the element
+model's own suffixes and before the seed's, and a skin run's name carries only its non-default settings, `_slurryspray-on`
+after the flow's. `--removal` not given is Girin's, except for the heat-only skins, whose liquid leaves as it forms
+(instant removal): with the skins Girin's removal is required with the flow and is the removal of a flow run, and a
+melting run with no flags runs the heat-only skins while the flow is off by default. Contradictory settings exit with
+code 2: Girin's removal without the flow, instant removal with it, `--slurry-spray on` without the flow or with the
+element model, and the element model's own settings (its runoff, deep runoff, molten cascade, rigid substrate and size
+feedback) given to the skins. With the flow on, the skins spray by the shared spray physics with the command line's
+constants and the run writes `particles.npz` and `size_distribution.csv` through the element model's writer; the
+per-step summary waits for the skin history's droplet columns (§10.2, sub-plan 22 Task 4) and is recorded as not
+written.
 
 ### 10.2 Outputs
 

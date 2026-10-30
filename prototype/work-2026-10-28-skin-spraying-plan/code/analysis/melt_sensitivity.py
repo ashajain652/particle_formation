@@ -47,7 +47,8 @@ COLUMNS = ["case", "variant", "sprayed [kg]", "median r [um]", "melt onset [km]"
 
 def argv_for(key, variant, outdir):
     return ["run"] + CASES[key] + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
-                                   "--melt", "on", "--heating", "physics", "--material", "AA7075_scheil", "--no-particles",
+                                   "--melt", "on", "--surface-model", "elements", "--heating", "physics", "--material",
+                                   "AA7075_scheil", "--no-particles",
                                    "--outdir", outdir, "--name", "{}__{}".format(key, variant), "--quiet"] + VARIANTS[variant]
 
 
