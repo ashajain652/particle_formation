@@ -861,10 +861,14 @@ fix every formula below, including Lighthill's conditions and the sign of the r^
   `earth.geodetic_to_ecef`, `trajectory.Simulator`, `AeroState`.
 - Produces in `shock_layer.py` (may import `reentry_model.gas` and `aero`; no altitude constants or arguments; no
   imports of `trajectory`, `droplet_reentry`, `atmosphere`):
-  - `@dataclass(frozen=True) ShockLayerSettings(shock_standoff="lighthill", phi_nose_deg=40.0, phi_blend_deg=20.0,
+  - `@dataclass(frozen=True) ShockLayerSettings(shock_standoff="lighthill", shock_shape="flux_matched", phi_nose_deg=40.0, phi_blend_deg=20.0,
     shock_thickness_mfp=3.0, n_phi=91, n_eta=21, pressure_gradient=True, follower_wall_T_K=300.0,
     kn_shock_layer_flag=1e-3, q_change_flag=0.10)` with `non_default() -> dict` (as `LawSettings`), validating
-    `shock_standoff in ("lighthill", "billig")` and positive numbers.
+    `shock_standoff in ("lighthill", "billig")`, `shock_shape in ("flux_matched", "billig")` and positive numbers.
+    (Amended 2026-10-29, Asha's option 2: with `"flux_matched"` the shock distance ahead of the base plane is set by
+    the mass-balance iteration of spec §4.3d; the field exposes `flux_mismatch` (largest relative mismatch on rays
+    10-90 degrees) and `flux_iterations`; the mass-flux test asserts 2 percent at 30, 60 and 89 degrees, and new
+    tests check the axis standoff, the Mach-angle floor and a continuous slope of r_s(phi).)
   - `@dataclass(frozen=True) FreeStream(rho, T, p, U, mfp, m_bar)` (the parent's free stream at release).
   - `@dataclass(frozen=True) PostShock(rho, T, p, h, s, m_bar, w_n, w_t)` and
     `oblique_jump(air, fs, sigma_rad) -> PostShock` — equilibrium Rankine-Hugoniot on the normal component
@@ -1149,9 +1153,10 @@ git commit -m "wake_residence: the parent's shock-layer flow (Billig shape with 
     follower in the parent's free stream, for comparison), `kn_f_exit` (the WakeAtmosphere gas at exit or end),
     `follower_regime`, `affix_status`, `release_kind`, `t_first_entry`, `first_interval`, `total_inside`; and for
     surface releases `shock_layer_exit`, `t_shock_layer_exit`, `x_exit_parent_frame`, `y_exit_parent_frame`,
-    `v_rel_shock_layer_exit`, `hit_theta_deg` (NaN unless hit), `epsilon`, `standoff_m`, `standoff_billig_m`, `mach`,
+    `v_rel_shock_layer_exit`, `hit_theta_deg` (NaN unless hit), `kn_f_min_in_layer` (smallest local Kn_f while the
+    field weight exceeds 0.5), `flux_mismatch`, `flux_iterations`, `epsilon`, `standoff_m`, `standoff_billig_m`, `mach`,
     `a_p_max`, `a_drag_max_shock_layer`, `q_change`, `cd_composed_release`, `cd_sesam_release`,
-    `field_build_time_s`, and the flags `mach_outside_billig`, `shock_layer_nonequilibrium`, `transitional_follower`,
+    `field_build_time_s`, and the flags `follower_continuum_in_layer` (kn_f_min_in_layer below kn_continuum), `mach_outside_billig`, `shock_layer_nonequilibrium`, `transitional_follower`,
     `q_change_large`.
   - Summary keys the tests read: `reason`, `residence_time`, `parent_sha256`, `git_commit`, `git_dirty`,
     `regime_at_release`, `regime_at_exit`, `kn_at_release`, `re_at_release`, `p_at_release`, `affix_zone`, `t_fz`,
