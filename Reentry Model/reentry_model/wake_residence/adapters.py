@@ -67,12 +67,13 @@ Rarefied followers in the parent's shock layer (spec 4.3d)
     correlation, Cunningham slip, blended on the speed ratio) relative to the local gas, with the wall-to-gas
     temperature ratio from a named wall temperature (300 K, assumed), zero at zero relative speed, plus the
     pressure-gradient acceleration -grad(p) / rho_f. Its AeroState's `a_drag` is the sum of the two (the whole
-    aerodynamic acceleration the integrator uses); `max_a_drag` and `max_a_pressure` record the largest of each seen
+    aerodynamic acceleration the integrator uses), so `Simulator.sample_row`'s drag and load-factor columns include the
+    pressure-gradient force for this simulator; `max_a_drag` and `max_a_pressure` record the largest of each seen
     inside the field (weight above 0.5), counting trial evaluations of the integrator.
   * `parent_collision_event` stops a run when the follower's distance from the parent's centroid falls below R (the
     parent as an obstacle); `shock_layer_exit` classifies the run: the first of `through_shock` (x >= x_s(y)) and
-    `past_base_plane` (x < 0 inside the envelope) on the dense output, else `hit_parent` if the collision event ended
-    the run, else `inside_at_end`.
+    `past_base_plane` (x below -1 micrometre inside the envelope) on the dense output, else `hit_parent` if the
+    collision event ended the run, else `inside_at_end`.
 """
 import json
 import math
@@ -101,8 +102,11 @@ AA7075_DENSITY = 2813.0         # kg/m3, AA7075 solid (DRAMA Sphere Experiments/
 SOLUTION_CADENCE = 0.002        # s, default sampling of a follower's dense run into a Track
 LOAD_FACTOR_MIN = 1e-4          # rows with a smaller loadFactor (g) are dropped from the beta table
 TWIN_T_MAX = 3600.0             # s, integration limit for the twin (the flight to 45 km takes about 950 s)
-HIT_DEPTH = 1e-9                # the collision event fires below a distance R (1 - HIT_DEPTH) from the centroid, so a
-                                # follower released exactly on the surface is caught by any inward motion
+HIT_DEPTH = 1e-7                # the collision event fires below a distance R (1 - HIT_DEPTH) from the centroid: well
+                                # above ECEF round-off (about 1e-9 m on 6.4e6 m), so a follower released on the surface
+                                # never starts with the event already negative
+BASE_PLANE_TOL = 1e-6           # m: `past_base_plane` needs x below -BASE_PLANE_TOL, so a release on the base plane
+                                # (theta = 90 degrees) is not labelled by round-off at its first sample
 
 
 # ---------------------------------------------------------------- the ballistic coefficient from the DRAMA file
@@ -495,8 +499,9 @@ class RarefiedSphereSimulator(Simulator):
     -(1/2) rho V v_rel C_D A / m, C_D from the composed law `particle_trajectory.drag_coefficient` with the local gas
     and the wall-to-gas temperature ratio wall_T_K / T (zero force at zero relative speed), plus the pressure-gradient
     acceleration -grad(p) / density read from `atmosphere.pressure_gradient(t, r)` when `pressure_gradient` is on and
-    the atmosphere has that method. The AeroState's `a_drag` is their sum (the whole aerodynamic acceleration), `cd` the
-    composed C_D (infinite at zero relative speed) and `kn` the hard-sphere Knudsen number. `max_a_drag` and
+    the atmosphere has that method. The AeroState's `a_drag` is their sum (the whole aerodynamic acceleration, so
+    history columns labelled drag or load factor include a_p), `cd` the composed C_D (infinite at zero relative
+    speed) and `kn` the hard-sphere Knudsen number. `max_a_drag` and
     `max_a_pressure` [m/s2] are the largest drag and pressure-gradient accelerations seen where the field's weight
     exceeds 0.5 (trial evaluations of the integrator included). The SESAM drag tables are kept on the simulator
     (`tables`, `bridging`) for consistency checks only.
@@ -571,9 +576,11 @@ class ShockLayerExit:
 
 def shock_layer_exit(run, wake_atmosphere, field, hit=False, tol=1e-3):
     """How the follower of a dense run left the parent's shock layer (spec 4.3d): the first of `through_shock`
-    (x >= x_s(y)) or `past_base_plane` (x < 0 inside the envelope), found on the dense output sampled at most `tol`
-    seconds apart and refined by root-finding; else `hit_parent` if `hit` (the collision event ended the run); else
-    `inside_at_end`. An exit followed by a hit is reported as the exit (the integration continues after an exit)."""
+    (x >= x_s(y)) or `past_base_plane` (x < -BASE_PLANE_TOL inside the envelope), found on the dense output sampled at
+    most `tol` seconds apart and refined by root-finding; else `hit_parent` if `hit` (the collision event ended the
+    run); else `inside_at_end`. An exit followed by a hit is reported as the exit (the integration continues after an
+    exit). The tolerance keeps a release on the base plane (theta = 90 degrees) from being labelled at t0 by
+    round-off."""
     wa, shape = wake_atmosphere, field.shape
     track = wa.plume.parent
     t0 = float(run.sol.t[0])
@@ -596,8 +603,8 @@ def shock_layer_exit(run, wake_atmosphere, field, hit=False, tol=1e-3):
     for i in range(len(ts)):
         if xs[i] >= shape.x_s(ys[i]):
             kind, f = "through_shock", lambda t: (lambda x, y, _: x - shape.x_s(y))(*frame(t))
-        elif xs[i] < 0.0:
-            kind, f = "past_base_plane", lambda t: -frame(t)[0]
+        elif xs[i] < -BASE_PLANE_TOL:
+            kind, f = "past_base_plane", lambda t: -frame(t)[0] - BASE_PLANE_TOL
         else:
             continue
         return found(kind, ts[0] if i == 0 else brentq(f, ts[i - 1], ts[i], xtol=1e-9))

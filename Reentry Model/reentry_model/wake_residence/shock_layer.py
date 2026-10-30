@@ -13,7 +13,21 @@ The model, piece by piece (each named in the spec as an assumption):
   * Shock shape: Billig (1967), x_s(y) = R + Delta - R_c cot^2(beta) [(1 + y^2 tan^2(beta) / R_c^2)^(1/2) - 1], with
     the vertex radius R_c = R 1.143 exp(0.54 / (M - 1)^1.2) and beta = arcsin(1/M). The standoff Delta is Lighthill's
     (default, at the equilibrium density ratio epsilon across the normal shock) or Billig's R 0.143 exp(3.24 / M^2)
-    (`ShockLayerSettings.shock_standoff`). Billig's fit covers Mach 2 to about 25 (`flags`).
+    (`ShockLayerSettings.shock_standoff`). Billig's fit covers Mach 2 to about 25 (`flags`). This is the
+    `shock_shape="billig"` sensitivity case and the start of the flux-matching iteration.
+  * Flux-matched shock (`shock_shape="flux_matched"`, the default; Asha's option 2): Billig's perfect-gas curvature
+    with the equilibrium standoff carried 27 to 73 percent too much gas through the layer, so ahead of the base plane
+    the shock distance r_s(phi) on every grid ray is set by mass balance: the layer flux, the integral of
+    rho |u_phi| 2 pi r sin(phi) dr from R to r_s, equals the free-stream flux rho_inf U pi (r_s sin(phi))^2 through the
+    shock disc of the same lateral radius. The profiles depend on the shock angles, which depend on the shape, so
+    the shock distance is found iteratively, started from Billig's shape. The shape is a cubic spline in phi through
+    knots every 3 degrees (continuous slope, independent of the field grid), the axis knot held at the chosen
+    standoff; its knots are found by a damped (relaxed) Gauss-Newton iteration on the flux residuals of all grid rays,
+    with post-shock states from a table of oblique jumps during the iteration and exact jumps for the final field
+    (`ShockLayerField._flux_match` says why the plain fixed point of the spec was replaced). The shock angle is
+    floored at the Mach angle; behind the base plane the slope relaxes towards the Mach angle (`FluxMatchedShape`).
+    `flux_mismatch` (the largest relative mismatch on the grid rays from 10 to 90 degrees; 0.4 percent at 80 km,
+    spec limit 2 percent, `flags["flux_mismatch_above_tol"]` above it) and `flux_iterations` record the result.
   * Just behind the shock: equilibrium Rankine-Hugoniot on the normal component U sin(sigma) of the free stream, sigma
     the local shock angle from the slope of x_s, by the damped fixed point of `gas.EquilibriumAir.stagnation`; the
     tangential component U cos(sigma) is unchanged (`oblique_jump`).
@@ -27,8 +41,10 @@ The model, piece by piece (each named in the spec as an assumption):
     smoothstep in phi between.
   * Edges: across the shock the field fades to the ambient gas over `shock_thickness_mfp` free-stream mean free paths,
     measured outward along the local shock normal (first order); behind the base plane (x < 0) it fades to zero at
-    x = -r0, evaluated there on the shoulder ray (phi = 90 degrees) at the same distance from the axis. Inside the body
-    the state is the surface state (eta clamped to 0), so it is always finite.
+    x = -r0, evaluated there on the shoulder ray (phi = 90 degrees) at the same distance from the axis. There the
+    field's phi derivatives are zero, so the pressure-gradient force changes discontinuously at the base plane (the
+    weight and the state are continuous). Inside the body the state is the surface state (eta clamped to 0), so it is
+    always finite.
 
 Tabulation: the field is computed on an (phi, eta) grid with phi from 0 to 90 degrees (n_phi by n_eta nodes), mirrored
 across the axis by three nodes (p, T, rho, m_bar and w_x even in phi, w_y odd) so the splines are symmetric there, and
@@ -49,8 +65,10 @@ from reentry_model import aero
 from reentry_model.gas import AIR, CP_AIR, T_EQUILIBRATE, T_FLOOR, EquilibriumAir
 
 AVOGADRO_KMOL = 6.02214076e26        # 1/kmol: Cantera's molecular weights are kg/kmol
+GAS_CONSTANT = 8314.462618           # J/(kmol K), universal gas constant (Cantera's units)
 BILLIG_MACH_RANGE = (2.0, 25.0)      # Mach numbers covered by Billig's sphere correlation
 STANDOFF_MODELS = ("lighthill", "billig")
+SHAPE_MODELS = ("flux_matched", "billig")
 N_MIRROR = 3                         # grid nodes mirrored across the axis for the splines
 
 
@@ -58,6 +76,7 @@ N_MIRROR = 3                         # grid nodes mirrored across the axis for t
 class ShockLayerSettings:
     """Named, overridable choices of the shock-layer model (spec 4.3d)."""
     shock_standoff: str = "lighthill"          # "lighthill" (equilibrium epsilon) or "billig" (perfect gas)
+    shock_shape: str = "flux_matched"          # "flux_matched" (mass balance) or "billig" (Billig's shape)
     phi_nose_deg: float = 40.0                 # Lighthill's velocities up to this angle from the stagnation line
     phi_blend_deg: float = 20.0                # width of the smoothstep blend to the linear-in-eta velocities
     shock_thickness_mfp: float = 3.0           # shock smoothing thickness, free-stream mean free paths
@@ -71,6 +90,8 @@ class ShockLayerSettings:
     def __post_init__(self):
         if self.shock_standoff not in STANDOFF_MODELS:
             raise ValueError(f"shock_standoff must be one of {STANDOFF_MODELS}, got {self.shock_standoff!r}")
+        if self.shock_shape not in SHAPE_MODELS:
+            raise ValueError(f"shock_shape must be one of {SHAPE_MODELS}, got {self.shock_shape!r}")
         for name in ("phi_nose_deg", "phi_blend_deg", "shock_thickness_mfp", "follower_wall_T_K",
                      "kn_shock_layer_flag", "q_change_flag"):
             v = getattr(self, name)
@@ -210,7 +231,7 @@ def lighthill_standoff_approx(eps):
     return eps / (1.0 + math.sqrt(8.0 * eps / 3.0))
 
 
-# ---------------------------------------------------------------- Billig's shock shape
+# ---------------------------------------------------------------- shock shapes
 
 def billig_standoff(R, M):
     """Billig's (1967) sphere standoff, perfect gas with gamma 1.4: R 0.143 exp(3.24 / M^2)."""
@@ -222,8 +243,44 @@ def billig_vertex_radius(R, M):
     return R * 1.143 * math.exp(0.54 / (M - 1.0) ** 1.2)
 
 
+class _ShockCurve:
+    """Geometry shared by the shock shapes, from x_s(y), its first two derivatives, R, M and the axis standoff."""
+
+    @property
+    def beta(self):
+        """Mach angle arcsin(1/M) [rad]."""
+        return math.asin(1.0 / self.M)
+
+    def sigma(self, y):
+        """Local shock angle [rad] between the shock surface and the free-stream direction: pi/2 on the axis, falling
+        towards the Mach angle far out, and never below it."""
+        return max(math.atan2(1.0, -self.dx_s(y)), self.beta)
+
+    def r_s(self, phi):
+        """Distance [m] from the centroid to the shock along the ray at phi (root of x_s(r sin phi) = r cos phi)."""
+        f = lambda r: self.x_s(r * math.sin(phi)) - r * math.cos(phi)
+        hi = 2.0 * (self.R + self.standoff)
+        while f(hi) > 0.0:
+            hi *= 2.0
+        return brentq(f, 0.0, hi, xtol=1e-13 * self.R, rtol=1e-15)
+
+    def inside(self, x, y):
+        return x < self.x_s(y)
+
+    def normal_distance(self, x, y):
+        """Signed distance [m] to the shock, positive inside, first order along the local shock normal:
+        (x_s(y) - x) / (1 + x_s'(y)^2)^(1/2)."""
+        return (self.x_s(y) - x) / math.sqrt(1.0 + self.dx_s(y) ** 2)
+
+    def normal_distance_gradient(self, x, y):
+        """(d/dx, d/dy) of `normal_distance`."""
+        d1, d2 = self.dx_s(y), self.d2x_s(y)
+        s = 1.0 / math.sqrt(1.0 + d1 * d1)
+        return -s, d1 * s - (self.x_s(y) - x) * d1 * d2 * s ** 3
+
+
 @dataclass(frozen=True)
-class ShockShape:
+class ShockShape(_ShockCurve):
     """Billig's hyperbola with vertex radius from Mach M and the given standoff, in the parent frame (x forward)."""
     R: float
     M: float
@@ -232,10 +289,6 @@ class ShockShape:
     @property
     def R_c(self):
         return billig_vertex_radius(self.R, self.M)
-
-    @property
-    def beta(self):
-        return math.asin(1.0 / self.M)
 
     def _u(self, y):
         return (y * math.tan(self.beta) / self.R_c) ** 2
@@ -251,32 +304,59 @@ class ShockShape:
     def d2x_s(self, y):
         return -1.0 / (self.R_c * (1.0 + self._u(y)) ** 1.5)
 
-    def sigma(self, y):
-        """Local shock angle [rad] between the shock surface and the free-stream direction: pi/2 on the axis, falling
-        towards beta far out."""
-        return math.atan2(1.0, -self.dx_s(y))
 
-    def r_s(self, phi):
-        """Distance [m] from the centroid to the shock along the ray at phi (root of x_s(r sin phi) = r cos phi)."""
-        f = lambda r: self.x_s(r * math.sin(phi)) - r * math.cos(phi)
-        hi = 2.0 * (self.R + self.standoff)
-        while f(hi) > 0.0:
-            hi *= 2.0
-        return brentq(f, 0.0, hi, xtol=1e-13 * self.R, rtol=1e-15)
+def _mirrored(phi, a, odd=False):
+    """(phi, a) extended across the axis by N_MIRROR nodes (a even in phi, or odd)."""
+    m = min(N_MIRROR, len(phi) - 1)
+    return (np.concatenate([-phi[m:0:-1], phi]),
+            np.concatenate([(-1.0 if odd else 1.0) * np.asarray(a)[m:0:-1], np.asarray(a)]))
 
-    def inside(self, x, y):
-        return x < self.x_s(y)
 
-    def normal_distance(self, x, y):
-        """Signed distance [m] to the shock, positive inside, first order along the local shock normal:
-        (x_s(y) - x) sin(sigma(y))."""
-        return (self.x_s(y) - x) / math.sqrt(1.0 + self.dx_s(y) ** 2)
+class FluxMatchedShape(_ShockCurve):
+    """The flux-matched shock (spec 4.3d): ahead of the base plane, the curve through the distances r_s at the knots
+    phi_k from 0 to 90 degrees (`r_s_spline`, a cubic spline in phi mirrored across the axis, so its slope is
+    continuous); behind it, x_s'(y) relaxes exponentially from its value at the 90-degree ray towards -cot(beta) (the
+    Mach angle), with the length chosen so that x_s'' is continuous there as well. ValueError if the distance from the
+    axis does not grow with phi (the curve x_s(y) would not be single-valued)."""
+    N_DENSE = 721                    # samples of the spline in phi from which x_s(y) is interpolated
 
-    def normal_distance_gradient(self, x, y):
-        """(d/dx, d/dy) of `normal_distance`."""
-        d1, d2 = self.dx_s(y), self.d2x_s(y)
-        s = 1.0 / math.sqrt(1.0 + d1 * d1)
-        return -s, d1 * s - (self.x_s(y) - x) * d1 * d2 * s ** 3
+    def __init__(self, R, M, standoff, phi_nodes, r_s_nodes):
+        self.R, self.M, self.standoff = float(R), float(M), float(standoff)
+        self.r_s_spline = CubicSpline(*_mirrored(np.asarray(phi_nodes, float), r_s_nodes))
+        ph = np.linspace(0.0, 0.5 * math.pi, self.N_DENSE)
+        r, dr = self.r_s_spline(ph), self.r_s_spline(ph, 1)
+        c, s = np.cos(ph), np.sin(ph)
+        y = r * s
+        dx, dy = dr * c - r * s, dr * s + r * c
+        if not np.all(dy[1:] > 0.0):
+            raise ValueError("the shock's distance from the axis must grow with phi (dr_s/dphi too negative)")
+        slope_90 = float(dx[-1] / dy[-1])
+        self._inner = CubicSpline(y, r * c, bc_type=((1, 0.0), (1, slope_90)))
+        self._y90 = float(y[-1])
+        cot_b = 1.0 / math.tan(self.beta)
+        self._cot_b = cot_b
+        self._excess = max(slope_90 + cot_b, 0.0)           # slope above the Mach-angle slope at the 90-degree ray
+        curv = float(self._inner(self._y90, 2))
+        self._L = self._excess / -curv if curv < 0.0 and self._excess > 0.0 else self._y90
+
+    def _behind(self, y):
+        return math.exp(-(y - self._y90) / self._L)
+
+    def x_s(self, y):
+        if y <= self._y90:
+            return float(self._inner(y))
+        q = y - self._y90
+        return float(self._inner(self._y90)) - self._cot_b * q + self._excess * self._L * (1.0 - self._behind(y))
+
+    def dx_s(self, y):
+        if y <= self._y90:
+            return float(self._inner(y, 1))
+        return -self._cot_b + self._excess * self._behind(y)
+
+    def d2x_s(self, y):
+        if y <= self._y90:
+            return float(self._inner(y, 2))
+        return -self._excess / self._L * self._behind(y)
 
 
 # ---------------------------------------------------------------- the tabulated field
@@ -304,10 +384,77 @@ def _smoothstep(u):
 
 
 _KEYS = ("rho", "T", "p", "m_bar", "w_x", "w_y")    # the FieldState fields, in order
+FLUX_TOL = 0.02                      # flux mismatch required on every ray from 10 to 90 degrees (spec 4.3d)
+FLUX_TARGET = 0.002                  # the iteration stops below this, or where the knots allow no further improvement
+FLUX_MAX_ITER = 30
+FLUX_DSIGMA = 1e-4                   # rad, step for the derivative of the flux residuals in the shock angle
+FLUX_MAX_STEP = 0.25                 # largest change of a ray's gap in one iteration, as a fraction of the gap
+FLUX_KNOT_DEG = 3.0                  # degrees between the knots of the flux-matched shape
+FLUX_PHI_MIN = math.radians(10.0)    # rays checked for the mismatch: 10 to 90 degrees
+JUMP_TABLE_NODES = 61                # oblique jumps tabulated in sin(sigma) for the iteration
+JUMP_TABLE_MN_MIN = 1.2              # lowest normal Mach number in the table (exact jumps below it)
+MW_TABLE_T_STEP = 50.0               # K, temperature spacing of the equilibrium molecular-weight table
+MW_TABLE_NP = 25                     # pressure nodes (uniform in log p) of that table
+
+
+class _JumpTable:
+    """Oblique jumps at JUMP_TABLE_NODES shock angles, uniform in sin(sigma) from a normal Mach number of
+    JUMP_TABLE_MN_MIN to 1, interpolated by cubic splines, for the flux-matching iteration (one exact jump costs
+    several milliseconds). Exact jumps below the table."""
+
+    def __init__(self, air, fs):
+        self.air, self.fs = air, fs
+        air.gas.TDX = max(fs.T, T_FLOOR), fs.rho, AIR
+        self.s_min = min(JUMP_TABLE_MN_MIN * float(air.gas.sound_speed) / fs.U, 1.0)
+        s = np.linspace(self.s_min, 1.0, JUMP_TABLE_NODES)
+        jumps = [oblique_jump(air, fs, math.asin(x)) for x in s]
+        self._splines = {k: CubicSpline(s, [getattr(j, k) for j in jumps]) for k in ("rho", "T", "p", "w_n")}
+
+    def __call__(self, sigma):
+        s = math.sin(sigma)
+        if s < self.s_min:
+            return oblique_jump(self.air, self.fs, sigma)
+        v = {k: float(sp(s)) for k, sp in self._splines.items()}
+        return PostShock(v["rho"], v["T"], v["p"], math.nan, math.nan, math.nan, v["w_n"],
+                         self.fs.U * math.cos(sigma))
+
+
+class _MolecularWeightTable:
+    """Equilibrium mean molecular weight [kg/kmol] on a (T, log p) grid covering the layer, bicubic, for the
+    flux-matching iteration; constant (frozen air) when the field is not equilibrated."""
+
+    def __init__(self, air, T_max, p_min, p_max, equilibrate):
+        g = air.gas
+        g.TPX = 300.0, 101325.0, AIR
+        self.frozen = float(g.mean_molecular_weight)
+        self.equilibrate = equilibrate
+        if not equilibrate:
+            return
+        T = np.arange(T_FLOOR, T_max + 2.0 * MW_TABLE_T_STEP, MW_TABLE_T_STEP)
+        lp = np.linspace(math.log(p_min), math.log(p_max), MW_TABLE_NP)
+        W = np.empty((T.size, lp.size))
+        for i, t in enumerate(T):
+            for j, x in enumerate(lp):
+                g.TPX = t, math.exp(x), AIR
+                if t > T_EQUILIBRATE:
+                    g.equilibrate("TP")
+                W[i, j] = float(g.mean_molecular_weight)
+        self._spline = RectBivariateSpline(T, lp, W, kx=3, ky=3)
+
+    def __call__(self, p, T):
+        if not self.equilibrate:
+            return np.full(np.shape(p), self.frozen)
+        return self._spline.ev(T, np.log(p))
 
 
 class ShockLayerField:
-    """The frozen shock-layer field of one release (module docstring). Build with `ShockLayerField.build`."""
+    """The frozen shock-layer field of one release (module docstring). Build with `ShockLayerField.build`.
+
+    Attributes: fs, R, r0, settings, mach, eps, lighthill (the nose solution), standoff (used on the axis),
+    standoff_billig (for comparison), shape (`FluxMatchedShape` or Billig's `ShockShape`), flags, flux_mismatch (the
+    largest |layer flux / inflow - 1| on the grid rays from 10 to 90 degrees, for either shape), flux_iterations (0
+    for Billig's shape), build_time_s.
+    """
 
     @classmethod
     def build(cls, fs, R, r0, settings=ShockLayerSettings(), air=None):
@@ -322,65 +469,195 @@ class ShockLayerField:
         self.standoff_billig = billig_standoff(self.R, self.mach)
         self.standoff = (self.lighthill.R_s - self.R if settings.shock_standoff == "lighthill"
                          else self.standoff_billig)
-        self.shape = ShockShape(self.R, self.mach, self.standoff)
         self.flags = {
             "mach_outside_billig": not BILLIG_MACH_RANGE[0] <= self.mach <= BILLIG_MACH_RANGE[1],
             "kn_parent_above_flag": fs.mfp / (2.0 * self.R) > settings.kn_shock_layer_flag,
         }
-
-        g = air.gas
+        self._air = air
         stag = air.stagnation(fs.rho, fs.T, fs.U)
-        s0, h0 = float(g.entropy_mass), stag.h                   # stagnation() leaves the gas at the stagnation state
-        equilibrate = max(fs.T, T_FLOOR) + 0.5 * fs.U ** 2 / CP_AIR > T_EQUILIBRATE
-        phi = np.linspace(0.0, 0.5 * math.pi, settings.n_phi)
-        eta = np.linspace(0.0, 1.0, settings.n_eta)
-        table = {k: np.empty((phi.size, eta.size)) for k in _KEYS}
-        r_s = np.empty(phi.size)
-        nose, blend = math.radians(settings.phi_nose_deg), math.radians(settings.phi_blend_deg)
-        L = self.lighthill
-        for i, ph in enumerate(phi):
-            c, s = math.cos(ph), math.sin(ph)
-            p_b = fs.p + (stag.p - fs.p) * c * c                 # modified Newtonian surface pressure
-            g.SPX = s0, p_b, AIR
-            if equilibrate:
-                g.equilibrate("SP")
-            T_b = float(g.T)
-            speed_b = math.sqrt(max(2.0 * (h0 - float(g.enthalpy_mass)), 0.0))
-            wb = np.array([-speed_b * s, speed_b * c])           # tangent to the surface, away from the stagnation point
-            r_s[i] = self.shape.r_s(ph)
-            sig = self.shape.sigma(r_s[i] * s)
-            ps = oblique_jump(air, fs, sig)
-            ws = np.array([-ps.w_t * math.cos(sig) - ps.w_n * math.sin(sig),
-                           ps.w_t * math.sin(sig) - ps.w_n * math.cos(sig)])
-            mix = _smoothstep((ph - nose) / blend)[0]
-            for j, et in enumerate(eta):
-                p, T = (1.0 - et) * p_b + et * ps.p, (1.0 - et) * T_b + et * ps.T
-                g.TPX = T, p, AIR
-                if equilibrate and T > T_EQUILIBRATE:
-                    g.equilibrate("TP")
-                w = (1.0 - et) * wb + et * ws
-                if mix < 1.0:
-                    u_r, u_phi = L.velocity(L.R + et * (L.R_s - L.R), ph)
-                    w = (1.0 - mix) * np.array([u_r * c - u_phi * s, u_r * s + u_phi * c]) + mix * w
-                for k, v in zip(_KEYS, (float(g.density), T, p, _m_bar(g), w[0], w[1])):
-                    table[k][i, j] = v
+        self._s0, self._h0, self._p_stag = float(air.gas.entropy_mass), stag.h, stag.p   # stagnation() leaves the gas there
+        self._equilibrate = max(fs.T, T_FLOOR) + 0.5 * fs.U ** 2 / CP_AIR > T_EQUILIBRATE
+        self._phi = np.linspace(0.0, 0.5 * math.pi, settings.n_phi)
+        self._eta = np.linspace(0.0, 1.0, settings.n_eta)
+        self._surface = [self._surface_state(ph) for ph in self._phi]
 
-        m = min(N_MIRROR, phi.size - 1)
-        phi_ext = np.concatenate([-phi[m:0:-1], phi])
-        def mirrored(a, odd=False):
-            return np.concatenate([(-1.0 if odd else 1.0) * a[m:0:-1], a])
-        self._splines = {k: RectBivariateSpline(phi_ext, eta, mirrored(table[k], odd=(k == "w_y")), kx=3, ky=3)
-                         for k in _KEYS}
-        self._r_s = CubicSpline(phi_ext, mirrored(r_s))
+        billig = ShockShape(self.R, self.mach, self.standoff)
+        r_s = np.array([billig.r_s(ph) for ph in self._phi])
+        self.shape, self.flux_iterations = billig, 0
+        if settings.shock_shape == "flux_matched":
+            r_s = self._flux_match(r_s, stag)
+        exact = lambda sigma: oblique_jump(air, fs, sigma)
+        rays = [self._ray(i, self.shape.sigma(r_s[i] * math.sin(ph)), exact)
+                for i, ph in enumerate(self._phi)]
+        self.flux_mismatch = self._worst(self._flux_residuals(rays, r_s)[0])
+        self.flags["flux_mismatch_above_tol"] = self.flux_mismatch > FLUX_TOL
+
+        self._splines = {}
+        for k in _KEYS:
+            phi_ext, table = _mirrored(self._phi, np.array([ray[k] for ray in rays]), odd=(k == "w_y"))
+            self._splines[k] = RectBivariateSpline(phi_ext, self._eta, table, kx=3, ky=3)
+        if isinstance(self.shape, FluxMatchedShape):
+            self._r_s = self.shape.r_s_spline
+        else:
+            self._r_s = CubicSpline(*_mirrored(self._phi, r_s))
         self._r_s_shoulder = float(r_s[-1])
         self.build_time_s = time.perf_counter() - started
         return self
 
+    # ---- construction ----
+
+    def _surface_state(self, ph):
+        """(p_b, T_b, w_b) on the body at phi: modified Newtonian pressure, isentropic equilibrium expansion from the
+        stagnation state, tangential speed from the total enthalpy."""
+        g, fs = self._air.gas, self.fs
+        c, s = math.cos(ph), math.sin(ph)
+        p_b = fs.p + (self._p_stag - fs.p) * c * c
+        g.SPX = self._s0, p_b, AIR
+        if self._equilibrate:
+            g.equilibrate("SP")
+        speed = math.sqrt(max(2.0 * (self._h0 - float(g.enthalpy_mass)), 0.0))
+        return p_b, float(g.T), np.array([-speed * s, speed * c])
+
+    def _flux_match(self, r_s, stag):
+        """Ray distances r_s [m] of the flux-matched shock (spec 4.3d), starting from `r_s` (Billig's); sets `shape`
+        and `flux_iterations`.
+
+        The shape is a cubic spline in phi through knots every FLUX_KNOT_DEG degrees (mirrored across the axis, the
+        axis knot held at the chosen standoff), so it is smooth and independent of the field grid. Its knot values are
+        found by a damped Gauss-Newton iteration on the residuals of all grid rays, F_i = layer flux / inflow - 1;
+        F_i depends on the ray's distance directly and on the shape through its local shock angle sigma_i (from the
+        spline's value and slope). A plain relaxed fixed point (each ray solved for its own distance at the current
+        angles, then relaxed and smoothed) is unstable at the shoulder: there the layer flux depends so strongly on
+        the shock angle that the balance acts as an equation for the slope, and short-wavelength corrections are
+        amplified (measured 2026-10-29: it diverged, or with heavy smoothing stalled at 5 percent, or was stable for
+        one setting only). The relaxation here is the step halving until the residuals fall, with each gap changed by
+        at most FLUX_MAX_STEP of itself per step. dF/dr is exact at fixed profiles and dF/dsigma a difference of two
+        ray evaluations. Post-shock states come from a table of oblique jumps and densities from a table of
+        equilibrium molecular weights, so an iteration costs tens of milliseconds; the final field is rebuilt from
+        exact jumps and Cantera states."""
+        fs, phi = self.fs, self._phi
+        knots = np.linspace(0.0, 0.5 * math.pi, int(round(90.0 / FLUX_KNOT_DEG)) + 1)
+        m = knots.size
+        eye = np.eye(m)
+        unit = [CubicSpline(*_mirrored(knots, eye[k])) for k in range(m)]
+        B = np.column_stack([u(phi) for u in unit])             # ray values from knot values
+        Bd = np.column_stack([u(phi, 1) for u in unit])         # ray slopes from knot values
+        q = np.interp(knots, phi, r_s)                          # start: Billig's shape at the knots
+        q[0] = self.R + self.standoff
+        jumps = _JumpTable(self._air, fs)
+        weights = _MolecularWeightTable(self._air, 1.05 * stag.T, 0.5 * fs.p, 1.05 * stag.p, self._equilibrate)
+        beta = math.asin(1.0 / self.mach)
+        c, s = np.cos(phi), np.sin(phi)
+        off_axis = phi > 0.0
+
+        def angles(q):
+            r, dr = B @ q, Bd @ q
+            a, b = dr * s + r * c, r * s - dr * c              # shock tangent (dy, -dx) per unit phi
+            h = a * a + b * b
+            sig = np.arctan2(a, b)
+            free = sig > beta                                  # floored at the Mach angle: no dependence there
+            return (np.maximum(sig, beta), np.where(free, (b * c - a * s) / h, 0.0),
+                    np.where(free, (b * s + a * c) / h, 0.0))
+
+        def residuals(q, dsig=0.0):
+            sig = angles(q)[0]
+            return self._flux_residuals([self._ray(i, sig[i] + dsig, jumps, weights) for i in range(phi.size)], B @ q)
+
+        def valid(q):
+            try:
+                FluxMatchedShape(self.R, self.mach, self.standoff, knots, q)
+            except ValueError:
+                return False
+            return bool(np.all(B @ q > self.R))
+
+        F, dF_dr = residuals(q)
+        while self._worst(F) >= FLUX_TARGET and self.flux_iterations < FLUX_MAX_ITER:
+            _, sig_r, sig_dr = angles(q)
+            dF_dsig = (residuals(q, FLUX_DSIGMA)[0] - F) / FLUX_DSIGMA
+            J = dF_dr[:, None] * B + dF_dsig[:, None] * (sig_r[:, None] * B + sig_dr[:, None] * Bd)
+            step = np.zeros(m)
+            step[1:] = np.linalg.lstsq(J[off_axis][:, 1:], -F[off_axis], rcond=None)[0]   # axis knot fixed
+            norm = float(np.linalg.norm(F))
+            lam = min(1.0, FLUX_MAX_STEP / float(np.max(np.abs(step[1:]) / (q[1:] - self.R))))
+            improved = False
+            while lam >= 1.0 / 1024.0:
+                trial = q + lam * step
+                if valid(trial):
+                    F_trial, dF_trial = residuals(trial)
+                    if np.linalg.norm(F_trial) < norm * (1.0 - 1e-6):
+                        improved = True
+                        break
+                lam *= 0.5
+            if not improved:                                   # the least-squares minimum of this knot spacing
+                break
+            q, F, dF_dr = trial, F_trial, dF_trial
+            self.flux_iterations += 1
+        self.shape = FluxMatchedShape(self.R, self.mach, self.standoff, knots, q)
+        return B @ q
+
+    def _ray(self, i, sigma, jump, weights=None):
+        """Profiles across the layer on ray i, {key: array over eta}, behind a shock of local angle sigma with the
+        post-shock state `jump(sigma)`. Densities and molecular masses are Cantera's equilibrium values at each (p, T),
+        or from `weights` (a `_MolecularWeightTable`) when given."""
+        settings, g, L = self.settings, self._air.gas, self.lighthill
+        ph, et = self._phi[i], self._eta
+        c, s = math.cos(ph), math.sin(ph)
+        p_b, T_b, wb = self._surface[i]
+        ps = jump(sigma)
+        ws = np.array([-ps.w_t * math.cos(sigma) - ps.w_n * math.sin(sigma),
+                       ps.w_t * math.sin(sigma) - ps.w_n * math.cos(sigma)])
+        p, T = (1.0 - et) * p_b + et * ps.p, (1.0 - et) * T_b + et * ps.T
+        if weights is not None:
+            W = weights(p, T)
+            rho, m_bar = p * W / (GAS_CONSTANT * T), W / AVOGADRO_KMOL
+        else:
+            rho, m_bar = np.empty(et.size), np.empty(et.size)
+            for j in range(et.size):
+                g.TPX = T[j], p[j], AIR
+                if self._equilibrate and T[j] > T_EQUILIBRATE:
+                    g.equilibrate("TP")
+                rho[j], m_bar[j] = float(g.density), _m_bar(g)
+        w = np.outer(1.0 - et, wb) + np.outer(et, ws)
+        mix = _smoothstep((ph - math.radians(settings.phi_nose_deg)) / math.radians(settings.phi_blend_deg))[0]
+        if mix < 1.0:
+            r_L = L.R + et * (L.R_s - L.R)
+            u_r = 2.0 * L.g(r_L) * c / (r_L * r_L)
+            u_phi = -L.dg(r_L) * s / r_L
+            w = (1.0 - mix) * np.column_stack([u_r * c - u_phi * s, u_r * s + u_phi * c]) + mix * w
+        return {"rho": rho, "T": T, "p": p, "m_bar": m_bar, "w_x": w[:, 0], "w_y": w[:, 1]}
+
+    def _flux_residuals(self, rays, r_s):
+        """(F, dF/dr): F_i = layer flux / inflow - 1 on every ray (0 on the axis), and its derivative in r_i with the
+        profiles fixed.
+
+        With the profiles fixed in eta, the layer flux on a ray of gap G = r_s - R is 2 pi sin(phi) G (R I0 + G I1),
+        I0 and I1 the integrals over eta of rho |u_phi| and rho |u_phi| eta (cubic splines in eta), and the inflow is
+        pi rho_inf U sin^2(phi) (R + G)^2."""
+        R, fs = self.R, self.fs
+        F, dF = np.zeros(len(rays)), np.ones(len(rays))
+        for i, ph in enumerate(self._phi):
+            if ph == 0.0:
+                continue
+            s, c = math.sin(ph), math.cos(ph)
+            f = np.abs(-rays[i]["w_x"] * s + rays[i]["w_y"] * c) * rays[i]["rho"]
+            I0 = CubicSpline(self._eta, f).integrate(0.0, 1.0)
+            I1 = CubicSpline(self._eta, f * self._eta).integrate(0.0, 1.0)
+            G = r_s[i] - R
+            a = fs.rho * fs.U * s
+            F[i] = 2.0 * G * (R * I0 + G * I1) / (a * (R + G) ** 2) - 1.0
+            dF[i] = 2.0 * ((R * I0 + 2.0 * G * I1) * (R + G) - 2.0 * G * (R * I0 + G * I1)) / (a * (R + G) ** 3)
+        return F, dF
+
+    def _worst(self, F):
+        """Largest |F| on the rays from 10 to 90 degrees (the flux mismatch)."""
+        return float(np.max(np.abs(F[self._phi >= FLUX_PHI_MIN - 1e-12])))
+
     # ---- coordinates and weights ----
 
     def _coords(self, x, y):
-        """(phi, eta_raw, d eta_raw/dx, d eta_raw/dy, d phi/dx, d phi/dy) of a point; behind the base plane the
-        shoulder ray at the same distance from the axis."""
+        """(phi, eta_raw, d eta_raw/dx, d eta_raw/dy, d phi/dx, d phi/dy) of a point. Behind the base plane the
+        shoulder ray (phi = 90 degrees) at the same distance from the axis, so the phi derivatives are zero there and
+        the field's pressure gradient changes discontinuously at x = 0 (the weight is continuous)."""
         R = self.R
         if x < 0.0:
             gap = self._r_s_shoulder - R
@@ -429,13 +706,19 @@ class ShockLayerField:
         return FieldState(*(self._ev(k, phi, eta) for k in _KEYS), w)
 
     def surface_state(self, theta_deg):
-        """FieldState on the body at release angle theta (eta = 0 at phi = 180 - theta), weight 1."""
-        phi = math.radians(180.0 - float(theta_deg))
+        """FieldState on the body at release angle theta in [0, 180] degrees (eta = 0 at phi = 180 - theta), weight 1;
+        ValueError outside that range. Releases with theta below 90 degrees lie behind the base plane, where this is the
+        shoulder state's tabulated extension, not a modelled state."""
+        theta = float(theta_deg)
+        if not 0.0 <= theta <= 180.0:
+            raise ValueError(f"theta_deg must lie in [0, 180] degrees, got {theta_deg!r}")
+        phi = math.radians(180.0 - theta)
         return FieldState(*(self._ev(k, phi, 0.0) for k in _KEYS), 1.0)
 
     def excess_pressure_gradient(self, x, y):
         """(d/dx, d/dy) of weight * (p_field - p_inf) [Pa/m]: includes the smoothed jump across the shock and the
-        base-plane fade, and is exactly zero where the field does not reach."""
+        base-plane fade, and is exactly zero where the field does not reach. Behind the base plane the field is the
+        shoulder ray's, so its own gradient has no x part there (see `_coords`)."""
         w, dwx, dwy = self._weight(x, y)
         if w == 0.0:
             return 0.0, 0.0

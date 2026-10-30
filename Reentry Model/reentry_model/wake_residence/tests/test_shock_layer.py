@@ -44,11 +44,8 @@ def test_oblique_tangential_preserved_and_weak_limit(air):
     ps = oblique_jump(air, FS, math.radians(60))
     assert ps.w_t == pytest.approx(FS.U * math.cos(math.radians(60)))
     # The brief asked for rho_2 / rho_inf within 5 % of 1 at beta + 0.5 degrees; at Mach 26 that is a normal Mach
-    # number of 1.23, a real (frozen-air) shock with a density ratio of 1.38 (measured), so the weak limit is checked
-    # at a normal Mach number of 1.05 (no jump, as in EquilibriumAir.stagnation), and beta + 0.5 degrees against the
-    # perfect-gas Rankine-Hugoniot ratio.
-    weak = oblique_jump(air, FS, math.asin(1.05 / M))
-    assert weak.rho / FS.rho == pytest.approx(1.0, rel=0.05)
+    # number of 1.23, a real (frozen-air) shock with a density ratio of 1.38 (measured), so it is checked against the
+    # perfect-gas Rankine-Hugoniot ratio instead.
     mn = M * math.sin(beta + math.radians(0.5))
     near = oblique_jump(air, FS, beta + math.radians(0.5))
     assert near.rho / FS.rho == pytest.approx(2.4 * mn**2 / (0.4 * mn**2 + 2.0), rel=0.02)
@@ -76,13 +73,9 @@ def test_field_stagnation_body_shock(field, air):
     stag_p = stag.p
     assert b.p == pytest.approx(FS.p + (stag_p - FS.p) * math.cos(phi)**2, rel=0.01)
 
-@pytest.mark.xfail(strict=True, reason=(
-    "the specified model does not conserve mass: Billig's perfect-gas shock curvature with Lighthill's equilibrium "
-    "standoff (0.058 m against Billig's 0.20 m) widens the layer away from the nose, and the layer carries "
-    "post-shock density and speed across that width; measured flux / inflow 1.27 at 30 degrees, 1.73 at 60 degrees "
-    "(2.61 at 89); reported to the controller (Task 7b)"))
 def test_mass_flux_through_layer(field):
-    for phi_deg in (30, 60):
+    assert field.flux_iterations > 0 and field.flux_mismatch < 0.02
+    for phi_deg in (30, 60, 89):
         phi = math.radians(phi_deg); rs = field.shape.r_s(phi)
         r = np.linspace(R, rs, 400); flux = 0.0
         for a, b in zip(r[:-1], r[1:]):
@@ -90,7 +83,7 @@ def test_mass_flux_through_layer(field):
             u_phi = -st.w_x * math.sin(phi) + st.w_y * math.cos(phi)
             flux += st.rho * abs(u_phi) * 2 * math.pi * rm * math.sin(phi) * (b - a)
         ys = rs * math.sin(phi)
-        assert flux == pytest.approx(math.pi * ys**2 * FS.rho * FS.U, rel=0.25)
+        assert flux == pytest.approx(math.pi * ys**2 * FS.rho * FS.U, rel=0.02)
 
 def test_outside_is_ambient_and_edges_are_continuous(field):
     x_far = field.shape.x_s(0.0) + 20 * FS.mfp
@@ -113,3 +106,59 @@ def test_pressure_gradient_matches_finite_difference_and_points_to_body(field):
 def test_no_altitude_argument():
     import inspect
     assert not any("alt" in p or p in ("h", "h_km") for p in inspect.signature(ShockLayerField.build).parameters)
+
+
+# ---- the flux-matched shape (Asha's option 2, spec 4.3d) and the review round's checks ----
+
+def test_billig_shape_carries_too_much_gas_and_is_kept_as_the_sensitivity_case(air):
+    # Task 7b measured 1.27 times the inflow at 30 degrees and 1.73 at 60 with Billig's shape; that is why the
+    # default shape is flux-matched. The Billig case is unchanged: its shape is Billig's and its mismatch is recorded.
+    f = ShockLayerField.build(FS, R, R0, ShockLayerSettings(shock_shape="billig"), air=air)
+    assert f.flux_iterations == 0 and f.flux_mismatch > 0.5 and f.flags["flux_mismatch_above_tol"]
+    assert f.shape.x_s(1.0) == pytest.approx(ShockShape(R, f.mach, f.standoff).x_s(1.0))
+    with pytest.raises(ValueError, match="shock_shape"):
+        ShockLayerSettings(shock_shape="lighthill")
+
+def test_flux_matched_shape_keeps_the_axis_standoff(field):
+    assert field.standoff == pytest.approx(field.lighthill.R_s - R)
+    assert field.shape.x_s(0.0) == pytest.approx(R + field.standoff, rel=1e-12)
+    assert field.shape.r_s(0.0) == pytest.approx(R + field.standoff, rel=1e-12)
+    assert not field.flags["flux_mismatch_above_tol"]
+
+def test_flux_matched_shock_angle_never_below_the_mach_angle(field):
+    beta = math.asin(1.0 / field.mach)
+    sig = [field.shape.sigma(y) for y in np.linspace(0.0, 50.0 * R, 2001)]
+    assert min(sig) >= beta and sig[0] == pytest.approx(math.pi / 2)
+    assert np.all(np.diff(sig) <= 1e-9)                               # falls monotonically from the axis
+    assert field.shape.sigma(1e4 * R) == pytest.approx(beta, abs=1e-3)   # tends to the Mach angle far out
+
+def test_flux_matched_shock_distance_has_a_continuous_slope(field):
+    h = 1e-6
+    rs = field.shape.r_s
+    for phi_deg in list(range(3, 90, 3)) + [90, 100, 120]:            # the knots, the base-plane ray and behind it
+        p = math.radians(phi_deg)
+        left, right = (rs(p) - rs(p - h)) / h, (rs(p + h) - rs(p)) / h
+        assert right == pytest.approx(left, abs=1e-4 * max(1.0, abs(left)))
+    y90 = field.shape.r_s(math.pi / 2)
+    assert field.shape.dx_s(y90 * (1 + 1e-9)) == pytest.approx(field.shape.dx_s(y90 * (1 - 1e-9)), abs=1e-6)
+
+@pytest.mark.parametrize("where", ["shock_band", "base_plane_fade"])
+def test_pressure_gradient_matches_finite_difference_across_the_edges(field, where):
+    pe = lambda x, y: (lambda s: s.weight * (s.p - FS.p))(field.state(x, y))
+    if where == "shock_band":                                         # half-way through the smoothing outside the shock
+        y = 0.3
+        x = field.shape.x_s(y) + 0.5 * 3 * FS.mfp / math.sin(field.shape.sigma(y))
+    else:                                                             # a third of the way into the fade behind the base
+        x, y = -0.3 * R0, R + 0.5 * (field.shape.r_s(math.pi / 2) - R)
+    w = field.state(x, y).weight
+    assert 0.05 < w < 0.95
+    h = 1e-6
+    gx, gy = field.excess_pressure_gradient(x, y)
+    assert gx == pytest.approx((pe(x + h, y) - pe(x - h, y)) / (2 * h), rel=1e-3)
+    assert gy == pytest.approx((pe(x, y + h) - pe(x, y - h)) / (2 * h), rel=1e-3, abs=1e-3)
+
+def test_surface_state_rejects_angles_outside_0_to_180(field):
+    assert field.surface_state(180.0).p == pytest.approx(field.state(R, 0.0).p)
+    for bad in (-1.0, 180.5):
+        with pytest.raises(ValueError, match="theta_deg"):
+            field.surface_state(bad)

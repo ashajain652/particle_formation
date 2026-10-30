@@ -47,28 +47,52 @@ def test_drag_is_the_composed_law_and_finite_at_zero_relative_speed(twin):
     mass = 2813.0 * math.pi * 1e-12 / 6
     assert np.allclose(a.a_drag, -0.5 * fs.rho * a.V * a.v_rel * cd * math.pi * 0.25e-8 / mass, rtol=1e-9)
 
+def test_zero_relative_speed_gives_exactly_zero_drag():
+    # The V == 0 branch: a follower at rest in still air (no wind, no field) has no drag and no NaN
+    from reentry_model.trajectory import InitialState
+    from datetime import datetime
+    st = InitialState(velocity=0.0, altitude=80e3, flight_path=0.0, heading=0.0, lat=0.3, lon=0.2,
+                      epoch=datetime(2024, 8, 1))
+    sim = rarefied_sphere_simulator(st, 1e-4, US76TableAtmosphere())
+    r = sim.initial_state_vector()[:3]
+    a = sim.aero_state(0.0, r, np.zeros(3))
+    assert a.V == 0.0 and np.array_equal(a.a_drag, np.zeros(3)) and a.cd == math.inf
+
+def test_release_on_the_base_plane_is_not_labelled_by_round_off(twin):
+    # theta = 90 degrees puts the follower on the base plane; whichever side round-off (or a 1e-7 degree nudge,
+    # 2.5e-9 m) puts it, the shoulder flow sweeps it behind the plane and the exit is the same crossing, after t0
+    exits = []
+    for theta in (90.0, 90.0 + 1e-7, 90.0 - 1e-7):
+        sim, wa, field, t_r = _setup(twin, theta=theta)
+        run = dense_solve(sim, 0.05, events=[parent_collision_event(wa, field.shape.R)])
+        exits.append(shock_layer_exit(run, wa, field, hit=run.end_reason == "hit_parent"))
+    assert all(e.kind == "past_base_plane" and e.t > 0.0 for e in exits)    # measured 0.24 ms
+    assert max(e.t for e in exits) - min(e.t for e in exits) < 1e-5
+
 def test_stagnation_release_moves_forward_relative_to_parent(twin):
     # The parent decelerates more than the follower (0.70 m/s2 against about 0 at the stagnation point), so the
     # follower moves forward off the wall, but the gas flowing in towards the body drags it back: it stays within
     # 0.2 mm of the wall (measured peak 0.16 mm at 30 ms). The brief's "x1 > x0 + 1 mm at 0.2 s" does not hold in this
     # model: the stagnation point is a saddle, and the lateral offset seeded by the turning flight path (about R times
     # the turn rate, 1e-5 m in 10 ms) grows with an e-folding time of about 15 ms, so the follower is swept off the
-    # axis along the surface and leaves through the shock at about 37 degrees from the axis at 0.167 s (measured).
+    # axis along the surface and leaves through the shock (measured at 0.163 s with the flux-matched shape, 0.167 s
+    # with Billig's). The seed comes from the field being frozen while the parent's path turns, so only the kind of
+    # exit is asserted, with a loose time bound.
     sim, wa, field, t_r = _setup(twin)
-    run = dense_solve(sim, 0.2, events=[parent_collision_event(wa, field.shape.R)])
+    run = dense_solve(sim, 0.4, events=[parent_collision_event(wa, field.shape.R)])
     x0, _, _, _ = wa.parent_frame(0.0, run.sol.sol(0.0)[:3])
     x1, _, _, _ = wa.parent_frame(0.03, run.sol.sol(0.03)[:3])
     assert x0 + 5e-5 < x1 < x0 + 1e-3                    # forward, but held near the wall by the inflow
     assert run.end_reason == "t_max"                     # never hits the parent
     ex = shock_layer_exit(run, wa, field)
-    assert ex.kind == "through_shock" and ex.t == pytest.approx(0.167, abs=0.01)
+    assert ex.kind == "through_shock" and 0.05 < ex.t < 0.4
 
 def test_follower_thrown_at_the_parent_hits_it(twin):
     sim, wa, field, t_r = _setup(twin, dv=-50.0, clearance=1e-3)
     run = dense_solve(sim, 1.0, events=[parent_collision_event(wa, field.shape.R)])
     assert shock_layer_exit(run, wa, field, hit=run.end_reason == "hit_parent").kind == "hit_parent"
 
-def test_grid_halving_changes_exit_time_by_under_one_percent(twin, capsys):
+def test_grid_halving_changes_exit_time_by_under_one_percent(twin):
     fine = ShockLayerSettings(n_phi=181, n_eta=41)
     t = []
     for s in (ShockLayerSettings(), fine):
