@@ -49,6 +49,7 @@ Followers in the wake (spec 4.3 and 4.3a)
     follower time beyond the end of the parent's track raises ValueError naming both ranges (the plume is undefined
     there); `follower_t_max` is the longest follower integration the parent track supports.
   * `sphere_simulator` builds a sphere follower exactly as `cli.py` builds a `--thermal none` run.
+  * `state_from_ecef` turns an Earth-fixed position and velocity into an `InitialState` (`release_state` uses it).
   * `solution_track` samples a dense run every `cadence` seconds (default 0.002 s, plus the end time) into a Track on
     the parent's clock; `sphere_parent_track` adds the flow arrays a sphere parent's plume needs, with
     C_D A = C_D(Kn, Ma) times the sphere's area from the simulator's own drag tables and bridging.
@@ -335,14 +336,18 @@ def twin_parent(parent=None, h_stop_km=45.0, atmosphere=None, frontal_area=PAREN
     return TwinParent(track, run, beta, initial.epoch, parent.sha256)
 
 
+def state_from_ecef(r, v, epoch):
+    """InitialState at the Earth-fixed position r [m] and velocity v [m/s] (relative to the rotating Earth): geodetic
+    altitude, latitude and longitude of r, and the speed, flight-path angle and heading of v there, at `epoch`."""
+    h, lat, lon = earth.ecef_to_geodetic(np.asarray(r, dtype=float))
+    V, gamma, heading = earth.flight_angles(np.asarray(v, dtype=float), lat, lon)
+    return InitialState(velocity=V, altitude=h, flight_path=gamma, heading=heading, lat=lat, lon=lon, epoch=epoch)
+
+
 def release_state(track, t, epoch):
     """InitialState of a follower released at time t exactly on the track (position and velocity of the track),
     with epoch + t as its epoch."""
-    r, v = track.position(float(t)), track.velocity(float(t))
-    h, lat, lon = earth.ecef_to_geodetic(r)
-    V, gamma, heading = earth.flight_angles(v, lat, lon)
-    return InitialState(velocity=V, altitude=h, flight_path=gamma, heading=heading, lat=lat, lon=lon,
-                        epoch=epoch + timedelta(seconds=float(t)))
+    return state_from_ecef(track.position(float(t)), track.velocity(float(t)), epoch + timedelta(seconds=float(t)))
 
 
 def twin_vs_drama(twin, parent):
