@@ -61,6 +61,9 @@ class CoupledSettings:
     dt_continuum: float = None       # s, the macro step from the first step whose body Knudsen number is below kn_switch,
                                      # latched (None: no switch; amendment of 2026-10-07, the continuum step)
     kn_switch: float = KN_BODY_SHOCK  # the body Knudsen number of the switch: the surface flow's own continuum boundary
+    switch_on_melt: bool = False      # the switch also latches at the first macro step at whose end the body holds liquid
+                                      # (`body.liquid_present()`), if that comes first: the layered skins' (sub-plan 22
+                                      # Task 3b, Asha 2026-10-29); the element model's switch is the Knudsen number's alone
 
     def __post_init__(self):
         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
@@ -75,6 +78,7 @@ class CoupledRun:
         self.settings = settings or CoupledSettings()
         if self.settings.frames_every and not self.settings.output_dir:
             raise ValueError("frames_every > 0 needs an output_dir")
+        self.switched_at = self.switch_trigger = None              # the continuum switch: (t, Kn, altitude km), and why
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
@@ -106,7 +110,7 @@ class CoupledRun:
     def run(self):
         started = time.perf_counter()
         sim, body, s = self.sim, self.body, self.settings
-        self.switched_at = None                                    # (t, Kn, altitude km) of the continuum switch
+        self.switched_at = self.switch_trigger = None              # (t, Kn, altitude km) of the continuum switch, and why
         self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
         a, loads = self.loads_at(sim.t, sim.y)
         rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
@@ -137,6 +141,8 @@ class CoupledRun:
             t_sw, kn_sw, h_sw = self.switched_at or (None, None, None)
             history.results.update({"dt_continuum_s": s.dt_continuum, "dt_switch_time_s": t_sw, "dt_switch_kn": kn_sw,
                                     "dt_switch_altitude_km": h_sw})
+            if s.switch_on_melt:                                   # what latched it: knudsen, melting or both at once
+                history.results["dt_switch_trigger"] = self.switch_trigger
         return history
 
     def _switch(self, t, a):
@@ -144,12 +150,19 @@ class CoupledRun:
         just given, before any re-evaluation on a surface the step's deaths changed -- has a body Knudsen number below
         kn_switch, the macro step is dt_continuum, latched. Girin's closure begins there and the droplet population needs
         the fine step from there on (plan facts 92-96); before it the default step serves, as the 2026-10-05 harness
-        that this replaces bit for bit had it."""
+        that this replaces bit for bit had it. With `switch_on_melt` (the layered skins, sub-plan 22 Task 3b) it also
+        latches at the first step at whose end the body holds liquid, if that comes first, since the skins spray from
+        their first liquid: the trigger is recorded, `knudsen`, `melting` or `both`."""
         s = self.settings
-        if s.dt_continuum is None or self.switched_at is not None or not (np.isfinite(a.kn) and a.kn < s.kn_switch):
+        if s.dt_continuum is None or self.switched_at is not None:
+            return
+        knudsen = bool(np.isfinite(a.kn) and a.kn < s.kn_switch)
+        melting = bool(s.switch_on_melt and self.body.liquid_present())
+        if not (knudsen or melting):
             return
         s.dt = s.dt_continuum
         self.switched_at = (float(t), float(a.kn), float(a.h) / 1e3)
+        self.switch_trigger = "both" if knudsen and melting else "knudsen" if knudsen else "melting"
 
     def melt_results(self, history):
         c, body = history.columns, self.body
