@@ -2,14 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2 and 3 (2026-10-28/29).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
 > and on the slurry cascade. Task 2 makes the droplet records from the skins. Task 3 retires stage 1's one-dimensional
-> skins, makes the layered skins the default surface model and puts the spraying skin flight on the command line; it
-> leaves two decisions to Asha, the flow's default and the macro step of a spraying flight (Inputs to settle). Tasks
-> 4–6 are the outline's, below, and the inputs it listed are carried at the end.
+> skins, makes the layered skins the default surface model and puts the spraying skin flight on the command line; Task
+> 3b, by Asha's decisions on the two questions it left, makes the flow the default of a melting skin run and latches
+> the skins' continuum step at their first liquid. Tasks 4–6 are the outline's, below, and the inputs it listed are
+> carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -139,8 +140,9 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
     first move unless the fine band is coarsened (`--fine-size 2`, as the skin tests give). Pinned by
     `test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings`.
 15. **The removal follows the flow on the skins** (Task 3, ruling 3) -- instant removal with the flow off, Girin's with
-    it on, so a melting run with no flags runs the heat-only skins while the flow's default is off (an input to settle).
-    Pinned by `test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow`.
+    it on, so a melting run with no flags runs the heat-only skins while the flow's default is off (an input to settle;
+    since Task 3b the flow is on by default, item 18). Pinned by
+    `test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow`.
 16. **Contradictions exit 2** (Task 3, ruling 4) -- Girin's removal without the flow, `--slurry-spray on` without it,
     and the element model's settings given to the skins, which would otherwise run the skins silently. Pinned by
     `test_contradictory_skin_settings_exit_2`.
@@ -148,6 +150,31 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
     constants, the droplet files and a summary recorded as not written; the books close (fact 179). Pinned by
     `test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_files` and
     `test_the_command_line_builds_the_skins_with_the_shared_spray_model`.
+18. **The flow on by default** (Task 3b, Asha 2026-10-29) -- a melting skin run with no flags flows and sprays; an
+    explicit `--removal instant` selects the heat-only skins (`_skinflow-off`) as an explicit `--skin-flow off` does
+    (ruling 1), and `skinbody.FLOW_DEFAULT` stays the class's heat-only default (ruling 2). Pinned by
+    `test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow` and the name tests.
+19. **The continuum step from the skins' first liquid** (Task 3b) -- the first macro step at whose end a top cell is
+    above the liquidus latches it if the Knudsen switch has not; on the element model the body is never asked and its
+    outputs are Task 3's to the last bit. At 71 km the step latches at the first liquid and the skins then spray
+    nothing while liquid lies on slurry off Girin's closure (fact 181): the steps the trigger adds before the Knudsen
+    switch, about 1 950 on each flight (fact 182), buy little spray where option B's hold applies. Pinned by
+    `test_the_continuum_switch_latches_at_the_first_liquid_only_where_asked` and
+    `test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch`.
+## Amendment of 2026-10-29 (after Task 3) — the flow on by default, and the continuum step from the skins' first liquid (Asha's decisions)
+
+> Decided by Asha on 2026-10-29 on the two questions Task 3 left (spec 10.1 and 16 as amended that day). This adds Task
+> 3b; the element model is unchanged.
+
+1. **The flow is on by default for melting skin runs** (option B of Task 3's report). With `--thermal fem --melt on`
+   and the skins, `--skin-flow` not given means on: the run flows, sprays by Girin's model and writes the droplet files.
+   The heat-only skins are `--skin-flow off`, named `_skinflow-off`, with instant removal as before; a flow run's name
+   loses `_skinflow-on`; a run that does not melt is as it was.
+2. **The continuum step also starts at melting onset, on the skins only.** On a skin run with a continuum step, the
+   macro step latches to it at the first macro step at whose end the skins hold liquid above the liquidus, or at the
+   Knudsen switch, whichever comes first; the results record which, with its flight time, Knudsen number and altitude.
+   The element model's switch stays exactly as it is.
+
 ## Amendment of 2026-10-29 — how the skins' depths are read where liquid lies on slurry, and the slurry cascade (Asha's decisions)
 
 > Decided by Asha on 2026-10-29, on the two choices Task 1c's first writing stopped on (spec §8 and §16 as amended that
@@ -1068,7 +1095,9 @@ write no droplet files, having none.
    0.011, Girin's closure does not hold, and a liquid on slurry is held from the shear modes (option B), so two 0.25 s
    steps from 880 K sprayed nothing. Cost: not the flight's conditions, which Task 5 flies.
 
-**Open for Asha** (Inputs to settle, below): the flow's default, and the macro step of a spraying skin flight.
+**Open for Asha** (Inputs to settle, below): the flow's default, and the macro step of a spraying skin flight. (Asha
+decided on 2026-10-29 that the flow is on by default and that the skins' continuum step also latches at their first
+liquid -- the amendment of that day, above, built in Task 3b; the macro step itself waits for Task 5.)
 
 - [ ] **Step 1: The run names, the defaults, the checks and the spraying flight's files** -- in
   `tests/test_reentry_model_cli.py`:
@@ -1147,7 +1176,168 @@ git commit -m "Skins: stage 1's one-dimensional skins retired and the layered sk
 
 ---
 
-## The outline (Tasks 4–6, and Tasks 1–3 written out above: 1 as Tasks 1a, 1b and 1c)
+### Task 3b: The flow on by default, and the continuum step from the skins' first liquid
+
+**Files:**
+- Modify: `reentry_model/cli.py` (`skin_flow_of`; `removal_of` reading it; `--skin-flow` defaulting to the run's own;
+  `skin_name_suffix(..., flow=True)`, `_skinflow-off`; `run_name_of`; `cmd_run`'s resolution and its
+  `CoupledSettings(..., switch_on_melt=)`; the `--dt-continuum` help), `reentry_model/coupled.py`
+  (`CoupledSettings.switch_on_melt`; `CoupledRun.switch_trigger`; `_switch`; the results' `dt_switch_trigger`),
+  `reentry_model/skinbody.py` (`SkinBody.liquid_present`; `FLOW_DEFAULT`'s comment)
+- Test: `tests/test_reentry_model_cli.py` (one test added, nine changed), `tests/test_reentry_model_coupled.py` (one
+  added), `tests/test_reentry_model_skinbody.py` (one added)
+
+**Interfaces:**
+- Consumes: Task 3's `surface_model_of`, `removal_of`, `run_name_of`, `skin_name_suffix`, `continuum_step`; the
+  coupled loop's continuum switch (the amendment of 2026-10-07); `Skins.T`, `.valid`.
+- Produces: `cli.skin_flow_of(args)` (on for the skins' melting runs unless `--removal instant` is given, off where the
+  flow does not apply); `--skin-flow` not given resolved, its value in the run's settings; `skin_name_suffix(...,
+  flow=True)`, `flow` False giving `_skinflow-off` and None (no melting) nothing; `coupled.CoupledSettings(...,
+  switch_on_melt=False)`; `CoupledRun.switch_trigger` (`knudsen`, `melting`, `both` or None); the results'
+  `dt_switch_trigger` where `switch_on_melt`; `SkinBody.liquid_present() -> bool`. The element model's settings,
+  history and results are unchanged; no skin history column or frame field changes.
+
+Asha decided Task 3's two questions on 2026-10-29 (spec 10.1 and 16 as amended that day; the amendment above): the flow
+is on by default for the skins' melting runs (option B), and on the skins the continuum step also latches at the first
+macro step at whose end they hold liquid, or at the Knudsen switch if that comes first; the element model's switch is
+unchanged.
+
+**The flow on by default.** `--skin-flow` not given is the run's own (`skin_flow_of`, resolved in `cmd_run` beside the
+surface model and the removal, and kept in the run's settings): on for a melting run with the skins, so it flows,
+sprays by Girin's model and writes the droplet files with no flags; off where `--removal instant` is given, the
+heat-only skins' removal (ruling 1); off for a run that does not melt or does not use the skins, which the flow does not
+concern, as before. `removal_of` follows it as in Task 3, so a melting skin run with no flags takes Girin's removal and
+its continuum step. A flow run's name loses `_skinflow-on`; the heat-only skins of a melting run are named
+`_skinflow-off` (spec 10.1), and a run that does not melt carries nothing for the flow. The contradictions of Task 3
+stand, each now reached only by explicit settings that disagree (`--skin-flow off` with `--removal girin`, `--skin-flow
+on` with `--removal instant`, `--slurry-spray on` without the flow). `skinbody.FLOW_DEFAULT` stays off: it is the
+class's default, which the heat-only skins' tests build on (ruling 2).
+
+**The continuum step from the skins' first liquid.** `CoupledRun._switch` latches the continuum step at the first macro
+step whose body Knudsen number is below `kn_switch`, as before, or, with `CoupledSettings.switch_on_melt`, at the first
+at whose end the body holds liquid (`body.liquid_present()`), whichever comes first. The command line sets it for the
+skins (`switch_on_melt=args.surface_model == "skin"`), so it acts where a skin run has a continuum step: Girin's removal,
+that is the flow. Onset is liquid above the liquidus (ruling 3): `SkinBody.liquid_present` is true once any column's
+top cell is above T_liquidus, which is where the liquid depth -- the depth option B reads for the Rayleigh-Taylor rules
+and the hold -- is not zero. The results record the trigger beside the `dt_switch_*` fields, which hold the latching
+step's flight time, Knudsen number and altitude: `dt_switch_trigger` is `melting`, `knudsen`, or `both` where the two
+come at the same step (ruling 4), and only where `switch_on_melt` (ruling 5). Without it the body is never asked, so
+the element model's switch, its outputs and its results are unchanged. No opt-out flag is added (ruling 6).
+
+**Measured** (2026-10-29, `prototype/work-2026-10-28-skin-spraying/measure/task3b/`; facts 180–182):
+- *The element model unchanged* (`runs/line3b_short` against Task 3's `line3_short`; `compare_runs.py`,
+  `element_files.py`). The CLI test's short melting case with `--surface-model elements`: the history file byte for
+  byte (93 columns, 76 rows), all 26 fields of the 25 266 source rows, the summary and the size distribution byte for
+  byte, the settings and all 61 results but the run time. Its switch is the Knudsen number's at 9.5 s, after melting
+  at 1.5 s, and its results carry no trigger.
+- *The melting trigger* (`evidence/`, `onset_check.py`; `run_evidence.sh`). The CLI tests' 71 km case as Task 3's spike
+  ran it -- the 100 mm sphere on the coarse mesh (2 367 columns, 20 um cells) from 880 K, physics heating, a 0.25 s first
+  step -- now with no flow flag, to 0.5 s: the body Knudsen number is 0.0112-0.0113 throughout, so the Knudsen switch
+  never fires; the nose holds 0.12 mm of liquid at 0.25 s and the step latches there, `melting`, at 70.97 km, the next
+  20 steps 12.5 ms. The liquid grows to 0.20 mm over a flowing layer of 0.73 rising to 1.29 mm, and nothing is
+  released: off Girin's closure a liquid on slurry is held from the shear modes (option B). 49 s, 0.64 GB. The 65 km
+  smoke case (Task 3's, Knudsen number 0.005) with no flow flag: `knudsen` at the first step's end (25 ms), the first
+  liquid two steps later (50 ms); it sprays as Task 3's smoke flight did, 1.95572 g as 76 300 droplets in 1 196 rows.
+- *Onset read elsewhere* (the same runs; the element model's flights). At 71 km a top at T_rigid or at the solidus
+  comes at the same macro step as the liquid (the first); at 65 km the Knudsen switch comes first whichever is read
+  (T_rigid and the solidus at the first step, the liquid at the third). On the element model's 100 mm flight (the
+  thin-gate flight of record, 0.5 s history) the hottest surface reaches the solidus at 13.5 s, T_rigid at 23.0 s and
+  the liquidus at 24.5 s: read at T_rigid the trigger would come three 0.5 s steps earlier, at the solidus 22.
+- *The cost, estimated* (not measured on a skin flight). The skins' first liquid is taken as the element model's
+  hottest surface reaching the liquidus: 24.5 s on the 100 mm flight (74.1 km, Knudsen number 0.018), whose Knudsen
+  switch is at 49.5 s (fact 69), so 25.0 s of flight at 12.5 ms, 2 000 macro steps where 0.5 s steps made 50: 1 950
+  more; on the 50 mm flight (the element model's of 2026-10-07 from 115 km, with the linear melting range: no Scheil
+  50 mm flight exists) 174.5 s (78.3 km, Knudsen number 0.068), and the Knudsen number never falls below 0.01 before the
+  demise at 199.5 s, so that flight had no continuum step at all and now has 25.0 s of it, again 1 950 more. The skins'
+  tops ran 2-3 K above the element model's surface in level 3 (fact 149), so their onset may come a little earlier. On
+  Task 3's coarse case the continuum step cost about half as much a second of flight as 62.5 ms steps (fact 179); what
+  each extra step adds regardless is its fixed work -- the surface flow (0.06 s), Girin's plan (0.09-0.51 s) and a 3D
+  solve each pass (1.17 s on the 100 mm sphere's fine band, fact 140) -- about 3 s, so about 1.6 h a flight, beside a
+  row of the history and the source rows of every spraying column.
+- *The tests* fail first on Task 3's code (9 failed, 27 passed, `log_fail_first.txt`) and pass (`log_slow_tests.txt`).
+
+**Rulings** (2026-10-29; each what, why, cost if wrong):
+1. *An explicit `--removal instant` turns the skins' flow off*, as an explicit `--skin-flow off` makes the removal
+   instant: each setting not given takes the value the other one given needs, and only two given that disagree exit 2.
+   Why: Asha's "the way `removal_of` resolves the removal"; a command line of Task 3's heat-only skins
+   (`--removal instant`) keeps its meaning instead of exiting 2. Cost if wrong: such a run is the heat-only skins and its
+   name says so (`_melt-instant_skinflow-off`); the alternative refuses it and asks for `--skin-flow off`.
+2. *`skinbody.FLOW_DEFAULT` stays off*, its comment saying why. Why: it is the Python class's default, on which the
+   heat-only skins' tests (most of the skin body's) build; what a run takes is the command line's. Cost: a caller
+   building `SkinBody` directly gets the heat-only body unless it passes `flow=True`.
+3. *Onset is a top cell above the liquidus*, read at the end of each macro step until the step latches. Why: Asha's
+   choice, the liquid depth of option B; a positive liquid depth is exactly a top cell above the liquidus. Cost: a
+   comparison per column a macro step. Read at T_rigid or at the solidus it would come at the same macro step on both
+   test cases, but 1.5 s (three 0.5 s steps) and 11 s (22 steps) earlier on the element model's 100 mm flight (fact
+   181): for Asha.
+4. *`both` where the Knudsen number and the liquid come at the same step.* Why: it says both; the step is the same.
+   Cost: none.
+5. *The trigger is recorded only where the melting trigger is armed (the skins).* Why: the element model's results stay
+   the same key for key; its trigger is always the Knudsen number. Cost: an element run's results have no
+   `dt_switch_trigger`; a reader takes its absence as `knudsen`.
+6. *No opt-out flag.* Why: `--dt-continuum off` already turns the continuum step off, and a skin run that latches on
+   the Knudsen number alone is needed only to compare with the element model's rule, which Task 5's study of the macro
+   step may want; it can add one then, named by spec 10.1 when not the default. Cost: until then that comparison needs
+   code.
+
+- [ ] **Step 1: The flow's default, its names and the melting trigger from the command line** -- in
+  `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T3B}}
+
+- [ ] **Step 2: The switch's two triggers, and the skins' liquid** -- append to `tests/test_reentry_model_coupled.py`
+  and `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_COUPLED_T3B}}
+
+{{DIFF_TEST_SKINBODY_T3B}}
+
+- [ ] **Step 3: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_cli.py
+  tests/test_reentry_model_coupled.py tests/test_reentry_model_skinbody.py -q -k "flow_settings_reach or default_and_girin
+  or run_names_mark or contradictory or builds_the_skins or bad_skin or sprays_from_its_top or
+  latches_at_their_first_liquid or writes_its_columns_frames or melting_run_writes or latches_at_the_first_liquid_only or
+  hold_liquid_once"`. Expected: 9 failed, 27 passed (about a minute) --
+  - the names: `assert '' == '_skinflow-on'`, `assert 'model_d100.0..._melt-instant' == 'model_d100.0...n_skinflow-on'`
+    and the heat-only skin run's name without `_skinflow-off`;
+  - `AttributeError: module 'reentry_model.cli' has no attribute 'skin_flow_of'`;
+  - `SystemExit: 2` (a melting skin run with no `--skin-flow` given and `--skin-flow-cycles`: the flow was off) in the
+    two skin runs, and the heat-only body built where the flow is now the default (`assert (False)`);
+  - `TypeError: CoupledSettings.__init__() got an unexpected keyword argument 'switch_on_melt'`;
+  - `AttributeError: 'SkinBody' object has no attribute 'liquid_present'`.
+
+- [ ] **Step 4: The switch at the first liquid** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T3B}}
+
+- [ ] **Step 5: The skins' liquid** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T3B}}
+
+- [ ] **Step 6: The flow on by default, and the skins' switch** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T3B}}
+
+- [ ] **Step 7: Run them to see them pass.** Expected: `tests/test_reentry_model_cli.py` 83 passed (the melting
+  trigger's run and the spraying run about 10-20 s each), `tests/test_reentry_model_coupled.py` 10,
+  `tests/test_reentry_model_skinbody.py` 35 (2 deselected); the unit tier 523 passed, 1 skipped (Task 3's 519 plus
+  four: the melting trigger's two, the skins' liquid, and a third heat-only contradiction).
+
+- [ ] **Step 8: The measurements** (in `measure/task3b/`, on mains power, one heavy run at a time): the element model's
+  short case, `../task1/cmp/run_case.sh <code> runs line3b_short --surface-model elements` against Task 3's
+  `line3_short` copied into `runs/`, `"$PY" -B ../task1/cmp/compare_runs.py runs line3_short line3b_short` and `"$PY" -B
+  ../task3/element_files.py runs line3_short line3b_short`; the two triggers, `./run_evidence.sh` (about a minute and a
+  half), then `"$PY" -B onset_check.py evidence/<run>.json` and `"$PY" -B smoke_check.py evidence/<run>.json` for each.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add reentry_model/cli.py reentry_model/coupled.py reentry_model/skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_coupled.py tests/test_reentry_model_skinbody.py
+git commit -m "Skins: the flow on by default for a melting skin run and the continuum step from the skins' first liquid (Asha 2026-10-29; spec 10.1) -- --skin-flow not given on for the skins' melting runs unless instant removal is given, the heat-only skins named _skinflow-off and a flow run's name losing _skinflow-on; on the skins the continuum step also latches at the first macro step at whose end a top cell is above the liquidus, or at the Knudsen switch if that comes first, the results recording the trigger (knudsen, melting or both); the element model's switch, outputs and results unchanged to the last bit (sub-plan 22 Task 3b)"
+```
+
+---
+
+## The outline (Tasks 4–6, and Tasks 1–3 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -1197,12 +1387,15 @@ macro step.
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
   sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step. What the
   code does (Task 3): a skin run with the flow takes Girin's removal and so its continuum step, the `--dt` step (0.5 s)
-  before the switch, and Girin's plan, the droplets' radius and the records once a macro step. Task 5 measures; Asha
-  decides.
-- The flow's default (Task 3): `--skin-flow` is off (spec 10.1; `skinbody.FLOW_DEFAULT`, sub-plan 21 Task 6c's ruling
-  that the flow is off until stage 4's spraying gives the liquid a sink, which it now does). Off, a melting run with no
+  before the switch, and Girin's plan, the droplets' radius and the records once a macro step. Task 3b (Asha,
+  2026-10-29): on the skins the continuum step also latches at their first liquid, which on the 100 mm flight adds
+  about 25 s of 12.5 ms steps before the Knudsen switch (1 950 macro steps) and gives the 50 mm flight, whose Knudsen
+  number never falls below 0.01, 25 s of them (estimated, fact 182). Task 5 measures; Asha decides the step itself.
+- Settled: the flow's default (Task 3; Asha, 2026-10-29, option B, built in Task 3b: on for a melting skin run).
+  `--skin-flow` was off (spec 10.1; `skinbody.FLOW_DEFAULT`, sub-plan 21 Task 6c's ruling that the flow is off until
+  stage 4's spraying gives the liquid a sink, which it now does). Off, a melting run with no
   flags runs the heat-only skins, its liquid removed as it forms, and writes no droplets; on, it would run the flow and
   Girin's spraying from the top cells at the continuum step and write the droplet files. On the 100 mm sphere a 0.5 s
   melting macro step costs about an hour of processor time with the flow (fact 157: eight 0.0625 s parts, each run by
   both passes 1.8 times on average, at about 239 s) and, by the same count from Task 6d's timings without it (about
-  30 s a part's two passes), about seven minutes without. Asha decides; Task 3's report gives the options.
+  30 s a part's two passes), about seven minutes without.

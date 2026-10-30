@@ -587,7 +587,7 @@ last bit.)
 | `--skin-swell on\|off` (each cell at its phase's density, §5.2) | `on` | `_noswell` |
 | `--fine-band` (mm below the surface, §5.3; 0 none), `--fine-size` (mm asked) | 4, 0.7 | `_fine<depth>x<size>mm`, `_fine0` |
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
-| `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `off` | `_skinflow-on` |
+| `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `on` with `--melt on` (Asha, 2026-10-29; `off` before) | `_skinflow-off` |
 | `--skin-flow-cycles` (flow sub-steps in each skin sub-step, fixed) | chosen each skin sub-step (Task 6d) | `_flowcycles<value>` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
@@ -599,14 +599,26 @@ malformed value exits with code 2.
 `--surface-model elements` is given; an element-model thermal run's name ends in `_surface-elements`, after the element
 model's own suffixes and before the seed's, and a skin run's name carries only its non-default settings, `_slurryspray-on`
 after the flow's. `--removal` not given is Girin's, except for the heat-only skins, whose liquid leaves as it forms
-(instant removal): with the skins Girin's removal is required with the flow and is the removal of a flow run, and a
-melting run with no flags runs the heat-only skins while the flow is off by default. Contradictory settings exit with
+(instant removal): with the skins Girin's removal is required with the flow and is the removal of a flow run (and, by
+sub-plan 22 Task 3b, a melting run with no flags flows and sprays, the flow being on by default). Contradictory settings
+exit with
 code 2: Girin's removal without the flow, instant removal with it, `--slurry-spray on` without the flow or with the
 element model, and the element model's own settings (its runoff, deep runoff, molten cascade, rigid substrate and size
 feedback) given to the skins. With the flow on, the skins spray by the shared spray physics with the command line's
 constants and the run writes `particles.npz` and `size_distribution.csv` through the element model's writer; the
 per-step summary waits for the skin history's droplet columns (§10.2, sub-plan 22 Task 4) and is recorded as not
 written.
+
+(Built in sub-plan 22 Task 3b, 2026-10-29, facts 180–182; Asha's decisions that day, §16.) `--skin-flow` not given is on
+for a melting run with the skins, so a melting run with no flags flows, sprays by Girin's model and writes the droplet
+files; off where `--removal instant` is given, the heat-only skins' removal, and for a run the flow does not concern.
+The heat-only skins of a melting run are named `_skinflow-off`, and a flow run carries no flow suffix. On the skins the
+continuum step (`--dt-continuum`, 12.5 ms by default with Girin's removal) also latches at the first macro step at
+whose end a column's top cell is above the liquidus -- where the liquid depth (§6.7) the Rayleigh–Taylor rules and the
+hold read is not zero -- or at the Knudsen switch, whichever comes first; the results record the trigger (`knudsen`,
+`melting` or `both`) beside the switch's flight time, Knudsen number and altitude. The element model's switch is the
+Knudsen number's alone, unchanged. No flag turns the melting trigger off; `--dt-continuum off` turns the continuum
+step off.
 
 ### 10.2 Outputs
 
@@ -1125,3 +1137,8 @@ Each stage is tested and measured before the next begins.
   0.6–0.8 K of the liquidus, which on a heated surface is where the slurry beneath the liquid lies. Task 1c's choices
   within the spec stand: Girin evaluated once a macro step at its start, only the admitted run re-checked in each
   sub-step, and his closure's surface velocity (Asha).
+- 2026-10-29 (after sub-plan 22 Task 3, its two questions): the flow is on by default for a melting skin run (option
+  B, over keeping it off or turning it on after Task 5's flights), the heat-only skins being `--skin-flow off`, named
+  `_skinflow-off`; and on the skins the continuum step also latches at the first macro step at whose end they hold
+  liquid above the liquidus, or at the Knudsen switch if that comes first, the element model's switch unchanged (§10.1;
+  built in sub-plan 22 Task 3b). The macro step itself is left to Task 5's measurement (Asha).

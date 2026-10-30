@@ -283,6 +283,8 @@ def test_melting_run_writes_columns_files_and_json(tmp_path):
     assert "deep_surfaced_mass_kg" in rows[0] and "deep_blob_fraction" in rows[0] and "deep_liquid_kg" in rows[0]
     assert s["molten_cascade"] == "on" and "cascade_passes" in rows[0] and "cascade_mass_kg" in rows[0]      # the molten cascade
     assert s["dt_continuum_s"] == 0.1 and r["dt_continuum_s"] == 0.1 and r["dt_switch_kn"] < s["kn_body_shock"]
+    # the element model's switch is the Knudsen number's alone (sub-plan 22 Task 3b): it melts long before it latches
+    assert r["melt_onset_time_s"] < r["dt_switch_time_s"] - 1.0 and "dt_switch_trigger" not in r
     assert s["rigid_substrate"] == "on" and all(k in rows[0] for k in ("nonrigid_depth_mean_mm", "slurry_thick_fraction",
                                                                        "rigid_thin_fraction", "slurry_held_mass_kg"))
     assert r["cascade_mass_kg"] == pytest.approx(float(rows[-1]["cascade_mass_kg"])) and r["cascade_mass_kg"] >= 0.0
@@ -378,7 +380,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-sesam_melt-instant_skin-dev_fine4x2mm")
+    assert doc["run_name"].endswith("_fem-sesam_melt-instant_skin-dev_fine4x2mm_skinflow-off")
     s, r = doc["settings"], doc["results"]
     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
@@ -404,7 +406,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     MELT + ["--removal", "instant", "--surface-model", "skin", "--deform-depth", "0"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-band", "-1"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--fine-size", "0"],
-    MELT + ["--removal", "girin", "--surface-model", "skin"],               # Girin's spraying needs the flow
+    MELT + ["--removal", "girin", "--surface-model", "skin", "--skin-flow", "off"],   # Girin's spraying needs the flow
     MELT + ["--removal", "instant", "--surface-model", "skin", "--animate"],
     MELT + ["--removal", "instant", "--surface-model", "skin", "--prism-layers", "4"],     # the rebuild cannot make prisms
     ["run", "--surface-model", "skin"],                                     # no thermal model
@@ -433,25 +435,29 @@ def test_a_skin_run_refuses_prism_layers_and_says_why(tmp_path, capsys):
 # Sub-plan 21 Task 6c: the flow in the skins, its setting and its sub-cycles
 
 def test_the_flow_settings_reach_the_run_name_only_when_not_default():
-    """Task 6d: the flow sub-steps are chosen each skin sub-step by default, so any fixed count is named."""
+    """Task 6d: the flow sub-steps are chosen each skin sub-step by default, so any fixed count is named. Sub-plan 22 Task
+    3b: the flow is on by default with melting (Asha, 2026-10-29), so the heat-only skins are named _skinflow-off, and a
+    run that does not melt (flow None) carries nothing for it."""
     from reentry_model import skin
     suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, **k)
-    assert suffix() == suffix(flow=False) == ""
-    assert suffix(flow=True) == suffix(flow=True, flow_cycles=None) == "_skinflow-on"
-    assert suffix(flow=True, flow_cycles=skin.FLOW_CYCLES) == "_skinflow-on_flowcycles{}".format(skin.FLOW_CYCLES)
-    assert suffix(flow=True, flow_cycles=2) == "_skinflow-on_flowcycles2"
-    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False, flow=True) == "_skin-dev_noswell_skinflow-on"
+    assert suffix() == suffix(flow=True) == suffix(flow=None) == ""
+    assert suffix(flow=False) == "_skinflow-off"
+    assert suffix(flow_cycles=skin.FLOW_CYCLES) == "_flowcycles{}".format(skin.FLOW_CYCLES)
+    assert suffix(flow_cycles=2) == "_flowcycles2"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "dev", 15.0, swell=False, flow=False) == "_skin-dev_noswell_skinflow-off"
     args = cli.build_parser().parse_args(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"])
-    assert args.skin_flow == "off" and args.skin_flow_cycles is None
+    assert args.skin_flow is None and args.skin_flow_cycles is None
 
 
 def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_files(tmp_path):
     """The spraying skin flight from the command line (sub-plan 22 Task 3). 62.5 ms from 65 km, where the body Knudsen
     number is 0.005 and Girin's closure holds, of a body at 893 K (2 K below T_rigid) under physics heating, with the
-    layered skins (dev preset) and the flow on at two flow sub-steps a skin sub-step: Girin's removal is the default with
-    the flow, and so is its continuum step, so a 25 ms first step is followed by three of 12.5 ms. The tops melt by the
-    last step's start and its plan sprays them. The run name ends in _melt-girin and the skins' own suffixes, with no
-    surface suffix (the skins are the default); the settings record the flow and the spray model's constants; mass,
+    layered skins (dev preset) and the flow at two flow sub-steps a skin sub-step: the flow is the default of a melting
+    skin run (Task 3b), Girin's removal the default with the flow, and so is its continuum step, so a 25 ms first step is
+    followed by three of 12.5 ms, latched by the Knudsen number at the first step's end, before the skins hold liquid.
+    The tops melt by the last step's start and its plan sprays them. The run name ends in _melt-girin and the skins' own
+    suffixes, with no surface or flow suffix (both defaults); the settings record the flow and the spray model's
+    constants, the results the switch's trigger; mass,
     energy and momentum close; the droplets are written by the element model's writer -- particles.npz, whose rows carry
     the mass released, and size_distribution.csv, their histogram -- and the per-step summary, which waits for Task 4's
     history columns, is recorded as not written; the history's flow columns and the frames' top speed are written."""
@@ -461,18 +467,20 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     from reentry_model import spray
     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
-                   "--fine-size", "2", "--skin-flow", "on", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_skinflow-on_flowcycles2")
+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
     assert s["we_critical"] == 3.08 and s["k_r"] == 0.17 and s["k_t"] == 1.1 and s["rt_spray"] == "on"
     assert s["dt_continuum_s"] == 0.0125 and r["dt_switch_time_s"] == pytest.approx(0.025)
+    assert r["dt_switch_trigger"] == "knudsen" and r["dt_switch_kn"] < 0.01
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
     assert len(rows) == 5 and all(k in rows[0] for k in coupled.SKINBODY_COLUMNS)
+    assert float(rows[1]["liquid_depth_max_mm"]) == 0.0                     # no liquid yet where the step latched
     released = r["released_mass_kg"]
     assert released > 0.0 and float(rows[-2]["released_mass_kg"]) == 0.0 and r["removed_mass_kg"] == 0.0
     # the books: mass, energy and momentum
@@ -512,19 +520,24 @@ def test_bad_flow_arguments_exit_2(argv, tmp_path):
 
 def test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow():
     """Spec 10.1: --surface-model defaults to the skins for a thermal run (a run without a thermal model has no surface
-    model). --removal not given is the run's own: Girin's for the element model and for the skins with the flow on (spec
-    10.1, --skin-flow on needs --removal girin), instant removal for the heat-only skins (the flow off, its default), whose
-    liquid leaves as it forms; the continuum step (0.0125 s) follows Girin's removal, so a spraying skin run takes it."""
+    model). --skin-flow not given is on for the skins' melting runs (sub-plan 22 Task 3b; Asha, 2026-10-29) unless instant
+    removal is given, and off where the flow does not apply. --removal not given is the run's own: Girin's for the
+    element model and for the skins with the flow on (spec 10.1, --skin-flow on needs --removal girin), instant removal
+    for the heat-only skins, whose liquid leaves as it forms; the continuum step (0.0125 s) follows Girin's removal, so a
+    skin melting run with no flags flows, sprays and takes it."""
     p = cli.build_parser()
     melt = THERMAL + ["--melt", "on"]
-    resolved = lambda argv: (lambda a: (cli.surface_model_of(a), cli.removal_of(a), cli.continuum_step(a)))(p.parse_args(argv))
+    resolved = lambda argv: (lambda a: (cli.surface_model_of(a), cli.skin_flow_of(a), cli.removal_of(a),
+                                        cli.continuum_step(a)))(p.parse_args(argv))
     assert cli.DEFAULT_SURFACE_MODEL == "skin" and p.parse_args(THERMAL).surface_model is None
-    assert resolved(BASE) == (None, "girin", None)                               # no thermal model, no surface model
-    assert resolved(THERMAL) == ("skin", "instant", None)                        # nothing melts: the removal is unused
-    assert resolved(melt) == ("skin", "instant", None)                           # the heat-only skins
-    assert resolved(melt + ["--skin-flow", "on"]) == ("skin", "girin", 0.0125)   # the spraying skins
-    assert resolved(melt + ["--surface-model", "elements"]) == ("elements", "girin", 0.0125)
-    assert resolved(melt + ["--surface-model", "elements", "--removal", "instant"]) == ("elements", "instant", None)
+    assert resolved(BASE) == (None, "off", "girin", None)                        # no thermal model, no surface model
+    assert resolved(THERMAL) == ("skin", "off", "instant", None)                 # nothing melts: flow and removal unused
+    assert resolved(melt) == ("skin", "on", "girin", 0.0125)                     # the spraying skins, the default
+    assert resolved(melt + ["--skin-flow", "on"]) == resolved(melt)
+    assert resolved(melt + ["--skin-flow", "off"]) == ("skin", "off", "instant", None)    # the heat-only skins
+    assert resolved(melt + ["--removal", "instant"]) == ("skin", "off", "instant", None)  # ... chosen by their removal
+    assert resolved(melt + ["--surface-model", "elements"]) == ("elements", "off", "girin", 0.0125)
+    assert resolved(melt + ["--surface-model", "elements", "--removal", "instant"]) == ("elements", "off", "instant", None)
 
 
 def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings():
@@ -539,13 +552,15 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     assert name(BASE) == base
     assert name(THERMAL) == base + "_fem-sesam"
     assert name(FEM) == base + "_fem-sesam_surface-elements"
-    assert name(melt) == base + "_fem-sesam_melt-instant"
-    assert name(melt + ["--skin-preset", "dev"]) == base + "_fem-sesam_melt-instant_skin-dev"
-    assert name(melt + ["--skin-flow", "on"]) == base + "_fem-sesam_melt-girin_skinflow-on"
-    assert name(melt + ["--skin-flow", "on", "--slurry-spray", "on"]) == base + "_fem-sesam_melt-girin_skinflow-on_slurryspray-on"
-    assert (name(melt + ["--skin-flow", "on", "--skin-flow-cycles", "2", "--slurry-spray", "on", "--seed", "7"])
-            == base + "_fem-sesam_melt-girin_skinflow-on_flowcycles2_slurryspray-on_seed-7")
-    assert name(melt + ["--skin-flow", "on", "--dt-continuum", "off"]) == base + "_fem-sesam_melt-girin_dtcontinuum-off_skinflow-on"
+    assert name(melt) == name(melt + ["--skin-flow", "on"]) == base + "_fem-sesam_melt-girin"    # the flow, Task 3b's default
+    assert name(melt + ["--skin-preset", "dev"]) == base + "_fem-sesam_melt-girin_skin-dev"
+    assert name(melt + ["--slurry-spray", "on"]) == base + "_fem-sesam_melt-girin_slurryspray-on"
+    assert (name(melt + ["--skin-flow-cycles", "2", "--slurry-spray", "on", "--seed", "7"])
+            == base + "_fem-sesam_melt-girin_flowcycles2_slurryspray-on_seed-7")
+    assert name(melt + ["--dt-continuum", "off"]) == base + "_fem-sesam_melt-girin_dtcontinuum-off"
+    assert (name(melt + ["--skin-flow", "off"]) == name(melt + ["--removal", "instant"])
+            == base + "_fem-sesam_melt-instant_skinflow-off")                     # the heat-only skins
+    assert name(THERMAL + ["--skin-flow", "off"]) == name(THERMAL)               # no melting: the flow does not apply
     elements = melt + ["--surface-model", "elements"]
     assert name(elements) == base + "_fem-sesam_melt-girin_surface-elements"
     assert name(elements + ["--removal", "instant"]) == base + "_fem-sesam_melt-instant_surface-elements"
@@ -553,13 +568,13 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
             == base + "_fem-sesam_melt-girin_deeprunoff-off_rigidsubstrate-off_dtcontinuum-off_surface-elements_seed-7")
     assert name(elements + ["--skin-preset", "dev"]) == name(elements)          # the skins' settings name skin runs only
     assert name(melt + ["--name", "mine"]) == "mine"
-    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, slurry_spray=True) == \
-        "_skinflow-on_slurryspray-on"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, slurry_spray=True) == "_slurryspray-on"
 
 
 @pytest.mark.parametrize("argv", [
-    THERMAL + ["--melt", "on", "--removal", "girin"],                                  # Girin's spraying needs the flow
-    THERMAL + ["--melt", "on", "--slurry-spray", "on"],                                # the slurry sprays by the flow's spraying
+    THERMAL + ["--melt", "on", "--skin-flow", "off", "--removal", "girin"],            # Girin's spraying needs the flow
+    THERMAL + ["--melt", "on", "--removal", "instant", "--slurry-spray", "on"],        # the slurry sprays by the flow's spraying
+    THERMAL + ["--melt", "on", "--skin-flow", "off", "--slurry-spray", "on"],
     THERMAL + ["--melt", "on", "--skin-flow", "on", "--slurry-spray", "maybe"],
     FEM + ["--melt", "on", "--slurry-spray", "on"],                                    # the element model has no cascade
     THERMAL + ["--slurry-spray", "on"],                                                # nothing melts
@@ -590,8 +605,9 @@ class _Built(Exception):
 
 def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path, monkeypatch):
     """--skin-flow on gives the skin body the shared spray physics with the command line's constants (the element model's
-    --kr, --kt, --we-critical, --rt-spray), --slurry-spray and --particles; the heat-only skins get none of them and
-    remove their liquid as it forms. The body is not built: its arguments are."""
+    --kr, --kt, --we-critical, --rt-spray), --slurry-spray and --particles, and so does a melting run with no flags (the
+    flow on by default, Task 3b); the heat-only skins (--skin-flow off) get none of them and remove their liquid as it
+    forms. The body is not built: its arguments are."""
     from reentry_model import skinbody
 
     def built(*args, **kwargs):
@@ -607,4 +623,32 @@ def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path,
     with pytest.raises(_Built) as got:
         cli.main(melt)
     k = got.value.args[0]
+    assert k["flow"] and not k["remove"] and k["spray"] is not None and k["spray"].k_r == 0.17 and k["particles"]
+    with pytest.raises(_Built) as got:
+        cli.main(melt + ["--skin-flow", "off"])
+    k = got.value.args[0]
     assert not k["flow"] and k["remove"] and k["spray"] is None and k["surface_flow"] is None and not k["slurry_spray"]
+
+
+def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch(tmp_path):
+    """Sub-plan 22 Task 3b (Asha, 2026-10-29): on the skins the continuum step also latches at the first macro step at
+    whose end they hold liquid above the liquidus, where that comes before the Knudsen switch. 112.5 ms from 71 km, where
+    the body Knudsen number is 0.011 and the Knudsen switch does not fire, of a body at 893 K under physics heating, with
+    the skins' default flow (dev preset, one flow sub-step a skin sub-step) and a 0.1 s first step: the nose holds liquid
+    at its end, so the step latches there to 12.5 ms, and the results say it was the melting, at the step's flight time,
+    Knudsen number and altitude."""
+    pytest.importorskip("cantera")
+    import glob
+    argv = MELT + ["--heating", "physics", "--altitude", "71", "--velocity", "7.24", "--temperature", "893", "--dt", "0.1",
+                   "--t-max", "0.1125", "--surface-model", "skin", "--skin-preset", "dev", "--fine-size", "2",
+                   "--skin-flow-cycles", "1", "--outdir", str(tmp_path)]
+    assert cli.main(argv) == 0
+    (path,) = glob.glob(str(tmp_path / "*.json"))
+    r = json.load(open(path))["results"]
+    rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+    t = [float(row["time_s"]) for row in rows]
+    assert t == pytest.approx([0.0, 0.1, 0.1125]) and float(rows[1]["liquid_depth_max_mm"]) > 0.0
+    assert r["dt_switch_trigger"] == "melting" and r["dt_switch_time_s"] == pytest.approx(0.1)
+    # the history prints nine significant digits
+    assert r["dt_switch_kn"] == pytest.approx(float(rows[1]["knudsen"]), rel=1e-8) and r["dt_switch_kn"] > 0.01
+    assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)

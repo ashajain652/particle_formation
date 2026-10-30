@@ -2838,6 +2838,52 @@ of one comment in `spray.py`, both changed after.
      one; unit tier 519 passed, 1 skipped (Task 2's 538 less stage 1's 35 skin tests, plus 16), 58 minutes on mains
      power beside another session's eight-worker sweep.
 
+## Amendment of 2026-10-29 — sub-plan 22 Task 3b: the flow on by default, and the continuum step from the skins' first liquid (facts 180–182)
+
+> Decided by Asha on 2026-10-29 on Task 3's two questions (spec 10.1 and 16 as amended that day): the flow on by
+> default for a melting skin run (option B), and on the skins the continuum step also latched at their first liquid.
+> Facts 1–179 stand; fact 178's "a melting run with no flags is the heat-only skins" is superseded by fact 180.
+
+180. **The flow on by default (sub-plan 22 Task 3b, 2026-10-29; `runs/line3b_short`).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task3b/`. `--skin-flow` not given (`cli.skin_flow_of`) is on for a
+     melting run with the skins, off where `--removal instant` is given (each of the flow and the removal not given takes
+     the value the other one given needs; only two given that disagree exit 2) and off for a run the flow does not
+     concern; the resolved value is the run's setting. Names: a flow run loses `_skinflow-on`, the heat-only skins of a
+     melting run are `_skinflow-off`, a run that does not melt carries nothing for the flow. `skinbody.FLOW_DEFAULT`, the
+     class's default the heat-only skins' tests build on, stays off. Task 3's 65 km smoke case with no flow flag sprays
+     as it did, 1.95572 g as 76 300 droplets in 1 196 rows. The element model's short case (fact 169) is Task 3's to
+     the last bit: the history file byte for byte, the 26 source fields of 25 266 rows, the summary, the size
+     distribution, the settings and the 61 results but the run time.
+181. **The continuum step from the skins' first liquid (sub-plan 22 Task 3b, 2026-10-29; `onset_check.py`,
+     `run_evidence.sh`).** `coupled.CoupledSettings.switch_on_melt` (set by the CLI for the skins) latches the continuum
+     step at the first macro step at whose end `body.liquid_present()` -- a column's top cell above the liquidus, where
+     the liquid depth of option B is not zero -- if the Knudsen switch has not; the results record `dt_switch_trigger`
+     (`knudsen`, `melting`, `both`) beside the switch's time, Knudsen number and altitude; without it the body is never
+     asked. The CLI tests' 71 km case (the 100 mm sphere on the coarse mesh, 2 367 columns of 20 um cells, from 880 K,
+     physics heating, a 0.25 s first step, the default flow, to 0.5 s; body Knudsen number 0.0112–0.0113, so the
+     Knudsen switch never fires): the nose holds 0.12 mm of liquid at 0.25 s and the step latches there, `melting`, at
+     70.97 km; over the next 20 steps of 12.5 ms the liquid grows to 0.20 mm over a flowing layer rising from 0.73 to
+     1.29 mm and nothing is released, a liquid on slurry being held from the shear modes off Girin's closure (option B);
+     49 s, 0.64 GB. The 65 km case (Knudsen number 0.005): `knudsen` at the first step's end (25 ms), the first liquid
+     at 50 ms. Read at T_rigid or the solidus, onset comes at the same macro step at 71 km (the first), and at 65 km the
+     Knudsen switch is first whichever is read; on the element model's 100 mm thin-gate flight (0.5 s history) the
+     hottest surface reaches the solidus at 13.5 s, T_rigid at 23.0 s and the liquidus at 24.5 s, so a T_rigid onset
+     would latch three 0.5 s steps earlier and a solidus onset 22. Each run once.
+182. **What the melting trigger adds to the flights (sub-plan 22 Task 3b, 2026-10-29; estimated, not measured on a skin
+     flight).** The skins' first liquid taken as the element model's hottest surface reaching the liquidus: on the
+     100 mm flight 24.5 s (74.1 km, Knudsen number 0.018) against the Knudsen switch at 49.5 s (fact 69), so 25.0 s of
+     12.5 ms steps, 2 000 macro steps where 0.5 s steps made 50: 1 950 more. On the 50 mm flight (the element model's of
+     2026-10-07 from 115 km with the linear melting range, AA7075_range; no Scheil 50 mm flight was found) 174.5 s
+     (78.3 km, Knudsen number 0.068), and the Knudsen number never falls below 0.01 before the demise at 199.5 s, so the
+     continuum step, which never latched on that flight, now runs 25.0 s: 1 950 more macro steps. The skins' tops ran
+     2–3 K above the element model's surface in level 3 (fact 149), so their onset may be a little earlier. On Task 3's
+     coarse case the continuum step cost about half as much a second of flight as 62.5 ms steps (fact 179); the fixed
+     work of each extra macro step -- the surface flow (0.06 s), Girin's plan (0.09–0.51 s), a 3D solve each pass on the
+     fine band (1.17 s, fact 140) -- is about 3 s, so about 1.6 h of processor time a flight, besides a history row and
+     the source rows of every spraying column per step. Where option B's hold applies before the Knudsen switch, as at
+     71 km, the extra steps spray little (fact 181). Tests: command line one added and nine changed, coupled one, skin
+     body one; unit tier 523 passed, 1 skipped (21 minutes, mains power).
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

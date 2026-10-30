@@ -108,8 +108,9 @@ from . import spray as spray_mod
 from .body import ThermalBody
 from .thermal import SIGMA_SB
 
-FLOW_DEFAULT = False              # the flow is off until stage 4's spraying gives the liquid a sink: with it on and nothing
-                                  # sprayed, a flight would only pile the liquid up (Task 6c's ruling, 2026-10-22)
+FLOW_DEFAULT = False              # the class's default, the heat-only skins its tests build on: the flow was off until
+                                  # stage 4's spraying gave the liquid a sink (Task 6c's ruling, 2026-10-22); a melting run
+                                  # from the command line flows by default since then (sub-plan 22 Task 3b, Asha 2026-10-29)
 
 GRADIENT_FLOOR = 1.0              # K/m: the smallest gradient along the normal that is divided by. A corner above T_rigid
                                   # whose gradient is below it (a flat or reversed field) is given this one, so its depth
@@ -911,6 +912,13 @@ class SkinBody(ThermalBody):
 
     def demised(self):
         return self.mass() < self.demise_fraction * self.mass0
+
+    def liquid_present(self):
+        """True once any column's top cell is above the liquidus, that is where the liquid depth (spec 6.7, the depth
+        option B reads for the Rayleigh-Taylor rules and the hold) is not zero: the melting onset at which a run's
+        continuum step latches (`coupled.CoupledSettings.switch_on_melt`; sub-plan 22 Task 3b, Asha 2026-10-29)."""
+        sk = self.skins
+        return bool(self.material.melts and np.any(sk.valid[:, 0] & (sk.T[:, 0] > self.material.T_liquidus)))
 
     def surface_stats(self):
         T, Tt = self.solver.temperature(), self.surface_temperature()

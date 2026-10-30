@@ -5,8 +5,8 @@
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
-                                     (the layered skins, the default with --thermal fem, their flow and spraying with
-                                      --skin-flow on; the element model with --surface-model elements)
+                                     (the layered skins, the default with --thermal fem, their flow and spraying the
+                                      default with --melt on; the element model with --surface-model elements)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
 Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
@@ -113,13 +113,23 @@ def surface_model_of(args):
     return DEFAULT_SURFACE_MODEL if args.thermal == "fem" else None
 
 
+def skin_flow_of(args):
+    """--skin-flow if given, else the run's own (sub-plan 22 Task 3b; Asha, 2026-10-29): on for the skins' melting runs,
+    which flow and spray by Girin's model, but off where --removal instant is given, the heat-only skins' removal; off
+    for a run that does not melt or does not use the skins, where the flow does not apply."""
+    if args.skin_flow is not None:
+        return args.skin_flow
+    melting_skins = surface_model_of(args) == "skin" and args.thermal == "fem" and args.melt == "on"
+    return "on" if melting_skins and args.removal != "instant" else "off"
+
+
 def removal_of(args):
     """--removal if given, else the run's own (sub-plan 22 Task 3): Girin's, for the element model and for the skins with
     the flow on, whose liquid only spraying removes (spec 10.1: --skin-flow on needs --removal girin); instant removal for
     the heat-only skins, whose liquid leaves as it forms (stage 2's stand-in for flow and spray, spec 11.2)."""
     if args.removal is not None:
         return args.removal
-    return "instant" if surface_model_of(args) == "skin" and args.skin_flow == "off" else "girin"
+    return "instant" if surface_model_of(args) == "skin" and skin_flow_of(args) == "off" else "girin"
 
 
 def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
@@ -146,16 +156,18 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 
 
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
-                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=False, flow_cycles=None,
+                     fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
     preset's, `_growth<ratio>`, `_sub<ms>ms` and `_deform<mm>mm` for another growth, sub-step or deforming depth,
-    `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none), and,
-    with the flow on (sub-plan 21 Task 6c), `_skinflow-on` followed by `_flowcycles<n>` where the flow sub-steps in each
-    heat sub-step are fixed at n rather than chosen each heat sub-step (Task 6d) and by `_slurryspray-on` where the
-    exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3); empty for the defaults."""
+    `_noswell` for skins held at the solid's density, `_fine<mm>x<mm>mm` for another fine band (`_fine0` for none);
+    `_skinflow-off` for the heat-only skins of a melting run (`flow` False: the flow, sub-plan 21 Task 6c, is on by default
+    with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
+    the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
+    sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3); empty
+    for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -175,10 +187,10 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_fine0"
     elif (fine_band_mm, fine_size_mm) != (FINE_BAND_MM, FINE_SIZE_MM):
         out += "_fine{:g}x{:g}mm".format(fine_band_mm, fine_size_mm)
-    if flow:
-        out += "_skinflow-on"
-        if flow_cycles is not None:
-            out += "_flowcycles{}".format(flow_cycles)
+    if flow is False:
+        out += "_skinflow-off"
+    if flow_cycles is not None:
+        out += "_flowcycles{}".format(flow_cycles)
     if slurry_spray:
         out += "_slurryspray-on"
     return out
@@ -336,11 +348,12 @@ def build_parser():
                     help="on: each skin cell at its own phase's density, so melting swells the skin (default). off: every "
                          "cell at the solid's density, the verification setting of levels 2 and 2b, whose references hold "
                          "one density")
-    me.add_argument("--skin-flow", choices=("on", "off"), default="off",
+    me.add_argument("--skin-flow", choices=("on", "off"), default=None,
                     help="with --surface-model skin and --melt on: on, the skins' liquid and slurry flow over the surface "
                          "(sub-plan 21) and Girin's model sprays them from the top cells (sub-plan 22), with --removal "
-                         "girin, whose continuum step (--dt-continuum) follows; off: the heat-only skins, liquid removed "
-                         "as it forms with --removal instant (default)")
+                         "girin, whose continuum step (--dt-continuum) follows (default, unless --removal instant is "
+                         "given); off: the heat-only skins, liquid removed as it forms with --removal instant, named "
+                         "_skinflow-off")
     me.add_argument("--slurry-spray", choices=("on", "off"), default="off",
                     help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
                          "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
@@ -364,7 +377,8 @@ def build_parser():
                     help="effective ratio of specific heats of the Prandtl-Meyer expansion that sets the wall pressure beyond the sonic "
                          "point (default %(default)s; 1.4 frozen air, ~1.15 dissociated -- a factor ~2 on p_w at 90 deg)")
     me.add_argument("--dt-continuum", type=parse_dt_continuum, default=None,
-                    help="macro step [s] from the first step whose body Knudsen number is below --kn-body-shock, latched "
+                    help="macro step [s] from the first step whose body Knudsen number is below --kn-body-shock, or, "
+                         "with the skins, from the first step at whose end they hold liquid if that comes first, latched "
                          "(default {} with --removal girin, where the droplet population converges; off with instant "
                          "removal). off: the --dt step throughout, as every run before 2026-10-07".format(DEFAULT_DT_CONTINUUM))
     me.add_argument("--kn-body-shock", type=float, default=surface_flow.KN_BODY_SHOCK,
@@ -506,7 +520,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                        skin_suffix=skin_name_suffix(args.skin_min_thickness, args.skin_cell, args.skin_growth,
                                                                     args.skin_substep, args.skin_preset, args.deform_depth,
                                                                     args.skin_swell == "on", args.fine_band, args.fine_size,
-                                                                    args.skin_fine_zone, args.skin_flow == "on",
+                                                                    args.skin_fine_zone,
+                                                                    skin_flow_of(args) == "on" if args.melt == "on" else None,
                                                                     args.skin_flow_cycles, args.slurry_spray == "on"))
 
 
@@ -517,9 +532,10 @@ def cmd_run(args, parser):
     np.random.seed(args.seed)
     if args.surface_model == "skin" and args.thermal != "fem":
         parser.error("--surface-model skin needs --thermal fem")
-    # the surface model and the removal not given take the run's own (sub-plan 22 Task 3): the skins for a thermal run,
-    # and Girin's removal except for the heat-only skins
-    args.surface_model, args.removal = surface_model_of(args), removal_of(args)
+    # the surface model, the flow and the removal not given take the run's own (sub-plan 22 Tasks 3 and 3b): the skins for
+    # a thermal run, their flow on when they melt unless instant removal is given, and Girin's removal except for the
+    # heat-only skins
+    args.surface_model, args.skin_flow, args.removal = surface_model_of(args), skin_flow_of(args), removal_of(args)
     for label, value in (("--diameter", args.diameter), ("--velocity", args.velocity), ("--material-density", args.material_density),
                          ("--cadence", args.cadence), ("--t-max", args.t_max)):
         if value <= 0.0:
@@ -575,8 +591,8 @@ def cmd_run(args, parser):
         parser.error("--skin-flow on keeps the liquid, which only spraying removes: it needs --removal girin, not instant "
                      "removal, which stands in for flow and spraying in the heat-only skins (spec 11.2)")
     if args.surface_model == "skin" and args.melt == "on" and args.skin_flow == "off" and args.removal != "instant":
-        parser.error("Girin's spraying from the skins needs --skin-flow on: the heat-only skins (--skin-flow off, the "
-                     "default) remove their liquid as it forms, --removal instant")
+        parser.error("Girin's spraying from the skins needs their flow: the heat-only skins (--skin-flow off) remove their "
+                     "liquid as it forms, --removal instant")
     if args.slurry_spray == "on" and args.skin_flow != "on":
         parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
                      "sprays by the skins' spraying from their top cells")
@@ -614,7 +630,8 @@ def cmd_run(args, parser):
         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
         run = coupled.CoupledRun(sim, the_body, heating_model,
                                  coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
-                                                         dt_continuum=dt_continuum, kn_switch=args.kn_body_shock))
+                                                         dt_continuum=dt_continuum, kn_switch=args.kn_body_shock,
+                                                         switch_on_melt=args.surface_model == "skin"))
         history = run.run()
         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
         thermal_info["dt_continuum_s"] = dt_continuum

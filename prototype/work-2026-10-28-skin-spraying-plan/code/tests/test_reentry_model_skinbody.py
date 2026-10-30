@@ -1279,3 +1279,20 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
         total = [line.split(",") for line in fh.read().splitlines()[1:]][-spray.N_BINS:]
     np.testing.assert_allclose([float(x[4]) for x in total], n_rec, rtol=1e-8)
     np.testing.assert_allclose([float(x[5]) for x in total], m_rec, rtol=1e-8)
+
+
+def test_the_skins_hold_liquid_once_a_top_cell_is_above_the_liquidus(coarse_sphere_mesh):
+    """Sub-plan 22 Task 3b: `liquid_present`, the melting onset at which a run's continuum step latches, is true once any
+    column's top cell is above the liquidus -- where the liquid depth, the depth option B reads, is not zero -- and not
+    for slurry however warm, nor for a material that does not melt."""
+    b = make(coarse_sphere_mesh, T0=890.0)
+    mat = b.material
+    assert not b.liquid_present() and not (b.skins.depth_above(mat.T_liquidus) > 0.0).any()
+    b.skins.T[3, 0] = mat.T_liquidus - 1e-6                      # slurry a micro-kelvin under the liquidus
+    assert not b.liquid_present()
+    b.skins.T[3, 0] = mat.T_liquidus + 1e-6
+    assert b.liquid_present() and (b.skins.depth_above(mat.T_liquidus) > 0.0).sum() == 1
+    copy = mesh.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    cold = skinbody.SkinBody(copy, material.Material.from_drama_json("AA7075_nomelt"), thermal_solver("skfem"), 1.47, DEV,
+                             T0=1200.0, v_hat=(-1.0, 0.0, 0.0))
+    assert not cold.liquid_present()                             # a material that does not melt holds no liquid

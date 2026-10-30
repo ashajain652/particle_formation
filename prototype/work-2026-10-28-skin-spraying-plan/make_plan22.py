@@ -60,6 +60,11 @@ TASKS = (
            ("DIFF_MELT_VERIFICATION_T3", "analysis/melt_verification.py"),
            ("DIFF_MELT_SENSITIVITY_T3", "analysis/melt_sensitivity.py")),
      ("reentry_model/skin1d.py", "tests/test_reentry_model_skin1d.py", "tests/test_reentry_model_melting_skin.py")),
+    ("3b", (("DIFF_TEST_CLI_T3B", "tests/test_reentry_model_cli.py"),
+            ("DIFF_TEST_COUPLED_T3B", "tests/test_reentry_model_coupled.py"),
+            ("DIFF_TEST_SKINBODY_T3B", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_COUPLED_T3B", "reentry_model/coupled.py"), ("DIFF_SKINBODY_T3B", "reentry_model/skinbody.py"),
+            ("DIFF_CLI_T3B", "reentry_model/cli.py"))),
 )
 
 
