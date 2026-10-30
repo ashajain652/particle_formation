@@ -2,14 +2,14 @@
 
     "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.sensitivity [--diameters mm ...]
         [--altitudes km ...] [--theta deg] [--bounds low high] [--parameters name ...] [--no-rarefied]
-        [--workers N] [--out DIR]
+        [--workers N] [--out DIR] [--force]
 
 Reference set: spheres of 10, 50 and 200 mm at 80 and 60 km released at `--theta` (default 90 degrees, the far wake),
 each at both bounds. The variations (`variations`) are Taylor's K by the factors 0.5/0.7 and 0.9/0.7 (Park's original
 0.5/0.7/0.9 range applied to Taylor's K), Taylor's exponent 0.30 and 0.40, the turbulent law Park instead of Taylor, the
 Feldman hot-axis temperature 2000 and 5000 K and core-speed fraction 0.75, the parent frontal area 3.1 and 12.4 m2
 (the spec's 6.2 m2 is the baseline 6.215 m2), the ballistic-coefficient table scaled by 0.9 and 1.1, the sphere density
-2700 and 2900 kg/m3, and `wake_flow` `velocity` and `density`. The rarefied set (`rarefied_variations`) is 10 mm at
+2700 and 2900 kg/m3, and `wake_flow` `velocity`, `density` and `both` against the baseline `off` (so each effect's share of the change can be read). The rarefied set (`rarefied_variations`) is 10 mm at
 90 km at theta 180 and 120 degrees with `shock_standoff="billig"`, `pressure_gradient` off, `follower_wall_T_K` 1000 K
 and `shock_thickness_mfp` 1 and 10; where 10 mm is not a rarefied follower at that theta the largest default diameter
 that is takes its place (`rarefied_diameter`; the choice is printed and is in the `case` name).
@@ -31,6 +31,7 @@ from typing import Callable
 from reentry_model.parent_follower_separation_interactions import OUTPUT
 from reentry_model.parent_follower_separation_interactions.analysis.sweep import (
     DEFAULT_BOUNDS, DEFAULT_DIAMETERS, get_twin, run_or_load, write_csv)
+from reentry_model.parent_follower_separation_interactions.laws import LawSettings
 from reentry_model.parent_follower_separation_interactions.scenarios import ScenarioSettings
 
 REFERENCE_DIAMETERS = (10.0, 50.0, 200.0)       # mm
@@ -38,7 +39,7 @@ REFERENCE_ALTITUDES = (80.0, 60.0)              # km
 RAREFIED_ALTITUDE = 90.0                        # km
 RAREFIED_THETAS = (180.0, 120.0)                # degrees
 RAREFIED_DIAMETER = 10.0                        # mm, used where it is a rarefied follower
-TAYLOR_K = 0.66                                 # the baseline coefficient the factors multiply (laws.LawSettings)
+TAYLOR_K = LawSettings().taylor_K               # the baseline coefficient the factors multiply
 COLUMNS = ("case", "parameter", "value", "bound", "residence_time", "change_vs_baseline", "shock_layer_exit",
            "t_shock_layer_exit", "relative_change", "set", "diameter_mm", "altitude_km", "theta_deg", "release_kind",
            "follower_regime", "regime_at_release", "reason", "censored")
@@ -74,7 +75,7 @@ def variations():
     out += [Variation("frontal_area", a, _top(frontal_area=a)) for a in (3.1, 12.4)]
     out += [Variation("beta_scale", b, _top(beta_scale=b)) for b in (0.9, 1.1)]
     out += [Variation("density", rho, _top(density=rho)) for rho in (2700.0, 2900.0)]
-    out += [Variation("wake_flow", m, _top(wake_flow=m)) for m in ("velocity", "density")]
+    out += [Variation("wake_flow", m, _top(wake_flow=m)) for m in ("velocity", "density", "both")]
     return out
 
 
@@ -87,17 +88,23 @@ def rarefied_variations():
             Variation("shock_thickness_mfp", 10.0, _shock(shock_thickness_mfp=10.0))]
 
 
-def rarefied_diameter(h_km, theta_deg, bound="low", out_dir=None, candidates=DEFAULT_DIAMETERS):
-    """The diameter [mm] used for the rarefied set at this altitude and theta: RAREFIED_DIAMETER if its follower is
-    rarefied (transitional or free-molecular) there, else the largest of `candidates` that is, else None. Each test
-    runs the baseline case (in `out_dir`, so it is kept)."""
+def rarefied_diameter(h_km, theta_deg, bound="low", out_dir=None, candidates=DEFAULT_DIAMETERS, force=False):
+    """(diameter, why) for the rarefied set at this altitude and theta. The diameter [mm] is RAREFIED_DIAMETER if its
+    follower is rarefied (transitional or free-molecular) there, else the largest of `candidates` that is, else None.
+    `why` says what RAREFIED_DIAMETER was instead (None when it is used): "a continuum follower" or "a case with no plume
+    law (<reason>)". Each test runs the baseline case (in `out_dir`, so it is kept); an exception from one propagates."""
     out_dir = out_dir if out_dir is not None else os.path.join(OUTPUT, "sensitivity")
     base = ScenarioSettings(bound=bound)
+    why = None
     for d in [RAREFIED_DIAMETER] + sorted(candidates, reverse=True):
-        s, _ = run_or_load(out_dir, d, h_km, theta_deg, base)
-        if s.get("follower_regime") in ("transitional", "free_molecular"):
-            return d
-    return None
+        s, _ = run_or_load(out_dir, d, h_km, theta_deg, base, force)
+        regime = s.get("follower_regime")
+        if regime in ("transitional", "free_molecular"):
+            return d, why
+        if d == RAREFIED_DIAMETER:
+            why = ("a continuum follower" if regime == "continuum"
+                   else f"a case with no plume law ({s.get('reason')})")
+    return None, why
 
 
 def _case_name(d_mm, h_km, theta):
@@ -108,22 +115,22 @@ def _run_job(job):
     """(job, summary or None, error message): one case in this process."""
     out_dir, d_mm, h_km, theta, settings = job[:5]
     try:
-        summary, _ = run_or_load(out_dir, d_mm, h_km, theta, settings)
+        summary, _ = run_or_load(out_dir, d_mm, h_km, theta, settings, job[8])
         return job, summary, ""
     except Exception as exc:
         return job, None, f"{type(exc).__name__}: {exc}"
 
 
-def _jobs(out_dir, diameters, altitudes, theta, bounds, variation_list, rarefied):
-    """Job tuples (out_dir, d, h, theta, settings, set, parameter, value) for the baseline and each variation of every
+def _jobs(out_dir, diameters, altitudes, theta, bounds, variation_list, rarefied, force=False):
+    """Job tuples (out_dir, d, h, theta, settings, set, parameter, value, force) for the baseline and each variation of every
     reference case, and of every rarefied case."""
     jobs = []
     def add(d, h, th, vs, name):
         for b in bounds:
             base = ScenarioSettings(bound=b)
-            jobs.append((out_dir, d, h, th, base, name, "baseline", ""))
+            jobs.append((out_dir, d, h, th, base, name, "baseline", "", force))
             for v in vs:
-                jobs.append((out_dir, d, h, th, v.apply(base), name, v.parameter, v.value))
+                jobs.append((out_dir, d, h, th, v.apply(base), name, v.parameter, v.value, force))
     for d in diameters:
         for h in altitudes:
             add(d, h, theta, variation_list, "reference")
@@ -140,7 +147,7 @@ def _rows(results):
             base[(job[1:4], job[4].bound)] = summary["residence_time"]
     rows = []
     for job, summary, error in results:
-        _, d, h, th, settings, name, parameter, value = job
+        _, d, h, th, settings, name, parameter, value, _ = job
         if summary is None:
             continue
         b = base.get(((d, h, th), settings.bound))
@@ -179,6 +186,7 @@ def _parser():
     p.add_argument("--no-rarefied", action="store_true", help="skip the rarefied set")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     p.add_argument("--out", default=OUTPUT, help="output folder")
+    p.add_argument("--force", action="store_true", help="rerun every case, even if its JSON is current")
     return p
 
 
@@ -193,15 +201,19 @@ def main(argv=None):
     rare = []
     if not args.no_rarefied:
         for th in RAREFIED_THETAS:
-            d = rarefied_diameter(RAREFIED_ALTITUDE, th, args.bounds[0], case_dir)
+            try:
+                d, why = rarefied_diameter(RAREFIED_ALTITUDE, th, args.bounds[0], case_dir, force=args.force)
+            except Exception as exc:                       # the rarefied set is skipped, the reference set still runs
+                print(f"rarefied set at {RAREFIED_ALTITUDE:g} km, theta {th:g} skipped: {type(exc).__name__}: {exc}")
+                continue
             if d is None:
                 print(f"no default diameter is a rarefied follower at {RAREFIED_ALTITUDE:g} km, theta {th:g}")
             else:
                 if d != RAREFIED_DIAMETER:
-                    print(f"{RAREFIED_DIAMETER:g} mm is a continuum follower at {RAREFIED_ALTITUDE:g} km, theta {th:g}; "
+                    print(f"{RAREFIED_DIAMETER:g} mm is {why} at {RAREFIED_ALTITUDE:g} km, theta {th:g}; "
                           f"the rarefied set uses {d:g} mm there")
                 rare.append((RAREFIED_ALTITUDE, th, d))
-    jobs = _jobs(case_dir, args.diameters, args.altitudes, args.theta, args.bounds, var, rare)
+    jobs = _jobs(case_dir, args.diameters, args.altitudes, args.theta, args.bounds, var, rare, args.force)
     if args.parameters is not None:                                  # keep the rarefied variations out unless asked for
         jobs = [j for j in jobs if j[5] == "reference" or j[6] == "baseline" or keep(j[6])]
     get_twin()
@@ -209,8 +221,15 @@ def main(argv=None):
     if args.workers <= 1 or len(jobs) <= 1:
         results = [_run_job(j) for j in jobs]
     else:
+        results = [None] * len(jobs)
         with concurrent.futures.ProcessPoolExecutor(max_workers=min(args.workers, len(jobs))) as pool:
-            results = list(pool.map(_run_job, jobs))
+            futures = {pool.submit(_run_job, j): i for i, j in enumerate(jobs)}
+            for fut in concurrent.futures.as_completed(futures):
+                i = futures[fut]
+                try:
+                    results[i] = fut.result()
+                except Exception as exc:                    # a worker that died takes its case with it
+                    results[i] = (jobs[i], None, f"{type(exc).__name__}: {exc}")
     rows = _rows(results)
     write_csv(os.path.join(out, "sensitivity.csv"), rows, COLUMNS)
     rank = ranking(rows)

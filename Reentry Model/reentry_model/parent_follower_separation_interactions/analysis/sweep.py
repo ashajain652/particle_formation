@@ -3,7 +3,7 @@ twin of the Generic Spacecraft, classified (AFFIx zone, the follower's own regim
 run by `scenarios.sphere_in_spacecraft_plume`.
 
     "$PY" -m reentry_model.parent_follower_separation_interactions.analysis.sweep [--diameters mm ...] [--altitudes km ...]
-        [--thetas deg ...] [--bounds low high] [--wake-flow off both] [--workers N] [--out DIR]
+        [--thetas deg ...] [--bounds low high] [--wake-flow off both] [--workers N] [--out DIR] [--force]
 
 Work units. The far-wake integration is shared by every far-wake theta of one (diameter, altitude, bound, wake_flow)
 through an in-process memo in `scenarios`, so one worker takes one such combination with all its thetas, one after
@@ -11,7 +11,9 @@ another; the units go to a process pool (default: CPU count less one workers; on
 Each worker builds its own twin (`get_twin`, once per process).
 
 Files under `--out` (default `parent_follower_separation_interactions.OUTPUT`):
-  runs/<run name>.json, .csv   one case each (`scenarios.write_case`); a case whose JSON exists is not run again.
+  runs/<run name>.json, .csv   one case each (`scenarios.write_case`). A case whose JSON exists is not run again, unless
+                               that JSON was made by another commit or from a dirty working tree (a stale case: it is
+                               rerun and a line is printed) or `--force` is given.
   summary.csv                  one row per (diameter, altitude, theta, bound, wake_flow), sorted in that order (bound
                                low before high, wake_flow in the order off, velocity, density, both), read back from
                                the JSON files. It holds no wall-clock value or git state, so two sweeps of the same
@@ -32,6 +34,7 @@ from collections import Counter
 
 from reentry_model.parent_follower_separation_interactions import OUTPUT
 from reentry_model.parent_follower_separation_interactions.adapters import PARENT_FRONTAL_AREA, twin_parent
+from reentry_model.parent_follower_separation_interactions import scenarios
 from reentry_model.parent_follower_separation_interactions.scenarios import (
     RELEASES, NO_THETA_RELEASES, ScenarioSettings, run_name, sphere_in_spacecraft_plume, write_case)
 from reentry_model.parent_follower_separation_interactions.wake_gas import WAKE_FLOW_MODES
@@ -46,7 +49,7 @@ LAG_TIME_S = 1.0                      # s after release at which the lag behind 
 # Columns of summary.csv that are always present (blank where a case does not have them), in this order; any other
 # scalar value in the case files follows, sorted by name.
 SUMMARY_COLUMNS = (
-    "diameter_mm", "altitude_km", "theta_deg", "bound", "wake_flow",
+    "name", "diameter_mm", "altitude_km", "theta_deg", "bound", "wake_flow",
     "affix_zone", "release_kind", "follower_regime", "affix_status", "transitional_follower",
     "residence_time", "censored", "reason", "residence_reason", "total_inside", "t_first_entry", "first_interval",
     "n_intervals", "residence_exceeds_t_fz", "t_release", "follower_t_end", "follower_end_reason",
@@ -56,7 +59,7 @@ SUMMARY_COLUMNS = (
     "kn_f_free_stream", "kn_f_release", "kn_f_min_in_layer", "kn_f_exit", "kn_f_end", "follower_continuum_in_layer",
     "shock_layer_exit", "t_shock_layer_exit", "flux_mismatch", "flux_mismatch_above_tol",
     "t_hat", "t_fz", "theta_inn", "theta_bif", "affix_r")
-SUMMARY_EXCLUDED = frozenset({"name", "kind", "config", "limitation", "wall_time_s", "field_build_time_s",
+SUMMARY_EXCLUDED = frozenset({"kind", "config", "limitation", "wall_time_s", "field_build_time_s",
                               "git_commit", "git_dirty", "parent_sha256"})     # wall-clock values and git state
 
 
@@ -99,27 +102,49 @@ def existing_case(out_dir, d_mm, h_km, theta_deg, settings):
     return None
 
 
-def run_or_load(out_dir, d_mm, h_km, theta_deg, settings):
-    """(summary dict, ran): the case's summary from its JSON file if it exists, else run it (in this process, with this
-    process's twin for the settings), write it, and read it back, so that a fresh and a resumed case look the same."""
+def git_state():
+    """(HEAD commit, working tree dirty) as `scenarios` records them in a case's JSON."""
+    return scenarios._git_commit(), scenarios._git_dirty()
+
+
+def stale_reason(summary):
+    """Why a case's JSON cannot be trusted for the current code, or None: it was made by another commit, or from a tree
+    with uncommitted changes (or git could not say), so its numbers may not be those the current code gives."""
+    commit, dirty = git_state()
+    if summary.get("git_dirty") is not False:
+        return f"made from a dirty or unknown working tree (git_dirty = {summary.get('git_dirty')!r})"
+    if commit is None or summary.get("git_commit") != commit:
+        return f"made by commit {str(summary.get('git_commit'))[:10]}, not {str(commit)[:10]}"
+    return None
+
+
+def run_or_load(out_dir, d_mm, h_km, theta_deg, settings, force=False):
+    """(summary dict, ran): the case's summary from its JSON file if it exists and is current, else run it (in this
+    process, with this process's twin for the settings), write it, and read it back, so that a fresh and a resumed case
+    look the same. A stale JSON (`stale_reason`) is rerun with a printed line; `force` reruns every case."""
     path = existing_case(out_dir, d_mm, h_km, theta_deg, settings)
-    ran = path is None
-    if ran:
-        twin = get_twin(settings.frontal_area, settings.beta_scale)
-        _, path = write_case(sphere_in_spacecraft_plume(d_mm, h_km, theta_deg, settings, twin=twin), out_dir)
+    if path is not None and not force:
+        with open(path) as fh:
+            summary = json.load(fh)
+        why = stale_reason(summary)
+        if why is None:
+            return summary, False
+        print(f"stale case {os.path.basename(path)[:-5]}: {why}; rerun", flush=True)
+    twin = get_twin(settings.frontal_area, settings.beta_scale)
+    _, path = write_case(sphere_in_spacecraft_plume(d_mm, h_km, theta_deg, settings, twin=twin), out_dir)
     with open(path) as fh:
-        return json.load(fh), ran
+        return json.load(fh), True
 
 
 def _run_unit(unit):
     """One work unit: all thetas of one (diameter, altitude, bound, wake_flow), run consecutively in this process so the
     far-wake integration is shared. Returns [(theta, status, message)], status "ran", "resumed" or "failed"."""
-    d_mm, h_km, bound, wake_flow, thetas, out_dir = unit
+    d_mm, h_km, bound, wake_flow, thetas, out_dir, force = unit
     settings = ScenarioSettings(bound=bound, wake_flow=wake_flow)
     result = []
     for theta in thetas:
         try:
-            _, ran = run_or_load(out_dir, d_mm, h_km, theta, settings)
+            _, ran = run_or_load(out_dir, d_mm, h_km, theta, settings, force)
             result.append((theta, "ran" if ran else "resumed", ""))
         except Exception as exc:                                   # one bad case must not stop the sweep
             result.append((theta, "failed", f"{type(exc).__name__}: {exc}"))
@@ -215,6 +240,7 @@ def _parser():
     p.add_argument("--wake-flow", nargs="+", choices=WAKE_FLOW_MODES, default=list(DEFAULT_WAKE_FLOWS), dest="wake_flow")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="worker processes")
     p.add_argument("--out", default=OUTPUT, help="output folder")
+    p.add_argument("--force", action="store_true", help="rerun every case, even if its JSON is current")
     return p
 
 
@@ -250,7 +276,7 @@ def main(argv=None):
     os.makedirs(os.path.join(out, "runs"), exist_ok=True)
     altitudes = kept_altitudes(args.altitudes, get_twin())
     thetas = sorted(args.thetas)
-    units = [(d, h, b, f, tuple(thetas), out)
+    units = [(d, h, b, f, tuple(thetas), out, args.force)
              for d in sorted(args.diameters) for h in altitudes for b in args.bounds for f in args.wake_flow]
     print(f"{len(units)} work units, {len(units) * len(thetas)} cases, {args.workers} worker(s), output {out}")
     failures, n_ran, n_resumed = [], 0, 0
@@ -278,8 +304,9 @@ def main(argv=None):
                     failures.extend((unit[:4] + (t,), f"{type(exc).__name__}: {exc}") for t in unit[4])
                 print(f"[{i}/{len(units)}] d {unit[0]:g} mm, h {unit[1]:g} km, {unit[2]}, {unit[3]} done", flush=True)
 
+    failed = {c for c, _ in failures}                  # a failed case may leave a stale JSON: it is not summarised
     cases = [(d, h, t, b, f) for d in args.diameters for h in altitudes for t in thetas for b in args.bounds
-             for f in args.wake_flow]
+             for f in args.wake_flow if (d, h, b, f, t) not in failed]
     rows = summary_rows(out, cases)
     write_csv(os.path.join(out, "summary.csv"), rows, summary_columns(rows))
     write_csv(os.path.join(out, "crossover.csv"), crossover_rows(out, rows),

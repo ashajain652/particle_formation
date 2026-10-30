@@ -1,11 +1,27 @@
 """Sweep, sensitivity and tables (Task 9, spec 4.5, 4.6 and 5): the resumable sweep and its summary file, the
 sensitivity set, and the supporting tables."""
-import csv, filecmp, math, os, shutil
+import concurrent.futures, csv, filecmp, glob, json, os
 import pytest
+from reentry_model.parent_follower_separation_interactions import scenarios
 from reentry_model.parent_follower_separation_interactions.analysis import sensitivity, sweep, tables
 
 ARGS = ["--diameters", "10", "--altitudes", "60", "--thetas", "90", "180", "--bounds", "low",
         "--wake-flow", "off", "--workers", "1"]
+FAR_WAKE_ARGS = ["--diameters", "25", "--altitudes", "60", "--thetas", "120", "130", "--bounds", "low",
+                 "--wake-flow", "off", "--workers", "1"]
+
+
+@pytest.fixture(autouse=True)
+def clean_git(monkeypatch):
+    """The cases record the commit and whether the tree is dirty, and a resumed sweep trusts only clean, current ones.
+    The working tree is dirty while the code is edited, so the tests run as if on one clean commit."""
+    monkeypatch.setattr(scenarios, "_git_commit", lambda: "test-commit")
+    monkeypatch.setattr(scenarios, "_git_dirty", lambda: False)
+
+
+def mtimes(folder):
+    """{file: modification time in ns} of every file under folder/runs."""
+    return {f: os.stat(f).st_mtime_ns for f in glob.glob(str(folder / "runs" / "*"))}
 
 
 def test_short_sweep_is_reproducible_and_resumable(tmp_path):
@@ -14,9 +30,10 @@ def test_short_sweep_is_reproducible_and_resumable(tmp_path):
     assert filecmp.cmp(a / "summary.csv", b / "summary.csv", shallow=False)
     rows = list(csv.DictReader(open(a / "summary.csv")))
     assert {r["affix_zone"] for r in rows} == {"far_wake", "escape"} and len(rows) == 2
-    mtime = os.path.getmtime(next((a / "runs").glob("*.json")))
-    sweep.main(ARGS + ["--out", str(a)])                                   # resumes: nothing rerun
-    assert os.path.getmtime(next((a / "runs").glob("*.json"))) == mtime
+    before = mtimes(a)
+    assert len([f for f in before if f.endswith(".json")]) == 2 and len(before) == 4      # two cases, JSON and history
+    sweep.main(ARGS + ["--out", str(a)])                                   # resumes: nothing rerun, no file touched
+    assert mtimes(a) == before
 
 
 def test_summary_carries_the_validity_flags_and_no_wall_clock(tmp_path):
@@ -24,20 +41,27 @@ def test_summary_carries_the_validity_flags_and_no_wall_clock(tmp_path):
     with open(tmp_path / "summary.csv") as fh:
         reader = csv.DictReader(fh)
         rows = list(reader)
-    needed = {"diameter_mm", "altitude_km", "theta_deg", "bound", "wake_flow", "affix_zone", "residence_time",
+    needed = {"name", "diameter_mm", "altitude_km", "theta_deg", "bound", "wake_flow", "affix_zone", "residence_time",
               "censored", "exit_altitude_m", "exit_speed", "exit_lag_m", "plume_distance_out_of_range",
               "plume_speed_out_of_range", "follower_regime", "affix_status", "release_kind", "shock_layer_exit",
               "t_shock_layer_exit", "kn_f_release", "kn_f_min_in_layer", "flux_mismatch", "flux_mismatch_above_tol",
               "follower_continuum_in_layer", "total_inside", "t_first_entry"}
+    case_keys = [set(json.load(open(f))) for f in glob.glob(str(tmp_path / "runs" / "*.json"))]
+    all_keys = set.union(*case_keys)
+    assert needed <= all_keys and set(sweep.SUMMARY_COLUMNS) <= all_keys     # no column is a stale or misspelt name
     assert needed <= set(reader.fieldnames)
-    assert not [c for c in reader.fieldnames if "time_s" in c and c != "t_shock_layer_exit"
-                or c in ("runtime_s", "wall_time_s", "git_commit", "git_dirty")]
+    assert (all_keys - sweep.SUMMARY_EXCLUDED - {"config"}) <= set(reader.fieldnames)    # nothing the cases hold is lost
+    assert not {"runtime_s", "wall_time_s", "field_build_time_s", "git_commit", "git_dirty"} & set(reader.fieldnames)
+    for r in rows:                                                         # the name is the deterministic run name
+        assert r["name"] == scenarios.run_name("sphere", 10.0, 60.0, scenarios.ScenarioSettings(),
+                                               release=r["release_kind"], theta_deg=float(r["theta_deg"]))
     # 10 mm at 60 km: at 90 degrees the shoulder gas is thin (transitional follower, released from the surface), at
     # 180 degrees the stagnation gas is dense (continuum, escape)
     by_theta = {float(r["theta_deg"]): r for r in rows}
     assert by_theta[90.0]["follower_regime"] == "transitional" and by_theta[90.0]["release_kind"] == "surface"
     assert by_theta[180.0]["follower_regime"] == "continuum" and by_theta[180.0]["release_kind"] == "escape"
     assert by_theta[90.0]["shock_layer_exit"] and not by_theta[180.0]["shock_layer_exit"]
+    assert by_theta[90.0]["kn_f_min_in_layer"] and by_theta[90.0]["flux_mismatch_above_tol"] in ("True", "False")
 
 
 def test_altitudes_outside_the_twin_are_dropped_with_a_message(tmp_path, capsys):
@@ -59,6 +83,68 @@ def test_a_failing_case_is_reported_and_the_rest_run(tmp_path, monkeypatch, caps
     assert len(list(csv.DictReader(open(tmp_path / "summary.csv")))) == 1
 
 
+def _case_files(folder):
+    return sorted(glob.glob(str(folder / "runs" / "*.json")))
+
+
+def test_stale_cases_are_rerun_and_force_reruns_everything(tmp_path, capsys, monkeypatch):
+    args = ["--diameters", "10", "--altitudes", "60", "--thetas", "180", "--bounds", "low", "--wake-flow", "off",
+            "--workers", "1", "--out", str(tmp_path)]
+    sweep.main(args)
+    (path,) = _case_files(tmp_path)
+    before = os.stat(path).st_mtime_ns
+    capsys.readouterr()
+    for edit in ({"git_commit": "another-commit"}, {"git_dirty": True}, {"git_dirty": None}):
+        summary = json.load(open(path))
+        summary.update(edit)
+        json.dump(summary, open(path, "w"))
+        stamp = os.stat(path).st_mtime_ns
+        sweep.main(args)
+        assert os.stat(path).st_mtime_ns != stamp, edit                   # rerun, so the file was rewritten
+        out = capsys.readouterr().out
+        assert out.count("stale case") == 1 and "stale case sphere_d0010.0mm" in out, edit
+        assert json.load(open(path))["git_commit"] == "test-commit"
+    stamp = os.stat(path).st_mtime_ns
+    sweep.main(args)                                                       # current again: not rerun, no stale line
+    assert os.stat(path).st_mtime_ns == stamp and "stale case" not in capsys.readouterr().out
+    sweep.main(args + ["--force"])
+    assert os.stat(path).st_mtime_ns != stamp
+    # the commit the cases are compared with is the current one
+    monkeypatch.setattr(scenarios, "_git_commit", lambda: "next-commit")
+    stamp = os.stat(path).st_mtime_ns
+    sweep.main(args)
+    assert os.stat(path).st_mtime_ns != stamp and "stale case" in capsys.readouterr().out
+
+
+def test_far_wake_angles_share_one_integration_and_resume(tmp_path, monkeypatch):
+    twin = sweep.get_twin()
+    for theta in (120.0, 130.0):                                           # both classify as far wake for 25 mm at 60 km
+        assert scenarios.classify_release(25, 60, theta, twin, scenarios.ScenarioSettings()).zone == "far_wake"
+    calls = []
+    real = scenarios.dense_solve
+    monkeypatch.setattr(scenarios, "dense_solve", lambda *a, **k: calls.append(1) or real(*a, **k))
+    scenarios._FAR_WAKE_RUNS.clear()                                       # an earlier test may have left this case
+    sweep.main(FAR_WAKE_ARGS + ["--out", str(tmp_path)])
+    assert len(calls) == 1                                                 # one integration serves both thetas
+    rows = list(csv.DictReader(open(tmp_path / "summary.csv")))
+    assert [(r["theta_deg"], r["release_kind"], r["follower_regime"]) for r in rows] == [
+        ("120.0", "far_wake", "continuum"), ("130.0", "far_wake", "continuum")]
+    assert rows[0]["residence_time"] == rows[1]["residence_time"] and rows[0]["name"] != rows[1]["name"]
+    before = mtimes(tmp_path)
+    assert len([f for f in before if f.endswith(".json")]) == 2 and len(before) == 4
+    sweep.main(FAR_WAKE_ARGS + ["--out", str(tmp_path)])
+    assert mtimes(tmp_path) == before and len(calls) == 1                  # every file untouched, nothing integrated
+    cases = [(25.0, 60.0, th, "low", "off") for th in (120.0, 130.0)]
+    (cross,) = sweep.crossover_rows(str(tmp_path), sweep.summary_rows(str(tmp_path), cases))
+    assert cross["n_far_wake_diameters"] == 1 and cross["lag_time_s"] == 1.0
+    ends = [cross["largest_diameter_positive_lag_mm"], cross["smallest_diameter_negative_lag_mm"]]
+    assert ends.count(25.0) == 1 and ends.count(None) == 1                 # the one diameter is on one side of zero
+    lag = cross["lag_there_m"] if ends[0] == 25.0 else cross["lag_there_negative_m"]
+    assert lag != 0.0 and (lag > 0.0) == (ends[0] == 25.0)
+    out = list(csv.DictReader(open(tmp_path / "crossover.csv")))
+    assert len(out) == 1 and out[0]["n_far_wake_diameters"] == "1"
+
+
 def test_crossover_bracket_from_lags():
     # lag > 0: the sphere is behind the parent at 1 s; the bracket is [largest positive, smallest negative]
     low, high, monotone = sweep.crossover_bracket({1.0: 5.0, 10.0: 3.0, 100.0: 0.5, 200.0: -2.0, 400.0: -9.0})
@@ -72,13 +158,14 @@ def test_sensitivity_set_is_the_spec_set():
     assert names.count("taylor_K") == 2 and names.count("taylor_n") == 2 and names.count("turbulent_law") == 1
     assert names.count("T_axis_hot") == 2 and names.count("feldman_f") == 1
     assert names.count("frontal_area") == 2 and names.count("beta_scale") == 2 and names.count("density") == 2
-    assert names.count("wake_flow") == 2
+    assert names.count("wake_flow") == 3
     base = sweep.ScenarioSettings()
     by = {(v.parameter, v.value): v.apply(base) for v in sensitivity.variations()}
     assert by[("taylor_K", 0.66 * 0.5 / 0.7)].law.taylor_K == pytest.approx(0.66 * 0.5 / 0.7)
     assert by[("turbulent_law", "park")].law.turbulent_law == "park"
     assert by[("density", 2700.0)].density == 2700.0
-    assert by[("wake_flow", "velocity")].wake_flow == "velocity"
+    assert by[("wake_flow", "velocity")].wake_flow == "velocity" and by[("wake_flow", "both")].wake_flow == "both"
+    assert sensitivity.TAYLOR_K == sweep.ScenarioSettings().law.taylor_K
     rare = {(v.parameter, v.value): v.apply(base) for v in sensitivity.rarefied_variations()}
     assert rare[("shock_standoff", "billig")].shock.shock_standoff == "billig"
     assert rare[("pressure_gradient", False)].shock.pressure_gradient is False
@@ -101,6 +188,53 @@ def test_short_sensitivity_reports_change_against_the_baseline(tmp_path):
     for r in rows[1:]:
         assert float(r["change_vs_baseline"]) == pytest.approx(float(r["residence_time"]) - base, abs=1e-12)
     assert os.path.exists(tmp_path / "sensitivity_ranking.csv")
+
+
+SHORT_SENSITIVITY = ["--diameters", "10", "--altitudes", "60", "--theta", "120", "--parameters", "density",
+                     "--bounds", "low"]
+
+
+def test_dead_sensitivity_worker_is_reported_and_the_rest_written(tmp_path, monkeypatch, capsys):
+    class FakePool:                       # a pool whose worker dies on the 2700 kg/m3 case
+        def __init__(self, max_workers=None): pass
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def submit(self, fn, job):
+            f = concurrent.futures.Future()
+            if job[7] == 2700.0:
+                f.set_exception(RuntimeError("worker died"))
+            else:
+                f.set_result(fn(job))
+            return f
+    monkeypatch.setattr(sensitivity.concurrent.futures, "ProcessPoolExecutor", FakePool)
+    status = sensitivity.main(SHORT_SENSITIVITY + ["--no-rarefied", "--workers", "2", "--out", str(tmp_path)])
+    assert status == 1 and "worker died" in capsys.readouterr().out
+    rows = list(csv.DictReader(open(tmp_path / "sensitivity.csv")))
+    assert [(r["parameter"], r["value"]) for r in rows] == [("baseline", ""), ("density", "2900.0")]
+
+
+def test_failed_rarefied_baseline_skips_the_rarefied_set(tmp_path, monkeypatch, capsys):
+    def broken(*a, **k):
+        raise RuntimeError("shock layer failed")
+    monkeypatch.setattr(sensitivity, "rarefied_diameter", broken)
+    status = sensitivity.main(SHORT_SENSITIVITY + ["--workers", "1", "--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert status == 0 and out.count("skipped: RuntimeError: shock layer failed") == 2     # theta 180 and 120
+    assert len(list(csv.DictReader(open(tmp_path / "sensitivity.csv")))) == 3
+
+
+def test_rarefied_diameter_names_why_ten_mm_was_not_used(monkeypatch, tmp_path):
+    def fake(regime, reason):
+        def run_or_load(out_dir, d, h, theta, settings, force=False):
+            return {"follower_regime": regime if d >= 10 else "transitional", "reason": reason}, True
+        return run_or_load
+    monkeypatch.setattr(sensitivity, "run_or_load", fake("continuum", "ok"))
+    assert sensitivity.rarefied_diameter(90.0, 180.0, out_dir=str(tmp_path)) == (5.0, "a continuum follower")
+    monkeypatch.setattr(sensitivity, "run_or_load", fake(None, "rarefied_no_law"))
+    d, why = sensitivity.rarefied_diameter(90.0, 180.0, out_dir=str(tmp_path))
+    assert d == 5.0 and "no plume law" in why and "rarefied_no_law" in why and "continuum" not in why
+    monkeypatch.setattr(sensitivity, "run_or_load", lambda *a, **k: ({"follower_regime": "transitional"}, True))
+    assert sensitivity.rarefied_diameter(90.0, 180.0, out_dir=str(tmp_path)) == (10.0, None)
 
 
 def test_tables_report_regimes_as_outputs(tmp_path):

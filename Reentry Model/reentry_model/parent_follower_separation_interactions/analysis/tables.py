@@ -10,7 +10,7 @@
   twin_vs_drama.csv        `adapters.twin_vs_drama` plus the twin's downrange at the DRAMA time and its difference from
                            DRAMA's downrange since the top of the descending branch.
   affix_regimes.csv        the AFFIx classification of every (diameter, altitude, theta): zone, angles, times, flags.
-  drag_ratio_check.csv     per altitude and bound: rho_w (V - u)^2 / (rho_inf V^2) at the far-wake start point from
+  drag_ratio_check.csv     per altitude and bound: rho_w |V - u|^2 / (rho_inf |V|^2) (vectors) at the far-wake start point from
                            the wake gas model (`wake_flow` "both"), next to Register et al.'s 0.14.
   wake_gas_sanity.csv      per altitude and bound: the model's core gas speed 30 km behind the parent and core
                            temperature 300 m behind, next to the values spec 4.3a assumed (about 10 m/s, 1,000-2,000 K).
@@ -23,6 +23,7 @@ import os
 import sys
 
 import numpy as np
+from scipy.optimize import minimize_scalar
 
 from reentry_model import aero, body, earth
 from reentry_model.droplet_reentry import parent_trajectory
@@ -102,6 +103,23 @@ def drama_rows(twin, parent):
     return rows
 
 
+def twin_time_lag(twin, parent):
+    """(lag [s], rms altitude residual [km]): the time by which the twin reaches each altitude later than DRAMA, found as
+    the L that best aligns the twin's altitude at DRAMA time T with DRAMA's altitude at T - L over the descending branch
+    (least squares, DRAMA's altitude linearly interpolated between its rows, rows inside the twin's range only)."""
+    offset = (twin.epoch - parent.epoch).total_seconds()
+    t_d = np.array([r["time"] for r in parent.branch])
+    h_d = np.array([r["altitude"] for r in parent.branch])
+    tt = t_d - offset
+    ok = (tt >= twin.track.t0) & (tt <= twin.track.t1)
+    h_twin = np.array([twin.altitude(t) / 1e3 for t in tt[ok]])
+
+    def rms(lag):
+        return float(np.sqrt(np.mean((h_twin - np.interp(t_d[ok] - lag, t_d, h_d)) ** 2)))
+    best = minimize_scalar(rms, bounds=(-60.0, 60.0), method="bounded", options={"xatol": 1e-6})
+    return float(best.x), float(best.fun)
+
+
 def affix_rows(twin, diameters, altitudes, thetas, settings=ScenarioSettings()):
     rows = []
     for h in altitudes:
@@ -124,6 +142,10 @@ def _wake_gas(twin, rel, bound, x, mode="both"):
 
 
 def drag_ratio_rows(twin, altitudes):
+    """The follower at the far-wake start moves with the parent's velocity; relative to the undisturbed air that is
+    V = (parent velocity - wind), and the wake gas moves at the vector u (along the parent's velocity at the emission
+    point, which is not exactly the release-time direction, so the vector difference is used), so the drag ratio is
+    rho_w |V - u|^2 / (rho_inf |V|^2)."""
     rows = []
     for h in altitudes:
         rel = _release(twin, h)
@@ -133,10 +155,18 @@ def drag_ratio_rows(twin, altitudes):
             row = {"altitude_km": h, "bound": b, "register_drag_ratio": REGISTER_DRAG_RATIO,
                    "parent_speed_ms": rel.e.U, "regime": m.regime}
             if gas is not None:
-                u = float(np.linalg.norm(gas.u))
-                ratio = gas.rho * (rel.e.U - u) ** 2 / (fs.rho * rel.e.U ** 2)
+                _, lat, lon = earth.ecef_to_geodetic(x)
+                e, n, up = earth.enu_basis(lat, lon)
+                w = fs.wind_enu
+                v_air = rel.V - (w[0] * e + w[1] * n + w[2] * up)       # follower velocity relative to undisturbed air
+                u = np.asarray(gas.u, dtype=float)
+                ratio = gas.rho * float(np.dot(v_air - u, v_air - u)) / (fs.rho * float(np.dot(v_air, v_air)))
                 row.update({"drag_ratio": ratio, "wake_density_over_ambient": gas.rho / fs.rho,
-                            "wake_gas_speed_ms": u, "r_axis_m": m.distance, "r_b_m": m.r_b})
+                            "wake_gas_speed_ms": float(np.linalg.norm(u)), "follower_air_speed_ms": float(np.linalg.norm(v_air)),
+                            "u_angle_to_v_deg": math.degrees(math.acos(min(1.0, float(np.dot(u, v_air)) /
+                                                                          (np.linalg.norm(u) * np.linalg.norm(v_air)))))
+                            if np.linalg.norm(u) > 0.0 else math.nan,
+                            "r_axis_m": m.distance, "r_b_m": m.r_b})
             rows.append(row)
     return rows
 
@@ -148,12 +178,14 @@ def wake_gas_rows(twin, altitudes):
         for b in DEFAULT_BOUNDS:
             row = {"altitude_km": h, "bound": b, "assumed_core_speed_ms": ASSUMED_CORE_SPEED_MS,
                    "assumed_core_temperature_K": ASSUMED_CORE_T_K}
-            for key, axis_key, s in (("core_speed_30km_ms", "core_speed_r_axis_m", CORE_SPEED_DISTANCE_M),
-                                     ("core_T_300m_K", "core_T_r_axis_m", CORE_TEMPERATURE_DISTANCE_M)):
+            row["regime"] = classify(rel.e, LawSettings())                      # the parent's regime at release
+            for key, axis_key, regime_key, s in (
+                    ("core_speed_30km_ms", "core_speed_r_axis_m", "regime_at_30km", CORE_SPEED_DISTANCE_M),
+                    ("core_T_300m_K", "core_T_r_axis_m", "regime_at_300m", CORE_TEMPERATURE_DISTANCE_M)):
                 # a point on the parent's own track s metres behind its position at release
                 x = twin.track.position(rel.t_r - s / rel.e.U)
                 gas, m, _ = _wake_gas(twin, rel, b, x)
-                row["regime"] = m.regime
+                row[regime_key] = m.regime                              # the plume regime where the gas is read
                 if gas is not None:
                     row[key] = float(np.linalg.norm(gas.u)) if key.startswith("core_speed") else gas.T
                     row[axis_key] = m.distance
@@ -187,10 +219,13 @@ def main(argv=None):
         "r_b_high_m", "laws_low", "laws_high", "beyond_s_park_limit")))
     rows = ballistic_rows(twin, altitudes, args.diameters)
     write_csv(os.path.join(out, "ballistic_coefficient.csv"), rows, _columns(rows, ("altitude_km", "diameter_mm")))
-    rows = drama_rows(twin, parent_trajectory.load_parent())
+    parent = parent_trajectory.load_parent()
+    rows = drama_rows(twin, parent)
+    lag, resid = twin_time_lag(twin, parent)
+    print(f"the twin reaches each altitude {lag:.3f} s after DRAMA (rms altitude residual {resid:.4f} km)")
     write_csv(os.path.join(out, "twin_vs_drama.csv"), rows, _columns(rows, ("time_s",)), comment=[
-        "The twin runs about 6.5 s behind DRAMA (its speed at a given altitude is within a fraction of a percent, but it",
-        "reaches each altitude later); the engine uses the twin's own clock and track, not DRAMA's.",
+        f"Measured: the twin reaches each altitude {lag:.2f} s after DRAMA (the lag that best aligns its altitude with",
+        f"DRAMA's over the descending branch; rms altitude residual {resid:.3f} km). The engine uses the twin's own clock and track.",
         "twin_downrange_km is the great-circle distance from the twin's start point at the DRAMA time (time_s minus the",
         "twin's start time); downrange_diff_km is that minus DRAMA's downrange since the top of the descending branch."])
     rows = affix_rows(twin, args.diameters, altitudes, args.thetas)
@@ -201,8 +236,8 @@ def main(argv=None):
                                                                                  "register_drag_ratio")))
     rows = wake_gas_rows(twin, altitudes)
     write_csv(os.path.join(out, "wake_gas_sanity.csv"), rows, _columns(rows, (
-        "altitude_km", "bound", "regime", "core_speed_30km_ms", "assumed_core_speed_ms", "core_T_300m_K",
-        "assumed_core_temperature_K")))
+        "altitude_km", "bound", "regime", "regime_at_30km", "core_speed_30km_ms", "assumed_core_speed_ms",
+        "regime_at_300m", "core_T_300m_K", "assumed_core_temperature_K")))
     print(f"tables written to {out}")
     return 0
 
