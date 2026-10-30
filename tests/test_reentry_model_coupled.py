@@ -249,3 +249,39 @@ def test_the_continuum_step_is_off_by_default_and_rejects_a_coarser_step():
         coupled.CoupledSettings(dt=0.5, dt_continuum=1.0)
     with pytest.raises(ValueError):
         coupled.CoupledSettings(dt=0.5, dt_continuum=0.0)
+
+
+def test_the_continuum_switch_latches_at_the_first_liquid_only_where_asked():
+    """Sub-plan 22 Task 3b: with `switch_on_melt` (the layered skins) the continuum step latches at the first macro step
+    at whose end the body holds liquid or whose body Knudsen number is below kn_switch, whichever comes first, and
+    records which (`knudsen`, `melting`, `both`); without it (the element model) the body is never asked and the step
+    latches on the Knudsen number alone, as before; without a continuum step nothing latches."""
+    import types
+
+    class Body:
+        liquid, asked = False, 0
+
+        def liquid_present(self):
+            self.asked += 1
+            return self.liquid
+
+    rarefied, continuum = types.SimpleNamespace(kn=0.02, h=71e3), types.SimpleNamespace(kn=0.005, h=65e3)
+
+    def steps(on_melt, states, dt_continuum=0.0125):
+        run = coupled.CoupledRun(None, Body(), None, coupled.CoupledSettings(dt=0.5, dt_continuum=dt_continuum,
+                                                                             switch_on_melt=on_melt))
+        for k, (liquid, a) in enumerate(states):
+            run.body.liquid = liquid
+            run._switch(0.5 * (k + 1), a)
+        return run
+
+    states = [(False, rarefied), (True, rarefied), (True, continuum)]
+    run = steps(True, states)
+    assert (run.switched_at, run.switch_trigger, run.settings.dt) == ((1.0, 0.02, 71.0), "melting", 0.0125)
+    assert run.body.asked == 2                                   # not asked again once latched
+    run = steps(False, states)                                   # the element model: the Knudsen number alone
+    assert (run.switched_at, run.switch_trigger, run.body.asked) == ((1.5, 0.005, 65.0), "knudsen", 0)
+    assert steps(True, [(False, rarefied), (False, continuum)]).switch_trigger == "knudsen"
+    assert steps(True, [(True, continuum)]).switch_trigger == "both"
+    run = steps(True, states, dt_continuum=None)
+    assert run.switched_at is None and run.settings.dt == 0.5
