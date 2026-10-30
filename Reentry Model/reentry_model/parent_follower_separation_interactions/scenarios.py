@@ -18,8 +18,11 @@ the windward side only, Asha). The order of decisions is that of spec 4.3c:
      windward surface point (both with the parent's velocity, integrated by `adapters.sphere_simulator` with no shock
      layer), shock band and trapped not integrated (reasons `shock_band` and `near_wake_trapped`).
 
-Integrated followers run to the smaller of `ScenarioSettings.t_max` and the end of the parent's track, and
-`overlap.residence` measures them against `Plume(parent track, law, bound)` from the release time.
+Integrated followers run to the smaller of `ScenarioSettings.t_max` and the end of the parent's track (a release that
+leaves less than MIN_FLIGHT_S of that track is refused), and `overlap.residence` measures them against
+`Plume(parent track, law, bound)` from the release time. The far-wake start does not depend on theta, so the far-wake
+integration and its residence are memoised in this process by (twin, diameter, altitude, settings) and shared by every
+far-wake theta; each theta still has its own run name and writes its own files, since its AFFIx record differs.
 
 `droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um)` is the worked example of spec 4.0: a solid sphere released
 from the twin at the far-wake start (integrated with no wake gas) becomes the parent, and a molten droplet released at
@@ -34,6 +37,7 @@ Output: `CaseResult` holds the run name (`run_name`, which encodes every setting
 `ResidenceResult` (None when nothing was integrated), the summary dict and the history rows; `write_case` writes
 `<out_dir>/runs/<name>.json` (the summary, NaN as null) and `<name>.csv` (the history, when there is one).
 """
+from collections import OrderedDict
 from dataclasses import asdict, dataclass, fields
 import csv
 import functools
@@ -66,14 +70,19 @@ from reentry_model.parent_follower_separation_interactions.wake_gas import check
 
 AFFIX_STATUS = {"continuum": "governing", "transitional": "indicative", "free_molecular": "not_applicable"}
 RELEASES = ("far_wake", "escape", "surface", "shock_band", "trapped", "no_law", "centroid")
-NO_THETA_RELEASES = ("far_wake", "centroid")   # one integration serves every theta (far wake) or theta is undefined
+NO_THETA_RELEASES = ("centroid",)             # releases whose run name carries no theta (theta is undefined there)
 NO_LAW = {"rarefied": "rarefied_no_law", "too_slow": "too_slow_no_law"}
 IN_LAYER_WEIGHT = 0.5         # the follower is "in the shock layer" where the field's weight exceeds this
-LAYER_SAMPLE_DT = 1e-4        # s, sampling of the dense run up to the shock-layer exit for the smallest Kn_f
+LAYER_SAMPLE_DT = 1e-4        # s, sampling of the dense run up to the shock-layer exit for the smallest Kn_f ...
+LAYER_MAX_SAMPLES = 20_000    # ... widened so that this grid never has more samples
+MIN_FLIGHT_S = 1.0            # s, least flight time the parent's track must leave after a release
+FAR_WAKE_MEMO_SIZE = 8        # far-wake integrations kept in memory (each serves every far-wake theta of its case)
 HISTORY_FINE_DT = 0.02        # s, history spacing over the first HISTORY_FINE_S after release ...
 HISTORY_FINE_S = 10.0
 HISTORY_LOG_POINTS = 200      # ... plus this many points spaced geometrically from HISTORY_LOG_START to the end
 HISTORY_LOG_START = 1e-4      # s
+PARENT_AT_RELEASE_KEYS = ("regime_at_release", "laws_at_release", "kn_at_release", "re_at_release", "p_at_release",
+                          "parent_speed_release")
 DROPLET_LIMITATION = ("the plume laws are metre-scale wake results applied to a centimetre-scale sphere parent, and "
                       "the droplet's release geometry from the sphere is not decided (released at its centroid)")
 
@@ -143,8 +152,9 @@ def _non_default(obj, default, skip=()):
 
 
 def run_name(kind, d_mm, h_km, settings, droplet_d_um=None, release="far_wake", theta_deg=None):
-    """The case's name: kind and diameters, release altitude, release (with theta, except for far-wake and centroid
-    releases), bound, wake_flow and turbulent law, then `_<field><value>` for every other non-default setting
+    """The case's name: kind and diameters, release altitude, release (with theta, except for centroid releases; a
+    far-wake name carries theta too, because its summary holds theta's AFFIx record, although its integration is
+    shared by every far-wake theta), bound, wake_flow and turbulent law, then `_<field><value>` for every other non-default setting
     (law, scenario, `affix_`-prefixed AFFIx and shock-layer fields), sorted by field name."""
     if kind == "sphere":
         head = f"sphere_d{d_mm:06.1f}mm"
@@ -232,6 +242,15 @@ def _release(twin, h_km):
     m_bar = _base_atmosphere().state(0.0, h, lat, lon).m_bar
     return _Release(t_r, P, V, V / np.linalg.norm(V), up, h, twin.epoch + timedelta(seconds=t_r),
                     twin.track.emission_state(t_r), m_bar)
+
+
+def _check_flight_time(twin, rel, h_km):
+    """ValueError when a release at h_km leaves the follower less than MIN_FLIGHT_S of the parent's track."""
+    left = twin.track.t1 - rel.t_r
+    if left < MIN_FLIGHT_S:
+        raise ValueError(f"a release at {h_km!r} km (t = {rel.t_r:.3f} s) leaves {left:.3f} s of the twin's track, which "
+                         f"ends at t = {twin.track.t1:.3f} s ({twin.altitude(twin.track.t1) / 1e3:.3f} km); at least "
+                         f"{MIN_FLIGHT_S} s is needed")
 
 
 def classify_release(d_mm, h_km, theta_deg, twin, settings):
@@ -332,6 +351,19 @@ def _history(plume, follower, t_r, extra_times=()):
     return rows
 
 
+def _layer_sample_times(step_times, t_until):
+    """The integrator's step times and a grid from 0 to t_until every LAYER_SAMPLE_DT, widened so the grid has at most
+    LAYER_MAX_SAMPLES points (a follower held in the layer for a long time would otherwise give millions)."""
+    n = min(int(math.ceil(t_until / LAYER_SAMPLE_DT)), LAYER_MAX_SAMPLES - 1) + 1 if t_until > 0.0 else 1
+    return np.unique(np.concatenate([np.asarray(step_times, dtype=float), np.linspace(0.0, max(t_until, 0.0), n)]))
+
+
+def _residence_exceeds_t_fz(res, t_fz):
+    """True when the follower spends more than 3 t_fz inside the plume in all (spec 4.3b): `total_inside`, because an
+    escape release starts outside the plume, so its first-interval `residence_time` is 0."""
+    return bool(res.total_inside > 3.0 * t_fz)
+
+
 def _shock_layer_summary(run, sim, wa, field, ex, twin, rel, d, settings):
     """The shock-layer record of a surface release (spec 4.3c-d)."""
     hit = ex.kind == "hit_parent"
@@ -341,7 +373,7 @@ def _shock_layer_summary(run, sim, wa, field, ex, twin, rel, d, settings):
         hit_theta = math.degrees(math.atan2(y, -x))
     # smallest local Kn_f where the field's weight exceeds IN_LAYER_WEIGHT, on the integrator's steps and a fine grid
     # up to the shock-layer exit
-    ts = np.unique(np.concatenate([run.sol.t, np.arange(0.0, min(ex.t, run.t_end), LAYER_SAMPLE_DT)]))
+    ts = _layer_sample_times(run.sol.t, min(ex.t, run.t_end))
     states = np.atleast_2d(run.sol.sol(ts).T)
     kn_min = math.inf
     for t, st in zip(ts, states):
@@ -375,6 +407,12 @@ def _shock_layer_summary(run, sim, wa, field, ex, twin, rel, d, settings):
 
 # -------------------------------------------------------------------------------------------------- scenarios
 
+# Far-wake integrations by (id of the twin, d_mm, h_km, settings): (twin, dense run, follower Track, ResidenceResult).
+# The far-wake start does not depend on theta (spec 4.3b), so every far-wake theta of a case reuses one integration and
+# writes its own files. The twin is kept in the entry so a recycled id never matches another twin.
+_FAR_WAKE_RUNS = OrderedDict()
+
+
 def _case(name, config, res, summary, history, started):
     summary["name"] = name
     summary["wall_time_s"] = time.perf_counter() - started
@@ -390,6 +428,7 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
     twin = _twin_for(twin, settings)
     d = d_mm * 1e-3
     rel = _release(twin, h_km)
+    _check_flight_time(twin, rel, h_km)
     e, D1 = rel.e, rel.e.d
     base = _base_atmosphere()
     plume = Plume(twin.track, settings.law, settings.bound)
@@ -427,6 +466,7 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
                     "t_hat": af.t_hat, "t_fz": af.t_fz, "transitional_follower": regime == "transitional",
                     "residence_exceeds_t_fz": False, **{f"affix_{k}": v for k, v in af.flags.items()}})
 
+    cached = None                  # the far-wake memo entry this case reuses, if any
     if regime != "continuum":
         # 3. rarefied follower: the surface point, through the shock layer
         release = "surface"
@@ -442,13 +482,21 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
     elif af.zone in ("far_wake", "escape"):
         # 4. continuum follower, AFFIx governs
         release = af.zone
-        offset = (far_wake_offset(D1, rel.v_hat) if release == "far_wake"
-                  else release_offset(theta_deg, D1, rel.v_hat, rel.up))
         wa = WakeAtmosphere(base, plume, rel.t_r, settings.wake_flow, k_E=settings.k_E)
-        t_max = min(settings.t_max, wa.follower_t_max)
-        sim = sphere_simulator(state_from_ecef(rel.P + offset, rel.V, rel.epoch), d, wa, density=settings.density,
-                               t_max=t_max)
-        run = dense_solve(sim, t_max)
+        key = (id(twin), d_mm, h_km, settings)
+        cached = _FAR_WAKE_RUNS.get(key) if release == "far_wake" else None
+        if cached is not None and cached[0] is not twin:
+            cached = None
+        if cached is not None:
+            _FAR_WAKE_RUNS.move_to_end(key)
+            run, follower, res = cached[1:]
+        else:
+            offset = (far_wake_offset(D1, rel.v_hat) if release == "far_wake"
+                      else release_offset(theta_deg, D1, rel.v_hat, rel.up))
+            t_max = min(settings.t_max, wa.follower_t_max)
+            sim = sphere_simulator(state_from_ecef(rel.P + offset, rel.V, rel.epoch), d, wa,
+                                   density=settings.density, t_max=t_max)
+            run = dense_solve(sim, t_max)
     else:
         summary["release_kind"] = None
         if af.zone == "shock_band":
@@ -457,13 +505,18 @@ def sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSett
             summary.update(_not_integrated("near_wake_trapped", censored=True))
         return done(af.zone, None, [])
 
-    follower = solution_track(run, rel.t_r)
-    res = residence(plume, follower, t_start=rel.t_r, t_end=follower.t1, scan_dt=settings.scan_dt)
+    if cached is None:
+        follower = solution_track(run, rel.t_r)
+        res = residence(plume, follower, t_start=rel.t_r, t_end=follower.t1, scan_dt=settings.scan_dt)
+        if release == "far_wake":
+            _FAR_WAKE_RUNS[key] = (twin, run, follower, res)
+            while len(_FAR_WAKE_RUNS) > FAR_WAKE_MEMO_SIZE:
+                _FAR_WAKE_RUNS.popitem(last=False)
     summary["release_kind"] = release
     summary.update(_residence_summary(res, run, wa, plume, rel.t_r, d))
     summary["reason"] = "hit_parent" if run.end_reason == "hit_parent" else res.reason
     if release == "escape":
-        summary["residence_exceeds_t_fz"] = bool(res.residence_time > 3.0 * af.t_fz)
+        summary["residence_exceeds_t_fz"] = _residence_exceeds_t_fz(res, af.t_fz)
     return done(release, res, _history(plume, follower, rel.t_r, [x.t for x in res.exits]))
 
 
@@ -490,9 +543,28 @@ def droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um, settings=ScenarioSe
     started = time.perf_counter()
     twin = _twin_for(twin, settings)
     rel = _release(twin, h_km)
+    _check_flight_time(twin, rel, h_km)
     base = _base_atmosphere()
     d_s, d0 = sphere_d_mm * 1e-3, droplet_d_um * 1e-6
     initial = state_from_ecef(rel.P + far_wake_offset(rel.e.d, rel.v_hat), rel.V, rel.epoch)
+    fs = base.state(0.0, initial.altitude, initial.lat, initial.lon)
+    we0 = weber(fs.rho, initial.velocity, d0, T_RELEASE)        # known before the sphere is integrated
+    summary = {"kind": "droplet", "sphere_diameter_mm": sphere_d_mm, "droplet_diameter_um": droplet_d_um,
+               "altitude_km": h_km, "release": "centroid", "t_release": rel.t_r, "bound": settings.bound,
+               "wake_flow": settings.wake_flow, "weber_release": we0,
+               "beta_parent_release": float(twin.beta.mass_at(rel.h)) / rel.e.cda,
+               "kn_f_free_stream": aero.mean_free_path(fs.rho, fs.m_bar) / d0, "limitation": DROPLET_LIMITATION,
+               **_provenance(twin.sha256)}
+    config = {"kind": "droplet", "sphere_d_mm": sphere_d_mm, "h_km": h_km, "droplet_d_um": droplet_d_um,
+              "release": "centroid", "settings": asdict(settings)}
+    name = run_name("droplet", sphere_d_mm, h_km, settings, droplet_d_um=droplet_d_um, release="centroid")
+    if we0 >= WE_CRIT:
+        # the sphere is not integrated either: its keys are kept, empty, so every droplet summary has the same keys
+        summary.update({"sphere_t_end": math.nan, "sphere_end_reason": None, "parent_interp_error_m": math.nan,
+                        "beta_sphere_release": math.nan, **dict.fromkeys(PARENT_AT_RELEASE_KEYS)},
+                       **_not_integrated("skipped_weber"))
+        return _case(name, config, None, summary, [], started)
+
     wa_s = WakeAtmosphere(base, Plume(twin.track, settings.law, settings.bound), rel.t_r, "off")
     t_max_s = min(settings.t_max, wa_s.follower_t_max)
     sim_s = sphere_simulator(initial, d_s, wa_s, density=settings.density, t_max=t_max_s)
@@ -500,22 +572,10 @@ def droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um, settings=ScenarioSe
     sphere = sphere_parent_track(run_s, sim_s, rel.t_r, base)
     plume = Plume(sphere, settings.law, settings.bound)
     e = sphere.emission_state(rel.t_r)
-    fs = base.state(0.0, initial.altitude, initial.lat, initial.lon)
-    we0 = weber(fs.rho, initial.velocity, d0, T_RELEASE)
-    summary = {"kind": "droplet", "sphere_diameter_mm": sphere_d_mm, "droplet_diameter_um": droplet_d_um,
-               "altitude_km": h_km, "release": "centroid", "t_release": rel.t_r, "bound": settings.bound,
-               "wake_flow": settings.wake_flow, "weber_release": we0, "sphere_t_end": rel.t_r + run_s.t_end,
-               "sphere_end_reason": run_s.end_reason, "parent_interp_error_m": sphere.interpolation_error(),
-               "beta_sphere_release": body.sphere_mass(d_s, settings.density) / e.cda,
-               "beta_parent_release": float(twin.beta.mass_at(rel.h)) / rel.e.cda,
-               "kn_f_free_stream": aero.mean_free_path(fs.rho, fs.m_bar) / d0, "limitation": DROPLET_LIMITATION,
-               **_parent_at_release(e, settings), **_provenance(twin.sha256)}
-    config = {"kind": "droplet", "sphere_d_mm": sphere_d_mm, "h_km": h_km, "droplet_d_um": droplet_d_um,
-              "release": "centroid", "settings": asdict(settings)}
-    name = run_name("droplet", sphere_d_mm, h_km, settings, droplet_d_um=droplet_d_um, release="centroid")
-    if we0 >= WE_CRIT:
-        summary.update(_not_integrated("skipped_weber"))
-        return _case(name, config, None, summary, [], started)
+    summary.update({"sphere_t_end": rel.t_r + run_s.t_end, "sphere_end_reason": run_s.end_reason,
+                    "parent_interp_error_m": sphere.interpolation_error(),
+                    "beta_sphere_release": body.sphere_mass(d_s, settings.density) / e.cda,
+                    **_parent_at_release(e, settings)})
     if summary["regime_at_release"] in NO_LAW:
         summary.update(_not_integrated(NO_LAW[summary["regime_at_release"]]))
         return _case(name, config, None, summary, [], started)

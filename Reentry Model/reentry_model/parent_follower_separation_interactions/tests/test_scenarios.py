@@ -6,13 +6,23 @@ from reentry_model.parent_follower_separation_interactions.scenarios import (Sce
 from reentry_model.parent_follower_separation_interactions.laws import LawSettings
 
 def test_run_names_differ_for_every_setting():
-    base = run_name("sphere", d_mm=50, h_km=80, settings=ScenarioSettings())
+    # far-wake names carry theta (fix round 1): one integration serves every far-wake theta, but each theta has its
+    # own AFFIx record and so its own files
+    from reentry_model.parent_follower_separation_interactions.affix import AffixSettings
+    from reentry_model.parent_follower_separation_interactions.shock_layer import ShockLayerSettings
+    base = run_name("sphere", d_mm=50, h_km=80, settings=ScenarioSettings(), theta_deg=120.0)
     others = [ScenarioSettings(bound="high"), ScenarioSettings(wake_flow="both"),
               ScenarioSettings(law=LawSettings(taylor_K=0.5)), ScenarioSettings(frontal_area=3.1),
-              ScenarioSettings(beta_scale=1.1), ScenarioSettings(density=2700.0)]
-    names = {run_name("sphere", d_mm=50, h_km=80, settings=s) for s in others}
+              ScenarioSettings(beta_scale=1.1), ScenarioSettings(density=2700.0),
+              ScenarioSettings(affix=AffixSettings(s_w_deg=3.0)),
+              ScenarioSettings(affix=AffixSettings(kn_continuum=0.02)),       # same field name as the law's ...
+              ScenarioSettings(law=LawSettings(kn_continuum=0.02)),           # ... which must give another name
+              ScenarioSettings(shock=ShockLayerSettings(shock_standoff="billig")), ScenarioSettings(k_E=2.0),
+              ScenarioSettings(t_max=300.0), ScenarioSettings(scan_dt=0.01), ScenarioSettings(kn_free_molecular=5.0)]
+    names = {run_name("sphere", d_mm=50, h_km=80, settings=s, theta_deg=120.0) for s in others}
     assert base not in names and len(names) == len(others)
     assert run_name("sphere", 50, 80, ScenarioSettings(), release="escape", theta_deg=160.0) != base
+    assert run_name("sphere", 50, 80, ScenarioSettings(), theta_deg=130.0) != base     # far wake, another theta
 
 def test_far_wake_case_runs_and_writes(twin, tmp_path):
     # The brief released at theta = 90 degrees. There the shoulder gas (Newtonian pressure p_inf, expanded from the
@@ -83,7 +93,10 @@ def test_state_from_ecef_round_trips_through_the_simulator(twin):
     assert np.allclose(y0[:3], r, rtol=0, atol=1e-6) and np.allclose(y0[3:], v, rtol=0, atol=1e-9)
 
 def test_surface_release_summary_carries_the_shock_layer_record(twin):
-    s = sphere_in_spacecraft_plume(1, 80, 120.0, twin=twin).summary      # Kn_f about 0.47: transitional
+    c = sphere_in_spacecraft_plume(1, 80, 120.0, twin=twin)              # Kn_f about 0.47: transitional
+    s = c.summary
+    assert c.history[0]["t"] == s["t_release"]                           # the history is on the parent's clock
+    assert s["follower_t_end"] == pytest.approx(s["t_release"] + c.history[-1]["t_since_release"], rel=0, abs=1e-9)
     for key in ("flux_mismatch", "flux_iterations", "flux_mismatch_above_tol", "mach_outside_billig",
                 "shock_layer_nonequilibrium", "kn_f_min_in_layer", "follower_continuum_in_layer", "epsilon",
                 "standoff_m", "standoff_billig_m", "q_change", "q_change_large", "cd_composed_release",
@@ -106,3 +119,55 @@ def test_case_without_integration_writes_only_the_summary(twin, tmp_path):
 def test_a_twin_built_with_other_parent_settings_is_refused(twin):
     with pytest.raises(ValueError, match="frontal_area"):
         sphere_in_spacecraft_plume(10, 60, 180.0, ScenarioSettings(frontal_area=3.1), twin=twin)
+
+
+# ---- fix round 1 ----
+
+def test_t_fz_flag_follows_the_total_time_inside():
+    # an escape release starts outside (residence_time 0) and may enter later: the flag compares total_inside
+    from reentry_model.parent_follower_separation_interactions.overlap import ResidenceResult
+    from reentry_model.parent_follower_separation_interactions.scenarios import _residence_exceeds_t_fz
+    later = ResidenceResult([(10.3, 15.1)], 0.0, 4.8, False, [], [], 0.0, "starts_outside")
+    assert _residence_exceeds_t_fz(later, t_fz=1.0) and not _residence_exceeds_t_fz(later, t_fz=2.0)
+    brief = ResidenceResult([(10.0, 10.5)], 5.0, 0.5, False, [], [], 0.0, "ok")
+    assert not _residence_exceeds_t_fz(brief, t_fz=1.0)
+
+def test_far_wake_thetas_share_one_integration_and_write_their_own_files(twin, tmp_path, monkeypatch):
+    from reentry_model.parent_follower_separation_interactions import scenarios
+    calls = []
+    real = scenarios.dense_solve
+    monkeypatch.setattr(scenarios, "dense_solve", lambda *a, **k: calls.append(1) or real(*a, **k))
+    monkeypatch.setattr(scenarios, "_FAR_WAKE_RUNS", scenarios.OrderedDict())
+    a = sphere_in_spacecraft_plume(10, 60, 120.0, twin=twin)    # both continuum (Kn_f 0.0059, 0.004) and far wake
+    b = sphere_in_spacecraft_plume(10, 60, 130.0, twin=twin)
+    assert a.summary["release_kind"] == b.summary["release_kind"] == "far_wake"
+    assert len(calls) == 1 and len(scenarios._FAR_WAKE_RUNS) == 1 and a.residence is b.residence
+    assert a.name != b.name and a.summary["t_fz"] != b.summary["t_fz"]
+    paths = [write_case(c, tmp_path) for c in (a, b)]
+    assert len({p for pair in paths for p in pair}) == 4
+    for c in (a, b):
+        assert c.history[0]["t"] == c.summary["t_release"]
+        assert c.summary["follower_t_end"] == pytest.approx(c.summary["t_release"] + c.history[-1]["t_since_release"],
+                                                            rel=0, abs=1e-9)
+
+def test_layer_sampling_is_bounded():
+    from reentry_model.parent_follower_separation_interactions.scenarios import _layer_sample_times, LAYER_MAX_SAMPLES
+    ts = _layer_sample_times(np.array([0.0, 500.0, 1000.0]), 1000.0)     # held in the layer for 1000 s
+    assert len(ts) <= LAYER_MAX_SAMPLES + 3 and ts[0] == 0.0 and ts[-1] == 1000.0
+    assert len(_layer_sample_times([0.0, 0.01], 0.01)) == 101             # short stays keep the 0.1 ms grid
+
+def test_a_release_with_no_flight_time_left_is_refused(twin):
+    h_end = twin.altitude(twin.track.t1) / 1e3
+    with pytest.raises(ValueError, match="leaves 0.000 s of the twin's track"):
+        sphere_in_spacecraft_plume(10, h_end, 180.0, twin=twin)
+    with pytest.raises(ValueError, match="leaves 0.000 s of the twin's track"):
+        droplet_in_sphere_plume(100, h_end, 50, twin=twin)
+
+def test_weber_gate_comes_before_the_sphere_integration(twin, monkeypatch):
+    from reentry_model.parent_follower_separation_interactions import scenarios
+    def refuse(*a, **k):
+        raise AssertionError("nothing may be integrated for a droplet that breaks up at release")
+    monkeypatch.setattr(scenarios, "dense_solve", refuse)
+    c = droplet_in_sphere_plume(100, 60, 5000, twin=twin)                 # a 5 mm droplet: Weber number far above 12
+    assert c.summary["reason"] == "skipped_weber" and c.summary["weber_release"] >= 12 and c.residence is None
+    assert set(scenarios.PARENT_AT_RELEASE_KEYS) <= set(c.summary) and math.isnan(c.summary["sphere_t_end"])
