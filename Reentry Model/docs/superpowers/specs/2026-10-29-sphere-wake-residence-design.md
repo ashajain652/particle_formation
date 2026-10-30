@@ -411,6 +411,183 @@ about 0.14. The tables report our model's drag ratio for a sphere at the far-wak
 behind, on the axis), rho_w (V - u)^2 / (rho_inf V^2) with V the parent's speed, at each release altitude and bound,
 next to 0.14.
 
+### 4.3c The follower's own flow regime, the shock-layer gas and the bow shock (Asha, 2026-10-29)
+
+Register's and Laurence's outcomes come from continuum forces (the follower's own bow shock interacting with the
+parent's). A follower in free-molecular flow has no shock of its own, barely disturbs the parent's flow, and moves
+almost ballistically; its separation is set by drag differences, which the engine integrates. So before any
+Register branch is used, the follower's own regime is decided (side-session addendum, approved by Asha with the
+changes below).
+
+**Order of decisions.**
+1. Parent regime first (`laws.classify` on the parent's state at release). Rarefied or too slow: no plume law and no
+   AFFIx; the case is reported without integration (reason `rarefied_no_law` / `too_slow_no_law`).
+2. Follower regime from Kn_f = mean free path of the LOCAL gas at the release point / follower diameter, with the
+   named thresholds `kn_continuum` (default 0.01) and `kn_free_molecular` (default 10, the repository's existing
+   free-molecular gate): `continuum` below the first, `free_molecular` at or above the second, `transitional`
+   between. Flow quantities only; no altitude.
+3. Continuum follower: AFFIx governs (§4.3b) — far wake on the axis two parent diameters behind, escape at the
+   windward surface point, shock band not integrated, trapped censored.
+   Transitional follower: AFFIx is computed and labelled `indicative`; the case is flagged "transitional follower:
+   neither continuum interaction nor ballistic limit"; the integrated engine result is primary.
+   Free-molecular follower: AFFIx is labelled `not_applicable` (values recorded for information); the integrated
+   engine result is primary and nothing overrides it.
+
+**The local gas at the release point is post-shock (Asha).** Every release point is on the parent's windward
+surface (theta 90 to 180 degrees), inside the parent's shock layer, so Kn_f uses the shock-layer gas there, not the
+free stream. Model (new adapter, using `reentry_model.gas.EquilibriumAir`, Cantera equilibrium air): the stagnation
+state behind the parent's normal shock (`EquilibriumAir.stagnation(rho_inf, T_inf, U)`); the local surface pressure
+by modified Newtonian theory, p(phi) = p_inf + (p_stag - p_inf) cos^2(phi), phi = 180 - theta the angle from the
+stagnation point; the local state by isentropic (equilibrium) expansion from the stagnation entropy to p(phi); the
+mean free path from that local density and mean molecular mass (`aero.mean_free_path`). Requires the parent in
+continuum (step 1). Recorded as assumed: Newtonian pressure under-predicts near the shoulder (theta near 90), and
+the hollow-shell parent is treated as a sphere of its equal-area diameter. Kn_f at the exit (or end) uses the local
+gas there (the `WakeAtmosphere` state: wake core or ambient), so a follower inside the hot core is classified more
+rarefied than in ambient air at the same point.
+
+**Rarefied followers (transitional and free-molecular) start at their surface point (Asha).** Release position
+P(t_r) + `release_offset(theta, D1, v_hat, up)`, velocity = the parent's. Because the plume lies behind the
+parent's base plane, such a follower usually starts outside it and enters as it falls behind, so its result is
+reported as: the time of first entry after release, the duration of that first inside interval, the total time
+inside, and the exits (the engine's `ResidenceResult.intervals`), with `residence_time` kept as defined in §4.4.
+
+**Does the rarefied follower cross the parent's bow shock? (Asha; superseded the same day by §4.3d.)** The first
+version of this section checked only whether the follower's ballistic trajectory left the bow-shock envelope. Asha
+then chose to integrate the rarefied follower through a modelled shock-layer flow (§4.3d), so the crossing is now a
+result of that trajectory (`shock_layer_exit`), not a separate check.
+
+**Recorded in every summary:** Kn_f at release (shock-layer gas) and at exit or end, the follower regime, the AFFIx
+status (`governing` / `indicative` / `not_applicable`) and the branch that governed, the release kind (`far_wake`,
+`escape`, `surface`), and for rarefied followers the entry time, first-interval duration, total time inside and the
+shock-layer outcome of §4.3d.
+
+**Droplet note (side session).** In free-molecular flow the hot wake lowers drag more than heating, because the wake
+gas carries thermal energy; heating may fall less than drag, or even rise, close behind the parent. Droplet results
+from the hot core carry this as a stated limitation.
+
+### 4.3d The shock-layer flow and the rarefied follower's motion through it (Asha, 2026-10-29, option 1)
+
+**Why the follower can be integrated through a fixed field.** A transitional or free-molecular follower has no
+shock of its own and barely disturbs the parent's flow, so the coupling runs one way: the parent's shock-layer gas
+(the gas between the bow shock and the parent's surface) is computed alone, and the follower is integrated through
+it the way it is integrated through the wake. Continuum followers keep §4.3b: their own shock interacts with the
+parent's, AFFIx governs, and they do not see this field. Transitional followers use it with the §4.3c flag, since
+one-way coupling is only approximate for them. The whole section requires the parent in continuum (§4.3c step 1);
+there is no shock layer otherwise.
+
+**Frame and quasi-steadiness.** A parent-centred frame: origin at the parent's centroid P(t), x along v_hat(t)
+(positive forward), y the distance from the axis; and spherical coordinates (r, phi) about the centroid, with phi
+the angle from the stagnation line (phi = 180 - theta). The parent is the equal-area sphere of radius R = D1/2. The
+field is built once per release from the parent's free stream at release (rho_inf, T_inf, p_inf, U, Mach M,
+mean free path) and then frozen (a named simplification); it moves with P(t) and turns with v_hat(t) along the twin
+track. The field gives the gas velocity relative to the parent, w; the Earth-fixed gas velocity handed to the
+follower is U(t) v_hat + w, so the gas at the stagnation point moves with the parent and the gas outside the shock
+is at rest. The summary records the relative change of the parent's dynamic pressure between release and the
+follower's shock-layer exit, flagged above 10 percent.
+
+**Shock shape.** Billig's (1967) sphere correlation for the shape: vertex curvature radius R_c = R * 1.143
+exp(0.54/(M - 1)^1.2) and x_s(y) = R + Delta - R_c cot^2(beta) [ (1 + y^2 tan^2(beta)/R_c^2)^(1/2) - 1 ], beta =
+arcsin(1/M); a point is inside the envelope when x < x_s(y). The standoff Delta is a setting `shock_standoff`:
+`"lighthill"` (default) takes it from the constant-density solution below at the equilibrium density ratio
+epsilon = rho_inf / rho_2 across the normal shock; `"billig"` takes Billig's perfect-gas value R * 0.143
+exp(3.24/M^2) (sensitivity). Reason for the default (the author's call): Billig's fit is for a perfect gas with a
+ratio of specific heats of 1.4, where epsilon is about 1/6, whereas equilibrium air at 7 to 8 km/s has epsilon of
+about 0.06 to 0.1, and the standoff scales roughly with epsilon, so Billig's standoff would be about 2 to 3 times
+too large. Billig's correlation is fitted for Mach 2 to about 25; use beyond that is flagged.
+
+**State just behind the shock.** At each shock point, the local shock angle sigma (between the shock surface and
+the free-stream direction) follows from the slope of x_s(y): 90 degrees on the axis, falling towards beta far out.
+The jump is the equilibrium Rankine-Hugoniot relation applied to the normal velocity component U sin(sigma), with
+Cantera equilibrium air by the same fixed-point iteration as `gas.EquilibriumAir.stagnation`; the tangential
+component U cos(sigma) is unchanged. This gives the post-shock density, temperature, pressure and gas velocity.
+
+**State at the body surface.** Pressure by modified Newtonian theory, p_b(phi) = p_inf + (p_stag - p_inf)
+cos^2(phi) (§4.3c); temperature and density by isentropic equilibrium expansion from the stagnation state to p_b;
+gas speed tangent to the surface from the total enthalpy, |w| = (2 (h_0 - h))^(1/2), h_0 the stagnation enthalpy.
+Inviscid: no boundary layer (named; at 80 km it is roughly a tenth of the layer's thickness, and thicker higher up).
+
+**Between body and shock.** A layer coordinate eta = (r - R)/(r_s(phi) - R), 0 at the body and 1 at the shock,
+where r_s(phi) is the shock's distance from the centroid along the ray at phi. Pressure and temperature vary
+linearly in eta between the surface and post-shock values; density is the equilibrium density at that pressure and
+temperature. The velocity:
+- near the nose (phi up to `phi_nose_deg`, default 40), Lighthill's (1957) constant-density solution, as given by
+  Hayes and Probstein. The gas behind a spherical shock of radius R_s concentric with the body is taken as
+  incompressible at density rho_inf/epsilon, with vorticity omega = C r sin(phi), uniform C (the property of
+  axisymmetric inviscid flow at constant density). The Stokes stream function is psi = sin^2(phi) g(r) with g(r) =
+  A r^2 + B / r - (C/10) r^4, velocities u_r = 2 g cos(phi) / r^2 and u_phi = -g' sin(phi) / r. The conditions are:
+  g(R_s) = -(1/2) epsilon U R_s^2 (normal velocity reduced by epsilon), g'(R_s) = -U R_s (tangential velocity
+  continuous), g(R) = 0 (the body is a streamline), and |C| = U (1 - epsilon)^2 / (epsilon R_s^2), the vorticity
+  behind a spherical shock from Crocco's theorem. In this sign convention the r^4 coefficient is
+  -(C/10) = -U (1 - epsilon)^2 / (10 epsilon R_s^2) (negative; checked numerically by the author on 2026-10-29: the
+  resulting standoff is within 2 to 7 percent of Hayes and Probstein's approximation for epsilon 0.05 to 0.2, while
+  the opposite sign misses it by 25 to 40 percent). These give A, B and R_s, and hence the standoff R_s - R. For
+  small epsilon g(R) = 0 has a second, spurious root further out; take the root closest to the body.
+  The solution is evaluated at r_L = R + eta (R_s - R), i.e. stretched to the local layer thickness;
+- towards the shoulder (phi from `phi_nose_deg` + `phi_blend_deg`, default 20, onward), linear interpolation in
+  eta between the surface velocity and the post-shock velocity;
+- between the two, a cubic-smoothstep blend in phi.
+
+Lighthill's solution is the classical one for the nose and is weakest at the shoulder; Newtonian pressure
+under-predicts near the shoulder (theta near 90); most windward releases between 90 and 135 degrees lie there.
+Both are named as assumptions.
+
+**Edges and smoothing.** The field applies inside the envelope, outside the body and ahead of the base plane
+(x > 0). Across the shock, the state passes from the ambient (or wake) gas to the field over a thickness of
+`shock_thickness_mfp` (default 3) free-stream mean free paths, measured along the local shock normal, with a cubic
+smoothstep. This is physical (a real shock is a few mean free paths thick) and keeps the adaptive integrator from
+stalling at a discontinuity. Behind the base plane, the field fades from full at x = 0 to zero at x = -r0 with a
+cubic smoothstep, evaluated there as on the shoulder ray (phi = 90) at the same distance from the axis, while the
+wake gas of §4.3a ramps in over the same distance (the existing front-plane ramp). Density, temperature, pressure and
+velocity are blended linearly with that weight. At trial points inside the body (the integrator may evaluate there)
+the state is the surface state (eta clamped to 0), so it is always finite.
+
+**Tabulation.** The field is computed per release on a grid in (phi, eta) and interpolated with smooth (bicubic)
+splines, so the Cantera calls happen once per release, not at every step. The pressure gradient is the derivative
+of the pressure spline. Grid spacing is the builder's call, with a test that halving it changes the follower's
+shock-layer exit time by less than 1 percent. The cost of building one field and of one follower run is measured.
+
+**Forces on the follower.**
+- Drag relative to the local gas, with the composed drag law of `droplet_reentry.particle_trajectory`
+  (`drag_coefficient`: Schaaf and Chambre free-molecular, a continuum correlation, Cunningham slip, blended on the
+  speed ratio), which holds at any speed ratio; the SESAM tables used by `sphere_simulator` are fitted to hypersonic
+  conditions and the relative speed in the shock layer is low. The wall-to-gas temperature ratio uses a named
+  follower wall temperature `follower_wall_T_K` (default 300 K, assumed: the sphere's temperature is not modelled).
+  At zero relative speed the drag force is zero (C_D times V stays finite); the implementation must not produce NaN
+  at release, when the relative speed at the stagnation point is near zero. The rarefied follower uses this law for
+  its whole flight, inside and outside the shock layer, so its drag comes from one smooth law; the summary records
+  C_D from this law and from the SESAM-table law at the release free stream, as a consistency number. The law's
+  air viscosity and mean free path are for undissociated air; in the hot shock layer that is approximate (named).
+- A pressure-gradient force, a_p = -grad(p) / rho_f (rho_f the follower's density): the net pressure force on a
+  body small compared with the distance over which the pressure changes (about R). Switch `pressure_gradient`
+  (default on; off in the sensitivity set). The summary records the largest |a_p| and the largest drag acceleration
+  inside the shock layer, so its share is visible.
+- Gravity, as now.
+
+**How it reaches the follower.** The gas goes through the existing seam: `WakeAtmosphere` takes an optional
+shock-layer field and its `state()` returns the blended gas (shock layer, wake or ambient) with the Earth-fixed gas
+velocity added to the wind. The pressure-gradient force is not an air property, so the follower is a
+`trajectory.Simulator` subclass in `adapters.py` (as the twin is) whose `aero_state` uses the composed law and adds
+a_p, read from a new `WakeAtmosphere.pressure_gradient(t, x)`. `trajectory.py` and `droplet_reentry/model.py` are not
+modified. Droplets are not given the shock-layer path in this version (the droplet-in-sphere use releases in the
+sphere's far wake); that is a named limitation.
+
+**The parent is an obstacle for rarefied followers.** A terminal event fires when the follower's distance from P(t)
+falls below R: reason `hit_parent`, with the time, the impact angle theta and the relative speed. The follower starts
+on the surface, so the event counts only an inward crossing after release. (Continuum followers keep the front-plane
+labels of §4.3a.)
+
+**Outcome recorded.** `shock_layer_exit`: `through_shock` (left the envelope across the shock into the free stream),
+`past_base_plane` (crossed the base plane inside the envelope, i.e. swept round towards the wake), `hit_parent`, or
+`inside_at_end`; with its time, x and y in the parent frame, and the relative speed. After `through_shock` or
+`past_base_plane` the integration continues: the follower may later hit the parent, enter the plume, or neither; the
+residence quantities of §4.3c (first entry, first-interval duration, total inside) are reported as before. Also
+recorded: epsilon, the standoff used and Billig's for comparison, the Mach number and the validity flags below.
+
+**Validity flags.** Mach outside Billig's fitted range; the parent's Knudsen number above `kn_shock_layer_flag`
+(default 1e-3, assumed), where the shock layer is likely out of chemical equilibrium and thickened by viscosity, so
+equilibrium air overstates dissociation and the thin-layer picture weakens; the transitional-follower flag of §4.3c;
+the dynamic-pressure change above.
+
 ### 4.4 In the plume, and residence time
 
 Let P(tau) be the parent's Earth-fixed track position at time tau, and S(t) the sphere's position at time t,
@@ -449,6 +626,11 @@ whose Knudsen number or Mach number leaves the tables' range is flagged.
 Release angles (§4.3b): theta = 90, 120, 135, 145, 160 and 180 degrees, which bracket theta_bif for every size.
 Every (diameter, altitude, theta) is classified; far-wake cases share one integration per (diameter, altitude,
 bound, wake_flow); escape cases are integrated from their surface points; shock-band cases are not integrated.
+Rarefied followers (§4.3c, §4.3d) are integrated per theta from their surface points through the shock-layer field.
+(The author's estimate, to be confirmed by the sweep: the follower's local Knudsen number at the surface is about a
+tenth of its free-stream value near the stagnation point (larger towards the shoulder), so in the default sweep rarefied followers are transitional, at 80 and 90 km for
+the smaller diameters, and none is free-molecular; at 100 km the parent itself is rarefied, so nothing is
+integrated there.)
 
 Time step: the sphere history is sampled finely enough to resolve the exit to the 1 ms tolerance (use the
 integrator's dense output rather than the 1 s cadence).
@@ -461,7 +643,10 @@ criteria give): vary the turbulent law's coefficient by the factors 0.5/0.7, 1 a
 0.5/0.7/0.9 range, applied to Taylor's K), its exponent (0.30, 1/3, 0.40), the turbulent law itself (Park
 instead of Taylor), the Feldman hot-axis temperature (2000, 3000, 5000 K) and core-speed fraction f (0.75,
 0.8), the parent frontal area (3.1, 6.2, 12.4 m2), the parent's ballistic-coefficient table scaled by 0.9 and
-1.1, the sphere density (2700, 2813, 2900 kg/m3), and `wake_flow` (`velocity` and `density` alone). Report
+1.1, the sphere density (2700, 2813, 2900 kg/m3), and `wake_flow` (`velocity` and `density` alone); and, for a
+rarefied follower (10 mm at 90 km, theta 180 and 120 degrees), `shock_standoff="billig"`, `pressure_gradient` off,
+`follower_wall_T_K` 1000 K and `shock_thickness_mfp` 1 and 10, with the shock-layer outcome reported beside the
+residence. Report
 each residence time and which parameter moves it most. (Amended 2026-10-29 when Taylor replaced Park as the
 baseline: the original set varied Park's C and n at 80 km only, which the regime criteria now place in the
 laminar regime.)
@@ -534,6 +719,39 @@ Regime tests (§4.2):
 - Transitional range: in a transitional interval the record holds the two Feldman results, the turbulent result,
   and their minimum and maximum.
 
+Follower-regime, shock-layer and bow-shock tests (§4.3c):
+- With identical r and theta, a follower state with Kn_f < 0.01 gives AFFIx `governing`, one between the
+  thresholds `indicative`, one >= 10 `not_applicable`; placed at arbitrary altitudes to show nothing depends on
+  altitude.
+- The same follower is classified more rarefied inside a `WakeAtmosphere` hot core than in ambient air at the same
+  point.
+- A free-molecular follower's reported residence equals the engine's integrated value, unchanged by any AFFIx
+  output.
+- Shock-layer gas: at theta = 180 the local state equals `EquilibriumAir.stagnation`; the local pressure falls
+  towards p_inf as theta falls towards 90; the local density exceeds the free-stream density at the stagnation
+  point; Kn_f at the release point is smaller than the free-stream Kn_f.
+Shock-layer field and rarefied-follower tests (§4.3d):
+- Shock: Billig's vertex radius and (with `shock_standoff="billig"`) standoff reproduce the formula; the shock passes
+  through (R + Delta, 0); points on the body surface are inside the envelope.
+- Jump: the oblique jump at sigma = 90 degrees followed by isentropic compression to rest reproduces
+  `EquilibriumAir.stagnation`'s pressure within 0.5 percent; the tangential velocity is unchanged across the jump; a
+  shock angle half a degree above the Mach angle gives a density ratio within 5 percent of 1.
+- Lighthill: the three shock and body conditions hold to round-off and the stream-function equation holds at
+  interior points; the standoff agrees with the approximation Delta/R_s = epsilon / (1 + (8 epsilon/3)^(1/2)) to
+  within 10 percent for epsilon from 0.05 to 0.2.
+- Field: at the stagnation point the state equals `EquilibriumAir.stagnation` within 1 percent and w = 0; at the
+  body the normal velocity is zero and the pressure is the Newtonian value; at eta = 1 the state is the post-shock
+  state; the mass flux through the layer at phi = 30 and 60 degrees equals the free-stream flux through the shock
+  disc, pi y_s^2 rho_inf U, within 25 percent; beyond the smoothing thickness outside the shock the state is exactly
+  the ambient (or wake) state; the state is continuous across the base plane and the shock.
+- Pressure gradient: the spline gradient matches a finite difference of the field; on the axis a_p points away from
+  the body.
+- Follower: with the field and the pressure gradient switched off, the rarefied-follower simulator gives the same
+  trajectory as a plain simulator with the composed law (round-off); no NaN at a release with zero relative speed;
+  a free-molecular follower released at the stagnation point of a decelerating parent first moves away from the
+  surface (forward relative to the parent); a follower given a velocity towards the parent ends with `hit_parent`;
+  halving the grid spacing changes the shock-layer exit time by less than 1 percent.
+
 Release classifier tests (§4.3b):
 - `affix_regime` reproduces theta_inn and theta_bif at r = 1/16, 1/4 and 1/2 and the zone boundaries around them.
 - theta = 90 with a small r gives `far_wake`; theta = 180 gives `escape`; a theta inside the shock band gives
@@ -580,7 +798,12 @@ unless a fallback is chosen explicitly (§4.2). Later still: the front-plane rul
 parent's base plane; `reached_parent` / `ahead_of_parent` labels) stands (§4.3a); the Register et al. (2020) release
 classifier is added with releases limited to the windward side, theta 90 to 180 degrees, far-wake releases starting
 on the wake axis two parent diameters behind the parent (Asha's estimate from Register et al.), escape releases at
-the windward surface point, shock-band cases flagged and not integrated (§4.3b).
+the windward surface point, shock-band cases flagged and not integrated (§4.3b). Then: the follower-regime gate
+(addendum) approved with Asha's changes — Kn_f from the local post-shock gas at the release point; transitional and
+free-molecular followers start at their surface point at theta and are checked for crossing the parent's bow shock
+along their ballistic trajectory (§4.3c). Then (option 1 of three offered: engineering model, tabulated continuum
+CFD, DSMC): rarefied followers are integrated through an engineering model of the parent's shock-layer flow, which
+replaces the ballistic bow-shock check (§4.3d); CFD and DSMC stay as later validation for a few cases.
 
 Calls made by the author (not decided by Asha; the final handover lists them again):
 - Union-of-balls definition of "in the plume" (§4.4).
@@ -599,9 +822,19 @@ Calls made by the author (not decided by Asha; the final handover lists them aga
   sphere parent settling at terminal speed cannot make Feldman's x/(f U) blow up.
 - Defaults `T_axis_hot` = 3000 K and f = 0.8 for the Feldman law (§4.2).
 - Default diameter and altitude lists (§4.5) and the sensitivity ranges (§4.6).
+- Shock-layer surface state (§4.3c): modified Newtonian surface pressure with isentropic equilibrium expansion
+  from the stagnation state; the equal-area sphere for the hollow parent; `kn_free_molecular` default 10.
+- Shock-layer field (§4.3d): Billig's shape with the standoff from Lighthill's constant-density solution at the
+  equilibrium density ratio (Billig's own standoff as the sensitivity); Lighthill velocities near the nose (to 40
+  degrees, blended over 20 degrees) and linear interpolation across the layer towards the shoulder; pressure and
+  temperature linear across the layer; the field frozen at its release free stream; the shock smoothed over 3 mean
+  free paths and the field faded over r0 behind the base plane; the composed drag law for the whole flight of a
+  rarefied follower, with a 300 K follower wall; the pressure-gradient force on by default; the parent as an obstacle
+  (`hit_parent`) for rarefied followers only; `kn_shock_layer_flag` 1e-3.
 - AFFIx details (§4.3b): s_w default 2 degrees, `affix_mach_min` 5, rho_body = the follower's density, n_hat in the
   local vertical plane pointing up, and one shared far-wake integration per case across theta.
 - The engine/adapter/scenario split (§4.0), the all-intervals output, and the validity record that flags
   but never refuses (so the droplet-in-sphere-plume use runs even where the plume law is poorly applicable).
 - Use of `trajectory.Simulator` rather than the droplet drag law, because the spheres are 1 to 400 mm and
-  hypersonic at release, the regime that integrator was verified in against SESAM.
+  hypersonic at release, the regime that integrator was verified in against SESAM. Exception: rarefied followers
+  released into the shock layer, where the relative speed is low (§4.3d).
