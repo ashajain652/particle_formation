@@ -3,7 +3,7 @@ sensitivity set, and the supporting tables."""
 import concurrent.futures, csv, filecmp, glob, json, os
 import pytest
 from reentry_model.parent_follower_separation_interactions import scenarios
-from reentry_model.parent_follower_separation_interactions.analysis import sensitivity, sweep, tables
+from reentry_model.parent_follower_separation_interactions.analysis import plots, sensitivity, sweep, tables
 
 ARGS = ["--diameters", "10", "--altitudes", "60", "--thetas", "90", "180", "--bounds", "low",
         "--wake-flow", "off", "--workers", "1"]
@@ -375,3 +375,85 @@ def test_crossover_rows_read_the_lag_one_second_after_release(tmp_path):
     (out,) = sweep.crossover_rows(str(tmp_path), rows)
     assert out["largest_diameter_positive_lag_mm"] == 100.0 and out["smallest_diameter_negative_lag_mm"] == 200.0
     assert out["lag_there_m"] == 0.5 and out["n_far_wake_diameters"] == 3 and out["monotone"] is True
+
+
+# ---------------------------------------------------------------------------------------------------------- plots
+
+def test_plots_are_written_from_a_short_sweep(tmp_path, capsys):
+    sweep.main(ARGS + ["--out", str(tmp_path)]); tables.main(["--out", str(tmp_path)])
+    capsys.readouterr()
+    plots.main(["--out", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "2 runs found" in out
+    # ARGS: 10 mm at 60 km is a rarefied (surface) follower at 90 degrees and a continuum escape release at 180, with no
+    # far-wake case, and no case at the map's default 120 degrees (the nearest, 90, is used and said so)
+    for name in ("plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png",
+                 "affix_zones.png", "shock_layer_paths_60km.png"):
+        assert (tmp_path / "plots" / name).stat().st_size > 0, name
+    assert "no case at theta 120 degrees; using the nearest, 90" in out
+
+
+def _row(**kw):
+    base = {"release_kind": "far_wake", "residence_time": 2.0, "first_interval": 2.0, "t_first_entry": 0.0,
+            "censored": False, "reason": "ok", "diameter_mm": 10.0, "altitude_km": 60.0, "theta_deg": 120.0,
+            "bound": "low", "wake_flow": "off"}
+    base.update(kw)
+    return base
+
+
+def test_map_cell_shows_residence_for_continuum_and_first_interval_for_surface():
+    assert plots.map_cell(_row())["value"] == 2.0
+    assert plots.map_cell(_row(release_kind="escape", residence_time=0.0, first_interval=5.0,
+                               t_first_entry=0.4, reason="starts_outside")) == {
+        "value": 0.0, "kind": "escape", "flags": [], "late": True}
+    surf = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=1.1, t_first_entry=17.0))
+    assert surf["value"] == 1.1 and surf["kind"] == "surface" and surf["late"]
+    never = plots.map_cell(_row(release_kind="surface", residence_time=0.0, first_interval=float("nan"),
+                                t_first_entry=float("nan")))
+    assert never["value"] == 0.0 and not never["late"]
+    assert plots.map_cell(_row(reason="reached_parent", censored=True))["flags"] == ["c", "r"]
+    assert plots.map_cell(_row(reason="hit_parent", release_kind="surface"))["flags"] == ["h"]
+    assert plots.map_cell(_row(release_kind="", reason="rarefied_no_law", residence_time=float("nan")))["flags"] == ["n"]
+    assert plots.map_cell(_row(release_kind="", reason="shock_band", residence_time=float("nan")))["flags"] == ["b"]
+    assert not (plots.map_cell(_row(release_kind="", residence_time=float("nan")))["value"] == 0.0)   # not integrated: NaN
+
+
+def test_parent_frame_path_recovers_x_forward_and_y_from_the_axis():
+    import numpy as np
+    t = np.linspace(0.0, 2.0, 41)
+    e = np.array([0.6, 0.0, 0.8])                          # the parent flies along e at 4,000 m/s from a point on the Earth
+    P = np.array([6.5e6, 0.0, 0.0]) + 4000.0 * t[:, None] * e
+    lateral = np.array([0.0, 1.0, 0.0])                    # perpendicular to e
+    x_true, y_true = -3.0 + 2.0 * t, 1.4 + 0.5 * t
+    F = P + x_true[:, None] * e + y_true[:, None] * lateral
+    hist = {"t": t, "parent_x": P[:, 0], "parent_y": P[:, 1], "parent_z": P[:, 2],
+            "follower_x": F[:, 0], "follower_y": F[:, 1], "follower_z": F[:, 2]}
+    x, y = plots.parent_frame_path(hist)
+    assert np.allclose(x, x_true, atol=1e-6) and np.allclose(y, y_true, atol=1e-6)
+
+
+def test_an_altitude_without_an_integrated_case_prints_a_note_and_writes_nothing(tmp_path, capsys):
+    rows = [_row(release_kind="", altitude_km=70.0, reason="shock_band", residence_time=float("nan"))]
+    assert plots.plot_margin(str(tmp_path), rows, 70.0, "low") is None
+    assert plots.plot_trajectories(str(tmp_path), rows, 70.0, "low", "off") is None
+    assert plots.plot_shock_layer_paths(str(tmp_path), rows, 70.0, "low", "off") is None
+    out = capsys.readouterr().out
+    assert "margin_70km.png skipped" in out and "trajectories_70km.png skipped" in out
+    assert "shock_layer_paths_70km.png skipped" in out
+    assert not (tmp_path / "plots").exists()
+
+
+def test_affix_zones_has_one_panel_unless_the_flags_differ_by_altitude():
+    def rows(flag_at_50):
+        out = []
+        for h in (80.0, 50.0):
+            for d in (10.0, 100.0):
+                out.append({"altitude_km": str(h), "diameter_mm": str(d), "theta_deg": "120.0", "zone": "far_wake",
+                            "theta_bif": "139.0", "flag_not_hypersonic": str(flag_at_50 and h == 50.0),
+                            "flag_parent_bulk_density": "63.5"})
+        return out
+    same = plots.affix_panels(rows(False))
+    assert [title for title, _ in same] == ["all altitudes"]
+    differ = plots.affix_panels(rows(True))
+    assert [title for title, _ in differ] == ["80 km", "50 km"] and all(len(rs) == 2 for _, rs in differ)
+    assert plots.affix_flag_names(rows(True)) == ["flag_not_hypersonic"]       # a numeric column is not a flag
