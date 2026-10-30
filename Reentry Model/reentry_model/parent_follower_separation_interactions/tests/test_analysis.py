@@ -532,6 +532,19 @@ def test_a_failing_plot_is_reported_and_the_others_still_written(tmp_path, capsy
     assert "margin_60km.png" not in names
 
 
-def test_shock_curve_rebuild_failure_is_a_note_not_an_exception(tmp_path):
+def test_shock_curve_rebuild_failure_is_a_printed_note_not_an_exception(tmp_path, capsys):
     R, shape, note = plots.rebuild_shock_curve(str(tmp_path), "no_such_case", 60.0)     # no JSON to read
     assert shape is None and note.startswith("shock curve not drawn") and R == pytest.approx(1.4065, abs=1e-3)
+    # a rarefied (surface) case with a history but no run JSON: the plot is still written and the note is printed
+    (tmp_path / "runs").mkdir()
+    with open(tmp_path / "runs" / "ghost_surface.csv", "w") as fh:
+        fh.write("t,t_since_release,follower_x,follower_y,follower_z,parent_x,parent_y,parent_z,lag_m,distance_m,r_b,margin,regime\n")
+        for i in range(5):
+            t = 0.1 * i
+            fh.write(f"{t},{t},{6.5e6 + 4000 * t + 1.4 - 3 * t},{0.1 * t},0,{6.5e6 + 4000 * t},0,0,0,1,1,0,turbulent\n")
+    row = _row(name="ghost_surface", release_kind="surface", shock_layer_exit="through_shock", t_shock_layer_exit=0.2,
+               x_exit_parent_frame=1.2, y_exit_parent_frame=0.5)
+    capsys.readouterr()
+    assert plots.plot_shock_layer_paths(str(tmp_path), [row], 60.0, "low", "off") is not None
+    assert "note: shock_layer_paths_60km.png: shock curve not drawn" in capsys.readouterr().out
+    assert (tmp_path / "plots" / "shock_layer_paths_60km.png").stat().st_size > 0

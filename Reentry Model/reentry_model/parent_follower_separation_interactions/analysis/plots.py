@@ -579,6 +579,8 @@ def plot_shock_layer_paths(out, rows, h, bound, wake_flow):
         print(f"shock_layer_paths_{h:g}km.png skipped: no rarefied follower at {h:g} km (bound {bound})")
         return None
     R, shape, note = rebuild_shock_curve(out, cases[0]["name"], h)
+    if note:
+        print(f"note: shock_layer_paths_{h:g}km.png: {note}")
     thetas = sorted({r["theta_deg"] for r in cases})
     styles = ["-", "--", "-.", ":", (0, (5, 1, 1, 1)), (0, (1, 3))]
     colors = diameter_colors(r["diameter_mm"] for r in cases)
@@ -658,6 +660,7 @@ def main(argv=None):
             fn(*a)
         except Exception as exc:
             failures.append(label)
+            plt.close("all")                          # a figure left open by the failed plot
             print(f"FAILED {label}: {type(exc).__name__}: {exc}")
 
     run("plume_size.png", plot_plume_size, out)
