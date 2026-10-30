@@ -4,10 +4,10 @@ wake_flow modes (design spec section 4.3a).
 """
 import math, numpy as np, pytest
 from scipy.integrate import quad
-from reentry_model.wake_residence.wake_gas import gas_state, Ambient, GasState, CP_AIR, R_AIR, WAKE_FLOW_MODES
-from reentry_model.wake_residence.laws import EmissionState, sutherland_mu
-from reentry_model.wake_residence.overlap import Plume
-from reentry_model.wake_residence.track import Track
+from reentry_model.parent_follower_separation_interactions.wake_gas import gas_state, Ambient, GasState, CP_AIR, R_AIR, WAKE_FLOW_MODES
+from reentry_model.parent_follower_separation_interactions.laws import EmissionState, sutherland_mu
+from reentry_model.parent_follower_separation_interactions.overlap import Plume
+from reentry_model.parent_follower_separation_interactions.track import Track
 
 E = EmissionState(rho=3e-4, T=240.0, p=20.0, mu=sutherland_mu(240.0), mfp=1e-4, U=4000.0, d=2.813, cda=5.5, r0=1.4065)
 AMB = Ambient(p=20.0, T=240.0, rho=20.0 / (R_AIR * 240.0)); X = np.array([1.0, 0, 0])

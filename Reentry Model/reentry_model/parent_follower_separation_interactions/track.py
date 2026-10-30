@@ -29,7 +29,7 @@ import math
 import numpy as np
 from scipy.interpolate import CubicHermiteSpline, CubicSpline
 
-from reentry_model.wake_residence.laws import EmissionState
+from reentry_model.parent_follower_separation_interactions.laws import EmissionState
 
 FLOW_KEYS = ("rho", "T", "p", "mu", "mfp", "d", "cda", "r0")   # the EmissionState fields other than U
 _GL_X, _GL_W = np.polynomial.legendre.leggauss(5)

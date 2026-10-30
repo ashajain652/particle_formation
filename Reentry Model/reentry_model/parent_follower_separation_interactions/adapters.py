@@ -94,8 +94,8 @@ from reentry_model.droplet_reentry.model import parent_release
 from reentry_model.droplet_reentry.particle_trajectory import drag_coefficient as composed_drag_coefficient
 from reentry_model.droplet_reentry.particle_trajectory import viscosity
 from reentry_model.trajectory import AeroState, InitialState, Settings, Simulator
-from reentry_model.wake_residence.track import FLOW_KEYS, Track
-from reentry_model.wake_residence.wake_gas import Ambient, check_mode
+from reentry_model.parent_follower_separation_interactions.track import FLOW_KEYS, Track
+from reentry_model.parent_follower_separation_interactions.wake_gas import Ambient, check_mode
 
 PARENT_FRONTAL_AREA = 6.215     # m2, DRAMA's impacting cross-section of the parent (spec 4.2)
 AA7075_DENSITY = 2813.0         # kg/m3, AA7075 solid (DRAMA Sphere Experiments/data/user_materials/AA7075_nomelt.json)

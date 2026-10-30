@@ -1,5 +1,5 @@
 import math, pytest
-from reentry_model.wake_residence.laws import (EmissionState, LawSettings, classify, park_radius, taylor_radius,
+from reentry_model.parent_follower_separation_interactions.laws import (EmissionState, LawSettings, classify, park_radius, taylor_radius,
     feldman_radius, plume_radius, sutherland_mu, pressure_parameter)
 
 def state(**kw):

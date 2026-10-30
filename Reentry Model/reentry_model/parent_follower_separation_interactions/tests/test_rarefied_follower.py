@@ -5,11 +5,11 @@ from reentry_model import earth
 from reentry_model.atmosphere import US76TableAtmosphere
 from reentry_model.droplet_reentry import particle_trajectory as pt
 from reentry_model.trajectory import InitialState
-from reentry_model.wake_residence.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
+from reentry_model.parent_follower_separation_interactions.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
     parent_collision_event, shock_layer_exit, release_state)
-from reentry_model.wake_residence.overlap import Plume
-from reentry_model.wake_residence.shock_layer import ShockLayerSettings, ShockLayerField, FreeStream
-from reentry_model.wake_residence.affix import release_offset
+from reentry_model.parent_follower_separation_interactions.overlap import Plume
+from reentry_model.parent_follower_separation_interactions.shock_layer import ShockLayerSettings, ShockLayerField, FreeStream
+from reentry_model.parent_follower_separation_interactions.affix import release_offset
 
 def _setup(twin, h_km=90.0, theta=180.0, dv=0.0, settings=ShockLayerSettings(), d=1e-4, clearance=0.0):
     # build: t_r = twin.t_at_altitude(h_km); FreeStream from the twin's flow at t_r; field; WakeAtmosphere with the

@@ -2,7 +2,7 @@
 the tabulated field with its smoothed edges and pressure gradient."""
 import math, numpy as np, pytest
 from reentry_model.gas import EquilibriumAir
-from reentry_model.wake_residence.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
+from reentry_model.parent_follower_separation_interactions.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
     lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField)
 
 R, R0 = 1.4065, 1.4065

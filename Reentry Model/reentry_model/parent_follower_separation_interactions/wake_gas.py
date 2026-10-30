@@ -54,7 +54,7 @@ import math
 
 import numpy as np
 
-from reentry_model.wake_residence.laws import EmissionState
+from reentry_model.parent_follower_separation_interactions.laws import EmissionState
 
 CP_AIR = 1004.5                                   # J/kg/K: specific heat of dry air at constant pressure
 R_AIR = 287.05                                    # J/kg/K: specific gas constant of dry air

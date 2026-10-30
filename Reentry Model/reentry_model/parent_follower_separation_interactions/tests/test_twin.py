@@ -4,8 +4,8 @@ release altitude outside the twin's range (Review Focus 5)."""
 import numpy as np
 import pytest
 
-from reentry_model.wake_residence.adapters import drama_beta_table, release_state, twin_vs_drama
-from reentry_model.wake_residence.overlap import Plume
+from reentry_model.parent_follower_separation_interactions.adapters import drama_beta_table, release_state, twin_vs_drama
+from reentry_model.parent_follower_separation_interactions.overlap import Plume
 
 
 def test_beta_table_matches_builder_check(parent):

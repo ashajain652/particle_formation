@@ -14,4 +14,4 @@ import os
 
 from reentry_model import OUTPUT_DIR
 
-OUTPUT = os.path.join(OUTPUT_DIR, "wake_residence_output")
+OUTPUT = os.path.join(OUTPUT_DIR, "parent_follower_separation_interactions_output")

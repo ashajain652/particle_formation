@@ -1,7 +1,7 @@
 # Sphere wake residence: how long a released solid sphere stays in the parent's reentry plume — design
 
 Date: 2026-10-29. Status: approved by Asha in conversation ("Looks good. Proceed ..."); this document is the
-written form. Package to be built: `reentry_model/wake_residence/`.
+written form. Package to be built: `reentry_model/parent_follower_separation_interactions/`.
 
 ## 1. Intent
 
@@ -67,9 +67,9 @@ Anti-goals — the result is a failure, even if it runs, if:
 ## 3. Constraints and conventions
 
 - Python in the Reentry Model project, run with `PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python` from
-  inside `Reentry Model/`. New package `reentry_model/wake_residence/` with `analysis/` and `tests/`; add the
+  inside `Reentry Model/`. New package `reentry_model/parent_follower_separation_interactions/` with `analysis/` and `tests/`; add the
   tests path to `pytest.ini`, as `droplet_reentry` and `wake_column` do. Outputs go to
-  `output/wake_residence_output/` (git-ignored), exposed as `wake_residence.OUTPUT`.
+  `output/parent_follower_separation_interactions_output/` (git-ignored), exposed as `parent_follower_separation_interactions.OUTPUT`.
 - Reuse, do not rewrite: `reentry_model.trajectory.Simulator` (rotating-Earth 3-DOF integration in Earth-fixed
   Cartesian coordinates with J2 gravity, so orbital-speed curvature is handled correctly — a flat-Earth
   integrator such as `particle_trajectory.integrate` is NOT acceptable here because at 7.7 km/s the
@@ -91,7 +91,7 @@ Anti-goals — the result is a failure, even if it runs, if:
 
 ## 4. The model
 
-### 4.0 The overlap engine and its interface (module `wake_residence/overlap.py`)
+### 4.0 The overlap engine and its interface (module `parent_follower_separation_interactions/overlap.py`)
 
 The engine is pure geometry plus the plume law. It must not import `trajectory`, `droplet_reentry`,
 `parent_trajectory`, DRAMA or anything that knows what a sphere or a droplet is; a test asserts this by
@@ -125,14 +125,14 @@ emission lay in Park's 5.8 to 7.9 km/s range, and, when the parent track carries
 parent's Knudsen number at emission. These are recorded and flagged, never used to refuse a computation.
 A follower that starts outside the plume is a valid input (zero residence, with a later entry possible).
 
-Adapters (each a small function returning a `Track`, kept out of the engine, in `wake_residence/adapters.py`):
+Adapters (each a small function returning a `Track`, kept out of the engine, in `parent_follower_separation_interactions/adapters.py`):
 the DRAMA parent file's descending branch (the `ParentTrajectory` of `parent_trajectory.load_parent`); a
 `trajectory.Simulator` `History` (ECEF states, any sphere run); a `DropletSimulator` run (the rows from
 `droplet_reentry.model.run_case`, or its simulator's dense output — whichever resolves the exit to the
 required accuracy; a small droplet decelerates within a second or two, so one-second rows are too coarse and
 the adapter must use the dense output or a finer cadence); a synthetic analytic path (used by tests).
 
-Scenarios (in `wake_residence/scenarios.py`, each a function using the engine and adapters):
+Scenarios (in `parent_follower_separation_interactions/scenarios.py`, each a function using the engine and adapters):
 1. `sphere_in_spacecraft_plume(d_mm, h_km)`: this task (§4.5); the parent is the twin of §4.3.
 2. `droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um)`: a solid AA7075 sphere of diameter
    `sphere_d_mm` released from the Generic Spacecraft at altitude `h_km` is the parent (its `Track` is its
@@ -686,7 +686,7 @@ laminar regime.)
 
 ## 5. Outputs
 
-Under `output/wake_residence_output/`:
+Under `output/parent_follower_separation_interactions_output/`:
 - `plume_size.csv` and plot: r_b against s and against time since passage (s divided by the parent's speed) for
   the parent's state at each release altitude, with the Park-limit distance marked.
 - `ballistic_coefficient.csv`: the parent's effective ballistic coefficient against altitude, and each
