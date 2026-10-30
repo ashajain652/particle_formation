@@ -11,6 +11,8 @@ selection, the track geometry, the union-of-balls margin, the residence search a
 nothing that knows about spheres, droplets, DRAMA or atmospheres. `adapters.py` connects them to the existing
 integrators: a twin of the DRAMA parent integrated by a `trajectory.Simulator` subclass, a `WakeAtmosphere` wrapper
 that feeds the wake gas to any follower through the atmosphere's `state()` call, and dense-output helpers.
+`shock_layer.py` models the parent's shock-layer gas, which the same wrapper feeds to rarefied followers released on
+the parent's windward surface (§4.3d).
 `scenarios.py` runs one case; `analysis/` runs the sweep, sensitivity, tables and plots. `trajectory.py` and
 `droplet_reentry/model.py` are not modified.
 
@@ -33,6 +35,15 @@ cites its sections as §n).
   the windward surface point; shock-band cases not integrated; s_w 2 degrees, `mach_min` 5, fitted r range 1/16-1.
 - Front plane (§4.3a): the plume exists only behind the parent's base plane; first exits through it are labelled
   `reached_parent` (fell behind, caught up) or `ahead_of_parent` (never fell behind).
+- Follower regime (§4.3c, amended 2026-10-29): Kn_f = mean free path of the LOCAL gas at the release point (the
+  shock-layer surface state) / follower diameter; `continuum` below 0.01, `free_molecular` at or above
+  `kn_free_molecular` 10, `transitional` between. Continuum: AFFIx `governing`. Transitional: AFFIx `indicative`,
+  flagged. Free-molecular: AFFIx `not_applicable`. Rarefied (transitional and free-molecular) followers start at the
+  windward surface point at theta and are integrated through the shock-layer field (§4.3d) with the composed drag
+  law, the pressure-gradient force and the parent as an obstacle (`hit_parent`).
+- Shock-layer field (§4.3d) defaults: `shock_standoff` "lighthill", `phi_nose_deg` 40, `phi_blend_deg` 20,
+  `shock_thickness_mfp` 3, `pressure_gradient` on, `follower_wall_T_K` 300, `kn_shock_layer_flag` 1e-3, dynamic-pressure
+  change flag 0.10; the field is frozen at the release free stream and faded over r0 behind the base plane.
 - `overlap.py`, `laws.py`, `track.py`, `wake_gas.py` and `affix.py` must not import `trajectory`, `droplet_reentry`,
   `parent_trajectory`, `body`, `aero` or `atmosphere`, and contain no altitude constants or altitude arguments (§4.0, §4.2).
 - All code in SI units; cm Hg-cm appears only inside `pressure_parameter`.
@@ -76,6 +87,8 @@ reentry_model/wake_residence/
   adapters.py        DRAMA beta table, TwinSimulator, dense_solve, twin_parent, release_state, WakeAtmosphere,
                      sphere_simulator, solution_track, sphere_parent_track
   affix.py           Register et al. (2020) release classifier: zone, interaction time, validity, release offsets
+  shock_layer.py     the parent's shock-layer field (§4.3d): Billig shape, equilibrium oblique jump, Lighthill nose
+                     solution, Newtonian surface state, tabulated field with smoothing and pressure gradient
   scenarios.py       ScenarioSettings, run_name, sphere_in_spacecraft_plume, droplet_in_sphere_plume, write_case
   analysis/__init__.py
   analysis/sweep.py        default sweep (resumable, --workers), summary.csv, crossover.csv
@@ -83,7 +96,8 @@ reentry_model/wake_residence/
   analysis/tables.py       plume_size.csv, ballistic_coefficient.csv, twin_vs_drama.csv
   analysis/plots.py        the §2 goal-6 plots into <out>/plots/
   tests/__init__.py, tests/conftest.py, tests/test_laws.py, tests/test_track.py, tests/test_overlap.py,
-  tests/test_wake_gas.py, tests/test_twin.py, tests/test_follower.py, tests/test_affix.py, tests/test_scenarios.py,
+  tests/test_wake_gas.py, tests/test_twin.py, tests/test_follower.py, tests/test_affix.py, tests/test_shock_layer.py,
+  tests/test_rarefied_follower.py, tests/test_scenarios.py,
   tests/test_analysis.py
 Modify: pytest.ini (testpaths), docs/model_assumptions.md (new section 10), README.md (root; commands),
         CLAUDE.md (layout + commands; committed on the branch — ruling R3)
@@ -829,6 +843,245 @@ git commit -m "wake_residence: Register et al. (2020) release classifier -- trap
 
 ---
 
+### Task 7b: Shock-layer field and the rarefied-follower simulator (§4.3d)
+
+Added 2026-10-29 after Asha chose option 1 (an engineering shock-layer model). Read spec §4.3c and §4.3d first: they
+fix every formula below, including Lighthill's conditions and the sign of the r^4 coefficient.
+
+**Files:**
+- Create: `reentry_model/wake_residence/shock_layer.py`, `reentry_model/wake_residence/tests/test_shock_layer.py`,
+  `reentry_model/wake_residence/tests/test_rarefied_follower.py`
+- Modify: `reentry_model/wake_residence/adapters.py` (WakeAtmosphere option, pressure gradient, rarefied simulator,
+  collision event, exit classification)
+
+**Interfaces:**
+- Consumes: `gas.EquilibriumAir` (its `gas` Cantera object, `stagnation`, `_state`-style GasState), `aero.mean_free_path`,
+  `droplet_reentry.particle_trajectory.drag_coefficient(V, rho, T, p, d, temperature_ratio, law="blend")`,
+  `overlap.Plume`, `Track.position/velocity`, `WakeAtmosphere` (Task 6), `affix.release_offset`, `earth.enu_basis`,
+  `earth.geodetic_to_ecef`, `trajectory.Simulator`, `AeroState`.
+- Produces in `shock_layer.py` (may import `reentry_model.gas` and `aero`; no altitude constants or arguments; no
+  imports of `trajectory`, `droplet_reentry`, `atmosphere`):
+  - `@dataclass(frozen=True) ShockLayerSettings(shock_standoff="lighthill", phi_nose_deg=40.0, phi_blend_deg=20.0,
+    shock_thickness_mfp=3.0, n_phi=91, n_eta=21, pressure_gradient=True, follower_wall_T_K=300.0,
+    kn_shock_layer_flag=1e-3, q_change_flag=0.10)` with `non_default() -> dict` (as `LawSettings`), validating
+    `shock_standoff in ("lighthill", "billig")` and positive numbers.
+  - `@dataclass(frozen=True) FreeStream(rho, T, p, U, mfp, m_bar)` (the parent's free stream at release).
+  - `@dataclass(frozen=True) PostShock(rho, T, p, h, s, m_bar, w_n, w_t)` and
+    `oblique_jump(air, fs, sigma_rad) -> PostShock` — equilibrium Rankine-Hugoniot on the normal component
+    `fs.U sin(sigma)` (same damped fixed point as `EquilibriumAir.stagnation`, same `T_EQUILIBRATE` gate),
+    `w_t = fs.U cos(sigma)`; the post-shock velocities are in the shock-normal/tangent frame relative to the parent.
+  - `@dataclass(frozen=True) Lighthill(eps, U, R, R_s, A, B, K)` with `velocity(r, phi) -> (u_r, u_phi)`;
+    `lighthill(eps, U, R) -> Lighthill` (root of g(R) = 0 closest to the body, K = -U (1-eps)^2 / (10 eps R_s^2));
+    `lighthill_standoff_approx(eps) -> float` = eps / (1 + sqrt(8 eps / 3)) (as a fraction of R_s).
+  - `billig_standoff(R, M)`, `billig_vertex_radius(R, M)`; `@dataclass(frozen=True) ShockShape(R, M, standoff)` with
+    `x_s(y)`, `sigma(y)` (local shock angle, radians), `r_s(phi)` (distance from the centroid to the shock along the
+    ray at phi; root-find), `inside(x, y) -> bool` and `normal_distance(x, y) -> float` (signed, positive inside,
+    first order along the local shock normal).
+  - `@dataclass FieldState(rho, T, p, m_bar, w_x, w_y, weight)` — `w_x`, `w_y` the gas velocity relative to the parent
+    (x forward along v_hat, y away from the axis), `weight` the field's share in [0, 1] (1 inside the layer, 0 beyond
+    the smoothing outside the shock and beyond r0 behind the base plane).
+  - `class ShockLayerField` with `ShockLayerField.build(fs: FreeStream, R, r0, settings, air=None)` (computes epsilon
+    from the normal jump, the standoff per `settings.shock_standoff`, the shape, the surface states, the (phi, eta) grid
+    and bicubic splines of p, T, rho, m_bar, w_x, w_y), attributes `eps`, `standoff`, `standoff_billig`, `shape`,
+    `fs`, `build_time_s`; methods `state(x, y) -> FieldState` and `excess_pressure_gradient(x, y) -> (dpx, dpy)` =
+    the gradient of weight * (p_field - fs.p) (so it includes the jump across the smoothed shock and is exactly zero
+    outside the field); `surface_state(theta_deg) -> FieldState` (eta = 0 at phi = 180 - theta).
+- Produces in `adapters.py`:
+  - `WakeAtmosphere(base, plume, t_offset, mode, k_E=1.0, shock_layer=None)`: with a field, `state()` blends the field
+    (weight w) with the wake-or-ambient gas (1 - w): rho, T, p and m_bar linearly, and the Earth-fixed velocity
+    w * (parent velocity at the parent time + field velocity rotated into ECEF) + (1 - w) * wake velocity. Mode `"off"`
+    with a field still applies the field. Without a field, behaviour is unchanged (the Task 6 tests must still pass).
+  - `WakeAtmosphere.parent_frame(t, x_ecef) -> (x, y, e_x, e_y)` (e_y the unit lateral vector; any perpendicular on
+    the axis) and `WakeAtmosphere.pressure_gradient(t, x_ecef) -> ndarray(3)` (ECEF; zeros without a field).
+  - `class RarefiedSphereSimulator(Simulator)` and `rarefied_sphere_simulator(initial, d_m, atmosphere,
+    density=AA7075_DENSITY, wall_T_K=300.0, pressure_gradient=True, t_max=600.0)`: `aero_state` replaces the drag
+    with -(1/2) rho V v_rel C_D A / m, C_D from `particle_trajectory.drag_coefficient` with the local gas and
+    `temperature_ratio = wall_T_K / T`, the force taken as zero when V == 0 (no NaN), and adds
+    `-atmosphere.pressure_gradient(t, r) / density` when `pressure_gradient` (only if the atmosphere has that method).
+    Records the largest |a_p| and |a_drag| seen inside the field (weight > 0.5) as attributes.
+  - `parent_collision_event(wake_atmosphere, R)` -> solve_ivp event, distance from the parent's centroid minus R,
+    `terminal = True`, `direction = -1`.
+  - `@dataclass ShockLayerExit(kind, t, x, y, v_rel)` and `shock_layer_exit(run, wake_atmosphere, field, hit=False,
+    tol=1e-3) -> ShockLayerExit` — kind `hit_parent` if the collision event ended the run inside the envelope, else
+    the first of `through_shock` (x >= x_s(y)) or `past_base_plane` (x < 0 inside the envelope) found on the dense
+    output to `tol` seconds, else `inside_at_end`.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_shock_layer.py`:
+
+```python
+import math, numpy as np, pytest
+from reentry_model.gas import EquilibriumAir
+from reentry_model.wake_residence.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
+    lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField)
+
+R, R0 = 1.4065, 1.4065
+FS = FreeStream(rho=1.85e-5, T=199.0, p=1.05, U=7400.0, mfp=4e-3, m_bar=4.81e-26)   # about 80 km
+M = FS.U / math.sqrt(1.4 * 287.05 * FS.T)
+
+@pytest.fixture(scope="module")
+def air():
+    return EquilibriumAir()
+
+@pytest.fixture(scope="module")
+def field(air):
+    return ShockLayerField.build(FS, R, R0, ShockLayerSettings(), air=air)
+
+def test_billig_formulas():
+    assert billig_standoff(R, M) == pytest.approx(R * 0.143 * math.exp(3.24 / M**2))
+    assert billig_vertex_radius(R, M) == pytest.approx(R * 1.143 * math.exp(0.54 / (M - 1) ** 1.2))
+    s = ShockShape(R, M, billig_standoff(R, M))
+    assert s.x_s(0.0) == pytest.approx(R + billig_standoff(R, M))
+    for phi in np.radians([0, 45, 89]):
+        assert s.inside(R * math.cos(phi), R * math.sin(phi))
+
+def test_normal_jump_then_compression_gives_stagnation(air):
+    stag = air.stagnation(FS.rho, FS.T, FS.U)
+    ps = oblique_jump(air, FS, math.pi / 2)
+    assert ps.w_t == pytest.approx(0.0, abs=1e-6)
+    assert ps.p < stag.p and ps.p == pytest.approx(stag.p, rel=0.05)     # compression to rest adds a few percent
+    from reentry_model.gas import AIR
+    from scipy.optimize import brentq
+    h0 = ps.h + 0.5 * ps.w_n**2
+    def res(lp):
+        air.gas.SPX = ps.s, math.exp(lp), AIR; air.gas.equilibrate("SP")
+        return air.gas.enthalpy_mass - h0
+    p0 = math.exp(brentq(res, math.log(ps.p), math.log(2 * ps.p)))
+    assert p0 == pytest.approx(stag.p, rel=0.005)
+
+def test_oblique_tangential_preserved_and_weak_limit(air):
+    beta = math.asin(1 / M)
+    ps = oblique_jump(air, FS, math.radians(60))
+    assert ps.w_t == pytest.approx(FS.U * math.cos(math.radians(60)))
+    weak = oblique_jump(air, FS, beta + math.radians(0.5))
+    assert weak.rho / FS.rho == pytest.approx(1.0, rel=0.05)
+
+@pytest.mark.parametrize("eps", [0.05, 0.1, 0.2])
+def test_lighthill_conditions_and_standoff(eps):
+    L = lighthill(eps, 1.0, 1.0)
+    g = lambda r: L.A * r**2 + L.B / r + L.K * r**4
+    dg = lambda r: 2 * L.A * r - L.B / r**2 + 4 * L.K * r**3
+    assert g(1.0) == pytest.approx(0.0, abs=1e-12)
+    assert g(L.R_s) == pytest.approx(-0.5 * eps * L.R_s**2, rel=1e-10)
+    assert dg(L.R_s) == pytest.approx(-L.R_s, rel=1e-10)
+    assert (L.R_s - 1.0) / L.R_s == pytest.approx(lighthill_standoff_approx(eps), rel=0.10)
+    ur, uphi = L.velocity(1.0, math.radians(30))
+    assert ur == pytest.approx(0.0, abs=1e-12)                       # body is a streamline
+
+def test_field_stagnation_body_shock(field, air):
+    stag = air.stagnation(FS.rho, FS.T, FS.U)
+    s = field.state(R + 1e-9, 0.0)
+    assert s.p == pytest.approx(stag.p, rel=0.01) and s.T == pytest.approx(stag.T, rel=0.01)
+    assert abs(s.w_x) < 1.0 and abs(s.w_y) < 1.0 and s.weight == pytest.approx(1.0)
+    phi = math.radians(50); ex, ey = math.cos(phi), math.sin(phi)
+    b = field.state(R * ex * (1 + 1e-9), R * ey * (1 + 1e-9))
+    assert abs(b.w_x * ex + b.w_y * ey) < 1e-3 * FS.U                 # no flow through the body
+    stag_p = stag.p
+    assert b.p == pytest.approx(FS.p + (stag_p - FS.p) * math.cos(phi)**2, rel=0.01)
+
+def test_mass_flux_through_layer(field):
+    for phi_deg in (30, 60):
+        phi = math.radians(phi_deg); rs = field.shape.r_s(phi)
+        r = np.linspace(R, rs, 400); flux = 0.0
+        for a, b in zip(r[:-1], r[1:]):
+            rm = 0.5 * (a + b); st = field.state(rm * math.cos(phi), rm * math.sin(phi))
+            u_phi = -st.w_x * math.sin(phi) + st.w_y * math.cos(phi)
+            flux += st.rho * abs(u_phi) * 2 * math.pi * rm * math.sin(phi) * (b - a)
+        ys = rs * math.sin(phi)
+        assert flux == pytest.approx(math.pi * ys**2 * FS.rho * FS.U, rel=0.25)
+
+def test_outside_is_ambient_and_edges_are_continuous(field):
+    x_far = field.shape.x_s(0.0) + 20 * FS.mfp
+    assert field.state(x_far, 0.0).weight == 0.0
+    assert field.state(-1.01 * R0, 0.5 * R).weight == 0.0
+    ws = [field.state(x, 1.2 * R).weight for x in np.linspace(0.05, -0.05, 41)]   # across the base plane
+    assert max(abs(a - b) for a, b in zip(ws[:-1], ws[1:])) < 0.05
+    xs = field.shape.x_s(0.0); d = FS.mfp * 3
+    ws = [field.state(x, 0.0).weight for x in np.linspace(xs - 2 * d, xs + 2 * d, 81)]
+    assert max(abs(a - b) for a, b in zip(ws[:-1], ws[1:])) < 0.1
+
+def test_pressure_gradient_matches_finite_difference_and_points_to_body(field):
+    x, y, h = R + 0.3 * field.standoff, 0.2, 1e-5
+    gx, gy = field.excess_pressure_gradient(x, y)
+    pe = lambda x, y: (lambda s: s.weight * (s.p - FS.p))(field.state(x, y))
+    assert gx == pytest.approx((pe(x + h, y) - pe(x - h, y)) / (2 * h), rel=1e-3)
+    assert gy == pytest.approx((pe(x, y + h) - pe(x, y - h)) / (2 * h), rel=1e-3, abs=1e-6)
+    assert field.excess_pressure_gradient(R + 0.5 * field.standoff, 0.0)[0] < 0   # pressure rises towards the body
+
+def test_no_altitude_argument():
+    import inspect
+    assert not any("alt" in p or p in ("h", "h_km") for p in inspect.signature(ShockLayerField.build).parameters)
+```
+
+  and in `tests/test_rarefied_follower.py` (uses the session `twin`; 90 km is inside its range):
+
+```python
+import math, numpy as np, pytest
+from reentry_model import aero
+from reentry_model.droplet_reentry import particle_trajectory as pt
+from reentry_model.wake_residence.adapters import (WakeAtmosphere, rarefied_sphere_simulator, dense_solve,
+    parent_collision_event, shock_layer_exit, release_state)
+from reentry_model.wake_residence.overlap import Plume
+from reentry_model.wake_residence.laws import LawSettings
+from reentry_model.wake_residence.shock_layer import ShockLayerSettings, ShockLayerField, FreeStream
+from reentry_model.wake_residence.affix import release_offset
+
+def _setup(twin, h_km=90.0, theta=180.0, dv=0.0, settings=ShockLayerSettings(), d=1e-4, clearance=0.0):
+    # build: t_r = twin.t_at_altitude(h_km); FreeStream from the twin's flow at t_r; field; WakeAtmosphere with the
+    # field and mode "off"; initial state at P(t_r) + release_offset(theta, D1, v_hat, up) * (1 + clearance / R)
+    # with the parent's velocity plus dv * v_hat; returns (sim, wake_atmosphere, field, t_r)
+    ...
+
+def test_drag_is_the_composed_law_and_finite_at_zero_relative_speed(twin):
+    sim, wa, field, t_r = _setup(twin, settings=ShockLayerSettings(pressure_gradient=False))
+    y0 = sim.initial_state_vector()
+    a = sim.aero_state(0.0, y0[:3], y0[3:])
+    assert np.all(np.isfinite(a.a_drag))
+    fs = a.freestream
+    cd = pt.drag_coefficient(a.V, fs.rho, fs.T, fs.p, 1e-4, temperature_ratio=300.0 / fs.T)
+    mass = 2813.0 * math.pi * 1e-12 / 6
+    assert np.allclose(a.a_drag, -0.5 * fs.rho * a.V * a.v_rel * cd * math.pi * 0.25e-8 / mass, rtol=1e-9)
+
+def test_stagnation_release_moves_forward_relative_to_parent(twin):
+    sim, wa, field, t_r = _setup(twin)
+    run = dense_solve(sim, 0.2, events=[parent_collision_event(wa, field.shape.R)])
+    x0, _, _, _ = wa.parent_frame(0.0, run.sol.sol(0.0)[:3])
+    x1, _, _, _ = wa.parent_frame(0.2, run.sol.sol(0.2)[:3])
+    assert x1 > x0 + 1e-3                                # the parent decelerates more than the follower
+
+def test_follower_thrown_at_the_parent_hits_it(twin):
+    sim, wa, field, t_r = _setup(twin, dv=-50.0, clearance=1e-3)
+    run = dense_solve(sim, 1.0, events=[parent_collision_event(wa, field.shape.R)])
+    assert shock_layer_exit(run, wa, field, hit=run.end_reason == "event").kind == "hit_parent"
+
+def test_grid_halving_changes_exit_time_by_under_one_percent(twin):
+    fine = ShockLayerSettings(n_phi=181, n_eta=41)
+    t = []
+    for s in (ShockLayerSettings(), fine):
+        sim, wa, field, t_r = _setup(twin, theta=150.0, settings=s)
+        run = dense_solve(sim, 20.0, events=[parent_collision_event(wa, field.shape.R)])
+        t.append(shock_layer_exit(run, wa, field).t)
+    assert t[1] == pytest.approx(t[0], rel=0.01)
+```
+
+  (The exact `dense_solve` end-reason string for an event follows Task 5's `DenseRun.end_reason`; use it.)
+
+- [ ] **Step 2: Run them to confirm they fail.** Run: `"$PY" -m pytest reentry_model/wake_residence/tests/test_shock_layer.py reentry_model/wake_residence/tests/test_rarefied_follower.py -q`. Expected: ImportError.
+- [ ] **Step 3: Implement `shock_layer.py`**, then the `adapters.py` additions. Compute the field on the (phi, eta) grid
+  with phi from 0 to 90 degrees; at phi = 0 use the axis limit. For y > 0 the frame's e_y is the lateral unit vector;
+  on the axis w_y = 0 by symmetry. Report in the commit message and the task report: epsilon, Lighthill's and
+  Billig's standoffs at 80 km, the build time of one field, and the wall time of the 20 s follower run.
+- [ ] **Step 4: Run them to confirm they pass**, then `"$PY" -m pytest reentry_model/wake_residence -q` (the Task 6
+  WakeAtmosphere tests must pass unchanged).
+- [ ] **Step 5: Commit**
+
+```bash
+git add reentry_model/wake_residence/shock_layer.py reentry_model/wake_residence/adapters.py \
+  reentry_model/wake_residence/tests/test_shock_layer.py reentry_model/wake_residence/tests/test_rarefied_follower.py
+git commit -m "wake_residence: the parent's shock-layer flow (Billig shape with a Lighthill standoff, equilibrium oblique-shock and Newtonian surface states, Lighthill nose velocities) fed to rarefied followers through WakeAtmosphere, with the composed drag law, a pressure-gradient force and the parent as an obstacle"
+```
+
+---
+
 ### Task 8: Scenarios, run names and case output
 
 **Files:**
@@ -836,26 +1089,47 @@ git commit -m "wake_residence: Register et al. (2020) release classifier -- trap
 - Modify: `reentry_model/wake_residence/adapters.py` (add `state_from_ecef`)
 
 **Interfaces:**
-- Consumes: everything above (Tasks 1-7, and the 6b front-plane change: `ResidenceResult.reason` values include
+- Consumes: everything above (Tasks 1-7b, and the 6b front-plane change: `ResidenceResult.reason` values include
   `reached_parent` and `ahead_of_parent`; `ExitState.through`); `droplet_reentry.model.DropletSimulator`, `weber`,
-  `WE_CRIT`, `T_RELEASE`, `VOLATILE`; `wake_column.run._git_commit`, `_git_dirty`; `affix.*`.
+  `WE_CRIT`, `T_RELEASE`, `VOLATILE`; `wake_column.run._git_commit`, `_git_dirty`; `affix.*`; Task 7b's
+  `ShockLayerSettings`, `FreeStream`, `ShockLayerField`, `WakeAtmosphere(..., shock_layer=)`,
+  `rarefied_sphere_simulator`, `parent_collision_event`, `shock_layer_exit`.
 - Produces:
   - In `adapters.py`: `state_from_ecef(r, v, epoch) -> InitialState` (geodetic position and flight angles from an
     Earth-fixed position and velocity; `release_state` should call it).
   - `@dataclass(frozen=True) ScenarioSettings(law: LawSettings = LawSettings(), bound="low", wake_flow="off",
     density=2813.0, frontal_area=6.215, beta_scale=1.0, k_E=1.0, t_max=600.0, scan_dt=None,
-    affix: AffixSettings = AffixSettings())`.
+    affix: AffixSettings = AffixSettings(), kn_free_molecular=10.0,
+    shock: ShockLayerSettings = ShockLayerSettings())`.
+  - `follower_regime(kn_f, kn_continuum, kn_free_molecular) -> str` — `continuum` / `transitional` /
+    `free_molecular` (§4.3c), and `AFFIX_STATUS = {"continuum": "governing", "transitional": "indicative",
+    "free_molecular": "not_applicable"}`.
   - `run_name(kind, d_mm, h_km, settings, droplet_d_um=None, release="far_wake", theta_deg=None) -> str` — e.g.
-    `sphere_d0050.0mm_h080.0km_farwake_low_both_taylor`, or `..._escape_th160.0_...` for escape releases (the
-    far-wake run name has no theta: one run serves every far-wake theta), or `droplet_s0050.0mm_d0100.0um_h080.0km_...`;
-    plus `_<field><value>` for each `LawSettings.non_default()` entry and each non-default `ScenarioSettings`
-    field (including non-default `AffixSettings` fields), in sorted order.
+    `sphere_d0050.0mm_h080.0km_farwake_low_both_taylor`, or `..._escape_th160.0_...` for escape releases, or
+    `..._surface_th160.0_...` for rarefied followers (the far-wake run name has no theta: one run serves every
+    far-wake theta), or `droplet_s0050.0mm_d0100.0um_h080.0km_...`; plus `_<field><value>` for each
+    `LawSettings.non_default()` entry and each non-default `ScenarioSettings` field (including non-default
+    `AffixSettings` and `ShockLayerSettings` fields), in sorted order.
   - `@dataclass CaseResult(name, config: dict, residence: ResidenceResult | None, summary: dict, history: list[dict])`.
   - `classify_release(d_mm, h_km, theta_deg, twin, settings) -> AffixResult` — the parent's EmissionState at the
     twin's release time, the sphere density, the parent mass at that altitude (`twin.beta.mass_at`), D1 = equal-area
     diameter.
   - `sphere_in_spacecraft_plume(d_mm, h_km, theta_deg=90.0, settings=ScenarioSettings(), twin=None) -> CaseResult`.
-    Raises ValueError unless 90 <= theta_deg <= 180 (windward only, Asha). Classify first. Then:
+    Raises ValueError unless 90 <= theta_deg <= 180 (windward only, Asha). Order (§4.3c):
+    1. Parent regime from `laws.classify` at t_r: `rarefied` or `too_slow` → no integration, `residence=None`, reason
+       `rarefied_no_law` / `too_slow_no_law`.
+    2. Build the shock-layer field from the parent's free stream at t_r (`FreeStream` from the twin's flow arrays;
+       R = D1/2, r0). Kn_f = `aero.mean_free_path(rho, m_bar)` of `field.surface_state(theta)` / d; follower regime
+       from `follower_regime(Kn_f, settings.affix.kn_continuum, settings.kn_free_molecular)`. Classify with AFFIx
+       in every case and record `affix_status = AFFIX_STATUS[regime]`.
+    3. Rarefied follower (transitional or free_molecular): release kind `surface`, position P(t_r) +
+       `release_offset(theta, D1, v_hat, up)`, velocity = parent velocity; integrate
+       `rarefied_sphere_simulator(..., wall_T_K=settings.shock.follower_wall_T_K,
+       pressure_gradient=settings.shock.pressure_gradient)` through `WakeAtmosphere(..., mode=settings.wake_flow,
+       shock_layer=field)` with `events=[parent_collision_event(wa, D1/2)]`; then `shock_layer_exit`, and
+       `residence(...)` as for the other kinds (reason `hit_parent` when the collision event ended the run; AFFIx's
+       zone does not change what is integrated). Transitional: flag `transitional_follower`.
+    4. Continuum follower: the AFFIx branches below, exactly as before (no shock-layer field in its WakeAtmosphere):
     - `far_wake`: release position P(t_r) + `far_wake_offset(D1, v_hat)`, velocity = parent velocity at t_r;
     - `escape`: release position P(t_r) + `release_offset(theta, D1, v_hat, up)` with `up` the local geodetic up at
       P(t_r), velocity = parent velocity;
@@ -871,10 +1145,18 @@ git commit -m "wake_residence: Register et al. (2020) release classifier -- trap
     integration's end time on the parent clock and its end reason — Task 3 ruling: a censored case reports when it
     ended), exit altitude/speed/lag/distance/r_b/s/through, regimes and laws at release and exit, Kn/Re/P at
     release, every plume flag, interp_error_m, sphere and parent ballistic coefficients at release, parent sha256,
-    git_commit, git_dirty.
+    git_commit, git_dirty. Added by §4.3c-d: `kn_f_release` (shock-layer surface gas), `kn_f_free_stream` (the same
+    follower in the parent's free stream, for comparison), `kn_f_exit` (the WakeAtmosphere gas at exit or end),
+    `follower_regime`, `affix_status`, `release_kind`, `t_first_entry`, `first_interval`, `total_inside`; and for
+    surface releases `shock_layer_exit`, `t_shock_layer_exit`, `x_exit_parent_frame`, `y_exit_parent_frame`,
+    `v_rel_shock_layer_exit`, `hit_theta_deg` (NaN unless hit), `epsilon`, `standoff_m`, `standoff_billig_m`, `mach`,
+    `a_p_max`, `a_drag_max_shock_layer`, `q_change`, `cd_composed_release`, `cd_sesam_release`,
+    `field_build_time_s`, and the flags `mach_outside_billig`, `shock_layer_nonequilibrium`, `transitional_follower`,
+    `q_change_large`.
   - Summary keys the tests read: `reason`, `residence_time`, `parent_sha256`, `git_commit`, `git_dirty`,
     `regime_at_release`, `regime_at_exit`, `kn_at_release`, `re_at_release`, `p_at_release`, `affix_zone`, `t_fz`,
-    `follower_t_end`. History keys: `t`, `follower_x/y/z`, `parent_x/y/z` (parent position at the same t), `lag_m`,
+    `follower_t_end`, `follower_regime`, `affix_status`, `release_kind`, `kn_f_release`, `kn_f_free_stream`,
+    `shock_layer_exit`. History keys: `t`, `follower_x/y/z`, `parent_x/y/z` (parent position at the same t), `lag_m`,
     `distance_m`, `r_b`, `margin`, `regime`.
   - `droplet_in_sphere_plume(sphere_d_mm, h_km, droplet_d_um, settings=ScenarioSettings(), twin=None) -> CaseResult`
     — sphere released from the twin at h_km at the far-wake start, integrated with `wake_flow="off"`; parent Track
@@ -915,8 +1197,28 @@ def test_far_wake_case_runs_and_writes(twin, tmp_path):
                           h[0]["follower_z"] - h[0]["parent_z"]])
     assert gap == pytest.approx(2 * 2 * math.sqrt(6.215 / math.pi), rel=1e-6)
 
+def test_follower_regime_thresholds():
+    from reentry_model.wake_residence.scenarios import follower_regime, AFFIX_STATUS
+    assert [follower_regime(k, 0.01, 10.0) for k in (0.005, 0.5, 10.0)] == ["continuum", "transitional",
+                                                                             "free_molecular"]
+    assert [AFFIX_STATUS[r] for r in ("continuum", "transitional", "free_molecular")] == [
+        "governing", "indicative", "not_applicable"]
+
+def test_rarefied_follower_starts_on_the_surface_and_reports_the_shock_layer(twin):
+    c = sphere_in_spacecraft_plume(1, 90, 150.0, twin=twin)
+    s = c.summary
+    assert s["follower_regime"] in ("transitional", "free_molecular") and s["release_kind"] == "surface"
+    assert s["affix_status"] in ("indicative", "not_applicable")
+    assert s["kn_f_release"] < s["kn_f_free_stream"]                     # the shock-layer gas is denser
+    assert s["shock_layer_exit"] in ("through_shock", "past_base_plane", "hit_parent", "inside_at_end")
+    h = c.history
+    gap = np.linalg.norm([h[0]["follower_x"] - h[0]["parent_x"], h[0]["follower_y"] - h[0]["parent_y"],
+                          h[0]["follower_z"] - h[0]["parent_z"]])
+    assert gap == pytest.approx(math.sqrt(6.215 / math.pi), rel=1e-6)   # on the surface, D1/2 from the centroid
+
 def test_escape_and_shock_band_and_windward_limit(twin):
     esc = sphere_in_spacecraft_plume(10, 60, 180.0, twin=twin)
+    assert esc.summary["follower_regime"] == "continuum" and esc.summary["affix_status"] == "governing"
     assert esc.summary["affix_zone"] == "escape" and esc.summary["residence_time"] < 0.05
     tb = classify_release(10, 60, 90.0, twin, ScenarioSettings()).theta_bif
     band = sphere_in_spacecraft_plume(10, 60, tb, twin=twin)
@@ -946,7 +1248,7 @@ def test_droplet_in_sphere_plume_worked_examples(twin):
 ```bash
 git add reentry_model/wake_residence/scenarios.py reentry_model/wake_residence/adapters.py \
   reentry_model/wake_residence/tests/test_scenarios.py
-git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume released by the AFFIx outcome (far wake on the axis two parent diameters behind, escape at the windward surface point) and a molten droplet in a solid sphere's plume, with configuration-encoding run names and case output"
+git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume, released by the follower's own regime (continuum: the AFFIx outcome, far wake on the axis two parent diameters behind or escape at the windward surface point; rarefied: the surface point, integrated through the shock layer) and a molten droplet in a solid sphere's plume, with configuration-encoding run names and case output"
 ```
 
 ---
@@ -965,16 +1267,21 @@ git commit -m "wake_residence: scenarios -- sphere in the spacecraft's plume rel
     (default `100 90 80 70 60 50` km; any outside the twin's range is dropped with a printed message), `--thetas`
     (default `90 120 135 145 160 180` degrees), `--bounds` (default `low high`), `--wake-flow` (default `off both`),
     `--workers` (default CPU count less one), `--out` (default `wake_residence.OUTPUT`). For each (diameter,
-    altitude, theta) classify; integrate the far-wake run once per (diameter, altitude, bound, wake_flow) and reuse
-    it for every far-wake theta; integrate escape runs per theta; do not integrate shock-band cases. Resumable: a
+    altitude, theta) decide the follower regime and classify; for continuum followers integrate the far-wake run
+    once per (diameter, altitude, bound, wake_flow) and reuse it for every far-wake theta, integrate escape runs per
+    theta, and do not integrate shock-band cases; integrate rarefied followers per theta from the surface (§4.3d);
+    print the count of continuum, transitional and free-molecular followers per altitude. Resumable: a
     run whose JSON exists is skipped. A case that raises is reported at the end without stopping the rest. Writes
     `<out>/summary.csv` — one row per (diameter, altitude, theta, bound, wake_flow), sorted in that order, joining
     the classification with the run that serves it — and `<out>/crossover.csv` (per altitude and wake_flow, from the
     far-wake runs: the largest diameter with positive lag behind the parent at 1 s after release and the smallest
     with negative lag — the crossover bracket).
   - `sensitivity.main(argv=None)` — the §4.6 set at theta = 90 (far wake) (spheres 10, 50, 200 mm at 80 and 60 km;
-    each variation one at a time against the baseline), `<out>/sensitivity.csv` with columns case, parameter, value,
-    bound, residence_time, change_vs_baseline.
+    each variation one at a time against the baseline), plus the rarefied set of §4.6 (10 mm at 90 km, theta 180 and
+    120: `shock_standoff="billig"`, `pressure_gradient=False`, `follower_wall_T_K=1000`, `shock_thickness_mfp` 1 and
+    10; if 10 mm is continuum there, use the largest default diameter that is rarefied and say so),
+    `<out>/sensitivity.csv` with columns case, parameter, value, bound, residence_time, change_vs_baseline,
+    shock_layer_exit, t_shock_layer_exit.
   - `tables.main(argv=None)` — writes:
     - `<out>/plume_size.csv` (for the twin's state at each default release altitude: regime, Kn, Re_d, P, and r_b
       low/high at s = 10, 100, 1000, 3000, 10000, 30000 m with time since passage s/U);
@@ -1031,8 +1338,9 @@ per-case JSON only.)
 - [ ] **Step 5: Run the real thing** (in the background; report wall time and any failed case):
   `"$PY" -m reentry_model.wake_residence.analysis.tables`, then `... .sweep`, then `... .sensitivity`.
   Expected: `summary.csv` with 8 × 6 × 6 × 2 × 2 = 1152 rows less any dropped altitudes; report to the controller
-  the twin-vs-DRAMA figures, the regime at each release altitude, the AFFIx zone counts, the drag-ratio check, the
-  wake-gas sanity values and the crossover brackets.
+  the twin-vs-DRAMA figures, the regime at each release altitude, the AFFIx zone counts, the follower-regime counts,
+  the shock-layer outcome counts for rarefied followers, the drag-ratio check, the wake-gas sanity values and the
+  crossover brackets.
 - [ ] **Step 6: Commit** (code and tests only; outputs are git-ignored)
 
 ```bash
@@ -1060,7 +1368,10 @@ git commit -m "wake_residence: resumable sweep over diameter, altitude and relea
   on), `residence_map.png` (far-wake residence time over diameter × altitude, one panel per wake_flow, low–high
   shown as two panels or as hatching where they differ, censored, reached-parent, ahead-of-parent and no-law cases
   marked), `affix_zones.png` (zone over diameter × release angle with theta_bif drawn, one panel per altitude only
-  if the validity flags differ by altitude, otherwise one panel). Prints how many runs it found.
+  if the validity flags differ by altitude, otherwise one panel), and `shock_layer_paths_<h>km.png` for each
+  altitude with rarefied followers (their paths in the parent frame, x forward against y from the axis, over the
+  first second or to the shock-layer exit if later, with the body circle and the shock curve drawn and the exit kind
+  in the legend; skipped with a printed note where there are none). Prints how many runs it found.
 
 - [ ] **Step 1: Write the failing test** (append to `tests/test_analysis.py`):
 
@@ -1071,7 +1382,7 @@ def test_plots_are_written_from_a_short_sweep(tmp_path):
     sweep.main(ARGS + ["--out", str(tmp_path)]); tables.main(["--out", str(tmp_path)])
     plots.main(["--out", str(tmp_path)])
     for name in ("plume_size.png", "residence_map.png", "margin_60km.png", "trajectories_60km.png",
-                 "affix_zones.png"):
+                 "affix_zones.png"):          # ARGS has no rarefied follower, so no shock_layer_paths plot here
         assert (tmp_path / "plots" / name).stat().st_size > 0
 ```
 
@@ -1108,8 +1419,13 @@ git commit -m "wake_residence: plots of plume size, trajectories, distance-to-tr
   front plane with the `reached_parent` / `ahead_of_parent` labels; the wake gas model, its well-mixed temperature,
   the density relative to the local ambient, and the drag-ratio check against Register's 0.14; the AFFIx release
   classifier, the windward-only release angles, the far-wake start two parent diameters behind (Asha's estimate from
-  Register et al.) and the extrapolation below r = 1/16; the non-goals (no melting of the sphere, no integrated
-  shock forces, no plume drift); the measured cost of a wake run.
+  Register et al.) and the extrapolation below r = 1/16; the follower-regime gate (Kn from the shock-layer surface
+  gas); the shock-layer field of §4.3d item by item (Billig shape, Lighthill standoff and nose velocities, equilibrium
+  oblique jump, Newtonian surface state, linear interpolation across the layer, frozen free stream, smoothing, the
+  composed drag law with the 300 K wall, the pressure-gradient force, the parent as an obstacle) with the measured
+  epsilon, standoffs and field build time from Task 7b; the non-goals (no melting of the sphere, no integrated
+  shock forces on continuum followers, no plume drift, no shock-layer path for droplets); the measured cost of a
+  wake run.
 - [ ] **Step 2: Add the README and CLAUDE.md sections.**
 - [ ] **Step 3: Run the whole unit tier.** `"$PY" -m pytest -m "not reference" -q`. Expected: all pass (report the
   count and wall time).
