@@ -4,7 +4,7 @@ import math, numpy as np, pytest
 from reentry_model import aero
 from reentry_model.gas import EquilibriumAir
 from reentry_model.parent_follower_separation_interactions.shock_layer import (ShockLayerSettings, FreeStream, oblique_jump, lighthill,
-    lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField, newtonian_prandtl_meyer)
+    lighthill_standoff_approx, billig_standoff, billig_vertex_radius, ShockShape, ShockLayerField, newtonian_prandtl_meyer, FLUX_TOL)
 
 R, R0 = 1.4065, 1.4065
 FS = FreeStream(rho=1.85e-5, T=199.0, p=1.05, U=7400.0, mfp=4e-3, m_bar=4.81e-26)   # about 80 km
@@ -222,3 +222,27 @@ def test_modified_newtonian_keeps_the_previous_surface_state_and_thins_the_shoul
     assert math.isnan(old.surface_match_phi_deg) and old.shoulder_pressure_ratio == pytest.approx(1.0, rel=1e-6)
     kn = lambda f: aero.mean_free_path(f.surface_state(90.0).rho, f.surface_state(90.0).m_bar)
     assert kn(old) / kn(field) > 10.0
+
+
+# ---- fix round 1: the flux-matched shock must not land on the shoulder's wrong branch ----
+
+R_TWIN = 1.4065190871908775     # the twin's equal-area radius, m
+TWIN_STREAMS = {                # the twin's release free stream where the first Newtonian-Prandtl-Meyer build failed
+    70: FreeStream(rho=8.282864467267134e-05, T=219.5848218170719, p=5.220896347309677, U=6842.024387673736,
+                   mfp=0.0009810304406688902, m_bar=4.8096517740629043e-26),
+    72: FreeStream(rho=6.237318190008517e-05, T=214.262751201073, p=3.8362488895719276, U=7093.80209580605,
+                   mfp=0.0013027621633728197, m_bar=4.8096517740629043e-26),
+    87: FreeStream(rho=5.823870335383377e-06, T=186.8673, p=0.31258581102689037, U=7777.415486264617,
+                   mfp=0.013952477769534087, m_bar=4.8096517740629043e-26),
+    94: FreeStream(rho=1.6699132579181645e-06, T=187.73580281240837, p=0.09055939353148428, U=7866.398344399675,
+                   mfp=0.04865966588523294, m_bar=4.8096517740629043e-26)}
+
+@pytest.mark.parametrize("h_km", sorted(TWIN_STREAMS))
+def test_flux_matched_shock_converges_with_a_falling_shock_angle_at_the_twins_failing_free_streams(air, h_km):
+    # Billig's distances carry up to 3 times too much gas here (shoulder gap 0.78 m against 0.27 m); Gauss-Newton from
+    # there ended on a shape whose last knot ran away (shock angle 24 degrees at 85 and 77 at 90 degrees, mismatch 0.28)
+    f = ShockLayerField.build(TWIN_STREAMS[h_km], R_TWIN, R_TWIN, ShockLayerSettings(), air=air)
+    assert f.flux_mismatch < FLUX_TOL and not f.flags["flux_mismatch_above_tol"]
+    phi = f._phi
+    sig = np.array([f.shape.sigma(f.shape.r_s(p) * math.sin(p)) for p in phi])
+    assert np.all(np.diff(sig) <= 2e-3)          # rad; the wrong branch jumped by about 1 rad

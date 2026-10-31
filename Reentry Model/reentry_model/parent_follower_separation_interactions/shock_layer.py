@@ -14,7 +14,8 @@ The model, piece by piece (each named in the spec as an assumption):
     the vertex radius R_c = R 1.143 exp(0.54 / (M - 1)^1.2) and beta = arcsin(1/M). The standoff Delta is Lighthill's
     (default, at the equilibrium density ratio epsilon across the normal shock) or Billig's R 0.143 exp(3.24 / M^2)
     (`ShockLayerSettings.shock_standoff`). Billig's fit covers Mach 2 to about 25 (`flags`). This is the
-    `shock_shape="billig"` sensitivity case and the start of the flux-matching iteration.
+    `shock_shape="billig"` sensitivity case and, through the shock angles it implies, the start of the flux-matching
+    iteration (each ray's distance balanced alone at Billig's angle, `_balanced_distances`).
   * Flux-matched shock (`shock_shape="flux_matched"`, the default; Asha's option 2): Billig's perfect-gas curvature
     with the equilibrium standoff carried 27 to 73 percent too much gas through the layer, so ahead of the base plane
     the shock distance r_s(phi) on every grid ray is set by mass balance: the layer flux, the integral of
@@ -26,8 +27,9 @@ The model, piece by piece (each named in the spec as an assumption):
     with post-shock states from a table of oblique jumps during the iteration and exact jumps for the final field
     (`ShockLayerField._flux_match` says why the plain fixed point of the spec was replaced). The shock angle is
     floored at the Mach angle; behind the base plane the slope relaxes towards the Mach angle (`FluxMatchedShape`).
-    `flux_mismatch` (the largest relative mismatch on the grid rays from 10 to 90 degrees; 0.7 percent at 80 km,
-    spec limit 2 percent, `flags["flux_mismatch_above_tol"]` above it) and `flux_iterations` record the result.
+    `flux_mismatch` (the largest relative mismatch on the grid rays from 10 to 90 degrees; 0.4 percent at 80 km and at
+    most 1.5 percent from 48 to 96 km, spec limit 2 percent, `flags["flux_mismatch_above_tol"]` above it) and
+    `flux_iterations` record the result.
   * Just behind the shock: equilibrium Rankine-Hugoniot on the normal component U sin(sigma) of the free stream, sigma
     the local shock angle from the slope of x_s, by the damped fixed point of `gas.EquilibriumAir.stagnation`; the
     tangential component U cos(sigma) is unchanged (`oblique_jump`).
@@ -656,10 +658,10 @@ class ShockLayerField:
         unit = [CubicSpline(*_mirrored(knots, eye[k])) for k in range(m)]
         B = np.column_stack([u(phi) for u in unit])             # ray values from knot values
         Bd = np.column_stack([u(phi, 1) for u in unit])         # ray slopes from knot values
-        q = np.interp(knots, phi, r_s)                          # start: Billig's shape at the knots
-        q[0] = self.R + self.standoff
         jumps = _JumpTable(self._air, fs)
         weights = _MolecularWeightTable(self._air, 1.05 * stag.T, 0.5 * fs.p, 1.05 * stag.p, self._equilibrate)
+        q = np.interp(knots, phi, self._balanced_distances(r_s, jumps, weights))    # start: each ray balanced alone
+        q[0] = self.R + self.standoff
         beta = math.asin(1.0 / self.mach)
         c, s = np.cos(phi), np.sin(phi)
         off_axis = phi > 0.0
@@ -708,6 +710,36 @@ class ShockLayerField:
             self.flux_iterations += 1
         self.shape = FluxMatchedShape(self.R, self.mach, self.standoff, knots, q)
         return B @ q
+
+    def _balanced_distances(self, r_s, jump, weights):
+        """Ray distances [m] at which each ray's layer flux balances its inflow, with the shock angle the shape `r_s`
+        (Billig's) has there: the start of the flux-matching iteration. With the profiles fixed in eta the balance
+        2 G (R I0 + G I1) = a (R + G)^2 (see `_flux_residuals`) is a quadratic in the gap G, and its positive root is
+        used (Billig's distance where there is none). Billig's own distances carry up to 3 times too much gas at
+        high Mach number (0.78 m against 0.27 m at the shoulder at 70 km); started there, the Gauss-Newton iteration
+        reached the shoulder only through shapes whose shock angle jumps from 24 to 77 degrees between 85 and 90
+        degrees (a flux mismatch of 0.28 at 70, 71, 72, 87 and 94 km, measured 2026-10-31). Requiring the shock
+        angle not to rise along phi did not rescue that start (the line search then found no step: mismatch 1.19 at
+        70 km) and is not a property of the solutions at low Mach number (3.7 at 48 km), so it is not imposed."""
+        R, fs = self.R, self.fs
+        billig = self.shape
+        out = np.array(r_s, float)
+        for i, ph in enumerate(self._phi):
+            if ph == 0.0:
+                continue
+            s = math.sin(ph)
+            ray = self._ray(i, billig.sigma(r_s[i] * s), jump, weights)
+            f = np.abs(-ray["w_x"] * s + ray["w_y"] * math.cos(ph)) * ray["rho"]
+            I0 = CubicSpline(self._eta, f).integrate(0.0, 1.0)
+            I1 = CubicSpline(self._eta, f * self._eta).integrate(0.0, 1.0)
+            a = fs.rho * fs.U * s
+            A, B = 2.0 * I1 - a, 2.0 * R * (I0 - a)
+            disc = B * B + 4.0 * A * a * R * R
+            roots = [g for g in ((-B + e * math.sqrt(disc)) / (2.0 * A) for e in (1.0, -1.0))
+                     if g > 0.0] if disc >= 0.0 and A != 0.0 else []
+            if roots:
+                out[i] = R + min(roots)
+        return out
 
     def _ray(self, i, sigma, jump, weights=None):
         """Profiles across the layer on ray i, {key: array over eta}, behind a shock of local angle sigma with the
