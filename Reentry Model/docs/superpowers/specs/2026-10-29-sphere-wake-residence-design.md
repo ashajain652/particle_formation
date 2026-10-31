@@ -507,7 +507,8 @@ local shock angle, which depends on the shape, so r_s(phi) is found iteratively,
 the chosen standoff, until the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. (Amended after
 Task 7b: a plain relaxed fixed point, solving each ray in turn, was unstable at the shoulder; the build uses a damped
 Gauss-Newton solve for r_s(phi) as a cubic spline with knots every 3 degrees, which keeps the slope continuous and
-reached a mismatch of 0.40 percent at 80 km in 10 iterations and 0.84 percent at 90 km in 13. A case that does not
+reached a mismatch of 0.40 percent at 80 km in 10 iterations and 0.84 percent at 90 km in 13 (with the
+Newtonian-Prandtl-Meyer surface pressure of 2026-10-30: 0.69 percent at 80 km in 11). A case that does not
 reach 2 percent is flagged `flux_mismatch_above_tol`, not refused.) On the axis the distance stays the chosen
 standoff (Lighthill's solution already conserves mass there). The shock angle may not fall below the Mach angle.
 Beyond the 90-degree ray (behind the base plane, where the field fades out over r0) the envelope is continued with

@@ -26,7 +26,7 @@ The model, piece by piece (each named in the spec as an assumption):
     with post-shock states from a table of oblique jumps during the iteration and exact jumps for the final field
     (`ShockLayerField._flux_match` says why the plain fixed point of the spec was replaced). The shock angle is
     floored at the Mach angle; behind the base plane the slope relaxes towards the Mach angle (`FluxMatchedShape`).
-    `flux_mismatch` (the largest relative mismatch on the grid rays from 10 to 90 degrees; 0.4 percent at 80 km,
+    `flux_mismatch` (the largest relative mismatch on the grid rays from 10 to 90 degrees; 0.7 percent at 80 km,
     spec limit 2 percent, `flags["flux_mismatch_above_tol"]` above it) and `flux_iterations` record the result.
   * Just behind the shock: equilibrium Rankine-Hugoniot on the normal component U sin(sigma) of the free stream, sigma
     the local shock angle from the slope of x_s, by the damped fixed point of `gas.EquilibriumAir.stagnation`; the
