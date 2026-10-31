@@ -503,12 +503,18 @@ the layer widen too fast away from the nose. So ahead of the base plane the shoc
 balance, as in classical thin-shock-layer theory: on every ray, the mass flux through the layer between the body and
 the shock, the integral of rho |u_phi| 2 pi r sin(phi) dr from R to r_s(phi), equals the free-stream flux through
 the shock disc of the same lateral radius, rho_inf U pi (r_s(phi) sin(phi))^2. The layer's profiles depend on the
-local shock angle, which depends on the shape, so r_s(phi) is found iteratively, starting from the Billig shape with
-the chosen standoff, until the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. (Amended after
+local shock angle, which depends on the shape, so r_s(phi) is found iteratively, starting on each ray from the
+distance that balances that ray alone behind a shock at Billig's local angle (amended 2026-10-31; Billig's own
+distances were the start before), until the flux mismatch is below 2 percent on every ray from 10 to 90 degrees. (Amended after
 Task 7b: a plain relaxed fixed point, solving each ray in turn, was unstable at the shoulder; the build uses a damped
 Gauss-Newton solve for r_s(phi) as a cubic spline with knots every 3 degrees, which keeps the slope continuous and
-reached a mismatch of 0.40 percent at 80 km in 10 iterations and 0.84 percent at 90 km in 13 (with the
-Newtonian-Prandtl-Meyer surface pressure of 2026-10-30 and the start of each ray balanced alone at Billig's angle, 2026-10-31: 0.44 percent at 80 km in 5 iterations, and at most 1.54 percent for the twin's release free streams at every km from 48 to 96). A case that does not
+reached a mismatch of 0.40 percent at 80 km in 10 iterations and 0.84 percent at 90 km in 13. Amended 2026-10-31:
+with the Newtonian-Prandtl-Meyer surface pressure, Billig's start, which carries up to three times too much gas at
+the shoulder, led the solve onto a second, high-angle branch of the shoulder's flux balance at 70, 71, 72, 87 and
+94 km (mismatch 28 to 31 percent); from the balanced start the mismatch is 0.44 percent at 80 km in 5 iterations and
+at most 1.54 percent for the twin's release free streams at every km from 48 to 96, under either surface pressure.
+The shock angle need not fall monotonically along phi at low Mach (it rises by 0.12 rad near the axis at 48 km,
+Mach 3.7). A case that does not
 reach 2 percent is flagged `flux_mismatch_above_tol`, not refused.) On the axis the distance stays the chosen
 standoff (Lighthill's solution already conserves mass there). The shock angle may not fall below the Mach angle.
 Beyond the 90-degree ray (behind the base plane, where the field fades out over r0) the envelope is continued with
