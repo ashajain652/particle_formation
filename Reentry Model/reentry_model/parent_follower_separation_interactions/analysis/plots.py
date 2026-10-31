@@ -595,7 +595,7 @@ def plot_shock_layer_paths(out, rows, h, bound, wake_flow):
         keep = hist["t_since_release"] <= max(PATH_WINDOW_S, t_exit if math.isfinite(t_exit) else 0.0)
         style = styles[thetas.index(r["theta_deg"]) % len(styles)]
         for ax in (ax_near, ax_far):
-            ax.plot(x[keep], y[keep], style, color=colors[r["diameter_mm"]], lw=1.2)
+            ax.plot(x[keep], y[keep], ls=style, color=colors[r["diameter_mm"]], lw=1.2)
             ax.plot([x[0]], [y[0]], ".", color=colors[r["diameter_mm"]], ms=4)
             if r["shock_layer_exit"] in EXIT_MARKER and math.isfinite(r["x_exit_parent_frame"]):
                 ax.plot([r["x_exit_parent_frame"]], [r["y_exit_parent_frame"]], EXIT_MARKER[r["shock_layer_exit"]],

@@ -549,3 +549,20 @@ def test_shock_curve_rebuild_failure_is_a_printed_note_not_an_exception(tmp_path
     assert plots.plot_shock_layer_paths(str(tmp_path), [row], 60.0, "low", "off") is not None
     assert "note: shock_layer_paths_60km.png: shock curve not drawn" in capsys.readouterr().out
     assert (tmp_path / "plots" / "shock_layer_paths_60km.png").stat().st_size > 0
+
+
+def test_shock_layer_paths_draw_all_six_default_release_angles(tmp_path):
+    # The fifth and sixth angles get dash-tuple line styles, which matplotlib rejects as a positional format string.
+    (tmp_path / "runs").mkdir()
+    rows = []
+    for theta in (90.0, 120.0, 135.0, 145.0, 160.0, 180.0):
+        name = f"ghost_surface_th{theta:g}"
+        with open(tmp_path / "runs" / f"{name}.csv", "w") as fh:
+            fh.write("t,t_since_release,follower_x,follower_y,follower_z,parent_x,parent_y,parent_z,lag_m,distance_m,r_b,margin,regime\n")
+            for i in range(5):
+                t = 0.1 * i
+                fh.write(f"{t},{t},{6.5e6 + 4000 * t + 1.4 - 3 * t},{0.1 * t},0,{6.5e6 + 4000 * t},0,0,0,1,1,0,turbulent\n")
+        rows.append(_row(name=name, theta_deg=theta, release_kind="surface", shock_layer_exit="through_shock",
+                         t_shock_layer_exit=0.2, x_exit_parent_frame=1.2, y_exit_parent_frame=0.5))
+    assert plots.plot_shock_layer_paths(str(tmp_path), rows, 60.0, "low", "off") is not None
+    assert (tmp_path / "plots" / "shock_layer_paths_60km.png").stat().st_size > 0
