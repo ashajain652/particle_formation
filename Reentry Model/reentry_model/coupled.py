@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import restart
 from . import trajectory as tj
 from .spray import RELEASE_ANGLE_COLUMNS
 from .surface_flow import KN_BODY_SHOCK
@@ -95,10 +96,16 @@ class CoupledSettings:
                                       # step of about 1e-17 s, a whole macro step of the skins over which the droplet-
                                       # momentum ratio read 5.5 and 8.6 (fact 179); the layered skins' (sub-plan 22 Task
                                       # 4), the element model keeping its loop, and that step, to the last bit
+    save_at: float = None             # s of flight: the run saves its whole state once, at the end of the first macro
+                                      # step ending at or after it, to save_path (`restart.save`; sub-plan 22 Task 5a)
+    save_path: str = None
+    save_meta: dict = None            # kept with the state: what made the run (the command line's arguments and name)
 
     def __post_init__(self):
         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
             raise ValueError("dt_continuum must be > 0 and no longer than dt, got {!r}".format(self.dt_continuum))
+        if self.save_at is not None and not (self.save_at > 0.0 and self.save_path):
+            raise ValueError("save_at must be > 0 and needs a save_path, got {!r} and {!r}".format(self.save_at, self.save_path))
 
 
 class CoupledRun:
@@ -110,6 +117,7 @@ class CoupledRun:
         if self.settings.frames_every and not self.settings.output_dir:
             raise ValueError("frames_every > 0 needs an output_dir")
         self.switched_at = self.switch_trigger = None              # the continuum switch: (t, Kn, altitude km), and why
+        self.state_saved_at = self.state_save_error = None        # the save's flight time [s], or why it failed (Task 5a)
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
@@ -138,14 +146,22 @@ class CoupledRun:
     def skins(self):
         return hasattr(self.body, "skin_stats")
 
-    def run(self):
+    def run(self, resume=None):
+        """Fly to the end, from the start or, with `resume` -- a state this run saved (`settings.save_at`), read back by
+        `restart.load` (sub-plan 22 Task 5a) -- from the end of the saved macro step: the history then starts with that
+        step's row, and the continuum switch, the frames' clock and the step count are the saved run's."""
         started = time.perf_counter()
         sim, body, s = self.sim, self.body, self.settings
-        self.switched_at = self.switch_trigger = None              # (t, Kn, altitude km) of the continuum switch, and why
-        self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
-        a, loads = self.loads_at(sim.t, sim.y)
-        rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
-        self._frame(step, sim.t, loads)
+        if resume is None:
+            self.switched_at = self.switch_trigger = None          # (t, Kn, altitude km) of the continuum switch, and why
+            self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
+            a, loads = self.loads_at(sim.t, sim.y)
+            rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
+            self._frame(step, sim.t, loads)
+        else:
+            if resume.get("format") != restart.FORMAT or resume.get("run") is not self:
+                raise ValueError("a run resumes only from a state of its own of format {}".format(restart.FORMAT))
+            rows, states, step = [dict(resume["row"])], [sim.y.copy()], resume["step"]
         while sim.end_reason is None:
             dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
             a, loads = self.loads_at(sim.t, sim.y)
@@ -159,6 +175,9 @@ class CoupledRun:
             self._frame(step, sim.t, loads)
             if (self.melting or self.skins) and body.demised():
                 sim.end_reason = "demise"
+            if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
+                    and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
+                self._save(step, rows[-1])
         self._collection()
         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
         history = tj.History(columns, np.array(states), sim.end_reason)
@@ -174,7 +193,22 @@ class CoupledRun:
                                     "dt_switch_altitude_km": h_sw})
             if s.switch_on_melt:                                   # what latched it: knudsen, melting or both at once
                 history.results["dt_switch_trigger"] = self.switch_trigger
+        if s.save_at is not None:
+            history.results.update({"state_saved_at_s": self.state_saved_at, "state_save_error": self.state_save_error})
         return history
+
+    def _save(self, step, row):
+        """Save the whole run once, at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a):
+        the run, the step, its row and flight time, numpy's global random state and `settings.save_meta`, by
+        `restart.save`, which alters nothing the run holds. A save that fails is recorded and the flight goes on: its
+        state is worth less than the flight."""
+        s = self.settings
+        try:
+            restart.save(s.save_path, {"format": restart.FORMAT, "run": self, "step": step, "row": row,
+                                       "time_s": float(self.sim.t), "rng": np.random.get_state(), "meta": s.save_meta})
+            self.state_saved_at = float(self.sim.t)
+        except Exception as exc:
+            self.state_save_error = "{}: {}".format(type(exc).__name__, exc)
 
     def _switch(self, t, a):
         """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
