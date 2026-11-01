@@ -1769,6 +1769,29 @@ git commit -m "Skins: the resolved sheared depth (spec 6.7 and 10.2) the straigh
    once a macro step takes 0.04–0.05 s on the 100 mm sphere's 9 417 columns, fact 171 -- nothing beside a melting
    macro step's hour of processor time. The flights also report the metal the fault tolerance holds in the skins and
    the deposit's fold, spec §12, and measure again the share of the flow at short wavelengths, spec §14 assumption 1.)
+   Where they run (Asha, 2026-10-31): every flight expected to take more than about two hours runs on the Mac Studio
+   (Apple M5 Max, 6 performance cores, 64 GB; fact 149), from a runbook for the agent there in the pattern of
+   `docs/superpowers/plans/2026-10-16-skin-level3-flights.md` -- from a tracked commit, no model code written, the
+   results pushed on a branch -- the flights side by side, one core each. A skin flight uses about one core and its 3D
+   solve is about 2 % of its time (fact 149: skins 81 %, 3D 1.8 %; the 65 km smoke flight of Task 4b: skins 87 %, of
+   which the metal's flow 70 % of the whole, 3D 2.4 %), so the cores are used by running flights together, not by a
+   parallel thermal solver (Asha declined it, 2026-10-31); side by side the level-3 flights each ran about 1.5 times
+   slower a step than alone on the laptop. Asha's three decisions of 2026-10-31 for this task: (1) a cost probe first --
+   about a second of melting flight on the production mesh (2 mm surface, 10 um cells), its time and memory a macro
+   step measured before the flights are sized (extrapolated from Task 3's coarse smoke flight, 2-7 s a 12.5 ms step on
+   2 367 columns of 20 um cells, a 100 mm flight's 7 640 melting steps take half a day to four days on one core);
+   (2) the base flights whole, the convergence repeats -- the macro step halved, 10 against 20 um cells, a 1 against
+   2 mm surface -- over a window of about 10 s around peak heating, so the convergence of quantities known only at the
+   end (the mass sprayed by 120 s) is not checked; (3) a flight that stops on a fold of the surface keeps and judges
+   what it made up to then, and reports where and when it folded, with options. The probe (fact 189): 4 425 s for one
+   second of the 65 km case on the production mesh alone on the laptop, a 12.5 ms step rising from 15 to 89 s with
+   the depth of the creeping slurry, the flow 79 % of the time and the 3D solve 1.6 %, at most 5.4 GB; so the 100 mm
+   flight takes at least about 8 days on one core, extrapolated. Asha (2026-10-31): the flights run as they are -- no
+   change to the model for their cost -- on the Mac Studio, from the runbook
+   `docs/superpowers/plans/2026-10-31-skin-spraying-flights.md`: the 100 mm and 50 mm skin flights and the element
+   model's two beside them, through `flights/fly.py` (beside the planning copy's `code/`, not part of it), which runs the
+   command line unchanged and writes each history row and a progress line as it goes, so a flight that stops early
+   keeps its history and its spooled droplet records.
 6. **Documentation**: the README, `docs/model_assumptions.md` and the facts, as the repository's rules require.
 
 ## Inputs to settle

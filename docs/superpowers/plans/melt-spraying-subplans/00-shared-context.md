@@ -2971,6 +2971,23 @@ of one comment in `spray.py`, both changed after.
      other history column the same as text. The model's dragged layer is within about a factor of 1.5 of Girin's
      depth on these cases, measured once each.
 
+## Amendment of 2026-10-31 — sub-plan 22 Task 5: the cost of a melting skin step on the production mesh (fact 189)
+
+> Asha's decision (1) for Task 5: a cost probe before the flights are sized. Facts 1–188 stand.
+
+189. **The cost probe (sub-plan 22 Task 5, 2026-10-31; `measure/task5/probe/report.md`).** One second of Task 3's
+     65 km smoke case (the 100 mm sphere at 7.24 km/s, its body at 893 K, 2 K below the rigid point) on the production
+     mesh (2 mm surface, 9 417 columns, 10 um cells), at build caad816, alone on the laptop: 4 425 s of wall time for
+     80 rows; the skins 88 %, of which the metal's flow 79 % of the whole, the moves 8 %, the 3D solve 1.6 %; at most
+     5.4 GB resident; 115 068 source rows, 2.28 million droplets and 59.6 g released, particles.npz 15 MB. A 12.5 ms
+     step cost 15.4 s over the first 0.1 s and 88.6 s over the last quarter, rising with the mean flowing depth
+     (0.27 to 2.64 mm; about 2.2 s plus 32 s a millimetre) and the flow sub-steps (about 3 to 5 in a heat sub-step) while
+     the skin cells rose only 27 %: the cost follows the depth of the slowly creeping slurry, which deepens as the body
+     warms through the rigid point. Extrapolated (not measured): the 100 mm flight's about 7 840 melting steps take at
+     least about 8 days alone on one core, more if the slurry keeps deepening; its early melting, with the interior
+     still cold, should be cheaper. Measured once, in one state. Asha (2026-10-31): the flights run as they are, on
+     the Mac Studio (runbook `docs/superpowers/plans/2026-10-31-skin-spraying-flights.md`).
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---
