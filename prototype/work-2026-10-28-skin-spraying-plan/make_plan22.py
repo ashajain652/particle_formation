@@ -77,6 +77,8 @@ TASKS = (
            ("DIFF_TRAJECTORY_T4", "reentry_model/trajectory.py"), ("DIFF_COUPLED_T4", "reentry_model/coupled.py"),
            ("DIFF_MOVEMESH_T4", "reentry_model/movemesh.py"), ("DIFF_SKINBODY_T4", "reentry_model/skinbody.py"),
            ("DIFF_CLI_T4", "reentry_model/cli.py"))),
+    ("4b", (("DIFF_TEST_SKINBODY_T4B", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_SKINBODY_T4B", "reentry_model/skinbody.py"))),
 )
 
 

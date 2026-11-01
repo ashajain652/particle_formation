@@ -164,9 +164,6 @@ SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin r
 
 SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
                                   # large-fragment design's labelled assumption for slurry)
-SHEARED_FRACTION = 0.1            # the resolved sheared depth (spec 6.7): from the top to where the computed speed falls to
-                                  # this fraction of the top cell's (sub-plan 22 Task 4): on Girin's linear profile, which
-                                  # falls to nothing at delta_m, it is 0.9 delta_m
 
 
 @dataclasses.dataclass
@@ -346,26 +343,18 @@ def region_extent(edges, selected, areas):
     return out
 
 
-def sheared_depth(sk, fraction=SHEARED_FRACTION):
-    """Per column, the resolved sheared depth [m] (spec 6.7; sub-plan 22 Task 4): the depth from the top at which the
-    computed speed falls to `fraction` of the top cell's, interpolated between the cells' centres as `Skins.depth_above`
-    is; the skin's thickness where it does not fall that far within the skin (the whole skin moves), nan where the top
-    cell does not move."""
+def sheared_depth(sk):
+    """Per column, the resolved sheared depth [m] (spec 6.7; sub-plan 22 Task 4b, Asha 2026-10-31): the depth of the
+    straight-line profile that falls from the top cell's speed to rest and carries the column's computed flow, twice the
+    flow per unit width -- the cells' speeds times their depths, summed -- over the top cell's speed. No cut-off: below
+    a fast top the slurry creeps on to the rigid front, so a speed near rest is first reached at the flowing depth b,
+    and a fraction of the top's is a choice; here the fast top and the slow creep each count by the flow they carry. On
+    Girin's linear profile, which falls to rest at delta_m, it is delta_m and about half a top cell (the top cell's speed
+    is its centre's); on a skin moving as one piece, twice its thickness; nan where the top cell does not move."""
     speed = np.where(sk.valid, np.linalg.norm(sk.U, axis=2), 0.0)
     top = speed[:, 0]
-    level = fraction * top
-    rows = np.arange(sk.n)
-    below = sk.valid & (speed <= level[:, None])
-    below[:, 0] = False
-    fell = below.any(axis=1)
-    k = np.where(fell, np.argmax(below, axis=1), 1)
-    dz = sk.dz()
-    z_mid = np.cumsum(dz, axis=1) - 0.5 * dz
-    Ka, Kb = np.clip(k - 1, 0, sk.m.shape[1] - 1), np.clip(k, 0, sk.m.shape[1] - 1)
-    sa, sb = speed[rows, Ka], speed[rows, Kb]
-    frac = np.clip(np.divide(sa - level, sa - sb, out=np.zeros_like(sa), where=sa > sb), 0.0, 1.0)
-    inside = z_mid[rows, Ka] + frac * (z_mid[rows, Kb] - z_mid[rows, Ka])
-    return np.where(top > 0.0, np.where(fell, inside, sk.thickness()), np.nan)
+    flow = (speed * sk.dz()).sum(axis=1)
+    return np.where(top > 0.0, 2.0 * flow / np.where(top > 0.0, top, 1.0), np.nan)
 
 
 def _no_step_spray():

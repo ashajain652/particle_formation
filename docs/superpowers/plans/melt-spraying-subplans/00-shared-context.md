@@ -2914,7 +2914,8 @@ of one comment in `spray.py`, both changed after.
      (`coupled.SKIN_SUMMARY_COLUMNS`: the element model's columns, the released mass the step's, the skins' mean liquid
      and flowing depths where the element model has its film). Spec 10.2's missing items: b over delta_m and the
      resolved sheared depth over delta_m, medians over the wet windward columns at the step's end, the sheared depth at
-     a tenth of the top cell's speed (`skinbody.sheared_depth`, 0.9 delta_m on Girin's linear profile), and each
+     a tenth of the top cell's speed (`skinbody.sheared_depth`, 0.9 delta_m on Girin's linear profile; Task 4b made it
+     the straight-line equivalent, fact 188), and each
      rebuild's mass residual (zero to the last bit on two rebuilds of the coarse test sphere); the results gain
      `sprayed_mass_kg`, `n_released`, `n_source_rows`, `wall_flow_s`, `rebuild_mass_residual_kg`. `shortfall_kg`, which
      spec 10.2 called cumulative, is the current shortfall and is left so (Asha corrected the spec's word, 2026-10-31). On the 65 km smoke flight (slurry spraying off)
@@ -2952,6 +2953,23 @@ of one comment in `spray.py`, both changed after.
      enthalpy). With scikit-fem's conjugate gradients at 1e-13 against the default 1e-10, its Newton iterations the same,
      the residual is 4.5e-12; with a tighter Newton tolerance alone 5.8e-9. It is the scikit-fem backend's linear
      tolerance, not the books; the test now gives both solvers 1e-13 and keeps its 1e-8 bound, passing in 22 s.
+
+## Amendment of 2026-10-31 — sub-plan 22 Task 4b: the resolved sheared depth as the straight-line equivalent (fact 188)
+
+> Asha's decision on Task 4's ruling 6. Facts 1–187 stand; fact 184's sheared depths were read at a tenth of the top
+> cell's speed.
+
+188. **The resolved sheared depth (sub-plan 22 Task 4b, 2026-10-31; `measure/task4b/shear_cutoffs.py`).** Below a
+     fast top the computed speed has a long slow tail, the slurry creeping on to the rigid front. On Task 4's test
+     sphere after its two 0.25 s steps (919 and 937 wet windward columns, delta_m about 160 um, cells about 18 um), the
+     depth over delta_m at which the speed falls to half the top cell's is 0.19 and 0.19 (Girin's line: 0.5), to a
+     tenth 0.46 and 1.91, to a hundredth 4.2 and 7.5, to a thousandth 5.3 and 10.1 against b over delta_m 5.5 and
+     10.7: a cut-off near rest reads the flowing depth. `skinbody.sheared_depth` is now the straight-line equivalent,
+     twice the flow per unit width over the top cell's speed, with no cut-off (delta_m and about half a top cell on
+     Girin's profile): 0.71 and 1.47 there (quartiles 0.58-0.79 and 1.17-1.85, against 0.35-0.52 and 0.86-3.16 at a
+     tenth); on the 65 km smoke flight 2.9 falling to 0.72-0.78 over its last five steps (a tenth: 2.5 to 0.43), every
+     other history column the same as text. The model's dragged layer is within about a factor of 1.5 of Girin's
+     depth on these cases, measured once each.
 
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 

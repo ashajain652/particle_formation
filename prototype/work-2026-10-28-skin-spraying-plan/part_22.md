@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29)
-> and 4 (2026-10-31).**
+> and 4 and 4b (2026-10-31).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -12,7 +12,8 @@
 > 3b, by Asha's decisions on the two questions it left, makes the flow the default of a melting skin run and latches
 > the skins' continuum step at their first liquid. Task 4 writes a spraying skin flight's outputs -- the summary, the
 > rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
-> without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure.
+> without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
+> 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -1553,7 +1554,8 @@ tolerance, not an error in the books, and the test now runs both backends' gradi
    is a bound of 3e-8 for scikit-fem's at its default.
 6. *The resolved sheared depth at a tenth of the top cell's speed.* Why: spec 6.7 leaves the fraction to be set; on
    Girin's linear profile, which reaches nothing at delta_m, a tenth gives 0.9 delta_m, so the ratio reads near 1 where
-   the resolved profile is Girin's. Cost: another fraction scales the column (a half gives 0.5 delta_m).
+   the resolved profile is Girin's. Cost: another fraction scales the column (a half gives 0.5 delta_m). Replaced by
+   Task 4b (Asha, 2026-10-31): the straight-line equivalent, with no fraction.
 7. *"Wet windward" for the skins: theta <= 90 degrees, a flowing depth above zero and Girin's delta_m*, at the step's
    end. Why: b is the flowing depth (spec 6.7), and delta_m exists only under his closure. Cost: none.
 8. *theta_cr_deg and spraying_area_m2 over the columns whose plan sprays, r_median_um and r_max_um over the step's
@@ -1667,7 +1669,74 @@ git commit -m "Skins: the outputs of a spraying skin flight (spec 8 and 10.2) --
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
+### Task 4b: The resolved sheared depth as the straight-line equivalent
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`sheared_depth(sk)`; `SHEARED_FRACTION` removed)
+- Test: `tests/test_reentry_model_skinbody.py` (one test replaced)
+
+**Interfaces:**
+- Consumes: Task 4's `sheared_depth`, `SkinBody._depth_ratios` and the history's `sheared_depth_over_delta_m_median`.
+- Produces: `skinbody.sheared_depth(sk) -> (n,)` [m], twice the flow per unit width over the top cell's speed, nan where
+  the top cell does not move; `skinbody.SHEARED_FRACTION` no longer exists. The history column keeps its name; no other
+  column, field or result changes.
+
+Asha decided Task 4's ruling 6 on 2026-10-31, asking why the depth should not be read where the speed is nearly at rest,
+as Girin's profile is at delta_m. Measured on Task 4's test sphere (below): below a fast top the slurry creeps on to the
+rigid front, so a speed near rest is first reached at the flowing depth b, and any fraction of the top's speed is a
+choice. **The resolved sheared depth** (spec 6.7) is therefore the depth of the straight-line profile that falls from
+the top cell's speed to rest and carries the column's computed flow: twice the flow per unit width -- the cells' speeds
+times their depths, summed over the skin -- over the top cell's speed, with no cut-off, the fast top and the slow creep
+each counted by the flow it carries. On Girin's linear profile it is delta_m, and about half a top cell more, since the
+top cell's speed is its centre's (ruling 1); on a skin moving as one piece, twice its thickness. `_depth_ratios` reads it
+as before, over delta_m on the wet windward columns whose top moves.
+
+**Measured** (2026-10-31, `prototype/work-2026-10-28-skin-spraying/measure/task4b/`; fact 188):
+- *The cut-offs* (`shear_cutoffs.py`, `log_shear_cutoffs.txt`). Task 4's test sphere (`bitid.py`'s body, slurry
+  spraying on, seeded), on its 919 and 937 wet windward columns after each of its two 0.25 s steps, medians over delta_m
+  (about 160 um; cells about 18 um): at half the top cell's speed 0.19 and 0.19; at a tenth 0.46 and 1.91 (quartiles
+  0.35-0.52 and 0.86-3.16); at a hundredth 4.2 and 7.5; at a thousandth 5.3 and 10.1, against b over delta_m 5.5 and
+  10.7, the median depth there the flowing depth itself. The straight-line equivalent: 0.71 and 1.47 (quartiles
+  0.58-0.79 and 1.17-1.85).
+- *The smoke flight* (`run_smoke.sh`, `log_smoke_compare.txt`). Task 4's 65 km case, slurry spraying off: every other
+  history column of the 10 rows the same as text as Task 4's (the wall times aside); the column 2.9, 3.0, 2.5, 1.8, then
+  1.08 falling to 0.72-0.78 over the last five steps, where a tenth read 2.5 falling to 0.43.
+
+**Ruling** (2026-10-31; what, why, cost if wrong):
+1. *The top cell's speed is the surface's*, not extrapolated to the surface. Why: it is the model's surface speed in
+   every other use (the release, the cut-off this replaces), and an extrapolation is thrown by a profile that rises below
+   the top. Cost: on Girin's profile the column reads 1 and about half a top cell over delta_m, 6 % on 18 um cells over
+   160 um.
+
+- [ ] **Step 1: The straight-line equivalent's test** -- in `tests/test_reentry_model_skinbody.py`, replacing Task 4's
+  test of the tenth:
+
+{{DIFF_TEST_SKINBODY_T4B}}
+
+- [ ] **Step 2: Run it to see it fail.** `"$PY" -m pytest tests/test_reentry_model_skinbody.py -q -m "not drama and not
+  reference" -k straight_line_depth`. Expected: 1 failed -- `AssertionError: assert not True` (`hasattr(skinbody,
+  'SHEARED_FRACTION')`).
+
+- [ ] **Step 3: The straight-line equivalent** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T4B}}
+
+- [ ] **Step 4: Run it to see it pass.** Expected: the test passes; `tests/test_reentry_model_skinbody.py` 36 passed (2
+  deselected, the reference tier's); the unit tier 532 passed, 1 skipped (Task 4's, one test replaced).
+
+- [ ] **Step 5: The measurements** (in `measure/task4b/`, on mains power): `"$PY" -I shear_cutoffs.py <code>` (about 90 s,
+  1.1 GB) and `./run_smoke.sh` (about 20 s), compared with Task 4's `smoke/` run.
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/skinbody.py tests/test_reentry_model_skinbody.py
+git commit -m "Skins: the resolved sheared depth (spec 6.7 and 10.2) the straight-line equivalent, twice the flow per unit width over the top cell's speed, with no cut-off (Asha 2026-10-31) -- below a fast top the slurry creeps on to the rigid front, so a cut-off near rest reads the flowing depth and a fraction of the top's speed is a choice; skinbody.SHEARED_FRACTION removed; the history column keeps its name and no other output changes (sub-plan 22 Task 4b)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -1689,7 +1758,7 @@ git commit -m "Skins: the outputs of a spraying skin flight (spec 8 and 10.2) --
    > `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
    > `--removal girin`.
 4. **Outputs** -- written out above as Task 4, with Register's release angle (Asha, 2026-10-29), the records on disk and
-   the FEniCSx tier's failure. The outline's item, as it stood:
+   the FEniCSx tier's failure, and Task 4b (the resolved sheared depth). The outline's item, as it stood:
    > **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
    > history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
    > mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).

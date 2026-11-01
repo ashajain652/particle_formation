@@ -428,8 +428,9 @@ flowing material drains away entirely draws rigid metal back to its minimum; no 
 - **Flowing (non-rigid) depth**: from the top to the first point at T_rigid. It lies within the skin by construction.
 - **Girin's film thickness b** is the flowing depth (decided 2026-10-11). The rigid-substrate amendment's regime test
   compares it with δ_m: the thick branch where it is deeper, the thin branch where it is not.
-- **Resolved sheared depth**: the depth over which the computed velocity falls to a set fraction of the top speed,
-  recorded beside Girin's δ_m (§8) for comparison.
+- **Resolved sheared depth**: the depth of the straight-line profile that falls from the top speed to rest and carries
+  the computed flow (twice the flow per unit width over the top speed; sub-plan 22 Task 4b, Asha 2026-10-31, in place of
+  a set fraction of the top speed), recorded beside Girin's δ_m (§8) for comparison.
 
 ## 7. Time-stepping and the skin–3D interface
 
@@ -648,8 +649,10 @@ position. Results gain the cumulative quantities; droplet records gain `solid_fr
 record mass-weighted over the cells released, on the element model's 0 and its film's liquid enthalpy; sub-plan 22 Task
 2).
 
-Built in sub-plan 22 Task 4 (2026-10-31). The resolved sheared depth (§6.7) is the depth at which the computed speed
-falls to a tenth of the top cell's, between the cells' centres (0.9 δ_m on Girin's own linear profile); it and b are
+Built in sub-plan 22 Task 4 (2026-10-31). The resolved sheared depth (§6.7) is, since Task 4b, the straight-line
+equivalent: twice the flow per unit width over the top cell's speed, with no cut-off (δ_m and about half a top cell
+on Girin's own linear profile; Task 4 read it at a tenth of the top cell's speed, and a cut-off near rest reads the
+flowing depth, the slurry creeping on to the rigid front); it and b are
 reported over δ_m as medians over the wet windward columns -- windward, with flowing metal, under Girin's closure -- at
 the macro step's end. Each rebuild's mass residual is the material's density times the volume the new mesh misses
 against the old, uncorrected and round-off, reported for the last rebuild and summed. A spraying skin flight's history
