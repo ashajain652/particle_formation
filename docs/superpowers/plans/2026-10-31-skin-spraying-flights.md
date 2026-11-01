@@ -152,7 +152,13 @@ stop and report. A difference only in the fourth digit or beyond: note it in the
 four free cores, about 25 GB of memory between them, and at least 40 GB of free disk. If the machine has less, stop
 and tell Asha.
 
-- [ ] **Step 6: launch the two skin flights.**
+> **Hold the 100 mm skin flight (Asha, 2026-11-01).** Launch only the other three now. `d100__physics__skin` waits
+> until the launcher can save the flight's whole state at about 88 s of flight, the start of the window over which the
+> convergence repeats will be resumed from it (sub-plan 22 Task 5a). A later commit on this branch adds that save and
+> the step that launches the 100 mm skin flight with it: `git pull --ff-only` when Asha says it is there. Do not launch
+> `d100__physics__skin` before then.
+
+- [ ] **Step 6: launch the 50 mm skin flight.**
 
 ```bash
 OUT="$CODE/reentry_model_output/task5_flights"
@@ -163,17 +169,16 @@ launch() {   # label, then the run arguments
     nohup "$FLIGHTS/launch.sh" "$OUT" "$LOGS" "$@" > /dev/null 2>&1 &
     echo "$1 pid $! started $(date '+%F %T')" | tee -a "$LOGS/launches.txt"
 }
-launch d100__physics__skin --diameter 100 --altitude 77.500133 "${COMMON[@]}" --t-max 120
 launch d050__physics__skin --diameter 50 --altitude 115 "${COMMON[@]}"
 ```
 
 The flights must outlive the shell command that started them: if your harness ends background jobs when a command
 returns, start each `launch` line with its own background-run facility (in Claude Code, `run_in_background`) instead.
-A minute later confirm with `ps -Ao pid,etime,pcpu,rss,command | grep "flights/fly.py" | grep -v grep` that two flights
-are running, each near 100 % of a core.
+A minute later confirm with `ps -Ao pid,etime,pcpu,rss,command | grep "flights/fly.py" | grep -v grep` that the flight
+is running near 100 % of a core.
 
-- [ ] **Step 7: launch the two element flights** once both skin flights have a first line in their progress files
-(`ls "$OUT"/*.progress`; their meshes are then built, so no two processes build one mesh file at once):
+- [ ] **Step 7: launch the two element flights** once the 50 mm skin flight has a first line in its progress file
+(`ls "$OUT"/*.progress`; its mesh is then built, so no two processes build one mesh file at once):
 
 ```bash
 launch d100__physics__elements --diameter 100 --altitude 77.500133 "${COMMON[@]}" --surface-model elements --t-max 120
