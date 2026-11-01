@@ -60,6 +60,9 @@ DEFAULT_SURFACE_MODEL = "skin"
 # sub-plan 22 Task 4): at the continuum step the 100 mm flight makes 35-70 million of them, 7.6-15.2 GB in memory. The
 # coupled writer reads them from there into particles.npz, and the directory is then removed.
 SOURCE_SPOOL = "source_rows"
+# --save-state-at saves the whole coupled run once on its way to <outdir>/<name> + this (restart.py; sub-plan 22 Task 5a):
+# about 1.3 GB on the 100 mm sphere's production mesh, from which a convergence repeat resumes.
+STATE_SUFFIX = ".state.pkl"
 # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
 # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
 # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
@@ -300,6 +303,9 @@ def build_parser():
     th.add_argument("--consistent-mass", action="store_true", help="consistent capacity matrix instead of the lumped nodal-enthalpy one (skfem only, analytic checks)")
     th.add_argument("--dt", type=float, default=0.5, help="macro step [s] (default %(default)s)")
     th.add_argument("--frames-every", type=int, default=0, help="VTK frame every n macro steps (default 0: none; 10 with --animate/--stills)")
+    th.add_argument("--save-state-at", type=float, default=None,
+                    help="[s] of flight: save the whole run once, at the end of the first macro step ending at or after it, "
+                         "as <outdir>/<name>{}, for a run to resume from (sub-plan 22 Task 5a)".format(STATE_SUFFIX))
     th.add_argument("--animate", action="store_true", help="MP4/GIF of the surface temperature and of the meridional cross-section, plus stills")
     th.add_argument("--stills", action="store_true", help="only the stills (start, peak heating, peak surface T, end; surface and section)")
     me = r.add_argument_group("melting and spraying (Step 3)")
@@ -559,6 +565,10 @@ def cmd_run(args, parser):
         parser.error("--animate/--stills/--frames-every need --thermal fem")
     if args.melt == "on" and args.thermal != "fem":
         parser.error("--melt on needs --thermal fem")
+    if args.save_state_at is not None and args.thermal != "fem":
+        parser.error("--save-state-at needs --thermal fem: it saves a coupled run")
+    if args.save_state_at is not None and not 0.0 < args.save_state_at < args.t_max:
+        parser.error("--save-state-at must be within (0, --t-max): a state saved at the end leaves nothing to resume")
     if not 1.0 < args.gamma_pm < 2.0:
         parser.error("--gamma-pm must be within (1, 2)")
     for label, value in (("--we-critical", args.we_critical), ("--kr", args.kr), ("--kt", args.kt), ("--layer-thickness", args.layer_thickness),
@@ -634,14 +644,20 @@ def cmd_run(args, parser):
     sim = tj.Simulator(initial, the_body, atm, aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
     if args.thermal == "fem":
         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
+        saving = args.save_state_at is not None
+        state_path = os.path.join(args.outdir, name + STATE_SUFFIX) if saving else None
         run = coupled.CoupledRun(sim, the_body, heating_model,
                                  coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
                                                          dt_continuum=dt_continuum, kn_switch=args.kn_body_shock,
                                                          switch_on_melt=args.surface_model == "skin",
-                                                         snap_to_t_max=args.surface_model == "skin"))
+                                                         snap_to_t_max=args.surface_model == "skin",
+                                                         save_at=args.save_state_at, save_path=state_path,
+                                                         save_meta={"name": name, "args": dict(vars(args))} if saving else None))
         history = run.run()
         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
         thermal_info["dt_continuum_s"] = dt_continuum
+        if saving:
+            thermal_info["save_state_at_s"] = args.save_state_at
     else:
         history = sim.run(extra_times=reference.time if reference is not None else None)
     csv_path = os.path.join(args.outdir, name + ".csv")
@@ -668,6 +684,8 @@ def cmd_run(args, parser):
         "provenance": prov,
         "files": {"csv": os.path.abspath(csv_path)},
     }
+    if history.results.get("state_saved_at_s") is not None:
+        doc["files"]["state"] = os.path.abspath(state_path)
     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
     # the skins' spraying flight (sub-plan 22 Tasks 3 and 4): the element model's droplet files, from the same writer --
     # the summary from the skin history's droplet columns -- the records read from their spool, which then goes
