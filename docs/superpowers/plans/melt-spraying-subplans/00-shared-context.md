@@ -2988,6 +2988,22 @@ of one comment in `spray.py`, both changed after.
      still cold, should be cheaper. Measured once, in one state. Asha (2026-10-31): the flights run as they are, on
      the Mac Studio (runbook `docs/superpowers/plans/2026-10-31-skin-spraying-flights.md`).
 
+## Amendment of 2026-11-01 — sub-plan 22 Task 5a: a flight's state saved on its way, and resumed from it (fact 190)
+
+> Asha's decisions of 2026-11-01: the restart scoped, then built as scoped, the 100 mm skin flight held until it can
+> save. Facts 1–189 stand.
+
+190. **The saved flight (sub-plan 22 Task 5a, 2026-11-01; `measure/task5/restart_scope/`, `measure/task5a/`).** A coupled
+     run pickles whole but for pyamg's coarse-grid solver (a class made inside a function), which `restart.save` writes
+     as its solver's name and cached factor: on the production mesh after one macro step 1 429 MB in 127 parts, the heat
+     solver's matrices most of it. numpy's global random state is saved with it; its only draws are pyamg's, at each
+     hierarchy the skfem backend builds (every 30 solves, two solves a macro step on the test's flight). The probe case
+     to 0.1 s saved at 0.05 s (1.38 GB) is the unsaved run in every history column at full precision and every droplet
+     record, and resumed in a fresh process its 5 rows and 2 311 records are the unbroken run's to the last bit; on the
+     coarse test flight a resume across a hierarchy rebuild is exact with the saved random state and differs with the
+     generator re-seeded. Each measured once. So a convergence repeat resumed from the base flight's state at 88 s
+     differs from the base only by the setting it changes.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

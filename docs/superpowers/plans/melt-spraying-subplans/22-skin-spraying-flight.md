@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29)
-> and 4 and 4b (2026-10-31).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
+> 4 and 4b (2026-10-31) and 5a (2026-11-01).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -14,6 +14,7 @@
 > rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
+> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -7797,7 +7798,470 @@ git commit -m "Skins: the resolved sheared depth (spec 6.7 and 10.2) the straigh
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5a: A flight's whole state saved on its way, and resumed from it
+
+**Files:**
+- Create: `reentry_model/restart.py` (`save(path, state)`, `load(path)`, `FORMAT`, `PART`, `COARSE_SOLVERS`)
+- Modify: `reentry_model/coupled.py` (`CoupledSettings.save_at`, `save_path`, `save_meta`; `CoupledRun.run(resume=None)`
+  and `CoupledRun._save`; the results' `state_saved_at_s` and `state_save_error`)
+- Modify: `reentry_model/cli.py` (`--save-state-at`, `STATE_SUFFIX`; the settings' `save_state_at_s`, the files' `state`)
+- Test: `tests/test_reentry_model_restart.py` (new: 9 tests)
+
+**Interfaces:**
+- Consumes: `coupled.CoupledRun` and its loop; `spray.SourceSpool` (Task 4); the skfem backend's multigrid hierarchy
+  (`solver._ml`, built afresh every `amg_rebuild_every`, 30, solves, drawing from numpy's global random state).
+- Produces: `restart.save(path, state)` and `restart.load(path) -> state`, any object graph, pyamg's coarse solvers
+  included; a flight's state, `{"format": 1, "run": CoupledRun, "step": int, "row": dict, "time_s": float, "rng": numpy's
+  global random state, "meta": {"name": str, "args": dict}}`, written by `--save-state-at T` to
+  `<outdir>/<name>.state.pkl` at the end of the first macro step ending at or after T (0 < T < --t-max), the flight
+  otherwise unchanged; `CoupledRun.run(resume=state)`, the flight from the end of the saved step, its history starting
+  with the saved row. Task 5b's resume command reads the state and changes a setting before resuming.
+
+Asha's decisions of 2026-10-31 and 2026-11-01: the convergence repeats are flown over a window of about 10 s around peak
+heating (93.5 s on the 100 mm flight); the model could only start a flight from the beginning, so each repeat would
+have cost nearly a whole flight, two to four times dearer for a halved step or a finer surface; she chose to have the
+restart scoped, then built as scoped -- the halved step, another seed and 20 um cells resumed from the base flight's
+state, the 1 mm surface compared on two windows started from a uniform temperature -- with the 100 mm skin flight held on
+the Mac Studio until it can save (runbook commit 1169338). **The save** pickles the coupled run whole, with numpy's
+global random state, whose only draws in a run are pyamg's (`cli.cmd_run`), and the command line's arguments and run
+name. Everything in it pickles but pyamg's coarse-grid solver, a class made inside `pyamg.multilevel.coarse_grid_solver`;
+it is saved as its solver's name and the factor it has cached and comes back as a new solver of that name holding that
+factor (ruling 1), so a hierarchy built before the save solves after it as it would have. The save alters nothing the
+flight holds, and a save that fails is recorded and the flight goes on (ruling 2). **The resume** goes on from the end
+of the saved step with the saved run's switch, frames' clock and step count, its history starting with the saved row
+(ruling 3), its droplet records in the spool the caller gives it.
+
+**Measured** (2026-11-01, `prototype/work-2026-10-28-skin-spraying/measure/task5/restart_scope/` and `measure/task5a/`):
+- *What a flight's state holds* (`restart_scope/unpicklable.py`, the probe case on the production mesh, after one macro
+  step): 1 429 MB in 127 parts, the heat solver's matrices most of it (the mass matrix 620 MB, the mesh 254 MB, the
+  sparsity pattern 169 MB, the stiffness 155 MB, the hierarchy's levels 64 MB, the skins 38 MB, the deforming zone 37
+  MB); the one part that fails, `solver._ml.coarse_solver`, the moving mesh failing only through the same solver.
+- *A save and a resume on the production mesh* (`task5a/resume_check.py`, the probe case to 0.1 s through the flight
+  launcher, saved at 0.05 s): 1.38 GB; the flight the same as the unsaved launcher run in every history column at full
+  precision (8 rows) and every droplet record; resumed in a fresh process, its 5 rows the same at full precision and its
+  2 311 droplet records the same in all 27 columns.
+- *The test's flight* (`tests/test_reentry_model_restart.py`): two solves a macro step, so the hierarchy saved at the
+  end of step 14 (28 solves) is used after the resume and a new one is built at the 31st solve, in step 16: with the
+  saved random state the resumed history and records are the flight's; with the generator re-seeded instead, the
+  history differs (checked by hand, 2026-11-01).
+
+**Rulings** (2026-11-01; what, why, cost if wrong):
+1. *The coarse solver is saved with its factor*, not dropped for the next solve to rebuild (as the scoping test did).
+   Why: dropping it would give the base flight a fresh hierarchy at its next solve, moving it at the linear solver's
+   tolerance from the save on; kept, the base flight is the unsaved one to the last bit. Cost if wrong: it reads
+   pyamg's closure to refuse a solver made with arguments (which a save cannot carry); a pyamg whose internals differ
+   makes the save refuse, recorded by ruling 2, not save wrongly (`test_a_coarse_grid_solver_with_arguments_is_refused`).
+2. *A failed save is recorded and the flight goes on.* Why: the state is worth less than the flight. Cost: a lost state
+   costs a second flight to the window, about two to three days of a core.
+3. *The resumed history starts with the saved row*, not one made again. Why: the row is the record the flight wrote;
+   making it again would read the step's accumulators a second time. Cost: none found.
+4. *The save is the model's* (`CoupledSettings`, `--save-state-at`), not the flight launcher's, as the scoping note had
+   it. Why: the command line's arguments, which a resume needs to name and describe its run, exist only there, and the
+   launcher stays a wrapper that changes nothing. Cost: model code, through this plan; without `--save-state-at` every
+   run is as before, its outputs unchanged.
+
+- [ ] **Step 1: The tests** -- `tests/test_reentry_model_restart.py`:
+
+```python
+"""restart.py and the coupled run's save and resume (sub-plan 22 Task 5a; Asha 2026-11-01): a flight saves its whole
+state once, at the end of the first macro step at or after a given flight time, without changing anything it does, and
+a saved flight resumes from it, in an object graph of its own, to the last bit."""
+import csv
+import json
+import os
+
+import numpy as np
+import pytest
+
+from reentry_model import cli, restart, spray
+from reentry_model import trajectory as tj
+
+# the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
+# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s
+FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", "--flight-path-angle", "-0.959331",
+          "--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
+          "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
+          "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
+
+
+def rows_of(path):
+    """A history CSV's rows as text, the wall-time columns left out (they time the run, not the flight)."""
+    with open(path) as fh:
+        return [{k: v for k, v in r.items() if not k.startswith("wall_")} for r in csv.DictReader(fh)]
+
+
+def test_a_coarse_grid_solver_is_saved_with_its_factor(tmp_path):
+    """pyamg's coarse-grid solver is a class made inside a function, which pickle cannot name; it is saved as its
+    solver's name and the factor it has cached, and comes back as the same solver holding the same factor, so a
+    hierarchy built before a save solves after it exactly as before."""
+    pyamg = pytest.importorskip("pyamg")
+    from pyamg.gallery import poisson
+    A = poisson((12, 12), format="csr")
+    np.random.seed(3)
+    ml = pyamg.smoothed_aggregation_solver(A, symmetry="symmetric")
+    b = np.random.rand(A.shape[0])
+    x = ml.solve(b, tol=1e-12)                     # the coarse solver caches its pseudo-inverse on the way
+    assert hasattr(ml.coarse_solver, "P")
+    path = str(tmp_path / "s.pkl")
+    restart.save(path, {"ml": ml})
+    assert not os.path.exists(path + restart.PART)
+    got = restart.load(path)["ml"]
+    assert got is not ml and repr(got.coarse_solver) == repr(ml.coarse_solver)
+    np.testing.assert_array_equal(got.coarse_solver.P, ml.coarse_solver.P)
+    np.testing.assert_array_equal(got.solve(b, tol=1e-12), x)
+
+
+def test_a_coarse_grid_solver_with_arguments_is_refused(tmp_path):
+    """A coarse solver given arguments keeps them where a save cannot reach them, so saving one is refused rather than
+    bringing back a different solver."""
+    pyamg = pytest.importorskip("pyamg")
+    from pyamg.multilevel import coarse_grid_solver
+    with pytest.raises(TypeError, match="coarse"):
+        restart.save(str(tmp_path / "s.pkl"), coarse_grid_solver(("pinv", {"rtol": 1e-6})))
+    assert not os.path.exists(str(tmp_path / "s.pkl"))
+
+
+def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_last_bit(tmp_path):
+    """The flight to 0.2125 s twice, once saving its state at 0.1875 s: the same history and droplet records, so a save
+    changes nothing in the flight that makes it. The saved state, loaded as a new object graph with the random state it
+    carries and a new folder for its droplet records, resumes from the end of its 14th step: the history it makes
+    starts with the saved step's row and repeats the flight's from there in every column, and its droplet records are
+    the flight's after the save, to the last bit. The heat solver solves twice a step and builds a new multigrid
+    hierarchy every 30 solves, drawing from numpy's random state, so the saved one is built before the save and used
+    after it, and the 16th step builds a new one: both the saved hierarchy and the saved random state are tested (with
+    the generator re-seeded instead, the history differs)."""
+    pytest.importorskip("cantera")
+    plain, saved = str(tmp_path / "plain"), str(tmp_path / "saved")
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", plain, "--name", "f"]) == 0
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", saved, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    flight = rows_of(os.path.join(plain, "f.csv"))
+    assert len(flight) == 17 and rows_of(os.path.join(saved, "f.csv")) == flight
+    a, b = np.load(os.path.join(plain, "f", "particles.npz")), np.load(os.path.join(saved, "f", "particles.npz"))
+    assert a.files == b.files and len(a["dm_kg"]) > 0 and all(np.array_equal(a[k], b[k], equal_nan=True) for k in a.files)
+    doc = json.load(open(os.path.join(saved, "f.json")))
+    assert doc["settings"]["save_state_at_s"] == 0.1875 and doc["results"]["state_saved_at_s"] == pytest.approx(0.1875)
+    assert doc["results"]["state_save_error"] is None and doc["files"]["state"] == os.path.join(saved, "f.state.pkl")
+    assert "save_state_at_s" not in json.load(open(os.path.join(plain, "f.json")))["settings"]
+
+    state = restart.load(doc["files"]["state"])
+    assert state["format"] == restart.FORMAT and state["step"] == 14 and state["time_s"] == pytest.approx(0.1875)
+    assert state["meta"]["name"] == "f" and state["meta"]["args"]["save_state_at"] == 0.1875
+    run = state["run"]
+    assert run.body.solver._solves == 28 and run.body.solver.amg_rebuild_every == 30
+    np.random.set_state(state["rng"])
+    run.body.source_rows = spray.SourceSpool(str(tmp_path / "resumed_rows"))
+    run.settings.save_at = None
+    history = run.run(resume=state)
+    assert run.body.solver._solves == 32                          # the 31st solve built a new hierarchy
+    tj.write_history_csv(history, str(tmp_path / "resumed.csv"))
+    assert rows_of(str(tmp_path / "resumed.csv")) == flight[14:]
+    after = a["time_s"] > state["time_s"]          # the saved step's records carry its end: 0.1875 and a round-off
+    got = run.body.source_rows.columns()
+    assert after.any() and all(np.array_equal(got[k], a[k][after], equal_nan=True) for k in a.files)
+
+
+def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
+    """A save that fails (a full disk, say) is recorded and the flight goes on: the state is worth less than the flight."""
+    pytest.importorskip("cantera")
+
+    def broken(path, state):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(restart, "save", broken)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.05"]) == 0
+    doc = json.load(open(str(tmp_path / "f.json")))
+    assert doc["results"]["end_reason"] == "t_max" and doc["results"]["state_saved_at_s"] is None
+    assert "no space left on device" in doc["results"]["state_save_error"] and "state" not in doc["files"]
+    assert len(rows_of(str(tmp_path / "f.csv"))) == 5
+
+
+@pytest.mark.parametrize("argv", [
+    FLIGHT + ["--t-max", "0.0875", "--save-state-at", "0"],
+    FLIGHT + ["--t-max", "0.0875", "--save-state-at", "-0.05"],
+    FLIGHT + ["--t-max", "0.0875", "--save-state-at", "0.0875"],     # nothing would be left to resume
+    FLIGHT + ["--t-max", "0.0875", "--save-state-at", "nan"],
+    ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5", "--t-max", "10", "--save-state-at", "5"],
+])
+def test_bad_save_times_exit_2(argv, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--outdir", str(tmp_path)])
+    assert exc.value.code == 2
+```
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_restart.py -q`. Expected: a
+  collection error -- `ImportError: cannot import name 'restart' from 'reentry_model'`.
+
+- [ ] **Step 3: The save and the load** -- `reentry_model/restart.py`:
+
+```python
+"""A flight's whole state on disk, and back (sub-plan 22 Task 5a; Asha 2026-11-01).
+
+The convergence repeats of Task 5 -- a halved macro step, another seed, 20 instead of 10 um skin cells -- are compared
+over a window of about 10 s around peak heating, 93.5 s into the 100 mm flight; flown from the start each would cost
+nearly a whole flight. So the base flight saves its state once on its way (`coupled.CoupledSettings.save_at`, the
+command line's --save-state-at) and each repeat resumes from it (`coupled.CoupledRun.run(resume=...)`).
+
+The state is the coupled run itself -- the trajectory, the body with its 3D mesh, heat solver, skins, moving mesh and
+spray model -- with numpy's global random state, whose only draws in a run are pyamg's (cli.cmd_run), pickled whole.
+Measured on the 100 mm sphere's production mesh (2026-11-01): 1.32 GB, written in 0.4 s, and everything in it pickles but
+pyamg's coarse-grid solver, a class made inside `pyamg.multilevel.coarse_grid_solver`, which pickle cannot name. It is
+saved as the name of its solver and the factor it has cached (`P`, `LU` or `L`), and comes back as a new solver of that
+name holding that factor, so a hierarchy built before the save solves after it exactly as it would have: a flight
+resumed from its state in a fresh process repeated the unbroken one to the last bit. The objects the flight holds are
+never altered by a save."""
+import ast
+import os
+import pickle
+
+FORMAT = 1                      # of a flight's saved state (`coupled.CoupledRun.state`); a resume refuses any other
+PART = ".part"                  # the state is written beside its path under this suffix, then renamed into place
+COARSE_SOLVERS = ("pinv", "pinv2", "lu", "cholesky")    # pyamg's coarse solvers whose caches are plain arrays
+
+
+def _is_coarse_solver(obj):
+    cls = type(obj)
+    return cls.__module__ == "pyamg.multilevel" and cls.__qualname__.endswith("coarse_grid_solver.<locals>.GenericSolver")
+
+
+def _coarse_name(obj):
+    """The solver a pyamg coarse-grid solver was made with, which must be one of COARSE_SOLVERS given no arguments: the
+    arguments live in the closure that made it, where a save cannot carry them, so a solver with any is refused."""
+    try:
+        name = ast.literal_eval(type(obj).name())
+        cells = dict(zip(type(obj).__call__.__code__.co_freevars, type(obj).__call__.__closure__ or ()))
+        solve = cells["solve"].cell_contents
+        kwargs = dict(zip(solve.__code__.co_freevars, solve.__closure__ or ())).get("kwargs")
+        kwargs = {} if kwargs is None else kwargs.cell_contents
+    except (KeyError, ValueError, SyntaxError, AttributeError, TypeError):
+        raise TypeError("a pyamg coarse solver whose make cannot be read cannot be saved: {!r}".format(obj))
+    if name not in COARSE_SOLVERS or kwargs:
+        raise TypeError("a pyamg coarse solver {!r} with arguments {!r} cannot be saved (saved: {} with none)".format(
+            name, kwargs, ", ".join(COARSE_SOLVERS)))
+    return name
+
+
+def _coarse_solver(name, cache):
+    """A pyamg coarse-grid solver of `name` holding `cache`, the attributes the saved one had cached."""
+    from pyamg.multilevel import coarse_grid_solver
+    solver = coarse_grid_solver(name)
+    vars(solver).update(cache)
+    return solver
+
+
+class _Pickler(pickle.Pickler):
+    def reducer_override(self, obj):
+        if _is_coarse_solver(obj):
+            return _coarse_solver, (_coarse_name(obj), dict(vars(obj)))
+        return NotImplemented
+
+
+def save(path, state):
+    """Write `state` to `path`: pickled (protocol 5), the coarse solvers as above, into path + PART and then renamed, so
+    a save cut short leaves no file at `path` (and its part removed when the failure is Python's)."""
+    part = path + PART
+    try:
+        with open(part, "wb") as fh:
+            _Pickler(fh, protocol=5).dump(state)
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
+def load(path):
+    """The state `save` wrote at `path`."""
+    with open(path, "rb") as fh:
+        return pickle.load(fh)
+```
+
+- [ ] **Step 4: The save on the way, and the resume**, in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -13,6 +13,7 @@
+ 
+ import numpy as np
+ 
++from . import restart
+ from . import trajectory as tj
+ from .spray import RELEASE_ANGLE_COLUMNS
+ from .surface_flow import KN_BODY_SHOCK
+@@ -95,10 +96,16 @@
+                                       # step of about 1e-17 s, a whole macro step of the skins over which the droplet-
+                                       # momentum ratio read 5.5 and 8.6 (fact 179); the layered skins' (sub-plan 22 Task
+                                       # 4), the element model keeping its loop, and that step, to the last bit
++    save_at: float = None             # s of flight: the run saves its whole state once, at the end of the first macro
++                                      # step ending at or after it, to save_path (`restart.save`; sub-plan 22 Task 5a)
++    save_path: str = None
++    save_meta: dict = None            # kept with the state: what made the run (the command line's arguments and name)
+ 
+     def __post_init__(self):
+         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
+             raise ValueError("dt_continuum must be > 0 and no longer than dt, got {!r}".format(self.dt_continuum))
++        if self.save_at is not None and not (self.save_at > 0.0 and self.save_path):
++            raise ValueError("save_at must be > 0 and needs a save_path, got {!r} and {!r}".format(self.save_at, self.save_path))
+ 
+ 
+ class CoupledRun:
+@@ -110,6 +117,7 @@
+         if self.settings.frames_every and not self.settings.output_dir:
+             raise ValueError("frames_every > 0 needs an output_dir")
+         self.switched_at = self.switch_trigger = None              # the continuum switch: (t, Kn, altitude km), and why
++        self.state_saved_at = self.state_save_error = None        # the save's flight time [s], or why it failed (Task 5a)
+ 
+     def loads_at(self, t, y):
+         a = self.sim.aero_state(t, y[:3], y[3:])
+@@ -138,14 +146,22 @@
+     def skins(self):
+         return hasattr(self.body, "skin_stats")
+ 
+-    def run(self):
++    def run(self, resume=None):
++        """Fly to the end, from the start or, with `resume` -- a state this run saved (`settings.save_at`), read back by
++        `restart.load` (sub-plan 22 Task 5a) -- from the end of the saved macro step: the history then starts with that
++        step's row, and the continuum switch, the frames' clock and the step count are the saved run's."""
+         started = time.perf_counter()
+         sim, body, s = self.sim, self.body, self.settings
+-        self.switched_at = self.switch_trigger = None              # (t, Kn, altitude km) of the continuum switch, and why
+-        self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
+-        a, loads = self.loads_at(sim.t, sim.y)
+-        rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
+-        self._frame(step, sim.t, loads)
++        if resume is None:
++            self.switched_at = self.switch_trigger = None          # (t, Kn, altitude km) of the continuum switch, and why
++            self._t0, self._frame_dt, self._next_frame = sim.t, s.frames_every * s.dt, sim.t
++            a, loads = self.loads_at(sim.t, sim.y)
++            rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
++            self._frame(step, sim.t, loads)
++        else:
++            if resume.get("format") != restart.FORMAT or resume.get("run") is not self:
++                raise ValueError("a run resumes only from a state of its own of format {}".format(restart.FORMAT))
++            rows, states, step = [dict(resume["row"])], [sim.y.copy()], resume["step"]
+         while sim.end_reason is None:
+             dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
+             a, loads = self.loads_at(sim.t, sim.y)
+@@ -159,6 +175,9 @@
+             self._frame(step, sim.t, loads)
+             if (self.melting or self.skins) and body.demised():
+                 sim.end_reason = "demise"
++            if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
++                    and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
++                self._save(step, rows[-1])
+         self._collection()
+         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
+         history = tj.History(columns, np.array(states), sim.end_reason)
+@@ -174,7 +193,22 @@
+                                     "dt_switch_altitude_km": h_sw})
+             if s.switch_on_melt:                                   # what latched it: knudsen, melting or both at once
+                 history.results["dt_switch_trigger"] = self.switch_trigger
++        if s.save_at is not None:
++            history.results.update({"state_saved_at_s": self.state_saved_at, "state_save_error": self.state_save_error})
+         return history
++
++    def _save(self, step, row):
++        """Save the whole run once, at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a):
++        the run, the step, its row and flight time, numpy's global random state and `settings.save_meta`, by
++        `restart.save`, which alters nothing the run holds. A save that fails is recorded and the flight goes on: its
++        state is worth less than the flight."""
++        s = self.settings
++        try:
++            restart.save(s.save_path, {"format": restart.FORMAT, "run": self, "step": step, "row": row,
++                                       "time_s": float(self.sim.t), "rng": np.random.get_state(), "meta": s.save_meta})
++            self.state_saved_at = float(self.sim.t)
++        except Exception as exc:
++            self.state_save_error = "{}: {}".format(type(exc).__name__, exc)
+ 
+     def _switch(self, t, a):
+         """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
+```
+
+- [ ] **Step 5: `--save-state-at`** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -60,6 +60,9 @@
+ # sub-plan 22 Task 4): at the continuum step the 100 mm flight makes 35-70 million of them, 7.6-15.2 GB in memory. The
+ # coupled writer reads them from there into particles.npz, and the directory is then removed.
+ SOURCE_SPOOL = "source_rows"
++# --save-state-at saves the whole coupled run once on its way to <outdir>/<name> + this (restart.py; sub-plan 22 Task 5a):
++# about 1.3 GB on the 100 mm sphere's production mesh, from which a convergence repeat resumes.
++STATE_SUFFIX = ".state.pkl"
+ # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
+ # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
+ # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
+@@ -300,6 +303,9 @@
+     th.add_argument("--consistent-mass", action="store_true", help="consistent capacity matrix instead of the lumped nodal-enthalpy one (skfem only, analytic checks)")
+     th.add_argument("--dt", type=float, default=0.5, help="macro step [s] (default %(default)s)")
+     th.add_argument("--frames-every", type=int, default=0, help="VTK frame every n macro steps (default 0: none; 10 with --animate/--stills)")
++    th.add_argument("--save-state-at", type=float, default=None,
++                    help="[s] of flight: save the whole run once, at the end of the first macro step ending at or after it, "
++                         "as <outdir>/<name>{}, for a run to resume from (sub-plan 22 Task 5a)".format(STATE_SUFFIX))
+     th.add_argument("--animate", action="store_true", help="MP4/GIF of the surface temperature and of the meridional cross-section, plus stills")
+     th.add_argument("--stills", action="store_true", help="only the stills (start, peak heating, peak surface T, end; surface and section)")
+     me = r.add_argument_group("melting and spraying (Step 3)")
+@@ -559,6 +565,10 @@
+         parser.error("--animate/--stills/--frames-every need --thermal fem")
+     if args.melt == "on" and args.thermal != "fem":
+         parser.error("--melt on needs --thermal fem")
++    if args.save_state_at is not None and args.thermal != "fem":
++        parser.error("--save-state-at needs --thermal fem: it saves a coupled run")
++    if args.save_state_at is not None and not 0.0 < args.save_state_at < args.t_max:
++        parser.error("--save-state-at must be within (0, --t-max): a state saved at the end leaves nothing to resume")
+     if not 1.0 < args.gamma_pm < 2.0:
+         parser.error("--gamma-pm must be within (1, 2)")
+     for label, value in (("--we-critical", args.we_critical), ("--kr", args.kr), ("--kt", args.kt), ("--layer-thickness", args.layer_thickness),
+@@ -634,14 +644,20 @@
+     sim = tj.Simulator(initial, the_body, atm, aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
+     if args.thermal == "fem":
+         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
++        saving = args.save_state_at is not None
++        state_path = os.path.join(args.outdir, name + STATE_SUFFIX) if saving else None
+         run = coupled.CoupledRun(sim, the_body, heating_model,
+                                  coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
+                                                          dt_continuum=dt_continuum, kn_switch=args.kn_body_shock,
+                                                          switch_on_melt=args.surface_model == "skin",
+-                                                         snap_to_t_max=args.surface_model == "skin"))
++                                                         snap_to_t_max=args.surface_model == "skin",
++                                                         save_at=args.save_state_at, save_path=state_path,
++                                                         save_meta={"name": name, "args": dict(vars(args))} if saving else None))
+         history = run.run()
+         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
+         thermal_info["dt_continuum_s"] = dt_continuum
++        if saving:
++            thermal_info["save_state_at_s"] = args.save_state_at
+     else:
+         history = sim.run(extra_times=reference.time if reference is not None else None)
+     csv_path = os.path.join(args.outdir, name + ".csv")
+@@ -668,6 +684,8 @@
+         "provenance": prov,
+         "files": {"csv": os.path.abspath(csv_path)},
+     }
++    if history.results.get("state_saved_at_s") is not None:
++        doc["files"]["state"] = os.path.abspath(state_path)
+     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
+     # the skins' spraying flight (sub-plan 22 Tasks 3 and 4): the element model's droplet files, from the same writer --
+     # the summary from the skin history's droplet columns -- the records read from their spool, which then goes
+```
+
+- [ ] **Step 6: Run them to see them pass.** Expected: 9 passed in about 2 minutes; the unit tier 541 passed, 1 skipped (Task 4b's 532 and these
+  9; 10 minutes across four processes with `-n 4`, measured 2026-11-01).
+
+- [ ] **Step 7: The production check** (in `measure/task5a/`, on mains power): the probe case to 0.1 s through
+  `flights/launch.sh` with `--save-state-at 0.05` (about 5 minutes, 4.3 GB), then `"$PY" -B resume_check.py <run dir>
+  saved_t01`: no column or record differing, from the unsaved launcher run nor after the resume.
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add reentry_model/restart.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_restart.py
+git commit -m "Coupled runs: a flight saves its whole state once on its way (--save-state-at T, at the end of the first macro step ending at or after T, to <outdir>/<name>.state.pkl) and resumes from it to the last bit (CoupledRun.run(resume=...)), for Task 5's convergence repeats over a window at peak heating (Asha 2026-11-01) -- restart.py pickles the run, numpy's random state and the command line's arguments, pyamg's coarse solver as its name and cached factor; the save alters nothing in the flight, a failed one is recorded and the flight goes on; without the option every output is as before (sub-plan 22 Task 5a)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4 and 5a written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

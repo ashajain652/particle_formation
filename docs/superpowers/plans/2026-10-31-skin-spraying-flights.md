@@ -26,7 +26,7 @@ atmosphere, physics-mode heating, the AA7075 alloy on Scheil's melting curve (th
 
 | Label | Sphere | Surface model | Ends | Macro steps (estimated) | Wall time (estimated) |
 |---|---|---|---|---|---|
-| `d100__physics__skin` | 100 mm from 77.5 km | skins | at 120 s of flight | about 44 of 0.5 s, then about 7 840 of 12.5 ms from the first liquid (about 22 s) | **one to three weeks** |
+| `d100__physics__skin` | 100 mm from 77.5 km | skins | at 120 s of flight, saving its state at 88 s | about 44 of 0.5 s, then about 7 840 of 12.5 ms from the first liquid (about 22 s) | **one to three weeks** |
 | `d050__physics__skin` | 50 mm from 115 km | skins | demise or the ground | about 340 of 0.5 s, then 12.5 ms steps from the first liquid (about 170 s); the element model demises at about 200 s | half a day to two days |
 | `d100__physics__elements` | 100 mm from 77.5 km | elements | at 120 s | 0.5 s, then 12.5 ms below a Knudsen number of 0.01 (about 49.5 s) | a few hours |
 | `d050__physics__elements` | 50 mm from 115 km | elements | demise or the ground | 0.5 s throughout | under an hour |
@@ -88,8 +88,9 @@ git log --oneline -1                                # note this commit for the r
 ```
 
 `$CODE` is a complete, runnable copy of the model package: the tracked copy from which sub-plan 22 is generated,
-byte-identical to the laptop's build repository at `caad816` (sub-plan 22 Task 4b). Every command below runs from
-`$CODE` unless it says otherwise.
+byte-identical to the laptop's build repository at `dfe3b66` (sub-plan 22 Task 5a, which adds `--save-state-at`; a
+flight not given it is the same to the last bit as at `caad816`, Task 4b, from which three of the flights may already
+have been launched). Every command below runs from `$CODE` unless it says otherwise.
 
 ## 4. The Python environment
 
@@ -152,11 +153,13 @@ stop and report. A difference only in the fourth digit or beyond: note it in the
 four free cores, about 25 GB of memory between them, and at least 40 GB of free disk. If the machine has less, stop
 and tell Asha.
 
-> **Hold the 100 mm skin flight (Asha, 2026-11-01).** Launch only the other three now. `d100__physics__skin` waits
-> until the launcher can save the flight's whole state at about 88 s of flight, the start of the window over which the
-> convergence repeats will be resumed from it (sub-plan 22 Task 5a). A later commit on this branch adds that save and
-> the step that launches the 100 mm skin flight with it: `git pull --ff-only` when Asha says it is there. Do not launch
-> `d100__physics__skin` before then.
+> **The 100 mm skin flight saves its state (Asha, 2026-11-01).** It was held until it could; it now can (sub-plan 22
+> Task 5a). It launches last, in Step 7b, with `--save-state-at 88`: at the end of its first macro step at or after 88 s
+> of flight -- the start of the window around peak heating (93.5 s) from which the convergence repeats will resume --
+> it writes its whole state, about 1.4 GB, to `$OUT/d100__physics__skin.state.pkl` and flies on unchanged. **Keep that
+> file and never commit it.** If the save fails the flight goes on, and its JSON's `results.state_save_error` says why:
+> report it. If you launched the other three flights from an earlier commit, `git pull --ff-only` now, which is safe
+> while they run (each loaded its code when it started), and go to Step 7b.
 
 - [ ] **Step 6: launch the 50 mm skin flight.**
 
@@ -184,6 +187,18 @@ is running near 100 % of a core.
 launch d100__physics__elements --diameter 100 --altitude 77.500133 "${COMMON[@]}" --surface-model elements --t-max 120
 launch d050__physics__elements --diameter 50 --altitude 115 "${COMMON[@]}" --surface-model elements
 ```
+
+- [ ] **Step 7b: launch the 100 mm skin flight, saving its state at 88 s**, once the 100 mm element flight has a first
+line in its progress file. Check `git log --oneline -1` shows this runbook's commit or later and
+`"$PY" -B -m reentry_model run --help | grep -c save-state-at` prints 2 (run from `$CODE`). If the shell of Steps 6-7 is gone, set `OUT`,
+`LOGS`, `COMMON` and `launch` again as in Step 6 first.
+
+```bash
+launch d100__physics__skin --diameter 100 --altitude 77.500133 "${COMMON[@]}" --t-max 120 --save-state-at 88
+```
+
+The 100 mm skin mesh was cached by the smoke check of Step 4. The save comes days into the flight; its progress lines
+pass 88 s some way before it.
 
 ## 7. Watch them
 
@@ -237,7 +252,7 @@ mkdir -p "$R"
 for f in "$OUT"/*.csv "$OUT"/*.json "$OUT"/*.progress; do cp "$f" "$R"/; done
 for d in "$OUT"/*/; do l="$(basename "$d")"; mkdir -p "$R/$l"; cp "$d"/*.csv "$R/$l"/ 2>/dev/null; done
 cp "$LOGS"/*.log "$LOGS"/launches.txt "$R"/
-{ for f in "$OUT"/*/particles.npz; do ls -l "$f"; shasum -a 256 "$f"; done; du -sh "$OUT"/*/source_rows 2>/dev/null; } > "$R/large_files.txt"
+{ for f in "$OUT"/*/particles.npz "$OUT"/*.state.pkl; do [ -f "$f" ] && { ls -l "$f"; shasum -a 256 "$f"; }; done; du -sh "$OUT"/*/source_rows 2>/dev/null; } > "$R/large_files.txt"
 { sysctl -n machdep.cpu.brand_string hw.perflevel0.physicalcpu hw.ncpu hw.memsize; sw_vers;
   "$PY" -c "import sys, numpy, scipy, skfem, gmsh, pyamg, cantera; print(sys.version); print(numpy.__version__, scipy.__version__, skfem.__version__, gmsh.__version__, pyamg.__version__, cantera.__version__)";
   git rev-parse HEAD; } > "$R/environment.txt"
@@ -278,9 +293,11 @@ measures, its units and why it matters; terms spelled out; no symbols in prose).
    and their median radius by number and by mass; and the same for the element flight of the same sphere beside it.
 3. For a flight that stopped early: the error, when and where it stopped (time and altitude), its largest fold angle,
    and what its `rows.csv` and `source_rows/` hold.
-4. The cost: each flight's wall time and peak memory (the end of its log), how the wall time per flight second changed
+4. For the 100 mm skin flight: whether its state was saved (`results.state_saved_at_s`, the flight time of the save,
+   or `results.state_save_error`), and the state file's size and checksum.
+5. The cost: each flight's wall time and peak memory (the end of its log), how the wall time per flight second changed
    through the flight (from the progress file), and that the flights ran side by side.
-5. Anything unexpected: a restart, a stalled progress file, an environment difference from the laptop (Step 2), or a
+6. Anything unexpected: a restart, a stalled progress file, an environment difference from the laptop (Step 2), or a
    smoke check that differed from Step 4's expected values.
 
 Do not interpret the results beyond this: the convergence checks, the comparison with the element model and the

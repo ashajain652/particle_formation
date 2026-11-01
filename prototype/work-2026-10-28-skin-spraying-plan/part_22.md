@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29)
-> and 4 and 4b (2026-10-31).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
+> 4 and 4b (2026-10-31) and 5a (2026-11-01).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -14,6 +14,7 @@
 > rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
+> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -1736,7 +1737,104 @@ git commit -m "Skins: the resolved sheared depth (spec 6.7 and 10.2) the straigh
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5a: A flight's whole state saved on its way, and resumed from it
+
+**Files:**
+- Create: `reentry_model/restart.py` (`save(path, state)`, `load(path)`, `FORMAT`, `PART`, `COARSE_SOLVERS`)
+- Modify: `reentry_model/coupled.py` (`CoupledSettings.save_at`, `save_path`, `save_meta`; `CoupledRun.run(resume=None)`
+  and `CoupledRun._save`; the results' `state_saved_at_s` and `state_save_error`)
+- Modify: `reentry_model/cli.py` (`--save-state-at`, `STATE_SUFFIX`; the settings' `save_state_at_s`, the files' `state`)
+- Test: `tests/test_reentry_model_restart.py` (new: 9 tests)
+
+**Interfaces:**
+- Consumes: `coupled.CoupledRun` and its loop; `spray.SourceSpool` (Task 4); the skfem backend's multigrid hierarchy
+  (`solver._ml`, built afresh every `amg_rebuild_every`, 30, solves, drawing from numpy's global random state).
+- Produces: `restart.save(path, state)` and `restart.load(path) -> state`, any object graph, pyamg's coarse solvers
+  included; a flight's state, `{"format": 1, "run": CoupledRun, "step": int, "row": dict, "time_s": float, "rng": numpy's
+  global random state, "meta": {"name": str, "args": dict}}`, written by `--save-state-at T` to
+  `<outdir>/<name>.state.pkl` at the end of the first macro step ending at or after T (0 < T < --t-max), the flight
+  otherwise unchanged; `CoupledRun.run(resume=state)`, the flight from the end of the saved step, its history starting
+  with the saved row. Task 5b's resume command reads the state and changes a setting before resuming.
+
+Asha's decisions of 2026-10-31 and 2026-11-01: the convergence repeats are flown over a window of about 10 s around peak
+heating (93.5 s on the 100 mm flight); the model could only start a flight from the beginning, so each repeat would
+have cost nearly a whole flight, two to four times dearer for a halved step or a finer surface; she chose to have the
+restart scoped, then built as scoped -- the halved step, another seed and 20 um cells resumed from the base flight's
+state, the 1 mm surface compared on two windows started from a uniform temperature -- with the 100 mm skin flight held on
+the Mac Studio until it can save (runbook commit 1169338). **The save** pickles the coupled run whole, with numpy's
+global random state, whose only draws in a run are pyamg's (`cli.cmd_run`), and the command line's arguments and run
+name. Everything in it pickles but pyamg's coarse-grid solver, a class made inside `pyamg.multilevel.coarse_grid_solver`;
+it is saved as its solver's name and the factor it has cached and comes back as a new solver of that name holding that
+factor (ruling 1), so a hierarchy built before the save solves after it as it would have. The save alters nothing the
+flight holds, and a save that fails is recorded and the flight goes on (ruling 2). **The resume** goes on from the end
+of the saved step with the saved run's switch, frames' clock and step count, its history starting with the saved row
+(ruling 3), its droplet records in the spool the caller gives it.
+
+**Measured** (2026-11-01, `prototype/work-2026-10-28-skin-spraying/measure/task5/restart_scope/` and `measure/task5a/`):
+- *What a flight's state holds* (`restart_scope/unpicklable.py`, the probe case on the production mesh, after one macro
+  step): 1 429 MB in 127 parts, the heat solver's matrices most of it (the mass matrix 620 MB, the mesh 254 MB, the
+  sparsity pattern 169 MB, the stiffness 155 MB, the hierarchy's levels 64 MB, the skins 38 MB, the deforming zone 37
+  MB); the one part that fails, `solver._ml.coarse_solver`, the moving mesh failing only through the same solver.
+- *A save and a resume on the production mesh* (`task5a/resume_check.py`, the probe case to 0.1 s through the flight
+  launcher, saved at 0.05 s): 1.38 GB; the flight the same as the unsaved launcher run in every history column at full
+  precision (8 rows) and every droplet record; resumed in a fresh process, its 5 rows the same at full precision and its
+  2 311 droplet records the same in all 27 columns.
+- *The test's flight* (`tests/test_reentry_model_restart.py`): two solves a macro step, so the hierarchy saved at the
+  end of step 14 (28 solves) is used after the resume and a new one is built at the 31st solve, in step 16: with the
+  saved random state the resumed history and records are the flight's; with the generator re-seeded instead, the
+  history differs (checked by hand, 2026-11-01).
+
+**Rulings** (2026-11-01; what, why, cost if wrong):
+1. *The coarse solver is saved with its factor*, not dropped for the next solve to rebuild (as the scoping test did).
+   Why: dropping it would give the base flight a fresh hierarchy at its next solve, moving it at the linear solver's
+   tolerance from the save on; kept, the base flight is the unsaved one to the last bit. Cost if wrong: it reads
+   pyamg's closure to refuse a solver made with arguments (which a save cannot carry); a pyamg whose internals differ
+   makes the save refuse, recorded by ruling 2, not save wrongly (`test_a_coarse_grid_solver_with_arguments_is_refused`).
+2. *A failed save is recorded and the flight goes on.* Why: the state is worth less than the flight. Cost: a lost state
+   costs a second flight to the window, about two to three days of a core.
+3. *The resumed history starts with the saved row*, not one made again. Why: the row is the record the flight wrote;
+   making it again would read the step's accumulators a second time. Cost: none found.
+4. *The save is the model's* (`CoupledSettings`, `--save-state-at`), not the flight launcher's, as the scoping note had
+   it. Why: the command line's arguments, which a resume needs to name and describe its run, exist only there, and the
+   launcher stays a wrapper that changes nothing. Cost: model code, through this plan; without `--save-state-at` every
+   run is as before, its outputs unchanged.
+
+- [ ] **Step 1: The tests** -- `tests/test_reentry_model_restart.py`:
+
+{{FILE_TEST_RESTART_T5A}}
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_restart.py -q`. Expected: a
+  collection error -- `ImportError: cannot import name 'restart' from 'reentry_model'`.
+
+- [ ] **Step 3: The save and the load** -- `reentry_model/restart.py`:
+
+{{FILE_RESTART_T5A}}
+
+- [ ] **Step 4: The save on the way, and the resume**, in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T5A}}
+
+- [ ] **Step 5: `--save-state-at`** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5A}}
+
+- [ ] **Step 6: Run them to see them pass.** Expected: 9 passed in about 2 minutes; the unit tier 541 passed, 1 skipped (Task 4b's 532 and these
+  9; 10 minutes across four processes with `-n 4`, measured 2026-11-01).
+
+- [ ] **Step 7: The production check** (in `measure/task5a/`, on mains power): the probe case to 0.1 s through
+  `flights/launch.sh` with `--save-state-at 0.05` (about 5 minutes, 4.3 GB), then `"$PY" -B resume_check.py <run dir>
+  saved_t01`: no column or record differing, from the unsaved launcher run nor after the resume.
+
+- [ ] **Step 8: Commit.**
+
+```bash
+git add reentry_model/restart.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_restart.py
+git commit -m "Coupled runs: a flight saves its whole state once on its way (--save-state-at T, at the end of the first macro step ending at or after T, to <outdir>/<name>.state.pkl) and resumes from it to the last bit (CoupledRun.run(resume=...)), for Task 5's convergence repeats over a window at peak heating (Asha 2026-11-01) -- restart.py pickles the run, numpy's random state and the command line's arguments, pyamg's coarse solver as its name and cached factor; the save alters nothing in the flight, a failed one is recorded and the flight goes on; without the option every output is as before (sub-plan 22 Task 5a)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4 and 5a written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
