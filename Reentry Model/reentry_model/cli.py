@@ -56,6 +56,10 @@ DEFAULT_DT_CONTINUUM = 0.0125
 # Sub-plan 18's one-dimensional skins are retired (sub-plan 22 Task 3).
 SURFACE_MODELS = ("skin", "elements")
 DEFAULT_SURFACE_MODEL = "skin"
+# A spraying skin run writes its droplet records to this directory inside the run's own as they come (spray.SourceSpool;
+# sub-plan 22 Task 4): at the continuum step the 100 mm flight makes 35-70 million of them, 7.6-15.2 GB in memory. The
+# coupled writer reads them from there into particles.npz, and the directory is then removed.
+SOURCE_SPOOL = "source_rows"
 # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
 # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
 # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
@@ -408,8 +412,9 @@ def build_parser():
     return p
 
 
-def build_thermal(args, settings, mass):
-    """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]."""
+def build_thermal(args, settings, mass, spool=None):
+    """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]; `spool`, a
+    directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4)."""
     radius = settings.diameter / 2.0
     melting = args.melt == "on"
     skins = args.surface_model == "skin"
@@ -440,7 +445,8 @@ def build_thermal(args, settings, mass):
                                      remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
                                      spray=spray_model_of(args, mat) if flow else None,
-                                     slurry_spray=args.slurry_spray == "on", particles=args.particles)
+                                     slurry_spray=args.slurry_spray == "on", particles=args.particles,
+                                     spool=spool if flow else None)
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -624,14 +630,15 @@ def cmd_run(args, parser):
     os.makedirs(args.outdir, exist_ok=True)
     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
     if args.thermal == "fem":
-        the_body, heating_model, thermal_info = build_thermal(args, settings, mass)
+        the_body, heating_model, thermal_info = build_thermal(args, settings, mass, spool=os.path.join(run_dir, SOURCE_SPOOL))
     sim = tj.Simulator(initial, the_body, atm, aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
     if args.thermal == "fem":
         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
         run = coupled.CoupledRun(sim, the_body, heating_model,
                                  coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
                                                          dt_continuum=dt_continuum, kn_switch=args.kn_body_shock,
-                                                         switch_on_melt=args.surface_model == "skin"))
+                                                         switch_on_melt=args.surface_model == "skin",
+                                                         snap_to_t_max=args.surface_model == "skin"))
         history = run.run()
         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
         thermal_info["dt_continuum_s"] = dt_continuum
@@ -662,8 +669,8 @@ def cmd_run(args, parser):
         "files": {"csv": os.path.abspath(csv_path)},
     }
     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
-    # the skins' spraying flight (sub-plan 22 Task 3): the element model's droplet files, from the same writer; the
-    # per-step summary waits for Task 4, which gives the skin history its droplet columns, and is recorded as not written
+    # the skins' spraying flight (sub-plan 22 Tasks 3 and 4): the element model's droplet files, from the same writer --
+    # the summary from the skin history's droplet columns -- the records read from their spool, which then goes
     spraying_skins = args.thermal == "fem" and args.melt == "on" and args.surface_model == "skin" and args.skin_flow == "on"
     if melting:
         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
@@ -671,7 +678,8 @@ def cmd_run(args, parser):
         doc["files"]["melt_plots"] = [os.path.abspath(p) for p in compare.plot_melt(history, run_dir, name, reference if compare.has_melt(history, reference) else None)]
     elif spraying_skins and args.particles:
         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()})
-        doc["files"]["particles_summary"] = None
+        if isinstance(the_body.source_rows, spray.SourceSpool):
+            the_body.source_rows.remove()
     if reference is not None:
         plots = compare.plot_all(history, reference, run_dir, name)
         doc["comparison"] = {"reference": reference.name, "reference_csv": reference.csv_path,
@@ -711,10 +719,9 @@ def cmd_run(args, parser):
                       res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
                       res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
         if spraying_skins:
-            print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}; no particles_summary.csv until "
-                  "sub-plan 22 Task 4 gives the skin history its droplet columns".format(
-                      the_body.released_mass, the_body.droplet_number, sum(len(b) for b in the_body.source_rows),
-                      " (particles.npz, size_distribution.csv)" if args.particles else ""))
+            print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}".format(
+                      res["released_mass_kg"], res["n_released"], res["n_source_rows"],
+                      " (particles.npz, particles_summary.csv, size_distribution.csv)" if args.particles else ""))
         if melting:
             print("  melt: onset {} km, spraying onset {} km, demise {} km at t = {} s; sprayed {:.4f} kg of {:.4f}, film left {:.4f} kg, "
                   "{:.3g} droplets (median r {} um), {} source rows, melt balance {:.1e}".format(

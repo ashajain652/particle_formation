@@ -95,7 +95,14 @@ def test_film_spraying_death_and_balances(layered_mesh):
     assert b.material.h_liquid < h_out <= b.material.enthalpy(b.surface_temperature().max())       # own temperature, superheat and all
     assert stats["film_T_max_K"] == pytest.approx(b.surface_temperature().max()) and stats["film_T_max_K"] > b.material.T_liquidus
     rows = np.array(b.source_rows)
-    assert rows.shape[1] == 26 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
+    assert rows.shape[1] == 27 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
+    # sub-plan 22 Task 4: Register et al.'s release angle of every row, from the centroid of the volume the surface
+    # enclosed at the spray step, windward; the history's mean by mass, least and largest are the last step's rows'
+    from reentry_model import spray as spray_mod
+    angle, last = rows[:, 26], rows[:, 0] == rows[-1, 0]
+    assert np.isfinite(angle).all() and (angle > 45.0).all() and (angle <= 180.0).all()
+    assert tuple(stats[k] for k in spray_mod.RELEASE_ANGLE_COLUMNS) == spray_mod.release_angle_stats(rows[last, 14],
+                                                                                                     angle[last])
     # sub-plan 22 Task 2: the film is liquid and leaves at its own enthalpy, the removed enthalpy's
     assert (rows[:, 24] == 0.0).all() and np.isfinite(rows[:, 25]).all()
     assert (rows[:, 14] * rows[:, 25]).sum() == pytest.approx(b.removed_enthalpy, rel=1e-12)

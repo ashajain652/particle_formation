@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import trajectory as tj
+from .spray import RELEASE_ANGLE_COLUMNS
 from .surface_flow import KN_BODY_SHOCK
 
 THERMAL_COLUMNS = ["convective_heat_W", "rad_cooling_W", "integrated_heat_J", "absorbed_heat_J",
@@ -34,6 +35,8 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
                 # the regime test's depth over the wet windward patches (fact 94); sub-plan 18's skin columns, which held
                 # 0 or nan in every run of the element model, went with its one-dimensional skins (sub-plan 22 Task 3)
                 "nonrigid_depth_wet_median_um"]
+# both surface models' histories also carry Register et al.'s release angle over each step's released mass (its mean by
+# mass, least and largest), spray.RELEASE_ANGLE_COLUMNS (Asha 2026-10-29, sub-plan 22 Task 4), after their own columns
 # the layered skins on the corner columns (sub-plan 20): skinbody.SkinBody.skin_stats(), every macro step
 SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
@@ -48,7 +51,30 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     # the droplet momentum sink (sub-plan 21 Task 7, spec 10.2): fact 29's Pi and its flag
                     "released_mass_kg", "droplet_momentum_ratio", "droplet_momentum_flagged",
                     # what the fault tolerance holds in the skins at the last base move (sub-plan 21 Task 9, spec 6.6)
-                    "held_mass_kg", "held_depth_max_mm"]
+                    "held_mass_kg", "held_depth_max_mm",
+                    # Girin's spraying from the top cells (sub-plan 22 Task 4, spec 10.2): the step's released mass -- the
+                    # released_mass_kg above is since time zero -- the droplets since time zero, the radius median and
+                    # largest over the step's records, the smallest angle and the top area of the columns whose plan
+                    # sprays, the element model's per-step columns of the same names, which particles_summary.csv reads
+                    "released_step_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg", "spraying_area_m2",
+                    # Register et al.'s release angle over the step's released mass (Asha 2026-10-29)
+                    *RELEASE_ANGLE_COLUMNS,
+                    # spec 10.2: b and the resolved sheared depth over Girin's delta_m on the wet windward columns, and
+                    # each rebuild's mass residual beside its energy residual
+                    "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
+                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
+# particles_summary.csv, one row a macro step: the element model's history columns
+SUMMARY_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um",
+                   "theta_cr_deg", "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
+# a skin flight's (sub-plan 22 Task 4): (the summary's column, the skin history's column it is read from) -- the same
+# droplet columns, the step's released mass from released_step_mass_kg, since the skin history's released_mass_kg is
+# cumulative, and where the element model has its film, which the skins do not, the skins' liquid and flowing depths
+SKIN_SUMMARY_COLUMNS = [("time_s", "time_s"), ("altitude_km", "altitude_km"), ("velocity_kms", "velocity_kms"),
+                        ("released_mass_kg", "released_step_mass_kg"), ("n_released", "n_released"),
+                        ("r_median_um", "r_median_um"), ("r_max_um", "r_max_um"), ("theta_cr_deg", "theta_cr_deg"),
+                        ("spraying_area_m2", "spraying_area_m2"), ("liquid_depth_mean_mm", "liquid_depth_mean_mm"),
+                        ("flowing_depth_mean_mm", "flowing_depth_mean_mm")]
+END_SNAP = 1e-6                   # of the macro step: a step that would end this close short of t_max ends at it (below)
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
 
 
@@ -64,6 +90,11 @@ class CoupledSettings:
     switch_on_melt: bool = False      # the switch also latches at the first macro step at whose end the body holds liquid
                                       # (`body.liquid_present()`), if that comes first: the layered skins' (sub-plan 22
                                       # Task 3b, Asha 2026-10-29); the element model's switch is the Knudsen number's alone
+    snap_to_t_max: bool = False       # a macro step that would end within END_SNAP of a step short of t_max ends at it:
+                                      # the steps' sum falls short of t_max by round-off, and the loop then took a last
+                                      # step of about 1e-17 s, a whole macro step of the skins over which the droplet-
+                                      # momentum ratio read 5.5 and 8.6 (fact 179); the layered skins' (sub-plan 22 Task
+                                      # 4), the element model keeping its loop, and that step, to the last bit
 
     def __post_init__(self):
         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
@@ -116,7 +147,7 @@ class CoupledRun:
         rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
         self._frame(step, sim.t, loads)
         while sim.end_reason is None:
-            dt = sim.advance(s.dt)
+            dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
             a, loads = self.loads_at(sim.t, sim.y)
             body.advance(sim.t, dt, loads, state=a)
             step += 1
@@ -200,10 +231,14 @@ class CoupledRun:
                "droplet_momentum_ratio_max": float(np.max(last["droplet_momentum_ratio"])),
                "droplet_momentum_flagged_steps": int((last["droplet_momentum_flagged"] > 0).sum()),
                "held_mass_max_kg": float(np.max(last["held_mass_kg"])),          # what the fault tolerance held (Task 9)
-               "held_depth_max_mm": float(np.max(last["held_depth_max_mm"]))}
+               "held_depth_max_mm": float(np.max(last["held_depth_max_mm"])),
+               # Girin's spraying (sub-plan 22 Task 4): the droplet records' mass, the droplets and the rows written --
+               # the element model's results of the same names
+               "sprayed_mass_kg": body.sprayed_mass, "n_released": body.droplet_number,
+               "n_source_rows": body.n_source_rows}
         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
-                                                  "wall_move_s", "wall_rebuild_s")})
+                                                  "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
         return out
 
@@ -329,31 +364,34 @@ def write_particles(run_dir, body, history, window=10.0):
     """particles.npz (the source table, SOURCE_COLUMNS as arrays), particles_summary.csv (per macro step) and
     size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths.
 
-    The table is the body's `source_rows`, the element model's rows or the layered skins' blocks of them
-    (`spray.source_table`; sub-plan 22 Task 2). The summary's columns are the element model's history columns; a history
-    without them -- the skin body's, until sub-plan 22 Task 4 gives it its droplet columns -- writes no summary, and the
-    paths returned then have none."""
+    The table is the body's `source_rows`, the element model's rows, the layered skins' blocks of them (sub-plan 22 Task
+    2) or their `spray.SourceSpool` on disk (Task 4), read column by column (`spray.source_columns`), so that a flight's
+    records need not be in memory at once: the numbers written are the same either way. The summary's columns are the
+    element model's history columns (SUMMARY_COLUMNS); a skin flight's are SKIN_SUMMARY_COLUMNS, read from its history's
+    droplet columns (Task 4); a history with neither writes no summary, and the paths returned then have none."""
     import csv
     from . import spray
     os.makedirs(run_dir, exist_ok=True)
-    rows = spray.source_table(body.source_rows)
+    cols = spray.source_columns(body.source_rows)
     npz = os.path.join(run_dir, "particles.npz")
-    np.savez_compressed(npz, **{name: rows[:, i] for i, name in enumerate(spray.SOURCE_COLUMNS)})
+    np.savez_compressed(npz, **cols)
     c = history.columns
     summary = os.path.join(run_dir, "particles_summary.csv")
-    keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
-            "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
-    if not set(keys) <= set(c):
-        summary = None
+    if set(SUMMARY_COLUMNS) <= set(c):
+        header, keys = SUMMARY_COLUMNS, SUMMARY_COLUMNS
+    elif {k for _, k in SKIN_SUMMARY_COLUMNS} <= set(c):
+        header, keys = [h for h, _ in SKIN_SUMMARY_COLUMNS], [k for _, k in SKIN_SUMMARY_COLUMNS]
     else:
+        summary = None
+    if summary is not None:
         with open(summary, "w", newline="") as fh:
             w = csv.writer(fh)
-            w.writerow(keys)
+            w.writerow(header)
             for i in range(len(history)):
                 w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
     dist = os.path.join(run_dir, "size_distribution.csv")
     edges = spray.BIN_EDGES
-    t = rows[:, 0] if len(rows) else np.zeros(0)
+    t, r, dn, dm = cols["time_s"], cols["r_m"], cols["dn"], cols["dm_kg"]
     t_end = float(c["time_s"][-1])
     starts = np.arange(0.0, t_end + 1e-9, window)
     with open(dist, "w", newline="") as fh:
@@ -361,12 +399,12 @@ def write_particles(run_dir, body, history, window=10.0):
         w.writerow(["window_start_s", "window_end_s", "r_lo_m", "r_hi_m", "dn", "dm_kg"])
         for t0 in list(starts) + [None]:
             if t0 is None:
-                sel = np.ones(len(rows), dtype=bool)
+                sel = np.ones(len(t), dtype=bool)
                 lo, hi = 0.0, t_end
             else:
                 lo, hi = t0, t0 + window
                 sel = (t >= lo) & (t < hi)
-            n_hist, m_hist = spray.histogram(rows[sel, 12], rows[sel, 13], rows[sel, 14]) if sel.any() else (np.zeros(spray.N_BINS), np.zeros(spray.N_BINS))
+            n_hist, m_hist = spray.histogram(r[sel], dn[sel], dm[sel]) if sel.any() else (np.zeros(spray.N_BINS), np.zeros(spray.N_BINS))
             for j in range(spray.N_BINS):
                 w.writerow(["{:.9g}".format(lo), "{:.9g}".format(hi), "{:.9g}".format(edges[j]), "{:.9g}".format(edges[j + 1]),
                             "{:.9g}".format(n_hist[j]), "{:.9g}".format(m_hist[j])])

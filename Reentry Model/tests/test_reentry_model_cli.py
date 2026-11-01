@@ -295,6 +295,11 @@ def test_melting_run_writes_columns_files_and_json(tmp_path):
     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
     for key in ("particles", "particles_summary", "size_distribution"):
         assert os.path.isfile(f[key])
+    # sub-plan 22 Task 4: the release angle in the history and the rows; the summary the element model's as before
+    from reentry_model import spray
+    assert all(k in rows[0] for k in spray.RELEASE_ANGLE_COLUMNS)
+    assert "release_angle_register_deg" in np.load(f["particles"]).files
+    assert open(f["particles_summary"]).readline().strip().split(",") == coupled.SUMMARY_COLUMNS
     assert len(f["melt_plots"]) == len(compare.MELT_PLOT_NAMES) and all(os.path.isfile(p) for p in f["melt_plots"])
     assert doc["comparison"] is None and f["film"] is None
     names = [os.path.basename(p) for p in f["stills"]]
@@ -459,8 +464,10 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     suffixes, with no surface or flow suffix (both defaults); the settings record the flow and the spray model's
     constants, the results the switch's trigger; mass,
     energy and momentum close; the droplets are written by the element model's writer -- particles.npz, whose rows carry
-    the mass released, and size_distribution.csv, their histogram -- and the per-step summary, which waits for Task 4's
-    history columns, is recorded as not written; the history's flow columns and the frames' top speed are written."""
+    the mass released, and size_distribution.csv, their histogram -- and, since Task 4, particles_summary.csv from the
+    skin history's droplet columns, each step's released mass its rows', the rows having gone through a spool on disk
+    that the run then removes; every row and step carries Register's release angle; the results count the sprayed
+    mass, the droplets and the rows; the history's flow columns and the frames' top speed are written."""
     pytest.importorskip("cantera")
     import glob
     import pyvista as pv
@@ -486,12 +493,25 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     # the books: mass, energy and momentum
     assert r["initial_mass_kg"] - r["final_mass_kg"] == pytest.approx(released, rel=1e-9)
     assert abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
-    # the droplet files, the element model's, and no summary until Task 4
-    assert f["particles_summary"] is None and not os.path.exists(os.path.join(os.path.dirname(f["particles"]),
-                                                                                  "particles_summary.csv"))
+    # the droplet files, the element model's, and the summary from the skin history (Task 4); the spool removed
     table = np.load(f["particles"])
     assert table.files == spray.SOURCE_COLUMNS and len(table["dm_kg"]) > 0 and (table["time_s"] == 0.0625).all()
     assert table["dm_kg"].sum() == pytest.approx(released, rel=1e-12)
+    assert not os.path.exists(os.path.join(os.path.dirname(f["particles"]), cli.SOURCE_SPOOL))
+    assert r["sprayed_mass_kg"] == pytest.approx(released, rel=1e-12) and r["n_source_rows"] == len(table["dm_kg"])
+    assert r["n_released"] == pytest.approx(table["dn"].sum(), rel=1e-12) and r["wall_flow_s"] > 0.0
+    with open(f["particles_summary"]) as fh:
+        summary = list(csv.DictReader(fh))
+    assert list(summary[0]) == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and len(summary) == len(rows)
+    assert [float(x["released_mass_kg"]) for x in summary[:-1]] == [0.0] * 4
+    assert float(summary[-1]["released_mass_kg"]) == pytest.approx(released, rel=1e-8)
+    assert float(summary[-1]["n_released"]) == pytest.approx(r["n_released"], rel=1e-8)
+    angle = table["release_angle_register_deg"]
+    assert (angle > 90.0).all() and (angle <= 180.0).all() and np.isnan(float(rows[-2]["release_angle_register_mean_deg"]))
+    mean = (table["dm_kg"] * angle).sum() / table["dm_kg"].sum()
+    assert float(rows[-1]["release_angle_register_mean_deg"]) == pytest.approx(mean, rel=1e-8)
+    assert float(rows[-1]["b_over_delta_m_median"]) > 0.0 and float(rows[-1]["released_step_mass_kg"]) == pytest.approx(
+        released, rel=1e-8)
     dist = [row for row in csv.DictReader(open(f["size_distribution"])) if float(row["window_end_s"]) == 0.0625]
     n_hist, m_hist = spray.histogram(table["r_m"], table["dn"], table["dm_kg"])
     np.testing.assert_allclose([float(row["dn"]) for row in dist], n_hist, rtol=1e-8)
