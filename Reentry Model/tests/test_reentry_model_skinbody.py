@@ -1355,25 +1355,29 @@ def test_the_skins_hold_liquid_once_a_top_cell_is_above_the_liquidus(coarse_sphe
 
 
 # -- the outputs of a spraying skin flight (sub-plan 22 Task 4) ----------------------------------------------------------
-def test_the_resolved_sheared_depth_is_where_the_speed_falls_to_a_tenth_of_the_top_s():
-    """Spec 6.7's resolved sheared depth (`skinbody.sheared_depth`, SHEARED_FRACTION 0.1): from the top to where the
-    computed speed falls to a tenth of the top cell's, between the cells' centres. Columns of 10 um cells: a
-    profile falling linearly to rest 0.2 mm down, so 0.9 of that depth and a tenth of the top cell centre's, 5.9 um down
-    (on Girin's linear profile over delta_m, 0.9 delta_m); a skin moving as one piece, its whole thickness; a top at
-    rest, nan."""
+def test_the_resolved_sheared_depth_is_the_straight_line_depth_carrying_the_computed_flow():
+    """Spec 6.7's resolved sheared depth (`skinbody.sheared_depth`, Task 4b, Asha 2026-10-31): twice the flow per unit
+    width over the top cell's speed -- the depth of the straight line from the top cell's speed to rest that carries the
+    computed flow -- with no cut-off. Columns of 11.7 um cells: a profile falling linearly to rest 0.2 mm down, sampled at
+    the cells' centres, D / (1 - z0 / D) with z0 the top cell centre's depth, 5.9 um (on Girin's linear profile over
+    delta_m, delta_m and about half a top cell), within the sampling of the cell where it comes to rest; a skin moving as
+    one piece, twice its thickness; a fast top of five cells over a creep at a hundredth of its speed, the creep counted
+    by the flow it carries, 10.7 cells where a tenth of the top's speed read 5.4; a top at rest, nan."""
     from test_reentry_model_skin import LIQUID, RIGID, stacked, strip_grid
     col, _ = strip_grid(3, 2, h=20e-3)
-    sk = stacked(col, [[LIQUID] * 30 + [RIGID] * 10, [LIQUID] * 40] + [[LIQUID] * 40] * 4)
+    sk = stacked(col, [[LIQUID] * 30 + [RIGID] * 10, [LIQUID] * 40, [LIQUID] * 40] + [[LIQUID] * 40] * 3)
     dz = sk.dz()
     z = np.cumsum(dz, axis=1) - 0.5 * dz
     D = 2e-4
     U = np.zeros(sk.U.shape)
     U[0, :, 0] = 3.0 * np.clip(1.0 - z[0] / D, 0.0, None)
     U[1, :, 1] = 0.5
+    U[2, :, 0] = np.where(np.arange(40) < 5, 3.0, 0.03)
     sk.U = U * sk.valid[..., None]
-    assert skinbody.SHEARED_FRACTION == 0.1
+    assert not hasattr(skinbody, "SHEARED_FRACTION")
     got = skinbody.sheared_depth(sk)
-    assert got[0] == pytest.approx(0.9 * D + 0.1 * z[0, 0], rel=1e-12) and 5e-6 < z[0, 0] < 7e-6
-    assert got[1] == pytest.approx(sk.thickness()[1], rel=1e-14)
-    assert np.isnan(got[2:]).all()
-    assert skinbody.sheared_depth(sk, 0.5)[0] == pytest.approx(0.5 * D + 0.5 * z[0, 0], rel=1e-12)
+    assert got[0] == pytest.approx(D / (1.0 - z[0, 0] / D), rel=1e-4) and 5e-6 < z[0, 0] < 7e-6
+    assert got[0] - D == pytest.approx(z[0, 0], rel=0.05)
+    assert got[1] == pytest.approx(2.0 * sk.thickness()[1], rel=1e-14)
+    assert np.allclose(dz[2], dz[2, 0]) and got[2] == pytest.approx(10.7 * dz[2, 0], rel=1e-12)
+    assert np.isnan(got[3:]).all()
