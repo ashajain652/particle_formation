@@ -7,6 +7,8 @@ from typing import Protocol
 
 import numpy as np
 
+from .spray import RELEASE_ANGLE_COLUMNS
+
 
 class Body(Protocol):
     def mass(self, t) -> float: ...
@@ -148,6 +150,13 @@ MAX_CASCADE_PASSES = 32          # safety cap on the molten cascade's passes in 
                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
 NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
 REMOVAL_NAMES = ("girin", "instant")
+
+
+def _no_release_angle():
+    """The release angle's history columns (spray.RELEASE_ANGLE_COLUMNS) of a step that released nothing: empty (nan)."""
+    return {k: float("nan") for k in RELEASE_ANGLE_COLUMNS}
+
+
 # Sub-plan 18's one-dimensional skins under the melting patches (MeltSettings(surface_model="skin1d"), skin1d.py) failed
 # their box test and are retired (sub-plan 22 Task 3, spec 9); the layered skins are skinbody.SkinBody.
 
@@ -740,7 +749,7 @@ class MeltingBody(ThermalBody):
         from . import spray as spray_mod
         if state is None or self.m_f.sum() <= 0.0 or flow is None:
             self.last_flow = self.last_spray = self.last_nonrigid = None
-            self.last_melt.update({"nonrigid_depth_wet_median_um": float("nan")})
+            self.last_melt.update({"nonrigid_depth_wet_median_um": float("nan"), **_no_release_angle()})
             return 0.0
         areas = self.surface.areas
         # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
@@ -791,12 +800,18 @@ class MeltingBody(ThermalBody):
         self.thin_invalid_patch_steps += int(invalid.sum())
         self.thin_invalid_mass_max = max(self.thin_invalid_mass_max, invalid_mass)
         released = float(res.dm.sum())
+        angles = _no_release_angle()
         if released > 0.0:
             if self.spray_onset is None:
                 self.spray_onset = t
+            # Register et al.'s release angle of each patch, from the centroid of the volume this surface encloses, the
+            # surface whose centroids the rows carry (sub-plan 22 Task 4)
+            angle = spray_mod.register_angle(self.surface.centroids, spray_mod.enclosed_centroid(
+                self.mesh.points, self.surface.faces, self.surface.normals), self.v_hat)
+            angles = dict(zip(RELEASE_ANGLE_COLUMNS, spray_mod.release_angle_stats(res.dm, angle)))
             if s.particles:                  # the film is liquid and leaves at its own enthalpy (sub-plan 22 Task 2)
                 self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state,
-                                                          solid_fraction=np.zeros(b.size), h_kg=h_p)
+                                                          solid_fraction=np.zeros(b.size), h_kg=h_p, release_angle=angle)
             hn, hm = spray_mod.histogram(res.r, res.dn, res.dm)
             self.hist_n += hn
             self.hist_m += hm
@@ -864,7 +879,7 @@ class MeltingBody(ThermalBody):
             if (self.windward & (self.m_f > 0.0)).any() else float("nan"),
             "nonrigid_depth_mean_mm": nonrigid_mean, "slurry_thick_fraction": slurry_thick,
             "rigid_thin_fraction": rigid_thin, "slurry_held_mass_kg": held_mass,
-            "thin_invalid_patches": int(invalid.sum()), "thin_invalid_mass_kg": invalid_mass, **depths})
+            "thin_invalid_patches": int(invalid.sum()), "thin_invalid_mass_kg": invalid_mass, **depths, **angles})
         return released
 
     def _kill(self, dead):
@@ -1248,4 +1263,7 @@ class MeltingBody(ThermalBody):
                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
                 "fitted_nose_radius_mm": self.fitted_nose_radius * 1e3,
                 "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active),
-                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", float("nan"))}
+                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", float("nan")),
+                # Register et al.'s release angle over the step's released mass: its mean by mass, least and largest, nan
+                # where nothing was released (sub-plan 22 Task 4)
+                **{k: lm.get(k, float("nan")) for k in RELEASE_ANGLE_COLUMNS}}

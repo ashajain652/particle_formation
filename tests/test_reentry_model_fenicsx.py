@@ -197,6 +197,11 @@ def test_the_thick_film_flux_matches_the_skfem_backend(coarse_sphere_mesh, monke
     (measured 2026-10-05); with it 2.7e7, set by the deepest piles' G b^3 / (3 mu) term, not by a vanishing film.
     Measured: the same 7 983 active elements, mass 5.8e-10, sprayed mass 5.9e-9, runoff 7.5e-10, film 1.7e-8, deep
     account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11.
+    Both solvers' conjugate gradients run to 1e-13 here (sub-plan 22 Task 4). At their default 1e-10 the scikit-fem
+    backend's balance is its linear solves' tolerance, not the books': the books are the one MeltingBody's, closing to
+    8.9e-12 on the FEniCSx backend, and on scikit-fem's they wandered 2.2e-9 to 1.17e-8 over the ten steps (5.1e-9 at
+    the last on sub-plan 21's code, 1.05e-8 with the spraying amendments of 2026-10-22, which spray 2.2 % more), but
+    with its gradients at 1e-13 and its Newton iterations unchanged 4.5e-12 (measured 2026-10-31).
     The rigid substrate (amendment of 2026-10-06) is off here: with the body's interior at 850 K, above AA7075_range's
     829 K half-liquid point, the whole body is slurry, every wet windward patch takes the thick branch, and films of
     about a micron that straddle the spray floor B_MIN are released whole by one backend and not by the other from the
@@ -226,8 +231,8 @@ def test_the_thick_film_flux_matches_the_skfem_backend(coarse_sphere_mesh, monke
     for name in ("skfem", "fenicsx"):
         np.random.seed(12345)
         m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
-        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM,
-                             settings=body.MeltSettings(rigid_substrate=False))
+        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name, cg_tol=1e-13),
+                             MASS_100MM, settings=body.MeltSettings(rigid_substrate=False))
         sim = simulator(b, t_max=90.0)
         sim.advance(50.0)
         p = b.mesh.points
@@ -242,6 +247,7 @@ def test_the_thick_film_flux_matches_the_skfem_backend(coarse_sphere_mesh, monke
                       state=a)
         out[name] = b
     s, f = out["skfem"], out["fenicsx"]
+    assert s.solver.cg_tol == f.solver.cg_tol == 1e-13
     assert seen["thin_on_thick"] > 0 and seen["c_max"] < 1e9 and f.runoff_mass > 0.0 and f.sprayed_mass > 0.0
     assert np.array_equal(s.mesh.active, f.mesh.active)
     assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6) and f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5)

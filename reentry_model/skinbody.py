@@ -89,7 +89,17 @@ macro step's, from its plan, so combining changes no radius. At the step's end t
 the plan was evaluated, b its flowing depth, the droplets leaving at the mean velocity of the metal they are made of --
 the momentum the books lose with them -- and their solid fraction and enthalpy per kilogram, mass-weighted over the
 cells released), kept one block per macro step in `source_rows`; the size histograms (`hist_n`, `hist_m`) accumulate
-each flow sub-step's release at the plan's radii (`SprayPlan.histogram`, through `skin.Cascade.histogram`)."""
+each flow sub-step's release at the plan's radii (`SprayPlan.histogram`, through `skin.Cascade.histogram`).
+
+The outputs of a spraying skin flight (sub-plan 22 Task 4; spec 10.2). Each record carries Register et al.'s (2020)
+release angle, from the centroid of the volume the top surface encloses where the plan was evaluated
+(`spray.register_angle`, `spray.enclosed_centroid`; Asha, 2026-10-29); every macro step the history reports the step's
+released mass, the droplets since time zero, the radius median and largest over the step's records, the smallest angle
+and the area of the columns whose plan sprays -- the element model's per-step columns, so the coupled writer writes the
+same particles_summary.csv -- the release angle's mean by mass, least and largest, b and the resolved sheared depth over
+Girin's delta_m on the wet windward columns (`sheared_depth`), and each rebuild's mass residual. Where `spool` names a
+directory the records go to disk as they come (`spray.SourceSpool`): a flight at the continuum step makes tens of
+millions of them."""
 import copy
 import dataclasses
 import math
@@ -154,6 +164,9 @@ SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin r
 
 SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
                                   # large-fragment design's labelled assumption for slurry)
+SHEARED_FRACTION = 0.1            # the resolved sheared depth (spec 6.7): from the top to where the computed speed falls to
+                                  # this fraction of the top cell's (sub-plan 22 Task 4): on Girin's linear profile, which
+                                  # falls to nothing at delta_m, it is 0.9 delta_m
 
 
 @dataclasses.dataclass
@@ -190,7 +203,9 @@ class SprayPlan:
     `momentum_slurry` [kg m/s, (n, 3)]; and, at the step's end, `number` and `number_slurry`, the droplets: the mass over
     one droplet's at the mode's radius. Where the plan was evaluated, for the records' rows (`source_block`; sub-plan 22
     Task 2): `theta` [rad], `closure` (the surface flow's), `points` [m, (n, 3)] the top surface's corners, `state` the
-    aero state and `props` the liquid's properties."""
+    aero state and `props` the liquid's properties; and for the history and Register's release angle (Task 4), `area`
+    [m2] the columns' top areas, `centre` [m, (3,)] the centroid of the volume the top surface enclosed and `v_hat` the
+    direction of flight."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     result: object
@@ -208,6 +223,9 @@ class SprayPlan:
     points: np.ndarray = None
     state: object = None
     props: object = None
+    area: np.ndarray = None
+    centre: np.ndarray = None
+    v_hat: np.ndarray = None
 
     def __post_init__(self):
         T = self.slurry["T"]
@@ -264,6 +282,17 @@ class SprayPlan:
         self.momentum += fb.phase_p[0]
         self.momentum_slurry += fb.phase_p[1]
 
+    def spraying(self):
+        """The columns whose plan sprays [bool, (n,)]: a mode with a release rate, the element model's `unstable`."""
+        return (self.rate > 0.0) | (self.rate_slurry > 0.0)
+
+    def release_angle(self):
+        """Register et al.'s release angle [deg, (n,)] of each column's top corner from the plan's centroid (nan without
+        one; `spray.register_angle`, sub-plan 22 Task 4)."""
+        if self.centre is None or self.points is None:
+            return np.full(len(self.rate), np.nan)
+        return spray_mod.register_angle(self.points, self.centre, self.v_hat)
+
     def source_block(self, t):
         """The macro step's records as source-table rows (spray.SOURCE_COLUMNS, by `spray.source_block`), one per column
         and mode that released, the liquid's mode's first: at the end of the step `t` [s] and the plan's aero state, the
@@ -274,9 +303,11 @@ class SprayPlan:
         lose with the droplets (spec 6.4: they leave at the speed of the cells they are made of; zero direction where it
         is at rest); We_d, Oh and the breakup flag at their radius, by their phase's density, viscosity and surface tension
         (the slurry's mixture density, viscosity at its sheared layer's rate and SLURRY_SIGMA, the 2026-10-07 design 8.4);
-        and their solid fraction and enthalpy per kilogram, mass-weighted over the cells released."""
+        their solid fraction and enthalpy per kilogram, mass-weighted over the cells released; and their column's release
+        angle (Task 4)."""
         st, s = self.state, self.slurry
         flow = types.SimpleNamespace(closure=self.closure)
+        angle = self.release_angle()
         blocks = []
         for mass, H, solid, p, number, res, b, props in (
                 (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
@@ -290,7 +321,7 @@ class SprayPlan:
             rows = types.SimpleNamespace(branch=res.branch, r=res.r, delta_m=res.delta_m, we_s=res.we_s, h_floor=res.h_floor,
                                          gamma_tau=res.gamma_tau, dm=mass, dn=number, v_s=per(speed))
             blocks.append(spray_mod.source_block(t, st.h, st.V, self.theta, self.points, direction, flow, rows, b, props, st,
-                                                 solid_fraction=per(solid), h_kg=per(H)))
+                                                 solid_fraction=per(solid), h_kg=per(H), release_angle=angle))
         return np.concatenate(blocks, axis=0)
 
 
@@ -315,6 +346,35 @@ def region_extent(edges, selected, areas):
     return out
 
 
+def sheared_depth(sk, fraction=SHEARED_FRACTION):
+    """Per column, the resolved sheared depth [m] (spec 6.7; sub-plan 22 Task 4): the depth from the top at which the
+    computed speed falls to `fraction` of the top cell's, interpolated between the cells' centres as `Skins.depth_above`
+    is; the skin's thickness where it does not fall that far within the skin (the whole skin moves), nan where the top
+    cell does not move."""
+    speed = np.where(sk.valid, np.linalg.norm(sk.U, axis=2), 0.0)
+    top = speed[:, 0]
+    level = fraction * top
+    rows = np.arange(sk.n)
+    below = sk.valid & (speed <= level[:, None])
+    below[:, 0] = False
+    fell = below.any(axis=1)
+    k = np.where(fell, np.argmax(below, axis=1), 1)
+    dz = sk.dz()
+    z_mid = np.cumsum(dz, axis=1) - 0.5 * dz
+    Ka, Kb = np.clip(k - 1, 0, sk.m.shape[1] - 1), np.clip(k, 0, sk.m.shape[1] - 1)
+    sa, sb = speed[rows, Ka], speed[rows, Kb]
+    frac = np.clip(np.divide(sa - level, sa - sb, out=np.zeros_like(sa), where=sa > sb), 0.0, 1.0)
+    inside = z_mid[rows, Ka] + frac * (z_mid[rows, Kb] - z_mid[rows, Ka])
+    return np.where(top > 0.0, np.where(fell, inside, sk.thickness()), np.nan)
+
+
+def _no_step_spray():
+    """The history's droplet columns of a macro step that sprayed nothing (the element model's defaults)."""
+    out = {"r_median_um": float("nan"), "r_max_um": float("nan"), "theta_cr_deg": float("nan"), "spraying_area_m2": 0.0}
+    out.update({k: float("nan") for k in spray_mod.RELEASE_ANGLE_COLUMNS})
+    return out
+
+
 def _rows(flow, idx):
     """The surface flow's evaluation on the corners idx alone: every per-corner array taken at idx, the rest kept."""
     n = len(flow.closure)
@@ -325,7 +385,8 @@ def _rows(flow, idx):
     return out
 
 
-def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None):
+def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,
+               v_hat=None):
     """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
     the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
     spray model (`model`) and the skins as they are at its start: a SprayPlan.
@@ -340,7 +401,9 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     of `radius` caps it too. Columns on the windward face, theta <= 90 degrees, only; `A_top` [m2] the top areas, `edges`
     the columns' graph, `dt` [s] the macro step (the nominal release in the result). With `slurry`, the exposed slurry's
     own mode too (`slurry_modes`). The plan keeps where it was evaluated for its records' rows: `theta`, the closure,
-    the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2)."""
+    the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2), and
+    for the history and the release angle the top areas, `centre` [m, (3,)], the centroid of the volume the top surface
+    encloses, and `v_hat`, the direction of flight (Task 4)."""
     mat, liq = sk.material, model.liquid
     n = sk.n
     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
@@ -365,7 +428,8 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     else:
         rate_s, modes = np.zeros(n), _no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
-                     points=points, state=state, props=liq)
+                     points=points, state=state, props=liq, area=np.asarray(A_top, dtype=float), centre=centre,
+                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float))
 
 
 def _no_slurry(n):
@@ -476,12 +540,13 @@ class SkinBody(ThermalBody):
     with the flow on, Girin's spraying from the top cells evaluated at the start of every macro step (`girin_plan`; sub-plan
     22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`; its
     droplet records, one block of source-table rows per macro step, in `source_rows` where `particles`, and the size
-    histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer)."""
+    histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
+    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory."""
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
-                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True):
+                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None):
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
         self.flow_cycles = flow_cycles
@@ -499,7 +564,10 @@ class SkinBody(ThermalBody):
         self.release, self.slurry_spray = release, bool(slurry_spray)
         self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
         self.particles = bool(particles)                     # keep the droplet records' rows (Task 2)
-        self.source_rows = []                                # one block of source-table rows per macro step (Task 2)
+        # one block of source-table rows per macro step (Task 2), in memory or, with `spool`, on disk (Task 4)
+        self.source_rows = spray_mod.SourceSpool(spool) if spool is not None and self.particles else []
+        self.sprayed_mass, self.n_source_rows = 0.0, 0         # kg of droplet records, and their rows kept (Task 4)
+        self.step_spray, self._released_step = _no_step_spray(), 0.0     # this macro step's droplet columns, release
         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)   # droplets, kg per size bin
         self._step_release = release                         # what the parts' Flow releases this macro step
         self.repeat_rule = repeat_rule
@@ -586,6 +654,7 @@ class SkinBody(ThermalBody):
         move called for. With the flow on, the gas side's push is the surface flow's on the corners from the aero state
         `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
         n, self._ratio, self.step_parts = self._hint, 0.0, 0
+        self.step_spray, self._released_step = _no_step_spray(), 0.0
         if self.flow_on:
             end = forcing if forcing is not None else self.flow_forcing(state)
             last = self._forcing_prev
@@ -598,9 +667,12 @@ class SkinBody(ThermalBody):
                 if end.result is None or state is None:
                     raise ValueError("Girin's spraying reads the surface flow's evaluation and the aero state (its records' "
                                      "altitude and speed): give the aero state, with a forcing only if it has its result")
-                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, self.surface.areas,
+                surface = self.surface               # where the plan is evaluated: its corners and its centroid (Task 4)
+                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, surface.areas,
                                              self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
-                                             points=self.surface.points.copy())
+                                             points=surface.points.copy(),
+                                             centre=spray_mod.enclosed_centroid(surface.points, surface.faces),
+                                             v_hat=self.v_hat)
                 self._step_release = self.spray_plan.release
         sk, mat = self.skins, self.material
         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
@@ -622,12 +694,35 @@ class SkinBody(ThermalBody):
         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
         self._q_prev = q_end.copy()
         if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
-            self.spray_plan.count(self.spray.liquid.rho)
-            self.droplet_number += float(self.spray_plan.number.sum() + self.spray_plan.number_slurry.sum())
-            if self.particles:                               # and its records' rows (Task 2)
-                block = self.spray_plan.source_block(t)
-                if len(block):
+            p = self.spray_plan
+            p.count(self.spray.liquid.rho)
+            self.droplet_number += float(p.number.sum() + p.number_slurry.sum())
+            block = p.source_block(t)                        # its records' rows (Task 2), and the history's columns
+            self.step_spray = self._step_columns(p, block)   # from them (Task 4)
+            if len(block):
+                self.sprayed_mass += float(block[:, spray_mod.SOURCE_COLUMNS.index("dm_kg")].sum())
+                if self.particles:
                     self.source_rows.append(block)
+                    self.n_source_rows += len(block)
+
+    @staticmethod
+    def _step_columns(plan, block):
+        """The history's droplet columns of a macro step from its plan and its records' rows (sub-plan 22 Task 4): the
+        radius median and largest over the rows [um], the smallest angle [deg] and the top area [m2] of the columns whose
+        plan sprays (the element model's theta_cr_deg and spraying_area_m2, over its unstable patches), and the release
+        angle's mean by mass, least and largest over the rows."""
+        out = _no_step_spray()
+        on = plan.spraying()
+        if on.any():
+            out["theta_cr_deg"] = float(np.degrees(plan.theta[on].min()))
+            out["spraying_area_m2"] = float(plan.area[on].sum())
+        if len(block):
+            C = spray_mod.SOURCE_COLUMNS
+            r = block[:, C.index("r_m")]
+            out["r_median_um"], out["r_max_um"] = float(np.median(r) * 1e6), float(r.max() * 1e6)
+            out.update(zip(spray_mod.RELEASE_ANGLE_COLUMNS, spray_mod.release_angle_stats(
+                block[:, C.index("dm_kg")], block[:, C.index("release_angle_register_deg")])))
+        return out
 
     def flow_forcing(self, state):
         """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
@@ -749,6 +844,7 @@ class SkinBody(ThermalBody):
             self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
             self.flow_passes, self.flow_cycles_max = max(self.flow_passes, fb.passes), max(self.flow_cycles_max, fb.cycles)
             self.released_mass += float(fb.released.sum())   # the release from the top cells (Task 7): it leaves the body
+            self._released_step += float(fb.released.sum())  # and this macro step's (sub-plan 22 Task 4)
             self.released_enthalpy += float(fb.released_H.sum())
             self.momentum_lost += fb.released_p.sum(axis=0)  # the droplets' momentum, at their cells' own velocities
             self.droplet_momentum += fb.released_p
@@ -974,7 +1070,36 @@ class SkinBody(ThermalBody):
                 # what the fault tolerance, and the cap on a part's hand-down, hold in the skins at the last base move
                 # (Task 9, spec 6.6, 2026-10-26 and 2026-10-27): unbounded (Asha, 2026-10-26), its mass and its deepest
                 # column's depth recorded for sub-plan 22's flow-on flight to report
-                "held_mass_kg": self.held_mass, "held_depth_max_mm": self.held_depth_max * 1e3}
+                "held_mass_kg": self.held_mass, "held_depth_max_mm": self.held_depth_max * 1e3,
+                # Girin's spraying (sub-plan 22 Task 4, spec 10.2): the step's released mass, the droplets since time
+                # zero, and the step's droplet columns (`_step_columns`), which particles_summary.csv reads
+                "released_step_mass_kg": self._released_step, "n_released": self.droplet_number, **self.step_spray,
+                # b and the resolved sheared depth over Girin's delta_m on the wet windward columns (medians), and each
+                # rebuild's mass residual, summed and the last
+                **self._depth_ratios(flowing),
+                "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
+                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0}
+
+    def _depth_ratios(self, flowing):
+        """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
+        the windward face (theta <= 90 degrees), with flowing metal (b, the flowing depth, above zero) and Girin's
+        conjugate depth delta_m from the macro step's surface flow (`last_flow`; nan off his closure); the sheared depth
+        `sheared_depth`, on those whose top moves. nan where there are none, or without the flow."""
+        mat, out = self.material, {"b_over_delta_m_median": float("nan"), "sheared_depth_over_delta_m_median": float("nan")}
+        if not (self.flow_on and mat.melts and mat.liquid is not None) or self.last_flow is None:
+            return out
+        delta_m, _ = spray_mod.melt_layer(self.last_flow, mat.liquid)
+        if len(delta_m) != self.skins.n:
+            return out
+        with np.errstate(invalid="ignore"):
+            wet = (self.theta <= 0.5 * np.pi) & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
+        if wet.any():
+            out["b_over_delta_m_median"] = float(np.median(flowing[wet] / delta_m[wet]))
+            sheared = sheared_depth(self.skins)
+            moving = wet & np.isfinite(sheared)
+            if moving.any():
+                out["sheared_depth_over_delta_m_median"] = float(np.median(sheared[moving] / delta_m[moving]))
+        return out
 
     def _recession(self):
         """How far each corner's top has moved inward along its starting direction since time zero [m]."""

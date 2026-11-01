@@ -46,8 +46,10 @@ and b_i the integral of the shape function i times the old field over the new el
 by preconditioned conjugate gradients. The projection reproduces a linear field exactly and keeps the energy where it
 was, region by region, to the rule's accuracy; what the quadrature still misses is made exact by a uniform offset over
 the new deforming zone only, where the field varies, as the 2026-09-27 remeshing design does for the whole body. The
-pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`. The validity gate stops
-on a non-manifold surface, more than one connected body, or a non-positive enclosed volume.
+pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`, and so is the mass the
+rebuild's new volume misses against the old (`RebuildResult.mass_residual`, `rebuild_mass_residual_total`; spec 10.2,
+sub-plan 22 Task 4): the surface is kept, so it is round-off. The validity gate stops on a non-manifold surface, more
+than one connected body, or a non-positive enclosed volume.
 
 The fine band (Asha, 2026-10-14, option 1): on 2 mm elements the 3D model cannot follow the temperature just below the
 rigid front -- the layer ahead of the front is 2-3 mm thick on the hot plate -- and the plates melt 2-6 % late; 1 mm
@@ -308,6 +310,7 @@ class MovingMesh:
         self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
         self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
         self.rebuild_residual_total = 0.0       # J, summed pre-correction residuals of all rebuilds
+        self.rebuild_mass_residual_total = 0.0  # kg, summed mass residuals of all rebuilds (sub-plan 22 Task 4)
 
     def _set_surface(self, faces_nodes):
         local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
@@ -425,6 +428,7 @@ class MovingMesh:
         h_new = project_enthalpy(mesh.points, mesh.tets, h_old, points, tets)
         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
+        mass_residual = float(mat.rho * (mesh.volume() - new_mesh.volume()))
         check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
         solver.setup(new_mesh, mat, solver.emissivity)
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
@@ -438,11 +442,12 @@ class MovingMesh:
         h_new[in_zone] += residual / m_zone.sum()
         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
         self.rebuild_residual_total += float(residual)
+        self.rebuild_mass_residual_total += mass_residual
         self.compression[:] = 0.0
         self.steps_since_rebuild = 0
         self.rebuilds += 1
         self.last_rebuild = RebuildResult(float(residual), float(residual / E_old) if E_old else 0.0, new_mesh.n_nodes,
-                                          new_mesh.n_elements, time.perf_counter() - t0, reason)
+                                          new_mesh.n_elements, time.perf_counter() - t0, reason, mass_residual)
         return self.last_rebuild
 
     def needs_rebuild(self):
@@ -481,6 +486,8 @@ class RebuildResult:
     n_elements: int
     seconds: float
     reason: str
+    mass_residual: float = 0.0          # kg, the material's density times the old volume less the new (spec 10.2): the
+                                        # surface is kept, so round-off; nothing corrects it
 
 
 def check_surface(points, faces):

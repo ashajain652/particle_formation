@@ -624,3 +624,23 @@ def test_locate_finds_the_containing_element_for_every_quadrature_point_of_a_reb
     elem, bary = movemesh.locate(old_points, old_tets, qp)
     assert len(qp) > 30000
     assert bary.min(axis=1).min() > -1e-9
+
+
+def test_a_rebuild_reports_the_mass_its_new_volume_misses_and_sums_it(coarse_sphere_mesh):
+    """Spec 10.2 (sub-plan 22 Task 4): every rebuild reports its mass residual beside its energy residual -- the
+    material's density times the old volume less the new, uncorrected -- and the moving mesh sums them. The surface is
+    kept to the last bit, so it is round-off: under 1e-12 of the body's mass on each of two rebuilds."""
+    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
+    mat = constant_material()
+    solver = solver_on(m, mat)
+    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
+    assert moving.rebuild_mass_residual_total == 0.0 and movemesh.RebuildResult(0.0, 0.0, 1, 1, 0.0, "x").mass_residual == 0.0
+    residuals = []
+    for _ in range(2):
+        assert not moving.move(inward(moving, 5e-4)).refused
+        V = moving.mesh.volume()
+        result = moving.rebuild()
+        assert result.mass_residual == mat.rho * (V - moving.mesh.volume())
+        assert abs(result.mass_residual) < 1e-12 * mat.rho * V
+        residuals.append(result.mass_residual)
+    assert moving.rebuild_mass_residual_total == residuals[0] + residuals[1]

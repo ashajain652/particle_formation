@@ -588,8 +588,9 @@ def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_t
     solid share and the enthalpy per kilogram they carry, 0 and nan where the caller gives none; the droplets' density,
     viscosity and surface tension may be one per patch, a slurry droplet's Weber and Ohnesorge numbers being its own
     phase's (the 2026-10-07 design 8.4); `source_block` is `source_rows` as an array, and `spray.source_table` reads a
-    body's rows or blocks of rows alike. The element model's form is unchanged in every other column."""
-    assert spray.SOURCE_COLUMNS[-2:] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 26
+    body's rows or blocks of rows alike. The element model's form is unchanged in every other column. (Sub-plan 22 Task
+    4 adds a 27th column after them, the release angle.)"""
+    assert spray.SOURCE_COLUMNS[24:26] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 27
     flow = FakeFlow(3)
     delta_m, _ = spray.melt_layer(flow, LIQ)
     b = np.full(3, 1e-3)
@@ -599,12 +600,12 @@ def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_t
              res, b)
     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
     plain = np.array(spray.source_rows(*where, LIQ, FakeState()))
-    assert plain.shape == (2, 26) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
+    assert plain.shape == (2, 27) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
     slurry = material.LiquidProperties(np.array([2400.0, 2500.0, 2550.0]), np.array([1.3e-3, 0.02, 0.05]),
                                        np.array([0.86, 0.80, 0.80]))
     block = spray.source_block(*where, slurry, FakeState(), solid_fraction=np.array([0.0, 0.1, 0.03]),
                                h_kg=np.array([1.1e6, 1.0e6, 0.9e6]))
-    assert block.shape == (2, 26) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
+    assert block.shape == (2, 27) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
     assert block[:, C["h_kg"]].tolist() == [1.1e6, 0.9e6]
     np.testing.assert_array_equal(block[:, :C["we_d"]], plain[:, :C["we_d"]])
     np.testing.assert_array_equal(block[0, :C["solid_fraction"]], plain[0, :C["solid_fraction"]])   # the liquid's patch
@@ -613,5 +614,100 @@ def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_t
     assert block[1, C["oh"]] == pytest.approx(0.05 / np.sqrt(2550.0 * 0.80 * 2.0 * r), rel=1e-14)
     np.testing.assert_array_equal(spray.source_block(*where, LIQ, FakeState()), plain)        # rows as an array
     table = spray.source_table([block, block[:1]])
-    assert table.shape == (3, 26) and np.array_equal(table[:2], block, equal_nan=True)
-    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 26)
+    assert table.shape == (3, 27) and np.array_equal(table[:2], block, equal_nan=True)
+    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 27)
+
+
+# -- the outputs of a spraying flight (sub-plan 22 Task 4) -------------------------------------------------------------
+def test_register_s_release_angle_is_180_at_the_stagnation_point_90_at_the_equator_and_0_behind_from_the_actual_vector():
+    """Register et al. (2020) section 4.2 (Asha, 2026-10-29; the 23-notes' first two tests): the angle between the larger
+    body's trajectory axis and the line from its centroid to the release point, from downstream: 180 degrees at the
+    stagnation point, 90 at the equator, 0 directly behind, wherever the body is and whichever way it flies. It is the
+    position's angle, not the surface normal's: on the flat face of a flattened body the normal points along the flight
+    (theta_deg 0) but a point 30 mm off the axis 20 mm ahead of the centroid is at 180 - atan(30/20); and a body whose
+    nose has receded, its centroid moved back, sees the same point at a larger angle."""
+    v = np.array([0.0, 0.6, 0.8])
+    c = np.array([0.01, -0.02, 0.03])
+    side = np.cross(v, [1.0, 0.0, 0.0])
+    side /= np.linalg.norm(side)
+    points = c + 0.05 * np.array([v, side, -v, (v + side) / np.sqrt(2.0)])
+    np.testing.assert_allclose(spray.register_angle(points, c, v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
+    np.testing.assert_allclose(spray.register_angle(points, c, 3.0 * v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
+    flat = np.array([[0.02, 0.03, 0.0]])                        # on a flat front face x = 20 mm, 30 mm off the axis
+    assert spray.register_angle(flat, np.zeros(3), [1.0, 0.0, 0.0])[0] == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.02)))
+    receded = spray.register_angle(flat, [-0.01, 0.0, 0.0], [1.0, 0.0, 0.0])[0]
+    assert receded == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.03))) and receded > 180.0 - 56.4
+
+
+def test_the_enclosed_centroid_is_the_volume_s_whichever_way_its_triangles_turn(coarse_sphere_mesh):
+    """`spray.enclosed_centroid`: the centroid of the volume a closed triangulated surface encloses, by the divergence
+    theorem -- the 100 mm test sphere's moved anywhere is its tetrahedra's volume-weighted centroid to round-off; turning
+    every triangle gives the same point, and with one outward normal per triangle a surface whose triangles are mixed
+    gives it too (the element model's surface)."""
+    m = coarse_sphere_mesh
+    s = m.surface()
+    shift = np.array([0.3, -0.1, 0.25])
+    P = m.points + shift
+    w = m.element_volumes()
+    exact = (w[:, None] * P[m.tets].mean(axis=1)).sum(axis=0) / w.sum()
+    got = spray.enclosed_centroid(P, s.faces)
+    np.testing.assert_allclose(got, exact, rtol=0.0, atol=1e-15)
+    np.testing.assert_allclose(spray.enclosed_centroid(P, s.faces[:, [0, 2, 1]]), got, rtol=0.0, atol=1e-15)
+    mixed = s.faces.copy()
+    mixed[::3] = mixed[::3][:, [0, 2, 1]]
+    np.testing.assert_allclose(spray.enclosed_centroid(P, mixed, s.normals), got, rtol=0.0, atol=1e-15)
+
+
+def test_the_release_angle_rides_in_the_source_table_and_a_step_s_statistics_are_by_mass():
+    """The source table's last column is the release angle, nan where the caller gives none; a step's history columns
+    are its mass-weighted mean, least and largest over the records that released, and nan where none did: the history's
+    mean equals the mean recomputed from the step's rows (the 23-notes' third test)."""
+    assert spray.SOURCE_COLUMNS[-1] == "release_angle_register_deg" and spray.RELEASE_ANGLE_COLUMNS == (
+        "release_angle_register_mean_deg", "release_angle_register_min_deg", "release_angle_register_max_deg")
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-3)
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
+                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
+             res, b, LIQ, FakeState())
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    angle = np.array([150.0, 135.0, 120.0])
+    rows = spray.source_block(*where, release_angle=angle)
+    assert rows[:, C["release_angle_register_deg"]].tolist() == [150.0, 120.0]
+    assert np.isnan(spray.source_block(*where)[:, C["release_angle_register_deg"]]).all()
+    np.testing.assert_array_equal(spray.source_block(*where)[:, :-1], rows[:, :-1])
+    assert np.array_equal(spray.source_rows(*where, release_angle=angle), rows, equal_nan=True)
+    mean, lo, hi = spray.release_angle_stats(rows[:, C["dm_kg"]], rows[:, C["release_angle_register_deg"]])
+    dm = res.dm[[0, 2]]
+    assert mean == (dm * [150.0, 120.0]).sum() / dm.sum() and (lo, hi) == (120.0, 150.0)
+    assert mean == spray.release_angle_stats(res.dm, angle)[0]                     # the rows' own mean, to the last bit
+    assert all(np.isnan(x) for x in spray.release_angle_stats(np.zeros(3), angle))
+    assert all(np.isnan(x) for x in spray.release_angle_stats([], []))
+
+
+def test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit(tmp_path):
+    """`spray.SourceSpool` (sub-plan 22 Task 4): the skins' blocks of rows written to disk as they come, one file per
+    column, read back column by column -- the source table's columns to the last bit, nan included, in the order the
+    blocks came; `len` counts the blocks given rows, as the in-memory list does, `n_rows` the rows; `source_table` and
+    `source_columns` read a spool as they read a list; an empty spool gives empty columns; `remove` deletes it."""
+    rng = np.random.default_rng(1)
+    blocks = [rng.normal(size=(k, len(spray.SOURCE_COLUMNS))) for k in (5, 1, 7)]
+    blocks[1][0, 26] = np.nan
+    spool = spray.SourceSpool(str(tmp_path / "spool"))
+    assert len(spool) == 0 and all(len(c) == 0 for c in spool.columns().values()) and spray.source_table(spool).shape == (0, 27)
+    for blk in blocks[:2] + [np.zeros((0, 27))] + blocks[2:]:
+        spool.append(blk)
+    assert len(spool) == 3 and spool.n_rows == 13
+    table = spray.source_table(blocks)
+    cols = spray.source_columns(spool)
+    assert list(cols) == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(cols[name], table[:, i], equal_nan=True) for i, name in enumerate(spray.SOURCE_COLUMNS))
+    assert np.array_equal(spray.source_table(spool), table, equal_nan=True)
+    listed = spray.source_columns(blocks)
+    assert all(np.array_equal(listed[name], cols[name], equal_nan=True) for name in spray.SOURCE_COLUMNS)
+    with pytest.raises(ValueError):
+        spool.append(np.zeros((2, 26)))
+    del cols
+    spool.remove()
+    assert not (tmp_path / "spool").exists()
