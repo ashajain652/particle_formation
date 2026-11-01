@@ -2,15 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29)
+> and 4 (2026-10-31).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
 > and on the slurry cascade. Task 2 makes the droplet records from the skins. Task 3 retires stage 1's one-dimensional
 > skins, makes the layered skins the default surface model and puts the spraying skin flight on the command line; Task
 > 3b, by Asha's decisions on the two questions it left, makes the flow the default of a melting skin run and latches
-> the skins' continuum step at their first liquid. Tasks 4–6 are the outline's, below, and the inputs it listed are
-> carried at the end.
+> the skins' continuum step at their first liquid. Task 4 writes a spraying skin flight's outputs -- the summary, the
+> rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
+> without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure.
+> Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -161,6 +164,30 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
     switch, about 1 950 on each flight (fact 182), buy little spray where option B's hold applies. Pinned by
     `test_the_continuum_switch_latches_at_the_first_liquid_only_where_asked` and
     `test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch`.
+20. **Register's release angle** (Task 4, Asha 2026-10-29) -- from the vector p - c, never the normal's `theta_deg`
+    (they differ by -65 to +88 degrees on the element model's staircase); c the centroid of the volume the outer surface
+    encloses, from the surface and at the instant of the rows' positions (ruling 1: the mass centre would move the angles
+    by at most 0.088 degrees on the test sphere, fact 183); the history's mean, least and largest the step's rows', nan
+    where nothing was released. Pinned by
+    `test_register_s_release_angle_is_180_at_the_stagnation_point_90_at_the_equator_and_0_behind_from_the_actual_vector`,
+    `test_the_release_angle_rides_in_the_source_table_and_a_step_s_statistics_are_by_mass` and the two bodies' tests.
+21. **The element model's outputs under Task 4** -- three history columns and one source column appended, every other
+    column, field, file and result its own to the last bit on the CLI test's short melting case, its vanishing last step
+    kept (ruling 4, fact 185). Pinned by `test_film_spraying_death_and_balances` and the melting run's CLI test.
+22. **A skin flight's summary** (Task 4, rulings 2 and 3) -- the element model's droplet columns under their names and
+    meanings, the step's released mass from the new `released_step_mass_kg` (the skin history's `released_mass_kg` stays
+    since time zero), the skins' liquid and flowing depths where the element model has its film. Pinned by
+    `test_the_writer_writes_a_skin_flight_s_summary_from_its_droplet_columns_and_a_spool_as_it_writes_rows`.
+23. **The skins' last step** (Task 4, ruling 4) -- with `snap_to_t_max` a step ending within 1e-6 of a step short of t_max
+    ends there; without it `Simulator.advance` is as it was. On the 65 km smoke flight the vanishing step had written
+    191 of its 1 196 rows (3.4e-17 kg) and read Pi 5.50 (fact 185). Pinned by
+    `test_the_skins_loop_ends_at_t_max_without_a_vanishing_step_and_the_element_model_s_is_unchanged`.
+24. **The records on disk** (Task 4, ruling 9) -- a spraying skin run's blocks appended to one file per column and read
+    back column by column: the same files to the last bit, the writer's allocations about 41 bytes a row against 460
+    from memory (fact 186). Pinned by `test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit` and the
+    skin body's records test.
+25. **The FEniCSx tier's thick-film test** (Task 4, ruling 5) -- both solvers' gradients at 1e-13, its 1e-8 bound kept:
+    the failure since Task 1a was scikit-fem's linear tolerance, not the books (fact 187).
 ## Amendment of 2026-10-29 (after Task 3) — the flow on by default, and the continuum step from the skins' first liquid (Asha's decisions)
 
 > Decided by Asha on 2026-10-29 on the two questions Task 3 left (spec 10.1 and 16 as amended that day). This adds Task
@@ -1337,7 +1364,310 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
 
 ---
 
-## The outline (Tasks 4–6, and Tasks 1–3 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
+### Task 4: The outputs of a spraying skin flight, Register's release angle, and the records on disk
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SOURCE_COLUMNS` + `release_angle_register_deg`; `source_block(...,
+  release_angle=None)`, `source_rows`; `source_table` and `source_columns` reading a spool; `SourceSpool`;
+  `register_angle`; `enclosed_centroid`; `RELEASE_ANGLE_COLUMNS`, `release_angle_stats`; the module docstring),
+  `reentry_model/body.py` (the element model's rows' release angle and its history's three columns),
+  `reentry_model/skinbody.py` (`SHEARED_FRACTION`, `sheared_depth`; `SprayPlan.area`, `.centre`, `.v_hat`, `.spraying`,
+  `.release_angle`; `girin_plan(..., centre=None, v_hat=None)`; `SkinBody(..., spool=None)`, `.sprayed_mass`,
+  `.n_source_rows`, `.step_spray`, `._step_columns`, `._depth_ratios`; the history's new columns; the module
+  docstring), `reentry_model/coupled.py` (`SKINBODY_COLUMNS`, `SUMMARY_COLUMNS`, `SKIN_SUMMARY_COLUMNS`, `END_SNAP`;
+  `CoupledSettings.snap_to_t_max`; the loop's last step; `skin_results`; `write_particles`),
+  `reentry_model/trajectory.py` (`Simulator.advance(dt, snap=0.0)`), `reentry_model/movemesh.py`
+  (`RebuildResult.mass_residual`, `MovingMesh.rebuild_mass_residual_total`), `reentry_model/cli.py` (`SOURCE_SPOOL`;
+  `build_thermal(..., spool=None)`; `cmd_run`'s spool, last step and printed summary)
+- Test: `tests/test_reentry_model_spray.py` (four added, one changed), `tests/test_reentry_model_trajectory.py` (one
+  added), `tests/test_reentry_model_coupled.py` (two added), `tests/test_reentry_model_movemesh.py` (one added),
+  `tests/test_reentry_model_skinbody.py` (one added, three changed), `tests/test_reentry_model_melting.py` (one changed),
+  `tests/test_reentry_model_cli.py` (two changed), `tests/test_reentry_model_fenicsx.py` (one changed)
+
+**Interfaces:**
+- Consumes: Task 2's `SprayPlan` records and `source_block`, `SkinBody.source_rows`, `coupled.write_particles`; Task
+  3's command line and `particles_summary` recorded as null; Task 3b's `CoupledSettings`; sub-plan 21 Task 7's
+  `released_mass_kg` and Pi; the element model's `MeltingBody.source_rows`, `melt_stats` and its surface.
+- Produces: `spray.SOURCE_COLUMNS` (27: + `release_angle_register_deg` [deg]); `spray.register_angle(points, centre,
+  v_hat) -> (n,)` [deg]; `spray.enclosed_centroid(points, faces, normals=None) -> (3,)` [m];
+  `spray.RELEASE_ANGLE_COLUMNS`, `spray.release_angle_stats(dm, angle) -> (mean, min, max)`; `spray.source_block(...,
+  release_angle=None)`, `spray.source_rows(..., release_angle=None)`; `spray.SourceSpool(directory)` with `.append(block)`,
+  `.columns()`, `.n_rows`, `len` (blocks), `.remove()`; `spray.source_columns(rows) -> {name: array}`;
+  `skinbody.SHEARED_FRACTION` (0.1), `skinbody.sheared_depth(sk, fraction) -> (n,)` [m]; `SprayPlan.spraying()`,
+  `.release_angle()`; `SkinBody(..., spool=None)`, `.sprayed_mass` [kg], `.n_source_rows`; the skin history's
+  `released_step_mass_kg`, `n_released`, `r_median_um`, `r_max_um`, `theta_cr_deg`, `spraying_area_m2`, the three
+  `release_angle_register_*_deg`, `b_over_delta_m_median`, `sheared_depth_over_delta_m_median`,
+  `rebuild_mass_residual_kg`, `rebuild_mass_residual_last_kg`; the element history's three release-angle columns; the
+  skin results' `sprayed_mass_kg`, `n_released`, `n_source_rows`, `wall_flow_s`, `rebuild_mass_residual_kg`;
+  `coupled.SUMMARY_COLUMNS`, `coupled.SKIN_SUMMARY_COLUMNS`, `coupled.END_SNAP` (1e-6), `CoupledSettings(...,
+  snap_to_t_max=False)`; `trajectory.Simulator.advance(dt, snap=0.0)`; `movemesh.RebuildResult.mass_residual` [kg],
+  `MovingMesh.rebuild_mass_residual_total`; `cli.SOURCE_SPOOL`, `build_thermal(..., spool=None)`. Every existing column,
+  row, field, result and file of the element model is unchanged to the last bit.
+
+The outline's item 4 (outputs) with the 23-notes' first item, which Asha made this task's on 2026-10-29, and the three
+loose ends of Tasks 1a-3: the summary Task 2 left (its ruling 10), the vanishing last macro step of fact 179, and the
+FEniCSx tier's failure since Task 1a.
+
+**The release angle** (Asha, 2026-10-29; `docs/superpowers/plans/melt-spraying-subplans/23-notes.md`, item 1; Register,
+P. J., et al. 2020, Icarus 337, 113468, section 4.2). The angle between the larger body's trajectory axis and the line
+joining its centroid to the released fragment's, from downstream: theta_R = 180 degrees - angle(v_hat, p - c), 180 at
+the stagnation point, 90 at the equator, 0 directly behind (`spray.register_angle`, from atan2 of the vector's parts
+across and along v_hat). It is computed from the vector p - c, never from the source table's `theta_deg`, which is the
+surface normal's angle: on the element model's short case the two differ by -65 to +88 degrees on the staircase its
+element deaths leave, on the skins' smoothed corner normals by -7.3 to +5.0. p is the row's own position; c is the
+centroid of the volume the body's outer surface encloses (`spray.enclosed_centroid`: signed tetrahedra from the points'
+mean, the triangles turned by their outward normals where given), from the surface the positions are on and at their
+instant -- the element model's surface at its spray step, the skins' top surface where the plan is evaluated, the macro
+step's start (`girin_plan(..., centre=, v_hat=)`); v_hat is the body's direction through the air, its fixed attitude
+(ruling 1). Each model's rows carry it through the shared `spray.source_block(..., release_angle=)`, the last column of
+the source table, and each history its mean by mass, least and largest over the step's rows
+(`spray.release_angle_stats`, `spray.RELEASE_ANGLE_COLUMNS`), nan where the step released nothing: the element model's
+from the patches that released (`MeltingBody._film_and_spray`), the skins' from the step's block. Register's wake zone
+(AFFIx) is not an output (Asha: post-processing).
+
+**The summary** (Task 2's ruling 10). `particles_summary.csv`'s columns are the element model's per-step history
+columns (`coupled.SUMMARY_COLUMNS`), and the skin history now has them under the same names and meanings: `n_released`,
+the droplets since time zero, as the element model's; `r_median_um` and `r_max_um` over the step's records; and
+`theta_cr_deg` and `spraying_area_m2`, the smallest angle and the top area of the columns whose plan sprays
+(`SprayPlan.spraying`: a mode with a release rate, as the element model's `unstable` is its rate's). Its
+`released_mass_kg` is since time zero (sub-plan 21 Task 7) where the summary's is the step's, so the skin history gains
+`released_step_mass_kg`, what the accepted parts released in the macro step, and keeps its own column as it was; the
+writer reads the summary's released mass from it (`coupled.SKIN_SUMMARY_COLUMNS`), and where the element model has its
+film, which the skins have not, the skins' mean liquid and flowing depths (ruling 2). Neither model's existing columns
+change meaning. The results add the element model's `sprayed_mass_kg` (the records' mass, the books' released mass to
+round-off), `n_released` and `n_source_rows` (the rows written).
+
+**The rest of spec 10.2.** Audited against `SKINBODY_COLUMNS`, `write_skin_frame` and `skin_results`: every history
+item but three was written, every frame field was, and the results lacked the flow's wall time. Built: b over delta_m
+and the resolved sheared depth over delta_m, medians over the wet windward columns -- windward, with flowing metal,
+under Girin's closure, delta_m from the macro step's surface flow -- at the step's end
+(`SkinBody._depth_ratios`); the resolved sheared depth (spec 6.7) the depth at which the computed speed falls to a tenth
+of the top cell's, between the cells' centres (`skinbody.sheared_depth`, `SHEARED_FRACTION`; ruling 6); each rebuild's
+mass residual beside its energy residual (`RebuildResult.mass_residual`, the density times the old volume less the new,
+uncorrected; `rebuild_mass_residual_kg` summed and `_last_kg`); and the results' `wall_flow_s` and
+`rebuild_mass_residual_kg`. One item differed from the spec's word: the spec listed "shortfall mass (cumulative)",
+but `shortfall_kg` is the current shortfall below the minimum at the step's end, not a sum; Asha corrected the spec's
+word on 2026-10-31 and the column is unchanged (ruling 10).
+
+**The vanishing last macro step** (fact 179). The loop asks `Simulator.advance` for `min(t + dt, t_max)` again and again;
+the floating-point sum falls short of t_max -- ten 0.0125 s steps reach 0.12499999999999999 s, ten of 0.1 s
+0.9999999999999999 s -- so one more step of 1.4e-17 s or 1.1e-16 s follows, a whole macro step of the body (its parts,
+its passes, a 3D solve), over which the droplet-momentum ratio, a ratio of two quantities each nearly nothing, read 5.5
+and 8.6. The element model has the same step: on its short case the last two rows are both at 15 s (printed), the last
+releasing 1.5e-13 kg. The loop is fixed for the skins: with `CoupledSettings.snap_to_t_max`, which the command line
+sets for them, a step that would end within `END_SNAP` (1e-6) of a macro step short of t_max ends at t_max
+(`Simulator.advance(dt, snap=)`), so there is no vanishing step; without it, the default and the element model's, the
+arithmetic is what it was (`snap` 0 leaves `t_target` as it was), its outputs unchanged to the last bit (ruling 4).
+
+**The records on disk** (Task 2's decision 2). With the continuum step from the first liquid (Task 3b), the 100 mm
+flight runs 12.5 ms steps from about 24.5 s to 120 s: 7 640 macro steps, and at Task 2's 4 600-9 200 rows a step (slurry
+spraying off and on) 35-70 million rows of 27 columns, 216 bytes a row, so 7.6-15.2 GB as arrays and twice that while
+`source_table` joins them at the end -- more than the laptop's 24 GB. So the command line gives a spraying skin body a
+spool, `<run>/source_rows/` (`cli.SOURCE_SPOOL`): each macro step's block is appended to one file per column
+(`spray.SourceSpool`), and the coupled writer reads the columns back from disk (`spray.source_columns`), each once and
+contiguous, writes `particles.npz`, the summary and the size distribution with the same arithmetic as from memory, and
+the command line then removes the spool. Nothing is combined over more than a macro step, so spec 8 needs no new
+sentence (ruling 9). The element model's rows stay in memory as before, and its files are byte for byte.
+
+**The FEniCSx tier's failure** (`test_the_thick_film_flux_matches_the_skfem_backend`, failing since Task 1a). The
+element model's books are one `MeltingBody`'s on both backends; printed term by term after every step
+(`measure/task4/fenicsx_books.py`) they close to 8.9e-12 of the heat absorbed on the FEniCSx backend and wander from
+2.2e-9 to 1.17e-8 on scikit-fem's, ending at 1.05e-8 (5.1e-9 on sub-plan 21's code, which already reached 1.07e-8 at its
+sixth step), with the spraying amendments of 2026-10-22, which spray 2.2 % more there, taking another path. With
+scikit-fem's conjugate gradients at 1e-13 instead of the default 1e-10, its Newton iterations the same in every step, the
+residual is 4.5e-12; a tighter Newton tolerance alone leaves 5.8e-9. So it is the scikit-fem backend's linear solves'
+tolerance, not an error in the books, and the test now runs both backends' gradients at 1e-13 (as the skin runs do,
+`skinbody.SKIN_CG_TOL`), its 1e-8 bound kept (ruling 5).
+
+**Measured** (2026-10-31, `prototype/work-2026-10-28-skin-spraying/measure/task4/`; facts 183-187):
+- *The element model unchanged* (`runs/line4_short` against Task 3b's `line3b_short`; `../task1/cmp/compare_runs.py`,
+  `element_files.py`). The CLI test's short melting case with `--surface-model elements`: its 93 history columns first,
+  in their order, the same text in all 76 rows, the three release-angle columns after them; the 26 old fields of its
+  25 266 source rows identical, the 27th the release angle; the summary and the size distribution byte for byte; the
+  settings and the 61 results but the run time. Its rows' angles 92.0/116.1/177.8 degrees (minimum/median/maximum);
+  each step's history mean, least and largest the rows' within 4.7e-9 (nine printed digits), nan on the 4 steps that
+  released nothing; 180 - theta_deg differs from the angle by -64.8 to +87.6 degrees (median 7.1), the element deaths'
+  staircase. Its last two rows print as 15 s, the last releasing 1.5e-13 kg: its vanishing step, kept.
+- *The skin body unchanged* (`bitid.py`, `run_bitid.sh`). Task 2's spraying test body with slurry spraying on, pyamg's
+  draws seeded: its 3D field, mesh, skins (mass, enthalpy, temperature, velocity, counts), books, histograms and the 26
+  old columns of its 759 rows are Task 3b's in all 12 arrays to the last bit, the history read after every step or not.
+- *The skin body's outputs* (`body_outputs.py`; the same body). The second step's 759 rows leave at 111.5/135.4/169.9
+  degrees (134.9 by mass), within 7.3 degrees of 180 - theta_deg on the corners' smoothed normals; the columns within
+  10.9 degrees of the nose do not spray (theta_cr_deg). The history: 5.769 g released in the step, 89 173 droplets, radius
+  median 174 um and largest 3.53 mm, 9.6e-3 m2 spraying; b over delta_m 5.5 at the first step's end and 10.7 at the
+  second's, the resolved sheared depth over delta_m 0.46 and 1.91 (medians over the wet windward columns). At the step's
+  end the body's mass centre (the 3D model and the skins' cells) lay 0.083 mm from the geometric centroid, which would
+  move the angles by at most 0.088 degrees; the centroid itself moved back 0.33 mm over the step.
+- *The smoke flight* (`run_smoke.sh`, `smoke_check.py`; Task 3's 65 km case, the default flow, slurry spraying off).
+  9 macro steps, 25 ms and eight of 12.5 ms, the last ending at 0.125 s exactly, against Task 3b's 10 whose last was
+  1.4e-17 s; every old history column of the first 9 rows the same text as Task 3b's, and the last step its same step's
+  but the interface mismatch (1.3e-9 relative) and the momentum residual (2.2e-17 against 4.0e-17, round-off both); Pi
+  at most 0.083 where Task 3b's vanishing step read 5.50. 1.95571981656 g released in both, in 1 005 rows against 1 196:
+  the vanishing step had written 191 rows holding 3.4e-17 kg in all. The summary: 10 rows under the skins' header; each
+  step's released mass, droplets since time zero, radius median and largest and release angle's mean, least and largest
+  the rows' within 3.4e-9 (nine printed digits); its released mass the step's; the size distribution the rows'
+  histogram within 5.4e-10 of the totals; the spool removed. Angles 123.5/145.5/168.7 degrees (148.9 by mass),
+  theta_cr_deg 11.5; b over delta_m 2.8 rising to 7.6, the resolved sheared depth over delta_m 2.5 falling to 0.43; no
+  rebuild. With slurry spraying on: 2.983 g in 1 811 rows against 2 223 (412 vanishing rows, 8.3e-17 kg), Pi at most
+  0.079 against 8.59, the summary and distribution within 3.9e-9 and 2.6e-10. About 18 s each, 1.0 GB at most.
+- *The records on disk* (`spool_cost.py`, 3.0 million rows, blocks of 9 231). Appending a block costs 1.4-2.9 ms (a
+  melting 12.5 ms macro step's skins take 1.5-6.2 s, fact 179); the writer from the spool and from blocks in memory give
+  the same `particles.npz` fields and size distribution byte for byte, from the spool with at most 123 MB of its own
+  allocations (41 bytes a row), from memory with the rows' 616 MB held and 739 MB more (453 bytes a row). For the 100 mm
+  flight's 35-70 million rows: 7.6-15.2 GB on disk and about 1.4-2.9 GB at the writer, against 16-32 GB from memory.
+- *The FEniCSx tier's failure* (`fenicsx_books.py`, `run_fenicsx_books.sh`): the energy residual over the absorbed heat
+  after ten 0.05 s steps --
+
+  | code | scikit-fem, default | FEniCSx, default | scikit-fem, CG 1e-13 | FEniCSx, CG 1e-13 |
+  |---|---|---|---|---|
+  | sub-plan 21 (602b262) | 5.1e-9 (1.07e-8 at step 6) | 1.1e-11 | 1.6e-12 (Newton 1e-10) | -- |
+  | Task 3b | 1.05e-8 (1.17e-8 at step 9) | 8.9e-12 | 4.5e-12 (Newton 1e-6), 6.3e-13 (1e-10) | 2.0e-14 |
+
+  and scikit-fem's at a Newton tolerance of 1e-8 with its default gradients 5.8e-9: the residual is the linear solves'.
+  The amended code sprays 2.2 % more there (removed enthalpy 1.375e5 J against 1.345e5 J). With both solvers at 1e-13 the
+  test passes in 22 s.
+- *The rebuild's mass residual*: zero to the last bit on each of two rebuilds of the coarse test sphere (10 191 and
+  9 955 elements, their volumes equal in every bit).
+
+**Rulings** (2026-10-31; each what, why, cost if wrong; Asha accepted rulings 1-5 as built on 2026-10-31):
+1. *The release angle's centroid is the geometric one*, of the volume the outer surface encloses, from the surface and
+   at the instant of the rows' positions. Why: Register's bodies are of one density, whose centroid is the centre of
+   mass; it is defined alike for both models from the surface the rows' positions are on, where the element model's
+   mass centre (`mass_centre`) and a skin body's (the 3D model and the skins' cells) are computed differently. Cost:
+   on the 4 mm test sphere's spraying step the mass centre lay 0.083 mm from the geometric one (the hot liquid at the
+   nose is lighter), moving the angles by at most 0.088 degrees.
+2. *A skin flight's summary: the element model's droplet columns, its released mass the step's, the skins' liquid and
+   flowing depths where the element model has its film.* Why: the same name must mean the same thing in both models'
+   files, the skins have no film, and their mean liquid and flowing depths are the history's columns of the reservoir
+   the release takes. Cost: a reader comparing the two summaries finds two columns named differently; the options
+   are the element model's film names left empty (nan) or given the skins' liquid.
+3. *The step's released mass a new column, `released_step_mass_kg`*, the skins' cumulative `released_mass_kg` kept.
+   Why: neither model's columns change meaning. Cost: the skin history has both.
+4. *The loop's fix for the skins only* (`snap_to_t_max`). Why: on the element model the same fix moves its last step's
+   end by 2e-14 s and removes a row, which changes its outputs; on the skins it removes a wasted macro step. Cost: the
+   element model keeps its vanishing step (and its own Pi-free columns); the fix can be given to both at a later
+   comparison's cost.
+5. *The FEniCSx test runs both solvers' gradients at 1e-13*, its bound kept, rather than a wider bound. Why: it then
+   checks the books to about 1e-11 on both backends, a tighter test than the bound's 1e-8, and the evidence shows the
+   residual is the solver's. Cost: the test compares the backends at a tolerance neither flight uses; the alternative
+   is a bound of 3e-8 for scikit-fem's at its default.
+6. *The resolved sheared depth at a tenth of the top cell's speed.* Why: spec 6.7 leaves the fraction to be set; on
+   Girin's linear profile, which reaches nothing at delta_m, a tenth gives 0.9 delta_m, so the ratio reads near 1 where
+   the resolved profile is Girin's. Cost: another fraction scales the column (a half gives 0.5 delta_m).
+7. *"Wet windward" for the skins: theta <= 90 degrees, a flowing depth above zero and Girin's delta_m*, at the step's
+   end. Why: b is the flowing depth (spec 6.7), and delta_m exists only under his closure. Cost: none.
+8. *theta_cr_deg and spraying_area_m2 over the columns whose plan sprays, r_median_um and r_max_um over the step's
+   rows.* Why: the element model's are over its patches with a rate and its rows. Cost: none.
+9. *The spool always for a spraying skin run from the command line*, removed once written; a skin body built in Python
+   keeps its rows in memory unless given a directory. Why: one path for every flight; the tests read either. Cost: a
+   failed run leaves its partial records on disk.
+10. *`shortfall_kg` unchanged* though spec 10.2 calls it cumulative. Why: it is a state (how far the columns are below
+    their minimum), whose sum over steps means nothing, and changing it changes an existing column. Asha, 2026-10-31:
+    the spec's word is corrected, the column unchanged. Cost: none.
+11. *The element model's history gains three columns at its end, its rows one at their end.* Why: Asha's requirement
+    for both models; appended, every existing column and field keeps its position and value. Cost: the history file is
+    three columns wider, the same column by column.
+
+- [ ] **Step 1: The release angle, its statistics and the spool** -- in `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T4}}
+
+- [ ] **Step 2: The loop's last step, the writer and the rebuild's mass** -- append to
+  `tests/test_reentry_model_trajectory.py`, `tests/test_reentry_model_coupled.py` and
+  `tests/test_reentry_model_movemesh.py`:
+
+{{DIFF_TEST_TRAJECTORY_T4}}
+
+{{DIFF_TEST_COUPLED_T4}}
+
+{{DIFF_TEST_MOVEMESH_T4}}
+
+- [ ] **Step 3: The skin body's outputs** -- in `tests/test_reentry_model_skinbody.py` (and sub-plan 21 Task 6c's
+  flow-off test comparing the two bodies' history columns, now nan-aware: the new columns are empty in both):
+
+{{DIFF_TEST_SKINBODY_T4}}
+
+- [ ] **Step 4: The element model's and the command line's** -- in `tests/test_reentry_model_melting.py`,
+  `tests/test_reentry_model_cli.py` and `tests/test_reentry_model_fenicsx.py`:
+
+{{DIFF_TEST_MELTING_T4}}
+
+{{DIFF_TEST_CLI_T4}}
+
+{{DIFF_TEST_FENICSX_T4}}
+
+- [ ] **Step 5: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py tests/test_reentry_model_trajectory.py
+  tests/test_reentry_model_coupled.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_skinbody.py
+  tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py -q -k "solid_fraction_and_enthalpy or register_s_release
+  or enclosed_centroid or rides_in_the_source or spool_on_disk or within_the_snap or vanishing_step or
+  summary_from_its_droplet or mass_its_new_volume or sheared_depth_is or plan_s_records or
+  close_on_its_books_and_the_coupled_writer or film_spraying_death_and_balances or sprays_from_its_top_cells or
+  melting_run_writes_columns"`. Expected: 15 failed (about a minute) --
+  - the source table's 26 columns where 27 are asked: `assert (26 == 27)`, `assert ((4, 26) == (4, 27)`, `IndexError:
+    index 26 is out of bounds for axis 1 with size 26`, `assert ('h_kg' == 'release_angle_register_deg'`;
+  - `AttributeError: module 'reentry_model.spray' has no attribute 'register_angle'` (and `'enclosed_centroid'`,
+    `'SourceSpool'`, `'RELEASE_ANGLE_COLUMNS'`);
+  - `TypeError: Simulator.advance() got an unexpected keyword argument 'snap'` and `TypeError: CoupledSettings.__init__()
+    got an unexpected keyword argument 'snap_to_t_max'`;
+  - `AttributeError: 'MovingMesh' object has no attribute 'rebuild_mass_residual_total'`;
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'spool'` and `AttributeError: module
+    'reentry_model.skinbody' has no attribute 'SHEARED_FRACTION'`;
+  - `AttributeError: module 'reentry_model.cli' has no attribute 'SOURCE_SPOOL'`.
+
+  The FEniCSx test (`FI_PROVIDER=tcp CC=... "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q -k thick_film_flux`)
+  fails on Task 3b's code as it stands, 1.0496e-8 against 1e-8, and passes with this step's version: its change is the
+  test's own solvers.
+
+- [ ] **Step 6: The release angle, the centroid and the spool** in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T4}}
+
+- [ ] **Step 7: The element model's rows and history** in `reentry_model/body.py`:
+
+{{DIFF_BODY_T4}}
+
+- [ ] **Step 8: The last step** in `reentry_model/trajectory.py`, and the summary, the skin results and the loop in
+  `reentry_model/coupled.py`:
+
+{{DIFF_TRAJECTORY_T4}}
+
+{{DIFF_COUPLED_T4}}
+
+- [ ] **Step 9: The rebuild's mass residual** in `reentry_model/movemesh.py`:
+
+{{DIFF_MOVEMESH_T4}}
+
+- [ ] **Step 10: The skin body's outputs** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T4}}
+
+- [ ] **Step 11: The spool and the skins' last step from the command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T4}}
+
+- [ ] **Step 12: Run them to see them pass.** Expected: the 15 pass (about two and a half minutes; the skin body's records test about 100 s);
+  `tests/test_reentry_model_spray.py` 29 passed, `tests/test_reentry_model_trajectory.py` 13,
+  `tests/test_reentry_model_coupled.py` 12, `tests/test_reentry_model_movemesh.py` 40, `tests/test_reentry_model_skinbody.py`
+  36 (2 deselected, the reference tier's); the unit tier 532 passed, 1 skipped (Task 3b's 523 and nine added); the FEniCSx tier 18 passed (Task 3's 17 and the thick-film test).
+
+- [ ] **Step 13: The measurements** (in `measure/task4/`, on mains power, one heavy run at a time): the element model's
+  short case, `../task1/cmp/run_case.sh <code> "$PWD/runs" line4_short --surface-model elements` against Task 3b's
+  `line3b_short` copied into `runs/`, `"$PY" -B ../task1/cmp/compare_runs.py runs line3b_short line4_short` and
+  `"$PY" -B element_files.py runs line3b_short line4_short`; `./run_bitid.sh` (the skin body against Task 3b's, about 8
+  minutes); `./run_smoke.sh` (two runs, about three minutes) and `"$PY" -B smoke_check.py smoke/<run>.json
+  ../task3b/evidence/<run>.json`; `"$PY" -B body_outputs.py <code> body_outputs_slurry.npz on`; `"$PY" -B
+  spool_cost.py <code> <scratch dir> 3000000`; `./run_fenicsx_books.sh` (about two minutes, the FEniCSx interpreter).
+
+- [ ] **Step 14: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/body.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/trajectory.py reentry_model/movemesh.py reentry_model/cli.py tests/test_reentry_model_spray.py tests/test_reentry_model_trajectory.py tests/test_reentry_model_coupled.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py tests/test_reentry_model_fenicsx.py
+git commit -m "Skins: the outputs of a spraying skin flight (spec 8 and 10.2) -- every droplet record of both surface models carries Register et al.'s (2020) release angle from the centroid of the volume the outer surface encloses (Asha 2026-10-29), each history its mean by mass, least and largest; the skin history gains the element model's per-step droplet columns and released_step_mass_kg, so the coupled writer writes its particles_summary.csv, and b and the resolved sheared depth over delta_m and each rebuild's mass residual; the skin results the sprayed mass, droplets and rows; the skins' loop ends at t_max without a vanishing last step; a spraying skin run's records go to disk as they come and are read back to the last bit; the FEniCSx tier's thick-film test runs both solvers' gradients at 1e-13, its residual having been scikit-fem's linear tolerance; the element model's existing outputs unchanged to the last bit (sub-plan 22 Task 4)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -1358,9 +1688,11 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
    > `MeltSettings(surface_model="skin1d")`: the retirement is deleting `skin1d.py`, its tests and `MeltingBody`'s
    > `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
    > `--removal girin`.
-4. **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
-   history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
-   mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).
+4. **Outputs** -- written out above as Task 4, with Register's release angle (Asha, 2026-10-29), the records on disk and
+   the FEniCSx tier's failure. The outline's item, as it stood:
+   > **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
+   > history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
+   > mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).
 5. **Flights**: the 100 mm flight to 120 s and the 50 mm flight; convergence under halving of the macro step, 10 against
    20 µm cells, and a skin surface at 2 against 1 mm spacing; the acceptance criterion (droplet count, thick share,
    medians by number and mass, sprayed mass and mass at 120 s within the scatter between seeds under halving and
@@ -1372,17 +1704,17 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
 
 ## Inputs to settle
 
-Carried from the outline, with one Task 2 adds and one Task 3 adds; none is settled by Tasks 1–3, whose spraying is
-evaluated and recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the
-macro step.
+Carried from the outline, with one Task 2 adds and one Task 3 adds; Tasks 1–3 settle none of the outline's, their
+spraying evaluated and recorded once a macro step at whatever macro step the run takes (Task 1c); Task 3b settles the
+flow's default and Task 4 the records' volume, whatever the macro step.
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
-- The droplet records' volume (Task 2, ruling 9): a skin flight writes a row per spraying column and mode per macro
-  step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 370 000 to 740 000
-  a second of flight at the 12.5 ms continuum step, 75-150 MB a second in memory; at 0.5 s macro steps, 40 times fewer.
-  If the flights keep the continuum step, Task 5 writes the blocks out as it goes or combines the records over a longer
-  window than the macro step (which spec 8 would then say).
+- Settled: the droplet records' volume (Task 2, ruling 9; Task 4): a skin flight writes a row per spraying column and
+  mode per macro step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 35-70
+  million rows on the 100 mm flight from its first liquid to 120 s at the continuum step, 7.6-15.2 GB as arrays; since
+  Task 4 a spraying skin run writes them to disk as they come and the writer reads them back (fact 186), nothing
+  combined over more than a macro step.
 - The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
   sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step. What the

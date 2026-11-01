@@ -547,6 +547,19 @@ staying the gates', and the droplet Weber and Ohnesorge numbers are by the phase
 The histograms accumulated in the sub-steps are the records' to the round-off of numpy's weighted histogram, which is
 the whole step's.)
 
+Every droplet record, the skins' and the element model's alike, carries its **release angle** as Register et al. (2020,
+section 4.2) define it, `release_angle_register_deg`: 180 degrees less the angle between the body's direction of flight
+through the air and the line from the body's centroid to the release point -- 180 at the stagnation point, 90 at the
+equator, 0 directly behind -- from the actual vector, so that a flattened or receded body gets its own angle (Asha,
+2026-10-29). The centroid is the geometric one, of the volume the body's outer surface encloses, taken from the same
+surface and at the same instant as the positions the records carry: the element model's surface at its spray step, the
+skins' top surface where their plan is evaluated, the macro step's start. Register's predicted wake zone is left to
+post-processing. A skin flight at the continuum step writes tens of millions of records (35–70 million on the 100 mm
+flight from its first liquid to 120 s, 7.6–15.2 GB as arrays), so the command line has the skin body write each macro
+step's block to disk as it comes, one file per column, which the coupled writer reads back into `particles.npz`; the
+numbers are the same to the last bit, and no record is combined over more than its macro step. (Sub-plan 22 Task 4,
+2026-10-31.)
+
 ## 9. What is retired and what is kept
 
 | Mechanism | With this design | Why |
@@ -627,12 +640,27 @@ max), liquid depth (mean, max), b over δ_m on the wet windward columns (median)
 (median), largest speed in any cell, worst surface triangle quality, corner-to-corner roughness of the top surface (the
 largest height difference between neighbours over their spacing), worst element radius ratio in the zone, rebuilds
 (cumulative) with each rebuild's pre-correction energy and mass residuals, drawn, absorbed and handed-down mass
-(cumulative), shortfall mass (cumulative), base temperature-jump faults (cumulative), interface mismatch and repeats,
+(cumulative), shortfall mass (the mass the columns lack below their minimum at the step's end: a state, not a sum;
+Asha, 2026-10-31), base temperature-jump faults (cumulative), interface mismatch and repeats,
 momentum balance residual, the droplet-momentum ratio Π of fact 29, and the wall time split into skins, 3D solve and
 rebuilds. Surface frames gain per corner: top temperature, liquid and flowing depths, skin thickness, top speed and base
 position. Results gain the cumulative quantities; droplet records gain `solid_fraction` and `h_kg` (§8: on a skin
 record mass-weighted over the cells released, on the element model's 0 and its film's liquid enthalpy; sub-plan 22 Task
 2).
+
+Built in sub-plan 22 Task 4 (2026-10-31). The resolved sheared depth (§6.7) is the depth at which the computed speed
+falls to a tenth of the top cell's, between the cells' centres (0.9 δ_m on Girin's own linear profile); it and b are
+reported over δ_m as medians over the wet windward columns -- windward, with flowing metal, under Girin's closure -- at
+the macro step's end. Each rebuild's mass residual is the material's density times the volume the new mesh misses
+against the old, uncorrected and round-off, reported for the last rebuild and summed. A spraying skin flight's history
+also carries the element model's per-step droplet columns of the same names -- the droplets since time zero, the radius
+median and largest over the step's records, the smallest angle and the area of the columns whose plan sprays -- and
+`released_step_mass_kg`, the step's released mass (its `released_mass_kg` is since time zero, as sub-plan 21 Task 7 made
+it), so that `particles_summary.csv` is written for it: the element model's columns, its released mass the step's and,
+where the element model has its film, the skins' mean liquid and flowing depths. Both models' histories carry the
+release angle (§8) over each step's released mass: its mean by mass, least and largest, empty where nothing was
+released. A skin run's results gain the sprayed mass, the droplets and the rows written, the flow's wall time and the
+rebuilds' mass residual.
 
 ### 10.3 Code
 

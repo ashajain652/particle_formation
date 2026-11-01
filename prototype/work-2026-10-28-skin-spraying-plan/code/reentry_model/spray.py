@@ -97,8 +97,21 @@ nose by 1/cos(phi)).
 Release per patch and step: dm = min(mdot A dt, m_f) (the film after feed and runoff), dn = dm / (4/3 pi rho_l r^3);
 one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX]. The layered
 skins' records are one row per column, per mode, per macro step (`skinbody.SprayPlan.source_block`, sub-plan 22 Task 2):
-the same columns, written by the same `source_block`, the two last columns the droplets' solid fraction and the enthalpy
-per kilogram they carry (spec 8 and 10.2; the 2026-10-07 design 7.5).
+the same columns, written by the same `source_block`, the droplets' solid fraction and the enthalpy per kilogram they
+carry (spec 8 and 10.2; the 2026-10-07 design 7.5) and, last, their release angle as Register et al. (2020) define it
+(`register_angle`, sub-plan 22 Task 4). A skin flight at the continuum step makes tens of millions of records, so the
+command line has the skin body write each macro step's block to disk as it comes (`SourceSpool`), and the coupled writer
+reads either form column by column (`source_columns`), the numbers the same to the last bit.
+
+The release angle (Asha, 2026-10-29; Register, P. J., et al. 2020, "Interactions between asteroid fragments during
+atmospheric entry", Icarus 337, 113468, section 4.2): the angle between the larger body's trajectory axis and the line
+joining its centroid to the released fragment's, measured from downstream, theta_R = 180 degrees - angle(v_hat, p - c):
+180 at the stagnation point, 90 at the equator, 0 directly behind. It is computed from the actual vector p - c, so a
+flattened or receded body gets its own angle (the source table's `theta_deg` is the surface normal's angle to the flight
+direction, a different thing off a sphere). p is the row's position; c is the centroid of the volume the body's outer
+surface encloses (`enclosed_centroid`), from the same surface and at the same instant as the positions the rows carry --
+the element model's surface at its spray step, the skins' top surface where their plan was evaluated, the macro step's
+start -- and v_hat the body's direction of motion through the air, its fixed attitude.
 
 The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius and by one
 of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
@@ -113,6 +126,7 @@ nothing gives no droplet, and nothing leaves. On the thick and thin branches it 
 about 2 % (thick: k_r = 0.17) and 6.5 % (thin: lambda*/4) of the wavelength; on the Rayleigh-Taylor branch, whose
 droplet is its wavelength (centimetres), on any layer shallower than about four wavelengths, so always: at lambda = 2 cm
 and h = 1 mm it is 4.6 mm, against about 2 mm under the film cap."""
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -129,10 +143,12 @@ CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi
 # h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
 # solid_fraction and h_kg: the droplets' solid share of their mass and the enthalpy per kilogram they carry [J/kg, on
 # the material's enthalpy scale] (spec 8 and 10.2, sub-plan 22 Task 2): the element model's film is liquid by
-# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`)
+# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`);
+# release_angle_register_deg: Register et al.'s (2020) release angle, 180 degrees at the stagnation point, 90 at the
+# equator, 0 directly behind (`register_angle`; Asha 2026-10-29, sub-plan 22 Task 4)
 SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup",
-                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg"]
+                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg", "release_angle_register_deg"]
 BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
 #                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
 BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous medium: Girin & Kopyt's step profile again
@@ -499,13 +515,15 @@ class SprayModel:
                            h_floor, gamma_tau, outside & gk, wavelength)
 
 
-def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
+def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
+                 release_angle=None):
     """Source-table rows, an array (k, len(SOURCE_COLUMNS)), for the patches that released mass (`res.dm` > 0): `h` [m]
     and `V` [m/s] the altitude and speed, `theta` [rad], `centroids` (n, 3) [m] and `t_hat` (n, 3) per patch, `flow`'s
     `closure`, `res` a SprayResult (or anything with its per-patch `branch`, `delta_m`, `we_s`, `r`, `dn`, `dm`, `v_s`,
     `h_floor`, `gamma_tau`), `b` [m] the film thickness, `liquid` the droplets' properties -- each of its `rho`, `mu` and
     `sigma` one value or one per patch (a slurry droplet's are its slurry's: sub-plan 22 Task 2) -- for their Weber and
-    Ohnesorge numbers at the freestream `state`, and `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given)."""
+    Ohnesorge numbers at the freestream `state`, `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given),
+    and `release_angle` [deg] per patch, Register et al.'s (`register_angle`; nan if not given; sub-plan 22 Task 4)."""
     k = np.flatnonzero(res.dm > 0.0)
     if k.size == 0:
         return np.zeros((0, len(SOURCE_COLUMNS)))
@@ -516,28 +534,141 @@ def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, 
     oh = mu / np.sqrt(rho * sigma * 2.0 * r)
     s_f = np.zeros(k.size) if solid_fraction is None else np.asarray(solid_fraction, dtype=float)[k]
     h_d = np.full(k.size, np.nan) if h_kg is None else np.asarray(h_kg, dtype=float)[k]
+    angle = np.full(k.size, np.nan) if release_angle is None else np.asarray(release_angle, dtype=float)[k]
     return np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
                             centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
                             res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1],
                             t_hat[k, 2], we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k],
-                            s_f, h_d])
+                            s_f, h_d, angle])
 
 
-def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
+def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
+                release_angle=None):
     """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step
     (`source_block`'s, as lists: the element model's form, one row per patch-step)."""
-    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg).tolist()
+    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg,
+                        release_angle).tolist()
 
 
 def source_table(rows):
     """A body's `source_rows` as one array (N, len(SOURCE_COLUMNS)): a list of rows (the element model's, one per
     patch-step) or of blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about
-    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records)."""
+    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records), or a
+    `SourceSpool` on disk, read into memory."""
+    if isinstance(rows, SourceSpool):
+        return np.column_stack([np.asarray(c) for c in rows.columns().values()]) if rows.n_rows \
+            else np.zeros((0, len(SOURCE_COLUMNS)))
     if not len(rows):
         return np.zeros((0, len(SOURCE_COLUMNS)))
     if isinstance(rows[0], np.ndarray) and rows[0].ndim == 2:
         return np.concatenate(rows, axis=0)
     return np.array(rows, dtype=float)
+
+
+def source_columns(rows):
+    """A body's `source_rows` as {name: one-dimensional array} in SOURCE_COLUMNS order, what the coupled writer writes: a
+    list of rows or of blocks, the columns of `source_table`'s array; a `SourceSpool`, its files mapped from disk, so that
+    no flight's records need be in memory at once. The values are the same to the last bit either way."""
+    if isinstance(rows, SourceSpool):
+        return rows.columns()
+    table = source_table(rows)
+    return {name: table[:, i] for i, name in enumerate(SOURCE_COLUMNS)}
+
+
+class SourceSpool:
+    """The layered skins' droplet records on disk as they come (sub-plan 22 Task 4): one file per source column,
+    `<directory>/<name>.f64` (float64, little-endian), each macro step's block appended to every one. Measured for the 100
+    mm flight at the continuum step from the first liquid (24.5 s) to 120 s: 7 640 macro steps of 4 600-9 200 rows, 35-70
+    million rows of 27 columns, 7.6-15.2 GB as arrays and twice that while `source_table` joins them -- more than the
+    laptop's 24 GB -- so the command line gives the skin body a spool in the run's directory and the coupled writer maps
+    the columns back (`columns`), each read once, contiguous. `len` counts the blocks (macro steps that released), as the
+    in-memory list does; `n_rows` the rows."""
+
+    def __init__(self, directory):
+        os.makedirs(directory, exist_ok=True)
+        self.directory, self.n_rows, self.n_blocks = directory, 0, 0
+        for name in SOURCE_COLUMNS:
+            open(self._path(name), "wb").close()
+
+    def _path(self, name):
+        return os.path.join(self.directory, name + ".f64")
+
+    def __len__(self):
+        return self.n_blocks
+
+    def append(self, block):
+        """Add a macro step's block of rows (k, len(SOURCE_COLUMNS)) to the end of every column's file."""
+        block = np.asarray(block, dtype=np.float64)
+        if block.ndim != 2 or block.shape[1] != len(SOURCE_COLUMNS):
+            raise ValueError("a block of source rows has {} columns, not {}".format(block.shape[-1], len(SOURCE_COLUMNS)))
+        if not len(block):
+            return
+        for i, name in enumerate(SOURCE_COLUMNS):
+            with open(self._path(name), "ab") as fh:
+                fh.write(np.ascontiguousarray(block[:, i], dtype="<f8").tobytes())
+        self.n_rows += len(block)
+        self.n_blocks += 1
+
+    def columns(self):
+        """{name: the column, read-only, mapped from its file} in SOURCE_COLUMNS order (empty arrays with no rows)."""
+        if not self.n_rows:
+            return {name: np.zeros(0) for name in SOURCE_COLUMNS}
+        return {name: np.memmap(self._path(name), dtype="<f8", mode="r", shape=(self.n_rows,)) for name in SOURCE_COLUMNS}
+
+    def remove(self):
+        """Delete the files and the directory, once what they hold has been written elsewhere."""
+        for name in SOURCE_COLUMNS:
+            if os.path.exists(self._path(name)):
+                os.remove(self._path(name))
+        if os.path.isdir(self.directory) and not os.listdir(self.directory):
+            os.rmdir(self.directory)
+
+
+def register_angle(points, centre, v_hat):
+    """Register et al.'s (2020, section 4.2) release angle [deg] of each point (n, 3) [m] on a body whose centroid is
+    `centre` (3,) [m] and which moves through the air along `v_hat`: 180 degrees minus the angle between v_hat and the
+    line from the centroid to the point, so 180 at the stagnation point, 90 at the equator and 0 directly behind,
+    measured from the actual vector so that a flattened or receded body gets its own angle (Asha, 2026-10-29)."""
+    d = np.asarray(points, dtype=float) - np.asarray(centre, dtype=float)
+    v = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
+    along = d @ v
+    across = np.linalg.norm(d - along[:, None] * v, axis=1)
+    return 180.0 - np.degrees(np.arctan2(across, along))
+
+
+def enclosed_centroid(points, faces, normals=None):
+    """The centroid [m, (3,)] of the volume a closed triangulated surface encloses (the divergence theorem, by signed
+    tetrahedra from the points' mean, so either consistent orientation gives the same point): `faces` (nt, 3) into
+    `points`; with `normals` (nt, 3), one outward normal per triangle, each triangle is first turned to agree with its
+    own, for a surface whose triangles are not consistently ordered (the element model's). Register's angle is
+    measured from this point (`register_angle`): the body's geometric centroid, which for a body of one density is its
+    centre of mass."""
+    points, faces = np.asarray(points, dtype=float), np.asarray(faces, dtype=np.int64)
+    o = points[np.unique(faces)].mean(axis=0)
+    a, b, c = (points[faces[:, i]] - o for i in range(3))
+    n2 = np.cross(b - a, c - a)
+    v = np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0
+    if normals is not None:
+        v = np.where(np.einsum("ij,ij->i", n2, np.asarray(normals, dtype=float)) < 0.0, -v, v)
+    return o + (v[:, None] * (a + b + c)).sum(axis=0) / (4.0 * v.sum())
+
+
+# the history's release angle over a step's released mass, both surface models' (sub-plan 22 Task 4): its mean by mass,
+# least and largest [deg], nan where the step released nothing
+RELEASE_ANGLE_COLUMNS = ("release_angle_register_mean_deg", "release_angle_register_min_deg",
+                         "release_angle_register_max_deg")
+
+
+def release_angle_stats(dm, angle):
+    """(mass-weighted mean, minimum, maximum) [deg] of the release angles `angle` of a step's records weighted by their
+    masses `dm` [kg], over the records that released (dm > 0); nan, nan, nan where none did (the history's
+    release_angle_register_*_deg, sub-plan 22 Task 4)."""
+    dm, angle = np.asarray(dm, dtype=float), np.asarray(angle, dtype=float)
+    on = dm > 0.0
+    if not on.any():
+        return float("nan"), float("nan"), float("nan")
+    w, a = dm[on], angle[on]
+    return float((w * a).sum() / w.sum()), float(a.min()), float(a.max())
 
 
 def histogram(r, dn, dm):

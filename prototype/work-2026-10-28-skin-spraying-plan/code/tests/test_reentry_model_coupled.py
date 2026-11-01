@@ -285,3 +285,73 @@ def test_the_continuum_switch_latches_at_the_first_liquid_only_where_asked():
     assert steps(True, [(True, continuum)]).switch_trigger == "both"
     run = steps(True, states, dt_continuum=None)
     assert run.switched_at is None and run.settings.dt == 0.5
+
+
+# -- the outputs of a spraying skin flight (sub-plan 22 Task 4) ----------------------------------------------------------
+def test_the_skins_loop_ends_at_t_max_without_a_vanishing_step_and_the_element_model_s_is_unchanged(coarse_sphere_mesh):
+    """Fact 179's vanishing last macro step: the steps' sum falls short of t_max by round-off -- ten 0.1 s steps reach
+    0.9999999999999999 s -- so the loop took an eleventh step of 1.1e-16 s, a whole macro step of the body over which
+    the skins' droplet-momentum ratio read 5.5 and 8.6. With `snap_to_t_max` (the layered skins') the tenth step ends at
+    t_max and there is no eleventh; without it (the element model's loop, the default) the run is as it was, row for
+    row and bit for bit. The first nine steps are the same either way (pyamg's draws seeded alike)."""
+    out = {}
+    for snap in (False, True):
+        np.random.seed(12345)
+        b = thermal_body(coarse_sphere_mesh)
+        sim = simulator(b, t_max=1.0)
+        out[snap] = coupled.CoupledRun(sim, b, heating.SesamEquivalentHeating(),
+                                       coupled.CoupledSettings(dt=0.1, snap_to_t_max=snap)).run()
+    old, new = out[False].columns, out[True].columns
+    assert coupled.CoupledSettings().snap_to_t_max is False and coupled.END_SNAP == 1e-6
+    assert len(old["time_s"]) == 12 and 0.0 < old["time_s"][-1] - old["time_s"][-2] < 1e-15 and old["time_s"][-1] == 1.0
+    assert len(new["time_s"]) == 11 and new["time_s"][-1] == 1.0 and out[True].end_reason == "t_max"
+    for k in old:
+        np.testing.assert_array_equal(new[k][:10], old[k][:10], err_msg=k)
+    assert new["temperature_K"][-1] == pytest.approx(old["temperature_K"][-1], rel=1e-12)
+
+
+def test_the_writer_writes_a_skin_flight_s_summary_from_its_droplet_columns_and_a_spool_as_it_writes_rows(tmp_path):
+    """`coupled.write_particles` (sub-plan 22 Task 4): a skin flight's history has the element model's per-step droplet
+    columns, so the summary is written -- its released mass the step's (the skin history's released_step_mass_kg; its
+    released_mass_kg is since time zero) and, where the element model has its film, the skins' liquid and flowing depths;
+    the element model's history writes the element model's summary as before. A skin body's rows written from a spool on
+    disk give particles.npz, the summary and the size distribution exactly as from blocks in memory."""
+    import types
+    from reentry_model import spray
+    rng = np.random.default_rng(7)
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+
+    def block(t, k):
+        rows = rng.uniform(0.1, 1.0, size=(k, len(spray.SOURCE_COLUMNS)))
+        rows[:, C["time_s"]], rows[:, C["r_m"]] = t, rng.uniform(5e-5, 2e-3, size=k)
+        return rows
+    blocks = [block(0.25, 40), block(0.5, 70)]
+    t = np.array([0.0, 0.25, 0.5])
+    step = np.array([0.0, blocks[0][:, C["dm_kg"]].sum(), blocks[1][:, C["dm_kg"]].sum()])
+    skin = {"time_s": t, "altitude_km": [65.0, 64.9, 64.8], "velocity_kms": [7.24, 7.23, 7.22], "released_mass_kg": np.cumsum(step),
+            "released_step_mass_kg": step, "n_released": [0.0, 1e3, 3e3], "r_median_um": [np.nan, 300.0, 310.0],
+            "r_max_um": [np.nan, 1900.0, 1950.0], "theta_cr_deg": [np.nan, 0.5, 0.4], "spraying_area_m2": [0.0, 1e-3, 2e-3],
+            "liquid_depth_mean_mm": [0.0, 0.01, 0.02], "flowing_depth_mean_mm": [0.0, 0.1, 0.2]}
+    history = tj.History({k: np.asarray(v, dtype=float) for k, v in skin.items()}, np.zeros((3, 6)), "t_max")
+    spool = spray.SourceSpool(str(tmp_path / "spool"))
+    for blk in blocks:
+        spool.append(blk)
+    written = {}
+    for name, rows in (("memory", blocks), ("disk", spool)):
+        written[name] = coupled.write_particles(str(tmp_path / name), types.SimpleNamespace(source_rows=rows), history)
+    a, b = written["memory"], written["disk"]
+    assert set(a) == set(b) == {"particles", "particles_summary", "size_distribution"}
+    pa, pb = np.load(a["particles"]), np.load(b["particles"])
+    assert pa.files == pb.files == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(pa[k], pb[k], equal_nan=True) for k in pa.files)
+    for key in ("particles_summary", "size_distribution"):
+        assert open(a[key]).read() == open(b[key]).read()
+    lines = open(a["particles_summary"]).read().splitlines()
+    assert lines[0].split(",") == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and lines[0].split(",")[9:] == [
+        "liquid_depth_mean_mm", "flowing_depth_mean_mm"]
+    released = [float(line.split(",")[3]) for line in lines[1:]]
+    np.testing.assert_allclose(released, step, rtol=1e-8)                           # the step's, not the running total
+    element = dict(skin, film_mass_kg=[0.0, 1e-3, 2e-3], film_thickness_mean_mm=[0.0, 0.1, 0.2])
+    hist_e = tj.History({k: np.asarray(v, dtype=float) for k, v in element.items()}, np.zeros((3, 6)), "t_max")
+    files = coupled.write_particles(str(tmp_path / "element"), types.SimpleNamespace(source_rows=blocks), hist_e)
+    assert open(files["particles_summary"]).readline().strip().split(",") == coupled.SUMMARY_COLUMNS

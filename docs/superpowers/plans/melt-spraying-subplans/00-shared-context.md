@@ -2884,6 +2884,75 @@ of one comment in `spray.py`, both changed after.
      71 km, the extra steps spray little (fact 181). Tests: command line one added and nine changed, coupled one, skin
      body one; unit tier 523 passed, 1 skipped (21 minutes, mains power).
 
+## Amendment of 2026-10-31 — sub-plan 22 Task 4: the outputs of a spraying skin flight, Register's release angle, the records on disk (facts 183–187)
+
+> Asha's requirement of 2026-10-29 (the release angle on both models' records, `23-notes.md` item 1) and the outline's
+> item 4. Facts 1–182 stand; fact 179's 1 196 rows of the smoke flight included 191 that its vanishing last macro step
+> wrote (fact 185).
+
+183. **Register's release angle (sub-plan 22 Task 4, 2026-10-31; `element_files.py`, `body_outputs.py`).** Every source
+     row of both surface models carries `release_angle_register_deg`, 180 degrees less the angle between the body's
+     direction of flight and the line from its centroid to the row's position (Register et al. 2020, Icarus 337,
+     113468, section 4.2: 180 at the stagnation point, 90 at the equator, 0 behind; `spray.register_angle`); the centroid
+     is the geometric one, of the volume the outer surface encloses (`spray.enclosed_centroid`), from the surface the
+     positions are on and at their instant: the element model's at its spray step, the skins' top surface where the
+     plan is evaluated, the macro step's start. Each history carries the step's mean by mass, least and largest
+     (`release_angle_register_{mean,min,max}_deg`), nan where nothing was released. The element model's short case
+     (fact 169): 92.0/116.1/177.8 degrees (minimum/median/maximum); its history the rows' within 4.7e-9 (nine printed
+     digits); the angle differs from 180 - theta_deg by -64.8 to +87.6 degrees (median 7.1), the facet normals of its
+     element deaths' staircase. The skins (Task 2's 4 mm test sphere at 3 MW/m2 from 890 K, slurry spraying on, the
+     second 0.25 s step's 759 rows): 111.5/135.4/169.9 degrees, 134.9 by mass, within 7.3 degrees of 180 - theta_deg; the
+     columns within 10.9 degrees of the nose do not spray; the body's mass centre (3D model and skins' cells) lay
+     0.083 mm from the geometric centroid at the step's end, which would move the angles by at most 0.088 degrees, and
+     the centroid moved back 0.33 mm over the step. The 65 km smoke flight (fact 179's case): 123.5/145.5/168.7 degrees,
+     148.9 by mass, slurry spraying off. Each measured once.
+184. **A spraying skin flight's history, summary and results (sub-plan 22 Task 4, 2026-10-31; `smoke_check.py`,
+     `bitid.py`).** The skin history gains the element model's per-step droplet columns under their names and meanings
+     -- `n_released` (since time zero), `r_median_um` and `r_max_um` over the step's rows, `theta_cr_deg` and
+     `spraying_area_m2` over the columns whose plan sprays -- and `released_step_mass_kg`, the step's released mass, its
+     `released_mass_kg` staying since time zero; so `coupled.write_particles` writes its `particles_summary.csv`
+     (`coupled.SKIN_SUMMARY_COLUMNS`: the element model's columns, the released mass the step's, the skins' mean liquid
+     and flowing depths where the element model has its film). Spec 10.2's missing items: b over delta_m and the
+     resolved sheared depth over delta_m, medians over the wet windward columns at the step's end, the sheared depth at
+     a tenth of the top cell's speed (`skinbody.sheared_depth`, 0.9 delta_m on Girin's linear profile), and each
+     rebuild's mass residual (zero to the last bit on two rebuilds of the coarse test sphere); the results gain
+     `sprayed_mass_kg`, `n_released`, `n_source_rows`, `wall_flow_s`, `rebuild_mass_residual_kg`. `shortfall_kg`, which
+     spec 10.2 called cumulative, is the current shortfall and is left so (Asha corrected the spec's word, 2026-10-31). On the 65 km smoke flight (slurry spraying off)
+     the summary's 10 rows agree with the rows within 3.4e-9 (nine printed digits) in each step's mass, droplets, radius
+     median and largest and release angle, the size distribution the rows' histogram within 5.4e-10; b over delta_m runs
+     2.8 to 7.6 and the sheared depth over delta_m 2.5 to 0.43; on the test sphere 5.5 and 10.7, 0.46 and 1.91. The skin
+     body with these outputs is Task 3b's to the last bit in all 12 arrays of `bitid.py` (3D field, mesh, skins, books,
+     histograms, the rows' 26 old columns), the history read after every step or not.
+185. **The vanishing last macro step (sub-plan 22 Task 4, 2026-10-31; fact 179).** The loop asks the trajectory for
+     min(t + dt, t_max) again and again; the floating-point sum falls short of t_max (ten 0.0125 s steps reach
+     0.12499999999999999 s, ten of 0.1 s 0.9999999999999999 s), so a last step of 1.4e-17 or 1.1e-16 s followed, a whole
+     macro step of the body. The element model has it too (its short case ends with two rows printed at 15 s, the last
+     releasing 1.5e-13 kg) and keeps it: the fix changes its outputs. For the skins `CoupledSettings.snap_to_t_max` (set
+     by the CLI) ends a step within 1e-6 of a macro step short of t_max at t_max (`Simulator.advance(dt, snap=)`; with
+     `snap` 0 the arithmetic is as it was). On the 65 km smoke flight: 9 macro steps where Task 3b's had 10, every old
+     history column of the first 9 rows the same text and the last step its same step's but in round-off (interface
+     mismatch 1.3e-9 relative, momentum residual 2.2e-17 against 4.0e-17); the released mass the same in all 12 digits,
+     1.95571981656 g, in 1 005 rows against 1 196 -- the vanishing step had written 191 rows holding 3.4e-17 kg -- and the
+     largest Pi 0.083 against 5.50; with slurry spraying on 1 811 rows against 2 223 (412 vanishing), Pi 0.079 against
+     8.59.
+186. **The droplet records on disk (sub-plan 22 Task 4, 2026-10-31; `spool_cost.py`).** With the continuum step from the
+     first liquid (Task 3b) the 100 mm flight runs 12.5 ms steps from about 24.5 s to 120 s: 7 640 macro steps, at
+     Task 2's 4 600-9 200 rows a step (slurry spraying off, on) 35-70 million rows of 27 columns, 216 bytes a row: 7.6-15.2
+     GB as arrays and twice that while they are joined, against the laptop's 24 GB. A spraying skin run from the CLI
+     therefore appends each macro step's block to one file per column (`spray.SourceSpool`, `<run>/source_rows/`), which
+     the coupled writer reads back column by column (`spray.source_columns`) and the CLI removes. Measured on 3.0 million
+     rows in blocks of 9 231: an append 1.4-2.9 ms (a melting 12.5 ms macro step's skins take 1.5-6.2 s); the same
+     `particles.npz` fields and size distribution byte for byte from disk as from memory; the writer's own allocations
+     123 MB from disk (41 bytes a row) against the rows' 616 MB held and 739 MB more from memory (453 bytes a row), so
+     about 1.4-2.9 GB at the end of the 100 mm flight against 16-32 GB. Nothing is combined over more than a macro step.
+187. **The FEniCSx tier's thick-film failure (sub-plan 22 Task 4, 2026-10-31; `fenicsx_books.py`).** The test's element
+     model books close on the FEniCSx backend to 1.1e-11 (sub-plan 21's code) and 8.9e-12 (Task 3b's) of the heat
+     absorbed after ten 0.05 s steps, and on scikit-fem's wander from 2.2e-9 to 1.07e-8 (sub-plan 21; 5.1e-9 at the
+     last) and to 1.17e-8 (Task 3b; 1.05e-8 at the last), the amended spraying taking another path (2.2 % more removed
+     enthalpy). With scikit-fem's conjugate gradients at 1e-13 against the default 1e-10, its Newton iterations the same,
+     the residual is 4.5e-12; with a tighter Newton tolerance alone 5.8e-9. It is the scikit-fem backend's linear
+     tolerance, not the books; the test now gives both solvers 1e-13 and keeps its 1e-8 bound, passing in 22 s.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

@@ -2,15 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29).**
+> Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29)
+> and 4 (2026-10-31).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
 > and on the slurry cascade. Task 2 makes the droplet records from the skins. Task 3 retires stage 1's one-dimensional
 > skins, makes the layered skins the default surface model and puts the spraying skin flight on the command line; Task
 > 3b, by Asha's decisions on the two questions it left, makes the flow the default of a melting skin run and latches
-> the skins' continuum step at their first liquid. Tasks 4–6 are the outline's, below, and the inputs it listed are
-> carried at the end.
+> the skins' continuum step at their first liquid. Task 4 writes a spraying skin flight's outputs -- the summary, the
+> rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
+> without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure.
+> Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
 rules of record (the element model's amendments of 2026-10-22) and a droplet no larger than one crest of its own wave;
@@ -161,6 +164,30 @@ document by hand: change `part_22.md` or the tested copy, and regenerate.
     switch, about 1 950 on each flight (fact 182), buy little spray where option B's hold applies. Pinned by
     `test_the_continuum_switch_latches_at_the_first_liquid_only_where_asked` and
     `test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch`.
+20. **Register's release angle** (Task 4, Asha 2026-10-29) -- from the vector p - c, never the normal's `theta_deg`
+    (they differ by -65 to +88 degrees on the element model's staircase); c the centroid of the volume the outer surface
+    encloses, from the surface and at the instant of the rows' positions (ruling 1: the mass centre would move the angles
+    by at most 0.088 degrees on the test sphere, fact 183); the history's mean, least and largest the step's rows', nan
+    where nothing was released. Pinned by
+    `test_register_s_release_angle_is_180_at_the_stagnation_point_90_at_the_equator_and_0_behind_from_the_actual_vector`,
+    `test_the_release_angle_rides_in_the_source_table_and_a_step_s_statistics_are_by_mass` and the two bodies' tests.
+21. **The element model's outputs under Task 4** -- three history columns and one source column appended, every other
+    column, field, file and result its own to the last bit on the CLI test's short melting case, its vanishing last step
+    kept (ruling 4, fact 185). Pinned by `test_film_spraying_death_and_balances` and the melting run's CLI test.
+22. **A skin flight's summary** (Task 4, rulings 2 and 3) -- the element model's droplet columns under their names and
+    meanings, the step's released mass from the new `released_step_mass_kg` (the skin history's `released_mass_kg` stays
+    since time zero), the skins' liquid and flowing depths where the element model has its film. Pinned by
+    `test_the_writer_writes_a_skin_flight_s_summary_from_its_droplet_columns_and_a_spool_as_it_writes_rows`.
+23. **The skins' last step** (Task 4, ruling 4) -- with `snap_to_t_max` a step ending within 1e-6 of a step short of t_max
+    ends there; without it `Simulator.advance` is as it was. On the 65 km smoke flight the vanishing step had written
+    191 of its 1 196 rows (3.4e-17 kg) and read Pi 5.50 (fact 185). Pinned by
+    `test_the_skins_loop_ends_at_t_max_without_a_vanishing_step_and_the_element_model_s_is_unchanged`.
+24. **The records on disk** (Task 4, ruling 9) -- a spraying skin run's blocks appended to one file per column and read
+    back column by column: the same files to the last bit, the writer's allocations about 41 bytes a row against 460
+    from memory (fact 186). Pinned by `test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit` and the
+    skin body's records test.
+25. **The FEniCSx tier's thick-film test** (Task 4, ruling 5) -- both solvers' gradients at 1e-13, its 1e-8 bound kept:
+    the failure since Task 1a was scikit-fem's linear tolerance, not the books (fact 187).
 ## Amendment of 2026-10-29 (after Task 3) — the flow on by default, and the continuum step from the skins' first liquid (Asha's decisions)
 
 > Decided by Asha on 2026-10-29 on the two questions Task 3 left (spec 10.1 and 16 as amended that day). This adds Task
@@ -5857,7 +5884,1756 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
 
 ---
 
-## The outline (Tasks 4–6, and Tasks 1–3 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
+### Task 4: The outputs of a spraying skin flight, Register's release angle, and the records on disk
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SOURCE_COLUMNS` + `release_angle_register_deg`; `source_block(...,
+  release_angle=None)`, `source_rows`; `source_table` and `source_columns` reading a spool; `SourceSpool`;
+  `register_angle`; `enclosed_centroid`; `RELEASE_ANGLE_COLUMNS`, `release_angle_stats`; the module docstring),
+  `reentry_model/body.py` (the element model's rows' release angle and its history's three columns),
+  `reentry_model/skinbody.py` (`SHEARED_FRACTION`, `sheared_depth`; `SprayPlan.area`, `.centre`, `.v_hat`, `.spraying`,
+  `.release_angle`; `girin_plan(..., centre=None, v_hat=None)`; `SkinBody(..., spool=None)`, `.sprayed_mass`,
+  `.n_source_rows`, `.step_spray`, `._step_columns`, `._depth_ratios`; the history's new columns; the module
+  docstring), `reentry_model/coupled.py` (`SKINBODY_COLUMNS`, `SUMMARY_COLUMNS`, `SKIN_SUMMARY_COLUMNS`, `END_SNAP`;
+  `CoupledSettings.snap_to_t_max`; the loop's last step; `skin_results`; `write_particles`),
+  `reentry_model/trajectory.py` (`Simulator.advance(dt, snap=0.0)`), `reentry_model/movemesh.py`
+  (`RebuildResult.mass_residual`, `MovingMesh.rebuild_mass_residual_total`), `reentry_model/cli.py` (`SOURCE_SPOOL`;
+  `build_thermal(..., spool=None)`; `cmd_run`'s spool, last step and printed summary)
+- Test: `tests/test_reentry_model_spray.py` (four added, one changed), `tests/test_reentry_model_trajectory.py` (one
+  added), `tests/test_reentry_model_coupled.py` (two added), `tests/test_reentry_model_movemesh.py` (one added),
+  `tests/test_reentry_model_skinbody.py` (one added, three changed), `tests/test_reentry_model_melting.py` (one changed),
+  `tests/test_reentry_model_cli.py` (two changed), `tests/test_reentry_model_fenicsx.py` (one changed)
+
+**Interfaces:**
+- Consumes: Task 2's `SprayPlan` records and `source_block`, `SkinBody.source_rows`, `coupled.write_particles`; Task
+  3's command line and `particles_summary` recorded as null; Task 3b's `CoupledSettings`; sub-plan 21 Task 7's
+  `released_mass_kg` and Pi; the element model's `MeltingBody.source_rows`, `melt_stats` and its surface.
+- Produces: `spray.SOURCE_COLUMNS` (27: + `release_angle_register_deg` [deg]); `spray.register_angle(points, centre,
+  v_hat) -> (n,)` [deg]; `spray.enclosed_centroid(points, faces, normals=None) -> (3,)` [m];
+  `spray.RELEASE_ANGLE_COLUMNS`, `spray.release_angle_stats(dm, angle) -> (mean, min, max)`; `spray.source_block(...,
+  release_angle=None)`, `spray.source_rows(..., release_angle=None)`; `spray.SourceSpool(directory)` with `.append(block)`,
+  `.columns()`, `.n_rows`, `len` (blocks), `.remove()`; `spray.source_columns(rows) -> {name: array}`;
+  `skinbody.SHEARED_FRACTION` (0.1), `skinbody.sheared_depth(sk, fraction) -> (n,)` [m]; `SprayPlan.spraying()`,
+  `.release_angle()`; `SkinBody(..., spool=None)`, `.sprayed_mass` [kg], `.n_source_rows`; the skin history's
+  `released_step_mass_kg`, `n_released`, `r_median_um`, `r_max_um`, `theta_cr_deg`, `spraying_area_m2`, the three
+  `release_angle_register_*_deg`, `b_over_delta_m_median`, `sheared_depth_over_delta_m_median`,
+  `rebuild_mass_residual_kg`, `rebuild_mass_residual_last_kg`; the element history's three release-angle columns; the
+  skin results' `sprayed_mass_kg`, `n_released`, `n_source_rows`, `wall_flow_s`, `rebuild_mass_residual_kg`;
+  `coupled.SUMMARY_COLUMNS`, `coupled.SKIN_SUMMARY_COLUMNS`, `coupled.END_SNAP` (1e-6), `CoupledSettings(...,
+  snap_to_t_max=False)`; `trajectory.Simulator.advance(dt, snap=0.0)`; `movemesh.RebuildResult.mass_residual` [kg],
+  `MovingMesh.rebuild_mass_residual_total`; `cli.SOURCE_SPOOL`, `build_thermal(..., spool=None)`. Every existing column,
+  row, field, result and file of the element model is unchanged to the last bit.
+
+The outline's item 4 (outputs) with the 23-notes' first item, which Asha made this task's on 2026-10-29, and the three
+loose ends of Tasks 1a-3: the summary Task 2 left (its ruling 10), the vanishing last macro step of fact 179, and the
+FEniCSx tier's failure since Task 1a.
+
+**The release angle** (Asha, 2026-10-29; `docs/superpowers/plans/melt-spraying-subplans/23-notes.md`, item 1; Register,
+P. J., et al. 2020, Icarus 337, 113468, section 4.2). The angle between the larger body's trajectory axis and the line
+joining its centroid to the released fragment's, from downstream: theta_R = 180 degrees - angle(v_hat, p - c), 180 at
+the stagnation point, 90 at the equator, 0 directly behind (`spray.register_angle`, from atan2 of the vector's parts
+across and along v_hat). It is computed from the vector p - c, never from the source table's `theta_deg`, which is the
+surface normal's angle: on the element model's short case the two differ by -65 to +88 degrees on the staircase its
+element deaths leave, on the skins' smoothed corner normals by -7.3 to +5.0. p is the row's own position; c is the
+centroid of the volume the body's outer surface encloses (`spray.enclosed_centroid`: signed tetrahedra from the points'
+mean, the triangles turned by their outward normals where given), from the surface the positions are on and at their
+instant -- the element model's surface at its spray step, the skins' top surface where the plan is evaluated, the macro
+step's start (`girin_plan(..., centre=, v_hat=)`); v_hat is the body's direction through the air, its fixed attitude
+(ruling 1). Each model's rows carry it through the shared `spray.source_block(..., release_angle=)`, the last column of
+the source table, and each history its mean by mass, least and largest over the step's rows
+(`spray.release_angle_stats`, `spray.RELEASE_ANGLE_COLUMNS`), nan where the step released nothing: the element model's
+from the patches that released (`MeltingBody._film_and_spray`), the skins' from the step's block. Register's wake zone
+(AFFIx) is not an output (Asha: post-processing).
+
+**The summary** (Task 2's ruling 10). `particles_summary.csv`'s columns are the element model's per-step history
+columns (`coupled.SUMMARY_COLUMNS`), and the skin history now has them under the same names and meanings: `n_released`,
+the droplets since time zero, as the element model's; `r_median_um` and `r_max_um` over the step's records; and
+`theta_cr_deg` and `spraying_area_m2`, the smallest angle and the top area of the columns whose plan sprays
+(`SprayPlan.spraying`: a mode with a release rate, as the element model's `unstable` is its rate's). Its
+`released_mass_kg` is since time zero (sub-plan 21 Task 7) where the summary's is the step's, so the skin history gains
+`released_step_mass_kg`, what the accepted parts released in the macro step, and keeps its own column as it was; the
+writer reads the summary's released mass from it (`coupled.SKIN_SUMMARY_COLUMNS`), and where the element model has its
+film, which the skins have not, the skins' mean liquid and flowing depths (ruling 2). Neither model's existing columns
+change meaning. The results add the element model's `sprayed_mass_kg` (the records' mass, the books' released mass to
+round-off), `n_released` and `n_source_rows` (the rows written).
+
+**The rest of spec 10.2.** Audited against `SKINBODY_COLUMNS`, `write_skin_frame` and `skin_results`: every history
+item but three was written, every frame field was, and the results lacked the flow's wall time. Built: b over delta_m
+and the resolved sheared depth over delta_m, medians over the wet windward columns -- windward, with flowing metal,
+under Girin's closure, delta_m from the macro step's surface flow -- at the step's end
+(`SkinBody._depth_ratios`); the resolved sheared depth (spec 6.7) the depth at which the computed speed falls to a tenth
+of the top cell's, between the cells' centres (`skinbody.sheared_depth`, `SHEARED_FRACTION`; ruling 6); each rebuild's
+mass residual beside its energy residual (`RebuildResult.mass_residual`, the density times the old volume less the new,
+uncorrected; `rebuild_mass_residual_kg` summed and `_last_kg`); and the results' `wall_flow_s` and
+`rebuild_mass_residual_kg`. One item differed from the spec's word: the spec listed "shortfall mass (cumulative)",
+but `shortfall_kg` is the current shortfall below the minimum at the step's end, not a sum; Asha corrected the spec's
+word on 2026-10-31 and the column is unchanged (ruling 10).
+
+**The vanishing last macro step** (fact 179). The loop asks `Simulator.advance` for `min(t + dt, t_max)` again and again;
+the floating-point sum falls short of t_max -- ten 0.0125 s steps reach 0.12499999999999999 s, ten of 0.1 s
+0.9999999999999999 s -- so one more step of 1.4e-17 s or 1.1e-16 s follows, a whole macro step of the body (its parts,
+its passes, a 3D solve), over which the droplet-momentum ratio, a ratio of two quantities each nearly nothing, read 5.5
+and 8.6. The element model has the same step: on its short case the last two rows are both at 15 s (printed), the last
+releasing 1.5e-13 kg. The loop is fixed for the skins: with `CoupledSettings.snap_to_t_max`, which the command line
+sets for them, a step that would end within `END_SNAP` (1e-6) of a macro step short of t_max ends at t_max
+(`Simulator.advance(dt, snap=)`), so there is no vanishing step; without it, the default and the element model's, the
+arithmetic is what it was (`snap` 0 leaves `t_target` as it was), its outputs unchanged to the last bit (ruling 4).
+
+**The records on disk** (Task 2's decision 2). With the continuum step from the first liquid (Task 3b), the 100 mm
+flight runs 12.5 ms steps from about 24.5 s to 120 s: 7 640 macro steps, and at Task 2's 4 600-9 200 rows a step (slurry
+spraying off and on) 35-70 million rows of 27 columns, 216 bytes a row, so 7.6-15.2 GB as arrays and twice that while
+`source_table` joins them at the end -- more than the laptop's 24 GB. So the command line gives a spraying skin body a
+spool, `<run>/source_rows/` (`cli.SOURCE_SPOOL`): each macro step's block is appended to one file per column
+(`spray.SourceSpool`), and the coupled writer reads the columns back from disk (`spray.source_columns`), each once and
+contiguous, writes `particles.npz`, the summary and the size distribution with the same arithmetic as from memory, and
+the command line then removes the spool. Nothing is combined over more than a macro step, so spec 8 needs no new
+sentence (ruling 9). The element model's rows stay in memory as before, and its files are byte for byte.
+
+**The FEniCSx tier's failure** (`test_the_thick_film_flux_matches_the_skfem_backend`, failing since Task 1a). The
+element model's books are one `MeltingBody`'s on both backends; printed term by term after every step
+(`measure/task4/fenicsx_books.py`) they close to 8.9e-12 of the heat absorbed on the FEniCSx backend and wander from
+2.2e-9 to 1.17e-8 on scikit-fem's, ending at 1.05e-8 (5.1e-9 on sub-plan 21's code, which already reached 1.07e-8 at its
+sixth step), with the spraying amendments of 2026-10-22, which spray 2.2 % more there, taking another path. With
+scikit-fem's conjugate gradients at 1e-13 instead of the default 1e-10, its Newton iterations the same in every step, the
+residual is 4.5e-12; a tighter Newton tolerance alone leaves 5.8e-9. So it is the scikit-fem backend's linear solves'
+tolerance, not an error in the books, and the test now runs both backends' gradients at 1e-13 (as the skin runs do,
+`skinbody.SKIN_CG_TOL`), its 1e-8 bound kept (ruling 5).
+
+**Measured** (2026-10-31, `prototype/work-2026-10-28-skin-spraying/measure/task4/`; facts 183-187):
+- *The element model unchanged* (`runs/line4_short` against Task 3b's `line3b_short`; `../task1/cmp/compare_runs.py`,
+  `element_files.py`). The CLI test's short melting case with `--surface-model elements`: its 93 history columns first,
+  in their order, the same text in all 76 rows, the three release-angle columns after them; the 26 old fields of its
+  25 266 source rows identical, the 27th the release angle; the summary and the size distribution byte for byte; the
+  settings and the 61 results but the run time. Its rows' angles 92.0/116.1/177.8 degrees (minimum/median/maximum);
+  each step's history mean, least and largest the rows' within 4.7e-9 (nine printed digits), nan on the 4 steps that
+  released nothing; 180 - theta_deg differs from the angle by -64.8 to +87.6 degrees (median 7.1), the element deaths'
+  staircase. Its last two rows print as 15 s, the last releasing 1.5e-13 kg: its vanishing step, kept.
+- *The skin body unchanged* (`bitid.py`, `run_bitid.sh`). Task 2's spraying test body with slurry spraying on, pyamg's
+  draws seeded: its 3D field, mesh, skins (mass, enthalpy, temperature, velocity, counts), books, histograms and the 26
+  old columns of its 759 rows are Task 3b's in all 12 arrays to the last bit, the history read after every step or not.
+- *The skin body's outputs* (`body_outputs.py`; the same body). The second step's 759 rows leave at 111.5/135.4/169.9
+  degrees (134.9 by mass), within 7.3 degrees of 180 - theta_deg on the corners' smoothed normals; the columns within
+  10.9 degrees of the nose do not spray (theta_cr_deg). The history: 5.769 g released in the step, 89 173 droplets, radius
+  median 174 um and largest 3.53 mm, 9.6e-3 m2 spraying; b over delta_m 5.5 at the first step's end and 10.7 at the
+  second's, the resolved sheared depth over delta_m 0.46 and 1.91 (medians over the wet windward columns). At the step's
+  end the body's mass centre (the 3D model and the skins' cells) lay 0.083 mm from the geometric centroid, which would
+  move the angles by at most 0.088 degrees; the centroid itself moved back 0.33 mm over the step.
+- *The smoke flight* (`run_smoke.sh`, `smoke_check.py`; Task 3's 65 km case, the default flow, slurry spraying off).
+  9 macro steps, 25 ms and eight of 12.5 ms, the last ending at 0.125 s exactly, against Task 3b's 10 whose last was
+  1.4e-17 s; every old history column of the first 9 rows the same text as Task 3b's, and the last step its same step's
+  but the interface mismatch (1.3e-9 relative) and the momentum residual (2.2e-17 against 4.0e-17, round-off both); Pi
+  at most 0.083 where Task 3b's vanishing step read 5.50. 1.95571981656 g released in both, in 1 005 rows against 1 196:
+  the vanishing step had written 191 rows holding 3.4e-17 kg in all. The summary: 10 rows under the skins' header; each
+  step's released mass, droplets since time zero, radius median and largest and release angle's mean, least and largest
+  the rows' within 3.4e-9 (nine printed digits); its released mass the step's; the size distribution the rows'
+  histogram within 5.4e-10 of the totals; the spool removed. Angles 123.5/145.5/168.7 degrees (148.9 by mass),
+  theta_cr_deg 11.5; b over delta_m 2.8 rising to 7.6, the resolved sheared depth over delta_m 2.5 falling to 0.43; no
+  rebuild. With slurry spraying on: 2.983 g in 1 811 rows against 2 223 (412 vanishing rows, 8.3e-17 kg), Pi at most
+  0.079 against 8.59, the summary and distribution within 3.9e-9 and 2.6e-10. About 18 s each, 1.0 GB at most.
+- *The records on disk* (`spool_cost.py`, 3.0 million rows, blocks of 9 231). Appending a block costs 1.4-2.9 ms (a
+  melting 12.5 ms macro step's skins take 1.5-6.2 s, fact 179); the writer from the spool and from blocks in memory give
+  the same `particles.npz` fields and size distribution byte for byte, from the spool with at most 123 MB of its own
+  allocations (41 bytes a row), from memory with the rows' 616 MB held and 739 MB more (453 bytes a row). For the 100 mm
+  flight's 35-70 million rows: 7.6-15.2 GB on disk and about 1.4-2.9 GB at the writer, against 16-32 GB from memory.
+- *The FEniCSx tier's failure* (`fenicsx_books.py`, `run_fenicsx_books.sh`): the energy residual over the absorbed heat
+  after ten 0.05 s steps --
+
+  | code | scikit-fem, default | FEniCSx, default | scikit-fem, CG 1e-13 | FEniCSx, CG 1e-13 |
+  |---|---|---|---|---|
+  | sub-plan 21 (602b262) | 5.1e-9 (1.07e-8 at step 6) | 1.1e-11 | 1.6e-12 (Newton 1e-10) | -- |
+  | Task 3b | 1.05e-8 (1.17e-8 at step 9) | 8.9e-12 | 4.5e-12 (Newton 1e-6), 6.3e-13 (1e-10) | 2.0e-14 |
+
+  and scikit-fem's at a Newton tolerance of 1e-8 with its default gradients 5.8e-9: the residual is the linear solves'.
+  The amended code sprays 2.2 % more there (removed enthalpy 1.375e5 J against 1.345e5 J). With both solvers at 1e-13 the
+  test passes in 22 s.
+- *The rebuild's mass residual*: zero to the last bit on each of two rebuilds of the coarse test sphere (10 191 and
+  9 955 elements, their volumes equal in every bit).
+
+**Rulings** (2026-10-31; each what, why, cost if wrong; Asha accepted rulings 1-5 as built on 2026-10-31):
+1. *The release angle's centroid is the geometric one*, of the volume the outer surface encloses, from the surface and
+   at the instant of the rows' positions. Why: Register's bodies are of one density, whose centroid is the centre of
+   mass; it is defined alike for both models from the surface the rows' positions are on, where the element model's
+   mass centre (`mass_centre`) and a skin body's (the 3D model and the skins' cells) are computed differently. Cost:
+   on the 4 mm test sphere's spraying step the mass centre lay 0.083 mm from the geometric one (the hot liquid at the
+   nose is lighter), moving the angles by at most 0.088 degrees.
+2. *A skin flight's summary: the element model's droplet columns, its released mass the step's, the skins' liquid and
+   flowing depths where the element model has its film.* Why: the same name must mean the same thing in both models'
+   files, the skins have no film, and their mean liquid and flowing depths are the history's columns of the reservoir
+   the release takes. Cost: a reader comparing the two summaries finds two columns named differently; the options
+   are the element model's film names left empty (nan) or given the skins' liquid.
+3. *The step's released mass a new column, `released_step_mass_kg`*, the skins' cumulative `released_mass_kg` kept.
+   Why: neither model's columns change meaning. Cost: the skin history has both.
+4. *The loop's fix for the skins only* (`snap_to_t_max`). Why: on the element model the same fix moves its last step's
+   end by 2e-14 s and removes a row, which changes its outputs; on the skins it removes a wasted macro step. Cost: the
+   element model keeps its vanishing step (and its own Pi-free columns); the fix can be given to both at a later
+   comparison's cost.
+5. *The FEniCSx test runs both solvers' gradients at 1e-13*, its bound kept, rather than a wider bound. Why: it then
+   checks the books to about 1e-11 on both backends, a tighter test than the bound's 1e-8, and the evidence shows the
+   residual is the solver's. Cost: the test compares the backends at a tolerance neither flight uses; the alternative
+   is a bound of 3e-8 for scikit-fem's at its default.
+6. *The resolved sheared depth at a tenth of the top cell's speed.* Why: spec 6.7 leaves the fraction to be set; on
+   Girin's linear profile, which reaches nothing at delta_m, a tenth gives 0.9 delta_m, so the ratio reads near 1 where
+   the resolved profile is Girin's. Cost: another fraction scales the column (a half gives 0.5 delta_m).
+7. *"Wet windward" for the skins: theta <= 90 degrees, a flowing depth above zero and Girin's delta_m*, at the step's
+   end. Why: b is the flowing depth (spec 6.7), and delta_m exists only under his closure. Cost: none.
+8. *theta_cr_deg and spraying_area_m2 over the columns whose plan sprays, r_median_um and r_max_um over the step's
+   rows.* Why: the element model's are over its patches with a rate and its rows. Cost: none.
+9. *The spool always for a spraying skin run from the command line*, removed once written; a skin body built in Python
+   keeps its rows in memory unless given a directory. Why: one path for every flight; the tests read either. Cost: a
+   failed run leaves its partial records on disk.
+10. *`shortfall_kg` unchanged* though spec 10.2 calls it cumulative. Why: it is a state (how far the columns are below
+    their minimum), whose sum over steps means nothing, and changing it changes an existing column. Asha, 2026-10-31:
+    the spec's word is corrected, the column unchanged. Cost: none.
+11. *The element model's history gains three columns at its end, its rows one at their end.* Why: Asha's requirement
+    for both models; appended, every existing column and field keeps its position and value. Cost: the history file is
+    three columns wider, the same column by column.
+
+- [ ] **Step 1: The release angle, its statistics and the spool** -- in `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -588,8 +588,9 @@
+     solid share and the enthalpy per kilogram they carry, 0 and nan where the caller gives none; the droplets' density,
+     viscosity and surface tension may be one per patch, a slurry droplet's Weber and Ohnesorge numbers being its own
+     phase's (the 2026-10-07 design 8.4); `source_block` is `source_rows` as an array, and `spray.source_table` reads a
+-    body's rows or blocks of rows alike. The element model's form is unchanged in every other column."""
+-    assert spray.SOURCE_COLUMNS[-2:] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 26
++    body's rows or blocks of rows alike. The element model's form is unchanged in every other column. (Sub-plan 22 Task
++    4 adds a 27th column after them, the release angle.)"""
++    assert spray.SOURCE_COLUMNS[24:26] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 27
+     flow = FakeFlow(3)
+     delta_m, _ = spray.melt_layer(flow, LIQ)
+     b = np.full(3, 1e-3)
+@@ -599,12 +600,12 @@
+              res, b)
+     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+     plain = np.array(spray.source_rows(*where, LIQ, FakeState()))
+-    assert plain.shape == (2, 26) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
++    assert plain.shape == (2, 27) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
+     slurry = material.LiquidProperties(np.array([2400.0, 2500.0, 2550.0]), np.array([1.3e-3, 0.02, 0.05]),
+                                        np.array([0.86, 0.80, 0.80]))
+     block = spray.source_block(*where, slurry, FakeState(), solid_fraction=np.array([0.0, 0.1, 0.03]),
+                                h_kg=np.array([1.1e6, 1.0e6, 0.9e6]))
+-    assert block.shape == (2, 26) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
++    assert block.shape == (2, 27) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
+     assert block[:, C["h_kg"]].tolist() == [1.1e6, 0.9e6]
+     np.testing.assert_array_equal(block[:, :C["we_d"]], plain[:, :C["we_d"]])
+     np.testing.assert_array_equal(block[0, :C["solid_fraction"]], plain[0, :C["solid_fraction"]])   # the liquid's patch
+@@ -613,5 +614,100 @@
+     assert block[1, C["oh"]] == pytest.approx(0.05 / np.sqrt(2550.0 * 0.80 * 2.0 * r), rel=1e-14)
+     np.testing.assert_array_equal(spray.source_block(*where, LIQ, FakeState()), plain)        # rows as an array
+     table = spray.source_table([block, block[:1]])
+-    assert table.shape == (3, 26) and np.array_equal(table[:2], block, equal_nan=True)
+-    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 26)
++    assert table.shape == (3, 27) and np.array_equal(table[:2], block, equal_nan=True)
++    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 27)
++
++
++# -- the outputs of a spraying flight (sub-plan 22 Task 4) -------------------------------------------------------------
++def test_register_s_release_angle_is_180_at_the_stagnation_point_90_at_the_equator_and_0_behind_from_the_actual_vector():
++    """Register et al. (2020) section 4.2 (Asha, 2026-10-29; the 23-notes' first two tests): the angle between the larger
++    body's trajectory axis and the line from its centroid to the release point, from downstream: 180 degrees at the
++    stagnation point, 90 at the equator, 0 directly behind, wherever the body is and whichever way it flies. It is the
++    position's angle, not the surface normal's: on the flat face of a flattened body the normal points along the flight
++    (theta_deg 0) but a point 30 mm off the axis 20 mm ahead of the centroid is at 180 - atan(30/20); and a body whose
++    nose has receded, its centroid moved back, sees the same point at a larger angle."""
++    v = np.array([0.0, 0.6, 0.8])
++    c = np.array([0.01, -0.02, 0.03])
++    side = np.cross(v, [1.0, 0.0, 0.0])
++    side /= np.linalg.norm(side)
++    points = c + 0.05 * np.array([v, side, -v, (v + side) / np.sqrt(2.0)])
++    np.testing.assert_allclose(spray.register_angle(points, c, v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
++    np.testing.assert_allclose(spray.register_angle(points, c, 3.0 * v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
++    flat = np.array([[0.02, 0.03, 0.0]])                        # on a flat front face x = 20 mm, 30 mm off the axis
++    assert spray.register_angle(flat, np.zeros(3), [1.0, 0.0, 0.0])[0] == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.02)))
++    receded = spray.register_angle(flat, [-0.01, 0.0, 0.0], [1.0, 0.0, 0.0])[0]
++    assert receded == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.03))) and receded > 180.0 - 56.4
++
++
++def test_the_enclosed_centroid_is_the_volume_s_whichever_way_its_triangles_turn(coarse_sphere_mesh):
++    """`spray.enclosed_centroid`: the centroid of the volume a closed triangulated surface encloses, by the divergence
++    theorem -- the 100 mm test sphere's moved anywhere is its tetrahedra's volume-weighted centroid to round-off; turning
++    every triangle gives the same point, and with one outward normal per triangle a surface whose triangles are mixed
++    gives it too (the element model's surface)."""
++    m = coarse_sphere_mesh
++    s = m.surface()
++    shift = np.array([0.3, -0.1, 0.25])
++    P = m.points + shift
++    w = m.element_volumes()
++    exact = (w[:, None] * P[m.tets].mean(axis=1)).sum(axis=0) / w.sum()
++    got = spray.enclosed_centroid(P, s.faces)
++    np.testing.assert_allclose(got, exact, rtol=0.0, atol=1e-15)
++    np.testing.assert_allclose(spray.enclosed_centroid(P, s.faces[:, [0, 2, 1]]), got, rtol=0.0, atol=1e-15)
++    mixed = s.faces.copy()
++    mixed[::3] = mixed[::3][:, [0, 2, 1]]
++    np.testing.assert_allclose(spray.enclosed_centroid(P, mixed, s.normals), got, rtol=0.0, atol=1e-15)
++
++
++def test_the_release_angle_rides_in_the_source_table_and_a_step_s_statistics_are_by_mass():
++    """The source table's last column is the release angle, nan where the caller gives none; a step's history columns
++    are its mass-weighted mean, least and largest over the records that released, and nan where none did: the history's
++    mean equals the mean recomputed from the step's rows (the 23-notes' third test)."""
++    assert spray.SOURCE_COLUMNS[-1] == "release_angle_register_deg" and spray.RELEASE_ANGLE_COLUMNS == (
++        "release_angle_register_mean_deg", "release_angle_register_min_deg", "release_angle_register_max_deg")
++    flow = FakeFlow(3)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    b = np.full(3, 1e-3)
++    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
++                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
++    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
++             res, b, LIQ, FakeState())
++    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
++    angle = np.array([150.0, 135.0, 120.0])
++    rows = spray.source_block(*where, release_angle=angle)
++    assert rows[:, C["release_angle_register_deg"]].tolist() == [150.0, 120.0]
++    assert np.isnan(spray.source_block(*where)[:, C["release_angle_register_deg"]]).all()
++    np.testing.assert_array_equal(spray.source_block(*where)[:, :-1], rows[:, :-1])
++    assert np.array_equal(spray.source_rows(*where, release_angle=angle), rows, equal_nan=True)
++    mean, lo, hi = spray.release_angle_stats(rows[:, C["dm_kg"]], rows[:, C["release_angle_register_deg"]])
++    dm = res.dm[[0, 2]]
++    assert mean == (dm * [150.0, 120.0]).sum() / dm.sum() and (lo, hi) == (120.0, 150.0)
++    assert mean == spray.release_angle_stats(res.dm, angle)[0]                     # the rows' own mean, to the last bit
++    assert all(np.isnan(x) for x in spray.release_angle_stats(np.zeros(3), angle))
++    assert all(np.isnan(x) for x in spray.release_angle_stats([], []))
++
++
++def test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit(tmp_path):
++    """`spray.SourceSpool` (sub-plan 22 Task 4): the skins' blocks of rows written to disk as they come, one file per
++    column, read back column by column -- the source table's columns to the last bit, nan included, in the order the
++    blocks came; `len` counts the blocks given rows, as the in-memory list does, `n_rows` the rows; `source_table` and
++    `source_columns` read a spool as they read a list; an empty spool gives empty columns; `remove` deletes it."""
++    rng = np.random.default_rng(1)
++    blocks = [rng.normal(size=(k, len(spray.SOURCE_COLUMNS))) for k in (5, 1, 7)]
++    blocks[1][0, 26] = np.nan
++    spool = spray.SourceSpool(str(tmp_path / "spool"))
++    assert len(spool) == 0 and all(len(c) == 0 for c in spool.columns().values()) and spray.source_table(spool).shape == (0, 27)
++    for blk in blocks[:2] + [np.zeros((0, 27))] + blocks[2:]:
++        spool.append(blk)
++    assert len(spool) == 3 and spool.n_rows == 13
++    table = spray.source_table(blocks)
++    cols = spray.source_columns(spool)
++    assert list(cols) == spray.SOURCE_COLUMNS
++    assert all(np.array_equal(cols[name], table[:, i], equal_nan=True) for i, name in enumerate(spray.SOURCE_COLUMNS))
++    assert np.array_equal(spray.source_table(spool), table, equal_nan=True)
++    listed = spray.source_columns(blocks)
++    assert all(np.array_equal(listed[name], cols[name], equal_nan=True) for name in spray.SOURCE_COLUMNS)
++    with pytest.raises(ValueError):
++        spool.append(np.zeros((2, 26)))
++    del cols
++    spool.remove()
++    assert not (tmp_path / "spool").exists()
+```
+
+- [ ] **Step 2: The loop's last step, the writer and the rebuild's mass** -- append to
+  `tests/test_reentry_model_trajectory.py`, `tests/test_reentry_model_coupled.py` and
+  `tests/test_reentry_model_movemesh.py`:
+
+```diff
+--- a/tests/test_reentry_model_trajectory.py
++++ b/tests/test_reentry_model_trajectory.py
+@@ -169,3 +169,26 @@
+     assert header[:len(tj.CSV_COLUMNS)] == tj.CSV_COLUMNS and header[-1] == "convective_heat_W"
+     back = tj.read_history_csv(tmp_path / "h.csv")
+     assert back.columns["convective_heat_W"].tolist() == [1.0, 2.0, 3.0] and len(back) == 3
++
++
++def test_a_step_that_would_end_within_the_snap_of_t_max_ends_at_it():
++    """Sub-plan 22 Task 4 (fact 179): t + dt added again and again falls short of t_max by round-off -- ten steps of
++    0.1 s reach 0.9999999999999999 s -- and the stepper then takes an eleventh step of 1.1e-16 s. With `snap` a step
++    that would end within it short of t_max ends at t_max: ten steps, the last ending at 1.0 s exactly, with the state of
++    the first nine unchanged to the last bit; with `snap` 0, the default, every step is as it was."""
++    atm = atmosphere.US76TableAtmosphere()
++    runs = {}
++    for snap in (None, 0.0, 1e-7):
++        sim = make(R100, atm, t_max=1.0)
++        steps, states = [], []
++        while sim.end_reason is None:
++            steps.append(sim.advance(0.1) if snap is None else sim.advance(0.1, snap=snap))
++            states.append(sim.y.copy())
++        runs[snap] = (steps, np.array(states), sim.t)
++    steps, states, t = runs[None]
++    assert len(steps) == 11 and 0.0 < steps[-1] < 1e-15 and t == 1.0
++    assert runs[0.0][0] == steps and np.array_equal(runs[0.0][1], states)
++    snapped, snapped_states, t_snap = runs[1e-7]
++    assert len(snapped) == 10 and t_snap == 1.0 and snapped[:9] == steps[:9]
++    assert np.array_equal(snapped_states[:9], states[:9]) and snapped[-1] == pytest.approx(0.1, rel=1e-14)
++    assert np.abs(snapped_states[-1] - states[-1]).max() < 1e-6                   # the eleventh step moved it by nothing
+```
+
+```diff
+--- a/tests/test_reentry_model_coupled.py
++++ b/tests/test_reentry_model_coupled.py
+@@ -285,3 +285,73 @@
+     assert steps(True, [(True, continuum)]).switch_trigger == "both"
+     run = steps(True, states, dt_continuum=None)
+     assert run.switched_at is None and run.settings.dt == 0.5
++
++
++# -- the outputs of a spraying skin flight (sub-plan 22 Task 4) ----------------------------------------------------------
++def test_the_skins_loop_ends_at_t_max_without_a_vanishing_step_and_the_element_model_s_is_unchanged(coarse_sphere_mesh):
++    """Fact 179's vanishing last macro step: the steps' sum falls short of t_max by round-off -- ten 0.1 s steps reach
++    0.9999999999999999 s -- so the loop took an eleventh step of 1.1e-16 s, a whole macro step of the body over which
++    the skins' droplet-momentum ratio read 5.5 and 8.6. With `snap_to_t_max` (the layered skins') the tenth step ends at
++    t_max and there is no eleventh; without it (the element model's loop, the default) the run is as it was, row for
++    row and bit for bit. The first nine steps are the same either way (pyamg's draws seeded alike)."""
++    out = {}
++    for snap in (False, True):
++        np.random.seed(12345)
++        b = thermal_body(coarse_sphere_mesh)
++        sim = simulator(b, t_max=1.0)
++        out[snap] = coupled.CoupledRun(sim, b, heating.SesamEquivalentHeating(),
++                                       coupled.CoupledSettings(dt=0.1, snap_to_t_max=snap)).run()
++    old, new = out[False].columns, out[True].columns
++    assert coupled.CoupledSettings().snap_to_t_max is False and coupled.END_SNAP == 1e-6
++    assert len(old["time_s"]) == 12 and 0.0 < old["time_s"][-1] - old["time_s"][-2] < 1e-15 and old["time_s"][-1] == 1.0
++    assert len(new["time_s"]) == 11 and new["time_s"][-1] == 1.0 and out[True].end_reason == "t_max"
++    for k in old:
++        np.testing.assert_array_equal(new[k][:10], old[k][:10], err_msg=k)
++    assert new["temperature_K"][-1] == pytest.approx(old["temperature_K"][-1], rel=1e-12)
++
++
++def test_the_writer_writes_a_skin_flight_s_summary_from_its_droplet_columns_and_a_spool_as_it_writes_rows(tmp_path):
++    """`coupled.write_particles` (sub-plan 22 Task 4): a skin flight's history has the element model's per-step droplet
++    columns, so the summary is written -- its released mass the step's (the skin history's released_step_mass_kg; its
++    released_mass_kg is since time zero) and, where the element model has its film, the skins' liquid and flowing depths;
++    the element model's history writes the element model's summary as before. A skin body's rows written from a spool on
++    disk give particles.npz, the summary and the size distribution exactly as from blocks in memory."""
++    import types
++    from reentry_model import spray
++    rng = np.random.default_rng(7)
++    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
++
++    def block(t, k):
++        rows = rng.uniform(0.1, 1.0, size=(k, len(spray.SOURCE_COLUMNS)))
++        rows[:, C["time_s"]], rows[:, C["r_m"]] = t, rng.uniform(5e-5, 2e-3, size=k)
++        return rows
++    blocks = [block(0.25, 40), block(0.5, 70)]
++    t = np.array([0.0, 0.25, 0.5])
++    step = np.array([0.0, blocks[0][:, C["dm_kg"]].sum(), blocks[1][:, C["dm_kg"]].sum()])
++    skin = {"time_s": t, "altitude_km": [65.0, 64.9, 64.8], "velocity_kms": [7.24, 7.23, 7.22], "released_mass_kg": np.cumsum(step),
++            "released_step_mass_kg": step, "n_released": [0.0, 1e3, 3e3], "r_median_um": [np.nan, 300.0, 310.0],
++            "r_max_um": [np.nan, 1900.0, 1950.0], "theta_cr_deg": [np.nan, 0.5, 0.4], "spraying_area_m2": [0.0, 1e-3, 2e-3],
++            "liquid_depth_mean_mm": [0.0, 0.01, 0.02], "flowing_depth_mean_mm": [0.0, 0.1, 0.2]}
++    history = tj.History({k: np.asarray(v, dtype=float) for k, v in skin.items()}, np.zeros((3, 6)), "t_max")
++    spool = spray.SourceSpool(str(tmp_path / "spool"))
++    for blk in blocks:
++        spool.append(blk)
++    written = {}
++    for name, rows in (("memory", blocks), ("disk", spool)):
++        written[name] = coupled.write_particles(str(tmp_path / name), types.SimpleNamespace(source_rows=rows), history)
++    a, b = written["memory"], written["disk"]
++    assert set(a) == set(b) == {"particles", "particles_summary", "size_distribution"}
++    pa, pb = np.load(a["particles"]), np.load(b["particles"])
++    assert pa.files == pb.files == spray.SOURCE_COLUMNS
++    assert all(np.array_equal(pa[k], pb[k], equal_nan=True) for k in pa.files)
++    for key in ("particles_summary", "size_distribution"):
++        assert open(a[key]).read() == open(b[key]).read()
++    lines = open(a["particles_summary"]).read().splitlines()
++    assert lines[0].split(",") == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and lines[0].split(",")[9:] == [
++        "liquid_depth_mean_mm", "flowing_depth_mean_mm"]
++    released = [float(line.split(",")[3]) for line in lines[1:]]
++    np.testing.assert_allclose(released, step, rtol=1e-8)                           # the step's, not the running total
++    element = dict(skin, film_mass_kg=[0.0, 1e-3, 2e-3], film_thickness_mean_mm=[0.0, 0.1, 0.2])
++    hist_e = tj.History({k: np.asarray(v, dtype=float) for k, v in element.items()}, np.zeros((3, 6)), "t_max")
++    files = coupled.write_particles(str(tmp_path / "element"), types.SimpleNamespace(source_rows=blocks), hist_e)
++    assert open(files["particles_summary"]).readline().strip().split(",") == coupled.SUMMARY_COLUMNS
+```
+
+```diff
+--- a/tests/test_reentry_model_movemesh.py
++++ b/tests/test_reentry_model_movemesh.py
+@@ -624,3 +624,23 @@
+     elem, bary = movemesh.locate(old_points, old_tets, qp)
+     assert len(qp) > 30000
+     assert bary.min(axis=1).min() > -1e-9
++
++
++def test_a_rebuild_reports_the_mass_its_new_volume_misses_and_sums_it(coarse_sphere_mesh):
++    """Spec 10.2 (sub-plan 22 Task 4): every rebuild reports its mass residual beside its energy residual -- the
++    material's density times the old volume less the new, uncorrected -- and the moving mesh sums them. The surface is
++    kept to the last bit, so it is round-off: under 1e-12 of the body's mass on each of two rebuilds."""
++    m = mesh_mod.VolumeMesh(coarse_sphere_mesh.points.copy(), coarse_sphere_mesh.tets.copy(), dict(coarse_sphere_mesh.params))
++    mat = constant_material()
++    solver = solver_on(m, mat)
++    moving = movemesh.MovingMesh(m, solver, mat, depth=15e-3, sizes={"h_surface": 4e-3, "h_core": 20e-3, "band": 0.0, "ramp": 0.05})
++    assert moving.rebuild_mass_residual_total == 0.0 and movemesh.RebuildResult(0.0, 0.0, 1, 1, 0.0, "x").mass_residual == 0.0
++    residuals = []
++    for _ in range(2):
++        assert not moving.move(inward(moving, 5e-4)).refused
++        V = moving.mesh.volume()
++        result = moving.rebuild()
++        assert result.mass_residual == mat.rho * (V - moving.mesh.volume())
++        assert abs(result.mass_residual) < 1e-12 * mat.rho * V
++        residuals.append(result.mass_residual)
++    assert moving.rebuild_mass_residual_total == residuals[0] + residuals[1]
+```
+
+- [ ] **Step 3: The skin body's outputs** -- in `tests/test_reentry_model_skinbody.py` (and sub-plan 21 Task 6c's
+  flow-off test comparing the two bodies' history columns, now nan-aware: the new columns are empty in both):
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -661,7 +661,8 @@
+     assert make(coarse_sphere_mesh, T0=600.0).flow_on is False
+     assert same_body(off, on) and np.all(on.skins.T[on.skins.valid] < on.material.T_rigid)
+     a, c = off.skin_stats(), on.skin_stats()
+-    assert all(a[k] == c[k] for k in a if not k.startswith("wall_"))
++    same = lambda x, y: x == y or (np.isnan(x) and np.isnan(y))     # a column empty in both (sub-plan 22 Task 4's)
++    assert all(same(a[k], c[k]) for k in a if not k.startswith("wall_"))
+     assert c["speed_max_ms"] == 0.0 and c["momentum_residual"] == 0.0 and c["flow_courant_max"] == 0.0
+ 
+ 
+@@ -1162,7 +1163,7 @@
+     rows = plan.source_block(0.0125)
+     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+     i, mode = np.array([0, 2, 1, 2]), np.array([0, 0, 1, 1])
+-    assert rows.shape == (4, 26)
++    assert rows.shape == (4, 27) and np.isnan(rows[:, C["release_angle_register_deg"]]).all()    # no centroid given
+     np.testing.assert_array_equal(rows[:, C["x_m"]:C["z_m"] + 1], pts[i])
+     np.testing.assert_array_equal(rows[:, C["theta_deg"]], np.degrees(theta[i]))
+     assert (rows[:, C["time_s"]] == 0.0125).all() and (rows[:, C["altitude_km"]] == 71.0).all()
+@@ -1208,16 +1209,25 @@
+     and the books' released mass, their enthalpy the books' released enthalpy, and their momentum, mass times speed
+     along their direction, the momentum the droplets took from each column, all to round-off; the size histograms
+     accumulated each flow sub-step are the rows'. The coupled writer writes the rows and their size distribution and
+-    reads them back to the last bit; the summary, whose columns are the element model's history, waits for Task 4."""
++    reads them back to the last bit.
++
++    Sub-plan 22 Task 4: the rows go to a spool on disk as they come, which gives back the block it was given to the
++    last bit; each carries Register et al.'s release angle of its column's top corner from the centroid of the volume
++    the top surface enclosed where the plan was evaluated; the history reports the step's released mass, the droplets
++    since time zero, the radius median and largest over the step's rows, the smallest angle and the area of the
++    columns whose plan sprays, the release angle's mean by mass -- the mean recomputed from the step's rows -- least and
++    largest, and b and the resolved sheared depth over delta_m on the wet windward columns; and from those columns the
++    coupled writer writes the summary, whose released mass is the step's rows'."""
+     pytest.importorskip("cantera")
+     from test_reentry_model_surface_flow import aero_state_at
+     from reentry_model import coupled, spray
+     from reentry_model import trajectory as tj
+     mat = material.Material.from_drama_json("AA7075_scheil")
++    np.random.seed(12345)              # pyamg's draws, as a run seeds them: the histograms' round-off is the path's
+     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
+-             slurry_spray=True)
+-    plans, books = [], []
+-    girin, book = skinbody.girin_plan, skinbody.SprayPlan.book
++             slurry_spray=True, spool=str(tmp_path / "spool"))
++    plans, books, spooled = [], [], []
++    girin, book, append = skinbody.girin_plan, skinbody.SprayPlan.book, spray.SourceSpool.append
+ 
+     def planned(*a, **k):
+         plans.append(girin(*a, **k))
+@@ -1226,13 +1236,20 @@
+     def booked(plan, fb):
+         books.append((plan, fb.released.copy(), fb.released_slurry.copy()))
+         return book(plan, fb)
++    def kept(spool, block):
++        spooled.append(block.copy())
++        return append(spool, block)
+     monkeypatch.setattr(skinbody, "girin_plan", planned)
+     monkeypatch.setattr(skinbody.SprayPlan, "book", booked)
++    monkeypatch.setattr(spray.SourceSpool, "append", kept)
+     state = aero_state_at(93.0)
++    stats = [b.skin_stats()]
+     for k in range(2):
+         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
+-    assert len(b.source_rows) == 1 and b.particles                      # the first step melts the tops
++        stats.append(b.skin_stats())
++    assert len(b.source_rows) == 1 and b.particles and isinstance(b.source_rows, spray.SourceSpool)   # the first step melts
+     rows = spray.source_table(b.source_rows)
++    assert len(spooled) == 1 and np.array_equal(rows, spooled[0], equal_nan=True)     # the spool's rows: the block's
+     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+     p = plans[-1]
+     index = {tuple(x): i for i, x in enumerate(p.points)}
+@@ -1263,15 +1280,54 @@
+     assert (h[mode == 0] > h_liq * (1.0 - 1e-6)).all() and (h_rigid < h[mode == 1]).all() and (h[mode == 1] < h_liq).all()
+     # the size histograms, accumulated each flow sub-step, are the rows': in the same bins, to the round-off of numpy's
+     # weighted histogram, which takes each bin as a difference of running sums over all the droplets (measured: 1.6e-12
+-    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all)
++    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all; with the draws seeded 5.3e-16 of the 89 173 in all, and
++    # unseeded, after other tests, up to 1.04e-15, sub-plan 22 Task 4)
+     n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
+     np.testing.assert_array_equal(b.hist_n > 0.0, n_rec > 0.0)
+     np.testing.assert_allclose(b.hist_n, n_rec, rtol=0.0, atol=1e-15 * n_rec.sum())
+     np.testing.assert_allclose(b.hist_m, m_rec, rtol=0.0, atol=1e-15 * m_rec.sum())
+-    # the coupled writer: the same files as the element model's, read back to the last bit; no summary until Task 4
+-    history = tj.History({"time_s": np.array([0.0, 0.25, 0.5])}, np.zeros((3, 6)), None)
++    # Task 4: the release angle of each row's column top from the plan's centroid, the top surface's where it was
++    # evaluated: 111.5-169.9 degrees, the columns within 10.9 degrees of the nose not spraying, none behind the equator,
++    # and within 7.3 degrees of 180 less the corner normal's angle theta_deg (measured)
++    angle = rows[:, C["release_angle_register_deg"]]
++    np.testing.assert_array_equal(p.centre, spray.enclosed_centroid(p.points, b.surface.faces))
++    np.testing.assert_array_equal(angle, spray.register_angle(p.points, p.centre, b.v_hat)[i])
++    assert 160.0 < angle.max() < 180.0 and angle.min() > 90.0
++    assert (np.abs(angle - (180.0 - rows[:, C["theta_deg"]])) < 10.0).all()
++    # the history's droplet columns: nothing in the first step, the second's from its rows and its plan
++    s0, s1, s2 = stats
++    assert s1["released_step_mass_kg"] == 0.0 and np.isnan(s1["r_median_um"]) and np.isnan(s1["release_angle_register_mean_deg"])
++    assert np.isnan(s0["b_over_delta_m_median"]) and s0["n_released"] == 0.0 and s0["spraying_area_m2"] == 0.0
++    dm = rows[:, C["dm_kg"]]
++    assert s2["released_step_mass_kg"] == pytest.approx(dm.sum(), rel=1e-12) and s2["n_released"] == b.droplet_number
++    assert s2["r_median_um"] == np.median(rows[:, C["r_m"]]) * 1e6 and s2["r_max_um"] == rows[:, C["r_m"]].max() * 1e6
++    on = p.spraying()
++    assert s2["theta_cr_deg"] == np.degrees(p.theta[on].min()) and s2["spraying_area_m2"] == p.area[on].sum() > 0.0
++    assert s2["release_angle_register_mean_deg"] == pytest.approx((dm * angle).sum() / dm.sum(), rel=1e-14)
++    assert (s2["release_angle_register_min_deg"], s2["release_angle_register_max_deg"]) == (angle.min(), angle.max())
++    assert b.sprayed_mass == pytest.approx(b.released_mass, rel=1e-12) and b.n_source_rows == len(rows)
++    # b and the resolved sheared depth over delta_m on the wet windward columns, the step's end
++    F = b.skins.depth_above(mat.T_rigid)
++    delta_m, _ = spray.melt_layer(b.last_flow, mat.liquid)
++    wet = (b.theta <= 0.5 * np.pi) & (F > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
++    assert wet.sum() > 100 and s2["b_over_delta_m_median"] == np.median(F[wet] / delta_m[wet])
++    sheared = skinbody.sheared_depth(b.skins)
++    moving = wet & np.isfinite(sheared)
++    assert s2["sheared_depth_over_delta_m_median"] == np.median(sheared[moving] / delta_m[moving]) > 0.0
++    # the coupled writer: the same files as the element model's, read back to the last bit, and the summary from the
++    # history's droplet columns
++    keys = {k for _, k in coupled.SKIN_SUMMARY_COLUMNS} - {"time_s", "altitude_km", "velocity_kms"}
++    columns = {k: np.array([x[k] for x in stats], dtype=float) for k in keys}
++    columns.update({"time_s": np.array([0.0, 0.25, 0.5]), "altitude_km": np.full(3, state.h / 1e3),
++                    "velocity_kms": np.full(3, state.V / 1e3)})
++    history = tj.History(columns, np.zeros((3, 6)), None)
+     files = coupled.write_particles(str(tmp_path), b, history)
+-    assert set(files) == {"particles", "size_distribution"}
++    assert set(files) == {"particles", "particles_summary", "size_distribution"}
++    with open(files["particles_summary"]) as fh:
++        summary = [line.split(",") for line in fh.read().splitlines()]
++    assert summary[0] == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and len(summary) == 4
++    assert float(summary[3][3]) == pytest.approx(dm.sum(), rel=1e-8) and float(summary[2][3]) == 0.0
++    assert float(summary[3][4]) == pytest.approx(rows[:, C["dn"]].sum(), rel=1e-8)
+     npz = np.load(files["particles"])
+     assert npz.files == spray.SOURCE_COLUMNS
+     assert all(np.array_equal(npz[name], rows[:, k], equal_nan=True) for k, name in enumerate(spray.SOURCE_COLUMNS))
+@@ -1296,3 +1352,28 @@
+     cold = skinbody.SkinBody(copy, material.Material.from_drama_json("AA7075_nomelt"), thermal_solver("skfem"), 1.47, DEV,
+                              T0=1200.0, v_hat=(-1.0, 0.0, 0.0))
+     assert not cold.liquid_present()                             # a material that does not melt holds no liquid
++
++
++# -- the outputs of a spraying skin flight (sub-plan 22 Task 4) ----------------------------------------------------------
++def test_the_resolved_sheared_depth_is_where_the_speed_falls_to_a_tenth_of_the_top_s():
++    """Spec 6.7's resolved sheared depth (`skinbody.sheared_depth`, SHEARED_FRACTION 0.1): from the top to where the
++    computed speed falls to a tenth of the top cell's, between the cells' centres. Columns of 10 um cells: a
++    profile falling linearly to rest 0.2 mm down, so 0.9 of that depth and a tenth of the top cell centre's, 5.9 um down
++    (on Girin's linear profile over delta_m, 0.9 delta_m); a skin moving as one piece, its whole thickness; a top at
++    rest, nan."""
++    from test_reentry_model_skin import LIQUID, RIGID, stacked, strip_grid
++    col, _ = strip_grid(3, 2, h=20e-3)
++    sk = stacked(col, [[LIQUID] * 30 + [RIGID] * 10, [LIQUID] * 40] + [[LIQUID] * 40] * 4)
++    dz = sk.dz()
++    z = np.cumsum(dz, axis=1) - 0.5 * dz
++    D = 2e-4
++    U = np.zeros(sk.U.shape)
++    U[0, :, 0] = 3.0 * np.clip(1.0 - z[0] / D, 0.0, None)
++    U[1, :, 1] = 0.5
++    sk.U = U * sk.valid[..., None]
++    assert skinbody.SHEARED_FRACTION == 0.1
++    got = skinbody.sheared_depth(sk)
++    assert got[0] == pytest.approx(0.9 * D + 0.1 * z[0, 0], rel=1e-12) and 5e-6 < z[0, 0] < 7e-6
++    assert got[1] == pytest.approx(sk.thickness()[1], rel=1e-14)
++    assert np.isnan(got[2:]).all()
++    assert skinbody.sheared_depth(sk, 0.5)[0] == pytest.approx(0.5 * D + 0.5 * z[0, 0], rel=1e-12)
+```
+
+- [ ] **Step 4: The element model's and the command line's** -- in `tests/test_reentry_model_melting.py`,
+  `tests/test_reentry_model_cli.py` and `tests/test_reentry_model_fenicsx.py`:
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -95,7 +95,14 @@
+     assert b.material.h_liquid < h_out <= b.material.enthalpy(b.surface_temperature().max())       # own temperature, superheat and all
+     assert stats["film_T_max_K"] == pytest.approx(b.surface_temperature().max()) and stats["film_T_max_K"] > b.material.T_liquidus
+     rows = np.array(b.source_rows)
+-    assert rows.shape[1] == 26 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
++    assert rows.shape[1] == 27 and np.all(rows[:, 14] > 0.0) and np.all(np.isfinite(rows[:, 12]))
++    # sub-plan 22 Task 4: Register et al.'s release angle of every row, from the centroid of the volume the surface
++    # enclosed at the spray step, windward; the history's mean by mass, least and largest are the last step's rows'
++    from reentry_model import spray as spray_mod
++    angle, last = rows[:, 26], rows[:, 0] == rows[-1, 0]
++    assert np.isfinite(angle).all() and (angle > 45.0).all() and (angle <= 180.0).all()
++    assert tuple(stats[k] for k in spray_mod.RELEASE_ANGLE_COLUMNS) == spray_mod.release_angle_stats(rows[last, 14],
++                                                                                                     angle[last])
+     # sub-plan 22 Task 2: the film is liquid and leaves at its own enthalpy, the removed enthalpy's
+     assert (rows[:, 24] == 0.0).all() and np.isfinite(rows[:, 25]).all()
+     assert (rows[:, 14] * rows[:, 25]).sum() == pytest.approx(b.removed_enthalpy, rel=1e-12)
+```
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -295,6 +295,11 @@
+     assert r["melt_onset_altitude_km"] is not None and r["sprayed_mass_kg"] > 0.0 and r["n_source_rows"] > 0 and abs(r["melt_energy_balance_residual"]) < 1e-6
+     for key in ("particles", "particles_summary", "size_distribution"):
+         assert os.path.isfile(f[key])
++    # sub-plan 22 Task 4: the release angle in the history and the rows; the summary the element model's as before
++    from reentry_model import spray
++    assert all(k in rows[0] for k in spray.RELEASE_ANGLE_COLUMNS)
++    assert "release_angle_register_deg" in np.load(f["particles"]).files
++    assert open(f["particles_summary"]).readline().strip().split(",") == coupled.SUMMARY_COLUMNS
+     assert len(f["melt_plots"]) == len(compare.MELT_PLOT_NAMES) and all(os.path.isfile(p) for p in f["melt_plots"])
+     assert doc["comparison"] is None and f["film"] is None
+     names = [os.path.basename(p) for p in f["stills"]]
+@@ -459,8 +464,10 @@
+     suffixes, with no surface or flow suffix (both defaults); the settings record the flow and the spray model's
+     constants, the results the switch's trigger; mass,
+     energy and momentum close; the droplets are written by the element model's writer -- particles.npz, whose rows carry
+-    the mass released, and size_distribution.csv, their histogram -- and the per-step summary, which waits for Task 4's
+-    history columns, is recorded as not written; the history's flow columns and the frames' top speed are written."""
++    the mass released, and size_distribution.csv, their histogram -- and, since Task 4, particles_summary.csv from the
++    skin history's droplet columns, each step's released mass its rows', the rows having gone through a spool on disk
++    that the run then removes; every row and step carries Register's release angle; the results count the sprayed
++    mass, the droplets and the rows; the history's flow columns and the frames' top speed are written."""
+     pytest.importorskip("cantera")
+     import glob
+     import pyvista as pv
+@@ -486,12 +493,25 @@
+     # the books: mass, energy and momentum
+     assert r["initial_mass_kg"] - r["final_mass_kg"] == pytest.approx(released, rel=1e-9)
+     assert abs(r["energy_balance_residual"]) < 1e-8 and r["momentum_residual"] < 1e-12
+-    # the droplet files, the element model's, and no summary until Task 4
+-    assert f["particles_summary"] is None and not os.path.exists(os.path.join(os.path.dirname(f["particles"]),
+-                                                                                  "particles_summary.csv"))
++    # the droplet files, the element model's, and the summary from the skin history (Task 4); the spool removed
+     table = np.load(f["particles"])
+     assert table.files == spray.SOURCE_COLUMNS and len(table["dm_kg"]) > 0 and (table["time_s"] == 0.0625).all()
+     assert table["dm_kg"].sum() == pytest.approx(released, rel=1e-12)
++    assert not os.path.exists(os.path.join(os.path.dirname(f["particles"]), cli.SOURCE_SPOOL))
++    assert r["sprayed_mass_kg"] == pytest.approx(released, rel=1e-12) and r["n_source_rows"] == len(table["dm_kg"])
++    assert r["n_released"] == pytest.approx(table["dn"].sum(), rel=1e-12) and r["wall_flow_s"] > 0.0
++    with open(f["particles_summary"]) as fh:
++        summary = list(csv.DictReader(fh))
++    assert list(summary[0]) == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and len(summary) == len(rows)
++    assert [float(x["released_mass_kg"]) for x in summary[:-1]] == [0.0] * 4
++    assert float(summary[-1]["released_mass_kg"]) == pytest.approx(released, rel=1e-8)
++    assert float(summary[-1]["n_released"]) == pytest.approx(r["n_released"], rel=1e-8)
++    angle = table["release_angle_register_deg"]
++    assert (angle > 90.0).all() and (angle <= 180.0).all() and np.isnan(float(rows[-2]["release_angle_register_mean_deg"]))
++    mean = (table["dm_kg"] * angle).sum() / table["dm_kg"].sum()
++    assert float(rows[-1]["release_angle_register_mean_deg"]) == pytest.approx(mean, rel=1e-8)
++    assert float(rows[-1]["b_over_delta_m_median"]) > 0.0 and float(rows[-1]["released_step_mass_kg"]) == pytest.approx(
++        released, rel=1e-8)
+     dist = [row for row in csv.DictReader(open(f["size_distribution"])) if float(row["window_end_s"]) == 0.0625]
+     n_hist, m_hist = spray.histogram(table["r_m"], table["dn"], table["dm_kg"])
+     np.testing.assert_allclose([float(row["dn"]) for row in dist], n_hist, rtol=1e-8)
+```
+
+```diff
+--- a/tests/test_reentry_model_fenicsx.py
++++ b/tests/test_reentry_model_fenicsx.py
+@@ -197,6 +197,11 @@
+     (measured 2026-10-05); with it 2.7e7, set by the deepest piles' G b^3 / (3 mu) term, not by a vanishing film.
+     Measured: the same 7 983 active elements, mass 5.8e-10, sprayed mass 5.9e-9, runoff 7.5e-10, film 1.7e-8, deep
+     account 2.8e-10, temperatures 2.3e-4 K, balances 5.1e-9 and 1.1e-11.
++    Both solvers' conjugate gradients run to 1e-13 here (sub-plan 22 Task 4). At their default 1e-10 the scikit-fem
++    backend's balance is its linear solves' tolerance, not the books': the books are the one MeltingBody's, closing to
++    8.9e-12 on the FEniCSx backend, and on scikit-fem's they wandered 2.2e-9 to 1.17e-8 over the ten steps (5.1e-9 at
++    the last on sub-plan 21's code, 1.05e-8 with the spraying amendments of 2026-10-22, which spray 2.2 % more), but
++    with its gradients at 1e-13 and its Newton iterations unchanged 4.5e-12 (measured 2026-10-31).
+     The rigid substrate (amendment of 2026-10-06) is off here: with the body's interior at 850 K, above AA7075_range's
+     829 K half-liquid point, the whole body is slurry, every wet windward patch takes the thick branch, and films of
+     about a micron that straddle the spray floor B_MIN are released whole by one backend and not by the other from the
+@@ -226,8 +231,8 @@
+     for name in ("skfem", "fenicsx"):
+         np.random.seed(12345)
+         m = mesh.VolumeMesh(coarse_sphere_mesh.points, coarse_sphere_mesh.tets, dict(coarse_sphere_mesh.params))
+-        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name), MASS_100MM,
+-                             settings=body.MeltSettings(rigid_substrate=False))
++        b = body.MeltingBody(m, material.Material.from_drama_json("AA7075_range"), thermal.thermal_solver(name, cg_tol=1e-13),
++                             MASS_100MM, settings=body.MeltSettings(rigid_substrate=False))
+         sim = simulator(b, t_max=90.0)
+         sim.advance(50.0)
+         p = b.mesh.points
+@@ -242,6 +247,7 @@
+                       state=a)
+         out[name] = b
+     s, f = out["skfem"], out["fenicsx"]
++    assert s.solver.cg_tol == f.solver.cg_tol == 1e-13
+     assert seen["thin_on_thick"] > 0 and seen["c_max"] < 1e9 and f.runoff_mass > 0.0 and f.sprayed_mass > 0.0
+     assert np.array_equal(s.mesh.active, f.mesh.active)
+     assert f.mass(0.0) == pytest.approx(s.mass(0.0), rel=1e-6) and f.sprayed_mass == pytest.approx(s.sprayed_mass, rel=1e-5)
+```
+
+- [ ] **Step 5: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spray.py tests/test_reentry_model_trajectory.py
+  tests/test_reentry_model_coupled.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_skinbody.py
+  tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py -q -k "solid_fraction_and_enthalpy or register_s_release
+  or enclosed_centroid or rides_in_the_source or spool_on_disk or within_the_snap or vanishing_step or
+  summary_from_its_droplet or mass_its_new_volume or sheared_depth_is or plan_s_records or
+  close_on_its_books_and_the_coupled_writer or film_spraying_death_and_balances or sprays_from_its_top_cells or
+  melting_run_writes_columns"`. Expected: 15 failed (about a minute) --
+  - the source table's 26 columns where 27 are asked: `assert (26 == 27)`, `assert ((4, 26) == (4, 27)`, `IndexError:
+    index 26 is out of bounds for axis 1 with size 26`, `assert ('h_kg' == 'release_angle_register_deg'`;
+  - `AttributeError: module 'reentry_model.spray' has no attribute 'register_angle'` (and `'enclosed_centroid'`,
+    `'SourceSpool'`, `'RELEASE_ANGLE_COLUMNS'`);
+  - `TypeError: Simulator.advance() got an unexpected keyword argument 'snap'` and `TypeError: CoupledSettings.__init__()
+    got an unexpected keyword argument 'snap_to_t_max'`;
+  - `AttributeError: 'MovingMesh' object has no attribute 'rebuild_mass_residual_total'`;
+  - `TypeError: SkinBody.__init__() got an unexpected keyword argument 'spool'` and `AttributeError: module
+    'reentry_model.skinbody' has no attribute 'SHEARED_FRACTION'`;
+  - `AttributeError: module 'reentry_model.cli' has no attribute 'SOURCE_SPOOL'`.
+
+  The FEniCSx test (`FI_PROVIDER=tcp CC=... "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q -k thick_film_flux`)
+  fails on Task 3b's code as it stands, 1.0496e-8 against 1e-8, and passes with this step's version: its change is the
+  test's own solvers.
+
+- [ ] **Step 6: The release angle, the centroid and the spool** in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -97,8 +97,21 @@
+ Release per patch and step: dm = min(mdot A dt, m_f) (the film after feed and runoff), dn = dm / (4/3 pi rho_l r^3);
+ one source row per emitting patch-step; histograms dn(r), dM(r) on N_BINS log bins over [R_MIN, R_MAX]. The layered
+ skins' records are one row per column, per mode, per macro step (`skinbody.SprayPlan.source_block`, sub-plan 22 Task 2):
+-the same columns, written by the same `source_block`, the two last columns the droplets' solid fraction and the enthalpy
+-per kilogram they carry (spec 8 and 10.2; the 2026-10-07 design 7.5).
++the same columns, written by the same `source_block`, the droplets' solid fraction and the enthalpy per kilogram they
++carry (spec 8 and 10.2; the 2026-10-07 design 7.5) and, last, their release angle as Register et al. (2020) define it
++(`register_angle`, sub-plan 22 Task 4). A skin flight at the continuum step makes tens of millions of records, so the
++command line has the skin body write each macro step's block to disk as it comes (`SourceSpool`), and the coupled writer
++reads either form column by column (`source_columns`), the numbers the same to the last bit.
++
++The release angle (Asha, 2026-10-29; Register, P. J., et al. 2020, "Interactions between asteroid fragments during
++atmospheric entry", Icarus 337, 113468, section 4.2): the angle between the larger body's trajectory axis and the line
++joining its centroid to the released fragment's, measured from downstream, theta_R = 180 degrees - angle(v_hat, p - c):
++180 at the stagnation point, 90 at the equator, 0 directly behind. It is computed from the actual vector p - c, so a
++flattened or receded body gets its own angle (the source table's `theta_deg` is the surface normal's angle to the flight
++direction, a different thing off a sphere). p is the row's position; c is the centroid of the volume the body's outer
++surface encloses (`enclosed_centroid`), from the same surface and at the same instant as the positions the rows carry --
++the element model's surface at its spray step, the skins' top surface where their plan was evaluated, the macro step's
++start -- and v_hat the body's direction of motion through the air, its fixed attitude.
+ 
+ The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius and by one
+ of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
+@@ -113,6 +126,7 @@
+ about 2 % (thick: k_r = 0.17) and 6.5 % (thin: lambda*/4) of the wavelength; on the Rayleigh-Taylor branch, whose
+ droplet is its wavelength (centimetres), on any layer shallower than about four wavelengths, so always: at lambda = 2 cm
+ and h = 1 mm it is 4.6 mm, against about 2 mm under the film cap."""
++import os
+ from dataclasses import dataclass, field
+ 
+ import numpy as np
+@@ -129,10 +143,12 @@
+ # h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
+ # solid_fraction and h_kg: the droplets' solid share of their mass and the enthalpy per kilogram they carry [J/kg, on
+ # the material's enthalpy scale] (spec 8 and 10.2, sub-plan 22 Task 2): the element model's film is liquid by
+-# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`)
++# construction and booked at its own liquid enthalpy, so its rows carry 0 and that enthalpy (`MeltingBody`);
++# release_angle_register_deg: Register et al.'s (2020) release angle, 180 degrees at the stagnation point, 90 at the
++# equator, 0 directly behind (`register_angle`; Asha 2026-10-29, sub-plan 22 Task 4)
+ SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "y_m", "z_m", "closure", "branch", "b_m",
+                   "delta_m_m", "we_s", "r_m", "dn", "dm_kg", "v_s_ms", "tx", "ty", "tz", "we_d", "oh", "breakup",
+-                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg"]
++                  "h_floor_m", "gamma_tau", "solid_fraction", "h_kg", "release_angle_register_deg"]
+ BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
+ #                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
+ BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous medium: Girin & Kopyt's step profile again
+@@ -499,13 +515,15 @@
+                            h_floor, gamma_tau, outside & gk, wavelength)
+ 
+ 
+-def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
++def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
++                 release_angle=None):
+     """Source-table rows, an array (k, len(SOURCE_COLUMNS)), for the patches that released mass (`res.dm` > 0): `h` [m]
+     and `V` [m/s] the altitude and speed, `theta` [rad], `centroids` (n, 3) [m] and `t_hat` (n, 3) per patch, `flow`'s
+     `closure`, `res` a SprayResult (or anything with its per-patch `branch`, `delta_m`, `we_s`, `r`, `dn`, `dm`, `v_s`,
+     `h_floor`, `gamma_tau`), `b` [m] the film thickness, `liquid` the droplets' properties -- each of its `rho`, `mu` and
+     `sigma` one value or one per patch (a slurry droplet's are its slurry's: sub-plan 22 Task 2) -- for their Weber and
+-    Ohnesorge numbers at the freestream `state`, and `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given)."""
++    Ohnesorge numbers at the freestream `state`, `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given),
++    and `release_angle` [deg] per patch, Register et al.'s (`register_angle`; nan if not given; sub-plan 22 Task 4)."""
+     k = np.flatnonzero(res.dm > 0.0)
+     if k.size == 0:
+         return np.zeros((0, len(SOURCE_COLUMNS)))
+@@ -516,28 +534,141 @@
+     oh = mu / np.sqrt(rho * sigma * 2.0 * r)
+     s_f = np.zeros(k.size) if solid_fraction is None else np.asarray(solid_fraction, dtype=float)[k]
+     h_d = np.full(k.size, np.nan) if h_kg is None else np.asarray(h_kg, dtype=float)[k]
++    angle = np.full(k.size, np.nan) if release_angle is None else np.asarray(release_angle, dtype=float)[k]
+     return np.column_stack([np.full(k.size, t), np.full(k.size, h / 1e3), np.full(k.size, V / 1e3), np.degrees(theta[k]),
+                             centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
+                             res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1],
+                             t_hat[k, 2], we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k],
+-                            s_f, h_d])
+-
+-
+-def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None):
++                            s_f, h_d, angle])
++
++
++def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
++                release_angle=None):
+     """Source-table rows (list of lists in SOURCE_COLUMNS order) for the patches that released mass this step
+     (`source_block`'s, as lists: the element model's form, one row per patch-step)."""
+-    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg).tolist()
++    return source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction, h_kg,
++                        release_angle).tolist()
+ 
+ 
+ def source_table(rows):
+     """A body's `source_rows` as one array (N, len(SOURCE_COLUMNS)): a list of rows (the element model's, one per
+     patch-step) or of blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about
+-    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records)."""
++    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records), or a
++    `SourceSpool` on disk, read into memory."""
++    if isinstance(rows, SourceSpool):
++        return np.column_stack([np.asarray(c) for c in rows.columns().values()]) if rows.n_rows \
++            else np.zeros((0, len(SOURCE_COLUMNS)))
+     if not len(rows):
+         return np.zeros((0, len(SOURCE_COLUMNS)))
+     if isinstance(rows[0], np.ndarray) and rows[0].ndim == 2:
+         return np.concatenate(rows, axis=0)
+     return np.array(rows, dtype=float)
++
++
++def source_columns(rows):
++    """A body's `source_rows` as {name: one-dimensional array} in SOURCE_COLUMNS order, what the coupled writer writes: a
++    list of rows or of blocks, the columns of `source_table`'s array; a `SourceSpool`, its files mapped from disk, so that
++    no flight's records need be in memory at once. The values are the same to the last bit either way."""
++    if isinstance(rows, SourceSpool):
++        return rows.columns()
++    table = source_table(rows)
++    return {name: table[:, i] for i, name in enumerate(SOURCE_COLUMNS)}
++
++
++class SourceSpool:
++    """The layered skins' droplet records on disk as they come (sub-plan 22 Task 4): one file per source column,
++    `<directory>/<name>.f64` (float64, little-endian), each macro step's block appended to every one. Measured for the 100
++    mm flight at the continuum step from the first liquid (24.5 s) to 120 s: 7 640 macro steps of 4 600-9 200 rows, 35-70
++    million rows of 27 columns, 7.6-15.2 GB as arrays and twice that while `source_table` joins them -- more than the
++    laptop's 24 GB -- so the command line gives the skin body a spool in the run's directory and the coupled writer maps
++    the columns back (`columns`), each read once, contiguous. `len` counts the blocks (macro steps that released), as the
++    in-memory list does; `n_rows` the rows."""
++
++    def __init__(self, directory):
++        os.makedirs(directory, exist_ok=True)
++        self.directory, self.n_rows, self.n_blocks = directory, 0, 0
++        for name in SOURCE_COLUMNS:
++            open(self._path(name), "wb").close()
++
++    def _path(self, name):
++        return os.path.join(self.directory, name + ".f64")
++
++    def __len__(self):
++        return self.n_blocks
++
++    def append(self, block):
++        """Add a macro step's block of rows (k, len(SOURCE_COLUMNS)) to the end of every column's file."""
++        block = np.asarray(block, dtype=np.float64)
++        if block.ndim != 2 or block.shape[1] != len(SOURCE_COLUMNS):
++            raise ValueError("a block of source rows has {} columns, not {}".format(block.shape[-1], len(SOURCE_COLUMNS)))
++        if not len(block):
++            return
++        for i, name in enumerate(SOURCE_COLUMNS):
++            with open(self._path(name), "ab") as fh:
++                fh.write(np.ascontiguousarray(block[:, i], dtype="<f8").tobytes())
++        self.n_rows += len(block)
++        self.n_blocks += 1
++
++    def columns(self):
++        """{name: the column, read-only, mapped from its file} in SOURCE_COLUMNS order (empty arrays with no rows)."""
++        if not self.n_rows:
++            return {name: np.zeros(0) for name in SOURCE_COLUMNS}
++        return {name: np.memmap(self._path(name), dtype="<f8", mode="r", shape=(self.n_rows,)) for name in SOURCE_COLUMNS}
++
++    def remove(self):
++        """Delete the files and the directory, once what they hold has been written elsewhere."""
++        for name in SOURCE_COLUMNS:
++            if os.path.exists(self._path(name)):
++                os.remove(self._path(name))
++        if os.path.isdir(self.directory) and not os.listdir(self.directory):
++            os.rmdir(self.directory)
++
++
++def register_angle(points, centre, v_hat):
++    """Register et al.'s (2020, section 4.2) release angle [deg] of each point (n, 3) [m] on a body whose centroid is
++    `centre` (3,) [m] and which moves through the air along `v_hat`: 180 degrees minus the angle between v_hat and the
++    line from the centroid to the point, so 180 at the stagnation point, 90 at the equator and 0 directly behind,
++    measured from the actual vector so that a flattened or receded body gets its own angle (Asha, 2026-10-29)."""
++    d = np.asarray(points, dtype=float) - np.asarray(centre, dtype=float)
++    v = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
++    along = d @ v
++    across = np.linalg.norm(d - along[:, None] * v, axis=1)
++    return 180.0 - np.degrees(np.arctan2(across, along))
++
++
++def enclosed_centroid(points, faces, normals=None):
++    """The centroid [m, (3,)] of the volume a closed triangulated surface encloses (the divergence theorem, by signed
++    tetrahedra from the points' mean, so either consistent orientation gives the same point): `faces` (nt, 3) into
++    `points`; with `normals` (nt, 3), one outward normal per triangle, each triangle is first turned to agree with its
++    own, for a surface whose triangles are not consistently ordered (the element model's). Register's angle is
++    measured from this point (`register_angle`): the body's geometric centroid, which for a body of one density is its
++    centre of mass."""
++    points, faces = np.asarray(points, dtype=float), np.asarray(faces, dtype=np.int64)
++    o = points[np.unique(faces)].mean(axis=0)
++    a, b, c = (points[faces[:, i]] - o for i in range(3))
++    n2 = np.cross(b - a, c - a)
++    v = np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0
++    if normals is not None:
++        v = np.where(np.einsum("ij,ij->i", n2, np.asarray(normals, dtype=float)) < 0.0, -v, v)
++    return o + (v[:, None] * (a + b + c)).sum(axis=0) / (4.0 * v.sum())
++
++
++# the history's release angle over a step's released mass, both surface models' (sub-plan 22 Task 4): its mean by mass,
++# least and largest [deg], nan where the step released nothing
++RELEASE_ANGLE_COLUMNS = ("release_angle_register_mean_deg", "release_angle_register_min_deg",
++                         "release_angle_register_max_deg")
++
++
++def release_angle_stats(dm, angle):
++    """(mass-weighted mean, minimum, maximum) [deg] of the release angles `angle` of a step's records weighted by their
++    masses `dm` [kg], over the records that released (dm > 0); nan, nan, nan where none did (the history's
++    release_angle_register_*_deg, sub-plan 22 Task 4)."""
++    dm, angle = np.asarray(dm, dtype=float), np.asarray(angle, dtype=float)
++    on = dm > 0.0
++    if not on.any():
++        return float("nan"), float("nan"), float("nan")
++    w, a = dm[on], angle[on]
++    return float((w * a).sum() / w.sum()), float(a.min()), float(a.max())
+ 
+ 
+ def histogram(r, dn, dm):
+```
+
+- [ ] **Step 7: The element model's rows and history** in `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -6,6 +6,8 @@
+ from typing import Protocol
+ 
+ import numpy as np
++
++from .spray import RELEASE_ANGLE_COLUMNS
+ 
+ 
+ class Body(Protocol):
+@@ -148,6 +150,13 @@
+                                  # next step, as every exposed element did before the cascade (amendment of 2026-10-03)
+ NONRIGID_MAX_CROSSINGS = 64      # elements the non-rigid depth's line may cross before it stops (amendment of 2026-10-06)
+ REMOVAL_NAMES = ("girin", "instant")
++
++
++def _no_release_angle():
++    """The release angle's history columns (spray.RELEASE_ANGLE_COLUMNS) of a step that released nothing: empty (nan)."""
++    return {k: float("nan") for k in RELEASE_ANGLE_COLUMNS}
++
++
+ # Sub-plan 18's one-dimensional skins under the melting patches (MeltSettings(surface_model="skin1d"), skin1d.py) failed
+ # their box test and are retired (sub-plan 22 Task 3, spec 9); the layered skins are skinbody.SkinBody.
+ 
+@@ -740,7 +749,7 @@
+         from . import spray as spray_mod
+         if state is None or self.m_f.sum() <= 0.0 or flow is None:
+             self.last_flow = self.last_spray = self.last_nonrigid = None
+-            self.last_melt.update({"nonrigid_depth_wet_median_um": float("nan")})
++            self.last_melt.update({"nonrigid_depth_wet_median_um": float("nan"), **_no_release_angle()})
+             return 0.0
+         areas = self.surface.areas
+         # the depth of liquid under each patch: its film plus the contiguous molten material beneath it. The branch
+@@ -791,12 +800,18 @@
+         self.thin_invalid_patch_steps += int(invalid.sum())
+         self.thin_invalid_mass_max = max(self.thin_invalid_mass_max, invalid_mass)
+         released = float(res.dm.sum())
++        angles = _no_release_angle()
+         if released > 0.0:
+             if self.spray_onset is None:
+                 self.spray_onset = t
++            # Register et al.'s release angle of each patch, from the centroid of the volume this surface encloses, the
++            # surface whose centroids the rows carry (sub-plan 22 Task 4)
++            angle = spray_mod.register_angle(self.surface.centroids, spray_mod.enclosed_centroid(
++                self.mesh.points, self.surface.faces, self.surface.normals), self.v_hat)
++            angles = dict(zip(RELEASE_ANGLE_COLUMNS, spray_mod.release_angle_stats(res.dm, angle)))
+             if s.particles:                  # the film is liquid and leaves at its own enthalpy (sub-plan 22 Task 2)
+                 self.source_rows += spray_mod.source_rows(t, state.h, state.V, self.theta, self.surface.centroids, self.t_hat, flow, res, b, liq, state,
+-                                                          solid_fraction=np.zeros(b.size), h_kg=h_p)
++                                                          solid_fraction=np.zeros(b.size), h_kg=h_p, release_angle=angle)
+             hn, hm = spray_mod.histogram(res.r, res.dn, res.dm)
+             self.hist_n += hn
+             self.hist_m += hm
+@@ -864,7 +879,7 @@
+             if (self.windward & (self.m_f > 0.0)).any() else float("nan"),
+             "nonrigid_depth_mean_mm": nonrigid_mean, "slurry_thick_fraction": slurry_thick,
+             "rigid_thin_fraction": rigid_thin, "slurry_held_mass_kg": held_mass,
+-            "thin_invalid_patches": int(invalid.sum()), "thin_invalid_mass_kg": invalid_mass, **depths})
++            "thin_invalid_patches": int(invalid.sum()), "thin_invalid_mass_kg": invalid_mass, **depths, **angles})
+         return released
+ 
+     def _kill(self, dead):
+@@ -1248,4 +1263,7 @@
+                 "nose_radius_mm": self.nose_radius() * 1e3, "transverse_radius_mm": self.transverse_radius * 1e3,
+                 "fitted_nose_radius_mm": self.fitted_nose_radius * 1e3,
+                 "n_dead_elements": float(self.mesh.n_elements - self.mesh.n_active),
+-                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", float("nan"))}
++                "nonrigid_depth_wet_median_um": lm.get("nonrigid_depth_wet_median_um", float("nan")),
++                # Register et al.'s release angle over the step's released mass: its mean by mass, least and largest, nan
++                # where nothing was released (sub-plan 22 Task 4)
++                **{k: lm.get(k, float("nan")) for k in RELEASE_ANGLE_COLUMNS}}
+```
+
+- [ ] **Step 8: The last step** in `reentry_model/trajectory.py`, and the summary, the skin results and the loop in
+  `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/trajectory.py
++++ b/reentry_model/trajectory.py
+@@ -137,14 +137,18 @@
+         escape.terminal, escape.direction = True, -1
+         return [ground, escape]
+ 
+-    def advance(self, dt):
++    def advance(self, dt, snap=0.0):
+         """One macro step from the stored state: DOP853 over [t, t + dt] at the Step 1 tolerances, a fresh solve_ivp
+         per step (spec section 7). A ground/escape event or t_max truncates the step and sets `end_reason`.
+-        Returns the time actually advanced."""
++        Returns the time actually advanced. A step that would end within `snap` [s] short of t_max ends at t_max: the
++        steps' sum, t + dt added again and again, falls short of t_max by round-off, and the loop then took a last step
++        of about 1e-17 s (sub-plan 22 Task 4, fact 179). With `snap` 0, the default, the step is as it always was."""
+         if self.end_reason is not None:
+             raise RuntimeError("the flight already ended ({})".format(self.end_reason))
+         s = self.settings
+         t_target = min(self.t + dt, s.t_max)
++        if s.t_max - t_target <= snap:
++            t_target = s.t_max
+         sol = solve_ivp(self.rhs, (self.t, t_target), self.y, method="DOP853", rtol=s.rtol,
+                         atol=[s.atol_position] * 3 + [s.atol_velocity] * 3, events=self._events())
+         if not sol.success:
+```
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -14,6 +14,7 @@
+ import numpy as np
+ 
+ from . import trajectory as tj
++from .spray import RELEASE_ANGLE_COLUMNS
+ from .surface_flow import KN_BODY_SHOCK
+ 
+ THERMAL_COLUMNS = ["convective_heat_W", "rad_cooling_W", "integrated_heat_J", "absorbed_heat_J",
+@@ -34,6 +35,8 @@
+                 # the regime test's depth over the wet windward patches (fact 94); sub-plan 18's skin columns, which held
+                 # 0 or nan in every run of the element model, went with its one-dimensional skins (sub-plan 22 Task 3)
+                 "nonrigid_depth_wet_median_um"]
++# both surface models' histories also carry Register et al.'s release angle over each step's released mass (its mean by
++# mass, least and largest), spray.RELEASE_ANGLE_COLUMNS (Asha 2026-10-29, sub-plan 22 Task 4), after their own columns
+ # the layered skins on the corner columns (sub-plan 20): skinbody.SkinBody.skin_stats(), every macro step
+ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
+                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
+@@ -48,7 +51,30 @@
+                     # the droplet momentum sink (sub-plan 21 Task 7, spec 10.2): fact 29's Pi and its flag
+                     "released_mass_kg", "droplet_momentum_ratio", "droplet_momentum_flagged",
+                     # what the fault tolerance holds in the skins at the last base move (sub-plan 21 Task 9, spec 6.6)
+-                    "held_mass_kg", "held_depth_max_mm"]
++                    "held_mass_kg", "held_depth_max_mm",
++                    # Girin's spraying from the top cells (sub-plan 22 Task 4, spec 10.2): the step's released mass -- the
++                    # released_mass_kg above is since time zero -- the droplets since time zero, the radius median and
++                    # largest over the step's records, the smallest angle and the top area of the columns whose plan
++                    # sprays, the element model's per-step columns of the same names, which particles_summary.csv reads
++                    "released_step_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg", "spraying_area_m2",
++                    # Register et al.'s release angle over the step's released mass (Asha 2026-10-29)
++                    *RELEASE_ANGLE_COLUMNS,
++                    # spec 10.2: b and the resolved sheared depth over Girin's delta_m on the wet windward columns, and
++                    # each rebuild's mass residual beside its energy residual
++                    "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
++                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
++# particles_summary.csv, one row a macro step: the element model's history columns
++SUMMARY_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um",
++                   "theta_cr_deg", "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
++# a skin flight's (sub-plan 22 Task 4): (the summary's column, the skin history's column it is read from) -- the same
++# droplet columns, the step's released mass from released_step_mass_kg, since the skin history's released_mass_kg is
++# cumulative, and where the element model has its film, which the skins do not, the skins' liquid and flowing depths
++SKIN_SUMMARY_COLUMNS = [("time_s", "time_s"), ("altitude_km", "altitude_km"), ("velocity_kms", "velocity_kms"),
++                        ("released_mass_kg", "released_step_mass_kg"), ("n_released", "n_released"),
++                        ("r_median_um", "r_median_um"), ("r_max_um", "r_max_um"), ("theta_cr_deg", "theta_cr_deg"),
++                        ("spraying_area_m2", "spraying_area_m2"), ("liquid_depth_mean_mm", "liquid_depth_mean_mm"),
++                        ("flowing_depth_mean_mm", "flowing_depth_mean_mm")]
++END_SNAP = 1e-6                   # of the macro step: a step that would end this close short of t_max ends at it (below)
+ PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+ 
+ 
+@@ -64,6 +90,11 @@
+     switch_on_melt: bool = False      # the switch also latches at the first macro step at whose end the body holds liquid
+                                       # (`body.liquid_present()`), if that comes first: the layered skins' (sub-plan 22
+                                       # Task 3b, Asha 2026-10-29); the element model's switch is the Knudsen number's alone
++    snap_to_t_max: bool = False       # a macro step that would end within END_SNAP of a step short of t_max ends at it:
++                                      # the steps' sum falls short of t_max by round-off, and the loop then took a last
++                                      # step of about 1e-17 s, a whole macro step of the skins over which the droplet-
++                                      # momentum ratio read 5.5 and 8.6 (fact 179); the layered skins' (sub-plan 22 Task
++                                      # 4), the element model keeping its loop, and that step, to the last bit
+ 
+     def __post_init__(self):
+         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
+@@ -116,7 +147,7 @@
+         rows, states, step = [self.row(sim.t, sim.y, a, loads)], [sim.y.copy()], 0
+         self._frame(step, sim.t, loads)
+         while sim.end_reason is None:
+-            dt = sim.advance(s.dt)
++            dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
+             a, loads = self.loads_at(sim.t, sim.y)
+             body.advance(sim.t, dt, loads, state=a)
+             step += 1
+@@ -200,10 +231,14 @@
+                "droplet_momentum_ratio_max": float(np.max(last["droplet_momentum_ratio"])),
+                "droplet_momentum_flagged_steps": int((last["droplet_momentum_flagged"] > 0).sum()),
+                "held_mass_max_kg": float(np.max(last["held_mass_kg"])),          # what the fault tolerance held (Task 9)
+-               "held_depth_max_mm": float(np.max(last["held_depth_max_mm"]))}
++               "held_depth_max_mm": float(np.max(last["held_depth_max_mm"])),
++               # Girin's spraying (sub-plan 22 Task 4): the droplet records' mass, the droplets and the rows written --
++               # the element model's results of the same names
++               "sprayed_mass_kg": body.sprayed_mass, "n_released": body.droplet_number,
++               "n_source_rows": body.n_source_rows}
+         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
+                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
+-                                                  "wall_move_s", "wall_rebuild_s")})
++                                                  "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
+         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
+         return out
+ 
+@@ -329,31 +364,34 @@
+     """particles.npz (the source table, SOURCE_COLUMNS as arrays), particles_summary.csv (per macro step) and
+     size_distribution.csv (dn, dM per log bin per `window`-second window and in total). Returns the paths.
+ 
+-    The table is the body's `source_rows`, the element model's rows or the layered skins' blocks of them
+-    (`spray.source_table`; sub-plan 22 Task 2). The summary's columns are the element model's history columns; a history
+-    without them -- the skin body's, until sub-plan 22 Task 4 gives it its droplet columns -- writes no summary, and the
+-    paths returned then have none."""
++    The table is the body's `source_rows`, the element model's rows, the layered skins' blocks of them (sub-plan 22 Task
++    2) or their `spray.SourceSpool` on disk (Task 4), read column by column (`spray.source_columns`), so that a flight's
++    records need not be in memory at once: the numbers written are the same either way. The summary's columns are the
++    element model's history columns (SUMMARY_COLUMNS); a skin flight's are SKIN_SUMMARY_COLUMNS, read from its history's
++    droplet columns (Task 4); a history with neither writes no summary, and the paths returned then have none."""
+     import csv
+     from . import spray
+     os.makedirs(run_dir, exist_ok=True)
+-    rows = spray.source_table(body.source_rows)
++    cols = spray.source_columns(body.source_rows)
+     npz = os.path.join(run_dir, "particles.npz")
+-    np.savez_compressed(npz, **{name: rows[:, i] for i, name in enumerate(spray.SOURCE_COLUMNS)})
++    np.savez_compressed(npz, **cols)
+     c = history.columns
+     summary = os.path.join(run_dir, "particles_summary.csv")
+-    keys = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um", "theta_cr_deg",
+-            "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
+-    if not set(keys) <= set(c):
++    if set(SUMMARY_COLUMNS) <= set(c):
++        header, keys = SUMMARY_COLUMNS, SUMMARY_COLUMNS
++    elif {k for _, k in SKIN_SUMMARY_COLUMNS} <= set(c):
++        header, keys = [h for h, _ in SKIN_SUMMARY_COLUMNS], [k for _, k in SKIN_SUMMARY_COLUMNS]
++    else:
+         summary = None
+-    else:
++    if summary is not None:
+         with open(summary, "w", newline="") as fh:
+             w = csv.writer(fh)
+-            w.writerow(keys)
++            w.writerow(header)
+             for i in range(len(history)):
+                 w.writerow(["{:.9g}".format(c[k][i]) for k in keys])
+     dist = os.path.join(run_dir, "size_distribution.csv")
+     edges = spray.BIN_EDGES
+-    t = rows[:, 0] if len(rows) else np.zeros(0)
++    t, r, dn, dm = cols["time_s"], cols["r_m"], cols["dn"], cols["dm_kg"]
+     t_end = float(c["time_s"][-1])
+     starts = np.arange(0.0, t_end + 1e-9, window)
+     with open(dist, "w", newline="") as fh:
+@@ -361,12 +399,12 @@
+         w.writerow(["window_start_s", "window_end_s", "r_lo_m", "r_hi_m", "dn", "dm_kg"])
+         for t0 in list(starts) + [None]:
+             if t0 is None:
+-                sel = np.ones(len(rows), dtype=bool)
++                sel = np.ones(len(t), dtype=bool)
+                 lo, hi = 0.0, t_end
+             else:
+                 lo, hi = t0, t0 + window
+                 sel = (t >= lo) & (t < hi)
+-            n_hist, m_hist = spray.histogram(rows[sel, 12], rows[sel, 13], rows[sel, 14]) if sel.any() else (np.zeros(spray.N_BINS), np.zeros(spray.N_BINS))
++            n_hist, m_hist = spray.histogram(r[sel], dn[sel], dm[sel]) if sel.any() else (np.zeros(spray.N_BINS), np.zeros(spray.N_BINS))
+             for j in range(spray.N_BINS):
+                 w.writerow(["{:.9g}".format(lo), "{:.9g}".format(hi), "{:.9g}".format(edges[j]), "{:.9g}".format(edges[j + 1]),
+                             "{:.9g}".format(n_hist[j]), "{:.9g}".format(m_hist[j])])
+```
+
+- [ ] **Step 9: The rebuild's mass residual** in `reentry_model/movemesh.py`:
+
+```diff
+--- a/reentry_model/movemesh.py
++++ b/reentry_model/movemesh.py
+@@ -46,8 +46,10 @@
+ by preconditioned conjugate gradients. The projection reproduces a linear field exactly and keeps the energy where it
+ was, region by region, to the rule's accuracy; what the quadrature still misses is made exact by a uniform offset over
+ the new deforming zone only, where the field varies, as the 2026-09-27 remeshing design does for the whole body. The
+-pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`. The validity gate stops
+-on a non-manifold surface, more than one connected body, or a non-positive enclosed volume.
++pre-correction residual is reported with every rebuild and summed in `rebuild_residual_total`, and so is the mass the
++rebuild's new volume misses against the old (`RebuildResult.mass_residual`, `rebuild_mass_residual_total`; spec 10.2,
++sub-plan 22 Task 4): the surface is kept, so it is round-off. The validity gate stops on a non-manifold surface, more
++than one connected body, or a non-positive enclosed volume.
+ 
+ The fine band (Asha, 2026-10-14, option 1): on 2 mm elements the 3D model cannot follow the temperature just below the
+ rigid front -- the layer ahead of the front is 2-3 mm thick on the hot plate -- and the plates melt 2-6 % late; 1 mm
+@@ -308,6 +310,7 @@
+         self.compression = np.zeros(len(self.corners))      # inward normal motion of each corner since the last rebuild
+         self.steps_since_rebuild, self.rebuilds, self.last_rebuild = 0, 0, None
+         self.rebuild_residual_total = 0.0       # J, summed pre-correction residuals of all rebuilds
++        self.rebuild_mass_residual_total = 0.0  # kg, summed mass residuals of all rebuilds (sub-plan 22 Task 4)
+ 
+     def _set_surface(self, faces_nodes):
+         local = np.full(self.mesh.n_nodes, -1, dtype=np.int64)
+@@ -425,6 +428,7 @@
+         h_new = project_enthalpy(mesh.points, mesh.tets, h_old, points, tets)
+         params = dict(mesh.params, rebuilds=self.rebuilds + 1)
+         new_mesh = mesh_mod.VolumeMesh(points, tets, params)
++        mass_residual = float(mat.rho * (mesh.volume() - new_mesh.volume()))
+         check_rebuilt_boundary(new_mesh, node_of_corner[self.faces_corner])
+         solver.setup(new_mesh, mat, solver.emissivity)
+         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+@@ -438,11 +442,12 @@
+         h_new[in_zone] += residual / m_zone.sum()
+         solver.set_temperature(mat.temperature_from_enthalpy(h_new))
+         self.rebuild_residual_total += float(residual)
++        self.rebuild_mass_residual_total += mass_residual
+         self.compression[:] = 0.0
+         self.steps_since_rebuild = 0
+         self.rebuilds += 1
+         self.last_rebuild = RebuildResult(float(residual), float(residual / E_old) if E_old else 0.0, new_mesh.n_nodes,
+-                                          new_mesh.n_elements, time.perf_counter() - t0, reason)
++                                          new_mesh.n_elements, time.perf_counter() - t0, reason, mass_residual)
+         return self.last_rebuild
+ 
+     def needs_rebuild(self):
+@@ -481,6 +486,8 @@
+     n_elements: int
+     seconds: float
+     reason: str
++    mass_residual: float = 0.0          # kg, the material's density times the old volume less the new (spec 10.2): the
++                                        # surface is kept, so round-off; nothing corrects it
+ 
+ 
+ def check_surface(points, faces):
+```
+
+- [ ] **Step 10: The skin body's outputs** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -89,7 +89,17 @@
+ the plan was evaluated, b its flowing depth, the droplets leaving at the mean velocity of the metal they are made of --
+ the momentum the books lose with them -- and their solid fraction and enthalpy per kilogram, mass-weighted over the
+ cells released), kept one block per macro step in `source_rows`; the size histograms (`hist_n`, `hist_m`) accumulate
+-each flow sub-step's release at the plan's radii (`SprayPlan.histogram`, through `skin.Cascade.histogram`)."""
++each flow sub-step's release at the plan's radii (`SprayPlan.histogram`, through `skin.Cascade.histogram`).
++
++The outputs of a spraying skin flight (sub-plan 22 Task 4; spec 10.2). Each record carries Register et al.'s (2020)
++release angle, from the centroid of the volume the top surface encloses where the plan was evaluated
++(`spray.register_angle`, `spray.enclosed_centroid`; Asha, 2026-10-29); every macro step the history reports the step's
++released mass, the droplets since time zero, the radius median and largest over the step's records, the smallest angle
++and the area of the columns whose plan sprays -- the element model's per-step columns, so the coupled writer writes the
++same particles_summary.csv -- the release angle's mean by mass, least and largest, b and the resolved sheared depth over
++Girin's delta_m on the wet windward columns (`sheared_depth`), and each rebuild's mass residual. Where `spool` names a
++directory the records go to disk as they come (`spray.SourceSpool`): a flight at the continuum step makes tens of
++millions of them."""
+ import copy
+ import dataclasses
+ import math
+@@ -154,6 +164,9 @@
+ 
+ SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
+                                   # large-fragment design's labelled assumption for slurry)
++SHEARED_FRACTION = 0.1            # the resolved sheared depth (spec 6.7): from the top to where the computed speed falls to
++                                  # this fraction of the top cell's (sub-plan 22 Task 4): on Girin's linear profile, which
++                                  # falls to nothing at delta_m, it is 0.9 delta_m
+ 
+ 
+ @dataclasses.dataclass
+@@ -190,7 +203,9 @@
+     `momentum_slurry` [kg m/s, (n, 3)]; and, at the step's end, `number` and `number_slurry`, the droplets: the mass over
+     one droplet's at the mode's radius. Where the plan was evaluated, for the records' rows (`source_block`; sub-plan 22
+     Task 2): `theta` [rad], `closure` (the surface flow's), `points` [m, (n, 3)] the top surface's corners, `state` the
+-    aero state and `props` the liquid's properties."""
++    aero state and `props` the liquid's properties; and for the history and Register's release angle (Task 4), `area`
++    [m2] the columns' top areas, `centre` [m, (3,)] the centroid of the volume the top surface enclosed and `v_hat` the
++    direction of flight."""
+     rate: np.ndarray
+     rate_slurry: np.ndarray
+     result: object
+@@ -208,6 +223,9 @@
+     points: np.ndarray = None
+     state: object = None
+     props: object = None
++    area: np.ndarray = None
++    centre: np.ndarray = None
++    v_hat: np.ndarray = None
+ 
+     def __post_init__(self):
+         T = self.slurry["T"]
+@@ -264,6 +282,17 @@
+         self.momentum += fb.phase_p[0]
+         self.momentum_slurry += fb.phase_p[1]
+ 
++    def spraying(self):
++        """The columns whose plan sprays [bool, (n,)]: a mode with a release rate, the element model's `unstable`."""
++        return (self.rate > 0.0) | (self.rate_slurry > 0.0)
++
++    def release_angle(self):
++        """Register et al.'s release angle [deg, (n,)] of each column's top corner from the plan's centroid (nan without
++        one; `spray.register_angle`, sub-plan 22 Task 4)."""
++        if self.centre is None or self.points is None:
++            return np.full(len(self.rate), np.nan)
++        return spray_mod.register_angle(self.points, self.centre, self.v_hat)
++
+     def source_block(self, t):
+         """The macro step's records as source-table rows (spray.SOURCE_COLUMNS, by `spray.source_block`), one per column
+         and mode that released, the liquid's mode's first: at the end of the step `t` [s] and the plan's aero state, the
+@@ -274,9 +303,11 @@
+         lose with the droplets (spec 6.4: they leave at the speed of the cells they are made of; zero direction where it
+         is at rest); We_d, Oh and the breakup flag at their radius, by their phase's density, viscosity and surface tension
+         (the slurry's mixture density, viscosity at its sheared layer's rate and SLURRY_SIGMA, the 2026-10-07 design 8.4);
+-        and their solid fraction and enthalpy per kilogram, mass-weighted over the cells released."""
++        their solid fraction and enthalpy per kilogram, mass-weighted over the cells released; and their column's release
++        angle (Task 4)."""
+         st, s = self.state, self.slurry
+         flow = types.SimpleNamespace(closure=self.closure)
++        angle = self.release_angle()
+         blocks = []
+         for mass, H, solid, p, number, res, b, props in (
+                 (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
+@@ -290,7 +321,7 @@
+             rows = types.SimpleNamespace(branch=res.branch, r=res.r, delta_m=res.delta_m, we_s=res.we_s, h_floor=res.h_floor,
+                                          gamma_tau=res.gamma_tau, dm=mass, dn=number, v_s=per(speed))
+             blocks.append(spray_mod.source_block(t, st.h, st.V, self.theta, self.points, direction, flow, rows, b, props, st,
+-                                                 solid_fraction=per(solid), h_kg=per(H)))
++                                                 solid_fraction=per(solid), h_kg=per(H), release_angle=angle))
+         return np.concatenate(blocks, axis=0)
+ 
+ 
+@@ -315,6 +346,35 @@
+     return out
+ 
+ 
++def sheared_depth(sk, fraction=SHEARED_FRACTION):
++    """Per column, the resolved sheared depth [m] (spec 6.7; sub-plan 22 Task 4): the depth from the top at which the
++    computed speed falls to `fraction` of the top cell's, interpolated between the cells' centres as `Skins.depth_above`
++    is; the skin's thickness where it does not fall that far within the skin (the whole skin moves), nan where the top
++    cell does not move."""
++    speed = np.where(sk.valid, np.linalg.norm(sk.U, axis=2), 0.0)
++    top = speed[:, 0]
++    level = fraction * top
++    rows = np.arange(sk.n)
++    below = sk.valid & (speed <= level[:, None])
++    below[:, 0] = False
++    fell = below.any(axis=1)
++    k = np.where(fell, np.argmax(below, axis=1), 1)
++    dz = sk.dz()
++    z_mid = np.cumsum(dz, axis=1) - 0.5 * dz
++    Ka, Kb = np.clip(k - 1, 0, sk.m.shape[1] - 1), np.clip(k, 0, sk.m.shape[1] - 1)
++    sa, sb = speed[rows, Ka], speed[rows, Kb]
++    frac = np.clip(np.divide(sa - level, sa - sb, out=np.zeros_like(sa), where=sa > sb), 0.0, 1.0)
++    inside = z_mid[rows, Ka] + frac * (z_mid[rows, Kb] - z_mid[rows, Ka])
++    return np.where(top > 0.0, np.where(fell, inside, sk.thickness()), np.nan)
++
++
++def _no_step_spray():
++    """The history's droplet columns of a macro step that sprayed nothing (the element model's defaults)."""
++    out = {"r_median_um": float("nan"), "r_max_um": float("nan"), "theta_cr_deg": float("nan"), "spraying_area_m2": 0.0}
++    out.update({k: float("nan") for k in spray_mod.RELEASE_ANGLE_COLUMNS})
++    return out
++
++
+ def _rows(flow, idx):
+     """The surface flow's evaluation on the corners idx alone: every per-corner array taken at idx, the rest kept."""
+     n = len(flow.closure)
+@@ -325,7 +385,8 @@
+     return out
+ 
+ 
+-def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None):
++def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,
++               v_hat=None):
+     """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
+     the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
+     spray model (`model`) and the skins as they are at its start: a SprayPlan.
+@@ -340,7 +401,9 @@
+     of `radius` caps it too. Columns on the windward face, theta <= 90 degrees, only; `A_top` [m2] the top areas, `edges`
+     the columns' graph, `dt` [s] the macro step (the nominal release in the result). With `slurry`, the exposed slurry's
+     own mode too (`slurry_modes`). The plan keeps where it was evaluated for its records' rows: `theta`, the closure,
+-    the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2)."""
++    the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2), and
++    for the history and the release angle the top areas, `centre` [m, (3,)], the centroid of the volume the top surface
++    encloses, and `v_hat`, the direction of flight (Task 4)."""
+     mat, liq = sk.material, model.liquid
+     n = sk.n
+     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
+@@ -365,7 +428,8 @@
+     else:
+         rate_s, modes = np.zeros(n), _no_slurry(n)
+     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
+-                     points=points, state=state, props=liq)
++                     points=points, state=state, props=liq, area=np.asarray(A_top, dtype=float), centre=centre,
++                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float))
+ 
+ 
+ def _no_slurry(n):
+@@ -476,12 +540,13 @@
+     with the flow on, Girin's spraying from the top cells evaluated at the start of every macro step (`girin_plan`; sub-plan
+     22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`; its
+     droplet records, one block of source-table rows per macro step, in `source_rows` where `particles`, and the size
+-    histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer)."""
++    histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
++    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory."""
+ 
+     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+-                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True):
++                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None):
+         if repeat_rule not in REPEAT_RULES:
+             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
+         self.flow_cycles = flow_cycles
+@@ -499,7 +564,10 @@
+         self.release, self.slurry_spray = release, bool(slurry_spray)
+         self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
+         self.particles = bool(particles)                     # keep the droplet records' rows (Task 2)
+-        self.source_rows = []                                # one block of source-table rows per macro step (Task 2)
++        # one block of source-table rows per macro step (Task 2), in memory or, with `spool`, on disk (Task 4)
++        self.source_rows = spray_mod.SourceSpool(spool) if spool is not None and self.particles else []
++        self.sprayed_mass, self.n_source_rows = 0.0, 0         # kg of droplet records, and their rows kept (Task 4)
++        self.step_spray, self._released_step = _no_step_spray(), 0.0     # this macro step's droplet columns, release
+         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)   # droplets, kg per size bin
+         self._step_release = release                         # what the parts' Flow releases this macro step
+         self.repeat_rule = repeat_rule
+@@ -586,6 +654,7 @@
+         move called for. With the flow on, the gas side's push is the surface flow's on the corners from the aero state
+         `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
+         n, self._ratio, self.step_parts = self._hint, 0.0, 0
++        self.step_spray, self._released_step = _no_step_spray(), 0.0
+         if self.flow_on:
+             end = forcing if forcing is not None else self.flow_forcing(state)
+             last = self._forcing_prev
+@@ -598,9 +667,12 @@
+                 if end.result is None or state is None:
+                     raise ValueError("Girin's spraying reads the surface flow's evaluation and the aero state (its records' "
+                                      "altitude and speed): give the aero state, with a forcing only if it has its result")
+-                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, self.surface.areas,
++                surface = self.surface               # where the plan is evaluated: its corners and its centroid (Task 4)
++                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, surface.areas,
+                                              self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
+-                                             points=self.surface.points.copy())
++                                             points=surface.points.copy(),
++                                             centre=spray_mod.enclosed_centroid(surface.points, surface.faces),
++                                             v_hat=self.v_hat)
+                 self._step_release = self.spray_plan.release
+         sk, mat = self.skins, self.material
+         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+@@ -622,12 +694,35 @@
+         self._hint = max(1, int(math.ceil(MOVE_HINT_MARGIN * self._ratio)))
+         self._q_prev = q_end.copy()
+         if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
+-            self.spray_plan.count(self.spray.liquid.rho)
+-            self.droplet_number += float(self.spray_plan.number.sum() + self.spray_plan.number_slurry.sum())
+-            if self.particles:                               # and its records' rows (Task 2)
+-                block = self.spray_plan.source_block(t)
+-                if len(block):
++            p = self.spray_plan
++            p.count(self.spray.liquid.rho)
++            self.droplet_number += float(p.number.sum() + p.number_slurry.sum())
++            block = p.source_block(t)                        # its records' rows (Task 2), and the history's columns
++            self.step_spray = self._step_columns(p, block)   # from them (Task 4)
++            if len(block):
++                self.sprayed_mass += float(block[:, spray_mod.SOURCE_COLUMNS.index("dm_kg")].sum())
++                if self.particles:
+                     self.source_rows.append(block)
++                    self.n_source_rows += len(block)
++
++    @staticmethod
++    def _step_columns(plan, block):
++        """The history's droplet columns of a macro step from its plan and its records' rows (sub-plan 22 Task 4): the
++        radius median and largest over the rows [um], the smallest angle [deg] and the top area [m2] of the columns whose
++        plan sprays (the element model's theta_cr_deg and spraying_area_m2, over its unstable patches), and the release
++        angle's mean by mass, least and largest over the rows."""
++        out = _no_step_spray()
++        on = plan.spraying()
++        if on.any():
++            out["theta_cr_deg"] = float(np.degrees(plan.theta[on].min()))
++            out["spraying_area_m2"] = float(plan.area[on].sum())
++        if len(block):
++            C = spray_mod.SOURCE_COLUMNS
++            r = block[:, C.index("r_m")]
++            out["r_median_um"], out["r_max_um"] = float(np.median(r) * 1e6), float(r.max() * 1e6)
++            out.update(zip(spray_mod.RELEASE_ANGLE_COLUMNS, spray_mod.release_angle_stats(
++                block[:, C.index("dm_kg")], block[:, C.index("release_angle_register_deg")])))
++        return out
+ 
+     def flow_forcing(self, state):
+         """The gas side's push on the metal at this macro step (FlowForcing): the surface flow evaluated on the corners
+@@ -749,6 +844,7 @@
+             self.flow_courant, self.flow_growth = max(self.flow_courant, fb.courant), max(self.flow_growth, fb.growth)
+             self.flow_passes, self.flow_cycles_max = max(self.flow_passes, fb.passes), max(self.flow_cycles_max, fb.cycles)
+             self.released_mass += float(fb.released.sum())   # the release from the top cells (Task 7): it leaves the body
++            self._released_step += float(fb.released.sum())  # and this macro step's (sub-plan 22 Task 4)
+             self.released_enthalpy += float(fb.released_H.sum())
+             self.momentum_lost += fb.released_p.sum(axis=0)  # the droplets' momentum, at their cells' own velocities
+             self.droplet_momentum += fb.released_p
+@@ -974,7 +1070,36 @@
+                 # what the fault tolerance, and the cap on a part's hand-down, hold in the skins at the last base move
+                 # (Task 9, spec 6.6, 2026-10-26 and 2026-10-27): unbounded (Asha, 2026-10-26), its mass and its deepest
+                 # column's depth recorded for sub-plan 22's flow-on flight to report
+-                "held_mass_kg": self.held_mass, "held_depth_max_mm": self.held_depth_max * 1e3}
++                "held_mass_kg": self.held_mass, "held_depth_max_mm": self.held_depth_max * 1e3,
++                # Girin's spraying (sub-plan 22 Task 4, spec 10.2): the step's released mass, the droplets since time
++                # zero, and the step's droplet columns (`_step_columns`), which particles_summary.csv reads
++                "released_step_mass_kg": self._released_step, "n_released": self.droplet_number, **self.step_spray,
++                # b and the resolved sheared depth over Girin's delta_m on the wet windward columns (medians), and each
++                # rebuild's mass residual, summed and the last
++                **self._depth_ratios(flowing),
++                "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
++                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0}
++
++    def _depth_ratios(self, flowing):
++        """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
++        the windward face (theta <= 90 degrees), with flowing metal (b, the flowing depth, above zero) and Girin's
++        conjugate depth delta_m from the macro step's surface flow (`last_flow`; nan off his closure); the sheared depth
++        `sheared_depth`, on those whose top moves. nan where there are none, or without the flow."""
++        mat, out = self.material, {"b_over_delta_m_median": float("nan"), "sheared_depth_over_delta_m_median": float("nan")}
++        if not (self.flow_on and mat.melts and mat.liquid is not None) or self.last_flow is None:
++            return out
++        delta_m, _ = spray_mod.melt_layer(self.last_flow, mat.liquid)
++        if len(delta_m) != self.skins.n:
++            return out
++        with np.errstate(invalid="ignore"):
++            wet = (self.theta <= 0.5 * np.pi) & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
++        if wet.any():
++            out["b_over_delta_m_median"] = float(np.median(flowing[wet] / delta_m[wet]))
++            sheared = sheared_depth(self.skins)
++            moving = wet & np.isfinite(sheared)
++            if moving.any():
++                out["sheared_depth_over_delta_m_median"] = float(np.median(sheared[moving] / delta_m[moving]))
++        return out
+ 
+     def _recession(self):
+         """How far each corner's top has moved inward along its starting direction since time zero [m]."""
+```
+
+- [ ] **Step 11: The spool and the skins' last step from the command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -56,6 +56,10 @@
+ # Sub-plan 18's one-dimensional skins are retired (sub-plan 22 Task 3).
+ SURFACE_MODELS = ("skin", "elements")
+ DEFAULT_SURFACE_MODEL = "skin"
++# A spraying skin run writes its droplet records to this directory inside the run's own as they come (spray.SourceSpool;
++# sub-plan 22 Task 4): at the continuum step the 100 mm flight makes 35-70 million of them, 7.6-15.2 GB in memory. The
++# coupled writer reads them from there into particles.npz, and the directory is then removed.
++SOURCE_SPOOL = "source_rows"
+ # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
+ # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
+ # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
+@@ -408,8 +412,9 @@
+     return p
+ 
+ 
+-def build_thermal(args, settings, mass):
+-    """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]."""
++def build_thermal(args, settings, mass, spool=None):
++    """(ThermalBody or MeltingBody, HeatingModel, settings-provenance dict) for --thermal fem [--melt on]; `spool`, a
++    directory for a spraying skin body's droplet records (SOURCE_SPOOL in the run's directory, sub-plan 22 Task 4)."""
+     radius = settings.diameter / 2.0
+     melting = args.melt == "on"
+     skins = args.surface_model == "skin"
+@@ -440,7 +445,8 @@
+                                      remove=melting and not flow, demise_fraction=args.demise_fraction, flow=flow,
+                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
+                                      spray=spray_model_of(args, mat) if flow else None,
+-                                     slurry_spray=args.slurry_spray == "on", particles=args.particles)
++                                     slurry_spray=args.slurry_spray == "on", particles=args.particles,
++                                     spool=spool if flow else None)
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -624,14 +630,15 @@
+     os.makedirs(args.outdir, exist_ok=True)
+     thermal_info, the_body = {}, body.ConstantBody(mass, args.temperature)
+     if args.thermal == "fem":
+-        the_body, heating_model, thermal_info = build_thermal(args, settings, mass)
++        the_body, heating_model, thermal_info = build_thermal(args, settings, mass, spool=os.path.join(run_dir, SOURCE_SPOOL))
+     sim = tj.Simulator(initial, the_body, atm, aero.SphereDragTables.from_json(), aero.bridging_by_name(args.bridging), settings)
+     if args.thermal == "fem":
+         frames_every = args.frames_every or (10 if (args.animate or args.stills) else 0)
+         run = coupled.CoupledRun(sim, the_body, heating_model,
+                                  coupled.CoupledSettings(dt=args.dt, frames_every=frames_every, output_dir=os.path.join(run_dir, "vtk"),
+                                                          dt_continuum=dt_continuum, kn_switch=args.kn_body_shock,
+-                                                         switch_on_melt=args.surface_model == "skin"))
++                                                         switch_on_melt=args.surface_model == "skin",
++                                                         snap_to_t_max=args.surface_model == "skin"))
+         history = run.run()
+         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
+         thermal_info["dt_continuum_s"] = dt_continuum
+@@ -662,8 +669,8 @@
+         "files": {"csv": os.path.abspath(csv_path)},
+     }
+     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
+-    # the skins' spraying flight (sub-plan 22 Task 3): the element model's droplet files, from the same writer; the
+-    # per-step summary waits for Task 4, which gives the skin history its droplet columns, and is recorded as not written
++    # the skins' spraying flight (sub-plan 22 Tasks 3 and 4): the element model's droplet files, from the same writer --
++    # the summary from the skin history's droplet columns -- the records read from their spool, which then goes
+     spraying_skins = args.thermal == "fem" and args.melt == "on" and args.surface_model == "skin" and args.skin_flow == "on"
+     if melting:
+         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()} if args.particles
+@@ -671,7 +678,8 @@
+         doc["files"]["melt_plots"] = [os.path.abspath(p) for p in compare.plot_melt(history, run_dir, name, reference if compare.has_melt(history, reference) else None)]
+     elif spraying_skins and args.particles:
+         doc["files"].update({k: os.path.abspath(v) for k, v in coupled.write_particles(run_dir, the_body, history).items()})
+-        doc["files"]["particles_summary"] = None
++        if isinstance(the_body.source_rows, spray.SourceSpool):
++            the_body.source_rows.remove()
+     if reference is not None:
+         plots = compare.plot_all(history, reference, run_dir, name)
+         doc["comparison"] = {"reference": reference.name, "reference_csv": reference.csv_path,
+@@ -711,10 +719,9 @@
+                       res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
+                       res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
+         if spraying_skins:
+-            print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}; no particles_summary.csv until "
+-                  "sub-plan 22 Task 4 gives the skin history its droplet columns".format(
+-                      the_body.released_mass, the_body.droplet_number, sum(len(b) for b in the_body.source_rows),
+-                      " (particles.npz, size_distribution.csv)" if args.particles else ""))
++            print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}".format(
++                      res["released_mass_kg"], res["n_released"], res["n_source_rows"],
++                      " (particles.npz, particles_summary.csv, size_distribution.csv)" if args.particles else ""))
+         if melting:
+             print("  melt: onset {} km, spraying onset {} km, demise {} km at t = {} s; sprayed {:.4f} kg of {:.4f}, film left {:.4f} kg, "
+                   "{:.3g} droplets (median r {} um), {} source rows, melt balance {:.1e}".format(
+```
+
+- [ ] **Step 12: Run them to see them pass.** Expected: the 15 pass (about two and a half minutes; the skin body's records test about 100 s);
+  `tests/test_reentry_model_spray.py` 29 passed, `tests/test_reentry_model_trajectory.py` 13,
+  `tests/test_reentry_model_coupled.py` 12, `tests/test_reentry_model_movemesh.py` 40, `tests/test_reentry_model_skinbody.py`
+  36 (2 deselected, the reference tier's); the unit tier 532 passed, 1 skipped (Task 3b's 523 and nine added); the FEniCSx tier 18 passed (Task 3's 17 and the thick-film test).
+
+- [ ] **Step 13: The measurements** (in `measure/task4/`, on mains power, one heavy run at a time): the element model's
+  short case, `../task1/cmp/run_case.sh <code> "$PWD/runs" line4_short --surface-model elements` against Task 3b's
+  `line3b_short` copied into `runs/`, `"$PY" -B ../task1/cmp/compare_runs.py runs line3b_short line4_short` and
+  `"$PY" -B element_files.py runs line3b_short line4_short`; `./run_bitid.sh` (the skin body against Task 3b's, about 8
+  minutes); `./run_smoke.sh` (two runs, about three minutes) and `"$PY" -B smoke_check.py smoke/<run>.json
+  ../task3b/evidence/<run>.json`; `"$PY" -B body_outputs.py <code> body_outputs_slurry.npz on`; `"$PY" -B
+  spool_cost.py <code> <scratch dir> 3000000`; `./run_fenicsx_books.sh` (about two minutes, the FEniCSx interpreter).
+
+- [ ] **Step 14: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/body.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/trajectory.py reentry_model/movemesh.py reentry_model/cli.py tests/test_reentry_model_spray.py tests/test_reentry_model_trajectory.py tests/test_reentry_model_coupled.py tests/test_reentry_model_movemesh.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py tests/test_reentry_model_fenicsx.py
+git commit -m "Skins: the outputs of a spraying skin flight (spec 8 and 10.2) -- every droplet record of both surface models carries Register et al.'s (2020) release angle from the centroid of the volume the outer surface encloses (Asha 2026-10-29), each history its mean by mass, least and largest; the skin history gains the element model's per-step droplet columns and released_step_mass_kg, so the coupled writer writes its particles_summary.csv, and b and the resolved sheared depth over delta_m and each rebuild's mass residual; the skin results the sprayed mass, droplets and rows; the skins' loop ends at t_max without a vanishing last step; a spraying skin run's records go to disk as they come and are read back to the last bit; the FEniCSx tier's thick-film test runs both solvers' gradients at 1e-13, its residual having been scikit-fem's linear tolerance; the element model's existing outputs unchanged to the last bit (sub-plan 22 Task 4)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4 written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
@@ -5878,9 +7654,11 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
    > `MeltSettings(surface_model="skin1d")`: the retirement is deleting `skin1d.py`, its tests and `MeltingBody`'s
    > `skin1d` branches. The default surface model becomes `skin` here, and `--surface-model skin` with `--melt on` gains
    > `--removal girin`.
-4. **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
-   history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
-   mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).
+4. **Outputs** -- written out above as Task 4, with Register's release angle (Asha, 2026-10-29), the records on disk and
+   the FEniCSx tier's failure. The outline's item, as it stood:
+   > **Outputs**: the history columns, frame fields and results of spec §10.2; for a spraying skin flight (Task 3) the
+   > history's per-step droplet columns, so that `coupled.write_particles` writes its summary, and the results' sprayed
+   > mass, droplets and row count; the droplet-momentum ratio of a vanishing last macro step (fact 179).
 5. **Flights**: the 100 mm flight to 120 s and the 50 mm flight; convergence under halving of the macro step, 10 against
    20 µm cells, and a skin surface at 2 against 1 mm spacing; the acceptance criterion (droplet count, thick share,
    medians by number and mass, sprayed mass and mass at 120 s within the scatter between seeds under halving and
@@ -5892,17 +7670,17 @@ git commit -m "Skins: the flow on by default for a melting skin run and the cont
 
 ## Inputs to settle
 
-Carried from the outline, with one Task 2 adds and one Task 3 adds; none is settled by Tasks 1–3, whose spraying is
-evaluated and recorded once a macro step at whatever macro step the run takes (Task 1c). The records' volume follows the
-macro step.
+Carried from the outline, with one Task 2 adds and one Task 3 adds; Tasks 1–3 settle none of the outline's, their
+spraying evaluated and recorded once a macro step at whatever macro step the run takes (Task 1c); Task 3b settles the
+flow's default and Task 4 the records' volume, whatever the macro step.
 
 - Sub-plans 19–21's measurements: the fold limit's resolution, the rebuild transfer, the skins' and the sideways solve's
   costs, which together decide the default macro step and whether the flights fit the laptop or need the cluster.
-- The droplet records' volume (Task 2, ruling 9): a skin flight writes a row per spraying column and mode per macro
-  step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 370 000 to 740 000
-  a second of flight at the 12.5 ms continuum step, 75-150 MB a second in memory; at 0.5 s macro steps, 40 times fewer.
-  If the flights keep the continuum step, Task 5 writes the blocks out as it goes or combines the records over a longer
-  window than the macro step (which spec 8 would then say).
+- Settled: the droplet records' volume (Task 2, ruling 9; Task 4): a skin flight writes a row per spraying column and
+  mode per macro step, about 4 600 at 93 s on the 100 mm sphere with slurry spraying off and 9 200 with it on, so 35-70
+  million rows on the 100 mm flight from its first liquid to 120 s at the continuum step, 7.6-15.2 GB as arrays; since
+  Task 4 a spraying skin run writes them to disk as they come and the writer reads them back (fact 186), nothing
+  combined over more than a macro step.
 - The macro step with the flow on: sub-plan 21 (Task 6c) pairs `--skin-flow on` with `--removal girin`, whose continuum
   step (0.0125 s once the body's Knudsen number is below 0.01) the flow runs keep for now (Asha, 2026-10-22); this
   sub-plan tests other options, such as the 0.5 s macro step with the spraying taken in every skin sub-step. What the

@@ -169,3 +169,26 @@ def test_history_csv_round_trips_extra_columns(tmp_path):
     assert header[:len(tj.CSV_COLUMNS)] == tj.CSV_COLUMNS and header[-1] == "convective_heat_W"
     back = tj.read_history_csv(tmp_path / "h.csv")
     assert back.columns["convective_heat_W"].tolist() == [1.0, 2.0, 3.0] and len(back) == 3
+
+
+def test_a_step_that_would_end_within_the_snap_of_t_max_ends_at_it():
+    """Sub-plan 22 Task 4 (fact 179): t + dt added again and again falls short of t_max by round-off -- ten steps of
+    0.1 s reach 0.9999999999999999 s -- and the stepper then takes an eleventh step of 1.1e-16 s. With `snap` a step
+    that would end within it short of t_max ends at t_max: ten steps, the last ending at 1.0 s exactly, with the state of
+    the first nine unchanged to the last bit; with `snap` 0, the default, every step is as it was."""
+    atm = atmosphere.US76TableAtmosphere()
+    runs = {}
+    for snap in (None, 0.0, 1e-7):
+        sim = make(R100, atm, t_max=1.0)
+        steps, states = [], []
+        while sim.end_reason is None:
+            steps.append(sim.advance(0.1) if snap is None else sim.advance(0.1, snap=snap))
+            states.append(sim.y.copy())
+        runs[snap] = (steps, np.array(states), sim.t)
+    steps, states, t = runs[None]
+    assert len(steps) == 11 and 0.0 < steps[-1] < 1e-15 and t == 1.0
+    assert runs[0.0][0] == steps and np.array_equal(runs[0.0][1], states)
+    snapped, snapped_states, t_snap = runs[1e-7]
+    assert len(snapped) == 10 and t_snap == 1.0 and snapped[:9] == steps[:9]
+    assert np.array_equal(snapped_states[:9], states[:9]) and snapped[-1] == pytest.approx(0.1, rel=1e-14)
+    assert np.abs(snapped_states[-1] - states[-1]).max() < 1e-6                   # the eleventh step moved it by nothing

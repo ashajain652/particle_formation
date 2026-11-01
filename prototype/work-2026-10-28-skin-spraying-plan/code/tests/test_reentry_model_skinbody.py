@@ -661,7 +661,8 @@ def test_the_flow_is_off_by_default_and_turned_on_where_nothing_flows_it_changes
     assert make(coarse_sphere_mesh, T0=600.0).flow_on is False
     assert same_body(off, on) and np.all(on.skins.T[on.skins.valid] < on.material.T_rigid)
     a, c = off.skin_stats(), on.skin_stats()
-    assert all(a[k] == c[k] for k in a if not k.startswith("wall_"))
+    same = lambda x, y: x == y or (np.isnan(x) and np.isnan(y))     # a column empty in both (sub-plan 22 Task 4's)
+    assert all(same(a[k], c[k]) for k in a if not k.startswith("wall_"))
     assert c["speed_max_ms"] == 0.0 and c["momentum_residual"] == 0.0 and c["flow_courant_max"] == 0.0
 
 
@@ -1162,7 +1163,7 @@ def test_a_plan_s_records_are_one_per_column_and_mode_with_the_released_cells_so
     rows = plan.source_block(0.0125)
     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
     i, mode = np.array([0, 2, 1, 2]), np.array([0, 0, 1, 1])
-    assert rows.shape == (4, 26)
+    assert rows.shape == (4, 27) and np.isnan(rows[:, C["release_angle_register_deg"]]).all()    # no centroid given
     np.testing.assert_array_equal(rows[:, C["x_m"]:C["z_m"] + 1], pts[i])
     np.testing.assert_array_equal(rows[:, C["theta_deg"]], np.degrees(theta[i]))
     assert (rows[:, C["time_s"]] == 0.0125).all() and (rows[:, C["altitude_km"]] == 71.0).all()
@@ -1208,16 +1209,25 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     and the books' released mass, their enthalpy the books' released enthalpy, and their momentum, mass times speed
     along their direction, the momentum the droplets took from each column, all to round-off; the size histograms
     accumulated each flow sub-step are the rows'. The coupled writer writes the rows and their size distribution and
-    reads them back to the last bit; the summary, whose columns are the element model's history, waits for Task 4."""
+    reads them back to the last bit.
+
+    Sub-plan 22 Task 4: the rows go to a spool on disk as they come, which gives back the block it was given to the
+    last bit; each carries Register et al.'s release angle of its column's top corner from the centroid of the volume
+    the top surface enclosed where the plan was evaluated; the history reports the step's released mass, the droplets
+    since time zero, the radius median and largest over the step's rows, the smallest angle and the area of the
+    columns whose plan sprays, the release angle's mean by mass -- the mean recomputed from the step's rows -- least and
+    largest, and b and the resolved sheared depth over delta_m on the wet windward columns; and from those columns the
+    coupled writer writes the summary, whose released mass is the step's rows'."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import coupled, spray
     from reentry_model import trajectory as tj
     mat = material.Material.from_drama_json("AA7075_scheil")
+    np.random.seed(12345)              # pyamg's draws, as a run seeds them: the histograms' round-off is the path's
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
-             slurry_spray=True)
-    plans, books = [], []
-    girin, book = skinbody.girin_plan, skinbody.SprayPlan.book
+             slurry_spray=True, spool=str(tmp_path / "spool"))
+    plans, books, spooled = [], [], []
+    girin, book, append = skinbody.girin_plan, skinbody.SprayPlan.book, spray.SourceSpool.append
 
     def planned(*a, **k):
         plans.append(girin(*a, **k))
@@ -1226,13 +1236,20 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     def booked(plan, fb):
         books.append((plan, fb.released.copy(), fb.released_slurry.copy()))
         return book(plan, fb)
+    def kept(spool, block):
+        spooled.append(block.copy())
+        return append(spool, block)
     monkeypatch.setattr(skinbody, "girin_plan", planned)
     monkeypatch.setattr(skinbody.SprayPlan, "book", booked)
+    monkeypatch.setattr(spray.SourceSpool, "append", kept)
     state = aero_state_at(93.0)
+    stats = [b.skin_stats()]
     for k in range(2):
         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
-    assert len(b.source_rows) == 1 and b.particles                      # the first step melts the tops
+        stats.append(b.skin_stats())
+    assert len(b.source_rows) == 1 and b.particles and isinstance(b.source_rows, spray.SourceSpool)   # the first step melts
     rows = spray.source_table(b.source_rows)
+    assert len(spooled) == 1 and np.array_equal(rows, spooled[0], equal_nan=True)     # the spool's rows: the block's
     C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
     p = plans[-1]
     index = {tuple(x): i for i, x in enumerate(p.points)}
@@ -1263,15 +1280,54 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     assert (h[mode == 0] > h_liq * (1.0 - 1e-6)).all() and (h_rigid < h[mode == 1]).all() and (h[mode == 1] < h_liq).all()
     # the size histograms, accumulated each flow sub-step, are the rows': in the same bins, to the round-off of numpy's
     # weighted histogram, which takes each bin as a difference of running sums over all the droplets (measured: 1.6e-12
-    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all)
+    # droplets in a bin of 0.065, 2e-17 of the 71 000 in all; with the draws seeded 5.3e-16 of the 89 173 in all, and
+    # unseeded, after other tests, up to 1.04e-15, sub-plan 22 Task 4)
     n_rec, m_rec = spray.histogram(rows[:, C["r_m"]], rows[:, C["dn"]], rows[:, C["dm_kg"]])
     np.testing.assert_array_equal(b.hist_n > 0.0, n_rec > 0.0)
     np.testing.assert_allclose(b.hist_n, n_rec, rtol=0.0, atol=1e-15 * n_rec.sum())
     np.testing.assert_allclose(b.hist_m, m_rec, rtol=0.0, atol=1e-15 * m_rec.sum())
-    # the coupled writer: the same files as the element model's, read back to the last bit; no summary until Task 4
-    history = tj.History({"time_s": np.array([0.0, 0.25, 0.5])}, np.zeros((3, 6)), None)
+    # Task 4: the release angle of each row's column top from the plan's centroid, the top surface's where it was
+    # evaluated: 111.5-169.9 degrees, the columns within 10.9 degrees of the nose not spraying, none behind the equator,
+    # and within 7.3 degrees of 180 less the corner normal's angle theta_deg (measured)
+    angle = rows[:, C["release_angle_register_deg"]]
+    np.testing.assert_array_equal(p.centre, spray.enclosed_centroid(p.points, b.surface.faces))
+    np.testing.assert_array_equal(angle, spray.register_angle(p.points, p.centre, b.v_hat)[i])
+    assert 160.0 < angle.max() < 180.0 and angle.min() > 90.0
+    assert (np.abs(angle - (180.0 - rows[:, C["theta_deg"]])) < 10.0).all()
+    # the history's droplet columns: nothing in the first step, the second's from its rows and its plan
+    s0, s1, s2 = stats
+    assert s1["released_step_mass_kg"] == 0.0 and np.isnan(s1["r_median_um"]) and np.isnan(s1["release_angle_register_mean_deg"])
+    assert np.isnan(s0["b_over_delta_m_median"]) and s0["n_released"] == 0.0 and s0["spraying_area_m2"] == 0.0
+    dm = rows[:, C["dm_kg"]]
+    assert s2["released_step_mass_kg"] == pytest.approx(dm.sum(), rel=1e-12) and s2["n_released"] == b.droplet_number
+    assert s2["r_median_um"] == np.median(rows[:, C["r_m"]]) * 1e6 and s2["r_max_um"] == rows[:, C["r_m"]].max() * 1e6
+    on = p.spraying()
+    assert s2["theta_cr_deg"] == np.degrees(p.theta[on].min()) and s2["spraying_area_m2"] == p.area[on].sum() > 0.0
+    assert s2["release_angle_register_mean_deg"] == pytest.approx((dm * angle).sum() / dm.sum(), rel=1e-14)
+    assert (s2["release_angle_register_min_deg"], s2["release_angle_register_max_deg"]) == (angle.min(), angle.max())
+    assert b.sprayed_mass == pytest.approx(b.released_mass, rel=1e-12) and b.n_source_rows == len(rows)
+    # b and the resolved sheared depth over delta_m on the wet windward columns, the step's end
+    F = b.skins.depth_above(mat.T_rigid)
+    delta_m, _ = spray.melt_layer(b.last_flow, mat.liquid)
+    wet = (b.theta <= 0.5 * np.pi) & (F > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
+    assert wet.sum() > 100 and s2["b_over_delta_m_median"] == np.median(F[wet] / delta_m[wet])
+    sheared = skinbody.sheared_depth(b.skins)
+    moving = wet & np.isfinite(sheared)
+    assert s2["sheared_depth_over_delta_m_median"] == np.median(sheared[moving] / delta_m[moving]) > 0.0
+    # the coupled writer: the same files as the element model's, read back to the last bit, and the summary from the
+    # history's droplet columns
+    keys = {k for _, k in coupled.SKIN_SUMMARY_COLUMNS} - {"time_s", "altitude_km", "velocity_kms"}
+    columns = {k: np.array([x[k] for x in stats], dtype=float) for k in keys}
+    columns.update({"time_s": np.array([0.0, 0.25, 0.5]), "altitude_km": np.full(3, state.h / 1e3),
+                    "velocity_kms": np.full(3, state.V / 1e3)})
+    history = tj.History(columns, np.zeros((3, 6)), None)
     files = coupled.write_particles(str(tmp_path), b, history)
-    assert set(files) == {"particles", "size_distribution"}
+    assert set(files) == {"particles", "particles_summary", "size_distribution"}
+    with open(files["particles_summary"]) as fh:
+        summary = [line.split(",") for line in fh.read().splitlines()]
+    assert summary[0] == [h for h, _ in coupled.SKIN_SUMMARY_COLUMNS] and len(summary) == 4
+    assert float(summary[3][3]) == pytest.approx(dm.sum(), rel=1e-8) and float(summary[2][3]) == 0.0
+    assert float(summary[3][4]) == pytest.approx(rows[:, C["dn"]].sum(), rel=1e-8)
     npz = np.load(files["particles"])
     assert npz.files == spray.SOURCE_COLUMNS
     assert all(np.array_equal(npz[name], rows[:, k], equal_nan=True) for k, name in enumerate(spray.SOURCE_COLUMNS))
@@ -1296,3 +1352,28 @@ def test_the_skins_hold_liquid_once_a_top_cell_is_above_the_liquidus(coarse_sphe
     cold = skinbody.SkinBody(copy, material.Material.from_drama_json("AA7075_nomelt"), thermal_solver("skfem"), 1.47, DEV,
                              T0=1200.0, v_hat=(-1.0, 0.0, 0.0))
     assert not cold.liquid_present()                             # a material that does not melt holds no liquid
+
+
+# -- the outputs of a spraying skin flight (sub-plan 22 Task 4) ----------------------------------------------------------
+def test_the_resolved_sheared_depth_is_where_the_speed_falls_to_a_tenth_of_the_top_s():
+    """Spec 6.7's resolved sheared depth (`skinbody.sheared_depth`, SHEARED_FRACTION 0.1): from the top to where the
+    computed speed falls to a tenth of the top cell's, between the cells' centres. Columns of 10 um cells: a
+    profile falling linearly to rest 0.2 mm down, so 0.9 of that depth and a tenth of the top cell centre's, 5.9 um down
+    (on Girin's linear profile over delta_m, 0.9 delta_m); a skin moving as one piece, its whole thickness; a top at
+    rest, nan."""
+    from test_reentry_model_skin import LIQUID, RIGID, stacked, strip_grid
+    col, _ = strip_grid(3, 2, h=20e-3)
+    sk = stacked(col, [[LIQUID] * 30 + [RIGID] * 10, [LIQUID] * 40] + [[LIQUID] * 40] * 4)
+    dz = sk.dz()
+    z = np.cumsum(dz, axis=1) - 0.5 * dz
+    D = 2e-4
+    U = np.zeros(sk.U.shape)
+    U[0, :, 0] = 3.0 * np.clip(1.0 - z[0] / D, 0.0, None)
+    U[1, :, 1] = 0.5
+    sk.U = U * sk.valid[..., None]
+    assert skinbody.SHEARED_FRACTION == 0.1
+    got = skinbody.sheared_depth(sk)
+    assert got[0] == pytest.approx(0.9 * D + 0.1 * z[0, 0], rel=1e-12) and 5e-6 < z[0, 0] < 7e-6
+    assert got[1] == pytest.approx(sk.thickness()[1], rel=1e-14)
+    assert np.isnan(got[2:]).all()
+    assert skinbody.sheared_depth(sk, 0.5)[0] == pytest.approx(0.5 * D + 0.5 * z[0, 0], rel=1e-12)

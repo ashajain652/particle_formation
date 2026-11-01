@@ -65,6 +65,18 @@ TASKS = (
             ("DIFF_TEST_SKINBODY_T3B", "tests/test_reentry_model_skinbody.py"),
             ("DIFF_COUPLED_T3B", "reentry_model/coupled.py"), ("DIFF_SKINBODY_T3B", "reentry_model/skinbody.py"),
             ("DIFF_CLI_T3B", "reentry_model/cli.py"))),
+    ("4", (("DIFF_TEST_SPRAY_T4", "tests/test_reentry_model_spray.py"),
+           ("DIFF_TEST_TRAJECTORY_T4", "tests/test_reentry_model_trajectory.py"),
+           ("DIFF_TEST_COUPLED_T4", "tests/test_reentry_model_coupled.py"),
+           ("DIFF_TEST_MOVEMESH_T4", "tests/test_reentry_model_movemesh.py"),
+           ("DIFF_TEST_SKINBODY_T4", "tests/test_reentry_model_skinbody.py"),
+           ("DIFF_TEST_MELTING_T4", "tests/test_reentry_model_melting.py"),
+           ("DIFF_TEST_CLI_T4", "tests/test_reentry_model_cli.py"),
+           ("DIFF_TEST_FENICSX_T4", "tests/test_reentry_model_fenicsx.py"),
+           ("DIFF_SPRAY_T4", "reentry_model/spray.py"), ("DIFF_BODY_T4", "reentry_model/body.py"),
+           ("DIFF_TRAJECTORY_T4", "reentry_model/trajectory.py"), ("DIFF_COUPLED_T4", "reentry_model/coupled.py"),
+           ("DIFF_MOVEMESH_T4", "reentry_model/movemesh.py"), ("DIFF_SKINBODY_T4", "reentry_model/skinbody.py"),
+           ("DIFF_CLI_T4", "reentry_model/cli.py"))),
 )
 
 
