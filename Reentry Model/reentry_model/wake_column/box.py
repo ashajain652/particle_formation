@@ -5,7 +5,7 @@ The plume is a horizontal line segment of length L (the trail) broadened into a 
 
   * State. Total counts in the plume, not concentrations, so aluminium conservation is a plain sum (decision 1).
     Concentrations are counts / V with V = volume(r, L) = pi r^2 L / erf(L / 2r) (decision 2).
-  * Radius. d(r^2)/dt = 4 D_total(r) with D for AlO in air (molecular plus eddy, transport.D_total); zero when
+  * Radius. d(r^2)/dt = 4 D_total(r) with D for AlO in air (molecular plus scale-dependent eddy, transport.D_total); zero when
     Settings.freeze_radius. dV/dt = V dlnV_dr2(r, L) d(r^2)/dt.
   * Entrainment. Each ambient species gains c_ambient dV/dt; the aluminium-bearing species have no ambient source,
     so they are diluted only through V. Written for concentrations this is the spec's
@@ -80,7 +80,8 @@ from reentry_model.wake_column.particles import (V_AL2O3, V_ALOH3, Bins, SmokeBa
                                                  volume_per_al)
 from reentry_model.wake_column.reactions import RateWarnings, load_reactions
 from reentry_model.wake_column.species import AL_SPECIES, AMBIENT_SPECIES, AMU, ANGSTROM, load_species
-from reentry_model.wake_column.transport import (AIR_MASS_AMU, K_B, D_total, EddyProfile, dlnV_dr2, settling_rate,
+from reentry_model.wake_column.transport import (AIR_MASS_AMU, K_B, D_total, DissipationProfile, EddyProfile,
+                                                 dlnV_dr2, settling_rate,
                                                  volume)
 
 GAS_SPECIES = AL_SPECIES + AMBIENT_SPECIES
@@ -148,7 +149,7 @@ class Box:
     """The plume of one trail: initial state, right-hand side, Jacobian and solver (module docstring)."""
 
     def __init__(self, trail, hot, amb, time_of_day, settings, *, species=None, reactions=None, bins=None, smoke=None,
-                 eddy=None, initial_bins=None):
+                 eddy=None, dissipation=None, initial_bins=None):
         if time_of_day not in ("day", "night"):
             raise ValueError(f"time_of_day must be 'day' or 'night', got {time_of_day!r}")
         self.trail, self.hot, self.amb, self.time_of_day, self.settings = trail, hot, amb, time_of_day, settings
@@ -170,6 +171,8 @@ class Box:
                              f"r0 = {self.r0} m)")
         self.V0 = volume(self.r0, self.L)
         self.K_eddy = self.eddy.K(amb.z_km)
+        self.dissipation = dissipation if dissipation is not None else DissipationProfile.load()
+        self.epsilon = self.dissipation.epsilon(amb.z_km)
         self._alo = self.species["AlO"]
 
         # inventory: the vaporised aluminium plus any seeded particle atoms
@@ -462,7 +465,7 @@ class Box:
         V = volume(r, self.L)
         if self.settings.freeze_radius:
             return V, 0.0, 0.0
-        dr2 = 4.0 * D_total(r, self._alo, self.amb, self.K_eddy, self.settings)
+        dr2 = 4.0 * D_total(r, self._alo, self.amb, self.K_eddy, self.epsilon, self.settings)
         return V, V * dlnV_dr2(r, self.L) * dr2, dr2
 
     def _network_rates(self, gas, V):

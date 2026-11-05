@@ -1,0 +1,12 @@
+# Turbulent energy dissipation rate epsilon against altitude, the input to the scale-dependent eddy diffusion in transport.py.
+# Source: the review "Smallest eddies in reentry wakes" (2026-11-05), Literature Review/Alumina Nanoparticles/reports/, recommended-values table. Central values and ranges follow the high-latitude winter rocket means: Lubken et al. (1993) 1-2 mW/kg below 75 km; Szewczyk (2015) as quoted by Lehmacher et al. (2018, Ann. Geophys. 36, 1099) about 1, 10 and 50 mW/kg at 70, 80 and 90 km; Latteck et al. (2005) radar upper limit about 5 mW/kg at 60 km.
+# All measurements are from 65-69 N. None exists for mid-latitudes such as 40.7 N or for 50-55 km. The 50 km value is ASSUMED, the 60 km value rests on one upper-limit estimate, and the 45 and 100 km rows are ASSUMED held from their neighbours so the table covers the ambient columns.
+# Columns: z_km altitude (km); epsilon_mWkg central value (mW/kg); low_mWkg, high_mWkg range (mW/kg); provenance. epsilon is log-linear in altitude between rows.
+z_km,epsilon_mWkg,low_mWkg,high_mWkg,provenance
+45,1,0.1,10,assumed
+50,1,0.1,10,assumed (no measurement)
+60,2,1,5,one radar upper limit plus winter rockets
+70,1,0.2,4,measured winter rockets (65-69 N)
+80,10,1,100,measured winter rocket mean (69 N)
+90,30,10,100,measured winter rocket mean (69 N)
+100,30,10,100,assumed

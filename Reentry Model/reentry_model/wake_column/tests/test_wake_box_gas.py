@@ -3,6 +3,7 @@
 Spec section 7 tests 2 (inert tracer), 3 (ambient stability) and 4 (single-reaction lifetimes; decision 12 puts the
 total air density in R6's third body), and conservation of gas-phase aluminium with the full network by day and night.
 """
+import math
 import numpy as np
 import pytest
 
@@ -48,3 +49,11 @@ def test_gas_aluminium_is_conserved_with_full_chemistry():
         sol = make_box(time_of_day=tod, particles=False, t_end_s=3600.0).solve()
         for i in range(len(sol.t)):
             assert sum(sol.al_budget(i).values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_box_spreads_with_the_altitude_dissipation_rate():
+    b = make_box(z=70.0, chemistry=False, particles=False, t_end_s=1.0)
+    assert b.epsilon == pytest.approx(transport.DissipationProfile.load().epsilon(b.amb.z_km))
+    r2 = 400.0
+    _, _, dr2 = b._geometry(r2)
+    assert dr2 == pytest.approx(4.0 * transport.D_total(math.sqrt(r2), S["AlO"], b.amb, b.K_eddy, b.epsilon, b.settings))

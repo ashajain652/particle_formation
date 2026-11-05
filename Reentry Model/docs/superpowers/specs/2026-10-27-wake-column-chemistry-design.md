@@ -122,6 +122,11 @@ cylinder whose axis is the trail:
   and removed. (Asha asked for gravitational settling out of the column; with a horizontal cylinder it
   leaves through the side, not an end.)
 
+**Amendment 2026-11-05 (Asha).** The switch S(r) and `l_inner` above are replaced by a continuous law after a
+literature review found the fixed 30 m gate too large below about 75 km and the wrong shape: D_total = D_mol +
+min(K_eddy, K_R(r)), with K_R the Richardson diffusivity from a dissipation-rate table. See
+`docs/model_assumptions.md` section 9.
+
 ### 4.3 Ambient air (Asha: WACCM baseline; NRLMSIS + AFGL cross-check)
 
 - **Baseline:** the full-chemistry WACCM starting-condition file

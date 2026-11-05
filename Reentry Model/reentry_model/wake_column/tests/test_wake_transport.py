@@ -42,29 +42,39 @@ def test_molecular_diffusion_formula_on_a_hand_state():
     assert tr.D_molecular(s, amb) == pytest.approx(want, rel=1e-6)
 
 
-def test_switch_limits():
-    assert tr.eddy_switch(10.0, 30.0) == 0.0 and tr.eddy_switch(60.0, 30.0) == 1.0
-    assert 0.0 < tr.eddy_switch(30.0, 30.0) < 1.0
+def test_dissipation_table_covers_the_ambient_columns():
+    e = tr.DissipationProfile.load()
+    for z, want in ((50.0, 1e-3), (60.0, 2e-3), (70.0, 1e-3), (80.0, 1e-2), (90.0, 3e-2)):
+        assert e.epsilon(z) == pytest.approx(want)                       # the review's central values, W/kg
+    assert e.epsilon(75.0) == pytest.approx(math.sqrt(1e-3 * 1e-2))      # log-linear between rows
+    assert e.epsilon(45.0) > 0 and e.epsilon(100.0) > 0
+    with pytest.raises(ValueError, match="44.0 km"):
+        e.epsilon(44.0)
 
 
-def test_switch_is_smooth_monotone_and_centred_in_ln_r():
-    L = 30.0
-    r = np.linspace(L / math.sqrt(2), L * math.sqrt(2), 201)
-    S = np.array([tr.eddy_switch(x, L) for x in r])
-    assert S[0] == pytest.approx(0.0) and S[-1] == pytest.approx(1.0)
-    assert np.all(np.diff(S) >= 0)
-    assert tr.eddy_switch(L, L) == pytest.approx(0.5)             # the midpoint in ln r, smoothstep(1/2) = 1/2
-    assert tr.eddy_switch(L / math.sqrt(2), L) == 0.0 and tr.eddy_switch(L * math.sqrt(2), L) == 1.0
+def test_richardson_K_reproduces_the_t_cubed_law():
+    """r^2 = g epsilon t^3 / 3 (a cloud's cross-section, from <l^2> = g epsilon t^3) solves d(r^2)/dt = 4 K_R(r)."""
+    g, eps = 0.52, 1e-3
+    for t in (10.0, 100.0, 1000.0):
+        r = math.sqrt(g * eps * t ** 3 / 3.0)
+        assert 4.0 * tr.richardson_K(r, eps, g) == pytest.approx(g * eps * t ** 2, rel=1e-12)
 
 
-def test_total_diffusion_adds_the_scaled_switched_eddy_part():
+def test_total_diffusion_grows_with_size_up_to_the_capped_eddy_part():
     s, amb = sp.load_species()["AlO"], AmbientColumn.load("waccm", "night").at(70.0)
-    K = 5.0
+    K, eps = 5.0, 1e-3
     Dm = tr.D_molecular(s, amb)
-    assert tr.D_total(10.0, s, amb, K, Settings()) == pytest.approx(Dm)                  # below the inner scale
-    assert tr.D_total(100.0, s, amb, K, Settings()) == pytest.approx(Dm + K)             # above it
-    st = Settings(eddy_scale=0.5, l_inner_m=100.0)
-    assert tr.D_total(100.0, s, amb, K, st) == pytest.approx(Dm + 0.5 * K * 0.5)         # S(l_inner) = 1/2
+    st = Settings()
+    kr = lambda r, e=eps: tr.richardson_K(r, e, st.richardson_g)
+    assert tr.D_total(1.0, s, amb, K, eps, st) == pytest.approx(Dm + kr(1.0))             # small plume: Richardson
+    assert tr.D_total(1000.0, s, amb, K, eps, st) == pytest.approx(Dm + K)                # wide plume: capped
+    assert tr.D_total(1.0, s, amb, K, eps, Settings(epsilon_scale=10.0)) == pytest.approx(Dm + kr(1.0, 10 * eps))
+    assert tr.D_total(1000.0, s, amb, K, eps, Settings(eddy_scale=0.1)) == pytest.approx(Dm + 0.5)
+    assert tr.D_total(1000.0, s, amb, K, eps, Settings(eddy_scale=0.0)) == pytest.approx(Dm)  # molecular only
+    r = np.logspace(-3, 4, 400)
+    D = np.array([tr.D_total(x, s, amb, K, eps, st) for x in r])
+    assert np.all(np.diff(D) >= 0)                                                        # no step anywhere
+    assert np.max(np.diff(np.log(D))) < 0.1
 
 
 def test_volume_limits():

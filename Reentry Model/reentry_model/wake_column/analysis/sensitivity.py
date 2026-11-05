@@ -38,8 +38,8 @@ def settings_set(**overrides):
         "eddy x0.1": {"eddy_scale": 0.1},
         "eddy x100": {"eddy_scale": 100.0},
         "molecular only": {"eddy_scale": 0.0},
-        "inner scale 10 m": {"l_inner_m": 10.0},
-        "inner scale 100 m": {"l_inner_m": 100.0},
+        "dissipation x0.1": {"epsilon_scale": 0.1},
+        "dissipation x10": {"epsilon_scale": 10.0},
         "smoke sticking x0.1": {"smoke_sticking": 0.1},
         "no smoke uptake": {"smoke_sticking": 0.0},
     }

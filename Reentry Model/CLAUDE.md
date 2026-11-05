@@ -184,7 +184,7 @@ physics or quoting a result.
 - Data-driven: species, reactions, ambient columns (WACCM baseline, NRLMSIS + AFGL cross-check) and the Megner eddy
   and smoke tables are committed in `data/wake_column/`, each with a source and its assumed values flagged. No
   unmeasured rate or efficiency is hard-coded: each is a named field of `Settings` (formation, sticking, oxidation and
-  smoke-sticking efficiencies, `hot_start`, `hot_reaction_scale`, `eddy_scale`, `l_inner_m`, `bin_ratio`, ...).
+  smoke-sticking efficiencies, `hot_start`, `hot_reaction_scale`, `eddy_scale`, `epsilon_scale`, `richardson_g`, `bin_ratio`, ...).
 - Commands, from this folder; everything goes to `output/wake_column_output/` (`wake_column.OUTPUT`, git-ignored):
 
   ```bash

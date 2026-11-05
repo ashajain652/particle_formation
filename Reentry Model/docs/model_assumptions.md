@@ -209,17 +209,35 @@ research output and are not summarised here.
   `test_volume_limits`, `test_volume_finite_and_monotone_over_extreme_ratios`, `test_dlnV_dr2_matches_a_finite_difference_of_ln_volume`,
   `test_dlnV_dr2_continuous_across_the_series_switch`. **(assumed)** the centreline form rather than a mean-square
   volume, which would be twice as large and halve second-order rates; the spec fixed V = pi r^2 L.
-- **Radius growth.** d(r^2)/dt = 4 (D_mol + K_eddy S(r)); D_mol is AlO in air; K_eddy is the Megner et al. (2006)
-  reference eddy diffusion profile (Fig. 3c) digitised to `data/wake_column/megner2006_eddy_diffusion.csv`.
-  **(verified)** `test_total_diffusion_adds_the_scaled_switched_eddy_part`; the table itself is only range-checked by
+- **Radius growth.** d(r^2)/dt = 4 (D_mol + min(K_eddy, K_R(r))); D_mol is AlO in air; K_eddy is the Megner et al.
+  (2006) reference eddy diffusion profile (Fig. 3c) digitised to `data/wake_column/megner2006_eddy_diffusion.csv`, which
+  acts as the cap on the scale-dependent K_R below. **(verified)** `test_total_diffusion_grows_with_size_up_to_the_capped_eddy_part`,
+  `test_box_spreads_with_the_altitude_dissipation_rate`; the table itself is only range-checked by
   `test_eddy_profile_is_megner_reference` (peak between 5 and 15 m^2/s, minimum above 0.05 over 50-97.5 km; the
   values 9.7 m^2/s at 90 km and 0.30 m^2/s at 50 km were read off the table once in the Task 3 build, not pinned).
   The digitisation is by pixel trace of a published figure, **(assumed)** good to about 10 % in K and not
   independently verified. Particles diffuse with the gas **(assumed)**: Brownian diffusion of particles is
   slower than the gas's, so this is an upper bound on their dilution.
-- **Eddy switch (D3).** S(r) is 0 below l_inner/sqrt(2), 1 above sqrt(2) l_inner and a cubic smoothstep in ln r
-  between; l_inner = 30 m is **(assumed)** (sensitivity 10 and 100 m) because eddies smaller than the plume cannot
-  mix it. **(verified)** `test_switch_limits`, `test_switch_is_smooth_monotone_and_centred_in_ln_r`.
+- **Scale-dependent eddy diffusion (2026-11-05, replaces the 30 m switch S(r), decision D3).** The review
+  `Literature Review/Alumina Nanoparticles/reports/Smallest eddies in reentry wakes.md` found that a fixed 30 m gate was
+  too large below about 75 km and that a gate is the wrong shape: eddy mixing grows continuously with plume size. So
+  K_R(r) = g^(1/3) 3^(2/3) / 4 epsilon^(1/3) r^(4/3), the K for which d(r^2)/dt = 4 K reproduces Richardson's law
+  <l^2> = g epsilon t^3, using r^2 = <l^2> / 3 for a cloud's cross-section. **(verified)** the algebra,
+  `test_richardson_K_reproduces_the_t_cubed_law`. **(assumed)** g = 0.52 (`richardson_g`), from DNS, with one experiment
+  near 0.1 (K_R goes as g^(1/3), so 0.58 times); this mapping gives K_R = 0.42 epsilon^(1/3) r^(4/3), weaker than
+  the review's beta 0.4-0.6 with l = sqrt(2) r (0.63-0.95 on r^(4/3)), which would not reproduce the DNS g.
+  **(assumed)** the law is used at all plume sizes: below the Kolmogorov scale it overstates the true (viscous) mixing,
+  but there it is already far below D_mol, since turbulence overtakes molecular diffusion above the Kolmogorov scale at
+  every altitude. **(assumed)** a sharp min() cap at Megner's K_eddy: the review's mismatch between K_eddy and the measured
+  dissipation rates (K_eddy implies epsilon 2-3 times too high at 70 km and 2-10 times too low at 90 km with N = 0.02
+  per second) is kept, with Megner's K read as an occurrence-weighted mean and epsilon as the value in turbulence.
+  Turbulence is intermittent (for example seen 16 % of the time at 90-100 km in winter) and the law treats it as
+  continuous **(assumed)**; `epsilon_scale` x0.1 and x10 are in the sensitivity set.
+- **Dissipation rate.** `data/wake_column/mesospheric_dissipation.csv`, central values 1, 2, 1, 10 and 30 mW/kg at 50, 60,
+  70, 80 and 90 km, log-linear between rows. **(verified)** the table is read as tabulated,
+  `test_dissipation_table_covers_the_ambient_columns`. **(assumed)** applying it at 40.7 N: every measurement is from
+  65-69 N, in winter for most of these values, and nothing measured exists at 50-55 km; the 60 km value is one radar
+  upper limit.
 - **Molecular diffusion (D4, D5).** Hard-sphere first-order Chapman-Enskog with the collision integral set to 1 (no
   Lennard-Jones well depths exist for aluminium molecules) and air as a pseudo-species (3.711 angstrom, 28.96 amu).
   Collision diameters are Svehla (1962) for N2, O2, O, H, H2, H2O, CO, CO2 and Al; every one-aluminium molecule is 3.5
@@ -462,7 +480,7 @@ research output and are not summarised here.
 - **Sensitivity set (ruling).** 14.1 micrometres at 60, 76 and 90 km by day and night; 15 one-at-a-time settings (the
   design's 13 plus "smoke sticking x0.1" and "no smoke uptake", which test the assumed smoke bin): formation x0.1, x0.01
   and x80 (Plane's polymerisation enhancement), sticking x0.1, oxidation x0.1, hot reactions x0.1 and x3,
-  droplet-temperature start, eddy x0.1, x100 and zero (molecular only), inner scale 10 and 100 m, smoke sticking x0.1
+  droplet-temperature start, eddy x0.1, x100 and zero (molecular only), dissipation x0.1 and x10, smoke sticking x0.1
   and 0. 15 x 6 = 90 runs; `sensitivity.py` also queues the six baselines itself and skips them when finished runs
   with the same name exist (the default sweep's), so the tornado plot works on a folder holding only this set. **(verified)**
   `test_sensitivity_set_is_15_settings_over_6_cases` (each setting changes exactly one field). The plot scripts pick
@@ -481,7 +499,11 @@ research output and are not summarised here.
   (AlOH 0.50 and Al(OH)2 0.27), and t50, t90 and the steady time are null. Across altitude (14.1 micrometres, by day,
   same settings) the condensed fraction at 12 hours is 0.0174 at 60 km, 0.217 at 76 km and 0.417 at 90 km, of which the
   plume particles hold 2.0e-4, 3.1e-5 and 4.2e-7 and smoke uptake nearly all the rest (the earlier infinite-mass smoke
-  gave 0.0126, 0.168 and 0.340).
+  gave 0.0126, 0.168 and 0.340). Re-run 2026-11-05 with the scale-dependent eddy diffusion in place of the 30 m switch
+  (all 126 default cases, measured once): the condensed fraction at 12 hours changes by at most 6 % (largest at 200
+  micrometres near 62 km; 0.0174, 0.217 and 0.417 above are unchanged to three figures) and plume particles fall by 3 to
+  18 % (14.1 micrometres by day: 1.77e-4, 2.78e-5 and 3.73e-7 at 60, 76 and 90 km). Particles from AlO in the first
+  milliseconds are unchanged below about 76 km; aluminium reaching particles from Al(OH)2 falls by more than half.
   This rests on the assumed 0.2 nm smoke bin, a smoke sticking of 1, the diffusion coefficient of D4, and one altitude;
   lower altitudes, where r0 is smaller (1.7 mm at 60 km), may nucleate more. Measured once
   (`run.run` on 14.1 micrometres, 76 km, day, WACCM, 5.4 s, from the commit that fixed the smoke mass; no test pins these values); the physical conclusion is **(assumed)** until the

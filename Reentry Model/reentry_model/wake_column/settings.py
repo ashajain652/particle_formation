@@ -30,8 +30,9 @@ class Settings:
     n_emission_samples: int = 20
     seed: int = 20261027
     # spreading
-    l_inner_m: float = 30.0                 # inner eddy scale, m: below it eddies do not mix the plume
-    eddy_scale: float = 1.0                 # multiplier on the Megner eddy diffusion coefficient
+    eddy_scale: float = 1.0                 # multiplier on the Megner eddy diffusion coefficient (the cap on K_R)
+    epsilon_scale: float = 1.0              # multiplier on the dissipation-rate table
+    richardson_g: float = 0.52              # Richardson constant g in <l^2> = g epsilon t^3 (DNS value)
     # efficiencies
     formation_scale: float = 1.0            # multiplier on every gas-phase dimer formation rate
     formation_eff: tuple = ()               # ((pathway id, value), ...) per-pathway formation efficiencies
@@ -67,12 +68,14 @@ class Settings:
             raise ValueError(f"hot_start must be one of {HOT_STARTS}, got {self.hot_start!r}")
         if self.ambient not in AMBIENTS:
             raise ValueError(f"ambient must be one of {AMBIENTS}, got {self.ambient!r}")
+        if not self.richardson_g > 0.0:
+            raise ValueError(f"richardson_g must be positive, got {self.richardson_g!r}")
         if not self.smoke_density_kgm3 > 0.0:
             raise ValueError(f"smoke_density_kgm3 must be positive, got {self.smoke_density_kgm3!r}")
 
     def tag(self):
         """'_<short><value>' for every field that differs from its default, in a fixed order ('' when all are
-        default): first the physics fields (form, stick, ox, hot, hotdroplet, eddy, lin, cut, smk, smkrho, q, fe-, st-),
+        default): first the physics fields (form, stick, ox, hot, hotdroplet, eddy, eps, rg, cut, smk, smkrho, q, fe-, st-),
         then the numerical, sampling and test-only fields. `ambient` is not here: run_name puts it in the name."""
         d = Settings()
         parts = []
@@ -82,7 +85,8 @@ class Settings:
                 parts.append(f"{short}{_fmt(getattr(self, field))}")
         if self.hot_start != d.hot_start:
             parts.append("hotdroplet")              # the only other hot_start allowed
-        for short, field in (("eddy", "eddy_scale"), ("lin", "l_inner_m"), ("cut", "thermal_cutoff"),
+        for short, field in (("eddy", "eddy_scale"), ("eps", "epsilon_scale"), ("rg", "richardson_g"),
+                             ("cut", "thermal_cutoff"),
                              ("smk", "smoke_sticking"), ("smkrho", "smoke_density_kgm3"), ("q", "bin_ratio")):
             if getattr(self, field) != getattr(d, field):
                 parts.append(f"{short}{_fmt(getattr(self, field))}")

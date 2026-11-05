@@ -1,13 +1,14 @@
-"""How the plume spreads: eddy and molecular diffusion, the plume volume, and the settling loss rate.
+"""How the plume spreads: scale-dependent eddy and molecular diffusion, the plume volume, and the settling loss rate.
 
 The plume is a horizontal line segment of length L (the trail) broadened into a Gaussian of mean-square radius r^2 =
 r0^2 + 4 integral(D dt). Everything here is a pure function of the plume radius r (m) and the ambient state, so `box.py`
 can combine them (design decisions 2, 3 and 4 of the plan; spec 4.2).
 
   EddyProfile   Megner et al. (2006) reference eddy diffusion coefficient K(z), from data/wake_column/megner2006_eddy_diffusion.csv
-  eddy_switch   S(r): 0 below l_inner/sqrt(2), 1 above sqrt(2) l_inner, cubic smoothstep in ln r between (decision 3)
+  DissipationProfile  turbulent dissipation rate epsilon(z), from data/wake_column/mesospheric_dissipation.csv
+  richardson_K  eddy diffusivity of a plume of radius r in inertial-range turbulence, K_R(r) ~ epsilon^(1/3) r^(4/3)
   D_molecular   hard-sphere Chapman-Enskog diffusion of a species in air (decision 4)
-  D_total       D_mol + eddy_scale K S(r)
+  D_total       D_mol + min(eddy_scale K, K_R(r)): the eddy part grows with plume size up to the climatological K
   volume        V = pi r^2 L / erf(L / 2r): pi r^2 L for r << L, pi^1.5 r^3 for r >> L (decision 2)
   dlnV_dr2      d ln V / d(r^2), analytic, finite for L/r from 1e-6 to 1e6
   settling_rate 2 v_s / (pi r): the rate at which the settling speed v_s empties a plume of radius r
@@ -27,46 +28,60 @@ AIR_SIGMA_A = 3.711             # angstrom, air as the pseudo-species (decision 
 AIR_MASS_AMU = 28.96
 
 EDDY_CSV = os.path.join(DATA, "megner2006_eddy_diffusion.csv")
+DISSIPATION_CSV = os.path.join(DATA, "mesospheric_dissipation.csv")
 
 
-class EddyProfile:
-    """Eddy diffusion coefficient K(z) in m^2/s, log-linear in z between the digitised points."""
+class _AltitudeProfile:
+    """A committed table of a positive quantity against altitude, log-linear in z between its rows."""
+    NAME, COLUMN, DEFAULT = "", "", ""
 
-    def __init__(self, z_km, K_m2s, path="<memory>"):
+    def __init__(self, z_km, values, path="<memory>"):
         self.z_km = np.asarray(z_km, dtype=float)
-        self.K_m2s = np.asarray(K_m2s, dtype=float)
+        self.values = np.asarray(values, dtype=float)
         self.path = path
         if np.any(np.diff(self.z_km) <= 0):
             raise ValueError(f"altitudes in {path} are not increasing")
 
     @classmethod
     def load(cls, path=None):
-        """The Megner et al. (2006) Fig. 3c reference profile (the committed digitised table)."""
-        path = path or EDDY_CSV
+        path = path or cls.DEFAULT
         with open(path, newline="") as f:
             rows = list(csv.DictReader(line for line in f if not line.startswith("#")))
-        return cls([float(r["z_km"]) for r in rows], [float(r["K_m2s"]) for r in rows], path)
+        return cls([float(r["z_km"]) for r in rows], [float(r[cls.COLUMN]) for r in rows], path)
 
-    def K(self, z_km):
-        """K in m^2/s at altitude z_km; ValueError outside the table (no extrapolation)."""
+    def at(self, z_km):
+        """The value at altitude z_km; ValueError outside the table (no extrapolation)."""
         z = float(z_km)
         zmin, zmax = float(self.z_km[0]), float(self.z_km[-1])
         if not (zmin <= z <= zmax):         # also false for nan
-            raise ValueError(f"altitude {z} km outside the Megner eddy-diffusion table {self.path} ({zmin}-{zmax} km)")
-        return _interp_log(z, self.z_km, self.K_m2s)
+            raise ValueError(f"altitude {z} km outside the {self.NAME} table {self.path} ({zmin}-{zmax} km)")
+        return _interp_log(z, self.z_km, self.values)
 
 
-def eddy_switch(r_m, l_inner_m):
-    """Fraction of the eddy diffusion that acts on a plume of radius r_m: 0 below l_inner/sqrt(2), 1 above
-    sqrt(2) l_inner, and a cubic smoothstep in ln r between (so 1/2 at r = l_inner)."""
-    if r_m <= 0.0:
-        return 0.0
-    t = (math.log(r_m / l_inner_m) + 0.5 * math.log(2.0)) / math.log(2.0)
-    if t <= 0.0:
-        return 0.0
-    if t >= 1.0:
-        return 1.0
-    return t * t * (3.0 - 2.0 * t)
+class EddyProfile(_AltitudeProfile):
+    """The Megner et al. (2006) Fig. 3c reference eddy diffusion coefficient (the committed digitised table)."""
+    NAME, COLUMN, DEFAULT = "Megner eddy-diffusion", "K_m2s", EDDY_CSV
+
+    def K(self, z_km):
+        """K in m^2/s at altitude z_km."""
+        return self.at(z_km)
+
+
+class DissipationProfile(_AltitudeProfile):
+    """Turbulent energy dissipation rate against altitude (data/wake_column/mesospheric_dissipation.csv)."""
+    NAME, COLUMN, DEFAULT = "dissipation", "epsilon_mWkg", DISSIPATION_CSV
+
+    def epsilon(self, z_km):
+        """epsilon in W/kg (m^2/s^3) at altitude z_km."""
+        return 1e-3 * self.at(z_km)
+
+
+def richardson_K(r_m, epsilon, g):
+    """Scale-dependent eddy diffusivity (m^2/s) of a plume of mean-square radius r_m^2 in inertial-range turbulence of
+    dissipation rate epsilon (W/kg): K = g^(1/3) 3^(2/3) / 4 epsilon^(1/3) r^(4/3). This is the K for which
+    d(r^2)/dt = 4 K reproduces Richardson's law <l^2> = g epsilon t^3 for the 3D separation l of two fluid points, since
+    a cloud's cross-section has r^2 = <l^2> / 3."""
+    return g ** (1.0 / 3.0) * 3.0 ** (2.0 / 3.0) / 4.0 * epsilon ** (1.0 / 3.0) * r_m ** (4.0 / 3.0)
 
 
 def D_molecular(sp, amb):
@@ -78,10 +93,12 @@ def D_molecular(sp, amb):
     return 3.0 / (8.0 * amb.n_total_m3 * sigma12 ** 2) * math.sqrt(K_B * amb.T_K / (2.0 * math.pi * mu))
 
 
-def D_total(r_m, sp, amb, eddy_K, settings):
-    """Total diffusion coefficient (m^2/s) of species sp for a plume of radius r_m:
-    D_mol + eddy_scale * K * S(r), with K the eddy coefficient (m^2/s) at the plume altitude."""
-    return D_molecular(sp, amb) + settings.eddy_scale * eddy_K * eddy_switch(r_m, settings.l_inner_m)
+def D_total(r_m, sp, amb, eddy_K, epsilon, settings):
+    """Total diffusion coefficient (m^2/s) of species sp for a plume of radius r_m: D_mol + min(eddy_scale K, K_R(r)),
+    with K the climatological eddy coefficient (m^2/s) at the plume altitude, which caps the Richardson diffusivity
+    K_R of richardson_K at dissipation rate epsilon_scale epsilon (W/kg)."""
+    k_r = richardson_K(r_m, settings.epsilon_scale * epsilon, settings.richardson_g)
+    return D_molecular(sp, amb) + min(settings.eddy_scale * eddy_K, k_r)
 
 
 def volume(r_m, L_m):

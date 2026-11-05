@@ -37,7 +37,7 @@ def test_sensitivity_set_is_15_settings_over_6_cases():
                        if getattr(st, f.name) != getattr(default, f.name)] for label, st in s}
     assert all(len(v) == 1 for v in changed.values())
     assert changed["formation x80"] == ["formation_scale"] and labels["formation x80"].formation_scale == 80.0
-    assert labels["inner scale 10 m"].l_inner_m == 10.0 and labels["inner scale 100 m"].l_inner_m == 100.0
+    assert labels["dissipation x0.1"].epsilon_scale == 0.1 and labels["dissipation x10"].epsilon_scale == 10.0
     assert labels["hot reactions x0.1"].hot_reaction_scale == 0.1 and labels["hot reactions x3"].hot_reaction_scale == 3.0
     assert labels["sticking x0.1"].sticking_scale == 0.1 and labels["oxidation x0.1"].oxidation_eff == 0.1
     assert labels["eddy x0.1"].eddy_scale == 0.1 and labels["eddy x100"].eddy_scale == 100.0
