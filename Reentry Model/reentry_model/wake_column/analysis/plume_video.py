@@ -1,8 +1,9 @@
 """Video of one wake-column run: the plume drawn as a column growing over time, the processes spreading it, the gas
 concentrations, the reactions dominating at each moment, the nanoparticles as they form, and gravitational settling.
+An opening (plume_prologue.py) first zooms in from the parent's re-entry to the droplet and the atoms leaving it.
 
     "$PY" -m reentry_model.wake_column.analysis.plume_video --diameter 200 --altitude 70 --time-of-day day
-    "$PY" -m reentry_model.wake_column.analysis.plume_video ... --frames 0,600,1200    # sample PNGs only
+    "$PY" -m reentry_model.wake_column.analysis.plume_video ... --frames 0,600 --opening-frames 100    # sample PNGs only
 
 Everything shown comes from the model's own state and rate terms: `compute` runs the chain of `run.run` (trail, Stage A,
 Box) on a fine time grid and asks the Box for its event rates, so nothing is reimplemented. What is schematic is the
@@ -26,6 +27,7 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
 from reentry_model.wake_column import OUTPUT
+from reentry_model.wake_column.analysis import plume_prologue
 from reentry_model.wake_column.ambient import AmbientColumn
 from reentry_model.wake_column.box import Box
 from reentry_model.wake_column.particles import formation_pathways
@@ -461,6 +463,24 @@ def render(args):
     return i
 
 
+def render_opening(args):
+    data_path, i, out = args
+    if data_path not in _cache:
+        with open(data_path, "rb") as f:
+            d = pickle.load(f)
+        _cache[data_path] = d, plume_prologue.Fixed(d)
+    d, fx = _cache[data_path]
+    return plume_prologue.frame(d, fx, i, out)
+
+
+def cached(path, make):
+    if not os.path.exists(path):
+        data = make()
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+    return path
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--diameter", type=float, default=200.0)
@@ -469,6 +489,7 @@ def main(argv=None):
     ap.add_argument("--points-per-decade", type=int, default=40)
     ap.add_argument("--workers", type=int, default=max((os.cpu_count() or 2) - 1, 1))
     ap.add_argument("--frames", default=None, help="comma-separated frame numbers: write only these PNGs")
+    ap.add_argument("--opening-frames", default=None, help="the same for the opening scenes")
     ap.add_argument("--out", default=os.path.join(OUTPUT, "video"))
     a = ap.parse_args(argv)
     case = Case(a.diameter, a.altitude, a.time_of_day)
@@ -476,28 +497,36 @@ def main(argv=None):
     folder = os.path.join(a.out, run_name(case, Settings()))
     frames_dir = os.path.join(folder, "frames")
     os.makedirs(frames_dir, exist_ok=True)
-    data_path = os.path.join(folder, "data.pkl")
-    if not os.path.exists(data_path):
-        data = compute(case, settings)
-        with open(data_path, "wb") as f:
-            pickle.dump(data, f)
+    data_path = cached(os.path.join(folder, "data.pkl"), lambda: compute(case, settings))
+    opening_path = cached(os.path.join(folder, "opening.pkl"), lambda: plume_prologue.compute(case))
     with open(data_path, "rb") as f:
-        d = pickle.load(f)
-    n = len(frame_times(d))
-    wanted = [int(x) for x in a.frames.split(",")] if a.frames else list(range(n))
-    jobs = [(data_path, i, os.path.join(frames_dir, f"f{i:05d}.png")) for i in wanted]
+        n = len(frame_times(pickle.load(f)))
+    def job(prefix, path, i):
+        return path, i, os.path.join(frames_dir, f"{prefix}{i:05d}.png")
+    picked = a.frames is not None or a.opening_frames is not None
+    main_frames = [int(x) for x in (a.frames or "").split(",") if x] if picked else list(range(n))
+    opening_frames = ([int(x) for x in (a.opening_frames or "").split(",") if x] if picked
+                      else list(range(plume_prologue.N_FRAMES)))
     with multiprocessing.get_context("spawn").Pool(a.workers) as pool:
-        for k, i in enumerate(pool.imap_unordered(render, jobs, chunksize=4)):
-            if (k + 1) % 200 == 0:
-                print(f"{k + 1}/{len(jobs)} frames", flush=True)
-    if a.frames:
-        print("wrote", [j[2] for j in jobs])
+        for fn, jobs in ((render_opening, [job("p", opening_path, i) for i in opening_frames]),
+                         (render, [job("f", data_path, i) for i in main_frames])):
+            for k, _ in enumerate(pool.imap_unordered(fn, jobs, chunksize=4)):
+                if (k + 1) % 200 == 0:
+                    print(f"{k + 1}/{len(jobs)} frames", flush=True)
+    if picked:
+        print("wrote frames in", frames_dir)
         return 0
     video = os.path.join(folder, "plume.mp4")
-    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-framerate", str(FPS),
-                    "-i", os.path.join(frames_dir, "f%05d.png"),
-                    "-vf", f"tpad=start_mode=clone:start_duration={HOLD_START_S}:stop_mode=clone:stop_duration={HOLD_END_S}",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-preset", "slow", video], check=True)
+    fade = 1.0
+    offset = plume_prologue.N_FRAMES / FPS - fade
+    graph = (f"[1:v]tpad=start_mode=clone:start_duration={HOLD_START_S}:stop_mode=clone:stop_duration={HOLD_END_S}[main];"
+             f"[0:v]tpad=stop_mode=clone:stop_duration={fade}[open];"
+             f"[open][main]xfade=transition=fade:duration={fade}:offset={offset + fade}[v]")
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error",
+                    "-framerate", str(FPS), "-i", os.path.join(frames_dir, "p%05d.png"),
+                    "-framerate", str(FPS), "-i", os.path.join(frames_dir, "f%05d.png"),
+                    "-filter_complex", graph, "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
+                    "-preset", "slow", video], check=True)
     shutil.rmtree(frames_dir)
     print("wrote", video)
     return 0

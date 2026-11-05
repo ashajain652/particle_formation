@@ -69,6 +69,7 @@ class HotStartResult:
     share_above_AlO_bond: float     # share of AlO collisions above the AlO bond energy
     per_sample: tuple               # one dict per emission sample with the same quantities, the sample's inputs and
                                     # the real-collision counts per partner (collisions_by_partner)
+    tracks: tuple = ()              # with n_tracks, one array per particle of (t, x, y, z, species, kinetic energy)
 
 
 def _mu(ma_amu, mb_amu):
@@ -154,8 +155,11 @@ def _partner_densities(a):
     return np.array([max(float(a.n_total_m3) - o2 - o - h2o, 0.0), o2, o, h2o])
 
 
-def slow_down(samples, column, settings, species, channels, partners_at_rest=False, reactions_on=True):
-    """Run Stage A over the emission samples and return the thermalised composition and r0 (HotStartResult)."""
+def slow_down(samples, column, settings, species, channels, partners_at_rest=False, reactions_on=True, n_tracks=0):
+    """Run Stage A over the emission samples and return the thermalised composition and r0 (HotStartResult). With
+    n_tracks, HotStartResult.tracks also holds that many particles' histories for display, one array per particle with
+    a row (t, x, y, z, species index in TRACKED, kinetic energy in the air's frame) at emission and at each collision;
+    recording draws no random numbers, so the result is unchanged."""
     samples = tuple(samples)
     ns = len(samples)
     if ns == 0:
@@ -218,7 +222,9 @@ def slow_down(samples, column, settings, species, channels, partners_at_rest=Fal
     loss_n = np.zeros(ns)
     n_by_partner = np.zeros((ns, len(PARTNERS)))
 
-    active = 0.5 * m_sp[sp] * np.einsum("ij,ij->i", vel, vel) >= E_stop[sid]
+    e_start = 0.5 * m_sp[sp] * np.einsum("ij,ij->i", vel, vel)
+    logged = {int(i): [(0.0, 0.0, 0.0, 0.0, 0.0, e_start[i])] for i in np.linspace(0, N - 1, n_tracks).astype(int)}
+    active = e_start >= E_stop[sid]
     idx = np.flatnonzero(active)
     steps = 0
     while idx.size:
@@ -295,6 +301,10 @@ def slow_down(samples, column, settings, species, channels, partners_at_rest=Fal
             vel[a_idx[el]] = v_new
         # thermalised?
         e_kin = 0.5 * m_sp[sp[a_idx]] * np.einsum("ij,ij->i", vel[a_idx], vel[a_idx])
+        if logged:
+            for q, i in enumerate(a_idx):
+                if int(i) in logged:
+                    logged[int(i)].append((t[i], *pos[i], sp[i], e_kin[q]))
         stopped = a_idx[e_kin < E_stop[sid[a_idx]]]
         if stopped.size:
             idx = np.setdiff1d(idx, stopped, assume_unique=True)
@@ -330,4 +340,5 @@ def slow_down(samples, column, settings, species, channels, partners_at_rest=Fal
         mean_stop_time_s=float(wn @ [p["mean_stop_time_s"] for p in per]),
         share_above_ionisation=share(pw @ n_al_ion, pw @ n_al_coll),
         share_above_AlO_bond=share(pw @ n_alo_bond, pw @ n_alo_coll),
-        per_sample=tuple(per))
+        per_sample=tuple(per),
+        tracks=tuple(np.array(v) for v in logged.values()))

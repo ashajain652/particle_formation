@@ -88,3 +88,15 @@ def test_degenerate_inputs_stay_finite():                      # Review Focus 4
     col = type("C", (), {"at": lambda self, z: no_O})()
     r = sl.slow_down(one(0.0, 908.0, 60.0), col, Settings(n_test_particles=2000), S, CH)
     assert np.isfinite(r.r0_m) and all(np.isfinite(v) for v in r.fractions.values())
+
+
+def test_recorded_tracks_change_nothing_and_end_where_the_atoms_stop():
+    st = Settings(n_test_particles=2000)
+    plain = sl.slow_down(one(7600.0, 1800.0), NIGHT, st, S, CH)
+    traced = sl.slow_down(one(7600.0, 1800.0), NIGHT, st, S, CH, n_tracks=50)
+    assert traced.fractions == plain.fractions and traced.r0_m == plain.r0_m
+    assert plain.tracks == () and len(traced.tracks) == 50
+    for tr in traced.tracks:
+        assert tr[0, 0] == 0.0 and np.all(np.diff(tr[:, 0]) > 0)
+        assert tr[-1, 5] <= tr[0, 5]
+
