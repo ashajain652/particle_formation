@@ -536,8 +536,16 @@ added at the same time since release (`TrailSolution`). Spreading along the trai
   the condensed share rises by 3 % at 200 um, 70 km and is unchanged at 14.1 um, 76 km; gas species fall by 0.3 % at
   200 um, 70 km. At 200 um, 70 km, the peak atoms per metre of trail at 12 hours is 2.85e13, about half of the 5.6e13
   at 1 second, and its position moves from 389 m to 986 m along the path.
-- **Not done:** the default sweep and sensitivity set have not been re-run with segments. `plume_video.py` still
-  shows the single column.
+- **Measured, the default sweep with 24 segments against the single column** (all 126 WACCM runs, 12 hours, commit
+  eba9a05; aluminium budgets close to 2.4e-13 of the inventory). Plume particles change by the factor
+  (24 x the sum of the squared segment shares) x (L at 90 % of the loss / trail length at 99.9 %), which predicts the
+  measured ratio to within 4 % in every run: the first factor is 1.39 to 2.22, the second 1/1.34 to 1/1.95. The ratio is
+  1.09 to 1.16 from 64 to 90 km and rises to 1.54 at 56 km, because the trail is then only 1.36 times L. Below 56 km the
+  particle shares are under 1e-8 of the inventory. The condensed share changes by more than 1 % relative only for 200 um
+  at 60 to 66 km (5.64 % to 6.66 % at 62 km, the largest change); gas species and smoke uptake change by at most 1.1 %.
+  The undercount from stepping the release over 24 segments, without chemistry, is at most 3.2 % on all 63 trails.
+- **Not done:** the sensitivity set and the NRLMSIS + AFGL cross-check have not been re-run with segments.
+  `plume_video.py` still shows the single column.
 - **Open (found 2026-11-05):** the box applies concentration on the axis to the whole volume, so aluminium-with-
   aluminium rates count c^2 V, while a Gaussian plume has half of that. From Stage A's stopping points at 70 km, with
   molecular diffusion and no chemistry, the time-integrated overlap to 10 ms is 0.52 of the box's. Particle formation

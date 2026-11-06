@@ -209,7 +209,7 @@ physics or quoting a result.
   default bin ratio is 2^(1/2), both chosen to make BDF converge and the coagulation test pass (assumptions 9.4);
   `Settings.particles=False` also switches off smoke uptake. The WACCM ambient needs `data/wake_column/` only; the
   1.6 GB WACCM file is not in the repository (`analysis/extract_waccm_columns.py` re-extracts the committed table).
-- A 12-hour run takes about 6-25 s; the default sweep's 126 cases take minutes on several cores.
+- A 12-hour run with 24 segments takes about 1-3 minutes; the default sweep's 126 cases took 65 minutes on three workers.
 
 ### Things that are easy to get wrong here
 
