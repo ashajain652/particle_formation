@@ -12,7 +12,7 @@ from reentry_model.wake_column.trail import Trail
 
 
 def test_short_run_writes_all_outputs(tmp_path, parent):
-    st = Settings(t_end_s=60.0, n_test_particles=500, n_emission_samples=4)
+    st = Settings(t_end_s=60.0, n_test_particles=500, n_emission_samples=4, n_segments=0)
     s = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
     d = tmp_path / s["run_name"]
     assert (d / "history.csv").exists() and (d / "size_distribution.csv").exists()
@@ -23,7 +23,7 @@ def test_short_run_writes_all_outputs(tmp_path, parent):
 
 
 def test_short_run_file_contents(tmp_path, parent):
-    st = Settings(t_end_s=60.0, n_test_particles=500, n_emission_samples=4)
+    st = Settings(t_end_s=60.0, n_test_particles=500, n_emission_samples=4, n_segments=0)
     s = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
     d = tmp_path / s["run_name"]
     with open(d / "history.csv", newline="") as f:
@@ -61,7 +61,7 @@ def test_short_run_file_contents(tmp_path, parent):
 
 
 def test_existing_summary_is_reused(tmp_path, parent):
-    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2)
+    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2, n_segments=0)
     a = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
     b = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
     assert a["runtime_s"] == b["runtime_s"]
@@ -103,7 +103,7 @@ def test_unreadable_summary_is_rerun(tmp_path, junk):
 
 
 def test_truncated_summary_of_a_real_run_is_rerun(tmp_path, parent):
-    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2)
+    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2, n_segments=0)
     case = Case(1.0, 80.0, "night")
     a = run.run(case, st, out_dir=tmp_path)
     path = tmp_path / a["run_name"] / "summary.json"
@@ -128,7 +128,7 @@ def test_condensed_is_particles_plus_smoke_plus_settled():                # deci
 
 
 def test_summary_records_whether_the_checkout_was_dirty(tmp_path, parent):
-    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2)
+    st = Settings(t_end_s=1.0, n_test_particles=200, n_emission_samples=2, n_segments=0)
     s = run.run(Case(1.0, 80.0, "night"), st, out_dir=tmp_path)
     assert "git_dirty" in s and (s["git_dirty"] is None or isinstance(s["git_dirty"], bool))
     saved = json.loads((tmp_path / s["run_name"] / "summary.json").read_text())

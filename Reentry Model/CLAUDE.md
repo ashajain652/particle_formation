@@ -180,7 +180,9 @@ physics or quoting a result.
   entrainment, the Plane et al. (2021) neutral network, sectional particles (bins by aluminium atoms, `particles.py`)
   with tallies by source molecule and route, uptake onto Megner smoke, coagulation and settling. `transport.py`,
   `ambient.py`, `species.py`, `reactions.py` and `settings.py` hold diffusion and geometry, the ambient columns, and
-  the tables and settings.
+  the tables and settings. By default the trail is 24 equal-length segments (`segments.py`), each with its real
+  aluminium, its own Stage A and box, added at a common time since release, with spreading along the trail applied
+  afterwards (`along_trail.csv`); `Settings.n_segments = 0` restores one column.
 - Data-driven: species, reactions, ambient columns (WACCM baseline, NRLMSIS + AFGL cross-check) and the Megner eddy
   and smoke tables are committed in `data/wake_column/`, each with a source and its assumed values flagged. No
   unmeasured rate or efficiency is hard-coded: each is a named field of `Settings` (formation, sticking, oxidation and

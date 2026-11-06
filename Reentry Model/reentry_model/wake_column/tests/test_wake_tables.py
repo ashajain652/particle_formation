@@ -46,7 +46,8 @@ def test_run_name_encodes_non_default_settings():
 def test_every_setting_changes_the_run_name():        # spec §8: run names encode every non-default setting
     import dataclasses
     changed = {"hot_start": "droplet_temperature", "hot_reaction_scale": 0.5, "thermal_cutoff": 3.0,
-               "n_test_particles": 5000, "n_emission_samples": 10, "seed": 12345678, "epsilon_scale": 10.0, "richardson_g": 0.1,
+               "n_test_particles": 5000, "n_emission_samples": 10, "n_segments": 48, "seed": 12345678,
+               "epsilon_scale": 10.0, "richardson_g": 0.1,
                "eddy_scale": 2.0, "formation_scale": 0.1, "formation_eff": (("AlO+AlO", 0.5),),
                "sticking_scale": 0.5, "sticking": (("AlO", 0.1),), "oxidation_eff": 0.3, "smoke_sticking": 0.2,
                "smoke_density_kgm3": 3000.0,

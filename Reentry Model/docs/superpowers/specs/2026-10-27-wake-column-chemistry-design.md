@@ -393,8 +393,9 @@ the 126-run default sweep.
 - **Energy-resolved hot cross-sections, if the sensitivity set shows the slowing-down products matter:**
   quasi-classical trajectories on Al + O2 and AlO + O2 potential surfaces, replacing the line-of-centers
   form above the fitted temperature range.
-- **Segmented trail:** split the trail into segments by deposition time, each with its own inventory,
-  temperature and altitude, with axial diffusion between them.
+- **Segmented trail:** built 2026-11-05 as equal-length segments with their real aluminium and spreading along the
+  trail applied after the runs (`segments.py`, `docs/model_assumptions.md` section 9.8). Solving diffusion between
+  segments directly is kept as a back-up: `docs/milestones/2026-11-05-coupled-trail-segments.md`.
 - Aggregate particle shape (fractal dimension about 1.6–2) for settling and coagulation.
 - Hydroxide dehydration to alumina.
 - Ion chemistry (Plane R18–R35) and particle charging.

@@ -14,6 +14,16 @@
   summary.json           the case, settings, trail, hot start and outcome; written last, so a run that stopped
                          part-way leaves no summary and a sweep repeats it.
 
+With Settings.n_segments > 0 (the default) the trail is a row of segments (segments.py). The files above then hold the
+whole trail at each time since release, history.csv gains frac_unreleased (the share in segments not yet laid), and two
+files are added:
+
+  segments.csv           one row per segment: its position, release time, altitude, aluminium share, hot start and its
+                         own shares at the end of the run;
+  along_trail.csv        at 1, 60, 600, 3600 and 43200 s (those within the run) and PROFILE_POINTS positions: atoms per
+                         metre of trail (line_*) and concentration on the axis (c_*) of each aluminium gas species,
+                         plume particles and smoke uptake, with spreading along the trail applied after the runs.
+
 "Condensed" (decision 17) is everything that left the gas phase: plume particles + background-smoke uptake + settled
 matter. A finished run (its summary exists) is returned as it stands unless `overwrite`.
 """
@@ -31,10 +41,11 @@ from reentry_model.wake_column.ambient import AmbientColumn
 from reentry_model.wake_column.box import PROVENANCE_ROUTES, ROUTES, SOURCES, Box
 from reentry_model.wake_column.particles import diameter
 from reentry_model.wake_column.reactions import load_reactions
+from reentry_model.wake_column.segments import TrailSolution, along_trail, combined_hot, cut_trail, solve_segments
 from reentry_model.wake_column.settings import Case, Settings, run_name
 from reentry_model.wake_column.slowing import calibrate, slow_down
 from reentry_model.wake_column.species import AL_SPECIES, load_species
-from reentry_model.wake_column.trail import trail_for
+from reentry_model.wake_column.trail import rows_for, trail_for, trail_from_rows
 
 MASK_FRACTION = 1e-9                                 # bins holding less aluminium than this share of the inventory
 SIZE_TIMES_S = (1e-3, 1.0, 60.0, 600.0, 3600.0, 43200.0)
@@ -42,6 +53,9 @@ HISTORY_AMBIENT = ("O", "O2", "O3", "H", "H2O")
 ALUMINA_LIKE_BELOW = 0.5                             # H/Al below this counts as alumina-like
 STEADY_TOLERANCE = 0.01                              # decision 18: change per decade, as a share of the inventory
 SKIPPED_NO_AL = "no aluminium vaporised"
+PROFILE_TIMES_S = (1.0, 60.0, 600.0, 3600.0, 43200.0)
+PROFILE_POINTS = 201
+PROFILE_REACH = 3.0                                  # along_trail.csv extends this many radii past the trail's ends
 
 
 # ---- steady state (decision 18) -------------------------------------------------------------------------------------
@@ -198,16 +212,19 @@ def _write_csv(path, header, rows):
 def write_history(path, sol):
     box = sol.box
     prov_keys = [(s, r) for s in SOURCES for r in PROVENANCE_ROUTES]
+    laying = getattr(sol, "unreleased", None)
     header = (["t_s", "r_m", "V_m3", "T_K"] + [f"frac_{s}" for s in AL_SPECIES]
               + ["frac_particles", "frac_smoke", "frac_settled", "frac_condensed"]
-              + [f"frac_{s}_{r}" for s, r in prov_keys] + [f"c_{s}_m3" for s in HISTORY_AMBIENT])
+              + [f"frac_{s}_{r}" for s, r in prov_keys] + [f"c_{s}_m3" for s in HISTORY_AMBIENT]
+              + (["frac_unreleased"] if laying else []))
     rows = []
     for i, t in enumerate(sol.t):
         bud = sol.al_budget(i)
         prov = sol.provenance(i)
         rows.append([t, sol.r(i), sol.V(i), box.amb.T_K] + [bud[s] for s in AL_SPECIES]
                     + [bud["particles"], bud["smoke"], bud["settled"], _condensed(bud)]
-                    + [prov[k] for k in prov_keys] + [sol.concentration(s, i) for s in HISTORY_AMBIENT])
+                    + [prov[k] for k in prov_keys] + [sol.concentration(s, i) for s in HISTORY_AMBIENT]
+                    + ([laying(i)] if laying else []))
     _write_csv(path, header, rows)
 
 
@@ -245,6 +262,42 @@ def write_size_distribution(path, sol, settings):
     _write_csv(path, header, rows)
 
 
+def write_segments(path, solved):
+    """One row per segment: position, release, hot start and the segment's own shares at the end of its run."""
+    total = sum(seg.trail.N_Al for seg, _, _ in solved)
+    header = (["segment", "x0_m", "x1_m", "t_laid_s", "z_km", "share_Al", "N_Al", "r0_m", "V_ms", "T_droplet_K"]
+              + [f"hot_{s}" for s in sorted(solved[0][2].fractions)] + [f"frac_{s}" for s in AL_SPECIES]
+              + ["particles", "smoke", "settled", "condensed"])
+    rows = []
+    for seg, sol, hot in solved:
+        bud = sol.al_budget(len(sol.t) - 1)
+        s = seg.trail.samples
+        rows.append([seg.index, seg.x0_m, seg.x1_m, seg.t_laid_s, seg.trail.z_mean_km, seg.trail.N_Al / total,
+                     seg.trail.N_Al, hot.r0_m, sum(q.V_ms for q in s) / len(s), sum(q.T_d_K for q in s) / len(s)]
+                    + [hot.fractions[k] for k in sorted(hot.fractions)] + [bud[k] for k in AL_SPECIES]
+                    + [bud["particles"], bud["smoke"], bud["settled"], _condensed(bud)])
+    _write_csv(path, header, rows)
+
+
+def write_along_trail(path, solved, sol, settings):
+    """The trail with spreading along it at PROFILE_TIMES_S (those within the run), on PROFILE_POINTS positions."""
+    names = list(AL_SPECIES) + ["particles", "smoke"]
+    header = ["t_s", "x_m"] + [f"line_{n}_per_m" for n in names] + [f"c_{n}_m3" for n in names]
+    whole = max(seg.x1_m for seg, _, _ in solved)
+    rows = []
+    for t in PROFILE_TIMES_S:
+        if t > settings.t_end_s * (1.0 + 1e-9):
+            continue
+        i = int(np.argmin(np.abs(sol.t - t)))
+        reach = PROFILE_REACH * sol.r(i)
+        x = np.linspace(-reach, whole + reach, PROFILE_POINTS)
+        p = along_trail(solved, t, x)
+        for k in range(len(x)):
+            rows.append([t, float(x[k])] + [float(p["line"][n][k]) for n in names]
+                        + [float(p["axis"][n][k]) for n in names])
+    _write_csv(path, header, rows)
+
+
 def _write_summary(path, summary):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -273,7 +326,11 @@ def run(case: Case, settings=None, out_dir=OUTPUT, trail=None, overwrite=False):
             pass                                     # truncated or hand-edited: fall through and run again
 
     t0 = time.perf_counter()
-    if trail is None:
+    rows = None
+    if trail is None and settings.n_segments > 0:
+        rows = rows_for(case.d0_um, case.h0_km)
+        trail = trail_from_rows(rows, case.d0_um, case.h0_km, n_samples=settings.n_emission_samples)
+    elif trail is None:
         trail = trail_for(case.d0_um, case.h0_km, settings.n_emission_samples)
     os.makedirs(d, exist_ok=True)
     if not trail.N_Al > 0.0:
@@ -289,12 +346,23 @@ def run(case: Case, settings=None, out_dir=OUTPUT, trail=None, overwrite=False):
     column = AmbientColumn.load(settings.ambient, case.time_of_day)
     amb = column.at(trail.z_mean_km)
     channels = calibrate(load_reactions(stage=("hot", "both")), species)
-    hot = slow_down(trail.samples, column, settings, species, channels)
-    sol = Box(trail, hot, amb, case.time_of_day, settings, species=species).solve()
+    extra = {}
+    if rows is not None:
+        segments = cut_trail(rows, case.d0_um, case.h0_km, settings.n_segments, settings.n_emission_samples)
+        solved = solve_segments(segments, column, settings, species, channels, case.time_of_day)
+        hot = combined_hot(solved)
+        sol = TrailSolution(solved, solved[0][1].box.time_grid())
+        write_segments(os.path.join(d, "segments.csv"), solved)
+        write_along_trail(os.path.join(d, "along_trail.csv"), solved, sol, settings)
+        extra = {"n_segments": len(segments), "trail_length_m": segments[0].trail.L_m}
+    else:
+        hot = slow_down(trail.samples, column, settings, species, channels)
+        sol = Box(trail, hot, amb, case.time_of_day, settings, species=species).solve()
 
     write_history(os.path.join(d, "history.csv"), sol)
     write_size_distribution(os.path.join(d, "size_distribution.csv"), sol, settings)
     summary = summarise(sol, trail, hot, case, settings)
+    summary.update(extra)
     summary["runtime_s"] = time.perf_counter() - t0
     _write_summary(summary_path, summary)            # last: a crash above leaves no summary, so a sweep re-runs it
     return _clean(summary)

@@ -96,8 +96,12 @@ def trail_from_rows(rows, d0_um, h0_km, n_samples=20, loss_fraction=0.9):
     return Trail(d0_um, h0_km, L, float(total / M_AL_ATOM), float(total), m_zn, m_mg, z_mean, samples)
 
 
+def rows_for(d0_um, h0_km, parent=None):
+    """The history rows of the droplet model for a d0_um [micrometre] droplet released at h0_km (None when skipped)."""
+    from reentry_model.droplet_reentry.model import run_case
+    return run_case(d0_um, h0_km, parent=parent)[1]
+
+
 def trail_for(d0_um, h0_km, n_samples=20, parent=None):
     """Run the droplet model for a d0_um [micrometre] droplet released at h0_km and return its Trail."""
-    from reentry_model.droplet_reentry.model import run_case
-    _, rows = run_case(d0_um, h0_km, parent=parent)
-    return trail_from_rows(rows, d0_um, h0_km, n_samples=n_samples)
+    return trail_from_rows(rows_for(d0_um, h0_km, parent=parent), d0_um, h0_km, n_samples=n_samples)

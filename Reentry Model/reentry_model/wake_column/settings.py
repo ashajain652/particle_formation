@@ -29,6 +29,7 @@ class Settings:
     n_test_particles: int = 10000
     n_emission_samples: int = 20
     seed: int = 20261027
+    n_segments: int = 24                    # equal-length segments of the trail (segments.py); 0 is one column
     # spreading
     eddy_scale: float = 1.0                 # multiplier on the Megner eddy diffusion coefficient (the cap on K_R)
     epsilon_scale: float = 1.0              # multiplier on the dissipation-rate table
@@ -68,6 +69,8 @@ class Settings:
             raise ValueError(f"hot_start must be one of {HOT_STARTS}, got {self.hot_start!r}")
         if self.ambient not in AMBIENTS:
             raise ValueError(f"ambient must be one of {AMBIENTS}, got {self.ambient!r}")
+        if self.n_segments < 0:
+            raise ValueError(f"n_segments must not be negative, got {self.n_segments!r}")
         if not self.richardson_g > 0.0:
             raise ValueError(f"richardson_g must be positive, got {self.richardson_g!r}")
         if not self.smoke_density_kgm3 > 0.0:
@@ -95,7 +98,7 @@ class Settings:
         for name, value in sorted(self.sticking):
             parts.append(f"st-{name}{_fmt(value)}")
         # sampling, time grid and solver
-        for short, field in (("ntp", "n_test_particles"), ("nem", "n_emission_samples"), ("seed", "seed"),
+        for short, field in (("seg", "n_segments"), ("ntp", "n_test_particles"), ("nem", "n_emission_samples"), ("seed", "seed"),
                              ("dmax", "d_max_nm"), ("tend", "t_end_s"), ("tfirst", "t_first_s"),
                              ("ppd", "points_per_decade"), ("rtol", "rtol")):
             if getattr(self, field) != getattr(d, field):

@@ -4,7 +4,8 @@ The plume is a horizontal line segment of length L (the trail) broadened into a 
 (spec 4.2; plan decisions 1, 2, 12 and 19):
 
   * State. Total counts in the plume, not concentrations, so aluminium conservation is a plain sum (decision 1).
-    Concentrations are counts / V with V = volume(r, L) = pi r^2 L / erf(L / 2r) (decision 2).
+    Concentrations are counts / V with V = volume(r, L) = pi r^2 L / erf(L / 2r) (decision 2), times volume_share
+    when the box is one segment of a trail of length L (segments.py).
   * Radius. d(r^2)/dt = 4 D_total(r) with D for AlO in air (molecular plus scale-dependent eddy, transport.D_total); zero when
     Settings.freeze_radius. dV/dt = V dlnV_dr2(r, L) d(r^2)/dt.
   * Entrainment. Each ambient species gains c_ambient dV/dt; the aluminium-bearing species have no ambient source,
@@ -149,7 +150,7 @@ class Box:
     """The plume of one trail: initial state, right-hand side, Jacobian and solver (module docstring)."""
 
     def __init__(self, trail, hot, amb, time_of_day, settings, *, species=None, reactions=None, bins=None, smoke=None,
-                 eddy=None, dissipation=None, initial_bins=None):
+                 eddy=None, dissipation=None, initial_bins=None, volume_share=1.0):
         if time_of_day not in ("day", "night"):
             raise ValueError(f"time_of_day must be 'day' or 'night', got {time_of_day!r}")
         self.trail, self.hot, self.amb, self.time_of_day, self.settings = trail, hot, amb, time_of_day, settings
@@ -165,11 +166,12 @@ class Box:
 
         # geometry and spreading
         self.L = float(trail.L_m)
+        self.volume_share = float(volume_share)     # this box's share of the volume of the trail of length L
         self.r0 = float(hot.r0_m)
         if not (self.L > 0.0 and self.r0 > 0.0):
             raise ValueError(f"the box needs a positive trail length and initial radius (L = {self.L} m, "
                              f"r0 = {self.r0} m)")
-        self.V0 = volume(self.r0, self.L)
+        self.V0 = self.volume_share * volume(self.r0, self.L)
         self.K_eddy = self.eddy.K(amb.z_km)
         self.dissipation = dissipation if dissipation is not None else DissipationProfile.load()
         self.epsilon = self.dissipation.epsilon(amb.z_km)
@@ -462,7 +464,7 @@ class Box:
         across the eddy switch has produced r2 < 0), and the floor at r0^2 keeps the right-hand side finite so the
         solver rejects the step and shortens it instead of failing on sqrt of a negative number."""
         r = math.sqrt(max(r2, self.r0 * self.r0))
-        V = volume(r, self.L)
+        V = self.volume_share * volume(r, self.L)
         if self.settings.freeze_radius:
             return V, 0.0, 0.0
         dr2 = 4.0 * D_total(r, self._alo, self.amb, self.K_eddy, self.epsilon, self.settings)
@@ -559,7 +561,7 @@ class Box:
         gas, r2 = x[lay.gas], x[lay.r2][0]
         ng = len(GAS_SPECIES)
         r = math.sqrt(max(r2, self.r0 * self.r0))
-        V = volume(r, self.L)
+        V = self.volume_share * volume(r, self.L)
         J = np.zeros((lay.size, lay.size))
         # network columns (reactions, formation, smoke): rate = coef ext[a] ext[b]
         ext = np.append(gas, 1.0)
@@ -666,7 +668,7 @@ class Solution:
 
     def V(self, i):
         """Plume volume (m^3) at output i."""
-        return volume(self.r(i), self.box.L)
+        return self.box.volume_share * volume(self.r(i), self.box.L)
 
     def count(self, name, i):
         """Molecules of gas species `name` in the plume at output i."""

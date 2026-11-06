@@ -508,3 +508,38 @@ research output and are not summarised here.
   lower altitudes, where r0 is smaller (1.7 mm at 60 km), may nucleate more. Measured once
   (`run.run` on 14.1 micrometres, 76 km, day, WACCM, 5.4 s, from the commit that fixed the smoke mass; no test pins these values); the physical conclusion is **(assumed)** until the
   sensitivity set has been run.
+
+### 9.8 The segmented trail (`segments.py`)
+
+Built 2026-11-05. The default run (`Settings.n_segments = 24`; 0 restores the single column) cuts the path to 99.9 % of
+the aluminium loss into equal lengths, each holding the aluminium really released there, with its own hot start,
+altitude, ambient air and clock. The last segment also holds the remaining 0.1 %. Each is its own `Box`, and they are
+added at the same time since release (`TrailSolution`). Spreading along the trail is applied afterwards (`along_trail`).
+
+- **Verified by tests** (`tests/test_wake_segments.py`): cutting conserves the aluminium, lengths are equal, mass follows
+  the release; a quarter of the atoms in a quarter of the volume evolves identically; aluminium is conserved at every
+  time since release including the unreleased share; each segment is read at its own age; `along_trail` keeps every
+  atom, equals the closed form for a top hat, and matches the box's axis concentration for one segment.
+- **Assumed: a segment appears whole at its aluminium-weighted release time.** Laying really takes about 0.03 s near
+  the peak and about 0.12 s in the tail, so time series before the droplet finishes (about 1.5 s for 200 um at 70 km)
+  are not to be read in detail. In a test without chemistry the particle formation rate at 0.1 s was 19 % of a
+  continuous trail's, while the total integrated over time differs only by the variation of release inside a segment.
+- **Assumed: spreading along the trail can be separated from the chemistry.** Tested once each at 70 and 60 km
+  (200 um, by day, single column, 12 hours) with four times less and four times more aluminium: the ratio of Al(OH)2 to
+  AlOH is the same to all printed digits (2.89 at 70 km, 27.62 at 60 km) and smoke uptake per gas atom is unchanged
+  (0.01746 at 60 km). Only plume particles respond to concentration. Spreading is assumed equal along and across the
+  trail, and neighbouring segments are assumed to hold nearly equal shares by the time they overlap. No coupled run
+  has been made; that option is kept in `docs/milestones/2026-11-05-coupled-trail-segments.md`.
+- **Measured, 24 against 48 segments** (two cases, by day, 12 hours). Plume particles rise by 0.9 % at 200 um, 70 km and
+  by 2.6 % at 14.1 um, 76 km with 48 segments; gas species and smoke uptake change by at most 0.03 %.
+- **Measured, 24 segments against the single column** (the same two cases). Plume particles rise by 12.9 % and 9.9 %;
+  the condensed share rises by 3 % at 200 um, 70 km and is unchanged at 14.1 um, 76 km; gas species fall by 0.3 % at
+  200 um, 70 km. At 200 um, 70 km, the peak atoms per metre of trail at 12 hours is 2.85e13, about half of the 5.6e13
+  at 1 second, and its position moves from 389 m to 986 m along the path.
+- **Not done:** the default sweep and sensitivity set have not been re-run with segments. `plume_video.py` still
+  shows the single column.
+- **Open (found 2026-11-05):** the box applies concentration on the axis to the whole volume, so aluminium-with-
+  aluminium rates count c^2 V, while a Gaussian plume has half of that. From Stage A's stopping points at 70 km, with
+  molecular diffusion and no chemistry, the time-integrated overlap to 10 ms is 0.52 of the box's. Particle formation
+  is therefore over-counted by about twice in both the single column and the segments. Asha chose on 2026-11-05 to leave
+  this uncorrected for now, so quoted plume particle shares carry this bias.
