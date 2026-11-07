@@ -1464,8 +1464,8 @@ def test_a_limit_outside_a_fold_s_range_is_refused(coarse_sphere_mesh):
 def test_spreading_keeps_the_books(coarse_sphere_mesh):
     """The melting body with a limit low enough to bind on the 4 mm mesh, whose sphere folds 14 degrees before anything happens:
     0.6 g of the 3.8 g handed down moves between corners, and the mass closes to 1e-12, the energy balance residual is below
-    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured 2026-11-06: mass exact,
-    energy 1.7e-11, momentum 3.9e-17)."""
+    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured: mass exact, energy 1.7e-11,
+    momentum 1.4e-17)."""
     b, M0 = melting_body(coarse_sphere_mesh, spread_limit=6.0)
     stats = b.skin_stats()
     assert stats["spread_mass_kg"] == b.spread_mass > 0.0 and stats["spread_edges_over"] > 0
@@ -1494,7 +1494,7 @@ def test_metal_landing_hot_takes_its_heat_to_the_receiving_corner_and_counts_no_
     E0, T_node = b.energy(), T[nodes]
     b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
     handed, s = spreads[0]
-    rose = s.handed > handed
+    rose = s.landed
     cold = rose & np.isin(np.arange(sk.n), ring)
     assert cold.any() and s.moved > 0.0
     excess = s.enthalpy[rose] - s.handed[rose] * mat.enthalpy(T_node[rose])
@@ -1512,6 +1512,44 @@ def test_metal_landing_hot_takes_its_heat_to_the_receiving_corner_and_counts_no_
     assert b.energy() == pytest.approx(E0, rel=1e-12)
     assert (b.solver.temperature()[nodes[cold]] > T_before[cold]).all()
     assert b.skin_stats()["spread_jump_max_K"] < stats["spread_jump_max_K"]               # since the last row
+
+
+def test_a_corner_that_takes_hot_metal_and_gives_more_onward_still_sends_its_landing_heat_to_its_node(coarse_sphere_mesh,
+                                                                                                       monkeypatch):
+    """A two-step cascade on the 4 mm sphere at 700 K (Finding 1 of Task 5c's review): a peak with its node and metal 60 K
+    hotter stands above a ring of corners, themselves above the rest. The ring takes the peak's hot metal and gives more onward than
+    it took, so each of its corners that keeps any ends handing down less than it started with. The heat it took is still its
+    landing, as Asha decided: its metal crosses at the node's enthalpy, the rest goes to that node through `pending`, not through
+    `h_outward` and so over the whole moving zone, and the landing counts in the largest recorded. Energy closes and no fault is
+    counted."""
+    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=15.0)
+    b.emissivity = 0.0
+    mat, sk, col, nodes = b.material, b.skins, b.columns, b.moving.corners
+    peak = np.argsort(b.theta)[:1]
+    ring = neighbours(b, peak)
+    u = np.zeros((col.n, 3))
+    u[peak], u[ring] = 2.4e-3 * col.normal[peak], 1.2e-3 * col.normal[ring]
+    b.moving.move_with_policy(u)
+    b._refresh_geometry()
+    nodes = b.moving.corners
+    T = b.solver.temperature().copy()
+    T[nodes[peak]] += 60.0
+    b.solver.set_temperature(T)
+    bump(b, peak, share=0.9, T=760.0)
+    bump(b, ring, share=0.5)
+    spreads, outward = spied(b, monkeypatch)
+    E0, T_node = b.energy(), b.solver.temperature()[nodes]
+    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
+    handed, s = spreads[0]
+    on = ring[(s.handed[ring] < handed[ring]) & (s.handed[ring] > 0.0)]
+    assert on.size > 0
+    jump = mat.temperature_from_enthalpy(s.enthalpy[on] / s.handed[on]) - T_node[on]
+    assert jump.max() > skin.JUMP_TOLERANCE
+    excess = s.enthalpy[on] - s.handed[on] * mat.enthalpy(T_node[on])
+    np.testing.assert_allclose(b.pending[on], excess, rtol=1e-12)
+    np.testing.assert_allclose(outward[0][on], mat.enthalpy(T_node[on]), rtol=1e-12)
+    assert b.skin_stats()["spread_jump_max_K"] >= jump.max() and b.jump_faults == 0
+    assert b.energy() == pytest.approx(E0, rel=1e-12)
 
 
 def test_a_donor_that_gives_away_all_its_hand_down_keeps_the_books(coarse_sphere_mesh, monkeypatch):

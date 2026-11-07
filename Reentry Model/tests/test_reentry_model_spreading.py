@@ -66,7 +66,7 @@ def test_a_limit_that_does_not_bind_returns_the_hand_down_itself():
     H = SPECIFIC * handed
     s = spread(col, handed, enthalpy=H)
     assert s.handed is handed and s.enthalpy is H
-    assert (s.moved, s.unplaced, s.over) == (0.0, 0.0, 0)
+    assert (s.moved, s.unplaced, s.over) == (0.0, 0.0, 0) and not s.landed.any() and s.landed.shape == (col.n,)
 
 
 def test_a_ridge_hands_its_metal_to_its_lower_neighbours_and_keeps_the_sums():
@@ -115,6 +115,29 @@ def test_a_valley_fold_gives_from_the_rim_to_the_floor():
     assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12)
     rose = np.flatnonzero(s.handed > handed)
     assert set(rose) <= set(floor)
+
+
+def test_a_corner_that_receives_and_gives_more_onward_is_marked_as_landed():
+    """A two-step cascade down a staircase whose 49 degree toe is past a 40 degree limit: the crest gives its hotter metal to the
+    flank below it, and the flank, which holds far more, gives more onward than it took, so it ends handing down less than it
+    started with and its total alone would not show that anything arrived. It carries the crest's heat all the same, so `landed`
+    marks it, and the toe it gave to; nothing arrives at the crest (Finding 1 of Task 5c's review: comparing the totals missed
+    these corners, and their neighbours' heat crossed the base through `h_outward`)."""
+    col = raised(plate(), [10, 11, 12, 13, 14], [0.0, 1e-3, 2e-3, 1e-3, 0.0])
+    crest, flank, toe = col.row(12)[2:-2], col.row(11)[2:-2], col.row(10)[2:-2]
+    cap = 0.25 * col.edge_length.mean() * RHO * col.area
+    handed = np.zeros(col.n)
+    handed[col.row(12)], handed[col.row(11)], handed[col.row(13)] = (0.1 * cap[col.row(12)], 0.8 * cap[col.row(11)],
+                                                                     0.8 * cap[col.row(13)])
+    unit = np.full(col.n, SPECIFIC)
+    unit[col.row(12)] = 1.1 * SPECIFIC
+    s = spread(col, handed, limit=40.0, cap=cap, enthalpy=unit * handed)
+    assert (s.handed[flank] < handed[flank]).all() and (s.handed[flank] > 0.0).all()      # net donors, with metal left
+    assert s.landed[flank].all() and s.landed[toe].all() and not s.landed[crest].any()
+    assert s.landed.dtype == bool and s.landed.shape == (col.n,)
+    mean = s.enthalpy[flank] / s.handed[flank]
+    assert (mean > SPECIFIC * (1.0 + 1e-6)).all() and (mean < 1.1 * SPECIFIC).all()       # the crest's heat came with it
+    assert (s.landed[s.handed > handed]).all()                                            # whatever rose, landed
 
 
 def growing_ridge(limit, parts=200, nx=37, ny=37):
@@ -236,5 +259,5 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
     H = SPECIFIC * handed
     s = spread(col, handed, enthalpy=H)
     inner = crest[2:-2]
-    assert (s.handed[inner] == 0.0).all() and (s.enthalpy[inner] == 0.0).all()
+    assert (s.handed[inner] == 0.0).all() and (s.enthalpy[inner] == 0.0).all() and not s.landed[inner].any()
     assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12) and s.enthalpy.sum() == pytest.approx(H.sum(), rel=1e-12)
