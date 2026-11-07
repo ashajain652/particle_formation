@@ -285,6 +285,9 @@ def resume_arguments(rs):
     rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
                     help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
                          "flight's, off for one saved before the option existed)")
+    rs.add_argument("--save-state-at", type=float, default=None,
+                    help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
+                         "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
 
 
 def build_parser():
@@ -889,6 +892,12 @@ def cmd_resume(args, parser):
         changed["--spread-limit"] = args.spread_limit
     if args.seed is not None:
         changed["--seed"] = args.seed
+    if args.save_state_at is not None:
+        t_end = args.t_max if args.t_max is not None else run.sim.settings.t_max
+        if not (math.isfinite(args.save_state_at) and state["time_s"] < args.save_state_at < t_end):
+            parser.error("--save-state-at must be a finite time after the saved state's {:.6g} s and before the end of flight "
+                         "{:.6g} s, got {!r}".format(state["time_s"], t_end, args.save_state_at))
+        changed["--save-state-at"] = args.save_state_at
     # -- the point between loading the state and flying on, where each option is applied; keep the options above and
     # their application below together, in the order of resume_arguments --
     if "--t-max" in changed:
@@ -898,6 +907,11 @@ def cmd_resume(args, parser):
         if run.switched_at is not None:            # latched: the step in use is the continuum step
             settings.dt = args.dt_continuum
     settings.save_at = settings.save_path = settings.save_meta = None
+    state_path = None
+    if "--save-state-at" in changed:               # the original flight's save left these set; run() saves only while they are None
+        state_path = os.path.join(args.outdir, args.name + STATE_SUFFIX)
+        settings.save_at, settings.save_path = args.save_state_at, state_path
+        run.state_saved_at = run.state_save_error = None
     settings.output_dir = os.path.join(run_dir, "vtk")
     settings.frames = []                           # the new series lists only its own frames
     if "--frames-every" in changed:
@@ -916,27 +930,41 @@ def cmd_resume(args, parser):
         np.random.seed(args.seed)
     else:
         np.random.set_state(state["rng"])
-    history = run.run(resume=state)
-    # the arguments of the writer: the saved flight's, with what is changed here
-    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", None)):
+    # the arguments of the writer, and of a state this run saves: the saved flight's, with what is changed here
+    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", changed.get("--save-state-at"))):
         setattr(saved, key, value)
     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
-                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray")):
+                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit")):
         if flag in changed:
             setattr(saved, key, changed[flag])
+    if state_path is not None:
+        settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+    limit = run.body.spread_limit if skins else None
+    print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+          "spread limit {}, save state at {}; files {}".format(
+              os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+              settings.dt_continuum if settings.dt_continuum is not None else "none",
+              args.seed if args.seed is not None else "saved random state", settings.frames_every,
+              "on" if getattr(run.body, "slurry_spray", False) else "off",
+              "off" if limit is None else "{:g} deg".format(limit),
+              "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+              os.path.join(args.outdir, args.name)), flush=True)
+    history = run.run(resume=state)
     atm, atm_name, atm_info = make_atmosphere(saved.atmosphere, saved.epoch, saved.wind)
     reference = sesam_io.load_reference(saved.reference) if saved.reference else None
     mass = body.sphere_mass(run.sim.settings.diameter, saved.material_density)
     thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
                                                          "skin_flow", "slurry_spray")}
     thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
+    if state_path is not None:
+        thermal_info["save_state_at_s"] = args.save_state_at
     if skins and run.body.spread_limit is not None:
         thermal_info["spread_limit_deg"] = run.body.spread_limit
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)
     return finish_run(saved, args.name, run.sim.settings, mass, atm_name, atm_info, reference, thermal_info, run.body, history,
-                      None, resumed=resumed)
+                      state_path, resumed=resumed)
 
 
 def _fmt(x):

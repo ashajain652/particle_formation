@@ -215,7 +215,7 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
 
 
 @pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
-                                  "spread_0", "spread_180", "spread_nan"])
+                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan"])
 def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
     """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
     (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees and a value that is not a number are
@@ -227,7 +227,10 @@ def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path)
                       "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
                       "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
                       "spread_0": (state_path, ["--spread-limit", "0"]), "spread_180": (state_path, ["--spread-limit", "180"]),
-                      "spread_nan": (state_path, ["--spread-limit", "nan"])}[case]
+                      "spread_nan": (state_path, ["--spread-limit", "nan"]),
+                      "save_not_after": (state_path, ["--save-state-at", "0.1875"]),
+                      "save_at_end": (state_path, ["--save-state-at", "0.2125"]),
+                      "save_nan": (state_path, ["--save-state-at", "nan"])}[case]
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
@@ -245,3 +248,42 @@ def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "60"])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
     assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "off"]) == 0
+
+
+def test_a_resumed_flight_saves_its_state_on_its_way_and_that_state_resumes(flown, tmp_path):
+    """A resumed flight can save its state as the first did (final review, 2026-11-07): `--save-state-at 0.2` on the resume
+    of the state saved at 0.1875 s writes <outdir>/<name>.state.pkl at the end of the 15th step, though the original
+    flight's own save had set the run's record of one; the JSON records the time and the file, the new state carries the
+    resumed run's name and arguments, and resumed in its turn it repeats the unbroken flight from its step to the last bit.
+    The same flight resumed without the option saves nothing."""
+    out, flight, records, state_path = flown
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.2"]) == 0
+    doc = json.load(open(str(tmp_path / "r.json")))
+    new = str(tmp_path / "r.state.pkl")
+    assert doc["settings"]["save_state_at_s"] == 0.2 and doc["results"]["state_saved_at_s"] == pytest.approx(0.2)
+    assert doc["results"]["state_save_error"] is None and doc["files"]["state"] == new
+    assert doc["resumed_from"]["changed"] == {"--save-state-at": 0.2}
+    state = restart.load(new)
+    assert state["step"] == 15 and state["meta"]["name"] == "r" and state["meta"]["args"]["save_state_at"] == 0.2
+    assert state["meta"]["args"]["outdir"] == str(tmp_path)
+    assert cli.main(["resume", new, "--outdir", str(tmp_path), "--name", "again"]) == 0
+    assert rows_of(str(tmp_path / "again.csv")) == flight[15:]
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "plain"]) == 0
+    assert not os.path.exists(str(tmp_path / "plain.state.pkl"))
+    assert "state" not in json.load(open(str(tmp_path / "plain.json")))["files"]
+
+
+def test_a_resume_says_what_it_is_doing_before_it_flies(flown, tmp_path, capsys):
+    """One line at the start of a resume, before the flight, names the state, its saved time, the end of flight and every
+    option in force, the spread limit or off included, so a flight's log says what it is without waiting for its JSON."""
+    out, flight, records, state_path = flown
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--t-max", "0.225", "--seed", "7",
+                     "--spread-limit", "60", "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")]
+    assert len(line) == 1
+    for text in (os.path.abspath(state_path), "saved at 0.1875 s", "step 14", "to 0.225 s", "seed 7", "spread limit 60 deg",
+                 "save state at 0.2 s", "dt_continuum 0.0125", "slurry spray off", os.path.join(str(tmp_path), "r")):
+        assert text in line[0]
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "q"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "saved random state" in line and "spread limit off" in line and "save state at no" in line
