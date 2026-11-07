@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31) and 5a (2026-11-01).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01) and 5b (2026-11-06).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -14,7 +14,7 @@
 > rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
-> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit.
+> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit; 5b puts the resume on the command line.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -8261,7 +8261,364 @@ git commit -m "Coupled runs: a flight saves its whole state once on its way (--s
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4 and 5a written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5b: The resume command
+
+**Files:**
+- Modify: `reentry_model/cli.py` (`resume_arguments`, `load_state`, `cmd_resume`, the `resume` subcommand; the writing of a
+  run's csv, json and droplet files moved out of `cmd_run` into `finish_run`, which both call)
+- Modify: `flights/fly.py` (beside `code/`, not part of the planning copy's code): `fly.py <outdir> <name> resume <state>
+  [options]` runs the resume command, its rows and progress kept as for `run`
+- Test: `tests/test_reentry_model_restart.py` (3 tests, 8 cases, beside Task 5a's 9)
+- Create (git-ignored): `prototype/work-2026-10-28-skin-spraying/measure/task5b/`, the production check
+
+**Interfaces:**
+- Consumes: Task 5a's `restart.load`, `restart.FORMAT` and `CoupledRun.run(resume=state)`; `spray.SourceSpool` (Task 4);
+  the state's `{format, run, step, row, time_s, rng, meta{name, args}}`.
+- Produces: `python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max S] [--dt-continuum S] [--seed N]
+  [--frames-every N] [--slurry-spray on|off]`, writing the files `run` writes (`<outdir>/<name>.csv` and `.json`, the droplet
+  files under `<outdir>/<name>/`); the JSON gains `"resumed_from": {"state", "step", "time_s", "run_name", "changed"}`.
+  The options are in `resume_arguments(parser)` and applied in one block of `cmd_resume`, between loading the state and
+  `run.run(resume=state)`, so a later task adds one option in those two places.
+
+Asha's decision of 2026-11-01 was to resume the convergence repeats from the base flight's state; Task 5a made the state
+and this task puts the resume on the command line, which until now could only be done from a script
+(`measure/task5a/resume_check.py`). **The random state** is the saved one unless `--seed` is given, which seeds numpy's
+generator instead. **What the run is given:** `save_at`, `save_path` and `save_meta` are cleared (a resumed flight saves
+nothing); `output_dir` is `<outdir>/<name>/vtk` and `frames` is emptied, so the new series lists only its own frames (with
+`--frames-every` the frames' step and the clock the series follows after the continuum switch are set together); `--t-max`
+sets the simulator's `t_max`; `--dt-continuum` sets the continuum step, and the macro step in use too if the switch has
+latched; `--slurry-spray` sets the body's flag; the droplet records go to a new spool in `<outdir>/<name>/source_rows`, so
+only those after the resume are written. **The files** are written by the code `run` used, now `finish_run`, from the saved
+flight's own arguments (`state["meta"]["args"]`) with the options given here, so `run`'s outputs are unchanged. Bad input
+exits 2: a missing file, a state of another format or without the command line's arguments, `--t-max` not finite or not
+after the saved time, `--dt-continuum` not finite or outside (0, the saved `--dt`], or given for a flight that has no
+continuum switch.
+
+**Measured** (2026-11-06): the two real states
+saved by Task 5a's build (commit 055c313) resumed through `flights/launch.sh` on mains power (`measure/task5b/check.md`).
+The 50 mm flight's state (0.29 GB, saved at 170.5 s, step 341) resumed to 172.0 s in 190 s (3 macro steps of 0.5 s, peak
+memory 1.47 GB), and the 100 mm flight's (1.38 GB, saved at 22.0 s, step 44) to 23.0 s in 330 s (2 steps, 3.95 GB): in both,
+84 history columns -- every column but the five `wall_` timers -- equal the snapshot flights' own rows at full precision,
+and the column sets are the same, the saved states pickled before this task resuming with the command unchanged. Neither
+flight had released a droplet yet (0 source rows), so the droplet records are pinned by the unit test only. The unit
+tier is 549 passed, 1 skipped.
+
+**Rulings** (2026-11-06; what, why, cost if wrong):
+1. *The resume writes `cmd_run`'s files by sharing its writer*, not by a copy. Why: two writers would drift and `run`'s
+   outputs must not change (`finish_run` is `cmd_run`'s tail moved whole, with the JSON's `resumed_from` added only when
+   resuming). Cost: none found; the unit tier's `run` tests pass unchanged.
+2. *`--outdir` and `--name` are required.* Why: a resume that defaulted to the saved flight's directory and name would
+   overwrite the files the state came from. Cost: two more words on the command line.
+3. *`--dt-continuum` is bounded by the saved `--dt`, the macro step before the switch, not by the step now in use.* Why: it
+   is the rule `run` applies, and a coarser repeat than the base flight's continuum step is a legitimate one. Cost: none.
+4. *The JSON's `settings.thermal` block of a resumed run is short* -- the heating, melt, surface model, solvers, skin-flow,
+   slurry-spray settings, the macro and continuum steps and `frames_every` -- not the mesh and skin details `run`
+   records. Why: those come from `build_thermal`, which makes the 3D mesh (minutes, GBs) and is not in the state. Cost: a
+   resumed run's JSON lacks `n_nodes` and the like; the saved flight's JSON has them.
+5. *`results.n_source_rows` and the other body totals of a resumed run count from the start of the flight, the droplet
+   files only from the resume.* Why: the totals are the body's own cumulative accumulators, in the state. Cost: the printed
+   count of source rows is higher than the rows in `particles.npz`; the droplet columns of the history agree with the body.
+
+- [ ] **Step 1: The tests** -- in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -121,3 +121,72 @@
+     with pytest.raises(SystemExit) as exc:
+         cli.main(argv + ["--outdir", str(tmp_path)])
+     assert exc.value.code == 2
++
++
++@pytest.fixture(scope="module")
++def flown(tmp_path_factory):
++    """The test flight to 0.2125 s once, saving its state at 0.1875 s (the end of its 14th step), for the resume command's
++    tests: (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
++    pytest.importorskip("cantera")
++    out = str(tmp_path_factory.mktemp("flown"))
++    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
++    rows = rows_of(os.path.join(out, "f.csv"))
++    assert len(rows) == 17
++    return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
++
++
++def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(flown, tmp_path):
++    """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
++    -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
++    unbroken flight's from there in every column, the droplet records those of the flight after the save, to the last bit,
++    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06)."""
++    out, flight, records, state_path = flown
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 0
++    assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
++    after = records["time_s"] > 0.1875 + 1e-9        # the saved step's records carry its end: 0.1875 and a round-off
++    got = np.load(str(tmp_path / "r" / "particles.npz"))
++    assert after.any() and got.files == list(records) and all(np.array_equal(got[k], records[k][after], equal_nan=True) for k in records)
++    assert os.path.exists(str(tmp_path / "r" / "particles_summary.csv")) and not os.path.exists(str(tmp_path / "r" / cli.SOURCE_SPOOL))
++    doc = json.load(open(str(tmp_path / "r.json")))
++    assert doc["run_name"] == "r" and doc["settings"]["t_max_s"] == 0.2125
++    assert doc["resumed_from"] == {"state": os.path.abspath(state_path), "step": 14, "time_s": pytest.approx(0.1875),
++                                   "run_name": "f", "changed": {}}
++    assert "resumed_from" not in json.load(open(os.path.join(out, "f.json")))
++    assert doc["results"]["end_reason"] == "t_max" and "state_saved_at_s" not in doc["results"]
++
++
++def test_the_resume_command_changes_what_it_is_told(flown, tmp_path):
++    """Each option changes the resumed flight and is recorded in the JSON's "changed": --t-max flies further (two more
++    12.5 ms steps than the saved flight's end), a halved --dt-continuum takes twice the steps over the same time (4 from
++    0.1875 s to 0.2125 s instead of 2), and --seed seeds numpy's generator instead of resuming the saved random state, so
++    the multigrid hierarchy the heat solver builds in the 16th step is another and the history differs from the flight's."""
++    out, flight, records, state_path = flown
++    run = lambda name, *options: (cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", name, *options]),
++                                  rows_of(str(tmp_path / (name + ".csv"))), json.load(open(str(tmp_path / (name + ".json")))))
++    code, longer, doc = run("longer", "--t-max", "0.2375")
++    assert code == 0 and len(longer) == 5 and longer[:2] == flight[14:16] and doc["resumed_from"]["changed"] == {"--t-max": 0.2375}
++    assert doc["results"]["final_time_s"] == pytest.approx(0.2375)       # (its 3rd row is mid-flight, the flight's the last: only its momentum_residual differs)
++    code, finer, doc = run("finer", "--dt-continuum", "0.00625")
++    assert code == 0 and len(finer) == 5 and doc["resumed_from"]["changed"] == {"--dt-continuum": 0.00625}
++    assert doc["results"]["final_time_s"] == pytest.approx(0.2125) and doc["settings"]["thermal"] == "fem"
++    code, reseeded, doc = run("reseeded", "--seed", "7")
++    assert code == 0 and len(reseeded) == 3 and reseeded != flight[14:] and doc["resumed_from"]["changed"] == {"--seed": 7}
++    assert doc["settings"]["seed"] == 7
++    code, same, doc = run("same")
++    assert same == flight[14:] and doc["settings"]["seed"] == cli.DEFAULT_SEED
++
++
++@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan"])
++def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
++    """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
++    (0, the saved flight's --dt of 0.025 s] and a value that is not a number are refused with exit 2 (bad input), and
++    nothing is written."""
++    out, flight, records, state_path = flown
++    bad_format = str(tmp_path / "other.pkl")
++    restart.save(bad_format, {"format": restart.FORMAT + 1})
++    state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
++                      "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
++                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"])}[case]
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
++    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+```
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_restart.py -q -k resume_command`.
+  Expected: failures with `argument command: invalid choice: 'resume' (choose from run, compare)`.
+
+- [ ] **Step 3: The command** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -7,6 +7,8 @@
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
++    python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
++        --slurry-spray on|off]       (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+@@ -22,7 +24,7 @@
+ 
+ import numpy as np
+ 
+-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
++from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, restart, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
+ from . import trajectory as tj
+ from .earth import GRAVITY_MODELS
+ from .thermal import MissingBackend
+@@ -242,6 +244,22 @@
+             versions[key] = None
+     return {"package_version": __version__, "git_commit": git_commit(), "numpy": np.__version__,
+             "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0], **versions}
++
++
++def resume_arguments(rs):
++    """The resume command's options, in one place: the new run's files and what it may change from the saved flight. A
++    flight resumed with none of the changes repeats the saved flight from its saved step to the last bit."""
++    rs.add_argument("--outdir", required=True, help="directory of the resumed run's files (never the saved flight's by default)")
++    rs.add_argument("--name", required=True, help="the resumed run's name: <outdir>/<name>.csv and .json, droplet files under <outdir>/<name>/")
++    rs.add_argument("--t-max", type=float, default=None, help="[s] end of flight, after the saved time (default: the saved flight's)")
++    rs.add_argument("--dt-continuum", type=float, default=None,
++                    help="[s] macro step after the continuum switch, in (0, the saved --dt] (default: the saved flight's)")
++    rs.add_argument("--seed", type=parse_seed, default=None,
++                    help="seed numpy's generator with this instead of resuming from the saved random state (default: the saved state)")
++    rs.add_argument("--frames-every", type=int, default=None,
++                    help="VTK frame every n macro steps, the series new (default: the saved flight's setting)")
++    rs.add_argument("--slurry-spray", choices=("on", "off"), default=None,
++                    help="the exposed slurry sprays too (default: the saved flight's)")
+ 
+ 
+ def build_parser():
+@@ -409,6 +427,11 @@
+                     help="write the particle source table and the size distribution of a spraying run (default)")
+     me.add_argument("--no-particles", dest="particles", action="store_false")
+ 
++    rs = sub.add_parser("resume", help="continue a flight from a state it saved (--save-state-at), to the last bit, "
++                                       "changing only what is given (sub-plan 22 Task 5b)")
++    rs.add_argument("state", help="the saved state, <outdir>/<name>{}".format(STATE_SUFFIX))
++    resume_arguments(rs)
++
+     c = sub.add_parser("compare", help="metrics and plots for an existing model history")
+     c.add_argument("--model", required=True, help="model history CSV")
+     c.add_argument("--reference", required=True, help="SESAM run CSV")
+@@ -660,6 +683,16 @@
+             thermal_info["save_state_at_s"] = args.save_state_at
+     else:
+         history = sim.run(extra_times=reference.time if reference is not None else None)
++    return finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history,
++                      state_path if args.thermal == "fem" else None)
++
++
++def finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history, state_path,
++               resumed=None):
++    """Write a finished run's files and print its summary (cmd_run and cmd_resume share this, sub-plan 22 Task 5b):
++    <outdir>/<name>.csv and .json, the droplet files and plots under <outdir>/<name>/. `resumed`, the resume command's
++    record of its state, goes into the JSON as "resumed_from". Returns the exit code."""
++    run_dir = os.path.join(args.outdir, name)
+     csv_path = os.path.join(args.outdir, name + ".csv")
+     json_path = os.path.join(args.outdir, name + ".json")
+     tj.write_history_csv(history, csv_path)
+@@ -684,6 +717,8 @@
+         "provenance": prov,
+         "files": {"csv": os.path.abspath(csv_path)},
+     }
++    if resumed is not None:
++        doc["resumed_from"] = resumed
+     if history.results.get("state_saved_at_s") is not None:
+         doc["files"]["state"] = os.path.abspath(state_path)
+     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
+@@ -768,6 +803,96 @@
+     return 0
+ 
+ 
++def load_state(path, parser):
++    """The saved flight at `path`, or a parser error (exit 2) for a missing file, one that is no state of this model's
++    format, or one saved without the command line's arguments."""
++    if not os.path.isfile(path):
++        parser.error("no saved state at {}".format(path))
++    try:
++        state = restart.load(path)
++    except Exception as exc:
++        parser.error("{} is not a saved state: {}: {}".format(path, type(exc).__name__, exc))
++    if not isinstance(state, dict) or state.get("format") != restart.FORMAT:
++        found = state.get("format") if isinstance(state, dict) else type(state).__name__
++        parser.error("{} is a state of format {!r}; this model resumes format {}".format(path, found, restart.FORMAT))
++    if not state.get("meta") or "args" not in state["meta"]:
++        parser.error("{} was saved without the command line's arguments (settings.save_meta), which a resume needs".format(path))
++    return state
++
++
++def cmd_resume(args, parser):
++    """Resume a saved flight (sub-plan 22 Task 5b; Asha, 2026-11-01): the state `--save-state-at` wrote, loaded as a new
++    object graph and flown on by `CoupledRun.run(resume=state)` from the end of the saved macro step, with the saved
++    random state (numpy's only draws are pyamg's, so it is part of the flight) unless --seed is given. Writes the files
++    `run` writes, from the saved flight's arguments with the options given here; the JSON's "resumed_from" records the
++    state and what was changed. Only the droplet records after the resume are written."""
++    state = load_state(args.state, parser)
++    run, saved = state["run"], argparse.Namespace(**state["meta"]["args"])
++    run_dir = os.path.join(args.outdir, args.name)
++    settings, changed = run.settings, {}
++    if args.t_max is not None:
++        if not (math.isfinite(args.t_max) and args.t_max > state["time_s"]):
++            parser.error("--t-max must be a finite time after the saved state's {:.6g} s, got {!r}".format(state["time_s"], args.t_max))
++        changed["--t-max"] = args.t_max
++    if args.dt_continuum is not None:
++        if settings.dt_continuum is None:
++            parser.error("--dt-continuum: the saved flight has no continuum switch (it did not run with --melt on and Girin removal)")
++        if not (math.isfinite(args.dt_continuum) and 0.0 < args.dt_continuum <= saved.dt):
++            parser.error("--dt-continuum must be a finite step in (0, the saved --dt = {} s], got {!r}".format(saved.dt, args.dt_continuum))
++        changed["--dt-continuum"] = args.dt_continuum
++    if args.frames_every is not None:
++        if args.frames_every < 0:
++            parser.error("--frames-every must be >= 0")
++        changed["--frames-every"] = args.frames_every
++    if args.slurry_spray is not None:
++        if args.slurry_spray == "on" and getattr(run.body, "spray", None) is None:
++            parser.error("--slurry-spray on needs a saved flight with the skins' spraying (--skin-flow on)")
++        changed["--slurry-spray"] = args.slurry_spray
++    if args.seed is not None:
++        changed["--seed"] = args.seed
++    # -- the point between loading the state and flying on, where each option is applied; keep the options above and
++    # their application below together, in the order of resume_arguments --
++    if "--t-max" in changed:
++        run.sim.settings.t_max = args.t_max
++    if "--dt-continuum" in changed:
++        settings.dt_continuum = args.dt_continuum
++        if run.switched_at is not None:            # latched: the step in use is the continuum step
++            settings.dt = args.dt_continuum
++    settings.save_at = settings.save_path = settings.save_meta = None
++    settings.output_dir = os.path.join(run_dir, "vtk")
++    settings.frames = []                           # the new series lists only its own frames
++    if "--frames-every" in changed:
++        settings.frames_every = args.frames_every
++        run._frame_dt, run._next_frame = args.frames_every * saved.dt, run.sim.t
++    if "--slurry-spray" in changed:
++        run.body.slurry_spray = args.slurry_spray == "on"
++    if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
++        run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
++    if args.seed is not None:
++        np.random.seed(args.seed)
++    else:
++        np.random.set_state(state["rng"])
++    history = run.run(resume=state)
++    # the arguments of the writer: the saved flight's, with what is changed here
++    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", None)):
++        setattr(saved, key, value)
++    for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
++                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray")):
++        if flag in changed:
++            setattr(saved, key, changed[flag])
++    atm, atm_name, atm_info = make_atmosphere(saved.atmosphere, saved.epoch, saved.wind)
++    reference = sesam_io.load_reference(saved.reference) if saved.reference else None
++    mass = body.sphere_mass(run.sim.settings.diameter, saved.material_density)
++    thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
++                                                         "skin_flow", "slurry_spray")}
++    thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
++    resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
++               "run_name": state["meta"]["name"], "changed": changed}
++    os.makedirs(args.outdir, exist_ok=True)
++    return finish_run(saved, args.name, run.sim.settings, mass, atm_name, atm_info, reference, thermal_info, run.body, history,
++                      None, resumed=resumed)
++
++
+ def _fmt(x):
+     return "n/a" if x is None else "{:.1f}".format(x)
+ 
+@@ -801,6 +926,8 @@
+     try:
+         if args.command == "run":
+             return cmd_run(args, parser)
++        if args.command == "resume":
++            return cmd_resume(args, parser)
+         return cmd_compare(args, parser)
+     except KeyError as exc:
+         # e.g. fap.solar_indices(): the run epoch (or the day before it) has no record in
+```
+
+- [ ] **Step 4: `flights/fly.py`** runs `resume` as the first of its arguments as the command line's resume, not `run`:
+
+```python
+        argv = args if args[:1] == ["resume"] else ["run"] + args
+        return cli.main(argv + ["--outdir", outdir, "--name", name])
+```
+
+- [ ] **Step 5: Run the tests to see them pass.** Expected: 17 passed in about 2.5 minutes in the file; the unit tier 549
+  passed, 1 skipped (Task 5a's 541 and these 8; 10.6 minutes across four processes).
+
+- [ ] **Step 6: The production check** (in `measure/task5b/`, on mains power, through `flights/launch.sh`, then `compare.py`):
+  resume `d050__physics__skin.state.pkl` to 172.0 s and `d100__physics__skin.state.pkl` to 23.0 s into
+  `reentry_model_output/task5b_check`, and compare with the snapshot flights' `rows.csv` at full precision: no column
+  but the `wall_` timers differs. Recorded in `measure/task5b/check.md`.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/cli.py tests/test_reentry_model_restart.py
+git commit -m "Coupled runs: the resume command (python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray]) continues a flight saved with --save-state-at to the last bit, writing the files run writes through one shared writer, the JSON naming the state and what was changed; exit 2 for a missing or foreign state, an end of flight not after the saved time, or a continuum step outside (0, --dt]; flights/fly.py runs it (sub-plan 22 Task 5b)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a and 5b written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

@@ -82,6 +82,7 @@ TASKS = (
     ("5a", (("FILE_TEST_RESTART_T5A", "tests/test_reentry_model_restart.py"),
             ("FILE_RESTART_T5A", "reentry_model/restart.py"),
             ("DIFF_COUPLED_T5A", "reentry_model/coupled.py"), ("DIFF_CLI_T5A", "reentry_model/cli.py"))),
+    ("5b", (("DIFF_TEST_RESTART_T5B", "tests/test_reentry_model_restart.py"), ("DIFF_CLI_T5B", "reentry_model/cli.py"))),
 )
 
 

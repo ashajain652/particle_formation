@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31) and 5a (2026-11-01).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01) and 5b (2026-11-06).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -14,7 +14,7 @@
 > rest of spec 10.2 and Register's release angle on both models' records (Asha, 2026-10-29) -- ends the skins' loop
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
-> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit.
+> Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit; 5b puts the resume on the command line.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -1834,7 +1834,100 @@ git commit -m "Coupled runs: a flight saves its whole state once on its way (--s
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4 and 5a written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5b: The resume command
+
+**Files:**
+- Modify: `reentry_model/cli.py` (`resume_arguments`, `load_state`, `cmd_resume`, the `resume` subcommand; the writing of a
+  run's csv, json and droplet files moved out of `cmd_run` into `finish_run`, which both call)
+- Modify: `flights/fly.py` (beside `code/`, not part of the planning copy's code): `fly.py <outdir> <name> resume <state>
+  [options]` runs the resume command, its rows and progress kept as for `run`
+- Test: `tests/test_reentry_model_restart.py` (3 tests, 8 cases, beside Task 5a's 9)
+- Create (git-ignored): `prototype/work-2026-10-28-skin-spraying/measure/task5b/`, the production check
+
+**Interfaces:**
+- Consumes: Task 5a's `restart.load`, `restart.FORMAT` and `CoupledRun.run(resume=state)`; `spray.SourceSpool` (Task 4);
+  the state's `{format, run, step, row, time_s, rng, meta{name, args}}`.
+- Produces: `python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max S] [--dt-continuum S] [--seed N]
+  [--frames-every N] [--slurry-spray on|off]`, writing the files `run` writes (`<outdir>/<name>.csv` and `.json`, the droplet
+  files under `<outdir>/<name>/`); the JSON gains `"resumed_from": {"state", "step", "time_s", "run_name", "changed"}`.
+  The options are in `resume_arguments(parser)` and applied in one block of `cmd_resume`, between loading the state and
+  `run.run(resume=state)`, so a later task adds one option in those two places.
+
+Asha's decision of 2026-11-01 was to resume the convergence repeats from the base flight's state; Task 5a made the state
+and this task puts the resume on the command line, which until now could only be done from a script
+(`measure/task5a/resume_check.py`). **The random state** is the saved one unless `--seed` is given, which seeds numpy's
+generator instead. **What the run is given:** `save_at`, `save_path` and `save_meta` are cleared (a resumed flight saves
+nothing); `output_dir` is `<outdir>/<name>/vtk` and `frames` is emptied, so the new series lists only its own frames (with
+`--frames-every` the frames' step and the clock the series follows after the continuum switch are set together); `--t-max`
+sets the simulator's `t_max`; `--dt-continuum` sets the continuum step, and the macro step in use too if the switch has
+latched; `--slurry-spray` sets the body's flag; the droplet records go to a new spool in `<outdir>/<name>/source_rows`, so
+only those after the resume are written. **The files** are written by the code `run` used, now `finish_run`, from the saved
+flight's own arguments (`state["meta"]["args"]`) with the options given here, so `run`'s outputs are unchanged. Bad input
+exits 2: a missing file, a state of another format or without the command line's arguments, `--t-max` not finite or not
+after the saved time, `--dt-continuum` not finite or outside (0, the saved `--dt`], or given for a flight that has no
+continuum switch.
+
+**Measured** (2026-11-06): the two real states
+saved by Task 5a's build (commit 055c313) resumed through `flights/launch.sh` on mains power (`measure/task5b/check.md`).
+The 50 mm flight's state (0.29 GB, saved at 170.5 s, step 341) resumed to 172.0 s in 190 s (3 macro steps of 0.5 s, peak
+memory 1.47 GB), and the 100 mm flight's (1.38 GB, saved at 22.0 s, step 44) to 23.0 s in 330 s (2 steps, 3.95 GB): in both,
+84 history columns -- every column but the five `wall_` timers -- equal the snapshot flights' own rows at full precision,
+and the column sets are the same, the saved states pickled before this task resuming with the command unchanged. Neither
+flight had released a droplet yet (0 source rows), so the droplet records are pinned by the unit test only. The unit
+tier is 549 passed, 1 skipped.
+
+**Rulings** (2026-11-06; what, why, cost if wrong):
+1. *The resume writes `cmd_run`'s files by sharing its writer*, not by a copy. Why: two writers would drift and `run`'s
+   outputs must not change (`finish_run` is `cmd_run`'s tail moved whole, with the JSON's `resumed_from` added only when
+   resuming). Cost: none found; the unit tier's `run` tests pass unchanged.
+2. *`--outdir` and `--name` are required.* Why: a resume that defaulted to the saved flight's directory and name would
+   overwrite the files the state came from. Cost: two more words on the command line.
+3. *`--dt-continuum` is bounded by the saved `--dt`, the macro step before the switch, not by the step now in use.* Why: it
+   is the rule `run` applies, and a coarser repeat than the base flight's continuum step is a legitimate one. Cost: none.
+4. *The JSON's `settings.thermal` block of a resumed run is short* -- the heating, melt, surface model, solvers, skin-flow,
+   slurry-spray settings, the macro and continuum steps and `frames_every` -- not the mesh and skin details `run`
+   records. Why: those come from `build_thermal`, which makes the 3D mesh (minutes, GBs) and is not in the state. Cost: a
+   resumed run's JSON lacks `n_nodes` and the like; the saved flight's JSON has them.
+5. *`results.n_source_rows` and the other body totals of a resumed run count from the start of the flight, the droplet
+   files only from the resume.* Why: the totals are the body's own cumulative accumulators, in the state. Cost: the printed
+   count of source rows is higher than the rows in `particles.npz`; the droplet columns of the history agree with the body.
+
+- [ ] **Step 1: The tests** -- in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5B}}
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_restart.py -q -k resume_command`.
+  Expected: failures with `argument command: invalid choice: 'resume' (choose from run, compare)`.
+
+- [ ] **Step 3: The command** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5B}}
+
+- [ ] **Step 4: `flights/fly.py`** runs `resume` as the first of its arguments as the command line's resume, not `run`:
+
+```python
+        argv = args if args[:1] == ["resume"] else ["run"] + args
+        return cli.main(argv + ["--outdir", outdir, "--name", name])
+```
+
+- [ ] **Step 5: Run the tests to see them pass.** Expected: 17 passed in about 2.5 minutes in the file; the unit tier 549
+  passed, 1 skipped (Task 5a's 541 and these 8; 10.6 minutes across four processes).
+
+- [ ] **Step 6: The production check** (in `measure/task5b/`, on mains power, through `flights/launch.sh`, then `compare.py`):
+  resume `d050__physics__skin.state.pkl` to 172.0 s and `d100__physics__skin.state.pkl` to 23.0 s into
+  `reentry_model_output/task5b_check`, and compare with the snapshot flights' `rows.csv` at full precision: no column
+  but the `wall_` timers differs. Recorded in `measure/task5b/check.md`.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/cli.py tests/test_reentry_model_restart.py
+git commit -m "Coupled runs: the resume command (python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray]) continues a flight saved with --save-state-at to the last bit, writing the files run writes through one shared writer, the JSON naming the state and what was changed; exit 2 for a missing or foreign state, an end of flight not after the saved time, or a continuum step outside (0, --dt]; flights/fly.py runs it (sub-plan 22 Task 5b)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a and 5b written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

@@ -2,8 +2,11 @@
 """Fly one run of the planning copy's command line, its history kept as it goes (sub-plan 22 Task 5).
 
     "$PY" -B flights/fly.py <outdir> <name> [reentry_model run arguments...]
+    "$PY" -B flights/fly.py <outdir> <name> resume <state> [reentry_model resume options...]
 
-Runs `python -m reentry_model run <arguments> --outdir <outdir> --name <name>` in this process. A hook on each history
+Runs `python -m reentry_model run <arguments> --outdir <outdir> --name <name>` in this process, or with `resume` first
+among the arguments (sub-plan 22 Task 5b) `python -m reentry_model resume <state> <options> --outdir <outdir> --name
+<name>`, a flight continued from a state it saved: its rows are those made after the saved step. A hook on each history
 row, which only reads it (as `watch` in analysis/reentry_model_thermal_verification.py does), appends every row to
 <outdir>/<name>.rows.csv as it is made and a progress line every PROGRESS_EVERY rows to <outdir>/<name>.progress, so the
 results are those of the command line to the last bit. The model writes its history and results only when a flight
@@ -70,7 +73,8 @@ def main(argv):
     os.makedirs(outdir, exist_ok=True)
     undo = keep(outdir, name)
     try:
-        return cli.main(["run"] + args + ["--outdir", outdir, "--name", name])
+        argv = args if args[:1] == ["resume"] else ["run"] + args
+        return cli.main(argv + ["--outdir", outdir, "--name", name])
     except BaseException:
         traceback.print_exc()
         return 1
