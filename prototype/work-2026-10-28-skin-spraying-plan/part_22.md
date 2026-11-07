@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01) and 5b (2026-11-06).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), and 5b and 5c (2026-11-06).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -15,6 +15,7 @@
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
 > Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit; 5b puts the resume on the command line.
+> Task 5c spreads the metal being handed down to lower neighbouring corners where the base would fold past a limit, off by default until the flights have tested it.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -1927,7 +1928,153 @@ git commit -m "Coupled runs: the resume command (python -m reentry_model resume 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a and 5b written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5c: The deposit spread to lower corners, landing hot
+
+**Files:**
+- Create: `reentry_model/spreading.py`
+- Modify: `reentry_model/skinbody.py` (`SPREAD_COLUMNS`, the class's defaults, `SkinBody.__init__`, `advance`, `_move_base`,
+  `spread_stats`, `skin_stats`)
+- Modify: `reentry_model/cli.py` (`parse_spread_limit`, `spread_limit_of`, `--spread-limit` on `run` and in `resume_arguments`, the
+  name suffix, the settings' record, `cmd_run`'s refusal, `cmd_resume`'s option and its marked block)
+- Modify: `reentry_model/coupled.py` (`skin_results`; the note after `SKINBODY_COLUMNS`)
+- Test: `tests/test_reentry_model_spreading.py` (new, 9 tests), `tests/test_reentry_model_skinbody.py` (6),
+  `tests/test_reentry_model_cli.py` (4 tests, 16 cases), `tests/test_reentry_model_restart.py` (2 tests, and 3 more cases of Task 5b's
+  refusals)
+- Create (git-ignored): `prototype/work-2026-10-28-skin-spraying/measure/task5c/`, the production check
+
+**Interfaces:**
+- Consumes: `Columns` (`edges`, `_tri`, `_opp`, `points`, `normal`, `area`, `faces`), `SkinBody._hand_cap()`, Task 5b's
+  `resume_arguments` and the block of `cmd_resume` where options are applied.
+- Produces: `spreading.fold_angles(columns, points)`, `(angle_deg, convex)` per edge; `spreading.spread_hand_down(columns, points,
+  normal, area, rho, drawn, handed, enthalpy, cap, limit_deg, passes=SPREAD_PASSES)`, a `Spread(handed, enthalpy, moved, unplaced,
+  over)`; `SkinBody(..., spread_limit=None)`; `skinbody.SPREAD_COLUMNS` and `SkinBody.spread_stats()`; `--spread-limit DEG|off` on
+  `run` and `resume`, off by default, DEG within (0, 180), exit 2 otherwise or without a melting skin run; the name suffix
+  `_spread-<deg>`; with a limit only, the history's `spread_mass_kg` (since time zero, each hop counted), `spread_unplaced_kg` and
+  `spread_edges_over` (at the last move) and `spread_jump_max_K` (the largest landing over its node's temperature since the last
+  row), the results' `spread_limit_deg` and `spread_mass_kg`, and the JSON's `settings.skin.spread_limit_deg`
+  (`settings.spread_limit_deg` in a resume, whose block is Task 5b's short one).
+
+Asha's idea, in answer to the two skin flights stopping: spread the re-frozen mass to neighbouring cells to keep the angles
+reasonable (`docs/superpowers/specs/2026-11-06-deposit-spreading-design.md`). The snapshot flights put the fold at the toe of a ring of
+re-frozen metal travelling outward (`measure/task5/snapshots/findings.md`), a ridge rather than a sawtooth, so she decided on
+2026-11-06 to build it, and that **spread metal lands hot**. The lower neighbours of a toe are its cold corners: across folded edges the
+3D temperature jumps by a median 62 K and 31 K, and about 90 % of the edges exceed the 5 K fault tolerance, so the tolerance does not
+apply at a receiving corner. **The pass**, in `SkinBody._move_base` after `hand_down` and the `held` lines: where the base as it would
+stand folds past the limit -- on the draws and the hand-down, the part's absorption and smoothing left out -- across a ridge along an
+edge (a, b) the corners a and b give to the corners opposite it, c and e, and across a valley c and e give to a and b, each of the four
+pairs wanting `SPREAD_SHARE` of the fold's excess over its angle of the metal in the donor's dual cell above the receiver. No donor
+falls below what balances its draw and no receiver rises above the part's allowance, so the part's move ratio holds and a hand-down
+still never splits a part. The metal keeps the donor's mean enthalpy, at most `SPREAD_PASSES` passes a part. **What crosses:** the
+skins have already given up `handed`, so nothing in them changes; `moved`, `inward`, `h_outward` and the reconciliation read the
+spread hand-down, `handed_s` and `landed_H`; `jump_faults`, `held_mass` and `handed_mass` keep what left each skin. **The landing:** at
+a corner that received, the metal crosses the base at the node's enthalpy and the rest of its heat, the excess, goes to the node
+through `pending`, after the reconciliation, because `_advance_part` has set `pending` by then and a part split or repeated has
+returned or restored before it. `MovingMesh.move` shares a correction over all the moving nodes, so booked through `h_outward` the heat
+would go to the whole zone rather than that corner; `pending` is the deferred per-corner heat the next part's 3D solve takes as a load
+and the books count. **A limit that does not bind** returns the very arrays it was given. **A state saved before this** has none of the
+attributes on its body, so they are class defaults too; and a run's columns are its first row's, the saved row's in a resume, so
+`cmd_resume`'s block drops the spreading columns from it and adds `spread_stats()`, which is empty without a limit.
+
+**Measured** (2026-11-06; `measure/task5c/check.md`, each once, on the 50 mm sphere, one limit, one mesh). On the test plate a crest
+handing down 0.025 of an edge a part for 200 parts, moved as the body moves its corners, passes 90 degrees by part 31 with the pass off and
+stays between 59.96 (over the last 100 parts) and 60.03 degrees with a limit of 60. On the production mesh, resumed from the state saved
+at 170.5 s (pickled by 055c313, before spreading existed): to 172.0 s, in 193 s, all 84 shared columns equal the snapshot flight's at full
+precision, the limit binding nowhere at a 37.22 degree fold. To 177.0 s, in 2 014 s, the limit first binds in the row at 174.0 s and the
+largest fold over the 91 rows is 64.86 degrees, at 176.0 s, against 120.14 over the same rows of the snapshot flight; 82 rows are above 60
+degrees, 4 above 62, none above 65, and the last is 61.82. At 177.0 s 5 base edges are past 60 degrees against 108, in the same travelling
+band. 1.704 g moved against 13.63 g handed down (12.5 %, each hop counted), the largest unplaced mass at a move 0.25 mg, the largest landing
+57.4 K above its node. Mass closes to 4.5e-16, the energy balance residual is -1.76e-11, the momentum residual 3.76e-17, and no fault is
+counted against the snapshot's 2. **Two things did not improve.** The 3D mesh's lowest radius ratio, which is what stops a flight, is 0.0533
+against 0.0503, the floor being 0.05, with 26 rows below 0.08 against 14 and 15 rebuilds against 18, so a fold held at 60 degrees does not
+by itself keep the elements off the floor. And the metal stays deeper: the deepest skin at 177.0 s is 5.99 mm against 4.48 mm, 22 corners are
+deeper than 5 mm against none, and 13.63 g is handed down against 15.69 g, the pools the design warned of. The check stops 2.04 s before the
+snapshot flight's stop, so whether a flight now gets past it is untested. The unit tier is 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+
+**Rulings** (2026-11-06; what, why, cost if wrong):
+1. *`SPREAD_SHARE` stays at the 0.25 the design proposed; no tuning was needed.* From 0.0625 to 1.0 the test's largest fold is 60.03 to
+   61.02 degrees, 0.25 the closest, and the passes matter more: one a part overshoots to 70.6, two to 60.4, four to 60.03. Cost: none found
+   on the plate; the production check flew one value.
+2. *The growing ridge's test moves its corners as the body does*, along their normals with the volume-neutral smoothing, irregular
+   triangles, the plate's open rim held still and the crest stopping short of it, at a tenth of the allowance a part. Why: moved along tilted
+   normals with no smoothing the triangles overturn with or without the pass, which tests nothing, and on an open plate the smoothing draws
+   in the rim, which a closed surface does not have. A straight outward move would have passed too, but that is not how the body moves. Cost:
+   the test repeats `MovingMesh.neutral_smoothing`'s few lines, which could drift. At twice the rate the fold holds at 60.7 for 140 parts, then
+   a valley grows at the foot of the ridge's end, where only 4 of the 16 corners around it hold handed metal: a limit of the design, recorded
+   in the test.
+3. *A donor that gives all it has ends at exactly zero* (`SPENT`, 1e-14 of what it held). Why: round-off left there would make its mean
+   enthalpy round-off over round-off, and `MovingMesh.move` books any sweep there at it; a sweep of 1e-13 m3 at a nonsense enthalpy of 3e10 J/kg
+   would move about 8 J. Cost: at most 1e-14 of that donor's hand-down from the sum, within round-off.
+4. *The landing's excess may be negative*: metal colder than its node lands at the node's enthalpy too, and `pending` takes the difference
+   off it. Why: the same books and the same place for the heat. Cost: none found; the check's largest landing is hot.
+5. *`spread_jump_max_K` is reset at the start of `advance`*, as `step_spray` is, not when read: reading the stats twice then gives the same
+   answer. Cost: none, a row is made once a macro step.
+6. *`--spread-limit` is accepted on the heat-only skins (`--skin-flow off`) too*: they hand metal down the same way. Cost: that case is
+   unflown; only its argument is tested.
+7. *The settings record the limit only when there is one*, so every run's JSON without the option is unchanged. *On `resume`, `off` asks
+   nothing of the flight, and a limit is refused unless the body is melting skins.* Cost: none.
+8. *The 177.0 s check used `--frames-every 1`, not 40.* After the continuum switch frames go by flight time, at n times the saved 0.5 s step,
+   so 40 would give one frame in 20 s; 1 gives 13 frames, 58 MB, at the snapshots' cadence. Cost: none.
+9. *`spread_mass_kg` sums the passes*, so metal that moves twice in a part counts twice. Why: it is what the passes moved, and simple. Cost:
+   the column overstates the net sideways mass; the 12.5 % above is an upper bound on it.
+10. *At a corner that received, all its hand-down lands at the node's enthalpy, its own metal too*, not only what came from a neighbour. Why:
+    `h_outward` is one number a corner, and its own metal is within the fault tolerance of the node anyway. Cost: at most 5 K of that metal's
+    heat goes through `pending` rather than across the base.
+
+- [ ] **Step 1: The tests** -- `tests/test_reentry_model_spreading.py`:
+
+{{FILE_TEST_SPREADING_T5C}}
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5C}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5C}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5C}}
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spreading.py -q`. Expected: `ImportError: cannot
+  import name 'spreading'`. The others, with the module in place: failures on `spread_limit`, `parse_spread_limit` and `--spread-limit`,
+  except the refusals, which an unknown option also exits 2 on, and which mean something once the option exists.
+
+- [ ] **Step 3: The pass**, `reentry_model/spreading.py`:
+
+{{FILE_SPREADING_T5C}}
+
+- [ ] **Step 4: The body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5C}}
+
+- [ ] **Step 5: The results and the column list's note** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T5C}}
+
+- [ ] **Step 6: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5C}}
+
+- [ ] **Step 7: Run the tests to see them pass.** Expected: the four files' new tests pass in about 2 minutes across three processes; the unit
+  tier 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+
+- [ ] **Step 8: The production check** (in `measure/task5c/`, on mains power, through `flights/launch.sh`, then `compare.py` and
+  `fold_place.py`): resume `d050__physics__skin.state.pkl` to 172.0 s with `--spread-limit 60 --frames-every 0` and compare with the snapshot
+  flight's `rows.csv`: every shared column but the `wall_` timers the same to the last bit. Then to 177.0 s with `--spread-limit 60
+  --frames-every 1`, recording the fold, `spread_mass_kg`, `spread_unplaced_kg`, the books and the wall time in `measure/task5c/check.md`.
+  A fold above the limit there is a finding to report, not a reason to tune the pass.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add reentry_model/spreading.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_spreading.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: what the skins hand down spreads to lower neighbouring corners where the base as it would stand folds past a limit (--spread-limit DEG|off on run and resume, off by default, reentry_model/spreading.py; Asha's idea and decisions of 2026-11-06), the metal landing hot -- across a ridge its corners give to the corners opposite, across a valley the reverse, no donor below what balances its draw and no receiver above the part's allowance, the metal crossing a receiving base at the node's enthalpy and the rest of its heat going to that node through pending; the history's columns and the results with a limit only, a limit that does not bind changing nothing to the last bit, a resume adding the columns to its saved row or dropping them from it; on the 50 mm state to 177.0 s with a limit of 60 degrees the fold peaks at 64.86 against 120.14, 1.70 g spread against 13.63 g handed down, the books closed and no fault, while the lowest 3D radius ratio is no better (0.053 against 0.050) and the deepest skin is deeper (5.99 mm against 4.48 mm); unit tier 585 passed, 1 skipped (sub-plan 22 Task 5c)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b and 5c written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01) and 5b (2026-11-06).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), and 5b and 5c (2026-11-06).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -15,6 +15,7 @@
 > without a vanishing last step, writes their records to disk as they come and settles the FEniCSx tier's failure;
 > 4b, by Asha's decision on its ruling 6, makes the resolved sheared depth the straight-line equivalent, with no cut-off.
 > Task 5a, for Task 5's convergence repeats, saves a flight's whole state on its way and resumes from it to the last bit; 5b puts the resume on the command line.
+> Task 5c spreads the metal being handed down to lower neighbouring corners where the base would fold past a limit, off by default until the flights have tested it.
 > Tasks 5–6 are the outline's, below, and the inputs it listed are carried at the end.
 
 **Goal:** Girin's spraying acts on each column's top cells, with the film thickness b the whole flowing depth, by the
@@ -8618,7 +8619,1172 @@ git commit -m "Coupled runs: the resume command (python -m reentry_model resume 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a and 5b written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5c: The deposit spread to lower corners, landing hot
+
+**Files:**
+- Create: `reentry_model/spreading.py`
+- Modify: `reentry_model/skinbody.py` (`SPREAD_COLUMNS`, the class's defaults, `SkinBody.__init__`, `advance`, `_move_base`,
+  `spread_stats`, `skin_stats`)
+- Modify: `reentry_model/cli.py` (`parse_spread_limit`, `spread_limit_of`, `--spread-limit` on `run` and in `resume_arguments`, the
+  name suffix, the settings' record, `cmd_run`'s refusal, `cmd_resume`'s option and its marked block)
+- Modify: `reentry_model/coupled.py` (`skin_results`; the note after `SKINBODY_COLUMNS`)
+- Test: `tests/test_reentry_model_spreading.py` (new, 9 tests), `tests/test_reentry_model_skinbody.py` (6),
+  `tests/test_reentry_model_cli.py` (4 tests, 16 cases), `tests/test_reentry_model_restart.py` (2 tests, and 3 more cases of Task 5b's
+  refusals)
+- Create (git-ignored): `prototype/work-2026-10-28-skin-spraying/measure/task5c/`, the production check
+
+**Interfaces:**
+- Consumes: `Columns` (`edges`, `_tri`, `_opp`, `points`, `normal`, `area`, `faces`), `SkinBody._hand_cap()`, Task 5b's
+  `resume_arguments` and the block of `cmd_resume` where options are applied.
+- Produces: `spreading.fold_angles(columns, points)`, `(angle_deg, convex)` per edge; `spreading.spread_hand_down(columns, points,
+  normal, area, rho, drawn, handed, enthalpy, cap, limit_deg, passes=SPREAD_PASSES)`, a `Spread(handed, enthalpy, moved, unplaced,
+  over)`; `SkinBody(..., spread_limit=None)`; `skinbody.SPREAD_COLUMNS` and `SkinBody.spread_stats()`; `--spread-limit DEG|off` on
+  `run` and `resume`, off by default, DEG within (0, 180), exit 2 otherwise or without a melting skin run; the name suffix
+  `_spread-<deg>`; with a limit only, the history's `spread_mass_kg` (since time zero, each hop counted), `spread_unplaced_kg` and
+  `spread_edges_over` (at the last move) and `spread_jump_max_K` (the largest landing over its node's temperature since the last
+  row), the results' `spread_limit_deg` and `spread_mass_kg`, and the JSON's `settings.skin.spread_limit_deg`
+  (`settings.spread_limit_deg` in a resume, whose block is Task 5b's short one).
+
+Asha's idea, in answer to the two skin flights stopping: spread the re-frozen mass to neighbouring cells to keep the angles
+reasonable (`docs/superpowers/specs/2026-11-06-deposit-spreading-design.md`). The snapshot flights put the fold at the toe of a ring of
+re-frozen metal travelling outward (`measure/task5/snapshots/findings.md`), a ridge rather than a sawtooth, so she decided on
+2026-11-06 to build it, and that **spread metal lands hot**. The lower neighbours of a toe are its cold corners: across folded edges the
+3D temperature jumps by a median 62 K and 31 K, and about 90 % of the edges exceed the 5 K fault tolerance, so the tolerance does not
+apply at a receiving corner. **The pass**, in `SkinBody._move_base` after `hand_down` and the `held` lines: where the base as it would
+stand folds past the limit -- on the draws and the hand-down, the part's absorption and smoothing left out -- across a ridge along an
+edge (a, b) the corners a and b give to the corners opposite it, c and e, and across a valley c and e give to a and b, each of the four
+pairs wanting `SPREAD_SHARE` of the fold's excess over its angle of the metal in the donor's dual cell above the receiver. No donor
+falls below what balances its draw and no receiver rises above the part's allowance, so the part's move ratio holds and a hand-down
+still never splits a part. The metal keeps the donor's mean enthalpy, at most `SPREAD_PASSES` passes a part. **What crosses:** the
+skins have already given up `handed`, so nothing in them changes; `moved`, `inward`, `h_outward` and the reconciliation read the
+spread hand-down, `handed_s` and `landed_H`; `jump_faults`, `held_mass` and `handed_mass` keep what left each skin. **The landing:** at
+a corner that received, the metal crosses the base at the node's enthalpy and the rest of its heat, the excess, goes to the node
+through `pending`, after the reconciliation, because `_advance_part` has set `pending` by then and a part split or repeated has
+returned or restored before it. `MovingMesh.move` shares a correction over all the moving nodes, so booked through `h_outward` the heat
+would go to the whole zone rather than that corner; `pending` is the deferred per-corner heat the next part's 3D solve takes as a load
+and the books count. **A limit that does not bind** returns the very arrays it was given. **A state saved before this** has none of the
+attributes on its body, so they are class defaults too; and a run's columns are its first row's, the saved row's in a resume, so
+`cmd_resume`'s block drops the spreading columns from it and adds `spread_stats()`, which is empty without a limit.
+
+**Measured** (2026-11-06; `measure/task5c/check.md`, each once, on the 50 mm sphere, one limit, one mesh). On the test plate a crest
+handing down 0.025 of an edge a part for 200 parts, moved as the body moves its corners, passes 90 degrees by part 31 with the pass off and
+stays between 59.96 (over the last 100 parts) and 60.03 degrees with a limit of 60. On the production mesh, resumed from the state saved
+at 170.5 s (pickled by 055c313, before spreading existed): to 172.0 s, in 193 s, all 84 shared columns equal the snapshot flight's at full
+precision, the limit binding nowhere at a 37.22 degree fold. To 177.0 s, in 2 014 s, the limit first binds in the row at 174.0 s and the
+largest fold over the 91 rows is 64.86 degrees, at 176.0 s, against 120.14 over the same rows of the snapshot flight; 82 rows are above 60
+degrees, 4 above 62, none above 65, and the last is 61.82. At 177.0 s 5 base edges are past 60 degrees against 108, in the same travelling
+band. 1.704 g moved against 13.63 g handed down (12.5 %, each hop counted), the largest unplaced mass at a move 0.25 mg, the largest landing
+57.4 K above its node. Mass closes to 4.5e-16, the energy balance residual is -1.76e-11, the momentum residual 3.76e-17, and no fault is
+counted against the snapshot's 2. **Two things did not improve.** The 3D mesh's lowest radius ratio, which is what stops a flight, is 0.0533
+against 0.0503, the floor being 0.05, with 26 rows below 0.08 against 14 and 15 rebuilds against 18, so a fold held at 60 degrees does not
+by itself keep the elements off the floor. And the metal stays deeper: the deepest skin at 177.0 s is 5.99 mm against 4.48 mm, 22 corners are
+deeper than 5 mm against none, and 13.63 g is handed down against 15.69 g, the pools the design warned of. The check stops 2.04 s before the
+snapshot flight's stop, so whether a flight now gets past it is untested. The unit tier is 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+
+**Rulings** (2026-11-06; what, why, cost if wrong):
+1. *`SPREAD_SHARE` stays at the 0.25 the design proposed; no tuning was needed.* From 0.0625 to 1.0 the test's largest fold is 60.03 to
+   61.02 degrees, 0.25 the closest, and the passes matter more: one a part overshoots to 70.6, two to 60.4, four to 60.03. Cost: none found
+   on the plate; the production check flew one value.
+2. *The growing ridge's test moves its corners as the body does*, along their normals with the volume-neutral smoothing, irregular
+   triangles, the plate's open rim held still and the crest stopping short of it, at a tenth of the allowance a part. Why: moved along tilted
+   normals with no smoothing the triangles overturn with or without the pass, which tests nothing, and on an open plate the smoothing draws
+   in the rim, which a closed surface does not have. A straight outward move would have passed too, but that is not how the body moves. Cost:
+   the test repeats `MovingMesh.neutral_smoothing`'s few lines, which could drift. At twice the rate the fold holds at 60.7 for 140 parts, then
+   a valley grows at the foot of the ridge's end, where only 4 of the 16 corners around it hold handed metal: a limit of the design, recorded
+   in the test.
+3. *A donor that gives all it has ends at exactly zero* (`SPENT`, 1e-14 of what it held). Why: round-off left there would make its mean
+   enthalpy round-off over round-off, and `MovingMesh.move` books any sweep there at it; a sweep of 1e-13 m3 at a nonsense enthalpy of 3e10 J/kg
+   would move about 8 J. Cost: at most 1e-14 of that donor's hand-down from the sum, within round-off.
+4. *The landing's excess may be negative*: metal colder than its node lands at the node's enthalpy too, and `pending` takes the difference
+   off it. Why: the same books and the same place for the heat. Cost: none found; the check's largest landing is hot.
+5. *`spread_jump_max_K` is reset at the start of `advance`*, as `step_spray` is, not when read: reading the stats twice then gives the same
+   answer. Cost: none, a row is made once a macro step.
+6. *`--spread-limit` is accepted on the heat-only skins (`--skin-flow off`) too*: they hand metal down the same way. Cost: that case is
+   unflown; only its argument is tested.
+7. *The settings record the limit only when there is one*, so every run's JSON without the option is unchanged. *On `resume`, `off` asks
+   nothing of the flight, and a limit is refused unless the body is melting skins.* Cost: none.
+8. *The 177.0 s check used `--frames-every 1`, not 40.* After the continuum switch frames go by flight time, at n times the saved 0.5 s step,
+   so 40 would give one frame in 20 s; 1 gives 13 frames, 58 MB, at the snapshots' cadence. Cost: none.
+9. *`spread_mass_kg` sums the passes*, so metal that moves twice in a part counts twice. Why: it is what the passes moved, and simple. Cost:
+   the column overstates the net sideways mass; the 12.5 % above is an upper bound on it.
+10. *At a corner that received, all its hand-down lands at the node's enthalpy, its own metal too*, not only what came from a neighbour. Why:
+    `h_outward` is one number a corner, and its own metal is within the fault tolerance of the node anyway. Cost: at most 5 K of that metal's
+    heat goes through `pending` rather than across the base.
+
+- [ ] **Step 1: The tests** -- `tests/test_reentry_model_spreading.py`:
+
+```python
+"""spreading.py: the metal being handed down spread to lower neighbouring corners where the base would fold past a limit
+(sub-plan 22 Task 5c; Asha 2026-11-06), on a small plate of near-equilateral 1 mm triangles, six neighbours to a corner as
+on the production surface."""
+import numpy as np
+import pytest
+
+from reentry_model import columns, movemesh, spreading
+
+RHO = 2813.0                    # kg/m3
+EDGE = 1e-3                     # m: the plate's triangles' edge
+SPECIFIC = 5e5                  # J/kg: the enthalpy of the metal handed down, unless a test says otherwise
+
+
+def plate(nx=25, ny=25, edge=EDGE, jitter=0.0):
+    """A flat plate in z = 0: `ny` rows of `nx` corners, every other row shifted half an edge and each corner up to `jitter`
+    edges off its place in x and y, as a `columns.Columns` (its triangles outward, +z), with `row(j)`, the corners of row j."""
+    x, y = np.meshgrid(np.arange(nx) * edge, np.arange(ny) * edge * np.sqrt(3.0) / 2.0, indexing="ij")
+    x = x + 0.5 * edge * (np.arange(ny) % 2)[None, :]
+    points = np.c_[x.ravel(), y.ravel(), np.zeros(nx * ny)]
+    points[:, :2] += jitter * edge * np.random.default_rng(1).uniform(-1.0, 1.0, (nx * ny, 2))
+    at = lambda i, j: i * ny + j
+    faces = []
+    for i in range(nx - 1):
+        for j in range(ny - 1):
+            a, b, c, d = at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)
+            faces += [[a, b, d], [a, d, c]] if j % 2 == 0 else [[a, b, c], [b, d, c]]
+    col = columns.Columns(points, np.array(faces))
+    col.row = lambda j: np.array([at(i, j) for i in range(nx)])
+    return col
+
+
+def raised(col, rows, heights):
+    """The plate with each of the rows in `rows` lifted to its height in `heights` [m]."""
+    p = col.points.copy()
+    for j, z in zip(rows, heights):
+        p[col.row(j), 2] += z
+    col.update(p)
+    return col
+
+
+def spread(col, handed, limit=60.0, drawn=None, cap=None, enthalpy=None, passes=spreading.SPREAD_PASSES):
+    drawn = np.zeros(col.n) if drawn is None else drawn
+    allowance = 0.25 * col.edge_length.mean() * RHO * col.area
+    H = SPECIFIC * handed if enthalpy is None else enthalpy
+    return spreading.spread_hand_down(col, col.points, col.normal, col.area, RHO, drawn, handed, H,
+                                      allowance if cap is None else cap, limit, passes=passes)
+
+
+def test_the_fold_is_the_surface_s_measure_with_a_ridge_convex_and_a_valley_not():
+    """`fold_angles` reads the same angle the moving mesh's `surface_fold` reports, and says which way the edge folds; an
+    edge on an open boundary has one triangle and folds nowhere."""
+    col = raised(plate(), [12], [0.5 * EDGE])
+    angle, convex = spreading.fold_angles(col, col.points)
+    assert angle.max() == pytest.approx(movemesh.max_dihedral(col.points, col.faces), rel=1e-12)
+    crest, toe = np.isin(col.edges, col.row(12)).all(axis=1), np.isin(col.edges, col.row(11)).all(axis=1)
+    assert angle[crest][2:-2].min() == pytest.approx(60.0, abs=1e-9) and convex[crest].all()     # two 30 degree faces
+    assert angle[toe][2:-2].min() == pytest.approx(30.0, abs=1e-9) and not convex[toe].any()
+    assert (angle[col._tri[:, 1] < 0] == 0.0).all() and not convex[col._tri[:, 1] < 0].any()
+
+
+def test_a_limit_that_does_not_bind_returns_the_hand_down_itself():
+    """On a flat plate nothing folds, so the hand-down and its enthalpy come back as the very arrays given and nothing has
+    moved: a limit that does not bind changes nothing to the last bit."""
+    col = plate()
+    handed = np.full(col.n, 1e-7)
+    H = SPECIFIC * handed
+    s = spread(col, handed, enthalpy=H)
+    assert s.handed is handed and s.enthalpy is H
+    assert (s.moved, s.unplaced, s.over) == (0.0, 0.0, 0)
+
+
+def test_a_ridge_hands_its_metal_to_its_lower_neighbours_and_keeps_the_sums():
+    """A ridge 1 mm high along a row of corners, folded about 98 degrees against a 60 degree limit, handing down a quarter
+    of the move allowance, with its own enthalpy per column: the sums of the mass and the enthalpy are kept to round-off,
+    every crest corner hands down less than it would have, the metal lands on corners lower than the crest and on no other,
+    and what lands first on a row that handed nothing carries the mean enthalpy of the crest's metal."""
+    col = raised(plate(), [12], [1e-3])
+    crest = col.row(12)
+    handed = np.zeros(col.n)
+    handed[crest] = 0.25 * 0.25 * EDGE * RHO * col.area[crest]
+    unit = np.full(col.n, SPECIFIC)
+    unit[crest] = SPECIFIC * (1.0 + 0.01 * np.arange(len(crest)) / len(crest))     # no two columns' metal alike
+    H = unit * handed
+    s = spread(col, handed, enthalpy=H)
+    assert s.handed is not handed and s.over > 0 and s.moved > 0.0
+    assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12) and s.enthalpy.sum() == pytest.approx(H.sum(), rel=1e-12)
+    inner = crest[2:-2]                                            # clear of the plate's open ends
+    assert (s.handed[inner] < handed[inner]).all()
+    rose = s.handed > handed
+    assert rose.any() and (col.points[rose, 2] < col.points[crest, 2].max()).all()
+    assert (s.handed[col.row(11)[2:-2]] > 0.0).all() and (s.handed[col.row(13)[2:-2]] > 0.0).all()
+    assert (s.handed >= 0.0).all()
+    got = s.enthalpy[rose] / s.handed[rose]
+    assert got.min() >= SPECIFIC * (1.0 - 1e-12) and got.max() <= unit[crest].max() * (1.0 + 1e-12)
+    assert s.moved <= spreading.SPREAD_PASSES * handed.sum()
+
+
+def test_a_valley_fold_gives_from_the_rim_to_the_floor():
+    """A trench along a row, its rims 0.8 mm above its floor: the fold is the floor's, a valley of about 95 degrees (the rims
+    fold about half that, within the 70 degree limit), so the rims hand their metal to the floor and the floor's corners,
+    which handed down nothing, receive it."""
+    col = plate()
+    p = col.points.copy()
+    p[:, 2] = 0.8e-3
+    p[col.row(12), 2] = 0.0
+    col.update(p)
+    angle, convex = spreading.fold_angles(col, col.points)
+    assert not convex[angle > 70.0].any() and (angle > 70.0).sum() > 0
+    floor, rims = col.row(12), np.r_[col.row(11), col.row(13)]
+    handed = np.zeros(col.n)
+    handed[rims] = 0.25 * 0.25 * EDGE * RHO * col.area[rims]
+    s = spread(col, handed, limit=70.0)
+    assert (s.handed[floor[2:-2]] > 0.0).all() and handed[floor].sum() == 0.0
+    assert s.handed[rims].sum() < handed[rims].sum()
+    assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12)
+    rose = np.flatnonzero(s.handed > handed)
+    assert set(rose) <= set(floor)
+
+
+def growing_ridge(limit, parts=200, nx=37, ny=37):
+    """A jittered plate on which the middle of the middle row, 21 corners stopping short of the rim, hands down a tenth of
+    the move allowance every part: the spreading pass (with `limit`, or none), then the body's move, `SkinBody._move_base`'s
+    -- every corner out along its normal by what lands on it, with the tangential smoothing made volume-neutral as
+    `MovingMesh.neutral_smoothing` makes it -- the plate's open rim held still, as a closed surface has no rim for the
+    smoothing to draw in. Returns the largest fold [deg] after every part and the plate."""
+    col = plate(nx, ny, jitter=0.1)
+    crest = col.row(ny // 2)[8:-8]
+    rim = np.unique(col.edges[col._tri[:, 1] < 0].ravel())
+    edges = movemesh.surface_edges(col.faces)
+
+    def held(u):
+        u[rim] = 0.0
+        return u
+    folds = []
+    for _ in range(parts):
+        p, normal, area = col.points, col.normal, col.area
+        allowance = 0.25 * col.edge_length.mean() * RHO * area
+        handed = np.zeros(col.n)
+        handed[crest] = 0.1 * 0.25 * EDGE * RHO * area[crest]
+        landing = handed
+        if limit is not None:
+            s = spreading.spread_hand_down(col, p, normal, area, RHO, np.zeros(col.n), handed, SPECIFIC * handed, allowance,
+                                           limit)
+            assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12) and (s.handed <= allowance * (1.0 + 1e-12)).all()
+            landing = s.handed
+        u = held(movemesh.tangential_smoothing(p, col.faces, normal, edges=edges))
+        for _ in range(movemesh.NEUTRAL_PASSES):
+            u = held(u + normal * (movemesh.swept_volumes(p, p + u, col.faces, col.faces, col.n) / area)[:, None])
+        col.update(p + u + held(normal * (landing / (RHO * area))[:, None]))
+        folds.append(float(spreading.fold_angles(col, col.points)[0].max()))
+    return np.array(folds), col
+
+
+def test_repeated_parts_hold_a_growing_ridge_near_the_limit():
+    """The test of the pass (Asha's idea, 2026-11-06): a crest handing down 0.025 of an edge every part for 200 parts, moved
+    as the body moves its corners. With the pass off it passes 90 degrees, past spec 12's 75-95 degrees, by part 31 and
+    goes on climbing; with a 60 degree limit the base stays within 5 degrees of the limit the whole way, not flattened below
+    it either, the ridge widening instead. Measured 2026-11-06 on this plate: 60.03 degrees at most and 59.96 at least over
+    the last 100 parts. SPREAD_SHARE stayed at the 0.25 the design proposed: from 0.0625 to 1.0 the largest fold is 60.03 to
+    61.02, 0.25 the closest, so the share is not what holds the fold; a limit of 45, 75 or 90 degrees holds to within 0.5; one
+    pass a part overshoots to 70.6, two to 60.4 and four, SPREAD_PASSES, to 60.03. At twice this crest's rate the fold holds
+    at 60.7 for 140 parts, then a valley grows at the foot of the ridge's end, where only 4 of the 16 corners around it hold
+    any handed metal and the smoothing has squeezed the triangles to 0.2 mm edges: only handed metal moves."""
+    off = growing_ridge(None, parts=60)[0]
+    assert off[:40].max() > 90.0 and off.max() > 120.0
+    folds, col = growing_ridge(60.0)
+    assert folds.max() <= 65.0
+    assert folds[-100:].min() >= 55.0
+    assert (col.points[:, 2] > 0.1e-3).sum() > 3 * 21             # it has widened: more than three rows of the crest's length
+
+
+def test_a_receiving_corner_stays_within_its_move_allowance():
+    """However much the ridge would give, no corner hands down more than a part's allowance: a corner's own hand-down plus
+    what lands on it moves its base by at most the allowance, the cap of 2026-10-27, so a part is never split for it."""
+    col = raised(plate(), [12], [2e-3])
+    crest = col.row(12)
+    cap = 0.25 * col.edge_length.mean() * RHO * col.area
+    handed = np.zeros(col.n)
+    handed[crest] = cap[crest]
+    handed[col.row(11)] = 0.9 * cap[col.row(11)]                   # next to nothing left of the allowance
+    s = spread(col, handed, cap=cap)
+    assert s.moved > 0.0
+    assert (s.handed <= cap * (1.0 + 1e-12)).all()
+    assert s.handed[col.row(11)].max() > 0.9 * cap[col.row(11)].max()
+
+
+def test_a_donor_keeps_what_balances_its_draw():
+    """A corner drawing metal moves in by its draw less its hand-down, and that move too is within the allowance, or the part
+    is split for it: a donor gives only down to its draw less the allowance, and a corner already at or under that gives
+    nothing."""
+    col = raised(plate(), [12], [2e-3])
+    crest = col.row(12)
+    cap = 0.25 * col.edge_length.mean() * RHO * col.area
+    drawn, handed = np.zeros(col.n), np.zeros(col.n)
+    drawn[crest], handed[crest] = 1.6 * cap[crest], cap[crest]     # moves in by 0.6 allowances, and may reach 1
+    idle = crest[10]
+    drawn[idle], handed[idle] = 2.0 * cap[idle], 0.5 * cap[idle]   # over the allowance already: it gives nothing
+    s = spread(col, handed, drawn=drawn, cap=cap)
+    floor = drawn - cap
+    assert s.moved > 0.0
+    others = crest[crest != idle]
+    assert (s.handed[others] >= floor[others] * (1.0 - 1e-12)).all()
+    assert (s.handed[others[2:-2]] < handed[others[2:-2]]).any()
+    assert s.handed[idle] >= handed[idle]
+
+
+def test_what_cannot_be_placed_stays_and_is_counted():
+    """Lower corners with no room left: with every neighbour of the crest at its allowance nothing can land, so the crest
+    keeps its metal and the mass that wanted to move is reported, as `held_mass` reports what the tolerance holds. With a
+    little room, that much lands and the rest is reported."""
+    col = raised(plate(), [12], [2e-3])
+    crest, flanks = col.row(12), np.r_[col.row(11), col.row(13)]
+    cap = 0.25 * col.edge_length.mean() * RHO * col.area
+    handed = np.zeros(col.n)
+    handed[crest], handed[flanks] = 0.5 * cap[crest], cap[flanks]
+    # the flanks' toes are folded too and may give to the next rows, leaving room: a limit only the crest exceeds stops that
+    q = col.points + col.normal * (handed / (RHO * col.area))[:, None]
+    limit = float(spreading.fold_angles(col, q)[0].max()) - 5.0
+    s = spread(col, handed, cap=cap, limit=limit, passes=1)
+    assert s.moved == 0.0 and s.unplaced > 0.0 and s.over > 0
+    np.testing.assert_array_equal(s.handed, handed)
+    handed[flanks] = 0.9 * cap[flanks]
+    room = (cap - handed)[flanks].sum()
+    s = spread(col, handed, cap=cap, limit=limit, passes=1)
+    assert 0.0 < s.moved <= room * (1.0 + 1e-12) and s.unplaced > 0.0
+
+
+def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
+    """A corner with a sliver of a hand-down on a ridge far past the limit gives it all: its hand-down and its enthalpy are
+    exactly zero, not round-off, whose quotient would be the mean enthalpy the moving mesh books its sweep at, and the sums
+    still hold."""
+    col = raised(plate(), [12], [1e-3])
+    crest = col.row(12)
+    handed = np.zeros(col.n)
+    handed[crest] = 1e-3 * 0.25 * EDGE * RHO * col.area[crest]
+    H = SPECIFIC * handed
+    s = spread(col, handed, enthalpy=H)
+    inner = crest[2:-2]
+    assert (s.handed[inner] == 0.0).all() and (s.enthalpy[inner] == 0.0).all()
+    assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12) and s.enthalpy.sum() == pytest.approx(H.sum(), rel=1e-12)
+```
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1381,3 +1381,177 @@
+     assert got[1] == pytest.approx(2.0 * sk.thickness()[1], rel=1e-14)
+     assert np.allclose(dz[2], dz[2, 0]) and got[2] == pytest.approx(10.7 * dz[2, 0], rel=1e-12)
+     assert np.isnan(got[3:]).all()
++
++
++# -- spreading the deposit (sub-plan 22 Task 5c; Asha 2026-11-06) ----------------------------------------------------------
++def melting_body(mesh, **kw):
++    """The melting test body of the spraying tests above, 890 K under the 100 mm flight's gas state at 93 s, one flow
++    sub-step a heat sub-step, flown for two 0.125 s macro steps at 3 MW/m2, numpy's generator seeded as a run seeds it: it
++    hands down 3.8 g. Returns the body and its starting mass."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import spray
++    np.random.seed(12345)
++    mat = material.Material.from_drama_json("AA7075_scheil")
++    b = make(mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid), **kw)
++    M0 = b.mass()
++    state = aero_state_at(93.0)
++    for k in range(2):
++        b.advance(0.125 * (k + 1), 0.125, front_loads(b, 3e6), state=state)
++    return b, M0
++
++
++def zero_book(sk):
++    """What no draw left: the base's operations alone, as the deposit tests above run them."""
++    return skin.SkinBook(*(np.zeros(sk.n) for _ in range(8)), momentum_out=np.zeros((sk.n, 3)))
++
++
++def bump(b, peak, share=0.9, T=700.0):
++    """A deposit at `T` on the bottoms of the columns `peak`, `share` of a part's allowance deep."""
++    mat, sk, col = b.material, b.skins, b.columns
++    extra = np.zeros(sk.n)
++    extra[peak] = share * skinbody.MOVE_MAX * col.edge_length.mean() * mat.rho * col.area[peak]
++    sk.add_bottom(extra, float(mat.enthalpy(T)))
++    sk.regrid()
++
++
++def spied(b, monkeypatch):
++    """The arguments of the base move's spreading and of its corner move, as they come: ([(hand-down given, Spread)], [the
++    enthalpy each outward sweep is to be booked at])."""
++    spreads, outward = [], []
++    spread, policy = skinbody.spreading.spread_hand_down, b.moving.move_with_policy
++
++    def recorded(*a, **k):
++        spreads.append((a[6], spread(*a, **k)))
++        return spreads[-1][1]
++
++    def recorded_move(u, h_inward=None, h_outward=None):
++        outward.append(h_outward)
++        return policy(u, h_inward, h_outward)
++    monkeypatch.setattr(skinbody.spreading, "spread_hand_down", recorded)
++    b.moving.move_with_policy = recorded_move
++    return spreads, outward
++
++
++def neighbours(b, corners):
++    """The corners sharing an edge with any of `corners`, those left out."""
++    e = b.columns.edges
++    near = np.unique(np.r_[e[np.isin(e[:, 0], corners), 1], e[np.isin(e[:, 1], corners), 0]])
++    return near[~np.isin(near, corners)]
++
++
++def test_a_limit_that_does_not_bind_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
++    """Nothing folds near 179.9 degrees, so the melting body flown with that limit is the body flown without one in every
++    array and every shared history column, and only the four spreading columns are added, recording nothing moved. Without
++    a limit there are no spreading columns: every run without the option keeps its column set."""
++    off, _ = melting_body(coarse_sphere_mesh)
++    on, _ = melting_body(coarse_sphere_mesh, spread_limit=179.9)
++    assert off.handed_mass > 0.0 and on.spread_limit == 179.9 and off.spread_limit is None
++    assert same_body(off, on)
++    a, c = off.skin_stats(), on.skin_stats()
++    same = lambda x, y: x == y or (np.isnan(x) and np.isnan(y))
++    assert all(same(a[k], c[k]) for k in a if not k.startswith("wall_"))
++    assert set(c) - set(a) == set(skinbody.SPREAD_COLUMNS) and not set(a) & set(skinbody.SPREAD_COLUMNS)
++    assert [c[k] for k in skinbody.SPREAD_COLUMNS] == [0.0, 0.0, 0, 0.0]
++
++
++def test_a_limit_outside_a_fold_s_range_is_refused(coarse_sphere_mesh):
++    for bad in (0.0, 180.0, -1.0, float("nan")):
++        with pytest.raises(ValueError):
++            make(coarse_sphere_mesh, spread_limit=bad)
++
++
++def test_spreading_keeps_the_books(coarse_sphere_mesh):
++    """The melting body with a limit low enough to bind on the 4 mm mesh, whose sphere folds 14 degrees before anything happens:
++    0.6 g of the 3.8 g handed down moves between corners, and the mass closes to 1e-12, the energy balance residual is below
++    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured 2026-11-06: mass exact,
++    energy 1.7e-11, momentum 3.9e-17)."""
++    b, M0 = melting_body(coarse_sphere_mesh, spread_limit=6.0)
++    stats = b.skin_stats()
++    assert stats["spread_mass_kg"] == b.spread_mass > 0.0 and stats["spread_edges_over"] > 0
++    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-12)
++    assert abs(b.energy_balance_residual()) < 1e-8
++    assert stats["momentum_residual"] < 1e-12
++
++
++def test_metal_landing_hot_takes_its_heat_to_the_receiving_corner_and_counts_no_fault(coarse_sphere_mesh, monkeypatch):
++    """Asha's decision of 2026-11-06: spread metal lands hot, because the lower neighbours of a toe are the cold corners ahead
++    of it. A proud corner of the 4 mm sphere at 700 K with its neighbours' nodes 40 K colder, past the 5 K fault tolerance:
++    the metal crosses each receiving base at that node's enthalpy, so the moving mesh shares no correction over the zone for
++    it, and the rest of its heat, the excess, waits in `pending` at that corner alone, which the books count and the next
++    part's 3D solve takes as a load there. No fault is counted, the largest landing is recorded, and the energy is exact
++    before and after the 3D model takes the heat."""
++    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=10.0)
++    b.emissivity = 0.0
++    mat, sk, col, nodes = b.material, b.skins, b.columns, b.moving.corners
++    peak = np.argsort(b.theta)[:1]
++    ring = neighbours(b, peak)
++    T = b.solver.temperature().copy()
++    T[nodes[ring]] -= 40.0
++    b.solver.set_temperature(T)
++    bump(b, peak)
++    spreads, outward = spied(b, monkeypatch)
++    E0, T_node = b.energy(), T[nodes]
++    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
++    handed, s = spreads[0]
++    rose = s.handed > handed
++    cold = rose & np.isin(np.arange(sk.n), ring)
++    assert cold.any() and s.moved > 0.0
++    excess = s.enthalpy[rose] - s.handed[rose] * mat.enthalpy(T_node[rose])
++    assert excess[np.isin(np.flatnonzero(rose), ring)].min() > 0.0
++    np.testing.assert_allclose(b.pending[rose], excess, rtol=1e-12)
++    assert (b.pending[~rose] == 0.0).all()
++    np.testing.assert_allclose(outward[0][cold], mat.enthalpy(T_node[cold]), rtol=1e-12)    # at the node's own enthalpy
++    assert b.jump_faults == 0
++    stats = b.skin_stats()
++    assert 30.0 < stats["spread_jump_max_K"] <= 40.0 + skin.JUMP_TOLERANCE
++    assert b.energy() == pytest.approx(E0, rel=1e-12)
++    T_before = b.solver.temperature()[nodes].copy()
++    zero = heating.HeatingResult(np.zeros(col.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.01, 0.01, zero)
++    assert b.energy() == pytest.approx(E0, rel=1e-12)
++    assert (b.solver.temperature()[nodes[cold]] > T_before[cold]).all()
++    assert b.skin_stats()["spread_jump_max_K"] < stats["spread_jump_max_K"]               # since the last row
++
++
++def test_a_donor_that_gives_away_all_its_hand_down_keeps_the_books(coarse_sphere_mesh, monkeypatch):
++    """A corner 1.5 mm proud of its neighbours with little to hand down -- 0.2 of a part's allowance, some of which goes to the
++    minimum its larger dual cell now needs -- gives all it has and nothing lands on it, being the highest: its hand-down is exactly nothing, so the moving mesh has no enthalpy for it (`h_outward` nan) and books any sweep
++    there at the corner's own, and the reconciliation and the fault count hold: mass and energy exact, nothing not finite, and
++    no fault."""
++    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=15.0)
++    b.emissivity = 0.0
++    mat, sk, col = b.material, b.skins, b.columns
++    peak = np.argsort(b.theta)[:1]
++    u = np.zeros((col.n, 3))
++    u[peak] = 1.5e-3 * col.normal[peak]
++    b.moving.move_with_policy(u)
++    b._refresh_geometry()
++    bump(b, peak, share=0.2)
++    spreads, outward = spied(b, monkeypatch)
++    M0, E0 = b.mass(), b.energy()
++    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
++    handed, s = spreads[0]
++    assert handed[peak] > 0.0 and s.handed[peak] == 0.0
++    gone = (handed > 0.0) & (s.handed == 0.0)
++    assert gone.any() and (s.enthalpy[gone] == 0.0).all() and np.isnan(outward[0][gone]).all()
++    assert b.mass() == pytest.approx(M0, rel=1e-12) and b.energy() == pytest.approx(E0, rel=1e-12)
++    assert np.isfinite(b.solver.temperature()).all() and np.isfinite(sk.T[sk.valid]).all() and np.isfinite(b.pending).all()
++    assert b.jump_faults == 0
++
++
++def test_a_body_saved_without_spreading_attributes_flies_on(coarse_sphere_mesh):
++    """The two real states were pickled before spreading existed, so a body from them has none of its attributes on the
++    instance: the class's defaults give them, it flies on as a body without a limit, and it takes a limit a resume gives it."""
++    b = make(coarse_sphere_mesh, T0=700.0)
++    b.emissivity = 0.0
++    for key in [k for k in vars(b) if "spread" in k]:
++        del vars(b)[key]
++    assert not [k for k in vars(b) if "spread" in k]
++    assert b.spread_limit is None
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.5, 0.5, zero)
++    assert not set(b.skin_stats()) & set(skinbody.SPREAD_COLUMNS) and b.spread_stats() == {}
++    b.spread_limit = 60.0
++    b.advance(1.0, 0.5, zero)
++    assert set(b.spread_stats()) == set(skinbody.SPREAD_COLUMNS) and set(skinbody.SPREAD_COLUMNS) <= set(b.skin_stats())
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -619,8 +619,62 @@
+     assert exc.value.code == 2 and "--surface-model elements" in capsys.readouterr().err
+ 
+ 
++@pytest.mark.parametrize("text,value", [("off", "off"), ("60", 60.0), ("72.5", 72.5), ("0.5", 0.5), ("179.5", 179.5)])
++def test_the_spread_limit_reads_off_or_a_fold_angle(text, value):
++    assert cli.parse_spread_limit(text) == value
++
++
++def test_the_spread_limit_marks_the_run_s_name_and_is_off_by_default():
++    """--spread-limit (sub-plan 22 Task 5c) is off by default, so that every existing run keeps its name; a limit ends a skin
++    run's settings in _spread-<deg>, after the spraying's and before the seed's."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert p.parse_args(melt).spread_limit == "off" and cli.spread_limit_of(p.parse_args(melt)) is None
++    assert name(melt) == name(melt + ["--spread-limit", "off"]) == base
++    assert name(melt + ["--spread-limit", "60"]) == base + "_spread-60"
++    assert name(melt + ["--spread-limit", "72.5"]) == base + "_spread-72.5"
++    assert (name(melt + ["--slurry-spray", "on", "--spread-limit", "60", "--seed", "7"])
++            == base + "_slurryspray-on_spread-60_seed-7")
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, spread_limit=45.0) == "_spread-45"
++
++
++@pytest.mark.parametrize("argv", [
++    THERMAL + ["--melt", "on", "--spread-limit", "0"],
++    THERMAL + ["--melt", "on", "--spread-limit", "180"],
++    THERMAL + ["--melt", "on", "--spread-limit", "-10"],
++    THERMAL + ["--melt", "on", "--spread-limit", "nan"],
++    THERMAL + ["--melt", "on", "--spread-limit", "inf"],
++    THERMAL + ["--melt", "on", "--spread-limit", "steep"],
++    THERMAL + ["--spread-limit", "60"],                                                # nothing melts, so nothing re-freezes
++    FEM + ["--melt", "on", "--spread-limit", "60"],                                    # the element model has no hand-down
++    BASE + ["--spread-limit", "60"],                                                   # no thermal model at all
++])
++def test_a_bad_spread_limit_or_one_without_a_melting_skin_run_exits_2(argv, tmp_path):
++    with pytest.raises(SystemExit) as exc:
++        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2
++
++
+ class _Built(Exception):
+     pass
++
++
++def test_the_command_line_gives_the_skins_their_spread_limit(tmp_path, monkeypatch):
++    """--spread-limit reaches the skin body as a number [deg], None when off, with the flow off too: the heat-only skins hand
++    metal down as well. The body is not built: its arguments are."""
++    from reentry_model import skinbody
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"], 60.0),
++                        (melt + ["--skin-flow", "off", "--spread-limit", "75"], 75.0)):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["spread_limit"] == limit
+ 
+ 
+ def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path, monkeypatch):
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -176,17 +176,72 @@
+     assert same == flight[14:] and doc["settings"]["seed"] == cli.DEFAULT_SEED
+ 
+ 
+-@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan"])
++def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flown, tmp_path):
++    """The rows of a run all take the first row's columns, the saved one's in a resume, so a limit given to a resume adds the
++    spreading columns to the saved row, or the later rows' would be lost, and `off` drops them from a state saved with a
++    limit, or the later rows would raise KeyError (sub-plan 22 Task 5c). The test flight's state saved without a limit, as the
++    two real states were, resumed with one: the columns are in every row, zero in the saved one, the JSON records the limit in
++    its settings, its results and what was changed, and every other column is the flight's, the limit binding nowhere. Then
++    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set."""
++    out, flight, records, state_path = flown
++    names = ["spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K"]
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--spread-limit", "60"]) == 0
++    rows = rows_of(str(tmp_path / "on.csv"))
++    assert len(rows) == 3 and list(rows[0]) == list(flight[14]) + names and all(list(r) == list(rows[0]) for r in rows)
++    assert all(float(rows[0][k]) == 0.0 for k in names)
++    assert [{k: v for k, v in r.items() if k not in names} for r in rows] == flight[14:]
++    doc = json.load(open(str(tmp_path / "on.json")))
++    assert doc["resumed_from"]["changed"] == {"--spread-limit": 60.0} and doc["settings"]["spread_limit_deg"] == 60.0
++    assert doc["results"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_mass_kg"] == 0.0
++
++    limited = str(tmp_path / "limited")
++    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
++                              "--spread-limit", "60"]) == 0
++    saved = os.path.join(limited, "f.state.pkl")
++    doc = json.load(open(os.path.join(limited, "f.json")))
++    assert doc["settings"]["skin"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_limit_deg"] == 60.0
++    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == list(flight[0]) + names
++
++    assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "kept"]) == 0
++    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == list(flight[0]) + names
++    assert json.load(open(str(tmp_path / "kept.json")))["results"]["spread_limit_deg"] == 60.0
++
++    assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "off", "--spread-limit", "off"]) == 0
++    assert rows_of(str(tmp_path / "off.csv")) == flight[14:]
++    doc = json.load(open(str(tmp_path / "off.json")))
++    assert doc["resumed_from"]["changed"] == {"--spread-limit": "off"}
++    assert "spread_limit_deg" not in doc["results"] and "spread_mass_kg" not in doc["results"]
++    assert "spread_limit_deg" not in doc["settings"]
++
++
++@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
++                                  "spread_0", "spread_180", "spread_nan"])
+ def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
+     """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
+-    (0, the saved flight's --dt of 0.025 s] and a value that is not a number are refused with exit 2 (bad input), and
+-    nothing is written."""
++    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees and a value that is not a number are
++    refused with exit 2 (bad input), and nothing is written."""
+     out, flight, records, state_path = flown
+     bad_format = str(tmp_path / "other.pkl")
+     restart.save(bad_format, {"format": restart.FORMAT + 1})
+     state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
+                       "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
+-                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"])}[case]
++                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
++                      "spread_0": (state_path, ["--spread-limit", "0"]), "spread_180": (state_path, ["--spread-limit", "180"]),
++                      "spread_nan": (state_path, ["--spread-limit", "nan"])}[case]
+     with pytest.raises(SystemExit) as exc:
+         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
+     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
++
++
++def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
++    """A flight that does not melt has nothing re-frozen to spread, so a limit given to its resume exits 2, as `run` refuses
++    it; `off` asks nothing of the flight, so that goes through."""
++    pytest.importorskip("cantera")
++    k = FLIGHT.index("--melt")
++    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
++    assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
++    state = str(tmp_path / "dry.state.pkl")
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "60"])
++    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
++    assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "off"]) == 0
+```
+
+- [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spreading.py -q`. Expected: `ImportError: cannot
+  import name 'spreading'`. The others, with the module in place: failures on `spread_limit`, `parse_spread_limit` and `--spread-limit`,
+  except the refusals, which an unknown option also exits 2 on, and which mean something once the option exists.
+
+- [ ] **Step 3: The pass**, `reentry_model/spreading.py`:
+
+```python
+"""Spreading the re-frozen deposit (sub-plan 22 Task 5c; Asha's idea and decisions of 2026-11-06,
+docs/superpowers/specs/2026-11-06-deposit-spreading-design.md).
+
+Both skin flights of 2026-11-05 stopped because a corner's move could no longer be absorbed by the 3D mesh, at the toe of a
+ring of re-frozen metal travelling outward ahead of the flow: at the 100 mm sphere's worst edge the base steps about 1.4 mm
+across a triangle about 1.5 mm wide. A 2 mm triangle cannot carry a ridge narrower than itself, so where the base as it
+would stand after this part's move folds past a limit angle, part of the metal a corner is handing down goes to its lower
+neighbouring corners instead: the angle-of-repose relaxation used for loose material on terrain, applied to the deposit
+(`SkinBody._move_base` calls `spread_hand_down` after `skin.hand_down`). It moves solid metal sideways with no physical
+mechanism, so the deposit's shape at the 2 mm scale is then set by the limit, and the sensitivity to it has to be measured.
+
+Only handed metal moves: draws and absorption stay where they are, and the skins, which have already given the metal up,
+do not change. Each pass finds the edges of the base as it would stand that fold past the limit. Across a ridge along an edge
+(a, b), a and b give to the corners opposite it, c and e; across a valley, c and e give to a and b. Each of those four pairs
+wants the share SPREAD_SHARE of the fold's excess over its angle, of the metal in the donor's dual cell above the receiver.
+No donor falls below what balances its draw, so its move stays within the part's allowance, and no receiver rises above that
+allowance: the part's move ratio holds, and a hand-down still never splits a part (spec 6.6, amended 2026-10-27). The metal
+keeps the donor's mean enthalpy. SPREAD_PASSES passes a part at most, so metal travels at most a ring or two of 2 mm
+neighbours in one part. What is left wanting to move after the last pass, and could leave its donor, is reported, as
+`held_mass` reports what the tolerance holds. A limit that does not bind returns the very arrays it was given, so a run under
+it is the run without it to the last bit."""
+from dataclasses import dataclass
+
+import numpy as np
+
+SPREAD_PASSES = 4       # passes a part at most: metal travels at most a ring or two of 2 mm neighbours in one part
+SPREAD_SHARE = 0.25     # of the fold's excess over a donor's four pairs
+SPENT = 1e-14           # of a donor's hand-down: round-off of a donor that gave all it had, kept as exactly nothing
+
+
+@dataclass
+class Spread:
+    handed: np.ndarray    # kg per column, the hand-down after spreading; the argument itself if the limit does not bind
+    enthalpy: np.ndarray  # J per column, likewise
+    moved: float          # kg moved between columns
+    unplaced: float       # kg still wanting to move after the last pass
+    over: int             # edges over the limit on the first estimate
+
+
+def fold_angles(columns, points):
+    """Per edge of the columns' triangulation with corners at `points` [m, (n, 3)]: the angle [deg] between its two
+    triangles' normals, the measure of `movemesh.max_dihedral` and so of `surface_fold`, zero on an open boundary; and
+    whether it is convex, a ridge along the edge, rather than a valley."""
+    p = np.asarray(points, dtype=float)
+    a, b, c = (p[columns.faces[:, v]] for v in range(3))
+    unit = np.cross(b - a, c - a)
+    unit /= np.linalg.norm(unit, axis=1)[:, None]
+    angle, convex = np.zeros(len(columns.edges)), np.zeros(len(columns.edges), dtype=bool)
+    two = np.flatnonzero(columns._tri[:, 1] >= 0)
+    first, second = unit[columns._tri[two, 0]], unit[columns._tri[two, 1]]
+    angle[two] = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", first, second), -1.0, 1.0)))
+    beyond = p[columns._opp[two, 1]] - p[columns.edges[two, 0]]         # the second triangle's far corner, under the
+    convex[two] = np.einsum("ij,ij->i", beyond, first) < 0.0             # first's plane where the edge is a ridge
+    return angle, convex
+
+
+def _pairs(columns, q, normal, area, rho, angle, convex, over, limit_deg):
+    """The donors, the receivers and the mass [kg] each pair wants to move, on the base at `q`, for the edges `over` the
+    limit (an open boundary's edge has no fold, so no -1 corner comes in): the four pairs an edge makes, those whose donor
+    stands above its receiver along the donor's normal."""
+    ends, opposite = columns.edges[over].T, columns._opp[over].T
+    high, low = np.where(convex[over], ends, opposite), np.where(convex[over], opposite, ends)
+    donor = np.concatenate([high[0], high[0], high[1], high[1]])
+    receiver = np.concatenate([low[0], low[1], low[0], low[1]])
+    dz = np.einsum("ij,ij->i", q[donor] - q[receiver], normal[donor])
+    above = dz > 0.0
+    fold = np.tile(angle[over], 4)[above]
+    want = SPREAD_SHARE * (fold - limit_deg) / fold * rho * area[donor[above]] * dz[above]
+    return donor[above], receiver[above], want
+
+
+def _within(want, who, room, n):
+    """`want` [kg per pair] scaled so that what the pairs of each column `who` add up to stays within its `room` [kg]."""
+    asked = np.bincount(who, want, n)
+    return want * np.minimum(room / np.where(asked > 0.0, asked, 1.0), 1.0)[who]
+
+
+def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy, cap, limit_deg, passes=SPREAD_PASSES):
+    """Spread the part's hand-down (`handed` [kg] and `enthalpy` [J] per column) over the corners at `points` [m], outward
+    `normal`, dual `area` [m2], where the base as it would stand folds past `limit_deg` (module docstring): a Spread. `drawn`
+    [kg] is the part's draws and `cap` [kg] its allowance per column (`SkinBody._hand_cap`). The base's estimate leaves out
+    the part's absorption and smoothing. The sums of the hand-down and its enthalpy are kept to round-off."""
+    n, first, moved = len(handed), 0, 0.0
+    h, H = handed, enthalpy
+    floor = np.maximum(drawn - cap, 0.0)                 # a donor keeps what balances its draw: the part's move ratio holds
+    for k in range(passes + 1):
+        q = points - normal * ((drawn - h) / (rho * area))[:, None]     # the base as it would stand
+        angle, convex = fold_angles(columns, q)
+        over = np.flatnonzero(angle > limit_deg)
+        if k == 0:
+            if not over.size:
+                return Spread(handed, enthalpy, 0.0, 0.0, 0)
+            first = int(over.size)
+        if not over.size:
+            return Spread(h, H, moved, 0.0, first)
+        donor, receiver, want = _pairs(columns, q, normal, area, rho, angle, convex, over, limit_deg)
+        want = _within(want, donor, np.maximum(h - floor, 0.0), n)
+        if k == passes:
+            return Spread(h, H, moved, float(want.sum()), first)
+        want = _within(want, receiver, np.maximum(cap - h, 0.0), n)
+        going = want > 0.0
+        donor, receiver, want = donor[going], receiver[going], want[going]
+        unit = H[donor] / h[donor]                       # the metal keeps the donor's mean enthalpy
+        gave = np.bincount(donor, want, n)
+        rest = 1.0 - gave / np.where(h > 0.0, h, 1.0)
+        rest = np.where(rest < SPENT, 0.0, rest)         # all it had: exactly nothing, or the mean enthalpy the moving
+        h = h * rest + np.bincount(receiver, want, n)    # mesh books its sweep at would be round-off over round-off
+        H = H * rest + np.bincount(receiver, want * unit, n)
+        moved += float(want.sum())
+```
+
+- [ ] **Step 4: The body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -99,7 +99,18 @@
+ same particles_summary.csv -- the release angle's mean by mass, least and largest, b and the resolved sheared depth over
+ Girin's delta_m on the wet windward columns (`sheared_depth`), and each rebuild's mass residual. Where `spool` names a
+ directory the records go to disk as they come (`spray.SourceSpool`): a flight at the continuum step makes tens of
+-millions of them."""
++millions of them.
++
++Spreading the deposit (sub-plan 22 Task 5c; `spread_limit`, None by default; Asha's idea and decisions of 2026-11-06, the
++design of that date; `spreading`): where the base as it would stand after a part's move folds past the limit, part of the
++metal a corner hands down goes to its lower neighbours' corners in step 4, after the hand-down and before the corners move.
++The skins have already given up what they handed down, so nothing in them changes: the corners move, and each column is
++reconciled, by the spread hand-down, whose sum is the hand-down's. The metal lands hot: it crosses a receiving base at the
++node's enthalpy and the rest of its heat goes to that node through `pending` (`_move_base`). `held_mass`, `handed_mass` and
++the fault count keep the hand-down as it left each skin. The history's spreading columns are `SPREAD_COLUMNS`, with a limit
++only (`spread_stats`), and a limit that does not bind changes nothing to the last bit. A body pickled before this has none of
++these attributes on the instance, so they are class defaults too: the saved flights of 2026-11-06 resume with or without a
++limit."""
+ import copy
+ import dataclasses
+ import math
+@@ -115,6 +126,7 @@
+ from . import rheology
+ from . import skin as skin_mod
+ from . import spray as spray_mod
++from . import spreading
+ from .body import ThermalBody
+ from .thermal import SIGMA_SB
+ 
+@@ -164,6 +176,11 @@
+ 
+ SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
+                                   # large-fragment design's labelled assumption for slurry)
++
++# the history's spreading columns (sub-plan 22 Task 5c), with a limit only (`SkinBody.spread_stats`): kg moved between columns
++# since time zero, kg still wanting to move and edges over the limit at the last move, and the largest landing [K] of metal over
++# its node's temperature since the last row
++SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K")
+ 
+ 
+ @dataclasses.dataclass
+@@ -530,12 +547,23 @@
+     22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`; its
+     droplet records, one block of source-table rows per macro step, in `source_rows` where `particles`, and the size
+     histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
+-    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory."""
++    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory.
++    `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
++    (`spreading`; sub-plan 22 Task 5c), None for no spreading."""
++    # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
++    spread_limit = None                  # deg
++    spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
++    spread_over = 0                      # edges over the limit on the last move's first estimate
++    spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
+ 
+     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+-                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None):
++                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
++                 spread_limit=None):
++        if spread_limit is not None and not 0.0 < spread_limit < 180.0:
++            raise ValueError("spread_limit must be None or an angle within (0, 180) degrees, got {!r}".format(spread_limit))
++        self.spread_limit = spread_limit
+         if repeat_rule not in REPEAT_RULES:
+             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
+         self.flow_cycles = flow_cycles
+@@ -644,6 +672,7 @@
+         `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
+         n, self._ratio, self.step_parts = self._hint, 0.0, 0
+         self.step_spray, self._released_step = _no_step_spray(), 0.0
++        self.spread_jump = 0.0
+         if self.flow_on:
+             end = forcing if forcing is not None else self.flow_forcing(state)
+             last = self._forcing_prev
+@@ -908,7 +937,9 @@
+         metal within the fault tolerance of the node (spec 6.6, amended 2026-10-26); what the tolerance and the cap keep
+         back, against a hand-down with neither, is recorded (`held_mass`). The bottom cell is then judged against the
+         metal that crossed and, for a hand-down, the cell it uncovered -- the rest of a cell the cap took in part, at its
+-        own temperature, where the cap ends inside one (`jump_faults`)."""
++        own temperature, where the cap ends inside one (`jump_faults`). With `spread_limit` the hand-down is first spread
++        over the corners (module docstring): the move and the reconciliation read the spread hand-down, `handed_s` with
++        its enthalpy `landed_H`, and the fault count and `handed_mass` what left each skin, `handed`."""
+         mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
+         started = time.perf_counter()
+         T_node = self.solver.temperature()[mm.corners]
+@@ -920,19 +951,45 @@
+         uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
+         held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
+         self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
++        handed_s, landed_H, excess = handed, handed_H, None                       # what crosses each base; the same arrays
++        if self.spread_limit is not None:                                         # without a limit (sub-plan 22 Task 5c)
++            s = spreading.spread_hand_down(col, col.points, col.normal, col.area, mat.rho, book.drawn, handed, handed_H,
++                                           self._hand_cap(), self.spread_limit)
++            self.spread_mass += s.moved
++            self.spread_unplaced, self.spread_over = s.unplaced, s.over
++            handed_s, landed_H = s.handed, s.enthalpy
++            # Spread metal lands hot (Asha, 2026-11-06). The 5 K fault tolerance does not apply where it lands: the lower
++            # neighbours of a toe are the cold corners ahead of it, across folded edges the 3D temperature jumps by a median
++            # 62 K and 31 K on the two spheres and about 90 % of the edges exceed 5 K, so the rule would refuse most of the
++            # spreading it is for, and hot metal freezing on cold metal is what happens at a real toe. Metal landed here from a
++            # neighbour crosses this base at this node's enthalpy, and the rest of its heat goes to this node through
++            # `pending`, the deferred per-corner heat the next part's 3D solve takes as a load and the energy books count:
++            # booked through `h_outward` instead, `MovingMesh.move` would share the correction over all the moving nodes, the
++            # whole zone rather than this corner. Added below, after the reconciliation: `_advance_part` has by then set
++            # `pending` to this part's mismatch, and a part split or repeated has returned or restored before it, so the heat
++            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh.
++            received = handed_s > handed
++            if received.any():
++                jump = mat.temperature_from_enthalpy(landed_H[received] / handed_s[received]) - T_node[received]
++                self.spread_jump = max(self.spread_jump, float(jump.max()))
++            excess = np.where(received, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
++            landed_H = landed_H - excess
+         if mat.melts:
+             self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
+-        moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
++        moved = (book.drawn - handed_s) / (mat.rho * col.area)                    # m inward by drawing and handing down
+         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
+-        inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
++        inward = book.drawn / mat.rho + depth * col.area - handed_s / mat.rho        # m3 per corner
+         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
+         rebuilds = mm.rebuilds
+         h_inward = lambda d: skin_mod.profile_enthalpy(mat, T_node, g0, 0.0, d)
+-        h_outward = np.where(handed > 0.0, handed_H / np.where(handed > 0.0, handed, 1.0), np.nan)
++        # nan where nothing lands, as where a donor gave away all it handed down: any sweep there is at the corner's own enthalpy
++        h_outward = np.where(handed_s > 0.0, landed_H / np.where(handed_s > 0.0, handed_s, 1.0), np.nan)
+         r = mm.move_with_policy(u, h_inward, h_outward)
+         if mm.rebuilds > rebuilds:
+             self.wall["rebuild"] += mm.last_rebuild.seconds
+-        sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
++        sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed_s), r.swept_enthalpy - (book.drawn_H - landed_H))
++        if excess is not None:
++            self.pending = self.pending + excess
+         self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
+         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
+         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+@@ -1067,7 +1124,16 @@
+                 # rebuild's mass residual, summed and the last
+                 **self._depth_ratios(flowing),
+                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
+-                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0}
++                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
++                **self.spread_stats()}
++
++    def spread_stats(self):
++        """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run
++        without one keeps its column set, and read here alone, as a resume adds them to its saved row or drops them from
++        it: a run's columns are its first row's (`coupled.CoupledRun.run`)."""
++        if self.spread_limit is None:
++            return {}
++        return dict(zip(SPREAD_COLUMNS, (self.spread_mass, self.spread_unplaced, self.spread_over, self.spread_jump)))
+ 
+     def _depth_ratios(self, flowing):
+         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
+```
+
+- [ ] **Step 5: The results and the column list's note** in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -64,6 +64,8 @@
+                     # each rebuild's mass residual beside its energy residual
+                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
+                     "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
++# with --spread-limit only, skinbody.SPREAD_COLUMNS follow these (sub-plan 22 Task 5c): a run's columns are its first row's, so
++# a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
+ # particles_summary.csv, one row a macro step: the element model's history columns
+ SUMMARY_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um",
+                    "theta_cr_deg", "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
+@@ -274,6 +276,8 @@
+                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
+                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
+         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
++        if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
++            out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
+         return out
+ 
+     def thermal_results(self, history):
+```
+
+- [ ] **Step 6: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -4,11 +4,12 @@
+         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+-        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
++        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+-        --slurry-spray on|off]       (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
++        --slurry-spray on|off --spread-limit DEG|off]
++                                     (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
+@@ -105,6 +106,24 @@
+     return value
+ 
+ 
++def parse_spread_limit(text):
++    """--spread-limit: `off`, or a fold angle [degrees] within (0, 180)."""
++    if text == "off":
++        return text
++    try:
++        value = float(text)
++    except ValueError:
++        value = float("nan")
++    if not 0.0 < value < 180.0:
++        raise argparse.ArgumentTypeError("spread-limit must be off or an angle within (0, 180) degrees, got {!r}".format(text))
++    return value
++
++
++def spread_limit_of(args):
++    """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
++    return None if args.spread_limit == "off" else args.spread_limit
++
++
+ def continuum_step(args):
+     """The macro step after the continuum switch [s], or None for no switch: --dt-continuum if given (`off`: none), else
+     DEFAULT_DT_CONTINUUM for the model proper -- melting with Girin removal -- and none for the instant-removal device
+@@ -166,7 +185,7 @@
+ 
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
+-                     slurry_spray=False):
++                     slurry_spray=False, spread_limit=None):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+@@ -175,8 +194,9 @@
+     `_skinflow-off` for the heat-only skins of a melting run (`flow` False: the flow, sub-plan 21 Task 6c, is on by default
+     with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
+     the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
+-    sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3); empty
+-    for the defaults."""
++    sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
++    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c); empty for the
++    defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -202,6 +222,8 @@
+         out += "_flowcycles{}".format(flow_cycles)
+     if slurry_spray:
+         out += "_slurryspray-on"
++    if spread_limit is not None:
++        out += "_spread-{:g}".format(spread_limit)
+     return out
+ 
+ 
+@@ -260,6 +282,9 @@
+                     help="VTK frame every n macro steps, the series new (default: the saved flight's setting)")
+     rs.add_argument("--slurry-spray", choices=("on", "off"), default=None,
+                     help="the exposed slurry sprays too (default: the saved flight's)")
++    rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
++                    help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
++                         "flight's, off for one saved before the option existed)")
+ 
+ 
+ def build_parser():
+@@ -386,6 +411,10 @@
+                     help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
+                          "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
+                          "liquidus, on a viscosity law with no data there (default off)")
++    me.add_argument("--spread-limit", type=parse_spread_limit, default="off",
++                    help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
++                         "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
++                         "lands hot (sub-plan 22 Task 5c; off until the flights have tested it; default off)")
+     me.add_argument("--skin-flow-cycles", type=int, default=None,
+                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+@@ -475,7 +504,7 @@
+                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
+                                      spray=spray_model_of(args, mat) if flow else None,
+                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
+-                                     spool=spool if flow else None)
++                                     spool=spool if flow else None, spread_limit=spread_limit_of(args))
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -508,6 +537,8 @@
+                         "swell": args.skin_swell == "on", "flow": args.skin_flow,
+                         "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles,
+                         "slurry_spray": args.slurry_spray}
++        if spread_limit_of(args) is not None:
++            info["skin"]["spread_limit_deg"] = spread_limit_of(args)
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -557,7 +588,8 @@
+                                                                     args.skin_swell == "on", args.fine_band, args.fine_size,
+                                                                     args.skin_fine_zone,
+                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
+-                                                                    args.skin_flow_cycles, args.slurry_spray == "on"))
++                                                                    args.skin_flow_cycles, args.slurry_spray == "on",
++                                                                    spread_limit_of(args)))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -635,6 +667,8 @@
+     if args.slurry_spray == "on" and args.skin_flow != "on":
+         parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
+                      "sprays by the skins' spraying from their top cells")
++    if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
++        parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
+     if args.surface_model == "skin":
+         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
+                             ("--molten-cascade off", args.molten_cascade == "off"),
+@@ -848,6 +882,11 @@
+         if args.slurry_spray == "on" and getattr(run.body, "spray", None) is None:
+             parser.error("--slurry-spray on needs a saved flight with the skins' spraying (--skin-flow on)")
+         changed["--slurry-spray"] = args.slurry_spray
++    skins = isinstance(run.body, skinbody.SkinBody)
++    if args.spread_limit is not None:
++        if spread_limit_of(args) is not None and not (skins and run.body.material.melts):
++            parser.error("--spread-limit needs a saved flight of melting skins: it spreads the metal they hand down")
++        changed["--spread-limit"] = args.spread_limit
+     if args.seed is not None:
+         changed["--seed"] = args.seed
+     # -- the point between loading the state and flying on, where each option is applied; keep the options above and
+@@ -866,6 +905,11 @@
+         run._frame_dt, run._next_frame = args.frames_every * saved.dt, run.sim.t
+     if "--slurry-spray" in changed:
+         run.body.slurry_spray = args.slurry_spray == "on"
++    if "--spread-limit" in changed and skins:      # every row takes the saved row's columns, which have to say so
++        run.body.spread_limit = spread_limit_of(args)
++        for key in skinbody.SPREAD_COLUMNS:
++            state["row"].pop(key, None)
++        state["row"].update(run.body.spread_stats())
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -886,6 +930,8 @@
+     thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
+                                                          "skin_flow", "slurry_spray")}
+     thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
++    if skins and run.body.spread_limit is not None:
++        thermal_info["spread_limit_deg"] = run.body.spread_limit
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 7: Run the tests to see them pass.** Expected: the four files' new tests pass in about 2 minutes across three processes; the unit
+  tier 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+
+- [ ] **Step 8: The production check** (in `measure/task5c/`, on mains power, through `flights/launch.sh`, then `compare.py` and
+  `fold_place.py`): resume `d050__physics__skin.state.pkl` to 172.0 s with `--spread-limit 60 --frames-every 0` and compare with the snapshot
+  flight's `rows.csv`: every shared column but the `wall_` timers the same to the last bit. Then to 177.0 s with `--spread-limit 60
+  --frames-every 1`, recording the fold, `spread_mass_kg`, `spread_unplaced_kg`, the books and the wall time in `measure/task5c/check.md`.
+  A fold above the limit there is a finding to report, not a reason to tune the pass.
+
+- [ ] **Step 9: Commit.**
+
+```bash
+git add reentry_model/spreading.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_spreading.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: what the skins hand down spreads to lower neighbouring corners where the base as it would stand folds past a limit (--spread-limit DEG|off on run and resume, off by default, reentry_model/spreading.py; Asha's idea and decisions of 2026-11-06), the metal landing hot -- across a ridge its corners give to the corners opposite, across a valley the reverse, no donor below what balances its draw and no receiver above the part's allowance, the metal crossing a receiving base at the node's enthalpy and the rest of its heat going to that node through pending; the history's columns and the results with a limit only, a limit that does not bind changing nothing to the last bit, a resume adding the columns to its saved row or dropping them from it; on the 50 mm state to 177.0 s with a limit of 60 degrees the fold peaks at 64.86 against 120.14, 1.70 g spread against 13.63 g handed down, the books closed and no fault, while the lowest 3D radius ratio is no better (0.053 against 0.050) and the deepest skin is deeper (5.99 mm against 4.48 mm); unit tier 585 passed, 1 skipped (sub-plan 22 Task 5c)"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b and 5c written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
