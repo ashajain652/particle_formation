@@ -4,7 +4,9 @@ Date: 2026-10-11
 Status: draft for Asha's review. Designed with Asha in the brainstorming sessions of 2026-10-09 to 2026-10-11; every
 decision is listed with its date in §16, and the ledger `.superpowers/sdd/18-melt-layer-skin/progress.md` holds the
 discussion behind each. Amended 2026-10-12 (while planning sub-plan 20): the booking of swept volumes (§5.2), the rebuild
-transfer (§5.3), level 2 of the ladder (§11.1), with the measurements behind each.
+transfer (§5.3), level 2 of the ladder (§11.1), with the measurements behind each. Amended 2026-11-06 (sub-plan 22 Tasks 5, 5b
+and 5c): where the deposit's fold sits and the spreading pass built against it (§6.6, §10.1, §10.2, §12, §16), with
+`2026-11-06-deposit-spreading-design.md`.
 Supersedes: `2026-10-07-melt-layer-skin-design.md` (one-dimensional skins under melting patches on a fixed mesh), whose
 stage 1 was built and failed its box test (§2); the derived surface of `2026-09-27-surface-recession-remeshing-design.md`
 §5 and §8 (the geometry follows the mesh here, not the reverse). Reuses from that design its dense band (§6), its mesh
@@ -392,6 +394,27 @@ After the sub-steps, each column's base moves by the metal crossing it:
   1.56 s splitting failed -- the same 1.026 allowances at parts of 62.5 to 7.8 ms -- eight of the last fifteen parts
   were kept over the allowance at the split limit, the 12.4 g held came down in 0.039 s and the mesh failed at 1.60 s.
   With the cap the reduced pushed plate split no part after 1.3 s.)
+- **Spread** (built 2026-11-06, sub-plan 22 Task 5c; off unless `--spread-limit` is given, §10.1). Where the base as it
+  would stand after the part's draws and hand-downs folds past the limit angle, part of the metal a corner hands down goes
+  instead to its lower neighbours on the column graph, as loose material relaxes to its angle of repose: across a ridge the
+  two corners of the folded edge give to the corners opposite it, across a valley the reverse, each pair wanting 0.25 of
+  the fold's excess over the limit (`SPREAD_SHARE`), at most four passes (`SPREAD_PASSES`) a part. No donor falls below what
+  balances its draw and no receiver rises above the part's move allowance (§7.1); only handed metal moves, and the sums of
+  mass and enthalpy are kept. (Asha's idea and decisions, 2026-11-06. Her question, in answer to the two skin flights
+  stopping on deposit folds: could the re-frozen mass be spread to neighbouring cells to keep the angles reasonable. The
+  snapshot flights showed the fold at the toe of a travelling ring of re-frozen metal, a ridge and not a one-corner
+  sawtooth, so she decided to build it, **that spread metal lands hot**, and that it is built with subagents.) **Landing
+  hot:** the fault tolerance above (5 K) does not apply at a receiving corner, because the lower neighbours of a toe are
+  the cold corners ahead of it -- across the folded edges the 3D temperature jumps by a median 62 K on the 100 mm sphere and
+  31 K on the 50 mm, about 90 % of them above 5 K -- and hot metal freezing on cold metal is what happens at a real toe.
+  At a corner where metal arrived in any pass the metal crosses the base at the node's enthalpy and the rest of its heat
+  goes to that node through the deferred per-corner heat the next part's 3D solve takes as a load (`SkinBody.pending`), not
+  through the outward sweep's booking, which the moving mesh shares over all the moving nodes and would put in the whole
+  zone. The landing is not a base fault; its largest size is recorded. The approximation is stated: it moves solid metal
+  sideways with no mechanism, justified by resolution (a 2 mm triangle cannot carry a ridge narrower than itself); the
+  total deposited is unchanged and its shape at the 2 mm scale is set by the limit chosen. (Amended 2026-11-06 after Task
+  5c's review: where metal landed was first read as a corner handing down more than it started with, which missed corners
+  that took hot metal and gave more onward; it is read pass by pass, and this was not flown.)
 
 Metal crossing the base carries its own enthalpy — the 3D field's enthalpy in the swept volume for a draw or absorption,
 the cells' enthalpy for a hand-down — and the other side gains or loses exactly that: the moving mesh books an
@@ -603,6 +626,7 @@ last bit.)
 | `--slurry-spray on\|off` | `off` | `_slurryspray-on` |
 | `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `on` with `--melt on` (Asha, 2026-10-29; `off` before) | `_skinflow-off` |
 | `--skin-flow-cycles` (flow sub-steps in each skin sub-step, fixed) | chosen each skin sub-step (Task 6d) | `_flowcycles<value>` |
+| `--spread-limit DEG\|off` (the fold, in degrees within (0, 180), past which a hand-down spreads, §6.6; sub-plan 22 Task 5c) | `off` | `_spread-<deg>` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
 (50 µm), the rebuild threshold (radius ratio 0.05) and gap (20 steps), the base temperature-jump tolerance (5 K), the
@@ -634,6 +658,16 @@ hold read is not zero -- or at the Knudsen switch, whichever comes first; the re
 Knudsen number's alone, unchanged. No flag turns the melting trigger off; `--dt-continuum off` turns the continuum
 step off.
 
+(Built in sub-plan 22 Tasks 5b and 5c, 2026-11-06, facts 191–192.) `--spread-limit` is on `run` and on the new `resume`
+command (`python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every
+--slurry-spray --spread-limit]`, which continues a flight saved with `--save-state-at` to the last bit and writes the files
+`run` writes). **It is off by default until flights have tested it, so every existing run stays as it is: a ruling of the
+controller's, not yet confirmed by Asha** (the design's first draft implied on); the cost if wrong is that flights must pass
+the option. The design's proposed starting value is 60 degrees, below §12's 75–95 and above the 37 degrees the 50 mm base shows before
+any melting. A limit outside (0, 180), or given to a run that does not have melting skins, exits with code 2; `resume`
+exits 2 too for a missing or foreign state, an end of flight not after the saved time, or a continuum step outside (0,
+`--dt`]. The settings record the limit only when there is one, so a run without it writes the JSON it always did.
+
 ### 10.2 Outputs
 
 History, per macro step: column cells (total), deepest column (mm), columns above their minimum, flowing depth (mean,
@@ -664,6 +698,13 @@ where the element model has its film, the skins' mean liquid and flowing depths.
 release angle (§8) over each step's released mass: its mean by mass, least and largest, empty where nothing was
 released. A skin run's results gain the sprayed mass, the droplets and the rows written, the flow's wall time and the
 rebuilds' mass residual.
+
+Built in sub-plan 22 Task 5c (2026-11-06), with a spread limit only: the history gains `spread_mass_kg` (the metal moved
+sideways since time zero, each hop counted, so metal that moves twice in a part counts twice and the column is an upper
+bound on the net), `spread_unplaced_kg` (what could not be placed at the last move), `spread_edges_over` (edges past the
+limit on the first estimate, at the last move) and `spread_jump_max_K` (the largest landing over its node's temperature
+since the last row); the results gain `spread_limit_deg` and `spread_mass_kg`. A resumed run's results count from the
+start of the flight, its droplet files from the resume.
 
 ### 10.3 Code
 
@@ -824,6 +865,23 @@ Each stage is tested and measured before the next begins.
   runoff also freezes downstream of the heat. The fallback (option 3) is a hand-down limited by its neighbours' depth,
   as the rim limit for absorption below, or local refinement (§13), once it is known whether the ridge is a rivulet of
   runoff freezing or a grid-scale product of the flow.
+  *Where the fold sits* (measured 2026-11-06, sub-plan 22 Task 5's snapshot flights, fact 191; one flight on each
+  sphere): at the toe of a ring of re-frozen metal travelling outward ahead of the flow at about 4 mm/s, all the way round
+  and not on the receded nose -- 347 base edges over 60 degrees on the 100 mm sphere at its 33.0 s stop and 149 on the 50 mm
+  sphere at its 179.0 s stop -- a ridge and not a sawtooth, wide enough to resolve on the 100 mm sphere (about five
+  triangles) but with its toe not resolved, and the top surface folds as much as the base or more. Metal also gathers at
+  the tips of lobes that grow on the front (the 50 mm sphere at 179.0 s: 12.4 g in 101 corners deeper than 5 mm, up to
+  22.4 mm), which hand-down spreading does not reach, so a flight with the fold held may stop on those pools next; they
+  need the spray outlet or a flow that can leave them. Asha decided on 2026-11-06 to build the spreading of §6.6 against the
+  ridge, as an approximation stated there. *What the check showed* (fact 192): on the 50 mm state resumed from 170.5 s to
+  177.0 s with a limit of 60 degrees, the largest fold was 64.86 degrees against 116.75 in the snapshot flight, with the
+  books closed. **Whether a flight now gets past the old stops, 33.0 s on the 100 mm sphere and 179.04 s on the 50 mm, is
+  untested**: the check ended 2.04 s before the latter, and the resumed flights have not been flown. **The lowest 3D
+  radius ratio near 0.05 is where a rebuild fires by design, so on its own it is no measure of mesh health;** the
+  like-with-like comparison to 175.5 s is 5 rebuilds against 8 and a lowest ratio of 0.0945 against 0.0787, the ratio in
+  a rebuild's rows having a median of 0.162 against 0.125 (one flight each, identical to 174 s). What stops a flight is a
+  move refused on a freshly rebuilt mesh. The check's numbers describe the code just before the review's `Spread.landed`
+  fix.
 - **Thick columns on concave surfaces**: column tops could cross where a skin is thicker than the local concave radius
   of curvature; not expected at millimetre depths, watched through the top surface's triangle quality.
 - **Slurry rheology**: Li et al.'s law was measured to 490 1/s at solid fractions 0.1–0.5; the bridge to the liquid has
@@ -1173,3 +1231,14 @@ Each stage is tested and measured before the next begins.
   `_skinflow-off`; and on the skins the continuum step also latches at the first macro step at whose end they hold
   liquid above the liquidus, or at the Knudsen switch if that comes first, the element model's switch unchanged (§10.1;
   built in sub-plan 22 Task 3b). The macro step itself is left to Task 5's measurement (Asha).
+- 2026-11-06 (after sub-plan 22 Task 5's snapshot flights, fact 191, and Task 5c, fact 192): Asha's idea, to spread the
+  re-frozen mass to neighbouring cells to keep the angles reasonable, is built as a pass in the base's move (§6.6), once
+  the snapshots showed the fold to be a ridge at the toe of a travelling ring of re-frozen metal and not a sawtooth;
+  **spread metal lands hot**, crossing the base at the receiving node's enthalpy with the rest of its heat sent to that
+  node through the deferred per-corner heat, over booking it through the outward sweep, which shares it over the whole
+  moving zone, and over holding it to the 5 K tolerance, which would refuse most of the spreading; and it is built with
+  subagents (Asha). `--spread-limit` is off by default until flights have tested it (§10.1): the controller's ruling,
+  not yet confirmed by Asha. Where metal landed is read pass by pass (`Spread.landed`), over the first formula (a corner
+  handing down more than it started with), which missed corners that took hot metal and gave more onward (the controller's
+  ruling after the build's review). The production check was not re-run after that fix, the resumed flights superseding
+  it. Whether a flight gets past the old stops is untested.

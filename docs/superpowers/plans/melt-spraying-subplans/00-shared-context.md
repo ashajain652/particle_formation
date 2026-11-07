@@ -3004,6 +3004,89 @@ of one comment in `spray.py`, both changed after.
      generator re-seeded. Each measured once. So a convergence repeat resumed from the base flight's state at 88 s
      differs from the base only by the setting it changes.
 
+## Amendment of 2026-11-06 — sub-plan 22 Task 5 snapshot flights, Tasks 5b and 5c: the resume command and the deposit spread to lower corners (facts 191–192)
+
+> Asha's decisions of 2026-11-06: her idea, "Could we smooth the re-frozen mass by spreading the re-frozen mass around to
+> neighboring cells to keep the angles reasonable?", answered with snapshot flights and a design drafted on paper
+> (`docs/superpowers/specs/2026-11-06-deposit-spreading-design.md`); then, with the snapshots in, that spread metal lands
+> hot and that it is built with subagents (`docs/superpowers/plans/2026-11-06-deposit-spreading-build.md`). The
+> controller's ruling, not yet confirmed by Asha: `--spread-limit` is off by default until flights have tested it. Facts
+> 1–190 stand.
+
+191. **The snapshot flights (sub-plan 22 Task 5, 2026-11-06; `measure/task5/snapshots/findings.md`).** The two skin flights
+     of 2026-11-05 flown again from the same code (055c313) with a frame every macro step (`--frames-every 1`, frames 0.5 s
+     apart; 3.1 GB) and a state saved one step before the flow (1.38 GB at 22.0 s on the 100 mm sphere, 0.29 GB at 170.5 s
+     on the 50 mm). Both stopped with the same error at the same place, and every column but the timers matched the first
+     flights' exactly: 769 rows and a stop at 33.00 s, 557 rows and a stop at 179.04 s. Each sphere flown once, on one mesh.
+     *Where the fold is:* at the toe of a ring of re-frozen metal that travels outward ahead of the flow at about 4 mm/s on
+     both spheres (mean front 26.6 to 59.4 degrees from the point of highest heating from 26 to 33 s on the 100 mm sphere;
+     41.0 to 89.9 degrees from 174 to 179 s on the 50 mm). At the stops 347 base edges (100 mm) were folded over 60 degrees,
+     all between 50.6 and 66.5 degrees from the hottest point, and 149 (50 mm), between 72.9 and 117.1 degrees; none sits
+     on the receded nose (mean recession within 15 degrees of the hottest point 6.8 mm and 8.5 mm). The ridge of re-frozen
+     metal stands a median 3.55 mm above the start (highest corner 5.13 mm) on the 100 mm sphere, 9 mm wide at half height,
+     about five triangles, and 2.35 mm (3.36 mm) on the 50 mm, 2 to 6 mm wide, one to three triangles; metal lost from
+     below the start 33 g and 24 g, gained above it 26 g and 7.8 g. At the 100 mm sphere's worst edge the base steps about
+     1.4 mm across a triangle about 1.5 mm wide, between a corner with flowing metal and a dry one. *A ridge, not a
+     sawtooth:* a corner's roughness correlates positively with its neighbours' (0.25 to 0.73), and the top surface folds
+     as much as the base or more (178.4 and 179.3 degrees at the stops against 137 and 130). The ridge is resolved on the
+     100 mm sphere, its toe is not, and on the 50 mm the ridge itself is marginal. *Lobes and pools:* the front stays round,
+     then breaks into lobes (100 mm: root-mean-square spread of the front about 1 degree to 31 s, then wavenumbers 10 to 11
+     grow from 0.45 to 3.84 degrees by 33 s; 50 mm: 1.6 degrees to 176 s, wavenumbers 3 to 4 growing to 12.6 degrees by
+     179 s), at spacings of about 25 mm and 45 mm, far above the 2 mm grid; whether the mesh seeds them is unknown. The fold
+     is already 109 degrees by 29 s on the 100 mm sphere, so it comes first. Metal gathers at the lobes' tips: on the 50 mm
+     sphere at 179.0 s four pools 95 to 105 degrees from the hottest point, 101 corners deeper than 5 mm holding 12.4 g,
+     every one with deep neighbours; the deepest skin rose from 4.5 mm to 22.4 mm in the last 2 s, the element flight
+     having sprayed 3.7 g by then. *What stops a flight:* the 3D radius-ratio floor of 0.05, not the fold itself; the lowest
+     ratio reached 0.098 at the 100 mm stop, from about 0.15 before, in tetrahedra at the same place as the worst folded
+     edges (63 and 51 degrees), while surface triangles kept their shape (quality 0.57 and 0.72); the refused move itself
+     is not recorded. *Heat across the folds:* the 3D temperature jumps by a median 62 K (100 mm) and 31 K (50 mm) across
+     folded edges, about 90 % of them above 5 K. *A radius ratio near 0.05 is not a measure of mesh health on its own:*
+     it is where a rebuild fires by design (controller's note, 2026-11-07). What stops a flight is a move refused on a
+     freshly rebuilt mesh, and that record is not kept. Measured once on each sphere.
+
+192. **The resume command and the spreading, as built and checked (sub-plan 22 Tasks 5b and 5c, 2026-11-06;
+     `measure/task5b/check.md`, `measure/task5c/check.md`; `part_22.md`).** *Task 5b:* `python -m reentry_model resume
+     STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray]` continues a flight
+     saved with `--save-state-at` to the last bit, writing the files `run` writes through one shared writer
+     (`finish_run`); exit 2 for a missing or foreign state, an end of flight not after the saved time, or a continuum step
+     outside (0, `--dt`]. The two real states resumed through the launcher on mains power: the 50 mm flight's (saved at
+     170.5 s, step 341) to 172.0 s in 190 s (3 macro steps, peak 1.47 GB) and the 100 mm flight's (saved at 22.0 s, step 44)
+     to 23.0 s in 330 s (2 steps, 3.95 GB); in both, 84 of 89 history columns (all but the five wall-time timers) equal the
+     snapshot flights' at full precision; neither flight had released a droplet, so the droplet records are pinned by the
+     unit test only. Unit tier 549 passed, 1 skipped. *Task 5c:* `--spread-limit DEG|off` on `run` and `resume`
+     (`reentry_model/spreading.py`, `SPREAD_PASSES` 4, `SPREAD_SHARE` 0.25 as designed): where the base as it would stand
+     folds past the limit, part of what the skins hand down goes to lower neighbouring corners, the metal landing hot -- it
+     crosses the base at the receiving node's enthalpy and the rest of its heat goes to that node through `pending`, not
+     through `h_outward`, which would share it over the whole moving zone (Asha's decision, 2026-11-06). **Off by default
+     until flights have tested it, so every existing run is as before: the controller's ruling, not yet confirmed by
+     Asha.** The history gains `spread_mass_kg`, `spread_unplaced_kg`, `spread_edges_over` and `spread_jump_max_K` with a
+     limit only; a limit that does not bind changes nothing to the last bit; the two states pickled before this resume with
+     or without one. On the test plate a crest passes 90 degrees by part 31 with the pass off and stays between 59.96 and
+     60.03 degrees at a limit of 60 over 200 parts. *The check (50 mm state, one limit, one mesh, flown once):* to 172.0 s
+     with a limit of 60 that cannot bind, 3 macro steps in 193 s, all 84 shared columns equal; to 177.0 s (91 macro steps,
+     2 014 s, peak 2.34 GB) the limit first binds at 174.0 s and the largest fold is 64.86 degrees, at 176.0 s, against
+     116.75 over the same flight time in the snapshot flight (82 of 91 rows above 60 degrees, 4 above 62, none above 65, the
+     last 61.82); edges past 60 degrees at 177.0 s 5 against 108, all five with flowing metal on both corners where 45 of
+     the 108 had neither wet, in the same band (65.8 to 71.6 degrees from the hottest point against 60.8 to 78.2); 1.704 g
+     spread against 13.63 g handed down (12.5 %, each hop counted); the largest unplaced mass at a move 0.25 mg; the largest
+     landing 57.4 K above its node; mass closed to 4.5e-16, energy residual -1.76e-11, momentum residual 3.76e-17; no fault
+     against 2 in the snapshot flight. **These numbers describe the code just before the fix of the review's
+     `Spread.landed` finding** (outer 928f961, build 27603f1): corners that took hot metal and gave more onward sent their
+     landing heat across the base, and were left out of the recorded largest landing (the review measured 16 to 127 corners
+     missed against 174 to 273 caught on a jittered plate); the fix reads where metal arrived pass by pass. It was not flown
+     and the check not re-run. *Not like with like after 176.0 s:* the continuum switch latched at 176.0 s with the
+     spreading and 176.5 s without (a 0.12 K difference at the nose about the 908.0 K liquidus, 908.11 K against 907.98 K;
+     why spreading changes the nose is not traced), so later rows ran different steps (91 rows against 52). To 176.0 s, the
+     same 11 macro steps and 95 parts: largest fold 64.86 against 114.59 degrees, lowest 3D radius ratio 0.0756 against
+     0.0678, rebuilds 6 against 10, deepest skin 2.22 mm against 3.04 mm, faults 0 against 2. The radius ratio and rebuild
+     counts are not a measure of mesh health on their own (the floor of 0.05 is where a rebuild fires by design); the
+     like-with-like comparison to 175.5 s is 5 rebuilds against 8 and a lowest ratio of 0.0945 against 0.0787, the ratio in
+     the rows of a rebuild having a median of 0.162 against 0.125 (controller's note, 2026-11-07; one flight each, the two
+     identical to 174 s). *Untested:* whether a flight gets past the old stops, 33.0 s on the 100 mm sphere and 179.04 s on
+     the 50 mm; the check ended 2.04 s before the latter and the resumed flights have not been flown. Neither is the
+     sensitivity to the limit, nor whether the metal stays deeper with the spreading (shallower to 176.0 s; the later
+     figures follow 40 steps against one). Unit tier 587 passed, 1 skipped.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

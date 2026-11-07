@@ -1,6 +1,6 @@
 # Spreading the re-frozen deposit: design draft
 
-**Status: draft, 2026-11-06. Nothing is built.** Asha's idea, in answer to the Task 5 skin flights stopping: "Could we
+**Status: built, not yet flown (2026-11-06). Built with subagents as Asha decided; checked on one 50 mm flight to 177.0 s, see "As built and checked" at the end.** First drafted the same day with nothing built. Asha's idea, in answer to the Task 5 skin flights stopping: "Could we
 smooth the re-frozen mass by spreading the re-frozen mass around to neighboring cells to keep the angles reasonable?"
 She chose to run snapshot flights and draft this on paper together, with no model code until the snapshots are in. The
 snapshots came in on 2026-11-06 and answer the open questions below; they change one rule of the proposal and show a second
@@ -131,3 +131,26 @@ took about 4.9 h and 2.8 h. A flight that then stops on the pools is a result ab
 spreading.
 
 **Cost:** about one to two days to build and test (my estimate), plus the resume command, then the flights.
+
+## As built and checked (2026-11-06)
+
+The decisions above stand and were not changed in the build: the pass in `SkinBody._move_base`, 60 degrees as the starting
+limit, the share of 0.25 and four passes a part, only handed metal moving, and Asha's decision that spread metal lands hot.
+Built in sub-plan 22 Tasks 5b (the resume command) and 5c (the spreading), with `docs/superpowers/plans/2026-11-06-deposit-spreading-build.md`;
+recorded in spec 2026-10-11 §6.6, §10.1, §10.2, §12 and §16 and in facts 191 and 192 of the sub-plans' shared context.
+
+- **`--spread-limit` is off by default** until flights have tested it: the controller's ruling, not yet confirmed by Asha.
+- **The check**, on the 50 mm state saved at 170.5 s, resumed once with a limit of 60 degrees, one mesh: to 172.0 s all 84
+  shared columns equal the snapshot flight's at full precision. To 177.0 s the largest fold is 64.86 degrees against 116.75 in
+  the snapshot flight, 5 edges past 60 degrees at 177.0 s against 108, 1.704 g spread against 13.63 g handed down, the largest
+  landing 57.4 K above its node, mass closed to 4.5e-16, and no fault against 2. The fold stays a little above the limit, as a
+  limit on an estimate would.
+- **The numbers describe the code just before the review's `Spread.landed` fix** (corners that took hot metal and gave more
+  onward sent their heat across the base and were left out of the largest landing). The fix was not flown.
+- **After 176.0 s the two flights are not like with like**: the continuum switch latched at 176.0 s with spreading and 176.5 s
+  without. To 176.0 s, 11 macro steps each, the lowest 3D radius ratio is 0.0756 against 0.0678 and the deepest skin 2.22 mm
+  against 3.04 mm. A radius ratio near 0.05 is where a rebuild fires by design, so on its own it says little about the mesh;
+  to 175.5 s it is 5 rebuilds against 8 and a lowest ratio of 0.0945 against 0.0787 (one flight each, identical to 174 s).
+- **Untested**: whether a flight gets past the old stops, 33.0 s on the 100 mm sphere and 179.04 s on the 50 mm sphere, since
+  the resumed flights have not been flown; the sensitivity to the limit; and the pools at the lobe tips, which spreading does
+  not reach.
