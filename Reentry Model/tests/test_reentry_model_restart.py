@@ -176,17 +176,72 @@ def test_the_resume_command_changes_what_it_is_told(flown, tmp_path):
     assert same == flight[14:] and doc["settings"]["seed"] == cli.DEFAULT_SEED
 
 
-@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan"])
+def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flown, tmp_path):
+    """The rows of a run all take the first row's columns, the saved one's in a resume, so a limit given to a resume adds the
+    spreading columns to the saved row, or the later rows' would be lost, and `off` drops them from a state saved with a
+    limit, or the later rows would raise KeyError (sub-plan 22 Task 5c). The test flight's state saved without a limit, as the
+    two real states were, resumed with one: the columns are in every row, zero in the saved one, the JSON records the limit in
+    its settings, its results and what was changed, and every other column is the flight's, the limit binding nowhere. Then
+    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set."""
+    out, flight, records, state_path = flown
+    names = ["spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K"]
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--spread-limit", "60"]) == 0
+    rows = rows_of(str(tmp_path / "on.csv"))
+    assert len(rows) == 3 and list(rows[0]) == list(flight[14]) + names and all(list(r) == list(rows[0]) for r in rows)
+    assert all(float(rows[0][k]) == 0.0 for k in names)
+    assert [{k: v for k, v in r.items() if k not in names} for r in rows] == flight[14:]
+    doc = json.load(open(str(tmp_path / "on.json")))
+    assert doc["resumed_from"]["changed"] == {"--spread-limit": 60.0} and doc["settings"]["spread_limit_deg"] == 60.0
+    assert doc["results"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_mass_kg"] == 0.0
+
+    limited = str(tmp_path / "limited")
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
+                              "--spread-limit", "60"]) == 0
+    saved = os.path.join(limited, "f.state.pkl")
+    doc = json.load(open(os.path.join(limited, "f.json")))
+    assert doc["settings"]["skin"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_limit_deg"] == 60.0
+    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == list(flight[0]) + names
+
+    assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "kept"]) == 0
+    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == list(flight[0]) + names
+    assert json.load(open(str(tmp_path / "kept.json")))["results"]["spread_limit_deg"] == 60.0
+
+    assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "off", "--spread-limit", "off"]) == 0
+    assert rows_of(str(tmp_path / "off.csv")) == flight[14:]
+    doc = json.load(open(str(tmp_path / "off.json")))
+    assert doc["resumed_from"]["changed"] == {"--spread-limit": "off"}
+    assert "spread_limit_deg" not in doc["results"] and "spread_mass_kg" not in doc["results"]
+    assert "spread_limit_deg" not in doc["settings"]
+
+
+@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
+                                  "spread_0", "spread_180", "spread_nan"])
 def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
     """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
-    (0, the saved flight's --dt of 0.025 s] and a value that is not a number are refused with exit 2 (bad input), and
-    nothing is written."""
+    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees and a value that is not a number are
+    refused with exit 2 (bad input), and nothing is written."""
     out, flight, records, state_path = flown
     bad_format = str(tmp_path / "other.pkl")
     restart.save(bad_format, {"format": restart.FORMAT + 1})
     state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
                       "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
-                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"])}[case]
+                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
+                      "spread_0": (state_path, ["--spread-limit", "0"]), "spread_180": (state_path, ["--spread-limit", "180"]),
+                      "spread_nan": (state_path, ["--spread-limit", "nan"])}[case]
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+
+
+def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
+    """A flight that does not melt has nothing re-frozen to spread, so a limit given to its resume exits 2, as `run` refuses
+    it; `off` asks nothing of the flight, so that goes through."""
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
+    state = str(tmp_path / "dry.state.pkl")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "60"])
+    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+    assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "off"]) == 0

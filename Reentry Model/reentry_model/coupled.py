@@ -64,6 +64,8 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     # each rebuild's mass residual beside its energy residual
                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
                     "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
+# with --spread-limit only, skinbody.SPREAD_COLUMNS follow these (sub-plan 22 Task 5c): a run's columns are its first row's, so
+# a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
 # particles_summary.csv, one row a macro step: the element model's history columns
 SUMMARY_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "released_mass_kg", "n_released", "r_median_um", "r_max_um",
                    "theta_cr_deg", "spraying_area_m2", "film_mass_kg", "film_thickness_mean_mm"]
@@ -274,6 +276,8 @@ class CoupledRun:
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
+        if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
+            out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
         return out
 
     def thermal_results(self, history):

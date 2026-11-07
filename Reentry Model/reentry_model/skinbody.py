@@ -99,7 +99,18 @@ and the area of the columns whose plan sprays -- the element model's per-step co
 same particles_summary.csv -- the release angle's mean by mass, least and largest, b and the resolved sheared depth over
 Girin's delta_m on the wet windward columns (`sheared_depth`), and each rebuild's mass residual. Where `spool` names a
 directory the records go to disk as they come (`spray.SourceSpool`): a flight at the continuum step makes tens of
-millions of them."""
+millions of them.
+
+Spreading the deposit (sub-plan 22 Task 5c; `spread_limit`, None by default; Asha's idea and decisions of 2026-11-06, the
+design of that date; `spreading`): where the base as it would stand after a part's move folds past the limit, part of the
+metal a corner hands down goes to its lower neighbours' corners in step 4, after the hand-down and before the corners move.
+The skins have already given up what they handed down, so nothing in them changes: the corners move, and each column is
+reconciled, by the spread hand-down, whose sum is the hand-down's. The metal lands hot: it crosses a receiving base at the
+node's enthalpy and the rest of its heat goes to that node through `pending` (`_move_base`). `held_mass`, `handed_mass` and
+the fault count keep the hand-down as it left each skin. The history's spreading columns are `SPREAD_COLUMNS`, with a limit
+only (`spread_stats`), and a limit that does not bind changes nothing to the last bit. A body pickled before this has none of
+these attributes on the instance, so they are class defaults too: the saved flights of 2026-11-06 resume with or without a
+limit."""
 import copy
 import dataclasses
 import math
@@ -115,6 +126,7 @@ from . import movemesh
 from . import rheology
 from . import skin as skin_mod
 from . import spray as spray_mod
+from . import spreading
 from .body import ThermalBody
 from .thermal import SIGMA_SB
 
@@ -164,6 +176,11 @@ SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin r
 
 SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
                                   # large-fragment design's labelled assumption for slurry)
+
+# the history's spreading columns (sub-plan 22 Task 5c), with a limit only (`SkinBody.spread_stats`): kg moved between columns
+# since time zero, kg still wanting to move and edges over the limit at the last move, and the largest landing [K] of metal over
+# its node's temperature since the last row
+SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K")
 
 
 @dataclasses.dataclass
@@ -530,12 +547,23 @@ class SkinBody(ThermalBody):
     22 Task 1c), with `slurry_spray` the exposed slurry's own mode too (the cascade), and its record in `spray_plan`; its
     droplet records, one block of source-table rows per macro step, in `source_rows` where `particles`, and the size
     histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
-    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory."""
+    `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory.
+    `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
+    (`spreading`; sub-plan 22 Task 5c), None for no spreading."""
+    # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
+    spread_limit = None                  # deg
+    spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
+    spread_over = 0                      # edges over the limit on the last move's first estimate
+    spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
 
     def __init__(self, mesh, material, solver, mass_kg, settings=None, T0=300.0, emissivity=None, T_ambient=0.0,
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
-                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None):
+                 surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
+                 spread_limit=None):
+        if spread_limit is not None and not 0.0 < spread_limit < 180.0:
+            raise ValueError("spread_limit must be None or an angle within (0, 180) degrees, got {!r}".format(spread_limit))
+        self.spread_limit = spread_limit
         if repeat_rule not in REPEAT_RULES:
             raise ValueError("repeat_rule must be one of {}, got {!r}".format(REPEAT_RULES, repeat_rule))
         self.flow_cycles = flow_cycles
@@ -644,6 +672,7 @@ class SkinBody(ThermalBody):
         `state` (`flow_forcing`), or `forcing`, a FlowForcing given instead (a prescribed push, in the tests)."""
         n, self._ratio, self.step_parts = self._hint, 0.0, 0
         self.step_spray, self._released_step = _no_step_spray(), 0.0
+        self.spread_jump = 0.0
         if self.flow_on:
             end = forcing if forcing is not None else self.flow_forcing(state)
             last = self._forcing_prev
@@ -908,7 +937,9 @@ class SkinBody(ThermalBody):
         metal within the fault tolerance of the node (spec 6.6, amended 2026-10-26); what the tolerance and the cap keep
         back, against a hand-down with neither, is recorded (`held_mass`). The bottom cell is then judged against the
         metal that crossed and, for a hand-down, the cell it uncovered -- the rest of a cell the cap took in part, at its
-        own temperature, where the cap ends inside one (`jump_faults`)."""
+        own temperature, where the cap ends inside one (`jump_faults`). With `spread_limit` the hand-down is first spread
+        over the corners (module docstring): the move and the reconciliation read the spread hand-down, `handed_s` with
+        its enthalpy `landed_H`, and the fault count and `handed_mass` what left each skin, `handed`."""
         mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
         started = time.perf_counter()
         T_node = self.solver.temperature()[mm.corners]
@@ -920,19 +951,45 @@ class SkinBody(ThermalBody):
         uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
         held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
         self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
+        handed_s, landed_H, excess = handed, handed_H, None                       # what crosses each base; the same arrays
+        if self.spread_limit is not None:                                         # without a limit (sub-plan 22 Task 5c)
+            s = spreading.spread_hand_down(col, col.points, col.normal, col.area, mat.rho, book.drawn, handed, handed_H,
+                                           self._hand_cap(), self.spread_limit)
+            self.spread_mass += s.moved
+            self.spread_unplaced, self.spread_over = s.unplaced, s.over
+            handed_s, landed_H = s.handed, s.enthalpy
+            # Spread metal lands hot (Asha, 2026-11-06). The 5 K fault tolerance does not apply where it lands: the lower
+            # neighbours of a toe are the cold corners ahead of it, across folded edges the 3D temperature jumps by a median
+            # 62 K and 31 K on the two spheres and about 90 % of the edges exceed 5 K, so the rule would refuse most of the
+            # spreading it is for, and hot metal freezing on cold metal is what happens at a real toe. Metal landed here from a
+            # neighbour crosses this base at this node's enthalpy, and the rest of its heat goes to this node through
+            # `pending`, the deferred per-corner heat the next part's 3D solve takes as a load and the energy books count:
+            # booked through `h_outward` instead, `MovingMesh.move` would share the correction over all the moving nodes, the
+            # whole zone rather than this corner. Added below, after the reconciliation: `_advance_part` has by then set
+            # `pending` to this part's mismatch, and a part split or repeated has returned or restored before it, so the heat
+            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh.
+            received = handed_s > handed
+            if received.any():
+                jump = mat.temperature_from_enthalpy(landed_H[received] / handed_s[received]) - T_node[received]
+                self.spread_jump = max(self.spread_jump, float(jump.max()))
+            excess = np.where(received, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
+            landed_H = landed_H - excess
         if mat.melts:
             self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
-        moved = (book.drawn - handed) / (mat.rho * col.area)                      # m inward by drawing and handing down
+        moved = (book.drawn - handed_s) / (mat.rho * col.area)                    # m inward by drawing and handing down
         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
-        inward = book.drawn / mat.rho + depth * col.area - handed / mat.rho          # m3 per corner
+        inward = book.drawn / mat.rho + depth * col.area - handed_s / mat.rho        # m3 per corner
         u = -col.normal * (inward / col.area)[:, None] + mm.neutral_smoothing(col.normal, col.area)
         rebuilds = mm.rebuilds
         h_inward = lambda d: skin_mod.profile_enthalpy(mat, T_node, g0, 0.0, d)
-        h_outward = np.where(handed > 0.0, handed_H / np.where(handed > 0.0, handed, 1.0), np.nan)
+        # nan where nothing lands, as where a donor gave away all it handed down: any sweep there is at the corner's own enthalpy
+        h_outward = np.where(handed_s > 0.0, landed_H / np.where(handed_s > 0.0, handed_s, 1.0), np.nan)
         r = mm.move_with_policy(u, h_inward, h_outward)
         if mm.rebuilds > rebuilds:
             self.wall["rebuild"] += mm.last_rebuild.seconds
-        sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed), r.swept_enthalpy - (book.drawn_H - handed_H))
+        sk.exchange_bottom(mat.rho * r.swept_volume - (book.drawn - handed_s), r.swept_enthalpy - (book.drawn_H - landed_H))
+        if excess is not None:
+            self.pending = self.pending + excess
         self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
@@ -1067,7 +1124,16 @@ class SkinBody(ThermalBody):
                 # rebuild's mass residual, summed and the last
                 **self._depth_ratios(flowing),
                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
-                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0}
+                "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
+                **self.spread_stats()}
+
+    def spread_stats(self):
+        """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run
+        without one keeps its column set, and read here alone, as a resume adds them to its saved row or drops them from
+        it: a run's columns are its first row's (`coupled.CoupledRun.run`)."""
+        if self.spread_limit is None:
+            return {}
+        return dict(zip(SPREAD_COLUMNS, (self.spread_mass, self.spread_unplaced, self.spread_over, self.spread_jump)))
 
     def _depth_ratios(self, flowing):
         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on

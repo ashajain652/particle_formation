@@ -1381,3 +1381,177 @@ def test_the_resolved_sheared_depth_is_the_straight_line_depth_carrying_the_comp
     assert got[1] == pytest.approx(2.0 * sk.thickness()[1], rel=1e-14)
     assert np.allclose(dz[2], dz[2, 0]) and got[2] == pytest.approx(10.7 * dz[2, 0], rel=1e-12)
     assert np.isnan(got[3:]).all()
+
+
+# -- spreading the deposit (sub-plan 22 Task 5c; Asha 2026-11-06) ----------------------------------------------------------
+def melting_body(mesh, **kw):
+    """The melting test body of the spraying tests above, 890 K under the 100 mm flight's gas state at 93 s, one flow
+    sub-step a heat sub-step, flown for two 0.125 s macro steps at 3 MW/m2, numpy's generator seeded as a run seeds it: it
+    hands down 3.8 g. Returns the body and its starting mass."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    np.random.seed(12345)
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid), **kw)
+    M0 = b.mass()
+    state = aero_state_at(93.0)
+    for k in range(2):
+        b.advance(0.125 * (k + 1), 0.125, front_loads(b, 3e6), state=state)
+    return b, M0
+
+
+def zero_book(sk):
+    """What no draw left: the base's operations alone, as the deposit tests above run them."""
+    return skin.SkinBook(*(np.zeros(sk.n) for _ in range(8)), momentum_out=np.zeros((sk.n, 3)))
+
+
+def bump(b, peak, share=0.9, T=700.0):
+    """A deposit at `T` on the bottoms of the columns `peak`, `share` of a part's allowance deep."""
+    mat, sk, col = b.material, b.skins, b.columns
+    extra = np.zeros(sk.n)
+    extra[peak] = share * skinbody.MOVE_MAX * col.edge_length.mean() * mat.rho * col.area[peak]
+    sk.add_bottom(extra, float(mat.enthalpy(T)))
+    sk.regrid()
+
+
+def spied(b, monkeypatch):
+    """The arguments of the base move's spreading and of its corner move, as they come: ([(hand-down given, Spread)], [the
+    enthalpy each outward sweep is to be booked at])."""
+    spreads, outward = [], []
+    spread, policy = skinbody.spreading.spread_hand_down, b.moving.move_with_policy
+
+    def recorded(*a, **k):
+        spreads.append((a[6], spread(*a, **k)))
+        return spreads[-1][1]
+
+    def recorded_move(u, h_inward=None, h_outward=None):
+        outward.append(h_outward)
+        return policy(u, h_inward, h_outward)
+    monkeypatch.setattr(skinbody.spreading, "spread_hand_down", recorded)
+    b.moving.move_with_policy = recorded_move
+    return spreads, outward
+
+
+def neighbours(b, corners):
+    """The corners sharing an edge with any of `corners`, those left out."""
+    e = b.columns.edges
+    near = np.unique(np.r_[e[np.isin(e[:, 0], corners), 1], e[np.isin(e[:, 1], corners), 0]])
+    return near[~np.isin(near, corners)]
+
+
+def test_a_limit_that_does_not_bind_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
+    """Nothing folds near 179.9 degrees, so the melting body flown with that limit is the body flown without one in every
+    array and every shared history column, and only the four spreading columns are added, recording nothing moved. Without
+    a limit there are no spreading columns: every run without the option keeps its column set."""
+    off, _ = melting_body(coarse_sphere_mesh)
+    on, _ = melting_body(coarse_sphere_mesh, spread_limit=179.9)
+    assert off.handed_mass > 0.0 and on.spread_limit == 179.9 and off.spread_limit is None
+    assert same_body(off, on)
+    a, c = off.skin_stats(), on.skin_stats()
+    same = lambda x, y: x == y or (np.isnan(x) and np.isnan(y))
+    assert all(same(a[k], c[k]) for k in a if not k.startswith("wall_"))
+    assert set(c) - set(a) == set(skinbody.SPREAD_COLUMNS) and not set(a) & set(skinbody.SPREAD_COLUMNS)
+    assert [c[k] for k in skinbody.SPREAD_COLUMNS] == [0.0, 0.0, 0, 0.0]
+
+
+def test_a_limit_outside_a_fold_s_range_is_refused(coarse_sphere_mesh):
+    for bad in (0.0, 180.0, -1.0, float("nan")):
+        with pytest.raises(ValueError):
+            make(coarse_sphere_mesh, spread_limit=bad)
+
+
+def test_spreading_keeps_the_books(coarse_sphere_mesh):
+    """The melting body with a limit low enough to bind on the 4 mm mesh, whose sphere folds 14 degrees before anything happens:
+    0.6 g of the 3.8 g handed down moves between corners, and the mass closes to 1e-12, the energy balance residual is below
+    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured 2026-11-06: mass exact,
+    energy 1.7e-11, momentum 3.9e-17)."""
+    b, M0 = melting_body(coarse_sphere_mesh, spread_limit=6.0)
+    stats = b.skin_stats()
+    assert stats["spread_mass_kg"] == b.spread_mass > 0.0 and stats["spread_edges_over"] > 0
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-12)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert stats["momentum_residual"] < 1e-12
+
+
+def test_metal_landing_hot_takes_its_heat_to_the_receiving_corner_and_counts_no_fault(coarse_sphere_mesh, monkeypatch):
+    """Asha's decision of 2026-11-06: spread metal lands hot, because the lower neighbours of a toe are the cold corners ahead
+    of it. A proud corner of the 4 mm sphere at 700 K with its neighbours' nodes 40 K colder, past the 5 K fault tolerance:
+    the metal crosses each receiving base at that node's enthalpy, so the moving mesh shares no correction over the zone for
+    it, and the rest of its heat, the excess, waits in `pending` at that corner alone, which the books count and the next
+    part's 3D solve takes as a load there. No fault is counted, the largest landing is recorded, and the energy is exact
+    before and after the 3D model takes the heat."""
+    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=10.0)
+    b.emissivity = 0.0
+    mat, sk, col, nodes = b.material, b.skins, b.columns, b.moving.corners
+    peak = np.argsort(b.theta)[:1]
+    ring = neighbours(b, peak)
+    T = b.solver.temperature().copy()
+    T[nodes[ring]] -= 40.0
+    b.solver.set_temperature(T)
+    bump(b, peak)
+    spreads, outward = spied(b, monkeypatch)
+    E0, T_node = b.energy(), T[nodes]
+    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
+    handed, s = spreads[0]
+    rose = s.handed > handed
+    cold = rose & np.isin(np.arange(sk.n), ring)
+    assert cold.any() and s.moved > 0.0
+    excess = s.enthalpy[rose] - s.handed[rose] * mat.enthalpy(T_node[rose])
+    assert excess[np.isin(np.flatnonzero(rose), ring)].min() > 0.0
+    np.testing.assert_allclose(b.pending[rose], excess, rtol=1e-12)
+    assert (b.pending[~rose] == 0.0).all()
+    np.testing.assert_allclose(outward[0][cold], mat.enthalpy(T_node[cold]), rtol=1e-12)    # at the node's own enthalpy
+    assert b.jump_faults == 0
+    stats = b.skin_stats()
+    assert 30.0 < stats["spread_jump_max_K"] <= 40.0 + skin.JUMP_TOLERANCE
+    assert b.energy() == pytest.approx(E0, rel=1e-12)
+    T_before = b.solver.temperature()[nodes].copy()
+    zero = heating.HeatingResult(np.zeros(col.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.01, 0.01, zero)
+    assert b.energy() == pytest.approx(E0, rel=1e-12)
+    assert (b.solver.temperature()[nodes[cold]] > T_before[cold]).all()
+    assert b.skin_stats()["spread_jump_max_K"] < stats["spread_jump_max_K"]               # since the last row
+
+
+def test_a_donor_that_gives_away_all_its_hand_down_keeps_the_books(coarse_sphere_mesh, monkeypatch):
+    """A corner 1.5 mm proud of its neighbours with little to hand down -- 0.2 of a part's allowance, some of which goes to the
+    minimum its larger dual cell now needs -- gives all it has and nothing lands on it, being the highest: its hand-down is exactly nothing, so the moving mesh has no enthalpy for it (`h_outward` nan) and books any sweep
+    there at the corner's own, and the reconciliation and the fault count hold: mass and energy exact, nothing not finite, and
+    no fault."""
+    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=15.0)
+    b.emissivity = 0.0
+    mat, sk, col = b.material, b.skins, b.columns
+    peak = np.argsort(b.theta)[:1]
+    u = np.zeros((col.n, 3))
+    u[peak] = 1.5e-3 * col.normal[peak]
+    b.moving.move_with_policy(u)
+    b._refresh_geometry()
+    bump(b, peak, share=0.2)
+    spreads, outward = spied(b, monkeypatch)
+    M0, E0 = b.mass(), b.energy()
+    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
+    handed, s = spreads[0]
+    assert handed[peak] > 0.0 and s.handed[peak] == 0.0
+    gone = (handed > 0.0) & (s.handed == 0.0)
+    assert gone.any() and (s.enthalpy[gone] == 0.0).all() and np.isnan(outward[0][gone]).all()
+    assert b.mass() == pytest.approx(M0, rel=1e-12) and b.energy() == pytest.approx(E0, rel=1e-12)
+    assert np.isfinite(b.solver.temperature()).all() and np.isfinite(sk.T[sk.valid]).all() and np.isfinite(b.pending).all()
+    assert b.jump_faults == 0
+
+
+def test_a_body_saved_without_spreading_attributes_flies_on(coarse_sphere_mesh):
+    """The two real states were pickled before spreading existed, so a body from them has none of its attributes on the
+    instance: the class's defaults give them, it flies on as a body without a limit, and it takes a limit a resume gives it."""
+    b = make(coarse_sphere_mesh, T0=700.0)
+    b.emissivity = 0.0
+    for key in [k for k in vars(b) if "spread" in k]:
+        del vars(b)[key]
+    assert not [k for k in vars(b) if "spread" in k]
+    assert b.spread_limit is None
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.5, 0.5, zero)
+    assert not set(b.skin_stats()) & set(skinbody.SPREAD_COLUMNS) and b.spread_stats() == {}
+    b.spread_limit = 60.0
+    b.advance(1.0, 0.5, zero)
+    assert set(b.spread_stats()) == set(skinbody.SPREAD_COLUMNS) and set(skinbody.SPREAD_COLUMNS) <= set(b.skin_stats())
