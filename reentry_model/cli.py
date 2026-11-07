@@ -7,6 +7,8 @@
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
+    python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+        --slurry-spray on|off]       (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
 Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
@@ -22,7 +24,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
+from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, restart, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend
@@ -244,6 +246,22 @@ def provenance():
             "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0], **versions}
 
 
+def resume_arguments(rs):
+    """The resume command's options, in one place: the new run's files and what it may change from the saved flight. A
+    flight resumed with none of the changes repeats the saved flight from its saved step to the last bit."""
+    rs.add_argument("--outdir", required=True, help="directory of the resumed run's files (never the saved flight's by default)")
+    rs.add_argument("--name", required=True, help="the resumed run's name: <outdir>/<name>.csv and .json, droplet files under <outdir>/<name>/")
+    rs.add_argument("--t-max", type=float, default=None, help="[s] end of flight, after the saved time (default: the saved flight's)")
+    rs.add_argument("--dt-continuum", type=float, default=None,
+                    help="[s] macro step after the continuum switch, in (0, the saved --dt] (default: the saved flight's)")
+    rs.add_argument("--seed", type=parse_seed, default=None,
+                    help="seed numpy's generator with this instead of resuming from the saved random state (default: the saved state)")
+    rs.add_argument("--frames-every", type=int, default=None,
+                    help="VTK frame every n macro steps, the series new (default: the saved flight's setting)")
+    rs.add_argument("--slurry-spray", choices=("on", "off"), default=None,
+                    help="the exposed slurry sprays too (default: the saved flight's)")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="reentry_model", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -408,6 +426,11 @@ def build_parser():
     me.add_argument("--particles", dest="particles", action="store_true", default=True,
                     help="write the particle source table and the size distribution of a spraying run (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
+
+    rs = sub.add_parser("resume", help="continue a flight from a state it saved (--save-state-at), to the last bit, "
+                                       "changing only what is given (sub-plan 22 Task 5b)")
+    rs.add_argument("state", help="the saved state, <outdir>/<name>{}".format(STATE_SUFFIX))
+    resume_arguments(rs)
 
     c = sub.add_parser("compare", help="metrics and plots for an existing model history")
     c.add_argument("--model", required=True, help="model history CSV")
@@ -660,6 +683,16 @@ def cmd_run(args, parser):
             thermal_info["save_state_at_s"] = args.save_state_at
     else:
         history = sim.run(extra_times=reference.time if reference is not None else None)
+    return finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history,
+                      state_path if args.thermal == "fem" else None)
+
+
+def finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history, state_path,
+               resumed=None):
+    """Write a finished run's files and print its summary (cmd_run and cmd_resume share this, sub-plan 22 Task 5b):
+    <outdir>/<name>.csv and .json, the droplet files and plots under <outdir>/<name>/. `resumed`, the resume command's
+    record of its state, goes into the JSON as "resumed_from". Returns the exit code."""
+    run_dir = os.path.join(args.outdir, name)
     csv_path = os.path.join(args.outdir, name + ".csv")
     json_path = os.path.join(args.outdir, name + ".json")
     tj.write_history_csv(history, csv_path)
@@ -684,6 +717,8 @@ def cmd_run(args, parser):
         "provenance": prov,
         "files": {"csv": os.path.abspath(csv_path)},
     }
+    if resumed is not None:
+        doc["resumed_from"] = resumed
     if history.results.get("state_saved_at_s") is not None:
         doc["files"]["state"] = os.path.abspath(state_path)
     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
@@ -768,6 +803,96 @@ def cmd_run(args, parser):
     return 0
 
 
+def load_state(path, parser):
+    """The saved flight at `path`, or a parser error (exit 2) for a missing file, one that is no state of this model's
+    format, or one saved without the command line's arguments."""
+    if not os.path.isfile(path):
+        parser.error("no saved state at {}".format(path))
+    try:
+        state = restart.load(path)
+    except Exception as exc:
+        parser.error("{} is not a saved state: {}: {}".format(path, type(exc).__name__, exc))
+    if not isinstance(state, dict) or state.get("format") != restart.FORMAT:
+        found = state.get("format") if isinstance(state, dict) else type(state).__name__
+        parser.error("{} is a state of format {!r}; this model resumes format {}".format(path, found, restart.FORMAT))
+    if not state.get("meta") or "args" not in state["meta"]:
+        parser.error("{} was saved without the command line's arguments (settings.save_meta), which a resume needs".format(path))
+    return state
+
+
+def cmd_resume(args, parser):
+    """Resume a saved flight (sub-plan 22 Task 5b; Asha, 2026-11-01): the state `--save-state-at` wrote, loaded as a new
+    object graph and flown on by `CoupledRun.run(resume=state)` from the end of the saved macro step, with the saved
+    random state (numpy's only draws are pyamg's, so it is part of the flight) unless --seed is given. Writes the files
+    `run` writes, from the saved flight's arguments with the options given here; the JSON's "resumed_from" records the
+    state and what was changed. Only the droplet records after the resume are written."""
+    state = load_state(args.state, parser)
+    run, saved = state["run"], argparse.Namespace(**state["meta"]["args"])
+    run_dir = os.path.join(args.outdir, args.name)
+    settings, changed = run.settings, {}
+    if args.t_max is not None:
+        if not (math.isfinite(args.t_max) and args.t_max > state["time_s"]):
+            parser.error("--t-max must be a finite time after the saved state's {:.6g} s, got {!r}".format(state["time_s"], args.t_max))
+        changed["--t-max"] = args.t_max
+    if args.dt_continuum is not None:
+        if settings.dt_continuum is None:
+            parser.error("--dt-continuum: the saved flight has no continuum switch (it did not run with --melt on and Girin removal)")
+        if not (math.isfinite(args.dt_continuum) and 0.0 < args.dt_continuum <= saved.dt):
+            parser.error("--dt-continuum must be a finite step in (0, the saved --dt = {} s], got {!r}".format(saved.dt, args.dt_continuum))
+        changed["--dt-continuum"] = args.dt_continuum
+    if args.frames_every is not None:
+        if args.frames_every < 0:
+            parser.error("--frames-every must be >= 0")
+        changed["--frames-every"] = args.frames_every
+    if args.slurry_spray is not None:
+        if args.slurry_spray == "on" and getattr(run.body, "spray", None) is None:
+            parser.error("--slurry-spray on needs a saved flight with the skins' spraying (--skin-flow on)")
+        changed["--slurry-spray"] = args.slurry_spray
+    if args.seed is not None:
+        changed["--seed"] = args.seed
+    # -- the point between loading the state and flying on, where each option is applied; keep the options above and
+    # their application below together, in the order of resume_arguments --
+    if "--t-max" in changed:
+        run.sim.settings.t_max = args.t_max
+    if "--dt-continuum" in changed:
+        settings.dt_continuum = args.dt_continuum
+        if run.switched_at is not None:            # latched: the step in use is the continuum step
+            settings.dt = args.dt_continuum
+    settings.save_at = settings.save_path = settings.save_meta = None
+    settings.output_dir = os.path.join(run_dir, "vtk")
+    settings.frames = []                           # the new series lists only its own frames
+    if "--frames-every" in changed:
+        settings.frames_every = args.frames_every
+        run._frame_dt, run._next_frame = args.frames_every * saved.dt, run.sim.t
+    if "--slurry-spray" in changed:
+        run.body.slurry_spray = args.slurry_spray == "on"
+    if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+        run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+    if args.seed is not None:
+        np.random.seed(args.seed)
+    else:
+        np.random.set_state(state["rng"])
+    history = run.run(resume=state)
+    # the arguments of the writer: the saved flight's, with what is changed here
+    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", None)):
+        setattr(saved, key, value)
+    for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray")):
+        if flag in changed:
+            setattr(saved, key, changed[flag])
+    atm, atm_name, atm_info = make_atmosphere(saved.atmosphere, saved.epoch, saved.wind)
+    reference = sesam_io.load_reference(saved.reference) if saved.reference else None
+    mass = body.sphere_mass(run.sim.settings.diameter, saved.material_density)
+    thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
+                                                         "skin_flow", "slurry_spray")}
+    thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
+    resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+               "run_name": state["meta"]["name"], "changed": changed}
+    os.makedirs(args.outdir, exist_ok=True)
+    return finish_run(saved, args.name, run.sim.settings, mass, atm_name, atm_info, reference, thermal_info, run.body, history,
+                      None, resumed=resumed)
+
+
 def _fmt(x):
     return "n/a" if x is None else "{:.1f}".format(x)
 
@@ -801,6 +926,8 @@ def main(argv=None):
     try:
         if args.command == "run":
             return cmd_run(args, parser)
+        if args.command == "resume":
+            return cmd_resume(args, parser)
         return cmd_compare(args, parser)
     except KeyError as exc:
         # e.g. fap.solar_indices(): the run epoch (or the day before it) has no record in

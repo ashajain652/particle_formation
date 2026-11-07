@@ -121,3 +121,72 @@ def test_bad_save_times_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv + ["--outdir", str(tmp_path)])
     assert exc.value.code == 2
+
+
+@pytest.fixture(scope="module")
+def flown(tmp_path_factory):
+    """The test flight to 0.2125 s once, saving its state at 0.1875 s (the end of its 14th step), for the resume command's
+    tests: (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
+    pytest.importorskip("cantera")
+    out = str(tmp_path_factory.mktemp("flown"))
+    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    rows = rows_of(os.path.join(out, "f.csv"))
+    assert len(rows) == 17
+    return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
+
+
+def test_the_resume_command_repeats_the_flight_to_the_last_bit_and_writes_its_files(flown, tmp_path):
+    """`resume` on the state saved at 0.1875 s, with nothing changed: it writes the files `run` writes under its own name
+    -- the history, the JSON, the droplet files -- the history starting with the saved step's row and repeating the
+    unbroken flight's from there in every column, the droplet records those of the flight after the save, to the last bit,
+    and the JSON naming the state it came from with nothing changed (sub-plan 22 Task 5b, Asha 2026-11-06)."""
+    out, flight, records, state_path = flown
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert rows_of(str(tmp_path / "r.csv")) == flight[14:]
+    after = records["time_s"] > 0.1875 + 1e-9        # the saved step's records carry its end: 0.1875 and a round-off
+    got = np.load(str(tmp_path / "r" / "particles.npz"))
+    assert after.any() and got.files == list(records) and all(np.array_equal(got[k], records[k][after], equal_nan=True) for k in records)
+    assert os.path.exists(str(tmp_path / "r" / "particles_summary.csv")) and not os.path.exists(str(tmp_path / "r" / cli.SOURCE_SPOOL))
+    doc = json.load(open(str(tmp_path / "r.json")))
+    assert doc["run_name"] == "r" and doc["settings"]["t_max_s"] == 0.2125
+    assert doc["resumed_from"] == {"state": os.path.abspath(state_path), "step": 14, "time_s": pytest.approx(0.1875),
+                                   "run_name": "f", "changed": {}}
+    assert "resumed_from" not in json.load(open(os.path.join(out, "f.json")))
+    assert doc["results"]["end_reason"] == "t_max" and "state_saved_at_s" not in doc["results"]
+
+
+def test_the_resume_command_changes_what_it_is_told(flown, tmp_path):
+    """Each option changes the resumed flight and is recorded in the JSON's "changed": --t-max flies further (two more
+    12.5 ms steps than the saved flight's end), a halved --dt-continuum takes twice the steps over the same time (4 from
+    0.1875 s to 0.2125 s instead of 2), and --seed seeds numpy's generator instead of resuming the saved random state, so
+    the multigrid hierarchy the heat solver builds in the 16th step is another and the history differs from the flight's."""
+    out, flight, records, state_path = flown
+    run = lambda name, *options: (cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", name, *options]),
+                                  rows_of(str(tmp_path / (name + ".csv"))), json.load(open(str(tmp_path / (name + ".json")))))
+    code, longer, doc = run("longer", "--t-max", "0.2375")
+    assert code == 0 and len(longer) == 5 and longer[:2] == flight[14:16] and doc["resumed_from"]["changed"] == {"--t-max": 0.2375}
+    assert doc["results"]["final_time_s"] == pytest.approx(0.2375)       # (its 3rd row is mid-flight, the flight's the last: only its momentum_residual differs)
+    code, finer, doc = run("finer", "--dt-continuum", "0.00625")
+    assert code == 0 and len(finer) == 5 and doc["resumed_from"]["changed"] == {"--dt-continuum": 0.00625}
+    assert doc["results"]["final_time_s"] == pytest.approx(0.2125) and doc["settings"]["thermal"] == "fem"
+    code, reseeded, doc = run("reseeded", "--seed", "7")
+    assert code == 0 and len(reseeded) == 3 and reseeded != flight[14:] and doc["resumed_from"]["changed"] == {"--seed": 7}
+    assert doc["settings"]["seed"] == 7
+    code, same, doc = run("same")
+    assert same == flight[14:] and doc["settings"]["seed"] == cli.DEFAULT_SEED
+
+
+@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan"])
+def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
+    """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
+    (0, the saved flight's --dt of 0.025 s] and a value that is not a number are refused with exit 2 (bad input), and
+    nothing is written."""
+    out, flight, records, state_path = flown
+    bad_format = str(tmp_path / "other.pkl")
+    restart.save(bad_format, {"format": restart.FORMAT + 1})
+    state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
+                      "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
+                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"])}[case]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
+    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
