@@ -3046,7 +3046,8 @@ of one comment in `spray.py`, both changed after.
 
 192. **The resume command and the spreading, as built and checked (sub-plan 22 Tasks 5b and 5c, 2026-11-06;
      `measure/task5b/check.md`, `measure/task5c/check.md`; `part_22.md`).** *Task 5b:* `python -m reentry_model resume
-     STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray]` continues a flight
+     STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray --spread-limit
+     --save-state-at]` continues a flight
      saved with `--save-state-at` to the last bit, writing the files `run` writes through one shared writer
      (`finish_run`); exit 2 for a missing or foreign state, an end of flight not after the saved time, or a continuum step
      outside (0, `--dt`]. The two real states resumed through the launcher on mains power: the 50 mm flight's (saved at

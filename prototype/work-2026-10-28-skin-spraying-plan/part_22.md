@@ -2077,6 +2077,20 @@ traced. The check stops 2.04 s before the snapshot flight's stop, so whether a f
   --frames-every 1`, recording the fold, `spread_mass_kg`, `spread_unplaced_kg`, the books and the wall time in `measure/task5c/check.md`.
   A fold above the limit there is a finding to report, not a reason to tune the pass.
 
+**The final review's amendments (2026-11-07).** The whole-branch review found the code ready for flights and asked for
+three things that stop a multi-hour flight being wasted; they fall into this task's diffs of `cli.py`, `spreading.py` and
+`tests/test_reentry_model_restart.py`. (1) `resume` takes `--save-state-at S` (finite, after the saved time and before the
+run's end of flight, else exit 2): the resumed flight saves its whole state once at the end of the first macro step ending
+at or after S, to `<outdir>/<name>.state.pkl`, with the resumed run's name and arguments in the state, and the record of
+the original flight's own save is reset so that the save happens; the JSON records `save_state_at_s` and the `state` file as
+`run` does. A flight that gets past the old stop can then be looked at without re-flying (`test_a_resumed_flight_saves_its_state_on_its_way_and_that_state_resumes`
+resumes from the new state to the unbroken flight's rows to the last bit). (2) `cmd_resume` prints one line to stdout after
+validation and before the flight naming the state, its saved time and step, the end of flight, the continuum step, seed,
+frames, slurry spray, spread limit (or off), the save time and the files (`test_a_resume_says_what_it_is_doing_before_it_flies`).
+(3) `spreading.py`'s docstring says that `SPENT` drops a true remainder of at most 1e-14 of one corner's hand-down per part,
+a leak by design far below the books' 1e-12, and fact 192 lists `--spread-limit` and `--save-state-at`. The resume
+command's options are now `[--t-max --dt-continuum --seed --frames-every --slurry-spray --spread-limit --save-state-at]`.
+
 - [ ] **Step 9: Commit.**
 
 ```bash

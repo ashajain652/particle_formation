@@ -9289,7 +9289,7 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 ```diff
 --- a/tests/test_reentry_model_restart.py
 +++ b/tests/test_reentry_model_restart.py
-@@ -176,17 +176,72 @@
+@@ -176,17 +176,114 @@
      assert same == flight[14:] and doc["settings"]["seed"] == cli.DEFAULT_SEED
  
  
@@ -9333,7 +9333,7 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 +
 +
 +@pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
-+                                  "spread_0", "spread_180", "spread_nan"])
++                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan"])
  def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
      """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
 -    (0, the saved flight's --dt of 0.025 s] and a value that is not a number are refused with exit 2 (bad input), and
@@ -9348,7 +9348,10 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 -                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"])}[case]
 +                      "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
 +                      "spread_0": (state_path, ["--spread-limit", "0"]), "spread_180": (state_path, ["--spread-limit", "180"]),
-+                      "spread_nan": (state_path, ["--spread-limit", "nan"])}[case]
++                      "spread_nan": (state_path, ["--spread-limit", "nan"]),
++                      "save_not_after": (state_path, ["--save-state-at", "0.1875"]),
++                      "save_at_end": (state_path, ["--save-state-at", "0.2125"]),
++                      "save_nan": (state_path, ["--save-state-at", "nan"])}[case]
      with pytest.raises(SystemExit) as exc:
          cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
      assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
@@ -9366,6 +9369,45 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 +        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "60"])
 +    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
 +    assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--spread-limit", "off"]) == 0
++
++
++def test_a_resumed_flight_saves_its_state_on_its_way_and_that_state_resumes(flown, tmp_path):
++    """A resumed flight can save its state as the first did (final review, 2026-11-07): `--save-state-at 0.2` on the resume
++    of the state saved at 0.1875 s writes <outdir>/<name>.state.pkl at the end of the 15th step, though the original
++    flight's own save had set the run's record of one; the JSON records the time and the file, the new state carries the
++    resumed run's name and arguments, and resumed in its turn it repeats the unbroken flight from its step to the last bit.
++    The same flight resumed without the option saves nothing."""
++    out, flight, records, state_path = flown
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--save-state-at", "0.2"]) == 0
++    doc = json.load(open(str(tmp_path / "r.json")))
++    new = str(tmp_path / "r.state.pkl")
++    assert doc["settings"]["save_state_at_s"] == 0.2 and doc["results"]["state_saved_at_s"] == pytest.approx(0.2)
++    assert doc["results"]["state_save_error"] is None and doc["files"]["state"] == new
++    assert doc["resumed_from"]["changed"] == {"--save-state-at": 0.2}
++    state = restart.load(new)
++    assert state["step"] == 15 and state["meta"]["name"] == "r" and state["meta"]["args"]["save_state_at"] == 0.2
++    assert state["meta"]["args"]["outdir"] == str(tmp_path)
++    assert cli.main(["resume", new, "--outdir", str(tmp_path), "--name", "again"]) == 0
++    assert rows_of(str(tmp_path / "again.csv")) == flight[15:]
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "plain"]) == 0
++    assert not os.path.exists(str(tmp_path / "plain.state.pkl"))
++    assert "state" not in json.load(open(str(tmp_path / "plain.json")))["files"]
++
++
++def test_a_resume_says_what_it_is_doing_before_it_flies(flown, tmp_path, capsys):
++    """One line at the start of a resume, before the flight, names the state, its saved time, the end of flight and every
++    option in force, the spread limit or off included, so a flight's log says what it is without waiting for its JSON."""
++    out, flight, records, state_path = flown
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r", "--t-max", "0.225", "--seed", "7",
++                     "--spread-limit", "60", "--save-state-at", "0.2"]) == 0
++    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")]
++    assert len(line) == 1
++    for text in (os.path.abspath(state_path), "saved at 0.1875 s", "step 14", "to 0.225 s", "seed 7", "spread limit 60 deg",
++                 "save state at 0.2 s", "dt_continuum 0.0125", "slurry spray off", os.path.join(str(tmp_path), "r")):
++        assert text in line[0]
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "q"]) == 0
++    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
++    assert "saved random state" in line and "spread limit off" in line and "save state at no" in line
 ```
 
 - [ ] **Step 2: Run them to see them fail.** `"$PY" -m pytest tests/test_reentry_model_spreading.py -q`. Expected: `ImportError: cannot
@@ -9395,7 +9437,8 @@ allowance: the part's move ratio holds, and a hand-down still never splits a par
 keeps the donor's mean enthalpy. SPREAD_PASSES passes a part at most, so metal travels at most a ring or two of 2 mm
 neighbours in one part. What is left wanting to move after the last pass, and could leave its donor, is reported, as
 `held_mass` reports what the tolerance holds. A limit that does not bind returns the very arrays it was given, so a run under
-it is the run without it to the last bit."""
+it is the run without it to the last bit. `SPENT` drops a true remainder of at most 1e-14 of one corner's hand-down per
+part: a leak by design, far below the books' 1e-12, not round-off."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -9756,17 +9799,20 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      return out
  
  
-@@ -260,6 +282,9 @@
+@@ -260,6 +282,12 @@
                      help="VTK frame every n macro steps, the series new (default: the saved flight's setting)")
      rs.add_argument("--slurry-spray", choices=("on", "off"), default=None,
                      help="the exposed slurry sprays too (default: the saved flight's)")
 +    rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
 +                    help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
 +                         "flight's, off for one saved before the option existed)")
++    rs.add_argument("--save-state-at", type=float, default=None,
++                    help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
++                         "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
  
  
  def build_parser():
-@@ -386,6 +411,10 @@
+@@ -386,6 +414,10 @@
                      help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
                           "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
                           "liquidus, on a viscosity law with no data there (default off)")
@@ -9777,7 +9823,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      me.add_argument("--skin-flow-cycles", type=int, default=None,
                      help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
                           "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
-@@ -475,7 +504,7 @@
+@@ -475,7 +507,7 @@
                                       flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
                                       spray=spray_model_of(args, mat) if flow else None,
                                       slurry_spray=args.slurry_spray == "on", particles=args.particles,
@@ -9786,7 +9832,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      elif melting:
          flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
          spray_model = spray_model_of(args, mat)
-@@ -508,6 +537,8 @@
+@@ -508,6 +540,8 @@
                          "swell": args.skin_swell == "on", "flow": args.skin_flow,
                          "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles,
                          "slurry_spray": args.slurry_spray}
@@ -9795,7 +9841,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      if args.heating == "physics":
          info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                       "accommodation": args.accommodation, "catalycity": args.catalycity})
-@@ -557,7 +588,8 @@
+@@ -557,7 +591,8 @@
                                                                      args.skin_swell == "on", args.fine_band, args.fine_size,
                                                                      args.skin_fine_zone,
                                                                      skin_flow_of(args) == "on" if args.melt == "on" else None,
@@ -9805,7 +9851,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
  
  
  def cmd_run(args, parser):
-@@ -635,6 +667,8 @@
+@@ -635,6 +670,8 @@
      if args.slurry_spray == "on" and args.skin_flow != "on":
          parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
                       "sprays by the skins' spraying from their top cells")
@@ -9814,7 +9860,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      if args.surface_model == "skin":
          for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                              ("--molten-cascade off", args.molten_cascade == "off"),
-@@ -848,6 +882,11 @@
+@@ -848,8 +885,19 @@
          if args.slurry_spray == "on" and getattr(run.body, "spray", None) is None:
              parser.error("--slurry-spray on needs a saved flight with the skins' spraying (--skin-flow on)")
          changed["--slurry-spray"] = args.slurry_spray
@@ -9825,8 +9871,28 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
 +        changed["--spread-limit"] = args.spread_limit
      if args.seed is not None:
          changed["--seed"] = args.seed
++    if args.save_state_at is not None:
++        t_end = args.t_max if args.t_max is not None else run.sim.settings.t_max
++        if not (math.isfinite(args.save_state_at) and state["time_s"] < args.save_state_at < t_end):
++            parser.error("--save-state-at must be a finite time after the saved state's {:.6g} s and before the end of flight "
++                         "{:.6g} s, got {!r}".format(state["time_s"], t_end, args.save_state_at))
++        changed["--save-state-at"] = args.save_state_at
      # -- the point between loading the state and flying on, where each option is applied; keep the options above and
-@@ -866,6 +905,11 @@
+     # their application below together, in the order of resume_arguments --
+     if "--t-max" in changed:
+@@ -859,6 +907,11 @@
+         if run.switched_at is not None:            # latched: the step in use is the continuum step
+             settings.dt = args.dt_continuum
+     settings.save_at = settings.save_path = settings.save_meta = None
++    state_path = None
++    if "--save-state-at" in changed:               # the original flight's save left these set; run() saves only while they are None
++        state_path = os.path.join(args.outdir, args.name + STATE_SUFFIX)
++        settings.save_at, settings.save_path = args.save_state_at, state_path
++        run.state_saved_at = run.state_save_error = None
+     settings.output_dir = os.path.join(run_dir, "vtk")
+     settings.frames = []                           # the new series lists only its own frames
+     if "--frames-every" in changed:
+@@ -866,31 +919,52 @@
          run._frame_dt, run._next_frame = args.frames_every * saved.dt, run.sim.t
      if "--slurry-spray" in changed:
          run.body.slurry_spray = args.slurry_spray == "on"
@@ -9838,15 +9904,52 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
      if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
          run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
      if args.seed is not None:
-@@ -886,6 +930,8 @@
+         np.random.seed(args.seed)
+     else:
+         np.random.set_state(state["rng"])
+-    history = run.run(resume=state)
+-    # the arguments of the writer: the saved flight's, with what is changed here
+-    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", None)):
++    # the arguments of the writer, and of a state this run saves: the saved flight's, with what is changed here
++    for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", changed.get("--save-state-at"))):
+         setattr(saved, key, value)
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+-                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray")):
++                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
++    if state_path is not None:
++        settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
++    limit = run.body.spread_limit if skins else None
++    print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
++          "spread limit {}, save state at {}; files {}".format(
++              os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
++              settings.dt_continuum if settings.dt_continuum is not None else "none",
++              args.seed if args.seed is not None else "saved random state", settings.frames_every,
++              "on" if getattr(run.body, "slurry_spray", False) else "off",
++              "off" if limit is None else "{:g} deg".format(limit),
++              "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
++              os.path.join(args.outdir, args.name)), flush=True)
++    history = run.run(resume=state)
+     atm, atm_name, atm_info = make_atmosphere(saved.atmosphere, saved.epoch, saved.wind)
+     reference = sesam_io.load_reference(saved.reference) if saved.reference else None
+     mass = body.sphere_mass(run.sim.settings.diameter, saved.material_density)
      thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
                                                           "skin_flow", "slurry_spray")}
      thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
++    if state_path is not None:
++        thermal_info["save_state_at_s"] = args.save_state_at
 +    if skins and run.body.spread_limit is not None:
 +        thermal_info["spread_limit_deg"] = run.body.spread_limit
      resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                 "run_name": state["meta"]["name"], "changed": changed}
      os.makedirs(args.outdir, exist_ok=True)
+     return finish_run(saved, args.name, run.sim.settings, mass, atm_name, atm_info, reference, thermal_info, run.body, history,
+-                      None, resumed=resumed)
++                      state_path, resumed=resumed)
+ 
+ 
+ def _fmt(x):
 ```
 
 - [ ] **Step 7: Run the tests to see them pass.** Expected: the four files' new tests pass in about 2 minutes across three processes; the unit
@@ -9857,6 +9960,20 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
   flight's `rows.csv`: every shared column but the `wall_` timers the same to the last bit. Then to 177.0 s with `--spread-limit 60
   --frames-every 1`, recording the fold, `spread_mass_kg`, `spread_unplaced_kg`, the books and the wall time in `measure/task5c/check.md`.
   A fold above the limit there is a finding to report, not a reason to tune the pass.
+
+**The final review's amendments (2026-11-07).** The whole-branch review found the code ready for flights and asked for
+three things that stop a multi-hour flight being wasted; they fall into this task's diffs of `cli.py`, `spreading.py` and
+`tests/test_reentry_model_restart.py`. (1) `resume` takes `--save-state-at S` (finite, after the saved time and before the
+run's end of flight, else exit 2): the resumed flight saves its whole state once at the end of the first macro step ending
+at or after S, to `<outdir>/<name>.state.pkl`, with the resumed run's name and arguments in the state, and the record of
+the original flight's own save is reset so that the save happens; the JSON records `save_state_at_s` and the `state` file as
+`run` does. A flight that gets past the old stop can then be looked at without re-flying (`test_a_resumed_flight_saves_its_state_on_its_way_and_that_state_resumes`
+resumes from the new state to the unbroken flight's rows to the last bit). (2) `cmd_resume` prints one line to stdout after
+validation and before the flight naming the state, its saved time and step, the end of flight, the continuum step, seed,
+frames, slurry spray, spread limit (or off), the save time and the files (`test_a_resume_says_what_it_is_doing_before_it_flies`).
+(3) `spreading.py`'s docstring says that `SPENT` drops a true remainder of at most 1e-14 of one corner's hand-down per part,
+a leak by design far below the books' 1e-12, and fact 192 lists `--spread-limit` and `--save-state-at`. The resume
+command's options are now `[--t-max --dt-continuum --seed --frames-every --slurry-spray --spread-limit --save-state-at]`.
 
 - [ ] **Step 9: Commit.**
 
