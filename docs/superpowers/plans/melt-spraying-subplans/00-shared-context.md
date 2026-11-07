@@ -3010,7 +3010,7 @@ of one comment in `spray.py`, both changed after.
 > neighboring cells to keep the angles reasonable?", answered with snapshot flights and a design drafted on paper
 > (`docs/superpowers/specs/2026-11-06-deposit-spreading-design.md`); then, with the snapshots in, that spread metal lands
 > hot and that it is built with subagents (`docs/superpowers/plans/2026-11-06-deposit-spreading-build.md`). The
-> controller's ruling, not yet confirmed by Asha: `--spread-limit` is off by default until flights have tested it. Facts
+> `--spread-limit` is off by default until flights have tested it: The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it. Facts
 > 1–190 stand.
 
 191. **The snapshot flights (sub-plan 22 Task 5, 2026-11-06; `measure/task5/snapshots/findings.md`).** The two skin flights
@@ -3058,8 +3058,7 @@ of one comment in `spray.py`, both changed after.
      folds past the limit, part of what the skins hand down goes to lower neighbouring corners, the metal landing hot -- it
      crosses the base at the receiving node's enthalpy and the rest of its heat goes to that node through `pending`, not
      through `h_outward`, which would share it over the whole moving zone (Asha's decision, 2026-11-06). **Off by default
-     until flights have tested it, so every existing run is as before: the controller's ruling, not yet confirmed by
-     Asha.** The history gains `spread_mass_kg`, `spread_unplaced_kg`, `spread_edges_over` and `spread_jump_max_K` with a
+     until flights have tested it, so every existing run is as before.** The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it. The history gains `spread_mass_kg`, `spread_unplaced_kg`, `spread_edges_over` and `spread_jump_max_K` with a
      limit only; a limit that does not bind changes nothing to the last bit; the two states pickled before this resume with
      or without one. On the test plate a crest passes 90 degrees by part 31 with the pass off and stays between 59.96 and
      60.03 degrees at a limit of 60 over 200 parts. *The check (50 mm state, one limit, one mesh, flown once):* to 172.0 s

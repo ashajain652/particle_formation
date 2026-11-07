@@ -139,7 +139,7 @@ limit, the share of 0.25 and four passes a part, only handed metal moving, and A
 Built in sub-plan 22 Tasks 5b (the resume command) and 5c (the spreading), with `docs/superpowers/plans/2026-11-06-deposit-spreading-build.md`;
 recorded in spec 2026-10-11 §6.6, §10.1, §10.2, §12 and §16 and in facts 191 and 192 of the sub-plans' shared context.
 
-- **`--spread-limit` is off by default** until flights have tested it: the controller's ruling, not yet confirmed by Asha.
+- **`--spread-limit` is off by default** until flights have tested it. The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it.
 - **The check**, on the 50 mm state saved at 170.5 s, resumed once with a limit of 60 degrees, one mesh: to 172.0 s all 84
   shared columns equal the snapshot flight's at full precision. To 177.0 s the largest fold is 64.86 degrees against 116.75 in
   the snapshot flight, 5 edges past 60 degrees at 177.0 s against 108, 1.704 g spread against 13.63 g handed down, the largest

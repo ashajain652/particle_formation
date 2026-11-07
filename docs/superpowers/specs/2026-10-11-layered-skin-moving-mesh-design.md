@@ -398,7 +398,7 @@ After the sub-steps, each column's base moves by the metal crossing it:
   would stand after the part's draws and hand-downs folds past the limit angle, part of the metal a corner hands down goes
   instead to its lower neighbours on the column graph, as loose material relaxes to its angle of repose: across a ridge the
   two corners of the folded edge give to the corners opposite it, across a valley the reverse, each pair wanting 0.25 of
-  the fold's excess over the limit (`SPREAD_SHARE`), at most four passes (`SPREAD_PASSES`) a part. No donor falls below what
+  the fold's excess over the limit, of the metal above the receiver (`SPREAD_SHARE`), at most four passes (`SPREAD_PASSES`) a part. No donor falls below what
   balances its draw and no receiver rises above the part's move allowance (§7.1); only handed metal moves, and the sums of
   mass and enthalpy are kept. (Asha's idea and decisions, 2026-11-06. Her question, in answer to the two skin flights
   stopping on deposit folds: could the re-frozen mass be spread to neighbouring cells to keep the angles reasonable. The
@@ -661,8 +661,7 @@ step off.
 (Built in sub-plan 22 Tasks 5b and 5c, 2026-11-06, facts 191–192.) `--spread-limit` is on `run` and on the new `resume`
 command (`python -m reentry_model resume STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every
 --slurry-spray --spread-limit]`, which continues a flight saved with `--save-state-at` to the last bit and writes the files
-`run` writes). **It is off by default until flights have tested it, so every existing run stays as it is: a ruling of the
-controller's, not yet confirmed by Asha** (the design's first draft implied on); the cost if wrong is that flights must pass
+`run` writes). **It is off by default until flights have tested it, so every existing run stays as it is.** The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it; the cost if wrong is that flights must pass
 the option. The design's proposed starting value is 60 degrees, below §12's 75–95 and above the 37 degrees the 50 mm base shows before
 any melting. A limit outside (0, 180), or given to a run that does not have melting skins, exits with code 2; `resume`
 exits 2 too for a missing or foreign state, an end of flight not after the saved time, or a continuum step outside (0,
@@ -1237,8 +1236,7 @@ Each stage is tested and measured before the next begins.
   **spread metal lands hot**, crossing the base at the receiving node's enthalpy with the rest of its heat sent to that
   node through the deferred per-corner heat, over booking it through the outward sweep, which shares it over the whole
   moving zone, and over holding it to the 5 K tolerance, which would refuse most of the spreading; and it is built with
-  subagents (Asha). `--spread-limit` is off by default until flights have tested it (§10.1): the controller's ruling,
-  not yet confirmed by Asha. Where metal landed is read pass by pass (`Spread.landed`), over the first formula (a corner
+  subagents (Asha). `--spread-limit` is off by default until flights have tested it (§10.1): The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it. Where metal landed is read pass by pass (`Spread.landed`), over the first formula (a corner
   handing down more than it started with), which missed corners that took hot metal and gave more onward (the controller's
   ruling after the build's review). The production check was not re-run after that fix, the resumed flights superseding
   it. Whether a flight gets past the old stops is untested.
