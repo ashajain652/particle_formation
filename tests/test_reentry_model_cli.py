@@ -619,8 +619,62 @@ def test_an_element_model_setting_given_to_the_default_skins_names_the_surface_m
     assert exc.value.code == 2 and "--surface-model elements" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("text,value", [("off", "off"), ("60", 60.0), ("72.5", 72.5), ("0.5", 0.5), ("179.5", 179.5)])
+def test_the_spread_limit_reads_off_or_a_fold_angle(text, value):
+    assert cli.parse_spread_limit(text) == value
+
+
+def test_the_spread_limit_marks_the_run_s_name_and_is_off_by_default():
+    """--spread-limit (sub-plan 22 Task 5c) is off by default, so that every existing run keeps its name; a limit ends a skin
+    run's settings in _spread-<deg>, after the spraying's and before the seed's."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).spread_limit == "off" and cli.spread_limit_of(p.parse_args(melt)) is None
+    assert name(melt) == name(melt + ["--spread-limit", "off"]) == base
+    assert name(melt + ["--spread-limit", "60"]) == base + "_spread-60"
+    assert name(melt + ["--spread-limit", "72.5"]) == base + "_spread-72.5"
+    assert (name(melt + ["--slurry-spray", "on", "--spread-limit", "60", "--seed", "7"])
+            == base + "_slurryspray-on_spread-60_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, spread_limit=45.0) == "_spread-45"
+
+
+@pytest.mark.parametrize("argv", [
+    THERMAL + ["--melt", "on", "--spread-limit", "0"],
+    THERMAL + ["--melt", "on", "--spread-limit", "180"],
+    THERMAL + ["--melt", "on", "--spread-limit", "-10"],
+    THERMAL + ["--melt", "on", "--spread-limit", "nan"],
+    THERMAL + ["--melt", "on", "--spread-limit", "inf"],
+    THERMAL + ["--melt", "on", "--spread-limit", "steep"],
+    THERMAL + ["--spread-limit", "60"],                                                # nothing melts, so nothing re-freezes
+    FEM + ["--melt", "on", "--spread-limit", "60"],                                    # the element model has no hand-down
+    BASE + ["--spread-limit", "60"],                                                   # no thermal model at all
+])
+def test_a_bad_spread_limit_or_one_without_a_melting_skin_run_exits_2(argv, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2
+
+
 class _Built(Exception):
     pass
+
+
+def test_the_command_line_gives_the_skins_their_spread_limit(tmp_path, monkeypatch):
+    """--spread-limit reaches the skin body as a number [deg], None when off, with the flow off too: the heat-only skins hand
+    metal down as well. The body is not built: its arguments are."""
+    from reentry_model import skinbody
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"], 60.0),
+                        (melt + ["--skin-flow", "off", "--spread-limit", "75"], 75.0)):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["spread_limit"] == limit
 
 
 def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path, monkeypatch):

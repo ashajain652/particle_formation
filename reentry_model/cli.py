@@ -4,11 +4,12 @@
         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
-        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off ...]
+        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
-        --slurry-spray on|off]       (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+        --slurry-spray on|off --spread-limit DEG|off]
+                                     (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
 Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
@@ -105,6 +106,24 @@ def parse_dt_continuum(text):
     return value
 
 
+def parse_spread_limit(text):
+    """--spread-limit: `off`, or a fold angle [degrees] within (0, 180)."""
+    if text == "off":
+        return text
+    try:
+        value = float(text)
+    except ValueError:
+        value = float("nan")
+    if not 0.0 < value < 180.0:
+        raise argparse.ArgumentTypeError("spread-limit must be off or an angle within (0, 180) degrees, got {!r}".format(text))
+    return value
+
+
+def spread_limit_of(args):
+    """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
+    return None if args.spread_limit == "off" else args.spread_limit
+
+
 def continuum_step(args):
     """The macro step after the continuum switch [s], or None for no switch: --dt-continuum if given (`off`: none), else
     DEFAULT_DT_CONTINUUM for the model proper -- melting with Girin removal -- and none for the instant-removal device
@@ -166,7 +185,7 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
-                     slurry_spray=False):
+                     slurry_spray=False, spread_limit=None):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -175,8 +194,9 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     `_skinflow-off` for the heat-only skins of a melting run (`flow` False: the flow, sub-plan 21 Task 6c, is on by default
     with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
     the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
-    sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3); empty
-    for the defaults."""
+    sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
+    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c); empty for the
+    defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -202,6 +222,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_flowcycles{}".format(flow_cycles)
     if slurry_spray:
         out += "_slurryspray-on"
+    if spread_limit is not None:
+        out += "_spread-{:g}".format(spread_limit)
     return out
 
 
@@ -260,6 +282,9 @@ def resume_arguments(rs):
                     help="VTK frame every n macro steps, the series new (default: the saved flight's setting)")
     rs.add_argument("--slurry-spray", choices=("on", "off"), default=None,
                     help="the exposed slurry sprays too (default: the saved flight's)")
+    rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
+                    help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
+                         "flight's, off for one saved before the option existed)")
 
 
 def build_parser():
@@ -386,6 +411,10 @@ def build_parser():
                     help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
                          "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
                          "liquidus, on a viscosity law with no data there (default off)")
+    me.add_argument("--spread-limit", type=parse_spread_limit, default="off",
+                    help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
+                         "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
+                         "lands hot (sub-plan 22 Task 5c; off until the flights have tested it; default off)")
     me.add_argument("--skin-flow-cycles", type=int, default=None,
                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
@@ -475,7 +504,7 @@ def build_thermal(args, settings, mass, spool=None):
                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
                                      spray=spray_model_of(args, mat) if flow else None,
                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
-                                     spool=spool if flow else None)
+                                     spool=spool if flow else None, spread_limit=spread_limit_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -508,6 +537,8 @@ def build_thermal(args, settings, mass, spool=None):
                         "swell": args.skin_swell == "on", "flow": args.skin_flow,
                         "flow_cycles": "adaptive" if the_body.flow_cycles is None else the_body.flow_cycles,
                         "slurry_spray": args.slurry_spray}
+        if spread_limit_of(args) is not None:
+            info["skin"]["spread_limit_deg"] = spread_limit_of(args)
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -557,7 +588,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     args.skin_swell == "on", args.fine_band, args.fine_size,
                                                                     args.skin_fine_zone,
                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
-                                                                    args.skin_flow_cycles, args.slurry_spray == "on"))
+                                                                    args.skin_flow_cycles, args.slurry_spray == "on",
+                                                                    spread_limit_of(args)))
 
 
 def cmd_run(args, parser):
@@ -635,6 +667,8 @@ def cmd_run(args, parser):
     if args.slurry_spray == "on" and args.skin_flow != "on":
         parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
                      "sprays by the skins' spraying from their top cells")
+    if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
+        parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
@@ -848,6 +882,11 @@ def cmd_resume(args, parser):
         if args.slurry_spray == "on" and getattr(run.body, "spray", None) is None:
             parser.error("--slurry-spray on needs a saved flight with the skins' spraying (--skin-flow on)")
         changed["--slurry-spray"] = args.slurry_spray
+    skins = isinstance(run.body, skinbody.SkinBody)
+    if args.spread_limit is not None:
+        if spread_limit_of(args) is not None and not (skins and run.body.material.melts):
+            parser.error("--spread-limit needs a saved flight of melting skins: it spreads the metal they hand down")
+        changed["--spread-limit"] = args.spread_limit
     if args.seed is not None:
         changed["--seed"] = args.seed
     # -- the point between loading the state and flying on, where each option is applied; keep the options above and
@@ -866,6 +905,11 @@ def cmd_resume(args, parser):
         run._frame_dt, run._next_frame = args.frames_every * saved.dt, run.sim.t
     if "--slurry-spray" in changed:
         run.body.slurry_spray = args.slurry_spray == "on"
+    if "--spread-limit" in changed and skins:      # every row takes the saved row's columns, which have to say so
+        run.body.spread_limit = spread_limit_of(args)
+        for key in skinbody.SPREAD_COLUMNS:
+            state["row"].pop(key, None)
+        state["row"].update(run.body.spread_stats())
     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
@@ -886,6 +930,8 @@ def cmd_resume(args, parser):
     thermal_info = {key: getattr(saved, key) for key in ("heating", "melt", "surface_model", "thermal_solver", "linear_solver",
                                                          "skin_flow", "slurry_spray")}
     thermal_info.update({"macro_step_s": saved.dt, "frames_every": settings.frames_every, "dt_continuum_s": settings.dt_continuum})
+    if skins and run.body.spread_limit is not None:
+        thermal_info["spread_limit_deg"] = run.body.spread_limit
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)
