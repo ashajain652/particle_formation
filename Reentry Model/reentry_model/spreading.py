@@ -18,7 +18,8 @@ allowance: the part's move ratio holds, and a hand-down still never splits a par
 keeps the donor's mean enthalpy. SPREAD_PASSES passes a part at most, so metal travels at most a ring or two of 2 mm
 neighbours in one part. What is left wanting to move after the last pass, and could leave its donor, is reported, as
 `held_mass` reports what the tolerance holds. A limit that does not bind returns the very arrays it was given, so a run under
-it is the run without it to the last bit."""
+it is the run without it to the last bit. `SPENT` drops a true remainder of at most 1e-14 of one corner's hand-down per
+part: a leak by design, far below the books' 1e-12, not round-off."""
 from dataclasses import dataclass
 
 import numpy as np
