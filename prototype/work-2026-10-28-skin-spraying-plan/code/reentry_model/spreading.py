@@ -35,6 +35,7 @@ class Spread:
     moved: float          # kg moved between columns
     unplaced: float       # kg still wanting to move after the last pass
     over: int             # edges over the limit on the first estimate
+    landed: np.ndarray    # bool per column: metal arrived here in some pass, whatever it gave onward
 
 
 def fold_angles(columns, points):
@@ -79,9 +80,12 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
     """Spread the part's hand-down (`handed` [kg] and `enthalpy` [J] per column) over the corners at `points` [m], outward
     `normal`, dual `area` [m2], where the base as it would stand folds past `limit_deg` (module docstring): a Spread. `drawn`
     [kg] is the part's draws and `cap` [kg] its allowance per column (`SkinBody._hand_cap`). The base's estimate leaves out
-    the part's absorption and smoothing. The sums of the hand-down and its enthalpy are kept to round-off."""
+    the part's absorption and smoothing. The sums of the hand-down and its enthalpy are kept to round-off. `landed` is read
+    pass by pass, not from the totals: a corner that takes metal and gives more onward ends handing down less than it started
+    with, and carries its neighbours' heat all the same."""
     n, first, moved = len(handed), 0, 0.0
     h, H = handed, enthalpy
+    landed = np.zeros(n, dtype=bool)
     floor = np.maximum(drawn - cap, 0.0)                 # a donor keeps what balances its draw: the part's move ratio holds
     for k in range(passes + 1):
         q = points - normal * ((drawn - h) / (rho * area))[:, None]     # the base as it would stand
@@ -89,14 +93,14 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
         over = np.flatnonzero(angle > limit_deg)
         if k == 0:
             if not over.size:
-                return Spread(handed, enthalpy, 0.0, 0.0, 0)
+                return Spread(handed, enthalpy, 0.0, 0.0, 0, landed)
             first = int(over.size)
         if not over.size:
-            return Spread(h, H, moved, 0.0, first)
+            return Spread(h, H, moved, 0.0, first, landed)
         donor, receiver, want = _pairs(columns, q, normal, area, rho, angle, convex, over, limit_deg)
         want = _within(want, donor, np.maximum(h - floor, 0.0), n)
         if k == passes:
-            return Spread(h, H, moved, float(want.sum()), first)
+            return Spread(h, H, moved, float(want.sum()), first, landed)
         want = _within(want, receiver, np.maximum(cap - h, 0.0), n)
         going = want > 0.0
         donor, receiver, want = donor[going], receiver[going], want[going]
@@ -104,6 +108,8 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
         gave = np.bincount(donor, want, n)
         rest = 1.0 - gave / np.where(h > 0.0, h, 1.0)
         rest = np.where(rest < SPENT, 0.0, rest)         # all it had: exactly nothing, or the mean enthalpy the moving
-        h = h * rest + np.bincount(receiver, want, n)    # mesh books its sweep at would be round-off over round-off
+        got = np.bincount(receiver, want, n)             # mesh books its sweep at would be round-off over round-off
+        h = h * rest + got
         H = H * rest + np.bincount(receiver, want * unit, n)
+        landed = landed | (got > 0.0)
         moved += float(want.sum())

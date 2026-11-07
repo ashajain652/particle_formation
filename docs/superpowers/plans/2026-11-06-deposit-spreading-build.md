@@ -143,6 +143,7 @@ the design: `prototype/work-2026-10-28-skin-spraying/measure/task5/snapshots/fin
       moved: float          # kg moved between columns
       unplaced: float       # kg still wanting to move after the last pass
       over: int             # edges over the limit on the first estimate
+      landed: np.ndarray    # bool per column: metal arrived here in some pass, whatever it gave onward
 
   def fold_angles(columns, points) -> (angle_deg, convex)   # per edge; convex: a ridge along the edge, else a valley
   def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy, cap, limit_deg,
@@ -169,22 +170,28 @@ for each pass:
     want = SPREAD_SHARE * (angle[pair] - limit_deg) / angle[pair] * rho * area[donor] * dz
     want scaled so no donor falls below floor and no receiver above cap (np.bincount over donors, then receivers)
     move want with the donor's mean enthalpy H[d] / h[d]
+    landed |= np.bincount(receiver, want, n) > 0.0
 ```
 After the last pass `unplaced` is the sum of `want`, scaled by the donors' limit only, on one more evaluation. Sums of `h`
-and `H` are kept to round-off. If no edge is over the limit at the first evaluation, return the arguments themselves.
+and `H` are kept to round-off. If no edge is over the limit at the first evaluation, return the arguments themselves, with
+`landed` all false.
 
 **In `_move_base`**, when `spread_limit` is set, after `hand_down` and the `held` lines:
 ```python
 s = spreading.spread_hand_down(col, col.points, col.normal, col.area, mat.rho, book.drawn, handed, handed_H,
                                self._hand_cap(), self.spread_limit)
 handed_s, landed_H = s.handed, s.enthalpy
-received = handed_s > handed                         # metal landed here from a neighbour: at this node's enthalpy,
-excess = np.where(received, landed_H - handed_s * mat.enthalpy(T_node), 0.0)      # the rest of its heat to this node
+# metal landed here from a neighbour in some pass: at this node's enthalpy, the rest of its heat to this node
+excess = np.where(s.landed, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
 landed_H = landed_H - excess
 ```
 `moved`, `inward`, `h_outward` and the reconciliation read `handed_s` and `landed_H`; `jump_faults` keeps the original
 `handed`, which is what left each skin; `handed_mass` keeps the original total. After the reconciliation:
 `self.pending = self.pending + excess`. Without a limit this code path is not entered, so `handed_s is handed`.
+*Corrected in Task 5c's review:* this plan first wrote `received = handed_s > handed`, which compares the totals, not whether
+metal arrived. A corner that takes hot metal and gives more onward ends handing down less than it started with, and its
+neighbours' heat then crossed through `h_outward`, over the whole moving zone, and was left out of `spread_jump_max_K`. The pass
+now reports `Spread.landed`, and a corner in it that ends with no metal has nothing to book.
 
 - [ ] **Step 1: Write the failing tests.** In `tests/test_reentry_model_spreading.py`, on a small triangulated plate:
   `test_a_limit_that_does_not_bind_returns_the_hand_down_itself` (`s.handed is handed`, `moved == 0`);

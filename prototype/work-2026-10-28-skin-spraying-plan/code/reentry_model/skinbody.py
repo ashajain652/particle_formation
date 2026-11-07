@@ -967,12 +967,16 @@ class SkinBody(ThermalBody):
             # booked through `h_outward` instead, `MovingMesh.move` would share the correction over all the moving nodes, the
             # whole zone rather than this corner. Added below, after the reconciliation: `_advance_part` has by then set
             # `pending` to this part's mismatch, and a part split or repeated has returned or restored before it, so the heat
-            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh.
-            received = handed_s > handed
-            if received.any():
-                jump = mat.temperature_from_enthalpy(landed_H[received] / handed_s[received]) - T_node[received]
+            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh. Where metal landed is
+            # the pass's `landed`, not handed_s > handed: a corner that took hot metal and gave more onward ends handing down
+            # less than it started with, and its neighbours' heat would cross through `h_outward` (Task 5c's review measured
+            # 1.9-7.0 % as much heat as went through `pending` going that way on a test plate). One that passed on all it
+            # took has no metal here and no enthalpy left to book: its excess is zero.
+            metal = s.landed & (handed_s > 0.0)
+            if metal.any():
+                jump = mat.temperature_from_enthalpy(landed_H[metal] / handed_s[metal]) - T_node[metal]
                 self.spread_jump = max(self.spread_jump, float(jump.max()))
-            excess = np.where(received, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
+            excess = np.where(s.landed, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
             landed_H = landed_H - excess
         if mat.melts:
             self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held

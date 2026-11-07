@@ -8628,7 +8628,7 @@ git commit -m "Coupled runs: the resume command (python -m reentry_model resume 
 - Modify: `reentry_model/cli.py` (`parse_spread_limit`, `spread_limit_of`, `--spread-limit` on `run` and in `resume_arguments`, the
   name suffix, the settings' record, `cmd_run`'s refusal, `cmd_resume`'s option and its marked block)
 - Modify: `reentry_model/coupled.py` (`skin_results`; the note after `SKINBODY_COLUMNS`)
-- Test: `tests/test_reentry_model_spreading.py` (new, 9 tests), `tests/test_reentry_model_skinbody.py` (6),
+- Test: `tests/test_reentry_model_spreading.py` (new, 10 tests), `tests/test_reentry_model_skinbody.py` (7),
   `tests/test_reentry_model_cli.py` (4 tests, 16 cases), `tests/test_reentry_model_restart.py` (2 tests, and 3 more cases of Task 5b's
   refusals)
 - Create (git-ignored): `prototype/work-2026-10-28-skin-spraying/measure/task5c/`, the production check
@@ -8638,7 +8638,7 @@ git commit -m "Coupled runs: the resume command (python -m reentry_model resume 
   `resume_arguments` and the block of `cmd_resume` where options are applied.
 - Produces: `spreading.fold_angles(columns, points)`, `(angle_deg, convex)` per edge; `spreading.spread_hand_down(columns, points,
   normal, area, rho, drawn, handed, enthalpy, cap, limit_deg, passes=SPREAD_PASSES)`, a `Spread(handed, enthalpy, moved, unplaced,
-  over)`; `SkinBody(..., spread_limit=None)`; `skinbody.SPREAD_COLUMNS` and `SkinBody.spread_stats()`; `--spread-limit DEG|off` on
+  over, landed)`, `landed` true at a column where metal arrived in any pass; `SkinBody(..., spread_limit=None)`; `skinbody.SPREAD_COLUMNS` and `SkinBody.spread_stats()`; `--spread-limit DEG|off` on
   `run` and `resume`, off by default, DEG within (0, 180), exit 2 otherwise or without a melting skin run; the name suffix
   `_spread-<deg>`; with a limit only, the history's `spread_mass_kg` (since time zero, each hop counted), `spread_unplaced_kg` and
   `spread_edges_over` (at the last move) and `spread_jump_max_K` (the largest landing over its node's temperature since the last
@@ -8658,28 +8658,32 @@ falls below what balances its draw and no receiver rises above the part's allowa
 still never splits a part. The metal keeps the donor's mean enthalpy, at most `SPREAD_PASSES` passes a part. **What crosses:** the
 skins have already given up `handed`, so nothing in them changes; `moved`, `inward`, `h_outward` and the reconciliation read the
 spread hand-down, `handed_s` and `landed_H`; `jump_faults`, `held_mass` and `handed_mass` keep what left each skin. **The landing:** at
-a corner that received, the metal crosses the base at the node's enthalpy and the rest of its heat, the excess, goes to the node
-through `pending`, after the reconciliation, because `_advance_part` has set `pending` by then and a part split or repeated has
+a corner where metal arrived in any pass (`Spread.landed`), whatever it gave onward, the metal crosses the base at the node's enthalpy
+and the rest of its heat, the excess, goes to the node through `pending`, after the reconciliation, because `_advance_part` has set `pending` by then and a part split or repeated has
 returned or restored before it. `MovingMesh.move` shares a correction over all the moving nodes, so booked through `h_outward` the heat
 would go to the whole zone rather than that corner; `pending` is the deferred per-corner heat the next part's 3D solve takes as a load
 and the books count. **A limit that does not bind** returns the very arrays it was given. **A state saved before this** has none of the
 attributes on its body, so they are class defaults too; and a run's columns are its first row's, the saved row's in a resume, so
 `cmd_resume`'s block drops the spreading columns from it and adds `spread_stats()`, which is empty without a limit.
 
-**Measured** (2026-11-06; `measure/task5c/check.md`, each once, on the 50 mm sphere, one limit, one mesh). On the test plate a crest
-handing down 0.025 of an edge a part for 200 parts, moved as the body moves its corners, passes 90 degrees by part 31 with the pass off and
-stays between 59.96 (over the last 100 parts) and 60.03 degrees with a limit of 60. On the production mesh, resumed from the state saved
-at 170.5 s (pickled by 055c313, before spreading existed): to 172.0 s, in 193 s, all 84 shared columns equal the snapshot flight's at full
-precision, the limit binding nowhere at a 37.22 degree fold. To 177.0 s, in 2 014 s, the limit first binds in the row at 174.0 s and the
-largest fold over the 91 rows is 64.86 degrees, at 176.0 s, against 120.14 over the same rows of the snapshot flight; 82 rows are above 60
-degrees, 4 above 62, none above 65, and the last is 61.82. At 177.0 s 5 base edges are past 60 degrees against 108, in the same travelling
-band. 1.704 g moved against 13.63 g handed down (12.5 %, each hop counted), the largest unplaced mass at a move 0.25 mg, the largest landing
-57.4 K above its node. Mass closes to 4.5e-16, the energy balance residual is -1.76e-11, the momentum residual 3.76e-17, and no fault is
-counted against the snapshot's 2. **Two things did not improve.** The 3D mesh's lowest radius ratio, which is what stops a flight, is 0.0533
-against 0.0503, the floor being 0.05, with 26 rows below 0.08 against 14 and 15 rebuilds against 18, so a fold held at 60 degrees does not
-by itself keep the elements off the floor. And the metal stays deeper: the deepest skin at 177.0 s is 5.99 mm against 4.48 mm, 22 corners are
-deeper than 5 mm against none, and 13.63 g is handed down against 15.69 g, the pools the design warned of. The check stops 2.04 s before the
-snapshot flight's stop, so whether a flight now gets past it is untested. The unit tier is 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+**Measured** (2026-11-06; `measure/task5c/check.md`, each once, on the 50 mm sphere, one limit, one mesh; on the code just before ruling 11,
+which changes where some landing heat goes and was not flown). On the test plate a crest handing down 0.025 of an edge a part for 200 parts,
+moved as the body moves its corners, passes 90 degrees by part 31 with the pass off and stays between 59.96 (over the last 100 parts) and
+60.03 degrees with a limit of 60. On the production mesh, resumed from the state saved at 170.5 s (pickled by 055c313, before spreading
+existed): to 172.0 s, in 193 s, all 84 shared columns equal the snapshot flight's at full precision, the limit binding nowhere at a 37.22
+degree fold. To 177.0 s, in 2 014 s, the limit first binds in the row at 174.0 s and the largest fold over the 91 rows is 64.86 degrees, at
+176.0 s, against 116.75 over the same flight time in the snapshot flight; 82 rows are above 60 degrees, 4 above 62, none above 65, and the last
+is 61.82. At 177.0 s 5 base edges are past 60 degrees against 108, in the same travelling band. 1.704 g moved against 13.63 g handed down (12.5 %,
+each hop counted), the largest unplaced mass at a move 0.25 mg, the largest landing recorded 57.4 K above its node. Mass closes to 4.5e-16, the
+energy balance residual is -1.76e-11, the momentum residual 3.76e-17, and no fault is counted against the snapshot's 2. **After 176.0 s the two
+flights are not like with like:** the continuum switch latched at 176.0 s here and 176.5 s in the snapshot flight, so from there they ran different
+macro steps, 0.0125 s against 0.5 s, and different time grids. Up to 176.0 s, the same 11 macro steps and 95 parts, the largest fold is 64.86
+against 114.59, the lowest 3D radius ratio, which is what stops a flight, 0.0756 against 0.0678 (the floor is 0.05), rebuilds 6 against 10, the
+deepest skin 2.22 mm against 3.04 mm. Later figures carry both differences: to 177.0 s the lowest ratio is 0.0533 against 0.0503, near the floor
+either way, and at 177.0 s the deepest skin is 5.99 mm against 4.48 mm and 13.63 g is handed down against 15.69 g, and how much of that is the
+spreading is unknown. The earlier switch is a threshold: the first liquid in both is one corner at the nose, 0 degrees from the point of highest
+heating and far from the folds, at 908.11 K against 907.98 K at 176.0 s, the liquidus being 908.0 K; why spreading moves the nose by 0.12 K is not
+traced. The check stops 2.04 s before the snapshot flight's stop, so whether a flight now gets past it is untested. The unit tier is 587 passed, 1 skipped (Task 5b's 549 and these 38; 15.1 minutes across four processes).
 
 **Rulings** (2026-11-06; what, why, cost if wrong):
 1. *`SPREAD_SHARE` stays at the 0.25 the design proposed; no tuning was needed.* From 0.0625 to 1.0 the test's largest fold is 60.03 to
@@ -8710,6 +8714,14 @@ snapshot flight's stop, so whether a flight now gets past it is untested. The un
 10. *At a corner that received, all its hand-down lands at the node's enthalpy, its own metal too*, not only what came from a neighbour. Why:
     `h_outward` is one number a corner, and its own metal is within the fault tolerance of the node anyway. Cost: at most 5 K of that metal's
     heat goes through `pending` rather than across the base.
+11. *Where metal landed is read pass by pass, `Spread.landed`, not from `handed_s > handed`* (Task 5c's review; the coordinator's ruling). Why: a
+    corner that takes hot metal and gives more onward ends handing down less than it started with, and its neighbours' heat then crossed through
+    `h_outward`, over the whole moving zone, the route Asha's decision excluded, and was left out of `spread_jump_max_K`. The review measured, on a
+    jittered plate, 16 to 127 corners missed against 174 to 273 caught, carrying 1.9 to 7.0 % as much heat as went through `pending`, and in 4 of 6
+    cases a missed landing hotter than the largest recorded (38.0 K against 18.8 K at the worst); on the 4 mm melting test body the recorded largest
+    goes from 1.18 K to 1.42 K with the fix. The books were closed either way. A corner in `landed` that passed on all it took has no metal and no
+    enthalpy left, so its excess is zero and it records no landing. Cost: the fix was not flown, so the production numbers above understate the
+    largest landing by an unknown amount and put some of the heat in the zone.
 
 - [ ] **Step 1: The tests** -- `tests/test_reentry_model_spreading.py`:
 
@@ -8782,7 +8794,7 @@ def test_a_limit_that_does_not_bind_returns_the_hand_down_itself():
     H = SPECIFIC * handed
     s = spread(col, handed, enthalpy=H)
     assert s.handed is handed and s.enthalpy is H
-    assert (s.moved, s.unplaced, s.over) == (0.0, 0.0, 0)
+    assert (s.moved, s.unplaced, s.over) == (0.0, 0.0, 0) and not s.landed.any() and s.landed.shape == (col.n,)
 
 
 def test_a_ridge_hands_its_metal_to_its_lower_neighbours_and_keeps_the_sums():
@@ -8831,6 +8843,29 @@ def test_a_valley_fold_gives_from_the_rim_to_the_floor():
     assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12)
     rose = np.flatnonzero(s.handed > handed)
     assert set(rose) <= set(floor)
+
+
+def test_a_corner_that_receives_and_gives_more_onward_is_marked_as_landed():
+    """A two-step cascade down a staircase whose 49 degree toe is past a 40 degree limit: the crest gives its hotter metal to the
+    flank below it, and the flank, which holds far more, gives more onward than it took, so it ends handing down less than it
+    started with and its total alone would not show that anything arrived. It carries the crest's heat all the same, so `landed`
+    marks it, and the toe it gave to; nothing arrives at the crest (Finding 1 of Task 5c's review: comparing the totals missed
+    these corners, and their neighbours' heat crossed the base through `h_outward`)."""
+    col = raised(plate(), [10, 11, 12, 13, 14], [0.0, 1e-3, 2e-3, 1e-3, 0.0])
+    crest, flank, toe = col.row(12)[2:-2], col.row(11)[2:-2], col.row(10)[2:-2]
+    cap = 0.25 * col.edge_length.mean() * RHO * col.area
+    handed = np.zeros(col.n)
+    handed[col.row(12)], handed[col.row(11)], handed[col.row(13)] = (0.1 * cap[col.row(12)], 0.8 * cap[col.row(11)],
+                                                                     0.8 * cap[col.row(13)])
+    unit = np.full(col.n, SPECIFIC)
+    unit[col.row(12)] = 1.1 * SPECIFIC
+    s = spread(col, handed, limit=40.0, cap=cap, enthalpy=unit * handed)
+    assert (s.handed[flank] < handed[flank]).all() and (s.handed[flank] > 0.0).all()      # net donors, with metal left
+    assert s.landed[flank].all() and s.landed[toe].all() and not s.landed[crest].any()
+    assert s.landed.dtype == bool and s.landed.shape == (col.n,)
+    mean = s.enthalpy[flank] / s.handed[flank]
+    assert (mean > SPECIFIC * (1.0 + 1e-6)).all() and (mean < 1.1 * SPECIFIC).all()       # the crest's heat came with it
+    assert (s.landed[s.handed > handed]).all()                                            # whatever rose, landed
 
 
 def growing_ridge(limit, parts=200, nx=37, ny=37):
@@ -8952,7 +8987,7 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
     H = SPECIFIC * handed
     s = spread(col, handed, enthalpy=H)
     inner = crest[2:-2]
-    assert (s.handed[inner] == 0.0).all() and (s.enthalpy[inner] == 0.0).all()
+    assert (s.handed[inner] == 0.0).all() and (s.enthalpy[inner] == 0.0).all() and not s.landed[inner].any()
     assert s.handed.sum() == pytest.approx(handed.sum(), rel=1e-12) and s.enthalpy.sum() == pytest.approx(H.sum(), rel=1e-12)
 ```
 
@@ -8961,7 +8996,7 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 ```diff
 --- a/tests/test_reentry_model_skinbody.py
 +++ b/tests/test_reentry_model_skinbody.py
-@@ -1381,3 +1381,177 @@
+@@ -1381,3 +1381,215 @@
      assert got[1] == pytest.approx(2.0 * sk.thickness()[1], rel=1e-14)
      assert np.allclose(dz[2], dz[2, 0]) and got[2] == pytest.approx(10.7 * dz[2, 0], rel=1e-12)
      assert np.isnan(got[3:]).all()
@@ -9048,8 +9083,8 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 +def test_spreading_keeps_the_books(coarse_sphere_mesh):
 +    """The melting body with a limit low enough to bind on the 4 mm mesh, whose sphere folds 14 degrees before anything happens:
 +    0.6 g of the 3.8 g handed down moves between corners, and the mass closes to 1e-12, the energy balance residual is below
-+    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured 2026-11-06: mass exact,
-+    energy 1.7e-11, momentum 3.9e-17)."""
++    1e-8 and the momentum books close, the hot landing's heat in transit counted (measured: mass exact, energy 1.7e-11,
++    momentum 1.4e-17)."""
 +    b, M0 = melting_body(coarse_sphere_mesh, spread_limit=6.0)
 +    stats = b.skin_stats()
 +    assert stats["spread_mass_kg"] == b.spread_mass > 0.0 and stats["spread_edges_over"] > 0
@@ -9078,7 +9113,7 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 +    E0, T_node = b.energy(), T[nodes]
 +    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
 +    handed, s = spreads[0]
-+    rose = s.handed > handed
++    rose = s.landed
 +    cold = rose & np.isin(np.arange(sk.n), ring)
 +    assert cold.any() and s.moved > 0.0
 +    excess = s.enthalpy[rose] - s.handed[rose] * mat.enthalpy(T_node[rose])
@@ -9096,6 +9131,44 @@ def test_a_donor_that_gives_all_it_has_hands_down_exactly_nothing():
 +    assert b.energy() == pytest.approx(E0, rel=1e-12)
 +    assert (b.solver.temperature()[nodes[cold]] > T_before[cold]).all()
 +    assert b.skin_stats()["spread_jump_max_K"] < stats["spread_jump_max_K"]               # since the last row
++
++
++def test_a_corner_that_takes_hot_metal_and_gives_more_onward_still_sends_its_landing_heat_to_its_node(coarse_sphere_mesh,
++                                                                                                       monkeypatch):
++    """A two-step cascade on the 4 mm sphere at 700 K (Finding 1 of Task 5c's review): a peak with its node and metal 60 K
++    hotter stands above a ring of corners, themselves above the rest. The ring takes the peak's hot metal and gives more onward than
++    it took, so each of its corners that keeps any ends handing down less than it started with. The heat it took is still its
++    landing, as Asha decided: its metal crosses at the node's enthalpy, the rest goes to that node through `pending`, not through
++    `h_outward` and so over the whole moving zone, and the landing counts in the largest recorded. Energy closes and no fault is
++    counted."""
++    b = make(coarse_sphere_mesh, T0=700.0, spread_limit=15.0)
++    b.emissivity = 0.0
++    mat, sk, col, nodes = b.material, b.skins, b.columns, b.moving.corners
++    peak = np.argsort(b.theta)[:1]
++    ring = neighbours(b, peak)
++    u = np.zeros((col.n, 3))
++    u[peak], u[ring] = 2.4e-3 * col.normal[peak], 1.2e-3 * col.normal[ring]
++    b.moving.move_with_policy(u)
++    b._refresh_geometry()
++    nodes = b.moving.corners
++    T = b.solver.temperature().copy()
++    T[nodes[peak]] += 60.0
++    b.solver.set_temperature(T)
++    bump(b, peak, share=0.9, T=760.0)
++    bump(b, ring, share=0.5)
++    spreads, outward = spied(b, monkeypatch)
++    E0, T_node = b.energy(), b.solver.temperature()[nodes]
++    b._move_base(zero_book(sk), skin.minimum_mass(mat, sk.area, DEV), b._normal_gradient())
++    handed, s = spreads[0]
++    on = ring[(s.handed[ring] < handed[ring]) & (s.handed[ring] > 0.0)]
++    assert on.size > 0
++    jump = mat.temperature_from_enthalpy(s.enthalpy[on] / s.handed[on]) - T_node[on]
++    assert jump.max() > skin.JUMP_TOLERANCE
++    excess = s.enthalpy[on] - s.handed[on] * mat.enthalpy(T_node[on])
++    np.testing.assert_allclose(b.pending[on], excess, rtol=1e-12)
++    np.testing.assert_allclose(outward[0][on], mat.enthalpy(T_node[on]), rtol=1e-12)
++    assert b.skin_stats()["spread_jump_max_K"] >= jump.max() and b.jump_faults == 0
++    assert b.energy() == pytest.approx(E0, rel=1e-12)
 +
 +
 +def test_a_donor_that_gives_away_all_its_hand_down_keeps_the_books(coarse_sphere_mesh, monkeypatch):
@@ -9339,6 +9412,7 @@ class Spread:
     moved: float          # kg moved between columns
     unplaced: float       # kg still wanting to move after the last pass
     over: int             # edges over the limit on the first estimate
+    landed: np.ndarray    # bool per column: metal arrived here in some pass, whatever it gave onward
 
 
 def fold_angles(columns, points):
@@ -9383,9 +9457,12 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
     """Spread the part's hand-down (`handed` [kg] and `enthalpy` [J] per column) over the corners at `points` [m], outward
     `normal`, dual `area` [m2], where the base as it would stand folds past `limit_deg` (module docstring): a Spread. `drawn`
     [kg] is the part's draws and `cap` [kg] its allowance per column (`SkinBody._hand_cap`). The base's estimate leaves out
-    the part's absorption and smoothing. The sums of the hand-down and its enthalpy are kept to round-off."""
+    the part's absorption and smoothing. The sums of the hand-down and its enthalpy are kept to round-off. `landed` is read
+    pass by pass, not from the totals: a corner that takes metal and gives more onward ends handing down less than it started
+    with, and carries its neighbours' heat all the same."""
     n, first, moved = len(handed), 0, 0.0
     h, H = handed, enthalpy
+    landed = np.zeros(n, dtype=bool)
     floor = np.maximum(drawn - cap, 0.0)                 # a donor keeps what balances its draw: the part's move ratio holds
     for k in range(passes + 1):
         q = points - normal * ((drawn - h) / (rho * area))[:, None]     # the base as it would stand
@@ -9393,14 +9470,14 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
         over = np.flatnonzero(angle > limit_deg)
         if k == 0:
             if not over.size:
-                return Spread(handed, enthalpy, 0.0, 0.0, 0)
+                return Spread(handed, enthalpy, 0.0, 0.0, 0, landed)
             first = int(over.size)
         if not over.size:
-            return Spread(h, H, moved, 0.0, first)
+            return Spread(h, H, moved, 0.0, first, landed)
         donor, receiver, want = _pairs(columns, q, normal, area, rho, angle, convex, over, limit_deg)
         want = _within(want, donor, np.maximum(h - floor, 0.0), n)
         if k == passes:
-            return Spread(h, H, moved, float(want.sum()), first)
+            return Spread(h, H, moved, float(want.sum()), first, landed)
         want = _within(want, receiver, np.maximum(cap - h, 0.0), n)
         going = want > 0.0
         donor, receiver, want = donor[going], receiver[going], want[going]
@@ -9408,8 +9485,10 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
         gave = np.bincount(donor, want, n)
         rest = 1.0 - gave / np.where(h > 0.0, h, 1.0)
         rest = np.where(rest < SPENT, 0.0, rest)         # all it had: exactly nothing, or the mean enthalpy the moving
-        h = h * rest + np.bincount(receiver, want, n)    # mesh books its sweep at would be round-off over round-off
+        got = np.bincount(receiver, want, n)             # mesh books its sweep at would be round-off over round-off
+        h = h * rest + got
         H = H * rest + np.bincount(receiver, want * unit, n)
+        landed = landed | (got > 0.0)
         moved += float(want.sum())
 ```
 
@@ -9503,7 +9582,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
          mat, sk, mm, col = self.material, self.skins, self.moving, self.columns
          started = time.perf_counter()
          T_node = self.solver.temperature()[mm.corners]
-@@ -920,19 +951,45 @@
+@@ -920,19 +951,49 @@
          uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
          held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
          self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
@@ -9523,12 +9602,16 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
 +            # booked through `h_outward` instead, `MovingMesh.move` would share the correction over all the moving nodes, the
 +            # whole zone rather than this corner. Added below, after the reconciliation: `_advance_part` has by then set
 +            # `pending` to this part's mismatch, and a part split or repeated has returned or restored before it, so the heat
-+            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh.
-+            received = handed_s > handed
-+            if received.any():
-+                jump = mat.temperature_from_enthalpy(landed_H[received] / handed_s[received]) - T_node[received]
++            # is applied once. T_node is read above, before the move, which may rebuild the 3D mesh. Where metal landed is
++            # the pass's `landed`, not handed_s > handed: a corner that took hot metal and gave more onward ends handing down
++            # less than it started with, and its neighbours' heat would cross through `h_outward` (Task 5c's review measured
++            # 1.9-7.0 % as much heat as went through `pending` going that way on a test plate). One that passed on all it
++            # took has no metal here and no enthalpy left to book: its excess is zero.
++            metal = s.landed & (handed_s > 0.0)
++            if metal.any():
++                jump = mat.temperature_from_enthalpy(landed_H[metal] / handed_s[metal]) - T_node[metal]
 +                self.spread_jump = max(self.spread_jump, float(jump.max()))
-+            excess = np.where(received, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
++            excess = np.where(s.landed, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
 +            landed_H = landed_H - excess
          if mat.melts:
              self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
@@ -9553,7 +9636,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
          self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
          T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
          T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
-@@ -1067,7 +1124,16 @@
+@@ -1067,7 +1128,16 @@
                  # rebuild's mass residual, summed and the last
                  **self._depth_ratios(flowing),
                  "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
@@ -9767,7 +9850,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
 ```
 
 - [ ] **Step 7: Run the tests to see them pass.** Expected: the four files' new tests pass in about 2 minutes across three processes; the unit
-  tier 585 passed, 1 skipped (Task 5b's 549 and these 36; 11.3 minutes across four processes).
+  tier 587 passed, 1 skipped (Task 5b's 549 and these 38; 15.1 minutes across four processes).
 
 - [ ] **Step 8: The production check** (in `measure/task5c/`, on mains power, through `flights/launch.sh`, then `compare.py` and
   `fold_place.py`): resume `d050__physics__skin.state.pkl` to 172.0 s with `--spread-limit 60 --frames-every 0` and compare with the snapshot
@@ -9779,7 +9862,7 @@ def spread_hand_down(columns, points, normal, area, rho, drawn, handed, enthalpy
 
 ```bash
 git add reentry_model/spreading.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_spreading.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
-git commit -m "Skins: what the skins hand down spreads to lower neighbouring corners where the base as it would stand folds past a limit (--spread-limit DEG|off on run and resume, off by default, reentry_model/spreading.py; Asha's idea and decisions of 2026-11-06), the metal landing hot -- across a ridge its corners give to the corners opposite, across a valley the reverse, no donor below what balances its draw and no receiver above the part's allowance, the metal crossing a receiving base at the node's enthalpy and the rest of its heat going to that node through pending; the history's columns and the results with a limit only, a limit that does not bind changing nothing to the last bit, a resume adding the columns to its saved row or dropping them from it; on the 50 mm state to 177.0 s with a limit of 60 degrees the fold peaks at 64.86 against 120.14, 1.70 g spread against 13.63 g handed down, the books closed and no fault, while the lowest 3D radius ratio is no better (0.053 against 0.050) and the deepest skin is deeper (5.99 mm against 4.48 mm); unit tier 585 passed, 1 skipped (sub-plan 22 Task 5c)"
+git commit -m "Skins: what the skins hand down spreads to lower neighbouring corners where the base as it would stand folds past a limit (--spread-limit DEG|off on run and resume, off by default, reentry_model/spreading.py; Asha's idea and decisions of 2026-11-06), the metal landing hot -- across a ridge its corners give to the corners opposite, across a valley the reverse, no donor below what balances its draw and no receiver above the part's allowance, the metal crossing at the node's enthalpy any base where metal arrived in any pass (Spread.landed) and the rest of its heat going to that node through pending; the history's columns and the results with a limit only, a limit that does not bind changing nothing to the last bit, a resume adding the columns to its saved row or dropping them from it; on the 50 mm state to 177.0 s with a limit of 60 degrees the fold peaks at 64.86 against 116.75, 1.70 g spread against 13.63 g handed down, the books closed and no fault; to 176.0 s, the two flights' last shared macro step, the lowest 3D radius ratio is 0.0756 against 0.0678 and the deepest skin 2.22 mm against 3.04 mm; unit tier 587 passed, 1 skipped (sub-plan 22 Task 5c)"
 ```
 
 ---
