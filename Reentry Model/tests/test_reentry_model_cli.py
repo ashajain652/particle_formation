@@ -726,3 +726,49 @@ def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knuds
     # the history prints nine significant digits
     assert r["dt_switch_kn"] == pytest.approx(float(rows[1]["knudsen"]), rel=1e-8) and r["dt_switch_kn"] > 0.01
     assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)
+
+
+def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_for_melting():
+    """--part-count-from (sub-plan 22 Task 5d) is `moves` by default, so that every existing run keeps its name and its
+    record; `melting` ends a skin run's settings in _parts-melting, after the spread limit's and before the seed's."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).part_count_from == "moves" and cli.part_count_rule_of(p.parse_args(melt)) == "moves"
+    assert name(melt) == name(melt + ["--part-count-from", "moves"]) == base
+    assert name(melt + ["--part-count-from", "melting"]) == base + "_parts-melting"
+    assert (name(melt + ["--spread-limit", "60", "--part-count-from", "melting", "--seed", "7"])
+            == base + "_spread-60_parts-melting_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting") == "_parts-melting"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+@pytest.mark.parametrize("argv", [
+    THERMAL + ["--melt", "on", "--part-count-from", "steep"],                          # no such rule
+    THERMAL + ["--melt", "on", "--part-count-from", "off"],
+    THERMAL + ["--part-count-from", "melting"],                                        # nothing melts, so nothing is drawn
+    FEM + ["--melt", "on", "--part-count-from", "melting"],                            # the element model has no parts
+    BASE + ["--part-count-from", "melting"],                                           # no thermal model at all
+])
+def test_a_bad_part_count_rule_or_the_melting_rule_without_a_melting_skin_run_exits_2(argv, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2
+
+
+def test_the_command_line_gives_the_skins_their_part_count_rule_and_records_it_only_for_melting(tmp_path, monkeypatch):
+    """--part-count-from reaches the skin body as `moves` or `melting` (sub-plan 22 Task 5d). The body is not built: its
+    arguments are."""
+    from reentry_model import skinbody
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, rule in ((melt, "moves"), (melt + ["--part-count-from", "moves"], "moves"),
+                       (melt + ["--part-count-from", "melting"], "melting"),
+                       (melt + ["--skin-flow", "off", "--part-count-from", "melting"], "melting")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["part_count_from"] == rule

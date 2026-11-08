@@ -1593,3 +1593,153 @@ def test_a_body_saved_without_spreading_attributes_flies_on(coarse_sphere_mesh):
     b.spread_limit = 60.0
     b.advance(1.0, 0.5, zero)
     assert set(b.spread_stats()) == set(skinbody.SPREAD_COLUMNS) and set(skinbody.SPREAD_COLUMNS) <= set(b.skin_stats())
+
+
+# -- what sets the next macro step's part count (sub-plan 22 Task 5d; Asha 2026-11-08) ---------------------------------------
+def held_back_body(mesh, depth_allowances=9.0, **kw):
+    """The 4 mm sphere at 700 K with thirty front columns holding `depth_allowances` move allowances of metal at the node's
+    temperature at their bottoms and no heat: every part's hand-down is capped at just under one allowance (a deposit that
+    deep is not down in the macro steps flown), and nothing is drawn. Returns the body and the columns' deposit [kg]."""
+    b = make(mesh, T0=700.0, **kw)
+    b.emissivity = 0.0
+    mat, sk, col = b.material, b.skins, b.columns
+    cols = np.argsort(b.theta)[:30]
+    extra = np.zeros(sk.n)
+    extra[cols] = depth_allowances * skinbody.MOVE_MAX * col.edge_length.mean() * mat.rho * col.area[cols]
+    sk.add_bottom(extra, float(mat.enthalpy(700.0)))
+    sk.regrid()
+    return b, extra.sum()
+
+
+def timed_out(stats):
+    """A history row without its wall-time columns, which time the run and not the flight."""
+    return {k: v for k, v in stats.items() if not k.startswith("wall_")}
+
+
+def same_rows(a, b):
+    """Two lists of (parts, row) the same to the last bit, a column of not-a-number (nothing sprayed yet) the same as another."""
+    return len(a) == len(b) and all(
+        pa == pb and ra.keys() == rb.keys() and all(ra[k] == rb[k] or (ra[k] != ra[k] and rb[k] != rb[k]) for k in ra)
+        for (pa, ra), (pb, rb) in zip(a, b))
+
+
+def fly_three_macro_steps(b, dt=0.05):
+    """Three macro steps of `dt` s (not longer than the melting part length) with no heat; the parts each ran as."""
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    parts = []
+    for k in range(3):
+        b.advance(dt * (k + 1), dt, zero)
+        parts.append(b.step_parts)
+    return parts
+
+
+def test_under_the_moves_rule_a_capped_hand_down_grows_the_next_steps_parts_by_a_quarter(coarse_sphere_mesh):
+    """The defect of the spreading flights, pinned (sub-plan 22 Task 5d): a hand-down capped just under the move allowance
+    gives a move ratio just under 1 in every part, and the hint is 1.25 times the parts of this step, so the next step
+    runs a quarter more parts whose hand-downs are capped again -- 837, 1 047, ..., 9 765 parts on the 50 mm spreading flight,
+    each the previous times 1.25 rounded up (measured 2026-11-08). Here a deposit nine allowances deep, three 0.05 s
+    macro steps (under the 0.0625 s part length, so that the length does not set the count): 1, 2 and 3 parts, each the
+    previous times 1.25 rounded up, the allowance of HAND_DOWN_SHARE's 1e-6 included."""
+    assert skinbody.PART_MAX >= 0.05
+    b, _ = held_back_body(coarse_sphere_mesh)
+    assert b.part_count_from == "moves"
+    parts = fly_three_macro_steps(b)
+    assert parts[0] == 1
+    for before, after in zip(parts, parts[1:]):
+        assert after == int(np.ceil(1.25 * before * skinbody.HAND_DOWN_SHARE)) and after > before
+    assert b.held_mass > 0.0                                        # the deposit still waits: every hand-down was capped
+
+
+def test_under_the_melting_rule_a_capped_hand_down_leaves_the_part_count_alone(coarse_sphere_mesh):
+    """The same flight under `melting`: the hint reads the draws alone, and nothing is drawn, so every macro step runs as the
+    one part the draws and the part length call for, while the same metal comes down (a capped hand-down an allowance a
+    part, the rest held) and mass and energy close (sub-plan 22 Task 5d)."""
+    b, extra = held_back_body(coarse_sphere_mesh, part_count_from="melting")
+    M0, E0 = b.mass(), b.energy()
+    assert fly_three_macro_steps(b) == [1, 1, 1] and b.part_count_from == "melting"
+    assert b.handed_mass > 0.0 and b.held_mass > 0.0
+    assert b.mass() == pytest.approx(M0, rel=1e-13) and b.energy() == pytest.approx(E0, rel=1e-12)
+    assert abs(b.energy_balance_residual()) < 1e-8 and b.jump_faults == 0
+
+
+def test_a_draw_over_the_allowance_splits_a_part_under_either_rule(coarse_sphere_mesh, monkeypatch):
+    """The split test is the same under both rules (sub-plan 22 Task 5d): 6 MW/m2 from 880 K for three 0.5 s macro steps on
+    4 mm elements, with no melting cap on the parts, draws more than the allowance in a part, which is run again as shorter
+    parts. The two rules differ only through the hand-down, so it is taken out of the comparison (the cap given to
+    `skin.hand_down` is zero: the skins only grow, the first step of such a flight is the one the unbroken run splits
+    into 8 parts), and then the two give the same parts and the same history rows in every step. numpy's generator is
+    seeded as a run seeds it, since the heat solver's multigrid hierarchy draws from it."""
+    hand_down = skin.hand_down
+    monkeypatch.setattr(skin, "hand_down", lambda *a, cap=None, **k: hand_down(*a, cap=np.zeros_like(cap), **k))
+    runs = {}
+    for rule in skinbody.PART_COUNT_RULES:
+        np.random.seed(12345)
+        b = make(coarse_sphere_mesh, part_count_from=rule, part_max=None)
+        rows = []
+        for k in range(3):
+            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
+            rows.append((b.step_parts, timed_out(b.skin_stats())))
+        runs[rule] = (b, rows)
+    moves, melting = runs["moves"], runs["melting"]
+    assert moves[0].handed_mass == 0.0 and moves[0].drawn_mass > 0.0
+    assert moves[1][0][0] > 1                                          # the draws split the first step's part
+    assert same_rows(moves[1], melting[1])
+    assert moves[0].mass() == melting[0].mass() and moves[0].energy() == melting[0].energy()
+
+
+def test_the_moves_rule_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
+    """`part_count_from="moves"` and the argument left out are one flight, every column of every row and the final mass and
+    energy equal to the last bit, the wall-time columns that time the run left out (sub-plan 22 Task 5d), on a flight that melts, hands down and splits parts (numpy's generator
+    seeded as a run seeds it before each)."""
+    runs = []
+    for kw in ({}, {"part_count_from": "moves"}):
+        np.random.seed(12345)
+        b = make(coarse_sphere_mesh, **kw)
+        rows = []
+        for k in range(3):
+            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
+            rows.append((b.step_parts, timed_out(b.skin_stats())))
+        runs.append((b, rows))
+    assert same_rows(runs[0][1], runs[1][1]) and runs[0][1][1][0] > 1
+    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
+
+
+def test_a_macro_step_that_would_need_more_than_PARTS_MAX_parts_stops_the_run(coarse_sphere_mesh, monkeypatch):
+    """The stall guard (sub-plan 22 Task 5d; the controller, 2026-11-08): a macro step that would start with more than
+    PARTS_MAX parts raises RuntimeError naming the step, the count and the limit, before any part runs, under either rule;
+    PARTS_MAX parts themselves run. The limit is lowered to 3 so that the test does not run a thousand parts."""
+    monkeypatch.setattr(skinbody, "PARTS_MAX", 3)
+    for rule in skinbody.PART_COUNT_RULES:
+        b = make(coarse_sphere_mesh, T0=600.0, part_count_from=rule)
+        b.emissivity = 0.0
+        zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+        M0, E0 = b.mass(), b.energy()
+        b._hint = 4
+        with pytest.raises(RuntimeError, match=r"from 0\.5 s to 1 s would run as 4 parts, more than PARTS_MAX = 3"):
+            b.advance(1.0, 0.5, zero)
+        assert b.step_parts == 0 and b.mass() == M0 and b.energy() == E0       # nothing ran
+        b._hint = 3
+        b.advance(1.0, 0.5, zero)
+        assert b.step_parts == 3
+    assert skinbody.PARTS_MAX == 3 and skinbody.PART_COUNT_RULES == ("moves", "melting")
+
+
+def test_a_body_saved_without_the_part_count_rule_flies_on(coarse_sphere_mesh):
+    """The states saved before the rule existed have no `part_count_from` on the instance: the class's default gives them
+    `moves`, they fly on as before, and a resume can give them `melting` (sub-plan 22 Task 5d)."""
+    b, _ = held_back_body(coarse_sphere_mesh)
+    del vars(b)["part_count_from"]
+    assert "part_count_from" not in vars(b) and b.part_count_from == "moves"
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.05, 0.05, zero)
+    b.advance(0.1, 0.05, zero)
+    assert b.step_parts == 2                                         # the moves rule: the hand-down fed the hint
+    b.part_count_from = "melting"
+    b.advance(0.15, 0.05, zero)
+    b.advance(0.2, 0.05, zero)
+    assert b.step_parts == 1
+
+
+def test_an_unknown_part_count_rule_is_refused(coarse_sphere_mesh):
+    with pytest.raises(ValueError, match="part_count_from"):
+        make(coarse_sphere_mesh, part_count_from="draws")

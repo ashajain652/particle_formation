@@ -287,3 +287,44 @@ def test_a_resume_says_what_it_is_doing_before_it_flies(flown, tmp_path, capsys)
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "q"]) == 0
     line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
     assert "saved random state" in line and "spread limit off" in line and "save state at no" in line
+
+
+def test_resuming_with_the_melting_rule_sets_it_on_the_body_and_records_it(flown, tmp_path, capsys):
+    """`--part-count-from melting` on a resume (sub-plan 22 Task 5d) sets the rule on the saved flight's skin body, which the
+    one line before the flight names, records it in the JSON's settings and in what was changed, and carries it into the
+    state the resumed flight saves, so a resume of that state keeps it unless told; `moves` asked of it gives back the
+    saved flight's record (no key), and a flight resumed without the option records none."""
+    out, flight, records, state_path = flown
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "m", "--part-count-from", "melting",
+                     "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "part count from melting" in line
+    doc = json.load(open(str(tmp_path / "m.json")))
+    assert doc["resumed_from"]["changed"] == {"--part-count-from": "melting", "--save-state-at": 0.2}
+    assert doc["settings"]["part_count_from"] == "melting"
+    assert restart.load(str(tmp_path / "m.state.pkl"))["meta"]["args"]["part_count_from"] == "melting"
+    assert cli.main(["resume", str(tmp_path / "m.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
+    assert "part count from melting" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["part_count_from"] == "melting"
+    assert cli.main(["resume", str(tmp_path / "m.state.pkl"), "--outdir", str(tmp_path), "--name", "back",
+                     "--part-count-from", "moves"]) == 0
+    doc = json.load(open(str(tmp_path / "back.json")))
+    assert "part_count_from" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--part-count-from": "moves"}
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "plain"]) == 0
+    assert "part_count_from" not in json.load(open(str(tmp_path / "plain.json")))["settings"]
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "run", "--part-count-from", "melting"]) == 0
+    assert json.load(open(str(tmp_path / "run.json")))["settings"]["skin"]["part_count_from"] == "melting"   # run's record
+
+
+def test_the_melting_rule_is_refused_on_a_resume_of_a_flight_that_does_not_melt(tmp_path):
+    """A flight that does not melt has no draws to set a part count by, so the melting rule asked of its resume exits 2,
+    as `run` refuses it; `moves` asks nothing of the flight, so that goes through (sub-plan 22 Task 5d)."""
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
+    state = str(tmp_path / "dry.state.pkl")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "melting"])
+    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+    assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "moves"]) == 0
