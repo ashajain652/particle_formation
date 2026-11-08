@@ -163,6 +163,15 @@ HAND_DOWN_SHARE = 1.0 - 1e-6      # of MOVE_MAX: the most a part's hand-down mov
                                   # capped mass by the area again, never makes a capped hand-down split a part
 SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
+# What sets the next macro step's part count (sub-plan 22 Task 5d; Asha, 2026-11-08). `moves`, the rule so far, feeds the
+# hint with the move the draws and the capped hand-down together call for (`_move_ratio`); a capped hand-down is
+# just under the whole allowance, so wherever one fires the ratio is just under 1 per part and the next step runs 1.25
+# times as many parts, whose hand-downs are capped again: on the 50 mm spreading flight 837, 1 047, ..., 9 765 parts,
+# each the previous times 1.25 rounded up (measured 2026-11-08), the metal still held back and the flight stalled.
+# `melting` feeds the hint with the draws alone, so the count follows the melting; the split test is the same under
+# both. Asha decided on 2026-11-08 to fly both and compare them.
+PART_COUNT_RULES = ("moves", "melting")
+PARTS_MAX = 1000                  # parts: a macro step that would start with more stops the run (the controller, 2026-11-08)
 # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
 # (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s macro steps (1.8 passes);
 # before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
@@ -549,9 +558,12 @@ class SkinBody(ThermalBody):
     histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
     `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory.
     `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
-    (`spreading`; sub-plan 22 Task 5c), None for no spreading."""
+    (`spreading`; sub-plan 22 Task 5c), None for no spreading.
+    `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
+    (`PART_COUNT_RULES`; sub-plan 22 Task 5d)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
+    part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -560,7 +572,10 @@ class SkinBody(ThermalBody):
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
-                 spread_limit=None):
+                 spread_limit=None, part_count_from="moves"):
+        if part_count_from not in PART_COUNT_RULES:
+            raise ValueError("part_count_from must be one of {}, got {!r}".format(PART_COUNT_RULES, part_count_from))
+        self.part_count_from = part_count_from
         if spread_limit is not None and not 0.0 < spread_limit < 180.0:
             raise ValueError("spread_limit must be None or an angle within (0, 180) degrees, got {!r}".format(spread_limit))
         self.spread_limit = spread_limit
@@ -704,6 +719,10 @@ class SkinBody(ThermalBody):
                     n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
                     self.capped_ahead += 1
         self._top_start, self._dt_last = top, dt
+        if n > PARTS_MAX:                                    # the stall of 2026-11-08 (sub-plan 22 Task 5d): stop, do not crawl
+            raise RuntimeError("the macro step from {:.6g} s to {:.6g} s would run as {} parts, more than PARTS_MAX = {}: "
+                               "the part count has run away (with --part-count-from moves a capped hand-down feeds it; "
+                               "sub-plan 22 Task 5d)".format(t - dt, t, n, PARTS_MAX))
         q_end = np.asarray(loads.q_conv, dtype=float)
         q_start = self._q_prev if self._q_prev is not None and self._q_prev.shape == q_end.shape else q_end
         self._heating = (t - dt, dt, q_start, q_end)
@@ -842,6 +861,8 @@ class SkinBody(ThermalBody):
             for k in range(n):
                 self._advance_part(t if k == n - 1 else t - dt + (k + 1) * (dt / n), dt / n, dt_macro, loads, depth + 1)
             return
+        if self.part_count_from == "melting":                # the hint from the draws alone, kept parts only (Task 5d)
+            ratio = self._draw_ratio(book)
         self._ratio = max(self._ratio, ratio * dt_macro / dt)
         self.step_parts += 1
         self.pending = mismatch
@@ -926,6 +947,12 @@ class SkinBody(ThermalBody):
             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid, limit, cap=self._hand_cap())
             sk.set_state(saved)
         d = np.abs(book.drawn - handed) / (mat.rho * self.columns.area)
+        return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
+
+    def _draw_ratio(self, book):
+        """`_move_ratio` with no hand-down: the largest distance a base would move by drawing alone, over MOVE_MAX of the
+        mean surface edge. It sets the next macro step's part count under `part_count_from="melting"` (Task 5d)."""
+        d = np.abs(book.drawn) / (self.material.rho * self.columns.area)
         return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
 
     def _move_base(self, book, m_min, g0):

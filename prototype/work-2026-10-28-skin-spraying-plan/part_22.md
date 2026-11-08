@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), and 5b and 5c (2026-11-06).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2100,7 +2100,78 @@ git commit -m "Skins: what the skins hand down spreads to lower neighbouring cor
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b and 5c written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5d: The part count set by melting, and the stall guard
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`PART_COUNT_RULES`, `PARTS_MAX`, the class default and `SkinBody(..., part_count_from="moves")`,
+  `_draw_ratio`, the hint line in `_advance_part`, the guard in `advance`)
+- Modify: `reentry_model/cli.py` (`--part-count-from moves|melting` on `run` and `resume`, `part_count_rule_of`, the name suffix, the
+  records, the refusals, the resume's one line)
+- Test: `tests/test_reentry_model_skinbody.py` (7 tests), `tests/test_reentry_model_cli.py` (3 tests, 7 cases),
+  `tests/test_reentry_model_restart.py` (2 tests)
+
+**Interfaces:**
+- Consumes: `SkinBody._move_ratio(book, m_min)`, `MOVE_MAX`, `MOVE_HINT_MARGIN`, `HAND_DOWN_SHARE`, `_hand_cap()`; Task 5c's
+  `--spread-limit` wiring as the pattern for the option on `run` and `resume`.
+- Produces: `PART_COUNT_RULES = ("moves", "melting")`; `PARTS_MAX = 1000`; `SkinBody(..., part_count_from="moves")`, also a class
+  default for states pickled before it; `--part-count-from moves|melting` on `run` (default `moves`) and `resume` (default: the
+  state's), exit 2 with `melting` unless `--surface-model skin --melt on` (run) or a saved flight of melting skins (resume); the run's
+  name suffix `_parts-melting`; the run JSON's `settings.skin.part_count_from = "melting"` only when given, the resume JSON's
+  `settings.part_count_from` only when the body's rule is `melting` and `changed["--part-count-from"]` when given.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`; Asha, 2026-11-08, to fly both
+and compare them). The flights with spreading (`--spread-limit 60`) got past the old stops and then stalled as the part count grew
+by a quarter a macro step: on the 50 mm sphere 837, 1 047, ..., 9 765 parts, each the previous times 1.25 rounded up, on the 100
+mm sphere from 1 to 1 537. The cause: since 2026-10-27 the hand-down is capped just under the move allowance, so it cannot split
+a part, but `_move_ratio` still counts it, and where a capped hand-down fires in any part the ratio is just under 1 a part and
+the next macro step's hint, `MOVE_HINT_MARGIN` times it, is a quarter more parts, whose hand-downs are capped again. With
+`melting` the hint reads, for each kept part, the draws alone, `max(drawn / (rho area)) / (MOVE_MAX mean edge)` times
+`dt_macro / dt`, kept parts only (a split part returns before it is maxed, as before); with `moves` the line is today's. **The split
+test is the same under both rules.** The guard, in `advance` once `n` is final and before the first part, raises
+`RuntimeError` if `n` is over `PARTS_MAX = 1000` (the controller, 2026-11-08), under both rules: it can only stop a run that would have
+run away.
+
+**Rulings** (the controller's, 2026-11-08): the guard's test lowers `PARTS_MAX` to 3 instead of running a thousand parts; the split
+test's two rules are compared with no hand-down in the compared steps (the cap given to `skin.hand_down` is zero), where they must
+give the same parts and rows; the capped-hand-down tests use a deposit nine move allowances deep and 0.05 s macro steps, under
+the 0.0625 s part length, so that the length does not set the count: under `moves` 1, 2 and 3 parts, under `melting` 1, 1 and 1.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5D}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5D}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5D}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` and `TypeError` on `part_count_from` and
+  `PART_COUNT_RULES`; the refusals of an unknown rule, which exit 2 without the option too, pass.
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5D}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5D}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier: 608 passed, 1 skipped (Task 5c's 592 and these 16; 22.8 minutes across four
+  processes, 2026-11-08).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: the part count can follow the melting, not the moves (--part-count-from moves|melting on run and resume, moves by default), and a macro step that would start with more than 1 000 parts stops the run; sub-plan 22 Task 5d"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c and 5d written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

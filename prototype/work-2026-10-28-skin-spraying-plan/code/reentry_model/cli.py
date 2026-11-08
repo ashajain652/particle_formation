@@ -4,11 +4,12 @@
         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
-        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off ...]
+        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+        --part-count-from moves|melting ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
-        --slurry-spray on|off --spread-limit DEG|off]
+        --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -119,6 +120,11 @@ def parse_spread_limit(text):
     return value
 
 
+def part_count_rule_of(args):
+    """The rule that sets a macro step's part count, `moves` unless --part-count-from says `melting` (sub-plan 22 Task 5d)."""
+    return args.part_count_from
+
+
 def spread_limit_of(args):
     """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
     return None if args.spread_limit == "off" else args.spread_limit
@@ -185,7 +191,7 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
-                     slurry_spray=False, spread_limit=None):
+                     slurry_spray=False, spread_limit=None, part_count_from="moves"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -195,8 +201,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
     the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
     sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
-    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c); empty for the
-    defaults."""
+    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
+    `_parts-melting` where the part count follows the melting, not the moves (Task 5d); empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -224,6 +230,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_slurryspray-on"
     if spread_limit is not None:
         out += "_spread-{:g}".format(spread_limit)
+    if part_count_from != "moves":
+        out += "_parts-{}".format(part_count_from)
     return out
 
 
@@ -285,6 +293,9 @@ def resume_arguments(rs):
     rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
                     help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
                          "flight's, off for one saved before the option existed)")
+    rs.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default=None,
+                    help="what the next macro step's part count follows: the moves (draws and hand-down) or the melting (the "
+                         "draws alone) (default: the saved flight's, moves for one saved before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -418,6 +429,11 @@ def build_parser():
                     help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
                          "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
                          "lands hot (sub-plan 22 Task 5c; off until the flights have tested it; default off)")
+    me.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default="moves",
+                    help="with --surface-model skin and --melt on: what sets the next macro step's part count: moves, the "
+                         "move the draws and the capped hand-down call for, or melting, the draws alone; a capped "
+                         "hand-down made the count grow by a quarter a step on the spreading flights (sub-plan 22 Task 5d; "
+                         "default moves)")
     me.add_argument("--skin-flow-cycles", type=int, default=None,
                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
@@ -507,7 +523,8 @@ def build_thermal(args, settings, mass, spool=None):
                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
                                      spray=spray_model_of(args, mat) if flow else None,
                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
-                                     spool=spool if flow else None, spread_limit=spread_limit_of(args))
+                                     spool=spool if flow else None, spread_limit=spread_limit_of(args),
+                                     part_count_from=part_count_rule_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -542,6 +559,8 @@ def build_thermal(args, settings, mass, spool=None):
                         "slurry_spray": args.slurry_spray}
         if spread_limit_of(args) is not None:
             info["skin"]["spread_limit_deg"] = spread_limit_of(args)
+        if part_count_rule_of(args) != "moves":
+            info["skin"]["part_count_from"] = part_count_rule_of(args)
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -592,7 +611,7 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     args.skin_fine_zone,
                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
-                                                                    spread_limit_of(args)))
+                                                                    spread_limit_of(args), part_count_rule_of(args)))
 
 
 def cmd_run(args, parser):
@@ -672,6 +691,8 @@ def cmd_run(args, parser):
                      "sprays by the skins' spraying from their top cells")
     if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
         parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
+    if part_count_rule_of(args) != "moves" and not (args.surface_model == "skin" and args.melt == "on"):
+        parser.error("--part-count-from melting needs --surface-model skin and --melt on: it sets the skins' part count")
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
@@ -890,6 +911,10 @@ def cmd_resume(args, parser):
         if spread_limit_of(args) is not None and not (skins and run.body.material.melts):
             parser.error("--spread-limit needs a saved flight of melting skins: it spreads the metal they hand down")
         changed["--spread-limit"] = args.spread_limit
+    if args.part_count_from is not None:
+        if args.part_count_from != "moves" and not (skins and run.body.material.melts):
+            parser.error("--part-count-from melting needs a saved flight of melting skins: it sets their part count")
+        changed["--part-count-from"] = args.part_count_from
     if args.seed is not None:
         changed["--seed"] = args.seed
     if args.save_state_at is not None:
@@ -924,6 +949,8 @@ def cmd_resume(args, parser):
         for key in skinbody.SPREAD_COLUMNS:
             state["row"].pop(key, None)
         state["row"].update(run.body.spread_stats())
+    if "--part-count-from" in changed and skins:
+        run.body.part_count_from = args.part_count_from
     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
@@ -934,19 +961,21 @@ def cmd_resume(args, parser):
     for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", changed.get("--save-state-at"))):
         setattr(saved, key, value)
     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
-                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit")):
+                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+                      ("part_count_from", "--part-count-from")):
         if flag in changed:
             setattr(saved, key, changed[flag])
     if state_path is not None:
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
               "on" if getattr(run.body, "slurry_spray", False) else "off",
               "off" if limit is None else "{:g} deg".format(limit),
+              run.body.part_count_from if skins else "moves",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
     history = run.run(resume=state)
@@ -960,6 +989,8 @@ def cmd_resume(args, parser):
         thermal_info["save_state_at_s"] = args.save_state_at
     if skins and run.body.spread_limit is not None:
         thermal_info["spread_limit_deg"] = run.body.spread_limit
+    if skins and run.body.part_count_from == "melting":
+        thermal_info["part_count_from"] = "melting"
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)

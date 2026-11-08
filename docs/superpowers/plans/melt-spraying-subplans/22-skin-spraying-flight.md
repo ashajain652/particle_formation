@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), and 5b and 5c (2026-11-06).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -9984,7 +9984,585 @@ git commit -m "Skins: what the skins hand down spreads to lower neighbouring cor
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b and 5c written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5d: The part count set by melting, and the stall guard
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`PART_COUNT_RULES`, `PARTS_MAX`, the class default and `SkinBody(..., part_count_from="moves")`,
+  `_draw_ratio`, the hint line in `_advance_part`, the guard in `advance`)
+- Modify: `reentry_model/cli.py` (`--part-count-from moves|melting` on `run` and `resume`, `part_count_rule_of`, the name suffix, the
+  records, the refusals, the resume's one line)
+- Test: `tests/test_reentry_model_skinbody.py` (7 tests), `tests/test_reentry_model_cli.py` (3 tests, 7 cases),
+  `tests/test_reentry_model_restart.py` (2 tests)
+
+**Interfaces:**
+- Consumes: `SkinBody._move_ratio(book, m_min)`, `MOVE_MAX`, `MOVE_HINT_MARGIN`, `HAND_DOWN_SHARE`, `_hand_cap()`; Task 5c's
+  `--spread-limit` wiring as the pattern for the option on `run` and `resume`.
+- Produces: `PART_COUNT_RULES = ("moves", "melting")`; `PARTS_MAX = 1000`; `SkinBody(..., part_count_from="moves")`, also a class
+  default for states pickled before it; `--part-count-from moves|melting` on `run` (default `moves`) and `resume` (default: the
+  state's), exit 2 with `melting` unless `--surface-model skin --melt on` (run) or a saved flight of melting skins (resume); the run's
+  name suffix `_parts-melting`; the run JSON's `settings.skin.part_count_from = "melting"` only when given, the resume JSON's
+  `settings.part_count_from` only when the body's rule is `melting` and `changed["--part-count-from"]` when given.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`; Asha, 2026-11-08, to fly both
+and compare them). The flights with spreading (`--spread-limit 60`) got past the old stops and then stalled as the part count grew
+by a quarter a macro step: on the 50 mm sphere 837, 1 047, ..., 9 765 parts, each the previous times 1.25 rounded up, on the 100
+mm sphere from 1 to 1 537. The cause: since 2026-10-27 the hand-down is capped just under the move allowance, so it cannot split
+a part, but `_move_ratio` still counts it, and where a capped hand-down fires in any part the ratio is just under 1 a part and
+the next macro step's hint, `MOVE_HINT_MARGIN` times it, is a quarter more parts, whose hand-downs are capped again. With
+`melting` the hint reads, for each kept part, the draws alone, `max(drawn / (rho area)) / (MOVE_MAX mean edge)` times
+`dt_macro / dt`, kept parts only (a split part returns before it is maxed, as before); with `moves` the line is today's. **The split
+test is the same under both rules.** The guard, in `advance` once `n` is final and before the first part, raises
+`RuntimeError` if `n` is over `PARTS_MAX = 1000` (the controller, 2026-11-08), under both rules: it can only stop a run that would have
+run away.
+
+**Rulings** (the controller's, 2026-11-08): the guard's test lowers `PARTS_MAX` to 3 instead of running a thousand parts; the split
+test's two rules are compared with no hand-down in the compared steps (the cap given to `skin.hand_down` is zero), where they must
+give the same parts and rows; the capped-hand-down tests use a deposit nine move allowances deep and 0.05 s macro steps, under
+the 0.0625 s part length, so that the length does not set the count: under `moves` 1, 2 and 3 parts, under `melting` 1, 1 and 1.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1593,3 +1593,153 @@
+     b.spread_limit = 60.0
+     b.advance(1.0, 0.5, zero)
+     assert set(b.spread_stats()) == set(skinbody.SPREAD_COLUMNS) and set(skinbody.SPREAD_COLUMNS) <= set(b.skin_stats())
++
++
++# -- what sets the next macro step's part count (sub-plan 22 Task 5d; Asha 2026-11-08) ---------------------------------------
++def held_back_body(mesh, depth_allowances=9.0, **kw):
++    """The 4 mm sphere at 700 K with thirty front columns holding `depth_allowances` move allowances of metal at the node's
++    temperature at their bottoms and no heat: every part's hand-down is capped at just under one allowance (a deposit that
++    deep is not down in the macro steps flown), and nothing is drawn. Returns the body and the columns' deposit [kg]."""
++    b = make(mesh, T0=700.0, **kw)
++    b.emissivity = 0.0
++    mat, sk, col = b.material, b.skins, b.columns
++    cols = np.argsort(b.theta)[:30]
++    extra = np.zeros(sk.n)
++    extra[cols] = depth_allowances * skinbody.MOVE_MAX * col.edge_length.mean() * mat.rho * col.area[cols]
++    sk.add_bottom(extra, float(mat.enthalpy(700.0)))
++    sk.regrid()
++    return b, extra.sum()
++
++
++def timed_out(stats):
++    """A history row without its wall-time columns, which time the run and not the flight."""
++    return {k: v for k, v in stats.items() if not k.startswith("wall_")}
++
++
++def same_rows(a, b):
++    """Two lists of (parts, row) the same to the last bit, a column of not-a-number (nothing sprayed yet) the same as another."""
++    return len(a) == len(b) and all(
++        pa == pb and ra.keys() == rb.keys() and all(ra[k] == rb[k] or (ra[k] != ra[k] and rb[k] != rb[k]) for k in ra)
++        for (pa, ra), (pb, rb) in zip(a, b))
++
++
++def fly_three_macro_steps(b, dt=0.05):
++    """Three macro steps of `dt` s (not longer than the melting part length) with no heat; the parts each ran as."""
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    parts = []
++    for k in range(3):
++        b.advance(dt * (k + 1), dt, zero)
++        parts.append(b.step_parts)
++    return parts
++
++
++def test_under_the_moves_rule_a_capped_hand_down_grows_the_next_steps_parts_by_a_quarter(coarse_sphere_mesh):
++    """The defect of the spreading flights, pinned (sub-plan 22 Task 5d): a hand-down capped just under the move allowance
++    gives a move ratio just under 1 in every part, and the hint is 1.25 times the parts of this step, so the next step
++    runs a quarter more parts whose hand-downs are capped again -- 837, 1 047, ..., 9 765 parts on the 50 mm spreading flight,
++    each the previous times 1.25 rounded up (measured 2026-11-08). Here a deposit nine allowances deep, three 0.05 s
++    macro steps (under the 0.0625 s part length, so that the length does not set the count): 1, 2 and 3 parts, each the
++    previous times 1.25 rounded up, the allowance of HAND_DOWN_SHARE's 1e-6 included."""
++    assert skinbody.PART_MAX >= 0.05
++    b, _ = held_back_body(coarse_sphere_mesh)
++    assert b.part_count_from == "moves"
++    parts = fly_three_macro_steps(b)
++    assert parts[0] == 1
++    for before, after in zip(parts, parts[1:]):
++        assert after == int(np.ceil(1.25 * before * skinbody.HAND_DOWN_SHARE)) and after > before
++    assert b.held_mass > 0.0                                        # the deposit still waits: every hand-down was capped
++
++
++def test_under_the_melting_rule_a_capped_hand_down_leaves_the_part_count_alone(coarse_sphere_mesh):
++    """The same flight under `melting`: the hint reads the draws alone, and nothing is drawn, so every macro step runs as the
++    one part the draws and the part length call for, while the same metal comes down (a capped hand-down an allowance a
++    part, the rest held) and mass and energy close (sub-plan 22 Task 5d)."""
++    b, extra = held_back_body(coarse_sphere_mesh, part_count_from="melting")
++    M0, E0 = b.mass(), b.energy()
++    assert fly_three_macro_steps(b) == [1, 1, 1] and b.part_count_from == "melting"
++    assert b.handed_mass > 0.0 and b.held_mass > 0.0
++    assert b.mass() == pytest.approx(M0, rel=1e-13) and b.energy() == pytest.approx(E0, rel=1e-12)
++    assert abs(b.energy_balance_residual()) < 1e-8 and b.jump_faults == 0
++
++
++def test_a_draw_over_the_allowance_splits_a_part_under_either_rule(coarse_sphere_mesh, monkeypatch):
++    """The split test is the same under both rules (sub-plan 22 Task 5d): 6 MW/m2 from 880 K for three 0.5 s macro steps on
++    4 mm elements, with no melting cap on the parts, draws more than the allowance in a part, which is run again as shorter
++    parts. The two rules differ only through the hand-down, so it is taken out of the comparison (the cap given to
++    `skin.hand_down` is zero: the skins only grow, the first step of such a flight is the one the unbroken run splits
++    into 8 parts), and then the two give the same parts and the same history rows in every step. numpy's generator is
++    seeded as a run seeds it, since the heat solver's multigrid hierarchy draws from it."""
++    hand_down = skin.hand_down
++    monkeypatch.setattr(skin, "hand_down", lambda *a, cap=None, **k: hand_down(*a, cap=np.zeros_like(cap), **k))
++    runs = {}
++    for rule in skinbody.PART_COUNT_RULES:
++        np.random.seed(12345)
++        b = make(coarse_sphere_mesh, part_count_from=rule, part_max=None)
++        rows = []
++        for k in range(3):
++            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 6e6))
++            rows.append((b.step_parts, timed_out(b.skin_stats())))
++        runs[rule] = (b, rows)
++    moves, melting = runs["moves"], runs["melting"]
++    assert moves[0].handed_mass == 0.0 and moves[0].drawn_mass > 0.0
++    assert moves[1][0][0] > 1                                          # the draws split the first step's part
++    assert same_rows(moves[1], melting[1])
++    assert moves[0].mass() == melting[0].mass() and moves[0].energy() == melting[0].energy()
++
++
++def test_the_moves_rule_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
++    """`part_count_from="moves"` and the argument left out are one flight, every column of every row and the final mass and
++    energy equal to the last bit, the wall-time columns that time the run left out (sub-plan 22 Task 5d), on a flight that melts, hands down and splits parts (numpy's generator
++    seeded as a run seeds it before each)."""
++    runs = []
++    for kw in ({}, {"part_count_from": "moves"}):
++        np.random.seed(12345)
++        b = make(coarse_sphere_mesh, **kw)
++        rows = []
++        for k in range(3):
++            b.advance(0.5 * (k + 1), 0.5, front_loads(b, 3e6))
++            rows.append((b.step_parts, timed_out(b.skin_stats())))
++        runs.append((b, rows))
++    assert same_rows(runs[0][1], runs[1][1]) and runs[0][1][1][0] > 1
++    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
++
++
++def test_a_macro_step_that_would_need_more_than_PARTS_MAX_parts_stops_the_run(coarse_sphere_mesh, monkeypatch):
++    """The stall guard (sub-plan 22 Task 5d; the controller, 2026-11-08): a macro step that would start with more than
++    PARTS_MAX parts raises RuntimeError naming the step, the count and the limit, before any part runs, under either rule;
++    PARTS_MAX parts themselves run. The limit is lowered to 3 so that the test does not run a thousand parts."""
++    monkeypatch.setattr(skinbody, "PARTS_MAX", 3)
++    for rule in skinbody.PART_COUNT_RULES:
++        b = make(coarse_sphere_mesh, T0=600.0, part_count_from=rule)
++        b.emissivity = 0.0
++        zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++        M0, E0 = b.mass(), b.energy()
++        b._hint = 4
++        with pytest.raises(RuntimeError, match=r"from 0\.5 s to 1 s would run as 4 parts, more than PARTS_MAX = 3"):
++            b.advance(1.0, 0.5, zero)
++        assert b.step_parts == 0 and b.mass() == M0 and b.energy() == E0       # nothing ran
++        b._hint = 3
++        b.advance(1.0, 0.5, zero)
++        assert b.step_parts == 3
++    assert skinbody.PARTS_MAX == 3 and skinbody.PART_COUNT_RULES == ("moves", "melting")
++
++
++def test_a_body_saved_without_the_part_count_rule_flies_on(coarse_sphere_mesh):
++    """The states saved before the rule existed have no `part_count_from` on the instance: the class's default gives them
++    `moves`, they fly on as before, and a resume can give them `melting` (sub-plan 22 Task 5d)."""
++    b, _ = held_back_body(coarse_sphere_mesh)
++    del vars(b)["part_count_from"]
++    assert "part_count_from" not in vars(b) and b.part_count_from == "moves"
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.05, 0.05, zero)
++    b.advance(0.1, 0.05, zero)
++    assert b.step_parts == 2                                         # the moves rule: the hand-down fed the hint
++    b.part_count_from = "melting"
++    b.advance(0.15, 0.05, zero)
++    b.advance(0.2, 0.05, zero)
++    assert b.step_parts == 1
++
++
++def test_an_unknown_part_count_rule_is_refused(coarse_sphere_mesh):
++    with pytest.raises(ValueError, match="part_count_from"):
++        make(coarse_sphere_mesh, part_count_from="draws")
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -726,3 +726,49 @@
+     # the history prints nine significant digits
+     assert r["dt_switch_kn"] == pytest.approx(float(rows[1]["knudsen"]), rel=1e-8) and r["dt_switch_kn"] > 0.01
+     assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)
++
++
++def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_for_melting():
++    """--part-count-from (sub-plan 22 Task 5d) is `moves` by default, so that every existing run keeps its name and its
++    record; `melting` ends a skin run's settings in _parts-melting, after the spread limit's and before the seed's."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert p.parse_args(melt).part_count_from == "moves" and cli.part_count_rule_of(p.parse_args(melt)) == "moves"
++    assert name(melt) == name(melt + ["--part-count-from", "moves"]) == base
++    assert name(melt + ["--part-count-from", "melting"]) == base + "_parts-melting"
++    assert (name(melt + ["--spread-limit", "60", "--part-count-from", "melting", "--seed", "7"])
++            == base + "_spread-60_parts-melting_seed-7")
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting") == "_parts-melting"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
++
++
++@pytest.mark.parametrize("argv", [
++    THERMAL + ["--melt", "on", "--part-count-from", "steep"],                          # no such rule
++    THERMAL + ["--melt", "on", "--part-count-from", "off"],
++    THERMAL + ["--part-count-from", "melting"],                                        # nothing melts, so nothing is drawn
++    FEM + ["--melt", "on", "--part-count-from", "melting"],                            # the element model has no parts
++    BASE + ["--part-count-from", "melting"],                                           # no thermal model at all
++])
++def test_a_bad_part_count_rule_or_the_melting_rule_without_a_melting_skin_run_exits_2(argv, tmp_path):
++    with pytest.raises(SystemExit) as exc:
++        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2
++
++
++def test_the_command_line_gives_the_skins_their_part_count_rule_and_records_it_only_for_melting(tmp_path, monkeypatch):
++    """--part-count-from reaches the skin body as `moves` or `melting` (sub-plan 22 Task 5d). The body is not built: its
++    arguments are."""
++    from reentry_model import skinbody
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    for argv, rule in ((melt, "moves"), (melt + ["--part-count-from", "moves"], "moves"),
++                       (melt + ["--part-count-from", "melting"], "melting"),
++                       (melt + ["--skin-flow", "off", "--part-count-from", "melting"], "melting")):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["part_count_from"] == rule
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -287,3 +287,44 @@
+     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "q"]) == 0
+     line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+     assert "saved random state" in line and "spread limit off" in line and "save state at no" in line
++
++
++def test_resuming_with_the_melting_rule_sets_it_on_the_body_and_records_it(flown, tmp_path, capsys):
++    """`--part-count-from melting` on a resume (sub-plan 22 Task 5d) sets the rule on the saved flight's skin body, which the
++    one line before the flight names, records it in the JSON's settings and in what was changed, and carries it into the
++    state the resumed flight saves, so a resume of that state keeps it unless told; `moves` asked of it gives back the
++    saved flight's record (no key), and a flight resumed without the option records none."""
++    out, flight, records, state_path = flown
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "m", "--part-count-from", "melting",
++                     "--save-state-at", "0.2"]) == 0
++    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
++    assert "part count from melting" in line
++    doc = json.load(open(str(tmp_path / "m.json")))
++    assert doc["resumed_from"]["changed"] == {"--part-count-from": "melting", "--save-state-at": 0.2}
++    assert doc["settings"]["part_count_from"] == "melting"
++    assert restart.load(str(tmp_path / "m.state.pkl"))["meta"]["args"]["part_count_from"] == "melting"
++    assert cli.main(["resume", str(tmp_path / "m.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
++    assert "part count from melting" in capsys.readouterr().out
++    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["part_count_from"] == "melting"
++    assert cli.main(["resume", str(tmp_path / "m.state.pkl"), "--outdir", str(tmp_path), "--name", "back",
++                     "--part-count-from", "moves"]) == 0
++    doc = json.load(open(str(tmp_path / "back.json")))
++    assert "part_count_from" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--part-count-from": "moves"}
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "plain"]) == 0
++    assert "part_count_from" not in json.load(open(str(tmp_path / "plain.json")))["settings"]
++    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "run", "--part-count-from", "melting"]) == 0
++    assert json.load(open(str(tmp_path / "run.json")))["settings"]["skin"]["part_count_from"] == "melting"   # run's record
++
++
++def test_the_melting_rule_is_refused_on_a_resume_of_a_flight_that_does_not_melt(tmp_path):
++    """A flight that does not melt has no draws to set a part count by, so the melting rule asked of its resume exits 2,
++    as `run` refuses it; `moves` asks nothing of the flight, so that goes through (sub-plan 22 Task 5d)."""
++    pytest.importorskip("cantera")
++    k = FLIGHT.index("--melt")
++    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
++    assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
++    state = str(tmp_path / "dry.state.pkl")
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "melting"])
++    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
++    assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "moves"]) == 0
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` and `TypeError` on `part_count_from` and
+  `PART_COUNT_RULES`; the refusals of an unknown rule, which exit 2 without the option too, pass.
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -163,6 +163,15 @@
+                                   # capped mass by the area again, never makes a capped hand-down split a part
+ SPLIT_DEPTH_MAX = 6               # a part is split at most this many times over
+ MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
++# What sets the next macro step's part count (sub-plan 22 Task 5d; Asha, 2026-11-08). `moves`, the rule so far, feeds the
++# hint with the move the draws and the capped hand-down together call for (`_move_ratio`); a capped hand-down is
++# just under the whole allowance, so wherever one fires the ratio is just under 1 per part and the next step runs 1.25
++# times as many parts, whose hand-downs are capped again: on the 50 mm spreading flight 837, 1 047, ..., 9 765 parts,
++# each the previous times 1.25 rounded up (measured 2026-11-08), the metal still held back and the flight stalled.
++# `melting` feeds the hint with the draws alone, so the count follows the melting; the split test is the same under
++# both. Asha decided on 2026-11-08 to fly both and compare them.
++PART_COUNT_RULES = ("moves", "melting")
++PARTS_MAX = 1000                  # parts: a macro step that would start with more stops the run (the controller, 2026-11-08)
+ # The part length while melting (2026-10-12). On the 100 mm sphere's first 1.5 s of melting, 0.5 s parts cost 1 454 s
+ # (53 % on parts rejected for their moves, 4.4 passes a kept part) against 341 s for 0.0625 s macro steps (1.8 passes);
+ # before melting short parts cost about 18 % more, so the cap holds only while some skin's top is non-rigid. (Those
+@@ -549,9 +558,12 @@
+     histograms in `hist_n` and `hist_m` (sub-plan 22 Task 2: the element model's interface to the coupled writer); with
+     `spool`, a directory, the rows go there as they come (`spray.SourceSpool`, Task 4) instead of staying in memory.
+     `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
+-    (`spreading`; sub-plan 22 Task 5c), None for no spreading."""
++    (`spreading`; sub-plan 22 Task 5c), None for no spreading.
++    `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
++    (`PART_COUNT_RULES`; sub-plan 22 Task 5d)."""
+     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
+     spread_limit = None                  # deg
++    part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
+     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
+     spread_over = 0                      # edges over the limit on the last move's first estimate
+     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
+@@ -560,7 +572,10 @@
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
+-                 spread_limit=None):
++                 spread_limit=None, part_count_from="moves"):
++        if part_count_from not in PART_COUNT_RULES:
++            raise ValueError("part_count_from must be one of {}, got {!r}".format(PART_COUNT_RULES, part_count_from))
++        self.part_count_from = part_count_from
+         if spread_limit is not None and not 0.0 < spread_limit < 180.0:
+             raise ValueError("spread_limit must be None or an angle within (0, 180) degrees, got {!r}".format(spread_limit))
+         self.spread_limit = spread_limit
+@@ -704,6 +719,10 @@
+                     n = max(n, int(math.ceil(dt / self.part_max - 1e-9)))
+                     self.capped_ahead += 1
+         self._top_start, self._dt_last = top, dt
++        if n > PARTS_MAX:                                    # the stall of 2026-11-08 (sub-plan 22 Task 5d): stop, do not crawl
++            raise RuntimeError("the macro step from {:.6g} s to {:.6g} s would run as {} parts, more than PARTS_MAX = {}: "
++                               "the part count has run away (with --part-count-from moves a capped hand-down feeds it; "
++                               "sub-plan 22 Task 5d)".format(t - dt, t, n, PARTS_MAX))
+         q_end = np.asarray(loads.q_conv, dtype=float)
+         q_start = self._q_prev if self._q_prev is not None and self._q_prev.shape == q_end.shape else q_end
+         self._heating = (t - dt, dt, q_start, q_end)
+@@ -842,6 +861,8 @@
+             for k in range(n):
+                 self._advance_part(t if k == n - 1 else t - dt + (k + 1) * (dt / n), dt / n, dt_macro, loads, depth + 1)
+             return
++        if self.part_count_from == "melting":                # the hint from the draws alone, kept parts only (Task 5d)
++            ratio = self._draw_ratio(book)
+         self._ratio = max(self._ratio, ratio * dt_macro / dt)
+         self.step_parts += 1
+         self.pending = mismatch
+@@ -926,6 +947,12 @@
+             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid, limit, cap=self._hand_cap())
+             sk.set_state(saved)
+         d = np.abs(book.drawn - handed) / (mat.rho * self.columns.area)
++        return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
++
++    def _draw_ratio(self, book):
++        """`_move_ratio` with no hand-down: the largest distance a base would move by drawing alone, over MOVE_MAX of the
++        mean surface edge. It sets the next macro step's part count under `part_count_from="melting"` (Task 5d)."""
++        d = np.abs(book.drawn) / (self.material.rho * self.columns.area)
+         return float(d.max() / (MOVE_MAX * self.columns.edge_length.mean()))
+ 
+     def _move_base(self, book, m_min, g0):
+```
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -4,11 +4,12 @@
+         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+-        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off ...]
++        [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
++        --part-count-from moves|melting ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+-        --slurry-spray on|off --spread-limit DEG|off]
++        --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -119,6 +120,11 @@
+     return value
+ 
+ 
++def part_count_rule_of(args):
++    """The rule that sets a macro step's part count, `moves` unless --part-count-from says `melting` (sub-plan 22 Task 5d)."""
++    return args.part_count_from
++
++
+ def spread_limit_of(args):
+     """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
+     return None if args.spread_limit == "off" else args.spread_limit
+@@ -185,7 +191,7 @@
+ 
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
+-                     slurry_spray=False, spread_limit=None):
++                     slurry_spray=False, spread_limit=None, part_count_from="moves"):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+@@ -195,8 +201,8 @@
+     with melting since sub-plan 22 Task 3b; None for a run that does not melt, which the flow does not concern), and with
+     the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
+     sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
+-    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c); empty for the
+-    defaults."""
++    `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
++    `_parts-melting` where the part count follows the melting, not the moves (Task 5d); empty for the defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -224,6 +230,8 @@
+         out += "_slurryspray-on"
+     if spread_limit is not None:
+         out += "_spread-{:g}".format(spread_limit)
++    if part_count_from != "moves":
++        out += "_parts-{}".format(part_count_from)
+     return out
+ 
+ 
+@@ -285,6 +293,9 @@
+     rs.add_argument("--spread-limit", type=parse_spread_limit, default=None,
+                     help="[deg] the fold past which the metal handed down spreads to lower corners, or off (default: the saved "
+                          "flight's, off for one saved before the option existed)")
++    rs.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default=None,
++                    help="what the next macro step's part count follows: the moves (draws and hand-down) or the melting (the "
++                         "draws alone) (default: the saved flight's, moves for one saved before the option existed)")
+     rs.add_argument("--save-state-at", type=float, default=None,
+                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
+                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
+@@ -418,6 +429,11 @@
+                     help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
+                          "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
+                          "lands hot (sub-plan 22 Task 5c; off until the flights have tested it; default off)")
++    me.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default="moves",
++                    help="with --surface-model skin and --melt on: what sets the next macro step's part count: moves, the "
++                         "move the draws and the capped hand-down call for, or melting, the draws alone; a capped "
++                         "hand-down made the count grow by a quarter a step on the spreading flights (sub-plan 22 Task 5d; "
++                         "default moves)")
+     me.add_argument("--skin-flow-cycles", type=int, default=None,
+                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+@@ -507,7 +523,8 @@
+                                      flow_cycles=args.skin_flow_cycles, surface_flow=flow_model,
+                                      spray=spray_model_of(args, mat) if flow else None,
+                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
+-                                     spool=spool if flow else None, spread_limit=spread_limit_of(args))
++                                     spool=spool if flow else None, spread_limit=spread_limit_of(args),
++                                     part_count_from=part_count_rule_of(args))
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -542,6 +559,8 @@
+                         "slurry_spray": args.slurry_spray}
+         if spread_limit_of(args) is not None:
+             info["skin"]["spread_limit_deg"] = spread_limit_of(args)
++        if part_count_rule_of(args) != "moves":
++            info["skin"]["part_count_from"] = part_count_rule_of(args)
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -592,7 +611,7 @@
+                                                                     args.skin_fine_zone,
+                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
+                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
+-                                                                    spread_limit_of(args)))
++                                                                    spread_limit_of(args), part_count_rule_of(args)))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -672,6 +691,8 @@
+                      "sprays by the skins' spraying from their top cells")
+     if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
+         parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
++    if part_count_rule_of(args) != "moves" and not (args.surface_model == "skin" and args.melt == "on"):
++        parser.error("--part-count-from melting needs --surface-model skin and --melt on: it sets the skins' part count")
+     if args.surface_model == "skin":
+         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
+                             ("--molten-cascade off", args.molten_cascade == "off"),
+@@ -890,6 +911,10 @@
+         if spread_limit_of(args) is not None and not (skins and run.body.material.melts):
+             parser.error("--spread-limit needs a saved flight of melting skins: it spreads the metal they hand down")
+         changed["--spread-limit"] = args.spread_limit
++    if args.part_count_from is not None:
++        if args.part_count_from != "moves" and not (skins and run.body.material.melts):
++            parser.error("--part-count-from melting needs a saved flight of melting skins: it sets their part count")
++        changed["--part-count-from"] = args.part_count_from
+     if args.seed is not None:
+         changed["--seed"] = args.seed
+     if args.save_state_at is not None:
+@@ -924,6 +949,8 @@
+         for key in skinbody.SPREAD_COLUMNS:
+             state["row"].pop(key, None)
+         state["row"].update(run.body.spread_stats())
++    if "--part-count-from" in changed and skins:
++        run.body.part_count_from = args.part_count_from
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -934,19 +961,21 @@
+     for key, value in (("outdir", args.outdir), ("name", args.name), ("save_state_at", changed.get("--save-state-at"))):
+         setattr(saved, key, value)
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+-                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit")):
++                      ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
++                      ("part_count_from", "--part-count-from")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+               "on" if getattr(run.body, "slurry_spray", False) else "off",
+               "off" if limit is None else "{:g} deg".format(limit),
++              run.body.part_count_from if skins else "moves",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -960,6 +989,8 @@
+         thermal_info["save_state_at_s"] = args.save_state_at
+     if skins and run.body.spread_limit is not None:
+         thermal_info["spread_limit_deg"] = run.body.spread_limit
++    if skins and run.body.part_count_from == "melting":
++        thermal_info["part_count_from"] = "melting"
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier: 608 passed, 1 skipped (Task 5c's 592 and these 16; 22.8 minutes across four
+  processes, 2026-11-08).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: the part count can follow the melting, not the moves (--part-count-from moves|melting on run and resume, moves by default), and a macro step that would start with more than 1 000 parts stops the run; sub-plan 22 Task 5d"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c and 5d written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
