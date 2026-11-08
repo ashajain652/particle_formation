@@ -1,6 +1,6 @@
 # Re-frozen metal kept in the skins, or the part count set by melting: design
 
-**Status: approved by Asha 2026-11-08, to be built with subagents (sub-plan 22 Tasks 5d and 5e), then flown and
+**Status: approved by Asha 2026-11-08, to be built with subagents (sub-plan 22 Tasks 5d, 5e and, added the same day, 5f), then flown and
 compared. Nothing built yet.**
 
 ## Why
@@ -46,6 +46,18 @@ Build both and compare them on flights:
    that splits a part is unchanged (it still reads `|drawn - handed|`): a capped hand-down is below the allowance, so only
    a draw can split a part, and the count loses nothing it was there to predict. **Flown with `--spread-limit 60`** (Asha).
 
+3. **Sideways heat between cells that touch** (Asha's idea, 2026-11-08, first written in the side session's draft
+   `docs/superpowers/specs/2026-11-08-refrozen-metal-in-skins-design.md` section 3; Asha then asked for the heat to be
+   paired correctly on the comparison flights): `--sideways-heat depth|height`, default `depth` (today's pairing by depth
+   below the top, spec 6.3). With `height` each cell's range is its height above its column's base, the neighbour's shifted
+   by the offset between the two bases along the mean of the two columns' directions, and cells exchange heat by the
+   overlap of their ranges times the shared face's conduction weight. Where the tops differ the part of a taller column
+   above its neighbour's top is a side wall facing the gas: it exchanges no heat with the neighbour and is not heated or
+   cooled from the gas (stated). Tracking every cell's Cartesian position would give the same answer at 2 mm spacing at
+   more cost and is not chosen (the side session's call). The flow's sideways transport is unchanged. **On all four
+   flights** (controller's reading of Asha's "I want the heat paired correctly"), and once the comparison decides the
+   part-count fix, the flight is re-run with it (Asha).
+
 **Defaults** stay today's (controller's call, in the description Asha approved): every earlier run stays reproducible
 until the comparison decides, as with `--spread-limit`.
 
@@ -72,7 +84,8 @@ stalled is affected.
 Four flights on the laptop, on mains, resumed from the snapshot states at 170.5 s (50 mm) and 22.0 s (100 mm), before
 the metal flows, to the old end times 190 s and 45 s, a frame every macro step (the top's fold is measured from frames),
 states saved at 178.5 s and 32.5 s, slurry spray off as in the spreading flights:
-`--hand-down off`, and `--spread-limit 60 --part-count-from melting`, on each sphere.
+`--hand-down off`, and `--spread-limit 60 --part-count-from melting`, on each sphere, all four with
+`--sideways-heat height`.
 
 Compared: how far each gets and its wall time; the fold of the base (`surface_fold_deg`) and of the top (frames); the
 deepest skin; the books; the heat absorbed and the mass lost, so that a difference in the physics, not only in the
