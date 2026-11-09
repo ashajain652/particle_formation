@@ -3087,6 +3087,46 @@ of one comment in `spray.py`, both changed after.
      sensitivity to the limit, nor whether the metal stays deeper with the spreading (shallower to 176.0 s; the later
      figures follow 40 steps against one). Unit tier 587 passed, 1 skipped.
 
+## Amendment of 2026-11-08 — the spreading flights' stall, and the three options built against it: the part count set by melting, the hand-down switched off, sideways heat between cells that touch (facts 193–194)
+
+> Asha's decisions of 2026-11-08, after the two spreading flights stalled: to build and compare `--hand-down off` (re-frozen metal stays in the skins; spreading off with it,
+> because it moves only handed metal) and `--part-count-from melting` (flown with `--spread-limit 60`); to pair the sideways heat by height on all four comparison flights, none
+> started early (her idea, first written in a side session's draft, `docs/superpowers/specs/2026-11-08-refrozen-metal-in-skins-design.md` section 3, where tracking every cell's Cartesian
+> position was her alternative, set aside by Claude); to re-run the flight once the comparison decides the part-count fix; and to build with subagents
+> (`docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`, `docs/superpowers/plans/2026-11-08-hand-down-and-part-count-build.md`). The controller's calls, in the description Asha approved: the
+> defaults stay today's, the stall guard is at `PARTS_MAX = 1 000` parts, and the sideways offset is `s_ij = (p_j - p_i) . unit(n_i + n_j)`. Facts 1–192 stand.
+
+193. **The spreading flights and their stall (sub-plan 22 Task 5, 2026-11-07 to 2026-11-08; rows in `reentry_model_output/task5_spreading`).** The two snapshot states resumed with
+     `--spread-limit 60` both got past the points where the earlier skin flights stopped: the 50 mm sphere passed 179.04 s after about 2.1 h of running and reached 179.66 s, its base fold at
+     most 68.0 degrees against 144 when the earlier flight stopped; the 100 mm sphere passed 33.0 s after about 4.1 h and reached 36.18 s, fold at most 86.5 degrees against 138. The mesh stayed above
+     its radius-ratio floor, mass closed to 1e-15 kg, and the rebuilds' energy residual was 3.7e-4 and 3.9e-4 of the heat absorbed (4.9e-4 and 4.4e-4 in the earlier flights). Both then
+     stalled: the number of parts a 12.5 ms macro step runs as grew by a quarter every step, on the 50 mm sphere from 9 at the old stop to 9 765 (24 at 179.3 s, 342 at 179.5 s, 9 765 at 179.66 s),
+     on the 100 mm sphere from 1 to 1 537, the last steps taking 6.7 h and 3.75 h, while the metal handed down stayed about 0.2-0.3 g a step; Asha stopped them on 2026-11-08 at 16:55. The cause,
+     **inferred from the code and not instrumented**: the next step's count is the largest move ratio times `MOVE_HINT_MARGIN`; the move ratio includes the hand-down, which since the cap of
+     2026-10-27 never splits a part but, not shrinking with the part, reads as a part needing the whole allowance, so the next step gets 25 % more parts (each of the 50 mm sphere's last eleven
+     counts is the previous times 1.25 rounded up; the earlier 50 mm flight was already climbing, 134 parts at its stop). Asha then asked why metal is handed down at all: the 100 mm sphere handed
+     down 64.1 g in all but only about 26 g stood above the starting surface at its stop, the 50 mm sphere 27.7 g and 7.8 g, most of what froze melting again, today by a round trip through the 3D
+     model. One flight on each sphere, one mesh each.
+
+194. **The three options and the guard, as built and checked (sub-plan 22 Tasks 5d, 5e, 5f, 2026-11-08; `measure/task5d/check.md`, `measure/task5e/check.md`; `part_22.md`).** Each is on `run` and
+     `resume` and defaults to today's behaviour, so every earlier run is as before to the last bit. *Task 5d* (outer 289fbb4): `--part-count-from moves|melting`; with `melting` the next step's count is
+     set by the draws alone (largest `drawn / (rho area)` over the allowance, times `dt_macro / dt`, times the margin, kept parts only) and **the split test is unchanged**; a macro step that would start with
+     more than `PARTS_MAX = 1000` parts raises `RuntimeError` under both rules (the one change for every run). *Task 5e* (57774b5): `--hand-down on|off`; `off` keeps every rigid cell in its skin, `held_mass_kg` and
+     `held_depth_max_mm` record every handable kilogram, and a spread limit, given or carried by a resumed state, exits 2. *Task 5f* (bb7165f; build repository c33b4a2): `--sideways-heat depth|height`; with
+     `height` cells are paired by height above their column's base, the neighbour's shifted by `s_ij`, conductance `0.5 (k_a + k_b) w l_ab`, symmetric and negative semi-definite; the part of a taller column
+     above its neighbour's top exchanges no heat and is not heated from the gas (stated). Unit tier 639 passed, 1 skipped. *The checks, on the 50 mm sphere, mains power, side by side, each once.* **5d**: resumed
+     from the stalled flight's state at 178.5 s (limit 60 carried) with `--part-count-from melting` to 179.7 s, 87.4 min, exit 0: `step_parts` 1 in all 95 macro steps after the saved row, against 24 at 179.3 s,
+     342 at 179.5 s and 9 765 at 179.66 s; **the count no longer grows, supporting the inferred cause**; fold 61.3-68.8 degrees (68.0 at most in the stalled flight), lowest radius ratio 0.0553 (0.0512), rebuilds 23
+     to 31 (to 37), held at most 3.41e-4 kg and 1.84 mm deep (5.3e-5 kg, 1.48 mm); dearer per step, 55.9 s of skins time to 179.3 s against 21.0 s over the same 63 steps, mostly in the flow (not traced, load
+     not matched); books: mass closed (3.8e-17 kg), energy residual -1.56e-10 (gate 1e-8), momentum 1.95e-17. **5e and 5f together**: resumed from the snapshot state at 170.5 s with `--hand-down off --sideways-heat
+     height` to 177.0 s, 74.9 min, exit 0: base fold 37.2 degrees (39.3 at most) against 116.75 in the snapshot flight and 64.86 with spreading, nothing handed down (0.905 g unchanged), 1 rebuild against 18, lowest
+     radius ratio 0.0625 against 0.0678, deepest skin 7.10 mm against 4.48, 8.35 g held in the skins up to 3.70 mm deep and still growing about 1.4 g per 0.5 s; the continuum step had not latched by 177.0 s (nose
+     907.97 K against the snapshot's 908.31 K at 176.5 s, not traced), so the flight ran 13 macro steps of 0.5 s; skins time 285.3 s a step against 210.3 s over the 12 equal steps (1.36 times, the hand-down's
+     effect not separated); books: mass closed (-3.8e-17 kg), energy residual -7.96e-13, momentum 2.05e-17, no fault. **Stated limitations, each measured once:** the height map's sub-step on the 100 mm sphere about
+     14 % slower (3.6-3.8 s against 3.2-3.3 s, line-search residuals 49 against 32, not traced), its build holding up to 0.37 GB at 75 cells a column and growing in proportion to the deepest column; the Task 5d tests
+     raised the unit tier from about 12 to 22.8 minutes. *Untested:* the top's fold under `--hand-down off`, whether the deposit's depth against pools of 22-45 mm on the 50 mm sphere lets a flight reach 190 s, and
+     the 100 mm sphere; the four comparison flights (hand-down off and melting on each sphere, all with `--sideways-heat height`) are to be flown after the final review.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---

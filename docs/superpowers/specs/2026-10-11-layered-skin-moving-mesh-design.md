@@ -7,6 +7,9 @@ discussion behind each. Amended 2026-10-12 (while planning sub-plan 20): the boo
 transfer (§5.3), level 2 of the ladder (§11.1), with the measurements behind each. Amended 2026-11-06 (sub-plan 22 Tasks 5, 5b
 and 5c): where the deposit's fold sits and the spreading pass built against it (§6.6, §10.1, §10.2, §12, §16), with
 `2026-11-06-deposit-spreading-design.md`.
+Amended 2026-11-08 (sub-plan 22 Tasks 5d, 5e and 5f): what the first spreading flights did and the three options built against it
+(the part count set by melting, the hand-down switched off, sideways heat between cells that touch) and the stall guard (§6.3, §6.6,
+§7.1, §10.1, §16), with `2026-11-08-hand-down-and-part-count-design.md`.
 Supersedes: `2026-10-07-melt-layer-skin-design.md` (one-dimensional skins under melting patches on a fixed mesh), whose
 stage 1 was built and failed its box test (§2); the derived surface of `2026-09-27-surface-recession-remeshing-design.md`
 §5 and §8 (the geometry follows the mesh here, not the reverse). Reuses from that design its dense band (§6), its mesh
@@ -287,6 +290,23 @@ On each sub-step the skin's enthalpy equation is solved:
   stage 3 it is implicit** (Asha, 2026-10-17; sub-plan 21's amendment of that date), solved with the sideways
   transport of §6.5, so a sub-step has no sideways stability limit.
 - **Sideways with the flow**: enthalpy moves with the mass of §6.5, at the donor cell's specific enthalpy.
+- **Sideways heat between cells that touch** (built 2026-11-08, sub-plan 22 Task 5f; `--sideways-heat depth|height`, default `depth`, §10.1).
+  Pairing by depth below the top is wrong where the tops differ: at the ring's outer edge the top steps about 1.4 mm across a 1.5 mm
+  triangle, so with the deposit kept in the skins (§6.6) a cell beside the gas would be paired with metal 1.4 mm lower. With `height`
+  each cell's range is its height above its column's base, the neighbour's shifted by the offset between the two bases
+  `s_ij = (p_j - p_i) . unit(n_i + n_j)` (p the base corners, n the columns' directions), and cells a of i and b of j exchange
+  `c_ab (x_b - x_a)` with `c_ab = 0.5 (k_a + k_b) w_ij l_ab` (k the cells' conductivities at the sub-step's start, w_ij the edge's conduction
+  weight, l_ab the overlap of their ranges), symmetric and negative semi-definite by construction, so the implicit sub-step takes it as it takes
+  the depth map. The part of a taller column above its neighbour's top is a side wall facing the gas: it exchanges no heat with the neighbour
+  and the model does not heat or cool it from the gas (stated). The flow's sideways transport (§6.5) is unchanged. (Asha's idea,
+  2026-11-08, first written in a side session's draft, `2026-11-08-refrozen-metal-in-skins-design.md` section 3, where tracking every cell's
+  Cartesian position was her alternative, set aside by Claude as giving the same answer at 2 mm spacing at more cost; she then asked for the heat to be
+  paired correctly on all four comparison flights, none started early. The offset's definition and the conductance are the controller's.)
+  **Measured, each once** (Task 5f, 2026-11-08, laptop on mains): on a 2 mm surface of the 100 mm sphere (9 519 columns, 28 551 edges, 2.66
+  million pairs, 85 MB) a 10 ms sub-step took 3.6-3.8 s against 3.2-3.3 s with the depth map, about 14 % slower, the same 11 Newton steps but
+  49 evaluations of the residual in the line search against 32 (not traced), and the map's build holds up to 0.37 GB against 0.09 at 75 cells a
+  column, growing in proportion to the deepest column: stated limitations. On level columns of cells on the depth grid the two maps agree to
+  2.0e-15 of the largest heat; the unit tier is 639 passed, 1 skipped.
 
 The 3D model's radiation is off on the base surface, which is no longer the free surface. Every quantity that reads a
 wall temperature reads the column's top cell.
@@ -415,6 +435,19 @@ After the sub-steps, each column's base moves by the metal crossing it:
   total deposited is unchanged and its shape at the 2 mm scale is set by the limit chosen. (Amended 2026-11-06 after Task
   5c's review: where metal landed was first read as a corner handing down more than it started with, which missed corners
   that took hot metal and gave more onward; it is read pass by pass, and this was not flown.)
+- **Hand-down off** (built 2026-11-08, sub-plan 22 Task 5e; `--hand-down on|off`, default `on`, §10.1). With `off` no metal passes to the 3D
+  model: every rigid cell stays in its skin, the base moves only by draws and absorption (inward), and the deposit heats, flows and sprays where
+  it is; `held_mass_kg` and `held_depth_max_mm` then record every handable kilogram, which is not a fault. **Spreading is off with it**, because it
+  moves only metal being handed down: `--hand-down off` with a spread limit, given or carried by a resumed state, exits 2. (Asha's decision,
+  2026-11-08. Her question, in answer to the spreading flights' stall: why is metal handed down at all, when re-frozen metal can heat again and flow
+  on or be sprayed; the earlier flights agree, the 100 mm sphere handing down 64.1 g in all of which about 26 g stood above the starting surface at its
+  stop. She decided to build this and the melting part count (§7.1) and compare them on flights, with subagents.) **What it costs, stated:** a
+  column is a straight stack on a fixed dual area, so deep columns on a curved body misplace volume (the 50 mm sphere's pools were already 22-45 mm
+  deep on a 25 mm radius); the fold moves from the base to the top of the metal, where the flow's push and Girin's spraying read it. **Checked once**
+  (2026-11-08, 50 mm state from 170.5 s to 177.0 s, with the sideways heat by height; not separated from it): the base fold stays at the unmelted base's
+  37.2 degrees (39.3 at most) against 116.75 degrees with the hand-down on, 1 rebuild against 18, nothing handed down (0.905 g, unchanged), 8.35 g held in the
+  skins at 177.0 s, up to 3.70 mm deep, the deepest skin 7.10 mm against 4.48; books closed. Whether the top's fold and the depth of the deposit let a
+  flight reach 190 s is for the comparison flights.
 
 Metal crossing the base carries its own enthalpy — the 3D field's enthalpy in the swept volume for a draw or absorption,
 the cells' enthalpy for a hand-down — and the other side gains or loses exactly that: the moving mesh books an
@@ -478,6 +511,21 @@ flow, sideways exchange and spray. The macro step's default is fixed by the conv
 (Measured 2026-10-12 on the level-2 plate over 2 s: the skins' work, counted as passes times sub-steps, is 1 346
 sub-step passes with 0.05 s macro steps, 1 630 with 0.1 s, 2 151 with 0.25 s and 2 437 with 0.5 s, because a longer
 part needs more damped passes; a large macro step no longer saves time.)
+
+**The part count set by melting, and a guard** (built 2026-11-08, sub-plan 22 Tasks 5d; `--part-count-from moves|melting`, default `moves`, §10.1). The
+spreading flights of 2026-11-07 (`--spread-limit 60`) got past the old stops (the 50 mm sphere's 179.04 s, the 100 mm sphere's 33.0 s) and then
+stalled as the number of parts a 12.5 ms macro step runs as grew by a quarter every step (50 mm sphere from 9 at the old stop to 9 765, 100 mm sphere from
+1 to 1 537; the last steps took 6.7 h and 3.75 h). Cause, inferred from the code and not instrumented: the next step's count is the largest part's move ratio times
+`MOVE_HINT_MARGIN`, the move ratio includes the hand-down, and since the cap of 2026-10-27 a hand-down that cannot split a part still reads as a part
+needing the whole allowance. With `melting` the hint reads the draws alone (largest `drawn / (rho area)` over the allowance, times `dt_macro / dt`, times the margin,
+rounded up, over kept parts only); **the split test is the same under both rules.** **Checked once** (2026-11-08, resumed from the 50 mm spreading flight's state at 178.5 s
+to 179.7 s): `step_parts` is 1 in all 95 macro steps after the saved row, where the stalled flight had 24 at 179.3 s, 342 at 179.5 s and 9 765 at 179.66 s; the fold stays
+61.3-68.8 degrees, the held metal at most 1.84 mm deep, books closed. A one-part step costs more: 55.9 s of skins time a step to 179.3 s against 21.0 s in the stalled flight over
+the same 63 steps, mostly in the flow (not traced, machine load not matched). A **guard** stops a run, with a `RuntimeError` naming the count, whose next macro step would
+start with more than `PARTS_MAX = 1 000` parts, under both rules; ordinary steps have needed one to ten parts, so it can stop only a run that would have run away. (Asha,
+2026-11-08: build the melting rule and compare it with `--hand-down off`, with spreading on at 60 degrees for it; the controller's calls: the defaults stay today's, so every earlier
+run is reproducible until the comparison decides, and the guard at 1 000.) **Stated limitation:** the new tests, which fly a body with held metal, raised the unit tier from
+about 12 to 22.8 minutes across four processes.
 
 ### 7.2 The interface
 
@@ -627,6 +675,9 @@ last bit.)
 | `--skin-flow on\|off` (sub-plan 21 Task 6c; on needs `--removal girin`) | `on` with `--melt on` (Asha, 2026-10-29; `off` before) | `_skinflow-off` |
 | `--skin-flow-cycles` (flow sub-steps in each skin sub-step, fixed) | chosen each skin sub-step (Task 6d) | `_flowcycles<value>` |
 | `--spread-limit DEG\|off` (the fold, in degrees within (0, 180), past which a hand-down spreads, §6.6; sub-plan 22 Task 5c) | `off` | `_spread-<deg>` |
+| `--hand-down on\|off` (metal passes to the 3D model, §6.6; sub-plan 22 Task 5e; `off` refuses a spread limit) | `on` | `_handdown-off` |
+| `--part-count-from moves\|melting` (what sets the next macro step's part count, §7.1; sub-plan 22 Task 5d) | `moves` | `_parts-melting` |
+| `--sideways-heat depth\|height` (cells paired by depth below the top or by height above the base, §6.3; sub-plan 22 Task 5f) | `depth` | `_side-height` |
 
 Constants in code with their measurement or reason: the split and merge bounds (1.5 and 0.5 of target), the δ_m margin
 (50 µm), the rebuild threshold (radius ratio 0.05) and gap (20 steps), the base temperature-jump tolerance (5 K), the
@@ -666,6 +717,14 @@ the option. The design's proposed starting value is 60 degrees, below §12's 75�
 any melting. A limit outside (0, 180), or given to a run that does not have melting skins, exits with code 2; `resume`
 exits 2 too for a missing or foreign state, an end of flight not after the saved time, or a continuum step outside (0,
 `--dt`]. The settings record the limit only when there is one, so a run without it writes the JSON it always did.
+
+(Built in sub-plan 22 Tasks 5d, 5e and 5f, 2026-11-08, fact 194.) The three options above are on `run` and `resume` (on `resume` the default is the saved
+state's). **Each defaults to today's behaviour, so every earlier run is as before to the last bit** (the controller's call, in the description Asha approved,
+as for `--spread-limit`; the cost if wrong is that flights must pass the options). Exit 2: `--hand-down off` unless melting skins, and with a spread limit (given or
+carried by a resumed state: give `--spread-limit off`); `--part-count-from melting` unless melting skins; `--sideways-heat height` unless skins. The settings record an
+option only when it is not its default. The stall guard of §7.1 is the one change that applies to every run. **Stated limitations**, each measured once: the height map's
+sub-step on the 100 mm sphere about 14 % slower (§6.3, not traced), its build holding up to 0.37 GB at 75 cells a column and growing in proportion to the deepest column,
+and the part-count tests that raised the unit tier from about 12 to 22.8 minutes.
 
 ### 10.2 Outputs
 
@@ -1240,3 +1299,12 @@ Each stage is tested and measured before the next begins.
   handing down more than it started with), which missed corners that took hot metal and gave more onward (the controller's
   ruling after the build's review). The production check was not re-run after that fix, the resumed flights superseding
   it. Whether a flight gets past the old stops is untested.
+- 2026-11-08 (after the spreading flights of 2026-11-07, which got past the old stops and stalled, fact 193; built as sub-plan 22 Tasks 5d, 5e and 5f, fact 194): Asha
+  decided to build and compare two cures: `--hand-down off`, re-frozen metal staying in the skins (spreading off with it: it moves only handed metal), after her question
+  why metal is handed down at all (§6.6); and `--part-count-from melting`, the part count set by the draws alone, flown with `--spread-limit 60` (§7.1); to pair the
+  sideways heat by height on all four comparison flights, none started early (§6.3), the pairing by height above the base being her idea, first written in a side session's
+  draft, where tracking each cell's Cartesian position was her alternative, set aside by Claude; to re-run the flight with the part-count fix once the comparison decides it;
+  and to build with subagents. The controller's calls, in the description Asha approved: the defaults stay today's (`depth`, `on`, `moves`), a macro step that would start
+  with more than `PARTS_MAX = 1 000` parts stops the run, and the offset `s_ij = (p_j - p_i) . unit(n_i + n_j)`. Checked once each on the 50 mm sphere (2026-11-08): the melting
+  rule held `step_parts` at 1 for 95 macro steps where the stalled flight reached 9 765; hand-down off with height heat held the base fold at 37.2 degrees (39.3 at most) to
+  177.0 s against 116.75; the comparison flights are not yet flown.

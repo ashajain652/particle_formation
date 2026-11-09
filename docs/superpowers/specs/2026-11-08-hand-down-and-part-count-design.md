@@ -1,7 +1,8 @@
 # Re-frozen metal kept in the skins, or the part count set by melting: design
 
-**Status: approved by Asha 2026-11-08, to be built with subagents (sub-plan 22 Tasks 5d, 5e and, added the same day, 5f), then flown and
-compared. Nothing built yet.**
+**Status: approved by Asha 2026-11-08; built with subagents (sub-plan 22 Tasks 5d, 5e and 5f, outer 289fbb4, 57774b5 and bb7165f; build
+repository c33b4a2) and checked once each on the 50 mm sphere on 2026-11-08 (below, "As built and checked"). The four comparison flights are not yet
+flown.**
 
 ## Why
 
@@ -90,3 +91,28 @@ states saved at 178.5 s and 32.5 s, slurry spray off as in the spreading flights
 Compared: how far each gets and its wall time; the fold of the base (`surface_fold_deg`) and of the top (frames); the
 deepest skin; the books; the heat absorbed and the mass lost, so that a difference in the physics, not only in the
 running, is seen.
+
+## As built and checked (2026-11-08)
+
+Built as designed: `--part-count-from moves|melting` and the guard (Task 5d), `--hand-down on|off` (Task 5e), `--sideways-heat depth|height` (Task 5f), each on `run`
+and `resume`, each defaulting to today's behaviour so that every earlier run is as before to the last bit. Unit tier 639 passed, 1 skipped. Two production checks
+through `flights/launch.sh` on mains power, side by side (records in `prototype/work-2026-10-28-skin-spraying/measure/task5d/check.md` and `task5e/check.md`, git-ignored),
+each one flight on one mesh:
+
+- **The part count (5d), resumed from the stalled flight's state at 178.5 s with `--part-count-from melting --t-max 179.7`** (87.4 min, exit 0): `step_parts` is 1 in all 95
+  macro steps after the saved row, where the stalled flight reached 24 at 179.3 s, 342 at 179.5 s and 9 765 at 179.66 s. **The inferred cause is supported: the count no longer
+  grows.** Over the same window the fold stays at 61.3-68.8 degrees (68.0 at most in the stalled flight), the lowest radius ratio 0.0553 (0.0512), rebuilds 23 to 31 (to 37), held metal at most 3.41e-4 kg
+  and 1.84 mm deep (5.3e-5 kg, 1.48 mm). It is dearer per step: to 179.3 s the skins took 55.9 s a macro step against 21.0 s over the same 63 steps, mostly in the flow, because a step of
+  one 12.5 ms part needs more damped flow passes than several short ones (spec 7.1); not traced, the machine's load not matched. Books from the JSON: mass 0.1836767894253005 kg in
+  and out (rebuild residual 3.8e-17 kg), energy residual -1.56e-10 (gate 1e-8), momentum 1.95e-17.
+- **Hand-down off and sideways heat by height (5e and 5f together), resumed from the snapshot state at 170.5 s with `--hand-down off --sideways-heat height --t-max 177.0`** (74.9 min, exit 0): the base
+  fold stays at 37.2 degrees (39.3 at most) where the snapshot flight reached 116.75 degrees at 177.0 s and the spreading check 64.86; nothing is handed down (0.905 g, unchanged from the saved row);
+  1 rebuild against 18; lowest radius ratio 0.0625 against 0.0678 (0.5 s rows); the deepest skin 7.10 mm (flowing 3.50 mm) against 4.48 mm; 8.35 g held in the skins, up to 3.70 mm
+  deep, still growing about 1.4 g per 0.5 s. **Not like with like:** the continuum step did not latch by 177.0 s (the nose peaks at 907.97 K, the snapshot's 908.31 K at 176.5 s; why is not traced), so this flight ran
+  13 macro steps of 0.5 s. Cost over the 12 equal steps of 0.5 s to 176.5 s: skins 285.3 s a step against 210.3 s (1.36 times), the hand-down's effect not separated from the height map's. Books: mass closed
+  (rebuild residual -3.8e-17 kg), energy residual -7.96e-13, momentum 2.05e-17, no fault.
+- **Stated limitations, each measured once:** the height map's sub-step on the 100 mm sphere is about 14 % slower (3.6-3.8 s against 3.2-3.3 s, line-search residuals 49 against 32, not traced) and
+  its build holds up to 0.37 GB at 75 cells a column, growing in proportion to the deepest column; the Task 5d tests raised the unit tier from about 12 to 22.8 minutes. The top's fold (read
+  from the 13 frames) and the deposit's depth against the pools of 22-45 mm were not examined in the check; they are for the comparison flights.
+
+Who decided what is as in "Decision" above. Still open: the four comparison flights (hand-down off and melting on each sphere, all four with `--sideways-heat height`), and with them the choice of the part-count fix.
