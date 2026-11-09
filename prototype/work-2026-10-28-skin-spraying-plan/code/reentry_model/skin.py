@@ -880,6 +880,83 @@ class Sideways:
         return np.where(self.valid, np.diff(_interp_apply(self.geometry["to_cells"], Qcum), axis=1), 0.0)
 
 
+# -- heat sideways between cells that touch (sub-plan 22 Task 5f) ------------------------------------------------------
+SIDEWAYS_PAIRINGS = ("depth", "height")   # what pairs neighbouring columns' cells in the sideways conduction: their depth
+                                          # below the tops (`Sideways`, spec 6.3) or their height above the bases
+                                          # (`SidewaysByHeight`; Asha, 2026-11-08)
+
+
+def _height_geometry(sk, columns, dz):
+    """What a sub-step's height map is built on, from the cells' thicknesses dz and the base corners: every pair of cells on
+    an edge's two columns whose ranges of height overlap, as flat cell indices (cell a of column i is i K + a) with the
+    overlap [m] and the edge. Each edge's boundaries of both columns, in its first column's frame, are sorted downward in
+    one pass; between two consecutive boundaries lies one cell of each column (or none, above a top or below a base),
+    counted by the boundaries of each above it. Vectorised over the edges: no loop over edges or cells."""
+    n, K = dz.shape
+    zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
+    y = zb[:, -1:] - zb                                     # their heights above the base: H to 0, and 0 beyond the cells
+    i, j = columns.edges[:, 0], columns.edges[:, 1]
+    mean = columns.normal[i] + columns.normal[j]
+    s = np.einsum("ij,ij->i", columns.points[j] - columns.points[i], mean / np.linalg.norm(mean, axis=1)[:, None])
+    Y = np.concatenate([y[i], y[j] + s[:, None]], axis=1)  # (E, 2 K + 2): i's boundaries, then j's shifted into i's frame
+    order = np.argsort(-Y, axis=1, kind="stable")
+    t = np.take_along_axis(Y, order, axis=1)
+    above_i = np.cumsum(order <= K, axis=1)[:, :-1]         # i's boundaries above each piece between consecutive ones
+    a, b = above_i - 1, np.arange(2 * K + 1)[None, :] - above_i      # the cells of i and of j it lies in, from the top
+    length = t[:, :-1] - t[:, 1:]
+    e, p = np.nonzero((length > 0.0) & (a >= 0) & (a < sk.count[i][:, None]) & (b >= 0) & (b < sk.count[j][:, None]))
+    return {"a": i[e] * K + a[e, p], "b": j[e] * K + b[e, p], "edge": e, "length": length[e, p]}
+
+
+class SidewaysByHeight:
+    """The sideways conduction of one sub-step with the cells paired by their height above the bases, so that heat passes
+    between cells that touch (`--sideways-heat height`; Asha's idea and decision of 2026-11-08, sub-plan 22 Task 5f).
+    `Sideways` pairs cells at the same depth below their tops (spec 6.3), right while neighbouring tops stand level; with
+    the re-frozen metal kept in the skins (`hand_down=False`, Task 5e) the top steps about 1.4 mm across a 1.5 mm triangle
+    at the ring's edge, where pairing by depth puts a cell beside the gas next to metal 1.4 mm lower.
+
+    Here every cell's range is its height above its column's base, [H - z_bottom, H - z_top] (z from the top, H the
+    column's thickness). On each edge (i, j) the neighbour's ranges are shifted into i's frame by the offset between the
+    bases, s_ij = (p_j - p_i) . n_ij, p the base corners (`columns.points`) and n_ij the unit mean of the two columns'
+    directions (`columns.normal`), so s_ji = -s_ij; cells a of i and b of j exchange c_ab (x_b - x_a), with
+    c_ab = 0.5 (k_a + k_b) w l_ab, k the cells' conductivities at the sub-step's start, w the edge's conduction weight and
+    l_ab the overlap of the two ranges (zero where they do not overlap). c_ab is symmetric in a and b, so `heat` keeps
+    `Sideways`' contract with `_coupled_solve` and `_conduct` by construction: linear in x, antisymmetric pair by pair (it
+    sums to zero to round-off), symmetric and negative semi-definite, zero beyond a column's cells. Where neighbours are
+    equally deep on one base and their cells lie on the depth grid, it is the depth map to round-off.
+
+    What it brings out, stated: the part of a taller column above its neighbour's top is a side wall facing the gas; it
+    exchanges no heat with the neighbour, and the model does not heat or cool it from the gas (the gas reaches the tops
+    alone). Tracking every cell's position in space would give the same answer at 2 mm spacing at more cost and is not
+    chosen (the side session's call). The flow's sideways transport (spec 6.5, matched by fraction of the flowing depth)
+    is unchanged.
+
+    The geometry is rebuilt whenever the cells' thicknesses or the bases change, as the depth map's is with the cells. Its
+    cost, measured 2026-11-08 on a 2 mm surface of the 100 mm sphere (9 519 columns, 28 551 edges, 59-75 cells of 10 um,
+    the columns one to three times their minimum deep on bases stepped by up to 0.3 mm): 2.7 million pairs, 85 MB; a build
+    0.15 s against the depth map's 0.09 (0.37 GB at its peak against 0.09), a `heat` 0.020 s against 0.027, and one 10 ms
+    sub-step with every cell at its own temperature 3.6-3.8 s against 3.2-3.3, its line search evaluating the residual 49
+    times against 32 in the same 11 Newton steps."""
+
+    def __init__(self, sk, columns, previous=None):
+        """`previous`: the last sub-step's map, whose geometry is reused while the cells keep their thicknesses and the base
+        corners stand where they stood (a copy is kept: a base moved in place is a move)."""
+        self.dz, self.points = sk.dz(), np.array(columns.points, dtype=float)
+        same = (type(previous) is type(self) and np.array_equal(previous.dz, self.dz)
+                and np.array_equal(previous.points, self.points))
+        self.geometry = previous.geometry if same else _height_geometry(sk, columns, self.dz)
+        g = self.geometry
+        k = sk.props.k(sk.T).ravel()
+        self.c = 0.5 * (k[g["a"]] + k[g["b"]]) * columns.conduct_weight[g["edge"]] * g["length"]
+
+    def heat(self, x):
+        """The heat [W per cell] the neighbouring columns conduct into each cell at cell temperatures x (linear in x)."""
+        g = self.geometry
+        flat = x.ravel()
+        d = self.c * (flat[g["b"]] - flat[g["a"]])           # into cell a, out of cell b
+        return (np.bincount(g["a"], d, x.size) - np.bincount(g["b"], d, x.size)).reshape(x.shape)
+
+
 # -- viscosity (sub-plan 21 Task 3) ------------------------------------------------------------------------------------
 def cell_viscosity(sk, gamma):
     """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `rheology.viscosity` at

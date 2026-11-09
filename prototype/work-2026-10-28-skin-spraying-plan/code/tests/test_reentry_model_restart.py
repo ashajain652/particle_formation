@@ -363,3 +363,42 @@ def test_resuming_with_the_hand_down_off_from_a_state_with_a_spread_limit_needs_
     assert cli.main(["resume", kept, "--outdir", out, "--name", "back", "--hand-down", "on"]) == 0
     doc = json.load(open(os.path.join(out, "back.json")))
     assert "hand_down" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--hand-down": "on"}
+
+
+def test_resuming_with_height_pairing_sets_it_on_the_body_and_records_it(flown, tmp_path, capsys):
+    """`--sideways-heat height` on a resume (sub-plan 22 Task 5f) sets the pairing on the saved flight's skin body, which pairs
+    the heat otherwise from the next step on and which the one line before the flight names; it is recorded in the JSON's
+    settings and in what was changed and carried into the state the resumed flight saves, so a resume of that state keeps
+    it unless told, and `depth` asked of it gives back the saved flight's record (no key). `run` records it in the skins'
+    settings only when given, and the resume of a flight without skins refuses it (exit 2)."""
+    out, flight, records, state_path = flown
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "h", "--sideways-heat", "height",
+                     "--save-state-at", "0.2"]) == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "sideways heat height" in line
+    doc = json.load(open(str(tmp_path / "h.json")))
+    assert doc["resumed_from"]["changed"] == {"--sideways-heat": "height", "--save-state-at": 0.2}
+    assert doc["settings"]["sideways_heat"] == "height"
+    rows = rows_of(str(tmp_path / "h.csv"))
+    assert rows[0] == flight[14] and rows[1:] != flight[15:]
+    saved = restart.load(str(tmp_path / "h.state.pkl"))
+    assert saved["meta"]["args"]["sideways_heat"] == "height" and saved["run"].body.sideways_pairing == "height"
+    assert cli.main(["resume", str(tmp_path / "h.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
+    assert "sideways heat height" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["sideways_heat"] == "height"
+    assert cli.main(["resume", str(tmp_path / "h.state.pkl"), "--outdir", str(tmp_path), "--name", "back",
+                     "--sideways-heat", "depth"]) == 0
+    doc = json.load(open(str(tmp_path / "back.json")))
+    assert "sideways_heat" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--sideways-heat": "depth"}
+    assert "sideways_heat" not in json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "run", "--sideways-heat", "height"]) == 0
+    assert json.load(open(str(tmp_path / "run.json")))["settings"]["skin"]["sideways_heat"] == "height"
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o"), "--name", "r",
+                  "--sideways-heat", "height"])
+    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+    assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err

@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d and 5e (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2236,7 +2236,134 @@ git commit -m "Skins: re-frozen metal can stay in the skins (--hand-down on|off 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d and 5e written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5f: Sideways heat between cells that touch
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`SIDEWAYS_PAIRINGS`, `_height_geometry` and `SidewaysByHeight`, beside `Sideways`, which is
+  unchanged)
+- Modify: `reentry_model/skinbody.py` (the class default and `SkinBody(..., sideways_pairing="depth")`, the `side` lambda in
+  `_advance_part`)
+- Modify: `reentry_model/cli.py` (`--sideways-heat depth|height` on `run` and `resume`, the name suffix, the records, the refusals,
+  the resume's one line)
+- Test: `tests/test_reentry_model_skin.py` (7 tests), `tests/test_reentry_model_skinbody.py` (3 tests),
+  `tests/test_reentry_model_cli.py` (3 tests, 6 cases), `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: `skin.Sideways(sk, columns, previous)` and its contract with `_coupled_solve` and `_conduct`: `heat(x)` [W per cell,
+  (n, K)] linear in x, antisymmetric edge by edge (it sums to zero to round-off), symmetric and negative semi-definite, zero in
+  the cells beyond a column's count; `columns.edges`, `columns.conduct_weight`, `columns.points` (the base corners as they stand)
+  and `columns.normal`; Task 5d's wiring of an option on `run` and `resume`.
+- Produces: `skin.SIDEWAYS_PAIRINGS = ("depth", "height")`; `skin.SidewaysByHeight(sk, columns, previous=None)`, a map with the same
+  contract; `SkinBody(..., sideways_pairing="depth")`, also a class default for states pickled before it, `ValueError` for another
+  value. `--sideways-heat depth|height` on `run` (default `depth`) and `resume` (default: the state's); exit 2 with `height` unless
+  `--surface-model skin` (run) or a saved flight of skins (resume), melting not required, the pairing applying to any skins. The
+  run's name suffix `_side-height`; the run JSON's `settings.skin.sideways_heat = "height"` only when given, the resume JSON's
+  `settings.sideways_heat = "height"` only when the body's pairing is `height` and `changed["--sideways-heat"]` when given; the
+  resume's one line names the sideways heat.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`, item 3; Asha's idea of
+2026-11-08, first written in the side session's draft `docs/superpowers/specs/2026-11-08-refrozen-metal-in-skins-design.md`
+section 3; Asha then asked for the heat to be paired correctly on the comparison flights). Spec 6.3 pairs each cell with the
+neighbour's cells at the same depth below the top. Where the tops differ this pairs cells that do not touch: at the ring's outer
+edge the top steps about 1.4 mm across a 1.5 mm triangle, so with the deposit kept in the skins (Task 5e) a cell beside the gas
+would be paired with metal 1.4 mm lower. With `height` every cell's range is its height above its column's base,
+`[H - z_bottom, H - z_top]` (z from the top, H the column's thickness); on each edge (i, j) the neighbour's ranges are shifted into
+i's frame by `s_ij = (p_j - p_i) . n_ij`, p the base corners and n_ij the unit mean of the two columns' directions, `s_ji = -s_ij`;
+cells a of i and b of j exchange `c_ab (x_b - x_a)` with `c_ab = 0.5 (k_a + k_b) w_ij l_ab`, k the cells' conductivities at the
+sub-step's start, w_ij the edge's conduction weight and l_ab the overlap of the two ranges. `c_ab` is symmetric in a and b, so the
+map is symmetric and negative semi-definite by construction and the implicit sub-step takes it as it takes the depth map. **What
+it brings out, stated:** the part of a taller column above its neighbour's top is a side wall facing the gas; it exchanges no heat
+with the neighbour, and the model does not heat or cool it from the gas. The flow's sideways transport (spec 6.5, matched by
+fraction of the flowing depth) is not changed. The geometry is rebuilt whenever the cells' thicknesses or the base corners change
+(a copy of the corners is kept, so a base moved in place is seen), and the overlaps are found for every edge at once: each edge's
+boundaries of both columns are sorted downward in one pass, and between two consecutive boundaries lies one cell of each column, or
+none above a top or below a base. The default stays `depth`, and `Sideways` is not touched, so every run without the option is as
+before to the last bit.
+
+**Measured** (2026-11-08, each once, on the laptop on mains power; a finding, not a gate, the production cost being the comparison
+flights'). On the 4 mm test sphere with the dev cells (2 254 columns, 6 756 edges, 33-49 cells, the columns one to three times their
+minimum deep on bases stepped by up to 0.3 mm, every cell at its own temperature): 401 969 pairs, 59.5 an edge, 13 MB; a map's build
+0.019 s against the depth map's 0.0095, a `heat` 0.0025 s against 0.0026, one 10 ms sub-step under 3 MW/m2 on the front 0.148 s against
+0.158 in 11 Newton steps and 10 conjugate-gradient iterations each. On a 2 mm surface of the 100 mm sphere with 10 um cells (9 519
+columns, 28 551 edges, 59-75 cells): 2.66 million pairs, 93 an edge, 85 MB; a build 0.15 s against 0.09 (its peak 0.37 GB against
+0.09), with the geometry reused 0.028 s against 0.034, a `heat` 0.020 s against 0.027; one 10 ms sub-step 3.6-3.8 s against 3.2-3.3 over
+three tries, the same 11 Newton steps (26 conjugate-gradient iterations against 29) but 49 evaluations of the residual against 32 in
+the line search, which with the build is the whole difference. On level columns of cells on the depth grid the two maps agree to
+2.0e-15 of the largest heat; moving one boundary by half a bin makes them differ by 12 %. The books test's flowing body closes its
+mass, energy and momentum with the height map as with the depth map; the resumed test flight's rows differ from the depth pairing's
+from the first step on. The unit tier: 639 passed, 1 skipped in 15.3 minutes across four processes.
+
+**Rulings** (2026-11-08; what, why, cost if wrong):
+1. *The offset and the conductance are the controller's* (`s_ij` along the unit mean of the two directions, `c_ab = 0.5 (k_a + k_b) w l`),
+   final in the brief. Why: symmetric by construction, so the implicit solve's contract holds. Cost: another offset changes the heat at a
+   base's step only.
+2. *The equality with the depth map is tested where it must hold* (the controller's): level tops and bases, cells on the depth grid;
+   elsewhere the depth map averages each bin over the cells in it and the two legitimately differ.
+3. *A second class beside `Sideways`, not an argument on it*, and the body picks the class. Why: `Sideways` stays the same code, so the
+   default is the same flight to the last bit without having to show it branch by branch. Cost: the two classes share no code but the
+   contract.
+4. *A height map reuses only a height map's geometry* (`type(previous) is type(self)`). In a body a pass's maps are all of one pairing,
+   so this only guards a caller that mixes them. Cost: none.
+5. *The conductivity is each cell's own at the sub-step's start*, `k(T)` cell by cell, where the depth map takes it at each bin's mean
+   temperature; on the depth grid the two are the same. Cost: none found.
+6. *The hand-built test columns are a namespace* holding the edges, weights, incidence, corners and directions the maps read, not a
+   triangulation. Why: the corners of one triangle lie in one plane, so an offset along the mean direction is zero on any triangle, and
+   a two-column case with one edge is computed by hand. Cost: the cases do not exercise `Columns`; the sphere tests do.
+7. *The body's books test flies a flowing body with a prescribed push* (two 0.0625 s macro steps from 893 K), not the spraying
+   `melting_body`, which needs cantera and two 0.125 s steps. Why: the flow moves metal between columns, so the cells change every
+   sub-step and the momentum books carry something; 13 s. Cost: spraying is not flown with the height map in the body tests, only in the
+   resume test.
+8. *No `sideways_heat_of` helper*: `args.sideways_heat` is read where it is used. Why: Task 5d's review called its `part_count_rule_of` a
+   trivial wrapper. Cost: none.
+9. *The resume refusal is tested on a saved flight of the element model* (a 0.075 s flight, about a second), the cheapest saved flight
+   without skins.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skin.py`:
+
+{{DIFF_TEST_SKIN_T5F}}
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5F}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5F}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5F}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError: module 'reentry_model.skin' has no attribute
+  'SidewaysByHeight'` for the seven map tests and the three body tests (whose spy reads it first); on the command line
+  `AttributeError` on `sideways_heat`, `KeyError: 'sideways_pairing'` in the body's arguments, and `unrecognized arguments:
+  --sideways-heat height`, which exits 2 and so fails the three refusals on their message and the resume test; the refusal of an
+  unknown pairing, which exits 2 without the option too, passes (16 failed, 1 passed).
+
+- [ ] **Step 3: The map** in `reentry_model/skin.py`:
+
+{{DIFF_SKIN_T5F}}
+
+- [ ] **Step 4: The body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5F}}
+
+- [ ] **Step 5: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5F}}
+
+- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 639 passed, 1 skipped (Task 5e's 622 and these 17; 15.3 minutes across four processes, 2026-11-08).
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: sideways heat can pass between cells that touch (--sideways-heat depth|height on run and resume, depth by default; with height the cells are paired by their height above the bases, the neighbour's shifted by the offset between the bases); sub-plan 22 Task 5f"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e and 5f written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

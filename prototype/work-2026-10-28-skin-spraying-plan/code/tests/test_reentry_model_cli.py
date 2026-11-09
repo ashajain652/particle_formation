@@ -820,3 +820,51 @@ def test_the_command_line_gives_the_skins_their_hand_down_switch_and_records_it_
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["hand_down"] is on
+
+
+def test_the_sideways_heat_reads_depth_or_height_and_marks_the_run_s_name_only_for_height():
+    """--sideways-heat (sub-plan 22 Task 5f) is `depth` by default, so that every existing run keeps its name and its record;
+    `height` ends a skin run's settings in _side-height, melting or not, after the hand-down's and before the seed's."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(THERMAL).sideways_heat == "depth" == p.parse_args(melt).sideways_heat
+    assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
+    assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
+    assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
+    assert (name(melt + ["--hand-down", "off", "--sideways-heat", "height", "--seed", "7"])
+            == base + "_melt-girin_handdown-off_side-height_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, sideways_pairing="height") == "_side-height"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+@pytest.mark.parametrize("argv", [
+    THERMAL + ["--sideways-heat", "width"],                                            # no such pairing
+    FEM + ["--sideways-heat", "height"],                                               # the element model has no skins
+    FEM + ["--melt", "on", "--sideways-heat", "height"],
+    BASE + ["--sideways-heat", "height"],                                              # no thermal model at all
+])
+def test_a_bad_sideways_heat_or_the_height_pairing_without_skins_exits_2(argv, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2
+    if "width" not in argv:
+        assert "--sideways-heat height needs --surface-model skin" in capsys.readouterr().err
+
+
+def test_the_command_line_gives_the_skins_their_sideways_pairing(tmp_path, monkeypatch):
+    """--sideways-heat reaches the skin body as `depth` or `height`, whether it melts or not: the pairing concerns the heat
+    of any skins (sub-plan 22 Task 5f). The body is not built: its arguments are."""
+    from reentry_model import skinbody
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    melt = dry + ["--melt", "on"]
+    for argv, pairing in ((dry, "depth"), (dry + ["--sideways-heat", "height"], "height"), (melt, "depth"),
+                          (melt + ["--sideways-heat", "height"], "height")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["sideways_pairing"] == pairing

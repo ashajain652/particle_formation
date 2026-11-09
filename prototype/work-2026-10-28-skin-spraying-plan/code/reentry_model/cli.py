@@ -5,12 +5,12 @@
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
-        --part-count-from moves|melting --hand-down on|off ...]
+        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
-        --hand-down on|off]
+        --hand-down on|off --sideways-heat depth|height]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -202,7 +202,7 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
-                     hand_down=True):
+                     hand_down=True, sideways_pairing="depth"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -214,7 +214,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
     `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
     `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
-    metal stays in the skins (Task 5e); empty for the defaults."""
+    metal stays in the skins (Task 5e); `_side-height` where the sideways conduction pairs cells by height above the bases
+    (Task 5f); empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -246,6 +247,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_parts-{}".format(part_count_from)
     if not hand_down:
         out += "_handdown-off"
+    if sideways_pairing != "depth":
+        out += "_side-{}".format(sideways_pairing)
     return out
 
 
@@ -313,6 +316,10 @@ def resume_arguments(rs):
     rs.add_argument("--hand-down", choices=("on", "off"), default=None,
                     help="re-frozen metal passes to the 3D model, or stays in the skins; off needs the spread limit off, given "
                          "or carried by the saved flight (default: the saved flight's, on for one saved before the option existed)")
+    rs.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default=None,
+                    help="what pairs neighbouring skin columns' cells in the sideways conduction: depth below the tops or "
+                         "height above the bases, heat between cells that touch (default: the saved flight's, depth for one "
+                         "saved before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -456,6 +463,11 @@ def build_parser():
                          "model (on) or stays in the skins, which can heat it again, let it flow on or spray it (off; needs "
                          "--spread-limit off, spreading moves only metal being handed down; Asha, 2026-11-08, sub-plan 22 "
                          "Task 5e; default on)")
+    me.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default="depth",
+                    help="with --surface-model skin: what pairs neighbouring columns' cells in the sideways conduction: depth "
+                         "below the tops (spec 6.3), or height above the bases, so that heat passes between cells that touch "
+                         "and a taller column's part above its neighbour's top exchanges none (Asha, 2026-11-08, sub-plan 22 "
+                         "Task 5f; default depth)")
     me.add_argument("--skin-flow-cycles", type=int, default=None,
                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
@@ -546,7 +558,8 @@ def build_thermal(args, settings, mass, spool=None):
                                      spray=spray_model_of(args, mat) if flow else None,
                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
-                                     part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args))
+                                     part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
+                                     sideways_pairing=args.sideways_heat)
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -585,6 +598,8 @@ def build_thermal(args, settings, mass, spool=None):
             info["skin"]["part_count_from"] = part_count_rule_of(args)
         if not hand_down_of(args):
             info["skin"]["hand_down"] = "off"
+        if args.sideways_heat != "depth":
+            info["skin"]["sideways_heat"] = args.sideways_heat
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -636,7 +651,7 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
                                                                     spread_limit_of(args), part_count_rule_of(args),
-                                                                    hand_down_of(args)))
+                                                                    hand_down_of(args), args.sideways_heat))
 
 
 def cmd_run(args, parser):
@@ -722,6 +737,8 @@ def cmd_run(args, parser):
         parser.error("--hand-down off needs --surface-model skin and --melt on: it keeps the skins' re-frozen metal in them")
     if not hand_down_of(args) and spread_limit_of(args) is not None:
         parser.error(NO_SPREAD_WITHOUT_HAND_DOWN)
+    if args.sideways_heat != "depth" and args.surface_model != "skin":
+        parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
@@ -948,6 +965,10 @@ def cmd_resume(args, parser):
         if args.hand_down == "off" and not (skins and run.body.material.melts):
             parser.error("--hand-down off needs a saved flight of melting skins: it keeps their re-frozen metal in them")
         changed["--hand-down"] = args.hand_down
+    if args.sideways_heat is not None:
+        if args.sideways_heat != "depth" and not skins:
+            parser.error("--sideways-heat height needs a saved flight of skins: it pairs their cells")
+        changed["--sideways-heat"] = args.sideways_heat
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -992,6 +1013,8 @@ def cmd_resume(args, parser):
         run.body.part_count_from = args.part_count_from
     if "--hand-down" in changed and skins:
         run.body.hand_down = args.hand_down == "on"
+    if "--sideways-heat" in changed and skins:
+        run.body.sideways_pairing = args.sideways_heat
     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
@@ -1003,14 +1026,15 @@ def cmd_resume(args, parser):
         setattr(saved, key, value)
     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
-                      ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down")):
+                      ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
+                      ("sideways_heat", "--sideways-heat")):
         if flag in changed:
             setattr(saved, key, changed[flag])
     if state_path is not None:
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1018,6 +1042,7 @@ def cmd_resume(args, parser):
               "off" if limit is None else "{:g} deg".format(limit),
               run.body.part_count_from if skins else "moves",
               "off" if skins and not run.body.hand_down else "on",
+              run.body.sideways_pairing if skins else "depth",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
     history = run.run(resume=state)
@@ -1035,6 +1060,8 @@ def cmd_resume(args, parser):
         thermal_info["part_count_from"] = "melting"
     if skins and not run.body.hand_down:
         thermal_info["hand_down"] = "off"
+    if skins and run.body.sideways_pairing != "depth":
+        thermal_info["sideways_heat"] = run.body.sideways_pairing
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)

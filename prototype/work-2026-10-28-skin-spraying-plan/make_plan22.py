@@ -97,6 +97,12 @@ TASKS = (
             ("DIFF_TEST_CLI_T5E", "tests/test_reentry_model_cli.py"),
             ("DIFF_TEST_RESTART_T5E", "tests/test_reentry_model_restart.py"),
             ("DIFF_SKINBODY_T5E", "reentry_model/skinbody.py"), ("DIFF_CLI_T5E", "reentry_model/cli.py"))),
+    ("5f", (("DIFF_TEST_SKIN_T5F", "tests/test_reentry_model_skin.py"),
+            ("DIFF_TEST_SKINBODY_T5F", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_TEST_CLI_T5F", "tests/test_reentry_model_cli.py"),
+            ("DIFF_TEST_RESTART_T5F", "tests/test_reentry_model_restart.py"),
+            ("DIFF_SKIN_T5F", "reentry_model/skin.py"), ("DIFF_SKINBODY_T5F", "reentry_model/skinbody.py"),
+            ("DIFF_CLI_T5F", "reentry_model/cli.py"))),
 )
 
 

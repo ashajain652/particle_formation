@@ -2263,3 +2263,158 @@ def test_a_cascade_with_a_histogram_bins_each_flow_sub_step_s_release_and_the_bo
     flow.release = skin.prescribed_release(rates[0])                          # a release of one rate: no histogram
     one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
     assert one.hist_n is None and one.phase_mass.sum() > 0.0
+
+
+# -- sideways heat between cells that touch (sub-plan 22 Task 5f; Asha 2026-11-08) -------------------------------------
+def side_by_side(mat, dz, T, offset=0.0, w=0.5, normals=None, edge=(0, 1), area=4e-6, settings=None):
+    """Two hand-built columns 1 mm apart with one edge between them, of conduction weight w (no triangulation: the maps read
+    only the edges, their weights and incidence, the base corners and the columns' directions): cells of thicknesses dz[c]
+    [m], top first, at temperatures T[c] [K], both columns along +z unless `normals` are given, the second's base `offset`
+    [m] above the first's."""
+    import types
+    import scipy.sparse as sp
+    count = np.array([len(d) for d in dz])
+    K = int(count.max())
+    sk = skin.Skins(mat, np.full(2, area), settings or skin.SkinSettings(cell=20e-6))
+    m, temps = np.zeros((2, K)), np.full((2, K), 300.0)
+    for c in range(2):
+        m[c, :count[c]] = np.asarray(dz[c]) * mat.rho * area
+        temps[c, :count[c]] = T[c]
+    sk._install(m, m * mat.enthalpy(temps), count)
+    i, j = edge
+    normal = np.array([[0.0, 0.0, 1.0]] * 2) if normals is None else np.asarray(normals, dtype=float)
+    col = types.SimpleNamespace(n=2, edges=np.array([edge]), conduct_weight=np.array([w]), normal=normal,
+                                points=np.array([[0.0, 0.0, 0.0], [1e-3, 0.0, offset]]),
+                                incidence=sp.csr_matrix(([1.0, -1.0], ([i, j], [0, 0])), shape=(2, 1)))
+    return sk, col
+
+
+def stepped_sphere_skins(coarse_sphere_mesh, seed=4):
+    """`random_sphere_skins` with every base moved in or out along its direction by up to 0.3 mm at random, so that both the
+    tops and the bases step between neighbours."""
+    sk, col, rng = random_sphere_skins(coarse_sphere_mesh, seed)
+    col.update(col.points + rng.uniform(-0.3e-3, 0.3e-3, col.n)[:, None] * col.normal)
+    return sk, col, rng
+
+
+def test_height_pairing_equals_depth_pairing_where_tops_and_bases_are_level_and_cells_lie_on_the_depth_grid():
+    """Where neighbouring columns are equally deep on one base and every cell boundary is a breakpoint of the depth grid,
+    a height above the base is a depth below the top and each bin lies inside one cell of each column, so the two pairings
+    are one map: two 0.2 mm columns of 20 um bins (the dev cell), one in cells of 2, 3 and 5 bins and the other of 1, 4, 1
+    and 4, every cell at its own temperature in the Scheil alloy, whose conductivity varies with it; the heat at a random
+    field agrees to round-off."""
+    mat, settings = scheil(), skin.SkinSettings(cell=20e-6)
+    np.testing.assert_allclose(skin.depth_grid(settings, 0.2e-3)[:11], np.arange(11) * 20e-6, rtol=1e-12, atol=1e-18)
+    sk, col = side_by_side(mat, (20e-6 * np.array([2, 3, 5]), 20e-6 * np.array([1, 4, 1, 4])),
+                           ([520.0, 610.0, 700.0], [560.0, 650.0, 590.0, 730.0]), settings=settings)
+    x = np.where(sk.valid, np.random.default_rng(8).uniform(500.0, 800.0, sk.T.shape), 0.0)
+    height, depth = skin.SidewaysByHeight(sk, col).heat(x), skin.Sideways(sk, col).heat(x)
+    assert np.abs(depth).max() > 0.0
+    np.testing.assert_allclose(height, depth, rtol=1e-11, atol=1e-12 * np.abs(depth).max())
+
+
+def test_a_taller_columns_cells_above_its_neighbours_top_exchange_no_heat():
+    """Where the tops differ the part of the taller column above its neighbour's top is a side wall facing the gas: it
+    exchanges no heat with the neighbour (and the model does not heat or cool it from the gas). A column 1.0 mm deep in one
+    cell beside one 1.4 mm deep in cells of 0.2, 0.3 and 0.9 mm (top first), on one base: the top cell, 1.2-1.4 mm above
+    the base, gets no heat at any temperature and gives none; the next, 0.9-1.2 mm, exchanges over its 0.1 mm below the
+    neighbour's top alone, k w l (x_b - x_a), and the bottom one over its 0.9 mm."""
+    mat = sharp()                                                     # k = 100 W/(m K) at every temperature
+    sk, col = side_by_side(mat, ([1.0e-3], [0.2e-3, 0.3e-3, 0.9e-3]), (700.0, 700.0))
+    S = skin.SidewaysByHeight(sk, col)
+    x = np.array([[700.0, 0.0, 0.0], [1500.0, 800.0, 750.0]])
+    Q = S.heat(x)
+    cold = x.copy()
+    cold[1, 0] = 300.0
+    np.testing.assert_array_equal(S.heat(cold), Q)
+    assert Q[1, 0] == 0.0
+    np.testing.assert_allclose(Q[1, 1:], 100.0 * 0.5 * np.array([0.1e-3, 0.9e-3]) * (700.0 - x[1, 1:]), rtol=1e-12)
+    assert Q[0, 0] == pytest.approx(-Q[1, 1:].sum(), rel=1e-12) and np.all(Q[0, 1:] == 0.0)
+
+
+def test_height_pairing_pairs_cells_at_the_same_height_above_a_common_base():
+    """By hand (sub-plan 22 Task 5f): a column 1.0 mm deep in cells of 0.2, 0.3 and 0.5 mm (top first) beside one 1.4 mm
+    deep in cells of 0.4 and 1.0 mm, on one base. Above the base the first's cells span 0.8-1.0, 0.5-0.8 and 0-0.5 mm and
+    the second's 1.0-1.4 and 0-1.0 mm, so each of the first's touches the second's bottom cell alone, over 0.2, 0.3 and
+    0.5 mm, and the second's top cell touches none: heat k w l (x_b - x_a) a pair. Pairing by depth below the tops instead
+    puts the second's top cell beside the first's top two."""
+    mat = sharp()
+    sk, col = side_by_side(mat, ([0.2e-3, 0.3e-3, 0.5e-3], [0.4e-3, 1.0e-3]), (700.0, 700.0))
+    x = np.array([[600.0, 650.0, 700.0], [900.0, 800.0, 0.0]])
+    Q = skin.SidewaysByHeight(sk, col).heat(x)
+    first = 100.0 * 0.5 * np.array([0.2e-3, 0.3e-3, 0.5e-3]) * (800.0 - x[0])
+    np.testing.assert_allclose(Q[0], first, rtol=1e-12)
+    assert Q[1, 0] == 0.0 and Q[1, 2] == 0.0 and Q[1, 1] == pytest.approx(-first.sum(), rel=1e-12)
+    assert abs(skin.Sideways(sk, col).heat(x)[1, 0]) > 0.1 * np.abs(Q).max()
+
+
+def test_an_offset_between_bases_shifts_the_pairing_by_the_offset():
+    """Two columns of two 0.5 mm cells, the second's base 0.3 mm above the first's along their direction, s_ij = (p_j - p_i)
+    . n_ij with n_ij the unit mean of the two directions: in the first's frame the second's cells span 0.8-1.3 and 0.3-0.8
+    mm, so the first's top cell (0.5-1.0) touches both, over 0.2 and 0.3 mm, and its bottom cell (0-0.5) the second's
+    bottom cell over 0.2 mm. The same with the edge the other way round (s_ji = -s_ij) and with the two directions tilted 20
+    degrees either way about their mean, which leaves the offset along it unchanged; with the bases level, cell by cell."""
+    mat = sharp()
+    cells, x = ([0.5e-3, 0.5e-3], [0.5e-3, 0.5e-3]), np.array([[600.0, 650.0], [900.0, 800.0]])
+    c = 100.0 * 0.5 * np.array([0.2e-3, 0.3e-3, 0.2e-3])               # k w l of the three pairs [W/K]
+    to_first = np.array([c[0] * (900.0 - 600.0) + c[1] * (800.0 - 600.0), c[2] * (800.0 - 650.0)])
+    expected = np.array([to_first, [-c[0] * (900.0 - 600.0), -c[1] * (800.0 - 600.0) - c[2] * (800.0 - 650.0)]])
+    t = np.radians(20.0)
+    tilted = [[np.sin(t), 0.0, np.cos(t)], [-np.sin(t), 0.0, np.cos(t)]]
+    for kw in ({}, {"edge": (1, 0)}, {"normals": tilted}):
+        sk, col = side_by_side(mat, cells, (700.0, 700.0), offset=0.3e-3, **kw)
+        np.testing.assert_allclose(skin.SidewaysByHeight(sk, col).heat(x), expected, rtol=1e-12)
+    sk, col = side_by_side(mat, cells, (700.0, 700.0))
+    np.testing.assert_allclose(skin.SidewaysByHeight(sk, col).heat(x),
+                               100.0 * 0.5 * 0.5e-3 * np.array([[300.0, 150.0], [-300.0, -150.0]]), rtol=1e-12)
+
+
+def test_the_height_map_is_symmetric_and_negative_semi_definite_and_its_heat_sums_to_zero(coarse_sphere_mesh):
+    """The contract of `Sideways` that the implicit sub-step's conjugate gradients rely on, for the height map: on the test
+    sphere's columns of one to three times their minimum depth on bases stepped by up to 0.3 mm, y . S x = x . S y,
+    x . S x < 0, no heat at a uniform temperature, the heat summing to zero and none in a cell beyond a column's count."""
+    sk, col, rng = stepped_sphere_skins(coarse_sphere_mesh)
+    S = skin.SidewaysByHeight(sk, col)
+    x, y = (np.where(sk.valid, rng.normal(size=sk.T.shape), 0.0) for _ in range(2))
+    yx, xy = float((y * S.heat(x)).sum()), float((x * S.heat(y)).sum())
+    assert abs(yx - xy) < 1e-10 * abs(yx)
+    assert float((x * S.heat(x)).sum()) < 0.0
+    assert np.all(S.heat(np.where(sk.valid, 700.0, 0.0)) == 0.0)
+    Q = S.heat(sk.T)
+    assert abs(Q.sum()) < 1e-12 * np.abs(Q).sum() and np.all(Q[~sk.valid] == 0.0)
+
+
+def test_the_coupled_solve_converges_with_the_height_map(coarse_sphere_mesh, monkeypatch):
+    """The implicit sub-step with the height map, on columns of different depths on stepped bases melting under 3 MW/m2 on
+    the front, every cell at its own temperature: each Newton step solved to KRYLOV_TOL gives the temperatures that steps
+    solved to 1e-10 give, to the Newton tolerance, and the sideways books, which carry heat, sum to zero."""
+    out = []
+    for tol in (skin.KRYLOV_TOL, 1e-10):
+        monkeypatch.setattr(skin, "KRYLOV_TOL", tol)
+        sk, col, _ = stepped_sphere_skins(coarse_sphere_mesh)
+        q = 3e6 * np.clip(col.normal[:, 0], 0.0, None)
+        books = skin._conduct(sk, 0.01, q, sk.area, 0.0, 0.15, np.full(sk.n, 850.0), skin.SidewaysByHeight(sk, col))
+        assert abs(books[3].sum()) < 1e-12 * np.abs(books[3]).sum() and np.abs(books[3]).max() > 0.0
+        out.append(sk.T[sk.valid].copy())
+    assert np.abs(out[0] - out[1]).max() < 1e-5
+
+
+def test_a_height_map_reuses_the_last_geometry_only_while_the_cells_and_the_bases_stay(coarse_sphere_mesh):
+    """The height map depends on the base corners as well as the cells' thicknesses, so its geometry is reused only while
+    both stay: a base moved in place along its direction, or a cell grown at the bottom, makes it anew, as a map made from
+    nothing makes it; a depth map is never reused for it."""
+    sk, col, rng = random_sphere_skins(coarse_sphere_mesh)
+    first = skin.SidewaysByHeight(sk, col)
+    assert skin.SidewaysByHeight(sk, col, first).geometry is first.geometry
+    col.points += 0.1e-3 * (rng.uniform(size=col.n) > 0.5)[:, None] * col.normal          # moved in place
+    col.update(col.points)
+    moved = skin.SidewaysByHeight(sk, col, first)
+    assert moved.geometry is not first.geometry
+    np.testing.assert_array_equal(moved.heat(sk.T), skin.SidewaysByHeight(sk, col).heat(sk.T))
+    sk.add_bottom(np.full(sk.n, 1e-7), np.full(sk.n, float(sk.material.enthalpy(700.0))), np.zeros(sk.n))
+    sk.regrid()
+    again = skin.SidewaysByHeight(sk, col, moved)
+    assert again.geometry is not moved.geometry
+    np.testing.assert_array_equal(again.heat(sk.T), skin.SidewaysByHeight(sk, col).heat(sk.T))
+    np.testing.assert_array_equal(skin.SidewaysByHeight(sk, col, skin.Sideways(sk, col)).heat(sk.T), again.heat(sk.T))
+    assert skin.SIDEWAYS_PAIRINGS == ("depth", "height")

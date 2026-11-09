@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d and 5e (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -11072,7 +11072,770 @@ git commit -m "Skins: re-frozen metal can stay in the skins (--hand-down on|off 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d and 5e written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5f: Sideways heat between cells that touch
+
+**Files:**
+- Modify: `reentry_model/skin.py` (`SIDEWAYS_PAIRINGS`, `_height_geometry` and `SidewaysByHeight`, beside `Sideways`, which is
+  unchanged)
+- Modify: `reentry_model/skinbody.py` (the class default and `SkinBody(..., sideways_pairing="depth")`, the `side` lambda in
+  `_advance_part`)
+- Modify: `reentry_model/cli.py` (`--sideways-heat depth|height` on `run` and `resume`, the name suffix, the records, the refusals,
+  the resume's one line)
+- Test: `tests/test_reentry_model_skin.py` (7 tests), `tests/test_reentry_model_skinbody.py` (3 tests),
+  `tests/test_reentry_model_cli.py` (3 tests, 6 cases), `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: `skin.Sideways(sk, columns, previous)` and its contract with `_coupled_solve` and `_conduct`: `heat(x)` [W per cell,
+  (n, K)] linear in x, antisymmetric edge by edge (it sums to zero to round-off), symmetric and negative semi-definite, zero in
+  the cells beyond a column's count; `columns.edges`, `columns.conduct_weight`, `columns.points` (the base corners as they stand)
+  and `columns.normal`; Task 5d's wiring of an option on `run` and `resume`.
+- Produces: `skin.SIDEWAYS_PAIRINGS = ("depth", "height")`; `skin.SidewaysByHeight(sk, columns, previous=None)`, a map with the same
+  contract; `SkinBody(..., sideways_pairing="depth")`, also a class default for states pickled before it, `ValueError` for another
+  value. `--sideways-heat depth|height` on `run` (default `depth`) and `resume` (default: the state's); exit 2 with `height` unless
+  `--surface-model skin` (run) or a saved flight of skins (resume), melting not required, the pairing applying to any skins. The
+  run's name suffix `_side-height`; the run JSON's `settings.skin.sideways_heat = "height"` only when given, the resume JSON's
+  `settings.sideways_heat = "height"` only when the body's pairing is `height` and `changed["--sideways-heat"]` when given; the
+  resume's one line names the sideways heat.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`, item 3; Asha's idea of
+2026-11-08, first written in the side session's draft `docs/superpowers/specs/2026-11-08-refrozen-metal-in-skins-design.md`
+section 3; Asha then asked for the heat to be paired correctly on the comparison flights). Spec 6.3 pairs each cell with the
+neighbour's cells at the same depth below the top. Where the tops differ this pairs cells that do not touch: at the ring's outer
+edge the top steps about 1.4 mm across a 1.5 mm triangle, so with the deposit kept in the skins (Task 5e) a cell beside the gas
+would be paired with metal 1.4 mm lower. With `height` every cell's range is its height above its column's base,
+`[H - z_bottom, H - z_top]` (z from the top, H the column's thickness); on each edge (i, j) the neighbour's ranges are shifted into
+i's frame by `s_ij = (p_j - p_i) . n_ij`, p the base corners and n_ij the unit mean of the two columns' directions, `s_ji = -s_ij`;
+cells a of i and b of j exchange `c_ab (x_b - x_a)` with `c_ab = 0.5 (k_a + k_b) w_ij l_ab`, k the cells' conductivities at the
+sub-step's start, w_ij the edge's conduction weight and l_ab the overlap of the two ranges. `c_ab` is symmetric in a and b, so the
+map is symmetric and negative semi-definite by construction and the implicit sub-step takes it as it takes the depth map. **What
+it brings out, stated:** the part of a taller column above its neighbour's top is a side wall facing the gas; it exchanges no heat
+with the neighbour, and the model does not heat or cool it from the gas. The flow's sideways transport (spec 6.5, matched by
+fraction of the flowing depth) is not changed. The geometry is rebuilt whenever the cells' thicknesses or the base corners change
+(a copy of the corners is kept, so a base moved in place is seen), and the overlaps are found for every edge at once: each edge's
+boundaries of both columns are sorted downward in one pass, and between two consecutive boundaries lies one cell of each column, or
+none above a top or below a base. The default stays `depth`, and `Sideways` is not touched, so every run without the option is as
+before to the last bit.
+
+**Measured** (2026-11-08, each once, on the laptop on mains power; a finding, not a gate, the production cost being the comparison
+flights'). On the 4 mm test sphere with the dev cells (2 254 columns, 6 756 edges, 33-49 cells, the columns one to three times their
+minimum deep on bases stepped by up to 0.3 mm, every cell at its own temperature): 401 969 pairs, 59.5 an edge, 13 MB; a map's build
+0.019 s against the depth map's 0.0095, a `heat` 0.0025 s against 0.0026, one 10 ms sub-step under 3 MW/m2 on the front 0.148 s against
+0.158 in 11 Newton steps and 10 conjugate-gradient iterations each. On a 2 mm surface of the 100 mm sphere with 10 um cells (9 519
+columns, 28 551 edges, 59-75 cells): 2.66 million pairs, 93 an edge, 85 MB; a build 0.15 s against 0.09 (its peak 0.37 GB against
+0.09), with the geometry reused 0.028 s against 0.034, a `heat` 0.020 s against 0.027; one 10 ms sub-step 3.6-3.8 s against 3.2-3.3 over
+three tries, the same 11 Newton steps (26 conjugate-gradient iterations against 29) but 49 evaluations of the residual against 32 in
+the line search, which with the build is the whole difference. On level columns of cells on the depth grid the two maps agree to
+2.0e-15 of the largest heat; moving one boundary by half a bin makes them differ by 12 %. The books test's flowing body closes its
+mass, energy and momentum with the height map as with the depth map; the resumed test flight's rows differ from the depth pairing's
+from the first step on. The unit tier: 639 passed, 1 skipped in 15.3 minutes across four processes.
+
+**Rulings** (2026-11-08; what, why, cost if wrong):
+1. *The offset and the conductance are the controller's* (`s_ij` along the unit mean of the two directions, `c_ab = 0.5 (k_a + k_b) w l`),
+   final in the brief. Why: symmetric by construction, so the implicit solve's contract holds. Cost: another offset changes the heat at a
+   base's step only.
+2. *The equality with the depth map is tested where it must hold* (the controller's): level tops and bases, cells on the depth grid;
+   elsewhere the depth map averages each bin over the cells in it and the two legitimately differ.
+3. *A second class beside `Sideways`, not an argument on it*, and the body picks the class. Why: `Sideways` stays the same code, so the
+   default is the same flight to the last bit without having to show it branch by branch. Cost: the two classes share no code but the
+   contract.
+4. *A height map reuses only a height map's geometry* (`type(previous) is type(self)`). In a body a pass's maps are all of one pairing,
+   so this only guards a caller that mixes them. Cost: none.
+5. *The conductivity is each cell's own at the sub-step's start*, `k(T)` cell by cell, where the depth map takes it at each bin's mean
+   temperature; on the depth grid the two are the same. Cost: none found.
+6. *The hand-built test columns are a namespace* holding the edges, weights, incidence, corners and directions the maps read, not a
+   triangulation. Why: the corners of one triangle lie in one plane, so an offset along the mean direction is zero on any triangle, and
+   a two-column case with one edge is computed by hand. Cost: the cases do not exercise `Columns`; the sphere tests do.
+7. *The body's books test flies a flowing body with a prescribed push* (two 0.0625 s macro steps from 893 K), not the spraying
+   `melting_body`, which needs cantera and two 0.125 s steps. Why: the flow moves metal between columns, so the cells change every
+   sub-step and the momentum books carry something; 13 s. Cost: spraying is not flown with the height map in the body tests, only in the
+   resume test.
+8. *No `sideways_heat_of` helper*: `args.sideways_heat` is read where it is used. Why: Task 5d's review called its `part_count_rule_of` a
+   trivial wrapper. Cost: none.
+9. *The resume refusal is tested on a saved flight of the element model* (a 0.075 s flight, about a second), the cheapest saved flight
+   without skins.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skin.py`:
+
+```diff
+--- a/tests/test_reentry_model_skin.py
++++ b/tests/test_reentry_model_skin.py
+@@ -2263,3 +2263,158 @@
+     flow.release = skin.prescribed_release(rates[0])                          # a release of one rate: no histogram
+     one = skin.flow_substeps(mixed_sphere_skins(coarse_sphere_mesh)[0], flow, 0.01)
+     assert one.hist_n is None and one.phase_mass.sum() > 0.0
++
++
++# -- sideways heat between cells that touch (sub-plan 22 Task 5f; Asha 2026-11-08) -------------------------------------
++def side_by_side(mat, dz, T, offset=0.0, w=0.5, normals=None, edge=(0, 1), area=4e-6, settings=None):
++    """Two hand-built columns 1 mm apart with one edge between them, of conduction weight w (no triangulation: the maps read
++    only the edges, their weights and incidence, the base corners and the columns' directions): cells of thicknesses dz[c]
++    [m], top first, at temperatures T[c] [K], both columns along +z unless `normals` are given, the second's base `offset`
++    [m] above the first's."""
++    import types
++    import scipy.sparse as sp
++    count = np.array([len(d) for d in dz])
++    K = int(count.max())
++    sk = skin.Skins(mat, np.full(2, area), settings or skin.SkinSettings(cell=20e-6))
++    m, temps = np.zeros((2, K)), np.full((2, K), 300.0)
++    for c in range(2):
++        m[c, :count[c]] = np.asarray(dz[c]) * mat.rho * area
++        temps[c, :count[c]] = T[c]
++    sk._install(m, m * mat.enthalpy(temps), count)
++    i, j = edge
++    normal = np.array([[0.0, 0.0, 1.0]] * 2) if normals is None else np.asarray(normals, dtype=float)
++    col = types.SimpleNamespace(n=2, edges=np.array([edge]), conduct_weight=np.array([w]), normal=normal,
++                                points=np.array([[0.0, 0.0, 0.0], [1e-3, 0.0, offset]]),
++                                incidence=sp.csr_matrix(([1.0, -1.0], ([i, j], [0, 0])), shape=(2, 1)))
++    return sk, col
++
++
++def stepped_sphere_skins(coarse_sphere_mesh, seed=4):
++    """`random_sphere_skins` with every base moved in or out along its direction by up to 0.3 mm at random, so that both the
++    tops and the bases step between neighbours."""
++    sk, col, rng = random_sphere_skins(coarse_sphere_mesh, seed)
++    col.update(col.points + rng.uniform(-0.3e-3, 0.3e-3, col.n)[:, None] * col.normal)
++    return sk, col, rng
++
++
++def test_height_pairing_equals_depth_pairing_where_tops_and_bases_are_level_and_cells_lie_on_the_depth_grid():
++    """Where neighbouring columns are equally deep on one base and every cell boundary is a breakpoint of the depth grid,
++    a height above the base is a depth below the top and each bin lies inside one cell of each column, so the two pairings
++    are one map: two 0.2 mm columns of 20 um bins (the dev cell), one in cells of 2, 3 and 5 bins and the other of 1, 4, 1
++    and 4, every cell at its own temperature in the Scheil alloy, whose conductivity varies with it; the heat at a random
++    field agrees to round-off."""
++    mat, settings = scheil(), skin.SkinSettings(cell=20e-6)
++    np.testing.assert_allclose(skin.depth_grid(settings, 0.2e-3)[:11], np.arange(11) * 20e-6, rtol=1e-12, atol=1e-18)
++    sk, col = side_by_side(mat, (20e-6 * np.array([2, 3, 5]), 20e-6 * np.array([1, 4, 1, 4])),
++                           ([520.0, 610.0, 700.0], [560.0, 650.0, 590.0, 730.0]), settings=settings)
++    x = np.where(sk.valid, np.random.default_rng(8).uniform(500.0, 800.0, sk.T.shape), 0.0)
++    height, depth = skin.SidewaysByHeight(sk, col).heat(x), skin.Sideways(sk, col).heat(x)
++    assert np.abs(depth).max() > 0.0
++    np.testing.assert_allclose(height, depth, rtol=1e-11, atol=1e-12 * np.abs(depth).max())
++
++
++def test_a_taller_columns_cells_above_its_neighbours_top_exchange_no_heat():
++    """Where the tops differ the part of the taller column above its neighbour's top is a side wall facing the gas: it
++    exchanges no heat with the neighbour (and the model does not heat or cool it from the gas). A column 1.0 mm deep in one
++    cell beside one 1.4 mm deep in cells of 0.2, 0.3 and 0.9 mm (top first), on one base: the top cell, 1.2-1.4 mm above
++    the base, gets no heat at any temperature and gives none; the next, 0.9-1.2 mm, exchanges over its 0.1 mm below the
++    neighbour's top alone, k w l (x_b - x_a), and the bottom one over its 0.9 mm."""
++    mat = sharp()                                                     # k = 100 W/(m K) at every temperature
++    sk, col = side_by_side(mat, ([1.0e-3], [0.2e-3, 0.3e-3, 0.9e-3]), (700.0, 700.0))
++    S = skin.SidewaysByHeight(sk, col)
++    x = np.array([[700.0, 0.0, 0.0], [1500.0, 800.0, 750.0]])
++    Q = S.heat(x)
++    cold = x.copy()
++    cold[1, 0] = 300.0
++    np.testing.assert_array_equal(S.heat(cold), Q)
++    assert Q[1, 0] == 0.0
++    np.testing.assert_allclose(Q[1, 1:], 100.0 * 0.5 * np.array([0.1e-3, 0.9e-3]) * (700.0 - x[1, 1:]), rtol=1e-12)
++    assert Q[0, 0] == pytest.approx(-Q[1, 1:].sum(), rel=1e-12) and np.all(Q[0, 1:] == 0.0)
++
++
++def test_height_pairing_pairs_cells_at_the_same_height_above_a_common_base():
++    """By hand (sub-plan 22 Task 5f): a column 1.0 mm deep in cells of 0.2, 0.3 and 0.5 mm (top first) beside one 1.4 mm
++    deep in cells of 0.4 and 1.0 mm, on one base. Above the base the first's cells span 0.8-1.0, 0.5-0.8 and 0-0.5 mm and
++    the second's 1.0-1.4 and 0-1.0 mm, so each of the first's touches the second's bottom cell alone, over 0.2, 0.3 and
++    0.5 mm, and the second's top cell touches none: heat k w l (x_b - x_a) a pair. Pairing by depth below the tops instead
++    puts the second's top cell beside the first's top two."""
++    mat = sharp()
++    sk, col = side_by_side(mat, ([0.2e-3, 0.3e-3, 0.5e-3], [0.4e-3, 1.0e-3]), (700.0, 700.0))
++    x = np.array([[600.0, 650.0, 700.0], [900.0, 800.0, 0.0]])
++    Q = skin.SidewaysByHeight(sk, col).heat(x)
++    first = 100.0 * 0.5 * np.array([0.2e-3, 0.3e-3, 0.5e-3]) * (800.0 - x[0])
++    np.testing.assert_allclose(Q[0], first, rtol=1e-12)
++    assert Q[1, 0] == 0.0 and Q[1, 2] == 0.0 and Q[1, 1] == pytest.approx(-first.sum(), rel=1e-12)
++    assert abs(skin.Sideways(sk, col).heat(x)[1, 0]) > 0.1 * np.abs(Q).max()
++
++
++def test_an_offset_between_bases_shifts_the_pairing_by_the_offset():
++    """Two columns of two 0.5 mm cells, the second's base 0.3 mm above the first's along their direction, s_ij = (p_j - p_i)
++    . n_ij with n_ij the unit mean of the two directions: in the first's frame the second's cells span 0.8-1.3 and 0.3-0.8
++    mm, so the first's top cell (0.5-1.0) touches both, over 0.2 and 0.3 mm, and its bottom cell (0-0.5) the second's
++    bottom cell over 0.2 mm. The same with the edge the other way round (s_ji = -s_ij) and with the two directions tilted 20
++    degrees either way about their mean, which leaves the offset along it unchanged; with the bases level, cell by cell."""
++    mat = sharp()
++    cells, x = ([0.5e-3, 0.5e-3], [0.5e-3, 0.5e-3]), np.array([[600.0, 650.0], [900.0, 800.0]])
++    c = 100.0 * 0.5 * np.array([0.2e-3, 0.3e-3, 0.2e-3])               # k w l of the three pairs [W/K]
++    to_first = np.array([c[0] * (900.0 - 600.0) + c[1] * (800.0 - 600.0), c[2] * (800.0 - 650.0)])
++    expected = np.array([to_first, [-c[0] * (900.0 - 600.0), -c[1] * (800.0 - 600.0) - c[2] * (800.0 - 650.0)]])
++    t = np.radians(20.0)
++    tilted = [[np.sin(t), 0.0, np.cos(t)], [-np.sin(t), 0.0, np.cos(t)]]
++    for kw in ({}, {"edge": (1, 0)}, {"normals": tilted}):
++        sk, col = side_by_side(mat, cells, (700.0, 700.0), offset=0.3e-3, **kw)
++        np.testing.assert_allclose(skin.SidewaysByHeight(sk, col).heat(x), expected, rtol=1e-12)
++    sk, col = side_by_side(mat, cells, (700.0, 700.0))
++    np.testing.assert_allclose(skin.SidewaysByHeight(sk, col).heat(x),
++                               100.0 * 0.5 * 0.5e-3 * np.array([[300.0, 150.0], [-300.0, -150.0]]), rtol=1e-12)
++
++
++def test_the_height_map_is_symmetric_and_negative_semi_definite_and_its_heat_sums_to_zero(coarse_sphere_mesh):
++    """The contract of `Sideways` that the implicit sub-step's conjugate gradients rely on, for the height map: on the test
++    sphere's columns of one to three times their minimum depth on bases stepped by up to 0.3 mm, y . S x = x . S y,
++    x . S x < 0, no heat at a uniform temperature, the heat summing to zero and none in a cell beyond a column's count."""
++    sk, col, rng = stepped_sphere_skins(coarse_sphere_mesh)
++    S = skin.SidewaysByHeight(sk, col)
++    x, y = (np.where(sk.valid, rng.normal(size=sk.T.shape), 0.0) for _ in range(2))
++    yx, xy = float((y * S.heat(x)).sum()), float((x * S.heat(y)).sum())
++    assert abs(yx - xy) < 1e-10 * abs(yx)
++    assert float((x * S.heat(x)).sum()) < 0.0
++    assert np.all(S.heat(np.where(sk.valid, 700.0, 0.0)) == 0.0)
++    Q = S.heat(sk.T)
++    assert abs(Q.sum()) < 1e-12 * np.abs(Q).sum() and np.all(Q[~sk.valid] == 0.0)
++
++
++def test_the_coupled_solve_converges_with_the_height_map(coarse_sphere_mesh, monkeypatch):
++    """The implicit sub-step with the height map, on columns of different depths on stepped bases melting under 3 MW/m2 on
++    the front, every cell at its own temperature: each Newton step solved to KRYLOV_TOL gives the temperatures that steps
++    solved to 1e-10 give, to the Newton tolerance, and the sideways books, which carry heat, sum to zero."""
++    out = []
++    for tol in (skin.KRYLOV_TOL, 1e-10):
++        monkeypatch.setattr(skin, "KRYLOV_TOL", tol)
++        sk, col, _ = stepped_sphere_skins(coarse_sphere_mesh)
++        q = 3e6 * np.clip(col.normal[:, 0], 0.0, None)
++        books = skin._conduct(sk, 0.01, q, sk.area, 0.0, 0.15, np.full(sk.n, 850.0), skin.SidewaysByHeight(sk, col))
++        assert abs(books[3].sum()) < 1e-12 * np.abs(books[3]).sum() and np.abs(books[3]).max() > 0.0
++        out.append(sk.T[sk.valid].copy())
++    assert np.abs(out[0] - out[1]).max() < 1e-5
++
++
++def test_a_height_map_reuses_the_last_geometry_only_while_the_cells_and_the_bases_stay(coarse_sphere_mesh):
++    """The height map depends on the base corners as well as the cells' thicknesses, so its geometry is reused only while
++    both stay: a base moved in place along its direction, or a cell grown at the bottom, makes it anew, as a map made from
++    nothing makes it; a depth map is never reused for it."""
++    sk, col, rng = random_sphere_skins(coarse_sphere_mesh)
++    first = skin.SidewaysByHeight(sk, col)
++    assert skin.SidewaysByHeight(sk, col, first).geometry is first.geometry
++    col.points += 0.1e-3 * (rng.uniform(size=col.n) > 0.5)[:, None] * col.normal          # moved in place
++    col.update(col.points)
++    moved = skin.SidewaysByHeight(sk, col, first)
++    assert moved.geometry is not first.geometry
++    np.testing.assert_array_equal(moved.heat(sk.T), skin.SidewaysByHeight(sk, col).heat(sk.T))
++    sk.add_bottom(np.full(sk.n, 1e-7), np.full(sk.n, float(sk.material.enthalpy(700.0))), np.zeros(sk.n))
++    sk.regrid()
++    again = skin.SidewaysByHeight(sk, col, moved)
++    assert again.geometry is not moved.geometry
++    np.testing.assert_array_equal(again.heat(sk.T), skin.SidewaysByHeight(sk, col).heat(sk.T))
++    np.testing.assert_array_equal(skin.SidewaysByHeight(sk, col, skin.Sideways(sk, col)).heat(sk.T), again.heat(sk.T))
++    assert skin.SIDEWAYS_PAIRINGS == ("depth", "height")
+```
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1841,3 +1841,75 @@
+     zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+     b.advance(0.1, 0.05, zero)
+     assert b.handed_mass == handed
++
++
++# -- sideways heat between cells that touch (sub-plan 22 Task 5f; Asha 2026-11-08) ------------------------------------------
++def maps_made(monkeypatch):
++    """The names of the sideways maps the body makes, as it makes them."""
++    made = []
++
++    def counted(cls):
++        def make_map(*args, **kwargs):
++            made.append(cls.__name__)
++            return cls(*args, **kwargs)
++        return make_map
++    for name in ("Sideways", "SidewaysByHeight"):
++        monkeypatch.setattr(skin, name, counted(getattr(skin, name)))
++    return made
++
++
++def test_height_pairing_keeps_the_books(coarse_sphere_mesh, monkeypatch):
++    """`sideways_pairing="height"` (sub-plan 22 Task 5f) on a melting body that flows: 3 MW/m2 on the front of the 4 mm
++    sphere from 893 K, just under T_rigid, for two 0.0625 s macro steps (the melting part length), the liquid kept and
++    flowing under a Newtonian push, one flow sub-step a heat sub-step, so the cells' thicknesses change every sub-step and
++    metal is drawn and handed down. Every sideways map is the height map; the mass closes to 1e-12, the energy to 1e-8 of
++    the heat absorbed and the momentum to round-off."""
++    made = maps_made(monkeypatch)
++    b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, sideways_pairing="height")
++    M0 = b.mass()
++    for k in range(2):
++        b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6), forcing=newtonian(b))
++    assert b.sideways_pairing == "height" and made and set(made) == {"SidewaysByHeight"}
++    assert b.drawn_mass > 0.0 and b.handed_mass > 0.0 and b.skin_stats()["flowing_depth_max_mm"] > 0.0
++    assert b.mass() == pytest.approx(M0, rel=1e-12)
++    assert abs(b.energy_balance_residual()) < 1e-8
++    assert b.momentum_residual() < 1e-12 and b.impulse_size > 0.0
++
++
++def test_the_depth_pairing_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh, monkeypatch):
++    """`sideways_pairing="depth"` and the argument left out are one flight, every column of every row and the final mass
++    and energy equal to the last bit, every map the depth map (sub-plan 22 Task 5f): 3 MW/m2 on the front from 893 K for two
++    0.0625 s macro steps, the liquid removed as it forms, numpy's generator seeded as a run seeds it before each."""
++    made = maps_made(monkeypatch)
++    runs = []
++    for kw in ({}, {"sideways_pairing": "depth"}):
++        np.random.seed(12345)
++        b = make(coarse_sphere_mesh, T0=893.0, **kw)
++        rows = []
++        for k in range(2):
++            b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6))
++            rows.append((b.step_parts, timed_out(b.skin_stats())))
++        runs.append((b, rows))
++    assert same_rows(runs[0][1], runs[1][1]) and runs[0][0].removed_mass > 0.0 and runs[0][0].sideways_pairing == "depth"
++    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
++    assert made and set(made) == {"Sideways"} and skinbody.SkinBody.sideways_pairing == "depth"
++
++
++def test_a_body_saved_without_the_sideways_pairing_flies_on(coarse_sphere_mesh, monkeypatch):
++    """The states saved before the pairing existed have no `sideways_pairing` on the instance: the class's default gives
++    them the depth pairing, they fly on as before, and a resume can give them the height pairing (sub-plan 22 Task 5f). An
++    unknown pairing is refused."""
++    made = maps_made(monkeypatch)
++    b = make(coarse_sphere_mesh, T0=700.0)
++    b.emissivity = 0.0
++    del vars(b)["sideways_pairing"]
++    assert "sideways_pairing" not in vars(b) and b.sideways_pairing == "depth"
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.05, 0.05, zero)
++    assert made and set(made) == {"Sideways"}
++    del made[:]
++    b.sideways_pairing = "height"
++    b.advance(0.1, 0.05, zero)
++    assert made and set(made) == {"SidewaysByHeight"}
++    with pytest.raises(ValueError, match="sideways_pairing"):
++        make(coarse_sphere_mesh, sideways_pairing="width")
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -820,3 +820,51 @@
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["hand_down"] is on
++
++
++def test_the_sideways_heat_reads_depth_or_height_and_marks_the_run_s_name_only_for_height():
++    """--sideways-heat (sub-plan 22 Task 5f) is `depth` by default, so that every existing run keeps its name and its record;
++    `height` ends a skin run's settings in _side-height, melting or not, after the hand-down's and before the seed's."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert p.parse_args(THERMAL).sideways_heat == "depth" == p.parse_args(melt).sideways_heat
++    assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
++    assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
++    assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
++    assert (name(melt + ["--hand-down", "off", "--sideways-heat", "height", "--seed", "7"])
++            == base + "_melt-girin_handdown-off_side-height_seed-7")
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, sideways_pairing="height") == "_side-height"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
++
++
++@pytest.mark.parametrize("argv", [
++    THERMAL + ["--sideways-heat", "width"],                                            # no such pairing
++    FEM + ["--sideways-heat", "height"],                                               # the element model has no skins
++    FEM + ["--melt", "on", "--sideways-heat", "height"],
++    BASE + ["--sideways-heat", "height"],                                              # no thermal model at all
++])
++def test_a_bad_sideways_heat_or_the_height_pairing_without_skins_exits_2(argv, tmp_path, capsys):
++    with pytest.raises(SystemExit) as exc:
++        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2
++    if "width" not in argv:
++        assert "--sideways-heat height needs --surface-model skin" in capsys.readouterr().err
++
++
++def test_the_command_line_gives_the_skins_their_sideways_pairing(tmp_path, monkeypatch):
++    """--sideways-heat reaches the skin body as `depth` or `height`, whether it melts or not: the pairing concerns the heat
++    of any skins (sub-plan 22 Task 5f). The body is not built: its arguments are."""
++    from reentry_model import skinbody
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    melt = dry + ["--melt", "on"]
++    for argv, pairing in ((dry, "depth"), (dry + ["--sideways-heat", "height"], "height"), (melt, "depth"),
++                          (melt + ["--sideways-heat", "height"], "height")):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["sideways_pairing"] == pairing
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -363,3 +363,42 @@
+     assert cli.main(["resume", kept, "--outdir", out, "--name", "back", "--hand-down", "on"]) == 0
+     doc = json.load(open(os.path.join(out, "back.json")))
+     assert "hand_down" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--hand-down": "on"}
++
++
++def test_resuming_with_height_pairing_sets_it_on_the_body_and_records_it(flown, tmp_path, capsys):
++    """`--sideways-heat height` on a resume (sub-plan 22 Task 5f) sets the pairing on the saved flight's skin body, which pairs
++    the heat otherwise from the next step on and which the one line before the flight names; it is recorded in the JSON's
++    settings and in what was changed and carried into the state the resumed flight saves, so a resume of that state keeps
++    it unless told, and `depth` asked of it gives back the saved flight's record (no key). `run` records it in the skins'
++    settings only when given, and the resume of a flight without skins refuses it (exit 2)."""
++    out, flight, records, state_path = flown
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "h", "--sideways-heat", "height",
++                     "--save-state-at", "0.2"]) == 0
++    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
++    assert "sideways heat height" in line
++    doc = json.load(open(str(tmp_path / "h.json")))
++    assert doc["resumed_from"]["changed"] == {"--sideways-heat": "height", "--save-state-at": 0.2}
++    assert doc["settings"]["sideways_heat"] == "height"
++    rows = rows_of(str(tmp_path / "h.csv"))
++    assert rows[0] == flight[14] and rows[1:] != flight[15:]
++    saved = restart.load(str(tmp_path / "h.state.pkl"))
++    assert saved["meta"]["args"]["sideways_heat"] == "height" and saved["run"].body.sideways_pairing == "height"
++    assert cli.main(["resume", str(tmp_path / "h.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
++    assert "sideways heat height" in capsys.readouterr().out
++    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["sideways_heat"] == "height"
++    assert cli.main(["resume", str(tmp_path / "h.state.pkl"), "--outdir", str(tmp_path), "--name", "back",
++                     "--sideways-heat", "depth"]) == 0
++    doc = json.load(open(str(tmp_path / "back.json")))
++    assert "sideways_heat" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--sideways-heat": "depth"}
++    assert "sideways_heat" not in json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]
++    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "run", "--sideways-heat", "height"]) == 0
++    assert json.load(open(str(tmp_path / "run.json")))["settings"]["skin"]["sideways_heat"] == "height"
++    k = FLIGHT.index("--melt")
++    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
++    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
++    capsys.readouterr()
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o"), "--name", "r",
++                  "--sideways-heat", "height"])
++    assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
++    assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError: module 'reentry_model.skin' has no attribute
+  'SidewaysByHeight'` for the seven map tests and the three body tests (whose spy reads it first); on the command line
+  `AttributeError` on `sideways_heat`, `KeyError: 'sideways_pairing'` in the body's arguments, and `unrecognized arguments:
+  --sideways-heat height`, which exits 2 and so fails the three refusals on their message and the resume test; the refusal of an
+  unknown pairing, which exits 2 without the option too, passes (16 failed, 1 passed).
+
+- [ ] **Step 3: The map** in `reentry_model/skin.py`:
+
+```diff
+--- a/reentry_model/skin.py
++++ b/reentry_model/skin.py
+@@ -878,6 +878,83 @@
+         Qg = self.B @ (self.c * (xb[self.j] - xb[self.i]))
+         Qcum = np.concatenate([np.zeros((x.shape[0], 1)), np.cumsum(Qg, axis=1)], axis=1)
+         return np.where(self.valid, np.diff(_interp_apply(self.geometry["to_cells"], Qcum), axis=1), 0.0)
++
++
++# -- heat sideways between cells that touch (sub-plan 22 Task 5f) ------------------------------------------------------
++SIDEWAYS_PAIRINGS = ("depth", "height")   # what pairs neighbouring columns' cells in the sideways conduction: their depth
++                                          # below the tops (`Sideways`, spec 6.3) or their height above the bases
++                                          # (`SidewaysByHeight`; Asha, 2026-11-08)
++
++
++def _height_geometry(sk, columns, dz):
++    """What a sub-step's height map is built on, from the cells' thicknesses dz and the base corners: every pair of cells on
++    an edge's two columns whose ranges of height overlap, as flat cell indices (cell a of column i is i K + a) with the
++    overlap [m] and the edge. Each edge's boundaries of both columns, in its first column's frame, are sorted downward in
++    one pass; between two consecutive boundaries lies one cell of each column (or none, above a top or below a base),
++    counted by the boundaries of each above it. Vectorised over the edges: no loop over edges or cells."""
++    n, K = dz.shape
++    zb = np.concatenate([np.zeros((n, 1)), np.cumsum(dz, axis=1)], axis=1)          # cell boundaries, from the top
++    y = zb[:, -1:] - zb                                     # their heights above the base: H to 0, and 0 beyond the cells
++    i, j = columns.edges[:, 0], columns.edges[:, 1]
++    mean = columns.normal[i] + columns.normal[j]
++    s = np.einsum("ij,ij->i", columns.points[j] - columns.points[i], mean / np.linalg.norm(mean, axis=1)[:, None])
++    Y = np.concatenate([y[i], y[j] + s[:, None]], axis=1)  # (E, 2 K + 2): i's boundaries, then j's shifted into i's frame
++    order = np.argsort(-Y, axis=1, kind="stable")
++    t = np.take_along_axis(Y, order, axis=1)
++    above_i = np.cumsum(order <= K, axis=1)[:, :-1]         # i's boundaries above each piece between consecutive ones
++    a, b = above_i - 1, np.arange(2 * K + 1)[None, :] - above_i      # the cells of i and of j it lies in, from the top
++    length = t[:, :-1] - t[:, 1:]
++    e, p = np.nonzero((length > 0.0) & (a >= 0) & (a < sk.count[i][:, None]) & (b >= 0) & (b < sk.count[j][:, None]))
++    return {"a": i[e] * K + a[e, p], "b": j[e] * K + b[e, p], "edge": e, "length": length[e, p]}
++
++
++class SidewaysByHeight:
++    """The sideways conduction of one sub-step with the cells paired by their height above the bases, so that heat passes
++    between cells that touch (`--sideways-heat height`; Asha's idea and decision of 2026-11-08, sub-plan 22 Task 5f).
++    `Sideways` pairs cells at the same depth below their tops (spec 6.3), right while neighbouring tops stand level; with
++    the re-frozen metal kept in the skins (`hand_down=False`, Task 5e) the top steps about 1.4 mm across a 1.5 mm triangle
++    at the ring's edge, where pairing by depth puts a cell beside the gas next to metal 1.4 mm lower.
++
++    Here every cell's range is its height above its column's base, [H - z_bottom, H - z_top] (z from the top, H the
++    column's thickness). On each edge (i, j) the neighbour's ranges are shifted into i's frame by the offset between the
++    bases, s_ij = (p_j - p_i) . n_ij, p the base corners (`columns.points`) and n_ij the unit mean of the two columns'
++    directions (`columns.normal`), so s_ji = -s_ij; cells a of i and b of j exchange c_ab (x_b - x_a), with
++    c_ab = 0.5 (k_a + k_b) w l_ab, k the cells' conductivities at the sub-step's start, w the edge's conduction weight and
++    l_ab the overlap of the two ranges (zero where they do not overlap). c_ab is symmetric in a and b, so `heat` keeps
++    `Sideways`' contract with `_coupled_solve` and `_conduct` by construction: linear in x, antisymmetric pair by pair (it
++    sums to zero to round-off), symmetric and negative semi-definite, zero beyond a column's cells. Where neighbours are
++    equally deep on one base and their cells lie on the depth grid, it is the depth map to round-off.
++
++    What it brings out, stated: the part of a taller column above its neighbour's top is a side wall facing the gas; it
++    exchanges no heat with the neighbour, and the model does not heat or cool it from the gas (the gas reaches the tops
++    alone). Tracking every cell's position in space would give the same answer at 2 mm spacing at more cost and is not
++    chosen (the side session's call). The flow's sideways transport (spec 6.5, matched by fraction of the flowing depth)
++    is unchanged.
++
++    The geometry is rebuilt whenever the cells' thicknesses or the bases change, as the depth map's is with the cells. Its
++    cost, measured 2026-11-08 on a 2 mm surface of the 100 mm sphere (9 519 columns, 28 551 edges, 59-75 cells of 10 um,
++    the columns one to three times their minimum deep on bases stepped by up to 0.3 mm): 2.7 million pairs, 85 MB; a build
++    0.15 s against the depth map's 0.09 (0.37 GB at its peak against 0.09), a `heat` 0.020 s against 0.027, and one 10 ms
++    sub-step with every cell at its own temperature 3.6-3.8 s against 3.2-3.3, its line search evaluating the residual 49
++    times against 32 in the same 11 Newton steps."""
++
++    def __init__(self, sk, columns, previous=None):
++        """`previous`: the last sub-step's map, whose geometry is reused while the cells keep their thicknesses and the base
++        corners stand where they stood (a copy is kept: a base moved in place is a move)."""
++        self.dz, self.points = sk.dz(), np.array(columns.points, dtype=float)
++        same = (type(previous) is type(self) and np.array_equal(previous.dz, self.dz)
++                and np.array_equal(previous.points, self.points))
++        self.geometry = previous.geometry if same else _height_geometry(sk, columns, self.dz)
++        g = self.geometry
++        k = sk.props.k(sk.T).ravel()
++        self.c = 0.5 * (k[g["a"]] + k[g["b"]]) * columns.conduct_weight[g["edge"]] * g["length"]
++
++    def heat(self, x):
++        """The heat [W per cell] the neighbouring columns conduct into each cell at cell temperatures x (linear in x)."""
++        g = self.geometry
++        flat = x.ravel()
++        d = self.c * (flat[g["b"]] - flat[g["a"]])           # into cell a, out of cell b
++        return (np.bincount(g["a"], d, x.size) - np.bincount(g["b"], d, x.size)).reshape(x.shape)
+ 
+ 
+ # -- viscosity (sub-plan 21 Task 3) ------------------------------------------------------------------------------------
+```
+
+- [ ] **Step 4: The body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -562,11 +562,15 @@
+     `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
+     (`PART_COUNT_RULES`; sub-plan 22 Task 5d).
+     `hand_down` [bool]: whether re-frozen metal at the bottom of a skin passes to the 3D model (the default), or stays in
+-    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down."""
++    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down.
++    `sideways_pairing`: `depth` (the default) or `height`, what pairs neighbouring columns' cells in the sideways conduction,
++    their depth below the tops (`skin.Sideways`) or their height above the bases (`skin.SidewaysByHeight`, heat between
++    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f)."""
+     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
+     spread_limit = None                  # deg
+     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
+     hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
++    sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
+     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
+     spread_over = 0                      # edges over the limit on the last move's first estimate
+     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
+@@ -575,7 +579,11 @@
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
+-                 spread_limit=None, part_count_from="moves", hand_down=True):
++                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth"):
++        if sideways_pairing not in skin_mod.SIDEWAYS_PAIRINGS:
++            raise ValueError("sideways_pairing must be one of {}, got {!r}".format(skin_mod.SIDEWAYS_PAIRINGS,
++                                                                                  sideways_pairing))
++        self.sideways_pairing = sideways_pairing
+         if not hand_down and spread_limit is not None:
+             raise ValueError("spreading moves only metal being handed down (Asha, 2026-11-08): hand_down=False needs "
+                              "spread_limit=None, got {!r}".format(spread_limit))
+@@ -802,7 +810,11 @@
+                                  slurry=self.slurry_spray)
+         eps = np.full(sk.n, self.emissivity)
+         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
+-        side = lambda s, previous: skin_mod.Sideways(s, self.columns, previous)   # implicit (sub-plan 21)
++        # implicit (sub-plan 21); with the height pairing heat passes between cells that touch (Asha's idea and decision of
++        # 2026-11-08, sub-plan 22 Task 5f: the deposit kept in the skins makes the depth pairing wrong at the ring's edge,
++        # where the top steps about 1.4 mm across a 1.5 mm triangle)
++        sideways_map = skin_mod.SidewaysByHeight if self.sideways_pairing == "height" else skin_mod.Sideways
++        side = lambda s, previous: sideways_map(s, self.columns, previous)
+         nodes = mm.corners
+         T_b0 = self.solver.temperature()[nodes]
+         g0 = self._normal_gradient()                         # the profile's slope below every base, for this part
+```
+
+- [ ] **Step 5: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -5,12 +5,12 @@
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+-        --part-count-from moves|melting --hand-down on|off ...]
++        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
+-        --hand-down on|off]
++        --hand-down on|off --sideways-heat depth|height]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -202,7 +202,7 @@
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
+                      slurry_spray=False, spread_limit=None, part_count_from="moves",
+-                     hand_down=True):
++                     hand_down=True, sideways_pairing="depth"):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+@@ -214,7 +214,8 @@
+     sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
+     `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
+     `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
+-    metal stays in the skins (Task 5e); empty for the defaults."""
++    metal stays in the skins (Task 5e); `_side-height` where the sideways conduction pairs cells by height above the bases
++    (Task 5f); empty for the defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -246,6 +247,8 @@
+         out += "_parts-{}".format(part_count_from)
+     if not hand_down:
+         out += "_handdown-off"
++    if sideways_pairing != "depth":
++        out += "_side-{}".format(sideways_pairing)
+     return out
+ 
+ 
+@@ -313,6 +316,10 @@
+     rs.add_argument("--hand-down", choices=("on", "off"), default=None,
+                     help="re-frozen metal passes to the 3D model, or stays in the skins; off needs the spread limit off, given "
+                          "or carried by the saved flight (default: the saved flight's, on for one saved before the option existed)")
++    rs.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default=None,
++                    help="what pairs neighbouring skin columns' cells in the sideways conduction: depth below the tops or "
++                         "height above the bases, heat between cells that touch (default: the saved flight's, depth for one "
++                         "saved before the option existed)")
+     rs.add_argument("--save-state-at", type=float, default=None,
+                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
+                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
+@@ -456,6 +463,11 @@
+                          "model (on) or stays in the skins, which can heat it again, let it flow on or spray it (off; needs "
+                          "--spread-limit off, spreading moves only metal being handed down; Asha, 2026-11-08, sub-plan 22 "
+                          "Task 5e; default on)")
++    me.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default="depth",
++                    help="with --surface-model skin: what pairs neighbouring columns' cells in the sideways conduction: depth "
++                         "below the tops (spec 6.3), or height above the bases, so that heat passes between cells that touch "
++                         "and a taller column's part above its neighbour's top exchanges none (Asha, 2026-11-08, sub-plan 22 "
++                         "Task 5f; default depth)")
+     me.add_argument("--skin-flow-cycles", type=int, default=None,
+                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+@@ -546,7 +558,8 @@
+                                      spray=spray_model_of(args, mat) if flow else None,
+                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
+                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
+-                                     part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args))
++                                     part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
++                                     sideways_pairing=args.sideways_heat)
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -585,6 +598,8 @@
+             info["skin"]["part_count_from"] = part_count_rule_of(args)
+         if not hand_down_of(args):
+             info["skin"]["hand_down"] = "off"
++        if args.sideways_heat != "depth":
++            info["skin"]["sideways_heat"] = args.sideways_heat
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -636,7 +651,7 @@
+                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
+                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
+                                                                     spread_limit_of(args), part_count_rule_of(args),
+-                                                                    hand_down_of(args)))
++                                                                    hand_down_of(args), args.sideways_heat))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -722,6 +737,8 @@
+         parser.error("--hand-down off needs --surface-model skin and --melt on: it keeps the skins' re-frozen metal in them")
+     if not hand_down_of(args) and spread_limit_of(args) is not None:
+         parser.error(NO_SPREAD_WITHOUT_HAND_DOWN)
++    if args.sideways_heat != "depth" and args.surface_model != "skin":
++        parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
+     if args.surface_model == "skin":
+         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
+                             ("--molten-cascade off", args.molten_cascade == "off"),
+@@ -948,6 +965,10 @@
+         if args.hand_down == "off" and not (skins and run.body.material.melts):
+             parser.error("--hand-down off needs a saved flight of melting skins: it keeps their re-frozen metal in them")
+         changed["--hand-down"] = args.hand_down
++    if args.sideways_heat is not None:
++        if args.sideways_heat != "depth" and not skins:
++            parser.error("--sideways-heat height needs a saved flight of skins: it pairs their cells")
++        changed["--sideways-heat"] = args.sideways_heat
+     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
+     if skins:
+         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
+@@ -992,6 +1013,8 @@
+         run.body.part_count_from = args.part_count_from
+     if "--hand-down" in changed and skins:
+         run.body.hand_down = args.hand_down == "on"
++    if "--sideways-heat" in changed and skins:
++        run.body.sideways_pairing = args.sideways_heat
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -1003,14 +1026,15 @@
+         setattr(saved, key, value)
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+-                      ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down")):
++                      ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
++                      ("sideways_heat", "--sideways-heat")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, part count from {}, hand-down {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+@@ -1018,6 +1042,7 @@
+               "off" if limit is None else "{:g} deg".format(limit),
+               run.body.part_count_from if skins else "moves",
+               "off" if skins and not run.body.hand_down else "on",
++              run.body.sideways_pairing if skins else "depth",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -1035,6 +1060,8 @@
+         thermal_info["part_count_from"] = "melting"
+     if skins and not run.body.hand_down:
+         thermal_info["hand_down"] = "off"
++    if skins and run.body.sideways_pairing != "depth":
++        thermal_info["sideways_heat"] = run.body.sideways_pairing
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 639 passed, 1 skipped (Task 5e's 622 and these 17; 15.3 minutes across four processes, 2026-11-08).
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skin.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skin.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: sideways heat can pass between cells that touch (--sideways-heat depth|height on run and resume, depth by default; with height the cells are paired by their height above the bases, the neighbour's shifted by the offset between the bases); sub-plan 22 Task 5f"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e and 5f written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
