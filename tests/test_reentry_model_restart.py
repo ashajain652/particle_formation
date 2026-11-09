@@ -328,3 +328,38 @@ def test_the_melting_rule_is_refused_on_a_resume_of_a_flight_that_does_not_melt(
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "melting"])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
     assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "moves"]) == 0
+
+
+def test_resuming_with_the_hand_down_off_from_a_state_with_a_spread_limit_needs_the_limit_off(tmp_path, capsys):
+    """Spreading moves only metal being handed down (Asha, 2026-11-08; sub-plan 22 Task 5e), so `--hand-down off` on a resume of
+    a state saved with a spread limit (the spreading states carry 60) exits 2 unless `--spread-limit off` is given too, and
+    flies with it: recorded in the JSON's settings and in what was changed, named in the line before the flight, and kept by
+    a resume of the state it saves. The reverse, a limit given to a state saved with the hand-down off, exits 2 as well."""
+    pytest.importorskip("cantera")
+    limited = str(tmp_path / "limited")
+    assert cli.main(FLIGHT + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
+                              "--spread-limit", "60"]) == 0
+    state, out = os.path.join(limited, "f.state.pkl"), str(tmp_path / "o")
+    capsys.readouterr()
+    for options in (["--hand-down", "off"], ["--hand-down", "off", "--spread-limit", "60"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["resume", state, "--outdir", out, "--name", "r"] + options)
+        assert exc.value.code == 2 and not os.path.exists(out)
+        err = capsys.readouterr().err
+        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
+    assert cli.main(["resume", state, "--outdir", out, "--name", "r", "--hand-down", "off", "--spread-limit", "off",
+                     "--save-state-at", "0.0625"]) == 0
+    assert "hand-down off" in capsys.readouterr().out
+    doc = json.load(open(os.path.join(out, "r.json")))
+    assert doc["resumed_from"]["changed"] == {"--hand-down": "off", "--spread-limit": "off", "--save-state-at": 0.0625}
+    assert doc["settings"]["hand_down"] == "off" and "spread_limit_deg" not in doc["settings"]
+    kept = os.path.join(out, "r.state.pkl")
+    assert restart.load(kept)["meta"]["args"]["hand_down"] == "off"
+    with pytest.raises(SystemExit) as exc:                  # a limit on a flight that hands nothing down
+        cli.main(["resume", kept, "--outdir", out, "--name", "again", "--spread-limit", "60"])
+    assert exc.value.code == 2 and "--hand-down on" in capsys.readouterr().err
+    assert cli.main(["resume", kept, "--outdir", out, "--name", "same"]) == 0
+    assert json.load(open(os.path.join(out, "same.json")))["settings"]["hand_down"] == "off"
+    assert cli.main(["resume", kept, "--outdir", out, "--name", "back", "--hand-down", "on"]) == 0
+    doc = json.load(open(os.path.join(out, "back.json")))
+    assert "hand_down" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--hand-down": "on"}
