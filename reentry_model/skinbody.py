@@ -562,11 +562,15 @@ class SkinBody(ThermalBody):
     `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
     (`PART_COUNT_RULES`; sub-plan 22 Task 5d).
     `hand_down` [bool]: whether re-frozen metal at the bottom of a skin passes to the 3D model (the default), or stays in
-    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down."""
+    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down.
+    `sideways_pairing`: `depth` (the default) or `height`, what pairs neighbouring columns' cells in the sideways conduction,
+    their depth below the tops (`skin.Sideways`) or their height above the bases (`skin.SidewaysByHeight`, heat between
+    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
     hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
+    sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -575,7 +579,11 @@ class SkinBody(ThermalBody):
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
-                 spread_limit=None, part_count_from="moves", hand_down=True):
+                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth"):
+        if sideways_pairing not in skin_mod.SIDEWAYS_PAIRINGS:
+            raise ValueError("sideways_pairing must be one of {}, got {!r}".format(skin_mod.SIDEWAYS_PAIRINGS,
+                                                                                  sideways_pairing))
+        self.sideways_pairing = sideways_pairing
         if not hand_down and spread_limit is not None:
             raise ValueError("spreading moves only metal being handed down (Asha, 2026-11-08): hand_down=False needs "
                              "spread_limit=None, got {!r}".format(spread_limit))
@@ -802,7 +810,11 @@ class SkinBody(ThermalBody):
                                  slurry=self.slurry_spray)
         eps = np.full(sk.n, self.emissivity)
         m_min = skin_mod.minimum_mass(mat, sk.area, self.settings)
-        side = lambda s, previous: skin_mod.Sideways(s, self.columns, previous)   # implicit (sub-plan 21)
+        # implicit (sub-plan 21); with the height pairing heat passes between cells that touch (Asha's idea and decision of
+        # 2026-11-08, sub-plan 22 Task 5f: the deposit kept in the skins makes the depth pairing wrong at the ring's edge,
+        # where the top steps about 1.4 mm across a 1.5 mm triangle)
+        sideways_map = skin_mod.SidewaysByHeight if self.sideways_pairing == "height" else skin_mod.Sideways
+        side = lambda s, previous: sideways_map(s, self.columns, previous)
         nodes = mm.corners
         T_b0 = self.solver.temperature()[nodes]
         g0 = self._normal_gradient()                         # the profile's slope below every base, for this part
