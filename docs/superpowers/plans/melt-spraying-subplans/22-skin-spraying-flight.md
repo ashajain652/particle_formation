@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d and 5e (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -10562,7 +10562,517 @@ git commit -m "Skins: the part count can follow the melting, not the moves (--pa
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c and 5d written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5e: The hand-down switched off
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (the class default and `SkinBody(..., hand_down=True)`, `_move_base`, `_move_ratio`)
+- Modify: `reentry_model/cli.py` (`--hand-down on|off` on `run` and `resume`, `hand_down_of`, the name suffix, the records, the
+  refusals, the resume's one line)
+- Test: `tests/test_reentry_model_skinbody.py` (6 tests), `tests/test_reentry_model_cli.py` (3 tests, 7 cases),
+  `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: Task 5d's wiring of an option on `run` and `resume`; `skin_mod.hand_down`, `skin_mod.handable`.
+- Produces: `SkinBody(..., hand_down=True)`, also a class default for states pickled before it; `ValueError` if `hand_down` is False
+  and `spread_limit` is not None. `--hand-down on|off` on `run` (default `on`) and `resume` (default: the state's); exit 2 with
+  `off` unless melting skins, and with `off` and a spread limit, given or carried by the resumed state (and a limit given to a
+  resume of a state saved with `off`), with a message saying spreading moves only metal being handed down (Asha, 2026-11-08) and to
+  give `--spread-limit off`. The run's name suffix `_handdown-off`; the run JSON's `settings.skin.hand_down = "off"` only when off,
+  the resume JSON's `settings.hand_down = "off"` only when the body's is off and `changed["--hand-down"]` when given.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`; Asha, 2026-11-08). Re-frozen
+metal can heat again and flow on or be sprayed, so it may stay in the skins instead of passing to the 3D model; spreading is off
+with it, because it moves only metal being handed down. With `hand_down` False `_move_base` does not call `skin_mod.hand_down`:
+`handed` and `handed_H` are zeros, `coldest` and `warmest` nan, `uncovered` nan, and `held = able`, so `held_mass` and
+`held_depth_max` record every handable kilogram; the move, the reconciliation and the fault count read the zero hand-down.
+`_move_ratio` uses a zero hand-down too. Draws and absorption are unchanged, so the base moves only inward (and by the neutral
+smoothing).
+
+**Rulings** (the controller's, 2026-11-08): the test that no metal crosses the base outward asserts that `handed_mass` stays 0 and the
+3D model's enclosed volume never grows from one macro step to the next, in a set-up (Task 5d's held-back deposit) where with the
+hand-down on it does grow; and `held_mass` and `held_depth_max` record every handable kilogram with the hand-down off, which is not
+a fault and adds no column.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1743,3 +1743,101 @@
+ def test_an_unknown_part_count_rule_is_refused(coarse_sphere_mesh):
+     with pytest.raises(ValueError, match="part_count_from"):
+         make(coarse_sphere_mesh, part_count_from="draws")
++
++
++# -- the hand-down switched off (sub-plan 22 Task 5e; Asha 2026-11-08) ------------------------------------------------------
++def fly_macro_steps(b, steps=2, dt=0.05, loads=None):
++    """`steps` macro steps of `dt` s (not longer than the melting part length), with no heat unless `loads` is given; the 3D
++    model's enclosed volume after each [m3]."""
++    loads = loads if loads is not None else heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    volumes = []
++    for k in range(steps):
++        b.advance(dt * (k + 1), dt, loads)
++        volumes.append(b.mesh.volume())
++    return volumes
++
++
++def test_with_the_hand_down_off_no_metal_crosses_the_base_outward(coarse_sphere_mesh):
++    """Asha's decision of 2026-11-08 (sub-plan 22 Task 5e): with `hand_down=False` nothing is handed down, so no metal is
++    added to the 3D model. On the deposit of `held_back_body` (nine move allowances of metal at the node's temperature,
++    no heat, nothing drawn), two 0.05 s macro steps: the default hands down and the enclosed volume of the 3D model grows
++    in each; with the hand-down off `handed_mass` stays 0 and the volume does not grow from one step to the next."""
++    on, _ = held_back_body(coarse_sphere_mesh)
++    off, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
++    start = off.mesh.volume()
++    assert on.mesh.volume() == start
++    v_on, v_off = fly_macro_steps(on), fly_macro_steps(off)
++    assert on.handed_mass > 0.0 and v_on[0] > start and v_on[1] > v_on[0]
++    assert off.handed_mass == 0.0 and v_off[0] <= start * (1.0 + 1e-12) and v_off[1] <= v_off[0] * (1.0 + 1e-12)
++
++
++def test_with_the_hand_down_off_the_rigid_metal_stays_in_its_skin_and_is_counted_as_held(coarse_sphere_mesh):
++    """The metal the default hands down stays in its skin with the hand-down off, so the skins' mass above their minimum is at
++    least the default's after the same steps, and `held_mass` is every kilogram `skin.handable` finds, with no limit or cap
++    (it is found on the skins as they stand before the first step: nothing is drawn or heated, so they do not change)."""
++    on, extra = held_back_body(coarse_sphere_mesh)
++    off, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
++    m_min = skin.minimum_mass(off.material, off.columns.area, off.settings)
++    able = skin.handable(off.skins, m_min, off.material.T_rigid)
++    area = off.columns.area.copy()               # the move changes the areas, and the held depth reads those before it
++    assert able.sum() > 0.0
++    fly_macro_steps(on, steps=1)
++    fly_macro_steps(off, steps=1)
++    above = lambda b: b.skins.mass() - m_min.sum()
++    assert above(off) >= above(on) and above(off) > above(on) + 0.5 * on.handed_mass
++    assert off.held_mass == pytest.approx(able.sum(), rel=1e-9) and off.held_mass > on.held_mass
++    assert off.held_depth_max == pytest.approx((able / (off.material.rho * area)).max(), rel=1e-9)
++
++
++def test_with_the_hand_down_off_the_books_close(coarse_sphere_mesh):
++    """Skins that only grow still close the books (mass 1e-12, energy 1e-8, momentum) on the held-back deposit flown for two
++    0.05 s macro steps, the second heated at 3 MW/m2 so that draws and the move run too."""
++    b, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
++    M0 = b.mass()
++    b.energy0 = E0 = b.energy()                  # the deposit was added after the body was built: its heat is the start's
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.05, 0.05, zero)
++    b.advance(0.1, 0.05, front_loads(b, 3e6))
++    assert b.handed_mass == 0.0 and b.drawn_mass >= 0.0
++    assert b.mass() == pytest.approx(M0, rel=1e-12) and b.jump_faults == 0
++    assert abs(b.energy_balance_residual()) < 1e-8 and abs(b.momentum_residual()) < 1e-8
++    assert b.energy() == pytest.approx(E0 + b.absorbed_heat - b.removed_enthalpy - b.released_enthalpy, rel=1e-8)
++
++
++def test_the_hand_down_on_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
++    """`hand_down=True` and the argument left out are one flight: every column of every row and the final mass and energy
++    equal to the last bit on the held-back deposit, which hands down (sub-plan 22 Task 5e)."""
++    runs = []
++    for kw in ({}, {"hand_down": True}):
++        b, _ = held_back_body(coarse_sphere_mesh, **kw)
++        zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++        rows = []
++        for k in range(2):
++            b.advance(0.05 * (k + 1), 0.05, zero)
++            rows.append((b.step_parts, timed_out(b.skin_stats())))
++        runs.append((b, rows))
++    assert same_rows(runs[0][1], runs[1][1]) and runs[0][0].handed_mass > 0.0 and runs[0][0].hand_down is True
++    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
++
++
++def test_the_hand_down_off_refuses_a_spread_limit(coarse_sphere_mesh):
++    """Spreading moves only metal being handed down (Asha, 2026-11-08), so a body with neither is refused."""
++    with pytest.raises(ValueError, match="hand_down"):
++        make(coarse_sphere_mesh, hand_down=False, spread_limit=60.0)
++    assert make(coarse_sphere_mesh, hand_down=False).spread_limit is None
++    assert make(coarse_sphere_mesh, spread_limit=60.0).hand_down is True
++
++
++def test_a_body_saved_without_the_hand_down_switch_flies_on(coarse_sphere_mesh):
++    """The states saved before the switch existed have no `hand_down` on the instance: the class's default gives them the
++    hand-down on, they fly on as before, and a resume can switch it off (sub-plan 22 Task 5e)."""
++    b, _ = held_back_body(coarse_sphere_mesh)
++    del vars(b)["hand_down"]
++    assert "hand_down" not in vars(b) and b.hand_down is True
++    fly_macro_steps(b, steps=1)
++    assert b.handed_mass > 0.0
++    handed = b.handed_mass
++    b.hand_down = False
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.1, 0.05, zero)
++    assert b.handed_mass == handed
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -772,3 +772,51 @@
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["part_count_from"] == rule
++
++
++def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_for_off():
++    """--hand-down (sub-plan 22 Task 5e) is `on` by default, so that every existing run keeps its name and its record; `off`
++    ends a skin run's settings in _handdown-off, after the part count's and before the seed's."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert p.parse_args(melt).hand_down == "on" and cli.hand_down_of(p.parse_args(melt)) is True
++    assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "off"])) is False
++    assert name(melt) == name(melt + ["--hand-down", "on"]) == base
++    assert name(melt + ["--hand-down", "off"]) == base + "_handdown-off"
++    assert (name(melt + ["--part-count-from", "melting", "--hand-down", "off", "--seed", "7"])
++            == base + "_parts-melting_handdown-off_seed-7")
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, hand_down=False) == "_handdown-off"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
++
++
++@pytest.mark.parametrize("argv", [
++    THERMAL + ["--melt", "on", "--hand-down", "maybe"],                                # no such setting
++    THERMAL + ["--hand-down", "off"],                                                  # nothing melts, so nothing is handed down
++    FEM + ["--melt", "on", "--hand-down", "off"],                                      # the element model has no skins
++    BASE + ["--hand-down", "off"],                                                     # no thermal model at all
++    THERMAL + ["--melt", "on", "--hand-down", "off", "--spread-limit", "60"],          # spreading moves only handed-down metal
++])
++def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_limit_exits_2(argv, tmp_path, capsys):
++    with pytest.raises(SystemExit) as exc:
++        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
++    assert exc.value.code == 2
++    if "60" in argv:
++        err = capsys.readouterr().err
++        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
++
++
++def test_the_command_line_gives_the_skins_their_hand_down_switch_and_records_it_only_for_off(tmp_path, monkeypatch):
++    """--hand-down reaches the skin body as True or False (sub-plan 22 Task 5e). The body is not built: its arguments are."""
++    from reentry_model import skinbody
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    for argv, on in ((melt, True), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
++                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False)):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["hand_down"] is on
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -328,3 +328,38 @@
+         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "melting"])
+     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+     assert cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", "--part-count-from", "moves"]) == 0
++
++
++def test_resuming_with_the_hand_down_off_from_a_state_with_a_spread_limit_needs_the_limit_off(tmp_path, capsys):
++    """Spreading moves only metal being handed down (Asha, 2026-11-08; sub-plan 22 Task 5e), so `--hand-down off` on a resume of
++    a state saved with a spread limit (the spreading states carry 60) exits 2 unless `--spread-limit off` is given too, and
++    flies with it: recorded in the JSON's settings and in what was changed, named in the line before the flight, and kept by
++    a resume of the state it saves. The reverse, a limit given to a state saved with the hand-down off, exits 2 as well."""
++    pytest.importorskip("cantera")
++    limited = str(tmp_path / "limited")
++    assert cli.main(FLIGHT + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
++                              "--spread-limit", "60"]) == 0
++    state, out = os.path.join(limited, "f.state.pkl"), str(tmp_path / "o")
++    capsys.readouterr()
++    for options in (["--hand-down", "off"], ["--hand-down", "off", "--spread-limit", "60"]):
++        with pytest.raises(SystemExit) as exc:
++            cli.main(["resume", state, "--outdir", out, "--name", "r"] + options)
++        assert exc.value.code == 2 and not os.path.exists(out)
++        err = capsys.readouterr().err
++        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
++    assert cli.main(["resume", state, "--outdir", out, "--name", "r", "--hand-down", "off", "--spread-limit", "off",
++                     "--save-state-at", "0.0625"]) == 0
++    assert "hand-down off" in capsys.readouterr().out
++    doc = json.load(open(os.path.join(out, "r.json")))
++    assert doc["resumed_from"]["changed"] == {"--hand-down": "off", "--spread-limit": "off", "--save-state-at": 0.0625}
++    assert doc["settings"]["hand_down"] == "off" and "spread_limit_deg" not in doc["settings"]
++    kept = os.path.join(out, "r.state.pkl")
++    assert restart.load(kept)["meta"]["args"]["hand_down"] == "off"
++    with pytest.raises(SystemExit) as exc:                  # a limit on a flight that hands nothing down
++        cli.main(["resume", kept, "--outdir", out, "--name", "again", "--spread-limit", "60"])
++    assert exc.value.code == 2 and "--hand-down on" in capsys.readouterr().err
++    assert cli.main(["resume", kept, "--outdir", out, "--name", "same"]) == 0
++    assert json.load(open(os.path.join(out, "same.json")))["settings"]["hand_down"] == "off"
++    assert cli.main(["resume", kept, "--outdir", out, "--name", "back", "--hand-down", "on"]) == 0
++    doc = json.load(open(os.path.join(out, "back.json")))
++    assert "hand_down" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--hand-down": "on"}
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `TypeError` on `hand_down` for the six body tests, `AttributeError` on
+  `hand_down_of` and unrecognised-argument exits for the command line's.
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -560,10 +560,13 @@
+     `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
+     (`spreading`; sub-plan 22 Task 5c), None for no spreading.
+     `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
+-    (`PART_COUNT_RULES`; sub-plan 22 Task 5d)."""
++    (`PART_COUNT_RULES`; sub-plan 22 Task 5d).
++    `hand_down` [bool]: whether re-frozen metal at the bottom of a skin passes to the 3D model (the default), or stays in
++    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down."""
+     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
+     spread_limit = None                  # deg
+     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
++    hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
+     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
+     spread_over = 0                      # edges over the limit on the last move's first estimate
+     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
+@@ -572,7 +575,11 @@
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
+-                 spread_limit=None, part_count_from="moves"):
++                 spread_limit=None, part_count_from="moves", hand_down=True):
++        if not hand_down and spread_limit is not None:
++            raise ValueError("spreading moves only metal being handed down (Asha, 2026-11-08): hand_down=False needs "
++                             "spread_limit=None, got {!r}".format(spread_limit))
++        self.hand_down = bool(hand_down)
+         if part_count_from not in PART_COUNT_RULES:
+             raise ValueError("part_count_from must be one of {}, got {!r}".format(PART_COUNT_RULES, part_count_from))
+         self.part_count_from = part_count_from
+@@ -941,7 +948,7 @@
+         The hand-down is found on a copy of the skins."""
+         mat, sk = self.material, self.skins
+         handed = np.zeros(sk.n)
+-        if mat.melts:
++        if mat.melts and self.hand_down:                     # with the hand-down off, a zero one (Task 5e)
+             saved = sk.state()
+             limit = self.solver.temperature()[self.moving.corners] + skin_mod.JUMP_TOLERANCE
+             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid, limit, cap=self._hand_cap())
+@@ -972,10 +979,17 @@
+         T_node = self.solver.temperature()[mm.corners]
+         none = np.full(sk.n, np.nan)
+         able = skin_mod.handable(sk, m_min, mat.T_rigid) if mat.melts else np.zeros(sk.n)     # with no limit or cap
++        # The hand-down switched off (Asha's question and decision, 2026-11-08; sub-plan 22 Task 5e): re-frozen metal can heat
++        # again and flow on or be sprayed, so it may stay in the skins instead of passing to the 3D model, and spreading is
++        # off with it, because it moves only metal being handed down (the constructor refuses the two together). Nothing is
++        # handed, so `skin_mod.hand_down` is not called: the hand-down and its enthalpy are zeros, there is no coldest or
++        # warmest cell handed and no cell uncovered, and every handable kilogram is held (`held = able`, below). The draws
++        # and the absorption are as they were, so a base moves only inward, by them and the neutral smoothing.
+         handed, handed_H, coldest, warmest = (
+             skin_mod.hand_down(sk, m_min, mat.T_rigid, T_node + skin_mod.JUMP_TOLERANCE, span=True, cap=self._hand_cap())
+-            if mat.melts else (np.zeros(sk.n), np.zeros(sk.n), none, none))
+-        uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
++            if mat.melts and self.hand_down else (np.zeros(sk.n), np.zeros(sk.n), none, none))
++        uncovered = (np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
++                     if self.hand_down else none)
+         held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
+         self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
+         handed_s, landed_H, excess = handed, handed_H, None                       # what crosses each base; the same arrays
+```
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -5,11 +5,12 @@
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+-        --part-count-from moves|melting ...]
++        --part-count-from moves|melting --hand-down on|off ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+-        --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting]
++        --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
++        --hand-down on|off]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -125,6 +126,15 @@
+     return args.part_count_from
+ 
+ 
++NO_SPREAD_WITHOUT_HAND_DOWN = ("--hand-down off cannot go with a spread limit: spreading moves only metal being handed down "
++                               "(Asha, 2026-11-08); give --spread-limit off")
++
++
++def hand_down_of(args):
++    """Whether the skins pass their re-frozen metal to the 3D model, True unless --hand-down says `off` (sub-plan 22 Task 5e)."""
++    return args.hand_down == "on"
++
++
+ def spread_limit_of(args):
+     """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
+     return None if args.spread_limit == "off" else args.spread_limit
+@@ -191,7 +201,8 @@
+ 
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
+-                     slurry_spray=False, spread_limit=None, part_count_from="moves"):
++                     slurry_spray=False, spread_limit=None, part_count_from="moves",
++                     hand_down=True):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+@@ -202,7 +213,8 @@
+     the flow on `_flowcycles<n>` where the flow sub-steps in each heat sub-step are fixed at n rather than chosen each heat
+     sub-step (Task 6d) and `_slurryspray-on` where the exposed slurry sprays too (spec 10.1; sub-plan 22 Task 3);
+     `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
+-    `_parts-melting` where the part count follows the melting, not the moves (Task 5d); empty for the defaults."""
++    `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
++    metal stays in the skins (Task 5e); empty for the defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -232,6 +244,8 @@
+         out += "_spread-{:g}".format(spread_limit)
+     if part_count_from != "moves":
+         out += "_parts-{}".format(part_count_from)
++    if not hand_down:
++        out += "_handdown-off"
+     return out
+ 
+ 
+@@ -296,6 +310,9 @@
+     rs.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default=None,
+                     help="what the next macro step's part count follows: the moves (draws and hand-down) or the melting (the "
+                          "draws alone) (default: the saved flight's, moves for one saved before the option existed)")
++    rs.add_argument("--hand-down", choices=("on", "off"), default=None,
++                    help="re-frozen metal passes to the 3D model, or stays in the skins; off needs the spread limit off, given "
++                         "or carried by the saved flight (default: the saved flight's, on for one saved before the option existed)")
+     rs.add_argument("--save-state-at", type=float, default=None,
+                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
+                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
+@@ -434,6 +451,11 @@
+                          "move the draws and the capped hand-down call for, or melting, the draws alone; a capped "
+                          "hand-down made the count grow by a quarter a step on the spreading flights (sub-plan 22 Task 5d; "
+                          "default moves)")
++    me.add_argument("--hand-down", choices=("on", "off"), default="on",
++                    help="with --surface-model skin and --melt on: re-frozen metal at the bottom of a skin passes to the 3D "
++                         "model (on) or stays in the skins, which can heat it again, let it flow on or spray it (off; needs "
++                         "--spread-limit off, spreading moves only metal being handed down; Asha, 2026-11-08, sub-plan 22 "
++                         "Task 5e; default on)")
+     me.add_argument("--skin-flow-cycles", type=int, default=None,
+                     help="with --skin-flow on: flow sub-steps in each skin sub-step, fixed (default: chosen each skin "
+                          "sub-step from the flow's Courant number and growth, {} to {})".format(skin.FLOW_CYCLES_MIN,
+@@ -524,7 +546,7 @@
+                                      spray=spray_model_of(args, mat) if flow else None,
+                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
+                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
+-                                     part_count_from=part_count_rule_of(args))
++                                     part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args))
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -561,6 +583,8 @@
+             info["skin"]["spread_limit_deg"] = spread_limit_of(args)
+         if part_count_rule_of(args) != "moves":
+             info["skin"]["part_count_from"] = part_count_rule_of(args)
++        if not hand_down_of(args):
++            info["skin"]["hand_down"] = "off"
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -611,7 +635,8 @@
+                                                                     args.skin_fine_zone,
+                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
+                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
+-                                                                    spread_limit_of(args), part_count_rule_of(args)))
++                                                                    spread_limit_of(args), part_count_rule_of(args),
++                                                                    hand_down_of(args)))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -693,6 +718,10 @@
+         parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
+     if part_count_rule_of(args) != "moves" and not (args.surface_model == "skin" and args.melt == "on"):
+         parser.error("--part-count-from melting needs --surface-model skin and --melt on: it sets the skins' part count")
++    if not hand_down_of(args) and not (args.surface_model == "skin" and args.melt == "on"):
++        parser.error("--hand-down off needs --surface-model skin and --melt on: it keeps the skins' re-frozen metal in them")
++    if not hand_down_of(args) and spread_limit_of(args) is not None:
++        parser.error(NO_SPREAD_WITHOUT_HAND_DOWN)
+     if args.surface_model == "skin":
+         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
+                             ("--molten-cascade off", args.molten_cascade == "off"),
+@@ -915,6 +944,16 @@
+         if args.part_count_from != "moves" and not (skins and run.body.material.melts):
+             parser.error("--part-count-from melting needs a saved flight of melting skins: it sets their part count")
+         changed["--part-count-from"] = args.part_count_from
++    if args.hand_down is not None:
++        if args.hand_down == "off" and not (skins and run.body.material.melts):
++            parser.error("--hand-down off needs a saved flight of melting skins: it keeps their re-frozen metal in them")
++        changed["--hand-down"] = args.hand_down
++    # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
++    if skins:
++        will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
++        will_hand = args.hand_down == "on" if args.hand_down is not None else run.body.hand_down
++        if will_spread is not None and not will_hand:
++            parser.error(NO_SPREAD_WITHOUT_HAND_DOWN + (" (or --hand-down on)" if args.hand_down is None else ""))
+     if args.seed is not None:
+         changed["--seed"] = args.seed
+     if args.save_state_at is not None:
+@@ -951,6 +990,8 @@
+         state["row"].update(run.body.spread_stats())
+     if "--part-count-from" in changed and skins:
+         run.body.part_count_from = args.part_count_from
++    if "--hand-down" in changed and skins:
++        run.body.hand_down = args.hand_down == "on"
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -962,20 +1003,21 @@
+         setattr(saved, key, value)
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+-                      ("part_count_from", "--part-count-from")):
++                      ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, part count from {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, hand-down {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+               "on" if getattr(run.body, "slurry_spray", False) else "off",
+               "off" if limit is None else "{:g} deg".format(limit),
+               run.body.part_count_from if skins else "moves",
++              "off" if skins and not run.body.hand_down else "on",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -991,6 +1033,8 @@
+         thermal_info["spread_limit_deg"] = run.body.spread_limit
+     if skins and run.body.part_count_from == "melting":
+         thermal_info["part_count_from"] = "melting"
++    if skins and not run.body.hand_down:
++        thermal_info["hand_down"] = "off"
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier: 622 passed, 1 skipped (Task 5d's 608 and these 14; 17.3 minutes across four processes, 2026-11-08).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: re-frozen metal can stay in the skins (--hand-down on|off on run and resume, on by default; off refuses a spread limit); sub-plan 22 Task 5e"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d and 5e written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

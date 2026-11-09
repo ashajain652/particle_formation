@@ -772,3 +772,51 @@ def test_the_command_line_gives_the_skins_their_part_count_rule_and_records_it_o
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["part_count_from"] == rule
+
+
+def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_for_off():
+    """--hand-down (sub-plan 22 Task 5e) is `on` by default, so that every existing run keeps its name and its record; `off`
+    ends a skin run's settings in _handdown-off, after the part count's and before the seed's."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).hand_down == "on" and cli.hand_down_of(p.parse_args(melt)) is True
+    assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "off"])) is False
+    assert name(melt) == name(melt + ["--hand-down", "on"]) == base
+    assert name(melt + ["--hand-down", "off"]) == base + "_handdown-off"
+    assert (name(melt + ["--part-count-from", "melting", "--hand-down", "off", "--seed", "7"])
+            == base + "_parts-melting_handdown-off_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, hand_down=False) == "_handdown-off"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+@pytest.mark.parametrize("argv", [
+    THERMAL + ["--melt", "on", "--hand-down", "maybe"],                                # no such setting
+    THERMAL + ["--hand-down", "off"],                                                  # nothing melts, so nothing is handed down
+    FEM + ["--melt", "on", "--hand-down", "off"],                                      # the element model has no skins
+    BASE + ["--hand-down", "off"],                                                     # no thermal model at all
+    THERMAL + ["--melt", "on", "--hand-down", "off", "--spread-limit", "60"],          # spreading moves only handed-down metal
+])
+def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_limit_exits_2(argv, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2
+    if "60" in argv:
+        err = capsys.readouterr().err
+        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
+
+
+def test_the_command_line_gives_the_skins_their_hand_down_switch_and_records_it_only_for_off(tmp_path, monkeypatch):
+    """--hand-down reaches the skin body as True or False (sub-plan 22 Task 5e). The body is not built: its arguments are."""
+    from reentry_model import skinbody
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, on in ((melt, True), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
+                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False)):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["hand_down"] is on

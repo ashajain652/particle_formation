@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d and 5e (2026-11-08).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2171,7 +2171,72 @@ git commit -m "Skins: the part count can follow the melting, not the moves (--pa
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c and 5d written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5e: The hand-down switched off
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (the class default and `SkinBody(..., hand_down=True)`, `_move_base`, `_move_ratio`)
+- Modify: `reentry_model/cli.py` (`--hand-down on|off` on `run` and `resume`, `hand_down_of`, the name suffix, the records, the
+  refusals, the resume's one line)
+- Test: `tests/test_reentry_model_skinbody.py` (6 tests), `tests/test_reentry_model_cli.py` (3 tests, 7 cases),
+  `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: Task 5d's wiring of an option on `run` and `resume`; `skin_mod.hand_down`, `skin_mod.handable`.
+- Produces: `SkinBody(..., hand_down=True)`, also a class default for states pickled before it; `ValueError` if `hand_down` is False
+  and `spread_limit` is not None. `--hand-down on|off` on `run` (default `on`) and `resume` (default: the state's); exit 2 with
+  `off` unless melting skins, and with `off` and a spread limit, given or carried by the resumed state (and a limit given to a
+  resume of a state saved with `off`), with a message saying spreading moves only metal being handed down (Asha, 2026-11-08) and to
+  give `--spread-limit off`. The run's name suffix `_handdown-off`; the run JSON's `settings.skin.hand_down = "off"` only when off,
+  the resume JSON's `settings.hand_down = "off"` only when the body's is off and `changed["--hand-down"]` when given.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`; Asha, 2026-11-08). Re-frozen
+metal can heat again and flow on or be sprayed, so it may stay in the skins instead of passing to the 3D model; spreading is off
+with it, because it moves only metal being handed down. With `hand_down` False `_move_base` does not call `skin_mod.hand_down`:
+`handed` and `handed_H` are zeros, `coldest` and `warmest` nan, `uncovered` nan, and `held = able`, so `held_mass` and
+`held_depth_max` record every handable kilogram; the move, the reconciliation and the fault count read the zero hand-down.
+`_move_ratio` uses a zero hand-down too. Draws and absorption are unchanged, so the base moves only inward (and by the neutral
+smoothing).
+
+**Rulings** (the controller's, 2026-11-08): the test that no metal crosses the base outward asserts that `handed_mass` stays 0 and the
+3D model's enclosed volume never grows from one macro step to the next, in a set-up (Task 5d's held-back deposit) where with the
+hand-down on it does grow; and `held_mass` and `held_depth_max` record every handable kilogram with the hand-down off, which is not
+a fault and adds no column.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5E}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5E}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5E}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `TypeError` on `hand_down` for the six body tests, `AttributeError` on
+  `hand_down_of` and unrecognised-argument exits for the command line's.
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5E}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5E}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier: 622 passed, 1 skipped (Task 5d's 608 and these 14; 17.3 minutes across four processes, 2026-11-08).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: re-frozen metal can stay in the skins (--hand-down on|off on run and resume, on by default; off refuses a spread limit); sub-plan 22 Task 5e"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d and 5e written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

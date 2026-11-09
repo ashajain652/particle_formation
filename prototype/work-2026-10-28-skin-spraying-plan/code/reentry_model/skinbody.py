@@ -560,10 +560,13 @@ class SkinBody(ThermalBody):
     `spread_limit` [deg, within (0, 180)]: the fold past which a part's hand-down is spread to lower neighbouring corners
     (`spreading`; sub-plan 22 Task 5c), None for no spreading.
     `part_count_from`: `moves` (the default) or `melting`, what the next macro step's part count follows
-    (`PART_COUNT_RULES`; sub-plan 22 Task 5d)."""
+    (`PART_COUNT_RULES`; sub-plan 22 Task 5d).
+    `hand_down` [bool]: whether re-frozen metal at the bottom of a skin passes to the 3D model (the default), or stays in
+    the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
+    hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -572,7 +575,11 @@ class SkinBody(ThermalBody):
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
-                 spread_limit=None, part_count_from="moves"):
+                 spread_limit=None, part_count_from="moves", hand_down=True):
+        if not hand_down and spread_limit is not None:
+            raise ValueError("spreading moves only metal being handed down (Asha, 2026-11-08): hand_down=False needs "
+                             "spread_limit=None, got {!r}".format(spread_limit))
+        self.hand_down = bool(hand_down)
         if part_count_from not in PART_COUNT_RULES:
             raise ValueError("part_count_from must be one of {}, got {!r}".format(PART_COUNT_RULES, part_count_from))
         self.part_count_from = part_count_from
@@ -941,7 +948,7 @@ class SkinBody(ThermalBody):
         The hand-down is found on a copy of the skins."""
         mat, sk = self.material, self.skins
         handed = np.zeros(sk.n)
-        if mat.melts:
+        if mat.melts and self.hand_down:                     # with the hand-down off, a zero one (Task 5e)
             saved = sk.state()
             limit = self.solver.temperature()[self.moving.corners] + skin_mod.JUMP_TOLERANCE
             handed, _ = skin_mod.hand_down(sk, m_min, mat.T_rigid, limit, cap=self._hand_cap())
@@ -972,10 +979,17 @@ class SkinBody(ThermalBody):
         T_node = self.solver.temperature()[mm.corners]
         none = np.full(sk.n, np.nan)
         able = skin_mod.handable(sk, m_min, mat.T_rigid) if mat.melts else np.zeros(sk.n)     # with no limit or cap
+        # The hand-down switched off (Asha's question and decision, 2026-11-08; sub-plan 22 Task 5e): re-frozen metal can heat
+        # again and flow on or be sprayed, so it may stay in the skins instead of passing to the 3D model, and spreading is
+        # off with it, because it moves only metal being handed down (the constructor refuses the two together). Nothing is
+        # handed, so `skin_mod.hand_down` is not called: the hand-down and its enthalpy are zeros, there is no coldest or
+        # warmest cell handed and no cell uncovered, and every handable kilogram is held (`held = able`, below). The draws
+        # and the absorption are as they were, so a base moves only inward, by them and the neutral smoothing.
         handed, handed_H, coldest, warmest = (
             skin_mod.hand_down(sk, m_min, mat.T_rigid, T_node + skin_mod.JUMP_TOLERANCE, span=True, cap=self._hand_cap())
-            if mat.melts else (np.zeros(sk.n), np.zeros(sk.n), none, none))
-        uncovered = np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
+            if mat.melts and self.hand_down else (np.zeros(sk.n), np.zeros(sk.n), none, none))
+        uncovered = (np.where(handed > 0.0, sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)], np.nan)  # as it left it
+                     if self.hand_down else none)
         held = np.maximum(able - handed, 0.0)                 # what the tolerance and the cap keep in the skins
         self.held_mass, self.held_depth_max = float(held.sum()), float((held / (mat.rho * col.area)).max())
         handed_s, landed_H, excess = handed, handed_H, None                       # what crosses each base; the same arrays

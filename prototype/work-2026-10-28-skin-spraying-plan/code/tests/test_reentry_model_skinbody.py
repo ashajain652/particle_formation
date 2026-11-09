@@ -1743,3 +1743,101 @@ def test_a_body_saved_without_the_part_count_rule_flies_on(coarse_sphere_mesh):
 def test_an_unknown_part_count_rule_is_refused(coarse_sphere_mesh):
     with pytest.raises(ValueError, match="part_count_from"):
         make(coarse_sphere_mesh, part_count_from="draws")
+
+
+# -- the hand-down switched off (sub-plan 22 Task 5e; Asha 2026-11-08) ------------------------------------------------------
+def fly_macro_steps(b, steps=2, dt=0.05, loads=None):
+    """`steps` macro steps of `dt` s (not longer than the melting part length), with no heat unless `loads` is given; the 3D
+    model's enclosed volume after each [m3]."""
+    loads = loads if loads is not None else heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    volumes = []
+    for k in range(steps):
+        b.advance(dt * (k + 1), dt, loads)
+        volumes.append(b.mesh.volume())
+    return volumes
+
+
+def test_with_the_hand_down_off_no_metal_crosses_the_base_outward(coarse_sphere_mesh):
+    """Asha's decision of 2026-11-08 (sub-plan 22 Task 5e): with `hand_down=False` nothing is handed down, so no metal is
+    added to the 3D model. On the deposit of `held_back_body` (nine move allowances of metal at the node's temperature,
+    no heat, nothing drawn), two 0.05 s macro steps: the default hands down and the enclosed volume of the 3D model grows
+    in each; with the hand-down off `handed_mass` stays 0 and the volume does not grow from one step to the next."""
+    on, _ = held_back_body(coarse_sphere_mesh)
+    off, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
+    start = off.mesh.volume()
+    assert on.mesh.volume() == start
+    v_on, v_off = fly_macro_steps(on), fly_macro_steps(off)
+    assert on.handed_mass > 0.0 and v_on[0] > start and v_on[1] > v_on[0]
+    assert off.handed_mass == 0.0 and v_off[0] <= start * (1.0 + 1e-12) and v_off[1] <= v_off[0] * (1.0 + 1e-12)
+
+
+def test_with_the_hand_down_off_the_rigid_metal_stays_in_its_skin_and_is_counted_as_held(coarse_sphere_mesh):
+    """The metal the default hands down stays in its skin with the hand-down off, so the skins' mass above their minimum is at
+    least the default's after the same steps, and `held_mass` is every kilogram `skin.handable` finds, with no limit or cap
+    (it is found on the skins as they stand before the first step: nothing is drawn or heated, so they do not change)."""
+    on, extra = held_back_body(coarse_sphere_mesh)
+    off, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
+    m_min = skin.minimum_mass(off.material, off.columns.area, off.settings)
+    able = skin.handable(off.skins, m_min, off.material.T_rigid)
+    area = off.columns.area.copy()               # the move changes the areas, and the held depth reads those before it
+    assert able.sum() > 0.0
+    fly_macro_steps(on, steps=1)
+    fly_macro_steps(off, steps=1)
+    above = lambda b: b.skins.mass() - m_min.sum()
+    assert above(off) >= above(on) and above(off) > above(on) + 0.5 * on.handed_mass
+    assert off.held_mass == pytest.approx(able.sum(), rel=1e-9) and off.held_mass > on.held_mass
+    assert off.held_depth_max == pytest.approx((able / (off.material.rho * area)).max(), rel=1e-9)
+
+
+def test_with_the_hand_down_off_the_books_close(coarse_sphere_mesh):
+    """Skins that only grow still close the books (mass 1e-12, energy 1e-8, momentum) on the held-back deposit flown for two
+    0.05 s macro steps, the second heated at 3 MW/m2 so that draws and the move run too."""
+    b, _ = held_back_body(coarse_sphere_mesh, hand_down=False)
+    M0 = b.mass()
+    b.energy0 = E0 = b.energy()                  # the deposit was added after the body was built: its heat is the start's
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.05, 0.05, zero)
+    b.advance(0.1, 0.05, front_loads(b, 3e6))
+    assert b.handed_mass == 0.0 and b.drawn_mass >= 0.0
+    assert b.mass() == pytest.approx(M0, rel=1e-12) and b.jump_faults == 0
+    assert abs(b.energy_balance_residual()) < 1e-8 and abs(b.momentum_residual()) < 1e-8
+    assert b.energy() == pytest.approx(E0 + b.absorbed_heat - b.removed_enthalpy - b.released_enthalpy, rel=1e-8)
+
+
+def test_the_hand_down_on_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
+    """`hand_down=True` and the argument left out are one flight: every column of every row and the final mass and energy
+    equal to the last bit on the held-back deposit, which hands down (sub-plan 22 Task 5e)."""
+    runs = []
+    for kw in ({}, {"hand_down": True}):
+        b, _ = held_back_body(coarse_sphere_mesh, **kw)
+        zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+        rows = []
+        for k in range(2):
+            b.advance(0.05 * (k + 1), 0.05, zero)
+            rows.append((b.step_parts, timed_out(b.skin_stats())))
+        runs.append((b, rows))
+    assert same_rows(runs[0][1], runs[1][1]) and runs[0][0].handed_mass > 0.0 and runs[0][0].hand_down is True
+    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
+
+
+def test_the_hand_down_off_refuses_a_spread_limit(coarse_sphere_mesh):
+    """Spreading moves only metal being handed down (Asha, 2026-11-08), so a body with neither is refused."""
+    with pytest.raises(ValueError, match="hand_down"):
+        make(coarse_sphere_mesh, hand_down=False, spread_limit=60.0)
+    assert make(coarse_sphere_mesh, hand_down=False).spread_limit is None
+    assert make(coarse_sphere_mesh, spread_limit=60.0).hand_down is True
+
+
+def test_a_body_saved_without_the_hand_down_switch_flies_on(coarse_sphere_mesh):
+    """The states saved before the switch existed have no `hand_down` on the instance: the class's default gives them the
+    hand-down on, they fly on as before, and a resume can switch it off (sub-plan 22 Task 5e)."""
+    b, _ = held_back_body(coarse_sphere_mesh)
+    del vars(b)["hand_down"]
+    assert "hand_down" not in vars(b) and b.hand_down is True
+    fly_macro_steps(b, steps=1)
+    assert b.handed_mass > 0.0
+    handed = b.handed_mass
+    b.hand_down = False
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.1, 0.05, zero)
+    assert b.handed_mass == handed
