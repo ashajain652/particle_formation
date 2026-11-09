@@ -1841,3 +1841,75 @@ def test_a_body_saved_without_the_hand_down_switch_flies_on(coarse_sphere_mesh):
     zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
     b.advance(0.1, 0.05, zero)
     assert b.handed_mass == handed
+
+
+# -- sideways heat between cells that touch (sub-plan 22 Task 5f; Asha 2026-11-08) ------------------------------------------
+def maps_made(monkeypatch):
+    """The names of the sideways maps the body makes, as it makes them."""
+    made = []
+
+    def counted(cls):
+        def make_map(*args, **kwargs):
+            made.append(cls.__name__)
+            return cls(*args, **kwargs)
+        return make_map
+    for name in ("Sideways", "SidewaysByHeight"):
+        monkeypatch.setattr(skin, name, counted(getattr(skin, name)))
+    return made
+
+
+def test_height_pairing_keeps_the_books(coarse_sphere_mesh, monkeypatch):
+    """`sideways_pairing="height"` (sub-plan 22 Task 5f) on a melting body that flows: 3 MW/m2 on the front of the 4 mm
+    sphere from 893 K, just under T_rigid, for two 0.0625 s macro steps (the melting part length), the liquid kept and
+    flowing under a Newtonian push, one flow sub-step a heat sub-step, so the cells' thicknesses change every sub-step and
+    metal is drawn and handed down. Every sideways map is the height map; the mass closes to 1e-12, the energy to 1e-8 of
+    the heat absorbed and the momentum to round-off."""
+    made = maps_made(monkeypatch)
+    b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, sideways_pairing="height")
+    M0 = b.mass()
+    for k in range(2):
+        b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6), forcing=newtonian(b))
+    assert b.sideways_pairing == "height" and made and set(made) == {"SidewaysByHeight"}
+    assert b.drawn_mass > 0.0 and b.handed_mass > 0.0 and b.skin_stats()["flowing_depth_max_mm"] > 0.0
+    assert b.mass() == pytest.approx(M0, rel=1e-12)
+    assert abs(b.energy_balance_residual()) < 1e-8
+    assert b.momentum_residual() < 1e-12 and b.impulse_size > 0.0
+
+
+def test_the_depth_pairing_by_default_changes_nothing_to_the_last_bit(coarse_sphere_mesh, monkeypatch):
+    """`sideways_pairing="depth"` and the argument left out are one flight, every column of every row and the final mass
+    and energy equal to the last bit, every map the depth map (sub-plan 22 Task 5f): 3 MW/m2 on the front from 893 K for two
+    0.0625 s macro steps, the liquid removed as it forms, numpy's generator seeded as a run seeds it before each."""
+    made = maps_made(monkeypatch)
+    runs = []
+    for kw in ({}, {"sideways_pairing": "depth"}):
+        np.random.seed(12345)
+        b = make(coarse_sphere_mesh, T0=893.0, **kw)
+        rows = []
+        for k in range(2):
+            b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6))
+            rows.append((b.step_parts, timed_out(b.skin_stats())))
+        runs.append((b, rows))
+    assert same_rows(runs[0][1], runs[1][1]) and runs[0][0].removed_mass > 0.0 and runs[0][0].sideways_pairing == "depth"
+    assert runs[0][0].mass() == runs[1][0].mass() and runs[0][0].energy() == runs[1][0].energy()
+    assert made and set(made) == {"Sideways"} and skinbody.SkinBody.sideways_pairing == "depth"
+
+
+def test_a_body_saved_without_the_sideways_pairing_flies_on(coarse_sphere_mesh, monkeypatch):
+    """The states saved before the pairing existed have no `sideways_pairing` on the instance: the class's default gives
+    them the depth pairing, they fly on as before, and a resume can give them the height pairing (sub-plan 22 Task 5f). An
+    unknown pairing is refused."""
+    made = maps_made(monkeypatch)
+    b = make(coarse_sphere_mesh, T0=700.0)
+    b.emissivity = 0.0
+    del vars(b)["sideways_pairing"]
+    assert "sideways_pairing" not in vars(b) and b.sideways_pairing == "depth"
+    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
+    b.advance(0.05, 0.05, zero)
+    assert made and set(made) == {"Sideways"}
+    del made[:]
+    b.sideways_pairing = "height"
+    b.advance(0.1, 0.05, zero)
+    assert made and set(made) == {"SidewaysByHeight"}
+    with pytest.raises(ValueError, match="sideways_pairing"):
+        make(coarse_sphere_mesh, sideways_pairing="width")
