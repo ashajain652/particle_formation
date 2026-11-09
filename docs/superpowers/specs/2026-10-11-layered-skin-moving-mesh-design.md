@@ -445,7 +445,7 @@ After the sub-steps, each column's base moves by the metal crossing it:
   column is a straight stack on a fixed dual area, so deep columns on a curved body misplace volume (the 50 mm sphere's pools were already 22-45 mm
   deep on a 25 mm radius); the fold moves from the base to the top of the metal, where the flow's push and Girin's spraying read it. **Checked once**
   (2026-11-08, 50 mm state from 170.5 s to 177.0 s, with the sideways heat by height; not separated from it): the base fold stays at the unmelted base's
-  37.2 degrees (39.3 at most) against 116.75 degrees with the hand-down on, 1 rebuild against 18, nothing handed down (0.905 g, unchanged), 8.35 g held in the
+  37.2 degrees at 177.0 s and at most 39.3 (at 176.5 s) against 116.75 degrees with the hand-down on, 1 rebuild against 18, (not like with like: the 5e flight's continuum step had not latched (13 macro steps of 0.5 s) while the snapshot flight latched the 12.5 ms step at 176.5 s), nothing handed down (0.905 g, unchanged), 8.35 g held in the
   skins at 177.0 s, up to 3.70 mm deep, the deepest skin 7.10 mm against 4.48; books closed. Whether the top's fold and the depth of the deposit let a
   flight reach 190 s is for the comparison flights.
 
@@ -519,13 +519,12 @@ stalled as the number of parts a 12.5 ms macro step runs as grew by a quarter ev
 `MOVE_HINT_MARGIN`, the move ratio includes the hand-down, and since the cap of 2026-10-27 a hand-down that cannot split a part still reads as a part
 needing the whole allowance. With `melting` the hint reads the draws alone (largest `drawn / (rho area)` over the allowance, times `dt_macro / dt`, times the margin,
 rounded up, over kept parts only); **the split test is the same under both rules.** **Checked once** (2026-11-08, resumed from the 50 mm spreading flight's state at 178.5 s
-to 179.7 s): `step_parts` is 1 in all 95 macro steps after the saved row, where the stalled flight had 24 at 179.3 s, 342 at 179.5 s and 9 765 at 179.66 s; the fold stays
+to 179.7 s): `step_parts` is 1 in all 95 macro steps after the saved row, where the stalled flight had 24 at 179.26 s, 342 at 179.48 s and 9 765 at 179.66 s; the fold stays
 61.3-68.8 degrees, the held metal at most 1.84 mm deep, books closed. A one-part step costs more: 55.9 s of skins time a step to 179.3 s against 21.0 s in the stalled flight over
 the same 63 steps, mostly in the flow (not traced, machine load not matched). A **guard** stops a run, with a `RuntimeError` naming the count, whose next macro step would
 start with more than `PARTS_MAX = 1 000` parts, under both rules; ordinary steps have needed one to ten parts, so it can stop only a run that would have run away. (Asha,
 2026-11-08: build the melting rule and compare it with `--hand-down off`, with spreading on at 60 degrees for it; the controller's calls: the defaults stay today's, so every earlier
-run is reproducible until the comparison decides, and the guard at 1 000.) **Stated limitation:** the new tests, which fly a body with held metal, raised the unit tier from
-about 12 to 22.8 minutes across four processes.
+run is reproducible until the comparison decides, and the guard at 1 000.) **Stated limitation:** the new tests, which fly a body with held metal, raised the unit tier from about 12 to about 15 minutes (15 min 16 s for the final 639 tests, 17 min 15 s at Task 2, 22.8 minutes at Task 1) across four processes.
 
 ### 7.2 The interface
 
@@ -724,7 +723,7 @@ as for `--spread-limit`; the cost if wrong is that flights must pass the options
 carried by a resumed state: give `--spread-limit off`); `--part-count-from melting` unless melting skins; `--sideways-heat height` unless skins. The settings record an
 option only when it is not its default. The stall guard of §7.1 is the one change that applies to every run. **Stated limitations**, each measured once: the height map's
 sub-step on the 100 mm sphere about 14 % slower (§6.3, not traced), its build holding up to 0.37 GB at 75 cells a column and growing in proportion to the deepest column,
-and the part-count tests that raised the unit tier from about 12 to 22.8 minutes.
+and the part-count tests that raised the unit tier from about 12 to about 15 minutes (15 min 16 s for the final 639 tests, 17 min 15 s at Task 2, 22.8 minutes at Task 1) across four processes.
 
 ### 10.2 Outputs
 
@@ -1306,5 +1305,4 @@ Each stage is tested and measured before the next begins.
   draft, where tracking each cell's Cartesian position was her alternative, set aside by Claude; to re-run the flight with the part-count fix once the comparison decides it;
   and to build with subagents. The controller's calls, in the description Asha approved: the defaults stay today's (`depth`, `on`, `moves`), a macro step that would start
   with more than `PARTS_MAX = 1 000` parts stops the run, and the offset `s_ij = (p_j - p_i) . unit(n_i + n_j)`. Checked once each on the 50 mm sphere (2026-11-08): the melting
-  rule held `step_parts` at 1 for 95 macro steps where the stalled flight reached 9 765; hand-down off with height heat held the base fold at 37.2 degrees (39.3 at most) to
-  177.0 s against 116.75; the comparison flights are not yet flown.
+  rule held `step_parts` at 1 for 95 macro steps where the stalled flight reached 9 765; hand-down off with height heat held the base fold at 37.2 degrees at 177.0 s (at most 39.3, at 176.5 s) against 116.75 in the snapshot flight (not like with like: the 5e flight's continuum step had not latched (13 macro steps of 0.5 s) while the snapshot flight latched the 12.5 ms step at 176.5 s); the comparison flights are not yet flown.
