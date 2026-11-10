@@ -391,7 +391,8 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
-                         "size_feedback": "current"}                  # always recorded: the default changed (Task 5g)
+                         "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
+                         "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
@@ -475,11 +476,16 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     from reentry_model import spray
     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
-                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--hand-down", "on", "--part-count-from", "moves",
+                   "--outdir", str(tmp_path)]
+    # the flight this test was written for, which hands down and counts parts by the moves; the melting skins' defaults
+    # changed to off and melting on 2026-11-10 (Task 5h), and with the hand-down off this flight's momentum books miss
+    # 4.4e-6 of the impulses where they close to 1e-17 with it on (measured at the build before Task 5h too, with
+    # --hand-down off given: a finding of Task 5h, reported, not changed here)
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_parts-moves_handdown-on")
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
@@ -671,8 +677,9 @@ def test_the_command_line_gives_the_skins_their_spread_limit(tmp_path, monkeypat
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
-    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"], 60.0),
-                        (melt + ["--skin-flow", "off", "--spread-limit", "75"], 75.0)):
+    on = ["--hand-down", "on"]                  # spreading moves only handed-down metal; off is the melting skins' default (Task 5h)
+    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"] + on, 60.0),
+                        (melt + ["--skin-flow", "off", "--spread-limit", "75"] + on, 75.0)):
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["spread_limit"] == limit
@@ -705,6 +712,27 @@ def test_the_command_line_builds_the_skins_with_the_shared_spray_model(tmp_path,
     assert not k["flow"] and k["remove"] and k["spray"] is None and k["surface_flow"] is None and not k["slurry_spray"]
 
 
+def test_the_spray_gates_are_2026_11_10_by_default_and_reach_the_spray_model(tmp_path, monkeypatch):
+    """--spray-gates (sub-plan 22 Task 5h, Asha 2026-11-10) is `2026-11-10` by default on `run` and reaches the spray
+    model the skins are given, and the element model's, as the model's `spray_gates`; `before` gives the old rules; no
+    other setting is accepted. The body is not built: its arguments are."""
+    from reentry_model import skinbody
+    assert cli.build_parser().parse_args(THERMAL).spray_gates == "2026-11-10"
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, gates in ((melt, "2026-11-10"), (melt + ["--spray-gates", "2026-11-10"], "2026-11-10"),
+                        (melt + ["--spray-gates", "before"], "before")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["spray"].spray_gates == gates
+    with pytest.raises(SystemExit) as exc:
+        cli.main(melt + ["--spray-gates", "2026-11-09"])
+    assert exc.value.code == 2
+
+
 def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch(tmp_path):
     """Sub-plan 22 Task 3b (Asha, 2026-10-29): on the skins the continuum step also latches at the first macro step at
     whose end they hold liquid above the liquidus, where that comes before the Knudsen switch. 112.5 ms from 71 km, where
@@ -729,19 +757,27 @@ def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knuds
     assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)
 
 
-def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_for_melting():
-    """--part-count-from (sub-plan 22 Task 5d) is `moves` by default, so that every existing run keeps its name and its
-    record; `melting` ends a skin run's settings in _parts-melting, after the spread limit's and before the seed's."""
+def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_where_it_differs_from_the_default():
+    """--part-count-from (sub-plan 22 Task 5d) defaults to `melting` for melting skins and `moves` for every other run
+    (Asha, 2026-11-10, Task 5h), and a run's name marks the value only where it differs from its own default: `moves` ends
+    a melting skin run's settings in _parts-moves, after the spread limit's and before the seed's, and `melting` is
+    refused on runs that do not melt."""
     p = cli.build_parser()
-    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
     melt = THERMAL + ["--melt", "on"]
-    assert p.parse_args(melt).part_count_from == "moves" and cli.part_count_rule_of(p.parse_args(melt)) == "moves"
-    assert name(melt) == name(melt + ["--part-count-from", "moves"]) == base
-    assert name(melt + ["--part-count-from", "melting"]) == base + "_parts-melting"
-    assert (name(melt + ["--spread-limit", "60", "--part-count-from", "melting", "--seed", "7"])
-            == base + "_spread-60_parts-melting_seed-7")
+    assert p.parse_args(melt).part_count_from is None and cli.part_count_rule_of(p.parse_args(melt)) == "melting"
+    assert cli.part_count_rule_of(p.parse_args(melt + ["--part-count-from", "moves"])) == "moves"
+    assert cli.part_count_rule_of(p.parse_args(THERMAL)) == "moves"                       # skins that do not melt
+    assert cli.part_count_rule_of(p.parse_args(FEM + ["--melt", "on"])) == "moves"        # the element model
+    assert name(melt) == name(melt + ["--part-count-from", "melting"]) == base + "_melt-girin"
+    assert name(melt + ["--part-count-from", "moves"]) == base + "_melt-girin_parts-moves"
+    assert (name(melt + ["--spread-limit", "60", "--hand-down", "on", "--part-count-from", "moves", "--seed", "7"])
+            == base + "_melt-girin_spread-60_parts-moves_handdown-on_seed-7")
+    assert name(THERMAL) == base
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting") == "_parts-melting"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting",
+                                melting_skins=True) == "_handdown-on"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
 
 
@@ -758,37 +794,43 @@ def test_a_bad_part_count_rule_or_the_melting_rule_without_a_melting_skin_run_ex
     assert exc.value.code == 2
 
 
-def test_the_command_line_gives_the_skins_their_part_count_rule_and_records_it_only_for_melting(tmp_path, monkeypatch):
-    """--part-count-from reaches the skin body as `moves` or `melting` (sub-plan 22 Task 5d). The body is not built: its
-    arguments are."""
+def test_the_command_line_gives_the_skins_their_part_count_rule(tmp_path, monkeypatch):
+    """--part-count-from reaches the skin body as `moves` or `melting`, `melting` unless given for melting skins and `moves`
+    for skins that do not melt (sub-plan 22 Tasks 5d and 5h). The body is not built: its arguments are."""
     from reentry_model import skinbody
 
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
-    for argv, rule in ((melt, "moves"), (melt + ["--part-count-from", "moves"], "moves"),
+    for argv, rule in ((melt, "melting"), (melt + ["--part-count-from", "moves"], "moves"),
                        (melt + ["--part-count-from", "melting"], "melting"),
-                       (melt + ["--skin-flow", "off", "--part-count-from", "melting"], "melting")):
+                       (melt + ["--skin-flow", "off", "--part-count-from", "moves"], "moves"),
+                       (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], "moves")):
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["part_count_from"] == rule
 
 
-def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_for_off():
-    """--hand-down (sub-plan 22 Task 5e) is `on` by default, so that every existing run keeps its name and its record; `off`
-    ends a skin run's settings in _handdown-off, after the part count's and before the seed's."""
+def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_where_it_differs_from_the_default():
+    """--hand-down (sub-plan 22 Task 5e) defaults to `off` for melting skins (Asha, 2026-11-10, Task 5h) and `on` for every
+    other run; a run's name marks the value only where it differs from its own default: `on` ends a melting skin run's
+    settings in _handdown-on, after the part count's and before the seed's, and `off` is refused on runs that do not melt."""
     p = cli.build_parser()
     base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
     melt = THERMAL + ["--melt", "on"]
-    assert p.parse_args(melt).hand_down == "on" and cli.hand_down_of(p.parse_args(melt)) is True
+    assert p.parse_args(melt).hand_down is None and cli.hand_down_of(p.parse_args(melt)) is False
+    assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "on"])) is True
     assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "off"])) is False
-    assert name(melt) == name(melt + ["--hand-down", "on"]) == base
-    assert name(melt + ["--hand-down", "off"]) == base + "_handdown-off"
-    assert (name(melt + ["--part-count-from", "melting", "--hand-down", "off", "--seed", "7"])
-            == base + "_parts-melting_handdown-off_seed-7")
+    assert cli.hand_down_of(p.parse_args(THERMAL)) is True and cli.hand_down_of(p.parse_args(FEM + ["--melt", "on"])) is True
+    assert name(melt) == name(melt + ["--hand-down", "off"]) == base
+    assert name(melt + ["--hand-down", "on"]) == base + "_handdown-on"
+    assert (name(melt + ["--part-count-from", "moves", "--hand-down", "on", "--seed", "7"])
+            == base + "_parts-moves_handdown-on_seed-7")
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, hand_down=False) == "_handdown-off"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, melting_skins=True,
+                                part_count_from="melting", hand_down=False) == ""
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
 
 
@@ -798,6 +840,7 @@ def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_for_
     FEM + ["--melt", "on", "--hand-down", "off"],                                      # the element model has no skins
     BASE + ["--hand-down", "off"],                                                     # no thermal model at all
     THERMAL + ["--melt", "on", "--hand-down", "off", "--spread-limit", "60"],          # spreading moves only handed-down metal
+    THERMAL + ["--melt", "on", "--spread-limit", "60"],                                # the same: off is the melting default
 ])
 def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_limit_exits_2(argv, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
@@ -805,19 +848,22 @@ def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_li
     assert exc.value.code == 2
     if "60" in argv:
         err = capsys.readouterr().err
-        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
+        assert "spreading moves only metal being handed down" in err
+        assert ("--spread-limit off" in err) == ("off" in argv) and ("--hand-down on" in err) == ("off" not in argv)
 
 
-def test_the_command_line_gives_the_skins_their_hand_down_switch_and_records_it_only_for_off(tmp_path, monkeypatch):
-    """--hand-down reaches the skin body as True or False (sub-plan 22 Task 5e). The body is not built: its arguments are."""
+def test_the_command_line_gives_the_skins_their_hand_down_switch(tmp_path, monkeypatch):
+    """--hand-down reaches the skin body as True or False: False unless given for melting skins, True for skins that do not
+    melt (sub-plan 22 Tasks 5e and 5h). The body is not built: its arguments are."""
     from reentry_model import skinbody
 
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
-    for argv, on in ((melt, True), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
-                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False)):
+    for argv, on in ((melt, False), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
+                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False),
+                     (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], True)):
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["hand_down"] is on
@@ -834,8 +880,9 @@ def test_the_sideways_heat_reads_depth_or_height_and_marks_the_run_s_name_only_f
     assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
     assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
     assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
-    assert (name(melt + ["--hand-down", "off", "--sideways-heat", "height", "--seed", "7"])
-            == base + "_melt-girin_handdown-off_side-height_seed-7")
+    assert (name(melt + ["--hand-down", "on", "--sideways-heat", "height", "--seed", "7"])
+            == base + "_melt-girin_handdown-on_side-height_seed-7")
+    assert name(melt + ["--sideways-heat", "height"]) == base + "_melt-girin_side-height"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, sideways_pairing="height") == "_side-height"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
 
