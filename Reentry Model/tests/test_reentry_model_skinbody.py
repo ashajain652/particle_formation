@@ -2127,3 +2127,16 @@ def test_a_body_saved_without_size_feedback_flies_on_as_initial(coarse_sphere_me
     assert b.nose_radius() == 0.05 and b.skin_stats()["nose_radius_mm"] == 50.0 and np.isfinite(b.nose_fit.fitted)
     b.size_feedback = "current"
     assert b.nose_radius() == b.nose_fit.fitted != 0.05
+
+
+def test_with_the_hand_down_off_a_release_s_momentum_is_not_counted_twice(coarse_sphere_mesh):
+    """Found by sub-plan 22 Task 5h on 2026-11-10 (a defect of Task 5e): `_move_base` added `momentum_out` to the momentum lost
+    as "what the handed-down cells held" even where no hand-down ran, when it still held what the last take (the spray
+    release's) took, which the release book had already counted. The command line's spraying flight missed its momentum books
+    by 4.4e-6 of the impulses with the hand-down off, and the 50 mm comparison flight by up to 1.4e-5 after spraying began.
+    The prescribed-release body of sub-plan 21 Task 7, with the hand-down off, closes its momentum books to round-off."""
+    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0), hand_down=False)
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
+    assert b.released_mass > 0.0 and np.abs(b.droplet_momentum).max() > 0.0 and b.handed_mass == 0.0
+    assert b.skin_stats()["momentum_residual"] < 1e-12
