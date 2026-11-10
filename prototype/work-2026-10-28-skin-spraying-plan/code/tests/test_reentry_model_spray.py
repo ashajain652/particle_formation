@@ -446,12 +446,12 @@ def crest(lam, h):
     return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
 
 
-def spraying_cases(cap_depth=None, areas=None, spray_gates="before"):
+def spraying_cases(cap_depth=None, areas=None, spray_gates="before", slip_band=False):
     """One patch of each branch the cap reaches, each evaluated as its own body: (result, the mode's own radius per
     wavelength) for the thick branch (Girin's closure, 1 mm of liquid), the thin branch (20 um on a floor 20 um down),
     the rarefied branch (20 um on a floor 1 mm down, where its 7.5 mm wave stays inside the inviscid mode's validity) and
     the front-surface Rayleigh-Taylor mode (5 mm of liquid at the nose, its lambda* 2 cm at W = 106 m/s2)."""
-    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
     areas = np.full(1, 1e-5) if areas is None else np.asarray(areas, dtype=float)
     out = {}
     h = None if cap_depth is None else np.full(1, cap_depth)
@@ -748,13 +748,17 @@ def test_the_crest_limit_still_binds_a_rayleigh_taylor_droplet_on_a_shallow_pool
 
 
 def test_the_new_spray_gates_change_no_other_branch_and_not_the_element_model():
-    """Under 2026-11-10 the thick, thin and rarefied branches' droplets (with a cap depth) and every branch's on the element
-    model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
-    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path."""
+    """Under 2026-11-10 the thick and thin branches' droplets (with a cap depth, both on a finite delta_m) and every branch's on
+    the element model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
+    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path. The rarefied branch,
+    with no conjugate depth, is the one the thin-branch gate of Task 5i (below) removes."""
     for cap in (1e-5, 1e-3, None):
         old, new = spraying_cases(cap_depth=cap), spraying_cases(cap_depth=cap, spray_gates="2026-11-10")
         for name in old:
             if cap is not None and name == "Rayleigh-Taylor":
+                continue
+            if name == "rarefied":              # Task 5i's gate: no conjugate depth on the free-molecular branch, nothing leaves
+                assert old[name][0].dm[0] > 0.0 and new[name][0].dm[0] == 0.0 and new[name][0].branch[0] == -1
                 continue
             for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
                 assert np.array_equal(getattr(old[name][0], field), getattr(new[name][0], field), equal_nan=True)
@@ -774,3 +778,130 @@ def test_spray_gates_before_reproduces_the_old_radius_to_the_last_bit():
             assert res.r[0] == np.minimum(lam, np.minimum(crest(lam, cap), 0.25 * radius))
     for name, (res, _) in spraying_cases(cap_depth=1e-3).items():       # the default model, as before the setting
         assert res.r[0] <= 0.0125
+
+
+# -- the thin branch's Knudsen gate and spraying in the slip band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10) --
+R_NOSE = 0.05
+
+
+def slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,), tau=40.0, branch=sf.BRANCH_MERGED):
+    """What `spray.py` reads from a merged-branch evaluation: Couette closure everywhere (no Girin delta_m), the bridged
+    shear, its integral from the nose, the body Knudsen number and the patches' own wall Knudsen numbers."""
+    theta = np.asarray(theta, dtype=float)
+    f = FakeFlow(theta.size, closure=sf.CLOSURE_COUETTE, branch=branch)
+    f.kn_body, f.kn_local, f.tau = kn_body, np.asarray(kn_local, dtype=float), np.full(theta.size, tau)
+    f.shear_integral = sf.shear_moment(theta, f.tau, R_NOSE, theta <= 0.5 * np.pi)
+    f.in_slip_band = branch == sf.BRANCH_MERGED and kn_body < sf.KN_BODY_SLIP
+    return f, theta
+
+
+def test_momentum_layer_values():
+    """delta_m^3 = 3 mu^2 I / (rho tau^2 r) in metres; at the film's surface velocity tau delta_m / mu the surface Weber
+    number rho V^2 delta_m / sigma is 3 I / (r sigma) however viscous the liquid is."""
+    d = spray.momentum_layer(np.array([40.0]), np.array([1e-2]), np.array([0.02]), LIQ)
+    assert d[0] == pytest.approx((3 * 1.3e-3 ** 2 * 1e-2 / (2400 * 40.0 ** 2 * 0.02)) ** (1 / 3), rel=1e-12)
+    assert 2400 * (40.0 * d[0] / 1.3e-3) ** 2 * d[0] / 0.86 == pytest.approx(3 * 1e-2 / (0.02 * 0.86), rel=1e-12)
+
+
+def test_momentum_layer_is_nan_at_the_nose_and_where_nothing_is_integrated_without_a_warning():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        d = spray.momentum_layer(np.array([0.0, 40.0, 40.0, 40.0]), np.array([0.0, 1e-2, np.nan, 0.0]),
+                                 np.array([0.0, 0.0, 0.02, 0.02]), LIQ)
+    assert np.isnan(d).all()
+
+
+def test_spray_layer_is_melt_layer_outside_the_band_and_with_it_off_to_the_last_bit():
+    """With the band off, with it on but the body not in it (Knudsen number 0.1 itself, or the shock layer), for a flow with
+    no integrated shear at all (a FakeFlow, a state from before the band) the depth is melt_layer's, nan included."""
+    flow, theta = slip_flow()
+    flow_old = FakeFlow(2)
+    for f, band in ((flow, False), (slip_flow(kn_body=0.1)[0], True), (flow_old, True),
+                    (slip_flow(branch=sf.BRANCH_SHOCK_LAYER)[0], True)):
+        np.testing.assert_array_equal(spray.spray_layer(f, LIQ, band, theta[:1] if f is not flow_old else np.zeros(2), R_NOSE),
+                                      spray.melt_layer(f, LIQ)[0])
+
+
+def test_spray_layer_in_the_band_is_the_momentum_balance_on_windward_patches():
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05, 0.05), theta=(0.0, 0.6, 2.0))
+    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
+    assert np.isnan(d[0]) and np.isnan(d[2]) and np.isfinite(d[1])            # the nose, a leeward patch
+    assert d[1] == pytest.approx((3 * 1.3e-3 ** 2 * flow.shear_integral[1] / (2400 * 40.0 ** 2 * R_NOSE * np.sin(0.6))) ** (1 / 3))
+    assert 20e-6 < d[1] < 200e-6                                                # 68 um on this patch: a physical film depth
+
+
+def test_a_patch_whose_wall_knudsen_number_is_above_a_tenth_is_outside_the_band():
+    """Asha, 2026-11-10: the band needs the patch's own wall Knudsen number below 0.1 too. Body Knudsen number 0.04, wall
+    Knudsen numbers 0.05 and 0.12 on two patches at one angle: the second has no band depth and no shear spray."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.12), theta=(0.6, 0.6))
+    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
+    assert np.isfinite(d[0]) and np.isnan(d[1])
+    model = spray.SprayModel(LIQ, spray_gates="2026-11-10", slip_band=True)
+    b = np.full(2, 1e-3)
+    res = model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, np.full(2, 1e-5), b * LIQ.rho * 1e-5)
+    assert res.dm[0] > 0.0 and res.dm[1] == 0.0 and res.branch[1] == -1
+
+
+def band_cases(spray_gates, slip_band, rt=False):
+    """A thick film (1 mm), a thin one (20 um, on a floor 20 um down) in the band, from `slip_flow`'s patches at 0.6 rad."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05), theta=(0.6, 0.6))
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
+    d = spray.spray_layer(flow, LIQ, slip_band, theta, R_NOSE)
+    b = np.array([1e-3, 2e-5])
+    areas = np.full(2, 1e-5)
+    return model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, areas, b * LIQ.rho * areas,
+                          b_layer=np.array([1e-3, 2e-5]), regime_layer=np.array([1e-3, 2e-5])), d
+
+
+def test_under_the_new_gates_the_thin_branch_does_not_spray_outside_both_depths():
+    """The merged branch with the band off has no depth (the Couette closure everywhere, no Girin delta_m): under 2026-11-10
+    the thin branch releases nothing, where under before it releases; the Rayleigh-Taylor mode, a melt-side mode, is not
+    gated and still takes a deep pool at the nose."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,))
+    b = np.full(1, 2e-5)
+    areas = np.full(1, 1e-5)
+    args = (flow, FakeState(), b, spray.melt_layer(flow, LIQ)[0], np.full(1, 10.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
+    old = spray.SprayModel(LIQ).evaluate(*args)
+    new = spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args)
+    assert old.branch[0] == spray.BRANCH_THIN and old.dm[0] > 0.0              # the rule as it was
+    assert new.branch[0] == -1 and new.dm[0] == 0.0 and not new.unstable[0]
+    # the rarefied branch is gated with it
+    fm = FakeFlow(1, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    args = (fm, FakeState(), b, spray.melt_layer(fm, LIQ)[0], np.full(1, 20.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
+    kw = dict(b_layer=np.full(1, 1e-3), regime_layer=np.full(1, 1e-3))
+    assert spray.SprayModel(LIQ).evaluate(*args, **kw).branch[0] == spray.BRANCH_RAREFIED
+    assert spray.SprayModel(LIQ).evaluate(*args, **kw).dm[0] > 0.0
+    assert spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args, **kw).dm[0] == 0.0
+    # Rayleigh-Taylor: not gated (flow_rt of spraying_cases: Couette closure, no delta_m)
+    for gates in ("before", "2026-11-10"):
+        res, _ = spraying_cases(spray_gates=gates)["Rayleigh-Taylor"]
+        assert res.branch[0] == spray.BRANCH_RT and res.dm[0] > 0.0
+
+
+def test_with_the_band_on_the_thin_and_thick_branches_spray_in_it():
+    """Band on: the 1 mm film on the band depth (68 um) is the thick branch and the 20 um film (shallower than the depth) the
+    thin branch, both finite-depth patches, so both pass the gate and release; with the band off under the new gates
+    neither does."""
+    res, d = band_cases("2026-11-10", True)
+    assert np.isfinite(d).all() and d[0] > 2e-5
+    assert res.branch.tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN] and (res.dm > 0.0).all()
+    res_off, d_off = band_cases("2026-11-10", False)
+    assert np.isnan(d_off).all() and (res_off.dm == 0.0).all() and (res_off.branch == -1).all()
+
+
+def test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit():
+    """A model with slip_band left off and before (the class defaults, and what a pickled model has) evaluates every case of
+    `spraying_cases` as the model before this task did, and with the band set on a flow outside the band, or with the new
+    gates on a flow that has a finite depth, the same numbers to the last bit."""
+    assert spray.SprayModel.slip_band is False and spray.SprayModel(LIQ).slip_band is False
+    base = spraying_cases(cap_depth=None)
+    for kwargs in ({"slip_band": True}, {"slip_band": False, "spray_gates": "before"}):
+        model_cases = spraying_cases(cap_depth=None, **kwargs)
+        for name in base:
+            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength", "delta_m"):
+                assert np.array_equal(getattr(base[name][0], field), getattr(model_cases[name][0], field), equal_nan=True)
+    for name in ("thick",):                                                      # finite depth: the gate passes it
+        old, new = spraying_cases()[name][0], spraying_cases(spray_gates="2026-11-10")[name][0]
+        for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
+            assert np.array_equal(getattr(old, field), getattr(new, field), equal_nan=True)

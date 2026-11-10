@@ -819,3 +819,45 @@ def test_the_one_dimensional_skins_are_retired():
     users = [str(p.relative_to(root)) for d in ("reentry_model", "tests", "analysis") for p in sorted((root / d).rglob("*.py"))
              if imports.search(p.read_text())]
     assert users == []
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Sub-plan 22 Task 5i: the slip band and the thin branch's gate in the element model (Asha, 2026-11-06 and 2026-11-10)
+def merged_film_case(layered_mesh, gates, band, kn_body=0.04):
+    """The 100 mm flight at 69.8 km with the body Knudsen number set to `kn_body` (the merged branch, Couette closure on every
+    patch, no Girin delta_m), 20 um of film on every windward patch, one `_film_and_spray` under the spray model's `gates`
+    and `band`."""
+    from reentry_model import spray
+    b = melting_body(layered_mesh, rigid_substrate=True)
+    b.spray = spray.SprayModel(b.liquid, spray_gates=gates, slip_band=band)
+    sim, a = girin_state(b)
+    a.kn = kn_body
+    flow, delta_m = flow_and_delta_m(b, a)
+    assert flow.branch == 1 and not np.isfinite(delta_m).any()
+    b.m_f = np.where(b.windward, 2e-5 * b.liquid.rho * b.surface.areas, 0.0)
+    h_p = deep_stage_args(b, delta_m)[4]
+    released = b._film_and_spray(sim.t, 0.5, a, h_p, flow, delta_m)
+    return b, released, flow
+
+
+def test_the_element_model_sprays_in_the_band_and_leaves_the_transport_alone(layered_mesh):
+    """Task 5i: on the merged branch (body Knudsen number 0.04) with the gate of 2026-11-10 on and the band off, the thin
+    branch has no conjugate depth and nothing shear-sprays (before: the thin branch sprays whatever its film); with the
+    band on, the patches whose wall Knudsen number is below 0.1 take the momentum-balance depth and spray, the thin branch
+    through the gate. The film's runoff and the conjugate depth the feed reads are the same in all three: the band's depth
+    is the spraying's alone (plan of 2026-11-06, Task 3). Above a body Knudsen number of 0.1 the band is empty."""
+    from reentry_model import spray
+    old, rel_old, _ = merged_film_case(layered_mesh, "before", False)
+    off, rel_off, flow = merged_film_case(layered_mesh, "2026-11-10", False)
+    on, rel_on, _ = merged_film_case(layered_mesh, "2026-11-10", True)
+    assert flow.in_slip_band and rel_old > 0.0
+    assert rel_off < 1e-3 * rel_old                         # the thin branch gated (Rayleigh-Taylor releases none at this deceleration)
+    inside = on.windward & (flow.kn_local < 0.1)
+    assert inside.any() and rel_on > 0.0 and (on.last_spray.dm[inside] > 0.0).any()
+    assert (on.last_spray.dm[~inside & on.windward] == 0.0).all()
+    assert np.isfinite(on.last_spray.delta_m[inside]).any() and not np.isfinite(off.last_spray.delta_m).any()
+    assert np.isin(on.last_spray.branch[on.last_spray.dm > 0.0], [spray.BRANCH_THICK, spray.BRANCH_THIN]).all()
+    assert on.runoff_mass == off.runoff_mass == old.runoff_mass and on.last_melt["runoff_substeps"] == off.last_melt["runoff_substeps"]
+    assert np.array_equal(on.last_melt["delta_m_mean_um"], off.last_melt["delta_m_mean_um"], equal_nan=True)
+    far, rel_far, _ = merged_film_case(layered_mesh, "2026-11-10", True, kn_body=0.2)
+    assert rel_far < 1e-3 * rel_old

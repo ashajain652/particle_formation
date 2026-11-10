@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g and 5h (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h and 5i (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -12649,7 +12649,7 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
 - Modify: `reentry_model/cli.py` (`--hand-down` and `--part-count-from` default by run on `run`: `off` and `melting` for melting skins,
   `on` and `moves` for every other run; `--spray-gates 2026-11-10|before` on `run` and `resume`; the spread-limit refusal; the name
   suffixes; the records)
-- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 5 changed),
+- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 8 changed),
   `tests/test_reentry_model_restart.py` (2 tests added, four resume tests on `FLIGHT_ON`), `tests/test_reentry_model_skinbody.py` (1 test, the momentum fix)
 
 **Interfaces:**
@@ -12659,7 +12659,8 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
   `part_count_rule_of` resolve an omitted option by it; `skin_name_suffix(..., melting_skins=False)`; `SprayModel.spray_gates`
   (`"2026-11-10"` or `"before"`, `ValueError` for another; Task 5i adds the thin branch's Knudsen gate under it). `run`:
   `--hand-down`, `--part-count-from` and `--spray-gates` (default `2026-11-10`); the name ends in `_handdown-on` or `_parts-moves` only
-  where the value differs from the run's default (melting skins: `on`, `moves`; other runs: `off`, `melting`); JSON
+  on a melting skin run, whose defaults are `off` and `melting`, and in `_handdown-off` or `_parts-melting` only on every other run, whose
+  defaults are `on` and `moves`; JSON
   `settings.skin.hand_down` (`"on"`/`"off"`) and `settings.skin.part_count_from` always, `settings.spray_gates` for a run with a spray
   model; the arguments a saved state carries hold the resolved values. `resume`: `--spray-gates`, default the saved model's (`before` for
   a state without it), exit 2 without spraying; JSON `settings.spray_gates` only when `2026-11-10`, `changed["--spray-gates"]` when given;
@@ -12682,8 +12683,10 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
    run. Why: the default depends on the surface model and on melting, known only after `surface_model_of`. `cmd_run` writes the resolved
    values into the arguments a saved state carries.
 2. *The suffix marks a value that differs from the run's default.* Why: a melting skin run's name is unchanged by the new defaults; the
-   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins.
-3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's.
+   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins; the same suffix-less name now means hand-down off and part count by melting,
+   where it meant hand-down on and part count by the moves before this task.
+3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's
+   (Task 5i adds `_gates-before` for a spraying run given `before`).
 4. *The class default is `before`, the constructor's too,* so every state pickled before and every direct `SprayModel(...)` keeps its
    behaviour; only the command line's `run` turns `2026-11-10` on.
 5. *The resume tests of the spread limit, of the melting rule's change and of the saved flight's options fly `--hand-down on --part-count-from moves`*
@@ -13487,9 +13490,1219 @@ git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py te
 git commit -m "Spraying: --hand-down off and --part-count-from melting the defaults of melting skins, the Rayleigh-Taylor droplet without the body-radius cap on the skins' crest-limit path (--spray-gates 2026-11-10|before on run and resume); sub-plan 22 Task 5h"
 ```
 
+### Task 5i: The thin branch's Knudsen gate, and spraying in the slip band
+
+**Files:**
+- Modify: `reentry_model/surface_flow.py` (`KN_BODY_SLIP`, `shear_moment`, the field `SurfaceFlowResult.shear_integral`, the property
+  `in_slip_band`, the integrated shear set in `evaluate`'s last return on the merged branch)
+- Modify: `reentry_model/spray.py` (`momentum_layer`, `spray_layer`, `SprayModel.slip_band` and its constructor argument, the thin and
+  rarefied branches' gate under `spray_gates` `2026-11-10`, the module docstring, two stale comments on the quarter-radius cap)
+- Modify: `reentry_model/skinbody.py` (`girin_plan` reads `spray_layer` and takes `nose_radius`; `slurry_modes` takes `theta` and
+  `nose_radius`; the slurry's one-patch model carries `slip_band`; the history's depth ratios read the band's depth; `advance` passes
+  `nose_radius()`)
+- Modify: `reentry_model/body.py` (`MeltingBody._film_and_spray`: the spraying reads `spray_layer`'s depth and the velocity it gives; the
+  feed, the runoff and the records of the conjugate depth keep Girin's)
+- Modify: `reentry_model/cli.py` (`--slip-band on|off` on `run` and `resume`; `spraying_run`, `spray_name_suffix`; the name suffixes
+  `_gates-before` and `_slipband-on`; the records)
+- Test: `tests/test_reentry_model_surface_flow.py` (3 tests added), `tests/test_reentry_model_spray.py` (8 added, 1 changed),
+  `tests/test_reentry_model_skinbody.py` (8 added), `tests/test_reentry_model_melting.py` (1 added),
+  `tests/test_reentry_model_cli.py` (2 added), `tests/test_reentry_model_restart.py` (1 added, 1 extended, a comment corrected)
+
+**Interfaces:**
+- Consumes: Task 5h's `SprayModel.spray_gates` and `spray.SPRAY_GATES_NAMES`; Task 5g's `SkinBody.nose_radius()` (the fitted radius under
+  `--size-feedback current`), which the band's momentum balance reads; `surface_flow`'s merged branch, `kn_local` and the bridged `tau`;
+  `slurry_modes`, `film.lubrication`.
+- Produces: `surface_flow.KN_BODY_SLIP = 0.1`; `surface_flow.shear_moment(theta, tau, radius, windward)`, I = integral of r tau ds
+  [Pa m2] per patch, nan on leeward patches; `SurfaceFlowResult.shear_integral` (last field, `None` off the merged branch) and the
+  property `in_slip_band` (the merged branch with a body Knudsen number below 0.1: 0.01 is in the band, 0.1 is out);
+  `spray.momentum_layer(tau, moment, radius, liquid)`, delta_m [m]; `spray.spray_layer(flow, liquid, band=False, theta=None, radius=None)`,
+  `melt_layer`'s depth except, with `band` on, on the windward patches whose own wall Knudsen number is below 0.1 where the body is in the
+  band, where it is the momentum balance's; `SprayModel(..., slip_band=False)` with a class default `False`; `girin_plan(..., nose_radius=None)`
+  (default the transverse radius). Under `spray_gates` `2026-11-10` the thin and rarefied branches release only where `delta_m` is finite.
+  `run`: `--slip-band on|off` (default `off`), refused (exit 2) without a spray model; the name ends in `_gates-before` for `--spray-gates
+  before` on a spraying run and `_slipband-on` for the band, after the surface model's suffixes and before the seed's; JSON
+  `settings.slip_band` (`"on"`/`"off"`) for a run with a spray model. `resume`: `--slip-band`, default the saved model's (`off` for a state
+  without it), exit 2 without spraying; JSON `settings.slip_band` always for a spraying flight; `changed["--slip-band"]` when given; the one
+  line before the flight names it.
+
+**What was decided** (Asha, 2026-11-10, "Further decisions" item 3 of the design and its amendment "the slip band follows the plan of
+2026-11-06"; the controller's calls on the points she left open). (1) *The gate*: under `--spray-gates 2026-11-10` the thin branch, and the
+rarefied branch with it, release only where a conjugate depth exists for spraying: Girin's closure below Knudsen 0.01 (`melt_layer`'s finite
+`delta_m`), or the band's momentum-balance depth where `--slip-band on` puts a patch in the band. Elsewhere a wet patch takes no shear mode;
+the Rayleigh-Taylor mode, a melt-side mode driven by the deceleration, is not gated. It applies wherever `SprayModel.evaluate` runs: the
+skins, the slurry's one-patch model and the element model. (2) *The band* follows the side session's plan of 2026-11-06 (Asha's six decisions
+of that day: the body gate stays the model's; the band's `delta_m` from a momentum balance, `delta_m^3 = 3 mu^2 I / (rho tau^2 r)`, with a jump
+of about 2 to 2.5 times at body Knudsen 0.01 accepted; the whole molten depth may spray on liquid properties; `--slurry-spray on` lets the slurry
+spray in the band, with it off the release stays capped at the liquid; the shear is the bridged `flow.tau` and the thin branch keeps its
+edge-state wavelength; the viscous floor already applies on the liquid thin branch and the band changes no gate there), with one change of
+2026-11-10: a patch is in the band only where the body is on the merged branch with a body Knudsen number below 0.1 **and** the patch's own
+wall Knudsen number is below 0.1. The body part is the property `in_slip_band`; the wall part is applied per patch in `spray_layer`.
+(3) *Both models*: the element model's spraying reads the band's depth too (`_film_and_spray`), and the band's depth is the spraying's alone.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *The gate lives under the existing `2026-11-10` value of `--spray-gates`; no new value.* Why: no state was saved between Tasks 5h and
+   5i (no flights were launched after Task 5g; the running diagnostic flight is a frozen copy of older code), so no saved state has
+   `2026-11-10` meaning the rules of Task 5h only. Cost if wrong: a state saved with `2026-11-10` between the two tasks would resume with
+   the thin branch gated; none exists. This changes the default `run`: a thin-branch patch whose wall Knudsen number is between 0.01 and
+   0.1 on the shock-layer branch, or on the merged branch, no longer shear-sprays, where before it did.
+2. *`in_slip_band` is the body's alone and a property of the surface flow's result;* the wall's condition is applied where the depth is
+   computed, per patch, because `kn_local` is per patch and the same flow serves the slurry's rows (`_rows` slices it).
+3. *`spray_layer` falls back to `melt_layer` whenever the band is off, the flow carries no integrated shear (a stub flow, a state saved before
+   the band) or the body is outside the band,* so every output with the band off is identical to the last bit; `getattr` on the flow
+   covers the tests' stand-ins.
+4. *The integral is taken from the nose radius the flow was evaluated at,* and `r = R sin(theta)` in the balance reads `nose_radius()`
+   (the fitted radius, bounded by the flat-face value), not the transverse radius, which stays the size cap's. The skins' call passes
+   `nose_radius=self.nose_radius()` just after `flow_forcing` evaluated the flow at the same value.
+5. *The element model takes a separate `spray_delta` and `v_spray`;* the feed, the runoff and `delta_m_mean_um` keep Girin's `delta_m`. With
+   the band off `spray_delta` is `delta_m` itself and `v_spray` is `v_s`, the same objects. `held` reads `spray_delta`: a film on slurry is
+   held only where no depth exists.
+6. *The rarefied branch is gated with the thin branch,* so under `2026-11-10` it never sprays (a free-molecular body has no `delta_m`); one
+   Task 5h test that expected it to spray under the new gates now expects nothing there.
+7. *`--slip-band on` is accepted with `--spray-gates before`.* Why: the band's depth is finite either way, so thick and thin spray in it;
+   under `before` the thin branch also sprays off the band. The flag is a research device; the pairing is the user's.
+8. *The names:* `_gates-before` and `_slipband-on` come from the run's own arguments, through `spraying_run(args)` (`--melt on`, with the skins'
+   flow on or the element model with Girin removal); a run with no spray model carries neither. This is Task 5h's parked fix 1 (the
+   `_gates-before` suffix) and replaces its ruling 3.
+9. *`resume` records `slip_band` for every spraying flight, `on` or `off`,* as `run` does; an older state reads `off`. (Task 5h's
+   `spray_gates` is recorded only when `2026-11-10`; the band is simpler.)
+10. *What is not measured here.* The band's depth jump at 0.01, the droplet sizes in the band and the thin branch's validity in the merged
+    regime are the flagged assumptions of the plan of 2026-11-06 (its Known limits, copied into `spray.py`'s docstring); the plan's own
+    measurement (the 74 km short case) is replaced by the test flights after the final review, the 100 mm sphere from its snapshot at 22.0 s
+    with the band off and on. The unit tests pin the mechanics (a band patch sprays, an outside patch does not, the transport is unchanged)
+    on constructed columns: 54 um of band depth at 200 Pa of shear and 0.6 radian, a 50 um film on the rigid floor spraying (the viscous
+    floor's gamma tau 0.47) and a 15 um film not (1.19).
+
+Parked fixes of Task 5h's review (`task-2-review.md`, Minor 1-5), done here: the `_gates-before` suffix with its name test; the two stale
+comments in `spray.py` on the quarter-radius cap corrected (the Rayleigh-Taylor droplet on the crest-limit path under `2026-11-10`); the
+restart test of the defaults now makes the `--hand-down on` resume its docstring claimed (`changed == {"--hand-down": "on"}`, no
+`hand_down` key in the JSON); the `FLIGHT_ON` comment says it differs from the default flight only in its hand-down and part count; and Task
+5h's record above (its Files line, the Interfaces parenthetical on the suffixes, ruling 2's cost) corrected.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_surface_flow.py`:
+
+```diff
+--- a/tests/test_reentry_model_surface_flow.py
++++ b/tests/test_reentry_model_surface_flow.py
+@@ -138,3 +138,45 @@
+     np.testing.assert_allclose(r.G[windward], -r.dp_ds[windward] - 2400.0 * r.deceleration * np.sin(theta[windward]),
+                                rtol=1e-12, atol=1e-9)
+     assert np.all(r.dp_ds[windward][1:-1] < 0.0) and np.all(r.dp_ds[~windward] == 0.0) and np.all(r.G[~windward] == 0.0)
++
++
++# -- the integrated shear and the slip band (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha's decisions of 2026-11-06 and 2026-11-10) --
++def test_shear_moment_matches_the_closed_form():
++    """I = integral of r tau ds along the meridian: for tau = 40 sin(theta) Pa on a sphere of radius 0.05 m, I = 40 R^2
++    (theta/2 - sin(2 theta)/4) in Pa m^2, the trapezoid sum within 0.1 % at 2001 angles from 0.2 rad up (very near the nose the
++    integral is a few parts in 1e11 and the first trapezoids' relative error is larger, which no spraying reads)."""
++    theta = np.linspace(0.0, np.pi / 2, 2001)
++    tau = 40.0 * np.sin(theta)
++    moment = sf.shear_moment(theta, tau, 0.05, theta <= np.pi / 2)
++    exact = 40.0 * 0.05 ** 2 * (theta / 2 - np.sin(2 * theta) / 4)
++    far = theta >= 0.2
++    assert moment[far] == pytest.approx(exact[far], rel=1e-3) and moment[0] == 0.0
++
++
++def test_shear_moment_keeps_order_ties_and_leeward():
++    """The columns come in any order and several share an angle: the integral is non-decreasing with angle, equal on equal
++    angles, and nan on the leeward patch, whose shear is not part of the push on the windward melt."""
++    theta = np.array([0.6, 0.2, 0.2, 2.0])
++    moment = sf.shear_moment(theta, np.array([3.0, 1.0, 1.0, 9.0]), 0.05, theta <= np.pi / 2)
++    assert moment[1] == moment[2] and moment[0] > moment[1] > 0.0 and np.isnan(moment[3])
++    assert not np.isnan(sf.shear_moment(np.array([0.1, 0.1]), np.array([5.0, 5.0]), 0.05, np.ones(2, bool))).any()
++
++
++def test_the_slip_band_is_the_merged_branch_below_a_body_knudsen_number_of_a_tenth():
++    """in_slip_band: true on the merged branch (body Knudsen number from 0.01, itself in it, up to 0.1, itself out) and false
++    on the shock-layer branch below 0.01 and the free-molecular branch (0.1 is still the merged branch, outside the band); only the merged branch carries the integrated shear,
++    from the final bridged shear, nan on the leeward patch."""
++    a = aero_state_at(43.5)
++    theta = np.radians(np.array([0.5, 30.0, 60.0, 89.0, 120.0]))
++    flow = sf.SurfaceFlow(gamma_pm=1.15)
++    got = {}
++    for kn in (0.009, 0.01, 0.05, 0.0999, 0.1, 20.0):
++        a.kn = kn
++        r = flow.evaluate(a, theta, 0.05, 2400.0, np.full(theta.size, 908.0))
++        got[kn] = r
++    assert [got[k].in_slip_band for k in (0.009, 0.01, 0.05, 0.0999, 0.1, 20.0)] == [False, True, True, True, False, False]
++    assert sf.KN_BODY_SLIP == 0.1
++    assert got[0.009].shear_integral is None and got[20.0].shear_integral is None and got[0.1].shear_integral is not None
++    r = got[0.05]
++    assert r.branch == sf.BRANCH_MERGED and np.isnan(r.shear_integral[4]) and np.all(np.diff(r.shear_integral[:4]) > 0.0)
++    np.testing.assert_array_equal(r.shear_integral, sf.shear_moment(theta, r.tau, 0.05, theta <= np.pi / 2))
+```
+
+  in `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -446,12 +446,12 @@
+     return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
+ 
+ 
+-def spraying_cases(cap_depth=None, areas=None, spray_gates="before"):
++def spraying_cases(cap_depth=None, areas=None, spray_gates="before", slip_band=False):
+     """One patch of each branch the cap reaches, each evaluated as its own body: (result, the mode's own radius per
+     wavelength) for the thick branch (Girin's closure, 1 mm of liquid), the thin branch (20 um on a floor 20 um down),
+     the rarefied branch (20 um on a floor 1 mm down, where its 7.5 mm wave stays inside the inviscid mode's validity) and
+     the front-surface Rayleigh-Taylor mode (5 mm of liquid at the nose, its lambda* 2 cm at W = 106 m/s2)."""
+-    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
++    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
+     areas = np.full(1, 1e-5) if areas is None else np.asarray(areas, dtype=float)
+     out = {}
+     h = None if cap_depth is None else np.full(1, cap_depth)
+@@ -748,13 +748,17 @@
+ 
+ 
+ def test_the_new_spray_gates_change_no_other_branch_and_not_the_element_model():
+-    """Under 2026-11-10 the thick, thin and rarefied branches' droplets (with a cap depth) and every branch's on the element
+-    model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
+-    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path."""
++    """Under 2026-11-10 the thick and thin branches' droplets (with a cap depth, both on a finite delta_m) and every branch's on
++    the element model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
++    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path. The rarefied branch,
++    with no conjugate depth, is the one the thin-branch gate of Task 5i (below) removes."""
+     for cap in (1e-5, 1e-3, None):
+         old, new = spraying_cases(cap_depth=cap), spraying_cases(cap_depth=cap, spray_gates="2026-11-10")
+         for name in old:
+             if cap is not None and name == "Rayleigh-Taylor":
++                continue
++            if name == "rarefied":              # Task 5i's gate: no conjugate depth on the free-molecular branch, nothing leaves
++                assert old[name][0].dm[0] > 0.0 and new[name][0].dm[0] == 0.0 and new[name][0].branch[0] == -1
+                 continue
+             for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
+                 assert np.array_equal(getattr(old[name][0], field), getattr(new[name][0], field), equal_nan=True)
+@@ -774,3 +778,130 @@
+             assert res.r[0] == np.minimum(lam, np.minimum(crest(lam, cap), 0.25 * radius))
+     for name, (res, _) in spraying_cases(cap_depth=1e-3).items():       # the default model, as before the setting
+         assert res.r[0] <= 0.0125
++
++
++# -- the thin branch's Knudsen gate and spraying in the slip band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10) --
++R_NOSE = 0.05
++
++
++def slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,), tau=40.0, branch=sf.BRANCH_MERGED):
++    """What `spray.py` reads from a merged-branch evaluation: Couette closure everywhere (no Girin delta_m), the bridged
++    shear, its integral from the nose, the body Knudsen number and the patches' own wall Knudsen numbers."""
++    theta = np.asarray(theta, dtype=float)
++    f = FakeFlow(theta.size, closure=sf.CLOSURE_COUETTE, branch=branch)
++    f.kn_body, f.kn_local, f.tau = kn_body, np.asarray(kn_local, dtype=float), np.full(theta.size, tau)
++    f.shear_integral = sf.shear_moment(theta, f.tau, R_NOSE, theta <= 0.5 * np.pi)
++    f.in_slip_band = branch == sf.BRANCH_MERGED and kn_body < sf.KN_BODY_SLIP
++    return f, theta
++
++
++def test_momentum_layer_values():
++    """delta_m^3 = 3 mu^2 I / (rho tau^2 r) in metres; at the film's surface velocity tau delta_m / mu the surface Weber
++    number rho V^2 delta_m / sigma is 3 I / (r sigma) however viscous the liquid is."""
++    d = spray.momentum_layer(np.array([40.0]), np.array([1e-2]), np.array([0.02]), LIQ)
++    assert d[0] == pytest.approx((3 * 1.3e-3 ** 2 * 1e-2 / (2400 * 40.0 ** 2 * 0.02)) ** (1 / 3), rel=1e-12)
++    assert 2400 * (40.0 * d[0] / 1.3e-3) ** 2 * d[0] / 0.86 == pytest.approx(3 * 1e-2 / (0.02 * 0.86), rel=1e-12)
++
++
++def test_momentum_layer_is_nan_at_the_nose_and_where_nothing_is_integrated_without_a_warning():
++    import warnings
++    with warnings.catch_warnings():
++        warnings.simplefilter("error")
++        d = spray.momentum_layer(np.array([0.0, 40.0, 40.0, 40.0]), np.array([0.0, 1e-2, np.nan, 0.0]),
++                                 np.array([0.0, 0.0, 0.02, 0.02]), LIQ)
++    assert np.isnan(d).all()
++
++
++def test_spray_layer_is_melt_layer_outside_the_band_and_with_it_off_to_the_last_bit():
++    """With the band off, with it on but the body not in it (Knudsen number 0.1 itself, or the shock layer), for a flow with
++    no integrated shear at all (a FakeFlow, a state from before the band) the depth is melt_layer's, nan included."""
++    flow, theta = slip_flow()
++    flow_old = FakeFlow(2)
++    for f, band in ((flow, False), (slip_flow(kn_body=0.1)[0], True), (flow_old, True),
++                    (slip_flow(branch=sf.BRANCH_SHOCK_LAYER)[0], True)):
++        np.testing.assert_array_equal(spray.spray_layer(f, LIQ, band, theta[:1] if f is not flow_old else np.zeros(2), R_NOSE),
++                                      spray.melt_layer(f, LIQ)[0])
++
++
++def test_spray_layer_in_the_band_is_the_momentum_balance_on_windward_patches():
++    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05, 0.05), theta=(0.0, 0.6, 2.0))
++    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
++    assert np.isnan(d[0]) and np.isnan(d[2]) and np.isfinite(d[1])            # the nose, a leeward patch
++    assert d[1] == pytest.approx((3 * 1.3e-3 ** 2 * flow.shear_integral[1] / (2400 * 40.0 ** 2 * R_NOSE * np.sin(0.6))) ** (1 / 3))
++    assert 20e-6 < d[1] < 200e-6                                                # 68 um on this patch: a physical film depth
++
++
++def test_a_patch_whose_wall_knudsen_number_is_above_a_tenth_is_outside_the_band():
++    """Asha, 2026-11-10: the band needs the patch's own wall Knudsen number below 0.1 too. Body Knudsen number 0.04, wall
++    Knudsen numbers 0.05 and 0.12 on two patches at one angle: the second has no band depth and no shear spray."""
++    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.12), theta=(0.6, 0.6))
++    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
++    assert np.isfinite(d[0]) and np.isnan(d[1])
++    model = spray.SprayModel(LIQ, spray_gates="2026-11-10", slip_band=True)
++    b = np.full(2, 1e-3)
++    res = model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, np.full(2, 1e-5), b * LIQ.rho * 1e-5)
++    assert res.dm[0] > 0.0 and res.dm[1] == 0.0 and res.branch[1] == -1
++
++
++def band_cases(spray_gates, slip_band, rt=False):
++    """A thick film (1 mm), a thin one (20 um, on a floor 20 um down) in the band, from `slip_flow`'s patches at 0.6 rad."""
++    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05), theta=(0.6, 0.6))
++    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
++    d = spray.spray_layer(flow, LIQ, slip_band, theta, R_NOSE)
++    b = np.array([1e-3, 2e-5])
++    areas = np.full(2, 1e-5)
++    return model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, areas, b * LIQ.rho * areas,
++                          b_layer=np.array([1e-3, 2e-5]), regime_layer=np.array([1e-3, 2e-5])), d
++
++
++def test_under_the_new_gates_the_thin_branch_does_not_spray_outside_both_depths():
++    """The merged branch with the band off has no depth (the Couette closure everywhere, no Girin delta_m): under 2026-11-10
++    the thin branch releases nothing, where under before it releases; the Rayleigh-Taylor mode, a melt-side mode, is not
++    gated and still takes a deep pool at the nose."""
++    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,))
++    b = np.full(1, 2e-5)
++    areas = np.full(1, 1e-5)
++    args = (flow, FakeState(), b, spray.melt_layer(flow, LIQ)[0], np.full(1, 10.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
++    old = spray.SprayModel(LIQ).evaluate(*args)
++    new = spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args)
++    assert old.branch[0] == spray.BRANCH_THIN and old.dm[0] > 0.0              # the rule as it was
++    assert new.branch[0] == -1 and new.dm[0] == 0.0 and not new.unstable[0]
++    # the rarefied branch is gated with it
++    fm = FakeFlow(1, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
++    args = (fm, FakeState(), b, spray.melt_layer(fm, LIQ)[0], np.full(1, 20.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
++    kw = dict(b_layer=np.full(1, 1e-3), regime_layer=np.full(1, 1e-3))
++    assert spray.SprayModel(LIQ).evaluate(*args, **kw).branch[0] == spray.BRANCH_RAREFIED
++    assert spray.SprayModel(LIQ).evaluate(*args, **kw).dm[0] > 0.0
++    assert spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args, **kw).dm[0] == 0.0
++    # Rayleigh-Taylor: not gated (flow_rt of spraying_cases: Couette closure, no delta_m)
++    for gates in ("before", "2026-11-10"):
++        res, _ = spraying_cases(spray_gates=gates)["Rayleigh-Taylor"]
++        assert res.branch[0] == spray.BRANCH_RT and res.dm[0] > 0.0
++
++
++def test_with_the_band_on_the_thin_and_thick_branches_spray_in_it():
++    """Band on: the 1 mm film on the band depth (68 um) is the thick branch and the 20 um film (shallower than the depth) the
++    thin branch, both finite-depth patches, so both pass the gate and release; with the band off under the new gates
++    neither does."""
++    res, d = band_cases("2026-11-10", True)
++    assert np.isfinite(d).all() and d[0] > 2e-5
++    assert res.branch.tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN] and (res.dm > 0.0).all()
++    res_off, d_off = band_cases("2026-11-10", False)
++    assert np.isnan(d_off).all() and (res_off.dm == 0.0).all() and (res_off.branch == -1).all()
++
++
++def test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit():
++    """A model with slip_band left off and before (the class defaults, and what a pickled model has) evaluates every case of
++    `spraying_cases` as the model before this task did, and with the band set on a flow outside the band, or with the new
++    gates on a flow that has a finite depth, the same numbers to the last bit."""
++    assert spray.SprayModel.slip_band is False and spray.SprayModel(LIQ).slip_band is False
++    base = spraying_cases(cap_depth=None)
++    for kwargs in ({"slip_band": True}, {"slip_band": False, "spray_gates": "before"}):
++        model_cases = spraying_cases(cap_depth=None, **kwargs)
++        for name in base:
++            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength", "delta_m"):
++                assert np.array_equal(getattr(base[name][0], field), getattr(model_cases[name][0], field), equal_nan=True)
++    for name in ("thick",):                                                      # finite depth: the gate passes it
++        old, new = spraying_cases()[name][0], spraying_cases(spray_gates="2026-11-10")[name][0]
++        for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
++            assert np.array_equal(getattr(old, field), getattr(new, field), equal_nan=True)
+```
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -2140,3 +2140,132 @@
+         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
+     assert b.released_mass > 0.0 and np.abs(b.droplet_momentum).max() > 0.0 and b.handed_mass == 0.0
+     assert b.skin_stats()["momentum_residual"] < 1e-12
++
++
++# -- spraying in the slip band (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha 2026-11-10) -------------------------------
++def band_plan(sk, col, flow, band, slurry=False, theta=0.6, gates="2026-11-10", nose_radius=None):
++    """`girin_plan` on columns at one angle `theta` with a spray model under `gates` and the band `band`."""
++    from reentry_model import spray
++    from test_reentry_model_spray import FakeState
++    model = spray.SprayModel(sk.material.liquid, spray_gates=gates, slip_band=band)
++    return skinbody.girin_plan(sk, flow, FakeState(), model, np.full(sk.n, theta), col.area, col.edges, 0.05, 0.0125,
++                               slurry=slurry, nose_radius=nose_radius)
++
++
++TAU = 200.0                    # Pa, the bridged shear on the band cases
++
++
++def band_case(kn_body=0.04, kn_local=0.05):
++    """Eight columns (four kinds, twice) 20 mm apart at one angle of 0.6 rad, on the merged branch (Couette closure, no Girin
++    delta_m), the bridged shear TAU: 50 um of liquid over 500 um of slurry (at 902 K) over rigid metal; 50 um of liquid on the
++    rigid floor; exposed slurry in the bridge (907.9 K, within a kelvin of the liquidus, the only slurry that sprays); 15 um
++    of liquid on the rigid floor, one cell. The edge speed is 1 500 m/s."""
++    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
++    from test_reentry_model_spray import slip_flow
++    col, _ = strip_grid(4, 2, h=20e-3)
++    n = col.n
++    temps = [[LIQUID] * 4 + [SLURRY] * 50 + [RIGID] * 10, [LIQUID] * 4 + [RIGID] * 10, [907.9] * 50 + [RIGID] * 10,
++             [LIQUID] + [RIGID] * 10] * 2
++    sk = stacked(col, temps)
++    flow, _ = slip_flow(kn_body, (kn_local,) * n, (0.6,) * n, tau=TAU)
++    flow.u_eff = flow.u_e = np.full(n, 1500.0)
++    flow.G = np.zeros(n)
++    return sk, col, flow
++
++
++def test_band_off_leaves_a_slipping_film_held():
++    """Without the band the merged branch has no delta_m: a liquid on slurry is held from every shear mode (the element
++    model's reading, 2026-10-29), and the liquid on the rigid floor, with the gate of 2026-11-10 on, releases nothing."""
++    sk, col, flow = band_case()
++    plan = band_plan(sk, col, flow, band=False)
++    assert plan.rate.sum() == 0.0 and plan.rate_slurry.sum() == 0.0
++    assert plan.on_slurry.tolist() == [True, False, True, False] * 2 and (plan.result.branch == -1).all()
++
++
++def test_band_on_sprays_the_liquid_and_reads_the_flowing_depth():
++    """Band on (body Knudsen number 0.04, wall 0.05 everywhere, 200 Pa of shear): the momentum-balance depth is finite on every
++    windward patch (54 um), a liquid on slurry is no longer held, its flowing depth (0.6 mm) is deeper than that depth so
++    the film is on Girin's thick branch, and 50 um of liquid on the rigid floor is shallower than it: the thin branch.
++    Both release; the release is capped by the liquid (slurry spraying off), so the exposed slurry gives nothing."""
++    from reentry_model import spray
++    sk, col, flow = band_case()
++    plan = band_plan(sk, col, flow, band=True)
++    delta = plan.result.delta_m
++    assert np.isfinite(delta).all() and (40e-6 < delta).all() and (delta < 120e-6).all()
++    assert plan.result.branch[:2].tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN]
++    assert plan.rate[0] > 0.0 and plan.rate[1] > 0.0 and plan.rate[2] == 0.0      # no liquid on the exposed slurry
++    assert not plan.on_slurry[0] or plan.rate[0] > 0.0
++    np.testing.assert_array_equal(plan.cap_depth, sk.depth_above(sk.material.T_liquidus))
++    np.testing.assert_array_equal(delta, spray.spray_layer(flow, sk.material.liquid, True, np.full(8, 0.6), 0.05))
++
++
++def test_band_release_is_capped_by_the_liquid_unless_the_slurry_is_on():
++    """Decision 4 of 2026-11-06 and item 3 of 2026-11-10: with --slurry-spray on the exposed slurry in the bridge sprays in the
++    band by its own mode (`slurry_modes`, its depth the momentum balance's with its own viscosity) and the cap is the flowing
++    depth; with it off the cap stays the liquid's depth and the slurry sprays nothing. The liquid's mode is the same."""
++    sk, col, flow = band_case()
++    off, on = band_plan(sk, col, flow, band=True), band_plan(sk, col, flow, band=True, slurry=True)
++    assert off.rate_slurry.sum() == 0.0
++    np.testing.assert_array_equal(on.cap_depth, sk.depth_above(sk.material.T_rigid))
++    assert on.rate_slurry[2] > 0.0 and np.isfinite(on.slurry["delta_m"][2]) and on.slurry["delta_m"][2] < on.slurry["depth"][2]
++    np.testing.assert_array_equal(on.rate[:2], off.rate[:2])
++
++
++def test_the_band_s_thin_branch_keeps_the_viscous_floor():
++    """Decision 6 of 2026-11-06: the viscous film's floor already applies on the liquid thin branch, and the band changes no
++    gate there, at an edge speed of 1 500 m/s: 50 um of liquid on the rigid floor sprays (gamma tau 0.47, below one), 15 um is
++    damped by the floor (gamma tau 1.19, above one) and releases nothing; both record the floor."""
++    from reentry_model import spray
++    sk, col, flow = band_case()
++    res = band_plan(sk, col, flow, band=True).result
++    assert res.branch[[1, 3]].tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]
++    assert np.isfinite(res.h_floor[[1, 3]]).all() and res.gamma_tau[1] < 1.0 and res.mdot[1] > 0.0
++    assert res.mdot[3] == 0.0 and res.gamma_tau[3] > 1.0
++
++
++def test_the_band_above_a_body_knudsen_number_of_a_tenth_or_a_wall_knudsen_number_of_a_tenth_does_nothing():
++    sk, col, flow = band_case(kn_body=0.2)
++    assert band_plan(sk, col, flow, band=True).rate.sum() == 0.0
++    sk, col, flow = band_case(kn_body=0.04, kn_local=0.12)             # Asha, 2026-11-10: the wall's own number too
++    assert band_plan(sk, col, flow, band=True).rate.sum() == 0.0
++    sk, col, flow = band_case()
++    assert band_plan(sk, col, flow, band=True).rate.sum() > 0.0         # the same columns inside both limits
++
++
++def test_the_band_depth_reads_the_nose_radius_it_is_given():
++    """The momentum balance's r is the nose radius times sin(theta): half the radius, half the r, and a depth larger by
++    2^(1/3), the plan's delta_m^3 = 3 mu^2 I / (rho tau^2 r) with the integral I unchanged."""
++    sk, col, flow = band_case()
++    a = band_plan(sk, col, flow, band=True, nose_radius=0.05).result.delta_m
++    b = band_plan(sk, col, flow, band=True, nose_radius=0.025).result.delta_m
++    np.testing.assert_allclose(b / a, 2.0 ** (1.0 / 3.0), rtol=1e-12)
++    np.testing.assert_array_equal(band_plan(sk, col, flow, band=True).result.delta_m, a)      # the default: the transverse radius, 0.05
++
++
++def test_the_thin_gate_leaves_a_slipping_liquid_on_the_floor_unsprayed_with_the_band_off_and_before_sprays_it():
++    """Task 5i's gate on the skins: with the band off the 50 um film on the floor has no conjugate depth and sprays nothing under
++    2026-11-10; under `before` the thin branch sprays it as it did."""
++    sk, col, flow = band_case()
++    assert band_plan(sk, col, flow, band=False).rate[1] == 0.0
++    from reentry_model import spray
++    old = band_plan(sk, col, flow, band=False, gates="before")
++    assert old.result.branch[1] == spray.BRANCH_THIN and old.rate[1] > 0.0                  # as before this task
++
++
++def test_the_skins_hand_girin_plan_their_nose_radius(coarse_sphere_mesh, monkeypatch):
++    """`SkinBody.advance` gives `girin_plan` the nose radius the loads read (`nose_radius()`, Task 5g's fit), for the band's
++    r = R sin(theta), where the transverse radius is the cap's size limit."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import spray
++    mat = material.Material.from_drama_json("AA7075_scheil")
++    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid))
++    seen = []
++    girin = skinbody.girin_plan
++
++    def planned(*a, **k):
++        seen.append((k.get("nose_radius"), b.nose_radius()))
++        return girin(*a, **k)
++    monkeypatch.setattr(skinbody, "girin_plan", planned)
++    b.advance(0.25, 0.25, front_loads(b, 3e6), state=aero_state_at(93.0))
++    assert len(seen) == 1 and seen[0][0] is not None and seen[0][0] == seen[0][1]
+```
+
+  in `tests/test_reentry_model_melting.py`:
+
+```diff
+--- a/tests/test_reentry_model_melting.py
++++ b/tests/test_reentry_model_melting.py
+@@ -819,3 +819,45 @@
+     users = [str(p.relative_to(root)) for d in ("reentry_model", "tests", "analysis") for p in sorted((root / d).rglob("*.py"))
+              if imports.search(p.read_text())]
+     assert users == []
++
++
++# ---------------------------------------------------------------------------------------------------------------
++# Sub-plan 22 Task 5i: the slip band and the thin branch's gate in the element model (Asha, 2026-11-06 and 2026-11-10)
++def merged_film_case(layered_mesh, gates, band, kn_body=0.04):
++    """The 100 mm flight at 69.8 km with the body Knudsen number set to `kn_body` (the merged branch, Couette closure on every
++    patch, no Girin delta_m), 20 um of film on every windward patch, one `_film_and_spray` under the spray model's `gates`
++    and `band`."""
++    from reentry_model import spray
++    b = melting_body(layered_mesh, rigid_substrate=True)
++    b.spray = spray.SprayModel(b.liquid, spray_gates=gates, slip_band=band)
++    sim, a = girin_state(b)
++    a.kn = kn_body
++    flow, delta_m = flow_and_delta_m(b, a)
++    assert flow.branch == 1 and not np.isfinite(delta_m).any()
++    b.m_f = np.where(b.windward, 2e-5 * b.liquid.rho * b.surface.areas, 0.0)
++    h_p = deep_stage_args(b, delta_m)[4]
++    released = b._film_and_spray(sim.t, 0.5, a, h_p, flow, delta_m)
++    return b, released, flow
++
++
++def test_the_element_model_sprays_in_the_band_and_leaves_the_transport_alone(layered_mesh):
++    """Task 5i: on the merged branch (body Knudsen number 0.04) with the gate of 2026-11-10 on and the band off, the thin
++    branch has no conjugate depth and nothing shear-sprays (before: the thin branch sprays whatever its film); with the
++    band on, the patches whose wall Knudsen number is below 0.1 take the momentum-balance depth and spray, the thin branch
++    through the gate. The film's runoff and the conjugate depth the feed reads are the same in all three: the band's depth
++    is the spraying's alone (plan of 2026-11-06, Task 3). Above a body Knudsen number of 0.1 the band is empty."""
++    from reentry_model import spray
++    old, rel_old, _ = merged_film_case(layered_mesh, "before", False)
++    off, rel_off, flow = merged_film_case(layered_mesh, "2026-11-10", False)
++    on, rel_on, _ = merged_film_case(layered_mesh, "2026-11-10", True)
++    assert flow.in_slip_band and rel_old > 0.0
++    assert rel_off < 1e-3 * rel_old                         # the thin branch gated (Rayleigh-Taylor releases none at this deceleration)
++    inside = on.windward & (flow.kn_local < 0.1)
++    assert inside.any() and rel_on > 0.0 and (on.last_spray.dm[inside] > 0.0).any()
++    assert (on.last_spray.dm[~inside & on.windward] == 0.0).all()
++    assert np.isfinite(on.last_spray.delta_m[inside]).any() and not np.isfinite(off.last_spray.delta_m).any()
++    assert np.isin(on.last_spray.branch[on.last_spray.dm > 0.0], [spray.BRANCH_THICK, spray.BRANCH_THIN]).all()
++    assert on.runoff_mass == off.runoff_mass == old.runoff_mass and on.last_melt["runoff_substeps"] == off.last_melt["runoff_substeps"]
++    assert np.array_equal(on.last_melt["delta_m_mean_um"], off.last_melt["delta_m_mean_um"], equal_nan=True)
++    far, rel_far, _ = merged_film_case(layered_mesh, "2026-11-10", True, kn_body=0.2)
++    assert rel_far < 1e-3 * rel_old
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -963,3 +963,47 @@
+             == base + "_side-height_nose-initial_seed-7")
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, size_feedback="initial") == "_nose-initial"
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
++
++
++def test_the_slip_band_is_off_by_default_reaches_the_spray_model_of_both_surface_models_and_is_recorded(tmp_path, monkeypatch):
++    """--slip-band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10) is `off` by default on `run`, `on` sets the spray
++    model's `slip_band` for the skins and the element model alike, and it is refused (exit 2) where there is no spray model:
++    without melting, with the heat-only skins, or with the element model's instant removal. No other value is accepted."""
++    from reentry_model import skinbody
++    assert cli.build_parser().parse_args(THERMAL).slip_band == "off"
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    for argv, band in ((melt, False), (melt + ["--slip-band", "off"], False), (melt + ["--slip-band", "on"], True)):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["spray"].slip_band is band
++    for argv in (THERMAL + ["--slip-band", "on"], melt + ["--skin-flow", "off", "--slip-band", "on"],
++                 melt + ["--surface-model", "elements", "--removal", "instant", "--slip-band", "on"], melt + ["--slip-band", "maybe"]):
++        with pytest.raises(SystemExit) as exc:
++            cli.main(argv + ["--outdir", str(tmp_path)])
++        assert exc.value.code == 2
++
++
++def test_the_spray_rules_mark_a_spraying_run_s_name_only_where_they_differ_from_the_defaults():
++    """Sub-plan 22 Tasks 5h and 5i: `_gates-before` where --spray-gates before is given to a run with a spray model, the
++    default 2026-11-10 unmarked; `_slipband-on` where the band is on; both ahead of the seed and after the skins' or the
++    element model's suffixes; no mark on a run that has no spray model (no melting, the heat-only skins, instant removal)."""
++    p = cli.build_parser()
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
++    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
++    melt = THERMAL + ["--melt", "on"]
++    assert name(melt + ["--spray-gates", "2026-11-10"]) == base + "_fem-sesam_melt-girin"
++    assert name(melt + ["--spray-gates", "before"]) == base + "_fem-sesam_melt-girin_gates-before"
++    assert name(melt + ["--slip-band", "on"]) == base + "_fem-sesam_melt-girin_slipband-on"
++    assert (name(melt + ["--slurry-spray", "on", "--spray-gates", "before", "--slip-band", "on", "--seed", "7"])
++            == base + "_fem-sesam_melt-girin_slurryspray-on_gates-before_slipband-on_seed-7")
++    elements = melt + ["--surface-model", "elements"]
++    assert name(elements + ["--spray-gates", "before"]) == base + "_fem-sesam_melt-girin_surface-elements_gates-before"
++    assert name(elements + ["--slip-band", "on"]) == base + "_fem-sesam_melt-girin_surface-elements_slipband-on"
++    for argv in (THERMAL, melt + ["--skin-flow", "off"], elements + ["--removal", "instant"]):      # no spray model: no mark
++        assert name(argv + ["--spray-gates", "before"]) == name(argv)
++    assert cli.spray_name_suffix("before", True) == "_gates-before_slipband-on"
++    assert cli.spray_name_suffix("2026-11-10", False) == "" and cli.spray_name_suffix("before", True, spraying=False) == ""
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -19,9 +19,10 @@
+           "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
+           "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
+ DEFAULT_FLIGHT = FLIGHT
+-# The flight as every one before 2026-11-10 flew, handing down and counting parts by the moves, for the resume tests of the
+-# spread limit (spreading moves only handed-down metal), of the melting rule's change and of the state's `flown` saved
+-# options, which need those settings and not the new defaults (Task 5h)
++# The old flight in its hand-down and its part count only (handing down and counting parts by the moves, as every flight before
++# 2026-11-10 did), for the resume tests of the spread limit (spreading moves only handed-down metal), of the melting rule's
++# change and of the state's `flown` saved options, which need those settings and not the new defaults (Task 5h); it flies
++# `--spray-gates 2026-11-10`, the default, as every other flight here does
+ FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
+ 
+ 
+@@ -483,6 +484,10 @@
+     doc = json.load(open(str(tmp_path / "same.json")))
+     assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
+     assert "hand_down" in doc["settings"] and doc["settings"]["hand_down"] == "off"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--hand-down", "on"]) == 0
++    doc = json.load(open(str(tmp_path / "on.json")))
++    assert doc["resumed_from"]["changed"] == {"--hand-down": "on"} and "hand_down" not in doc["settings"]
++    assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
+ 
+ 
+ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_state_without_them_resumes_as_before(
+@@ -521,3 +526,40 @@
+         cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                   "--spray-gates", "before"])
+     assert exc.value.code == 2 and "--spray-gates needs a saved flight with spraying" in capsys.readouterr().err
++
++
++def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_without_it_resumes_with_it_off(flown, tmp_path, capsys):
++    """`--slip-band` on a resume (sub-plan 22 Task 5i). The test flight has it off, recorded as `off` in the JSON's settings of the
++    flight and of a plain resume of it, `slip band off` in the line before the flight; `on` asked of it is recorded in the settings and in what
++    was changed and kept by the state the resumed flight saves; a state saved before the option (the attribute removed from the
++    spray model, which reads the class default) resumes with it off, recorded as such; a flight that does not spray refuses the option."""
++    out, flight, records, state_path = flown
++    assert json.load(open(os.path.join(out, "f.json")))["settings"]["slip_band"] == "off"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
++    assert "slip band off" in capsys.readouterr().out
++    assert json.load(open(str(tmp_path / "same.json")))["settings"]["slip_band"] == "off"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--slip-band", "on",
++                     "--save-state-at", "0.2"]) == 0
++    assert "slip band on" in capsys.readouterr().out
++    doc = json.load(open(str(tmp_path / "on.json")))
++    assert doc["resumed_from"]["changed"] == {"--slip-band": "on", "--save-state-at": 0.2} and doc["settings"]["slip_band"] == "on"
++    saved = restart.load(str(tmp_path / "on.state.pkl"))
++    assert saved["run"].body.spray.slip_band is True and saved["meta"]["args"]["slip_band"] == "on"
++    assert cli.main(["resume", str(tmp_path / "on.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
++    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["slip_band"] == "on"      # a resume keeps the saved setting
++    state = restart.load(state_path)
++    state["run"].body.spray.slip_band = True
++    vars(state["run"].body.spray).pop("slip_band")                                           # pickled before the option existed
++    old = str(tmp_path / "old.state.pkl")
++    restart.save(old, state)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
++    assert "slip band off" in capsys.readouterr().out and json.load(open(str(tmp_path / "o.json")))["settings"]["slip_band"] == "off"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--slip-band", "off"]) == 0
++    assert json.load(open(str(tmp_path / "off.json")))["resumed_from"]["changed"] == {"--slip-band": "off"}
++    k = FLIGHT.index("--melt")
++    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
++    assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
++    capsys.readouterr()
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r", "--slip-band", "on"])
++    assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` for `shear_moment`, `momentum_layer`, `spray_layer`, `KN_BODY_SLIP`; `TypeError` for `slip_band` and `nose_radius`; unrecognised `--slip-band`.
+
+- [ ] **Step 3: The surface flow** in `reentry_model/surface_flow.py`:
+
+```diff
+--- a/reentry_model/surface_flow.py
++++ b/reentry_model/surface_flow.py
+@@ -85,6 +85,7 @@
+ CLOSURE_GIRIN, CLOSURE_COUETTE = 0, 1
+ KN_BODY_SHOCK, KN_BODY_FM = 0.01, 10.0            # body-scale gate (module docstring)
+ KN_LOCAL_CONTINUUM, KN_LOCAL_SLIP = 0.01, 0.1     # wall-scale closure gate
++KN_BODY_SLIP = 0.1         # top of the slip band, where the merged branch's spraying may run (sub-plan 22 Task 5i; 2026-11-06 plan)
+ RE_SHOCK_MERGED = 100.0                            # Re2 below which the shock layer is merged (diagnostic only)
+ R_SPECIFIC_AIR = K_BOLTZMANN / M_BAR_AIR          # J/(kg K), 287.06
+ RANGER_C = 58.08                                   # 4.84 x 12: Ranger's delta_a from the u_e^4 integral (below)
+@@ -182,6 +183,25 @@
+     with np.errstate(divide="ignore", invalid="ignore"):
+         lam = mu_wall * np.sqrt(math.pi * R_s * np.asarray(T_wall, dtype=float) / 2.0) / np.maximum(p_w, 1e-30)
+     return lam, lam / length
++
++
++def shear_moment(theta, tau, radius, windward):
++    """The shear's moment about the axis integrated from the nose, I = integral of r tau ds [Pa m2] per patch (sub-plan 22
++    Task 5i, the slip-band plan of 2026-11-06): on a sphere of radius `radius`, r = R sin(theta) and ds = R d(theta), so
++    I = R^2 times the integral of sin(theta) tau d(theta) over the windward patches ordered by angle, by the trapezoid
++    rule from (theta, integrand) = (0, 0). The order is the angle's (stable, so patches at one angle share one value and
++    I does not decrease with angle); nan on the patches that are not `windward`, whose shear is not part of the push on the
++    melt ahead of them, and where theta or tau is not finite."""
++    theta, tau = np.asarray(theta, dtype=float), np.asarray(tau, dtype=float)
++    out = np.full(theta.shape, np.nan)
++    idx = np.flatnonzero(np.asarray(windward, dtype=bool) & np.isfinite(theta) & np.isfinite(tau))
++    if not idx.size:
++        return out
++    idx = idx[np.argsort(theta[idx], kind="stable")]
++    x = np.concatenate([[0.0], theta[idx]])
++    y = np.concatenate([[0.0], radius ** 2 * np.sin(theta[idx]) * tau[idx]])
++    out[idx] = cumulative_trapezoid(y, x, initial=0.0)[1:]
++    return out
+ 
+ 
+ @dataclass
+@@ -215,6 +235,15 @@
+     G: np.ndarray
+     dp_ds: np.ndarray = None      # the wall pressure's gradient along the meridian [Pa/m], from the fine bins (the
+                                   # pressure part of G; the skins' push takes it on its own, sub-plan 21 Task 5)
++    shear_integral: np.ndarray = None   # I = integral of r tau ds from the nose [Pa m2], the merged branch's only (None
++                                  # elsewhere): the momentum balance of the slip band's depth (`spray.momentum_layer`)
++
++    @property
++    def in_slip_band(self):
++        """True where the body is on the merged branch with a body Knudsen number below KN_BODY_SLIP: the band, 0.01 up to
++        0.1 (0.01 is in it, being the merged branch; 0.1 is out), where the spraying of the 2026-11-06 plan may run. A patch
++        is in it only if its own wall Knudsen number is below KN_LOCAL_SLIP too (Asha, 2026-11-10; `spray.spray_layer`)."""
++        return bool(self.branch == BRANCH_MERGED and self.kn_body < KN_BODY_SLIP)
+ 
+     @property
+     def branch_name(self):
+@@ -333,7 +362,10 @@
+         dp_ds_w = np.where(windward, at(dp_ds), 0.0)
+         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)
+         u_e, rho_e, mu_e = (np.where(np.isfinite(x), x, 0.0) for x in (u_e, rho_e, mu_e))
++        # the integrated shear of the slip band (sub-plan 22 Task 5i), from the final bridged shear: the merged branch only
++        shear_integral = shear_moment(theta, tau, radius, windward) if branch == BRANCH_MERGED else None
+         return SurfaceFlowResult(branch, float(state.kn), re_shock, float(state.ma), float(stag.p), p_inf, float(phi_star),
+                                  decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
+                                  np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
+-                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w)
++                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w,
++                                 shear_integral)
+```
+
+  the spray model in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -113,8 +113,9 @@
+ the element model's surface at its spray step, the skins' top surface where their plan was evaluated, the macro step's
+ start -- and v_hat the body's direction of motion through the air, its fixed attitude.
+ 
+-The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius and by one
+-of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
++The droplet's size caps (2026-10-24, Asha). Every branch's radius is capped by a quarter of the body radius -- except the
++Rayleigh-Taylor droplet on the crest-limit path under `spray_gates` `2026-11-10`, which only the crest limit caps (Asha,
++2026-11-10, sub-plan 22 Task 5h) -- and by one of two volumes. Without `cap_depth` (the element model) it is the film on the patch, r <= (3 m_f / (4 pi rho_l))^1/3,
+ which depends on the mesh facet's area: measured on the element model's 100 mm flight with the thin gate it bound on
+ 67 % of the thick branch's release rows (24 % of its mass), 16 % of the thin branch's (4.4 %) and set essentially every
+ Rayleigh-Taylor droplet (about 2 mm). With `cap_depth` h (the layered skins, where there is no film account) a droplet
+@@ -125,14 +126,32 @@
+ nothing gives no droplet, and nothing leaves. On the thick and thin branches it binds only on layers shallower than
+ about 2 % (thick: k_r = 0.17) and 6.5 % (thin: lambda*/4) of the wavelength; on the Rayleigh-Taylor branch, whose
+ droplet is its wavelength (centimetres), on any layer shallower than about four wavelengths, so always: at lambda = 2 cm
+-and h = 1 mm it is 4.6 mm, against about 2 mm under the film cap."""
++and h = 1 mm it is 4.6 mm, against about 2 mm under the film cap.
++
++The thin branch's Knudsen gate and the slip band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10). Girin's Eq. (2)
++and Ranger's boundary layer are continuum results, so `melt_layer` gives a conjugate depth only on Girin's closure (body
++Knudsen number below 0.01, wall Knudsen number below 0.01). Under `spray_gates` `2026-11-10` the thin and rarefied branches
++shear-spray only where a conjugate depth exists, whichever way it is found: elsewhere (the merged branch, the free-molecular
++one, a patch off Girin's closure) a wet patch takes no shear mode, because their edge state is a shock-layer construction the
++merged branch treats as invalid; the Rayleigh-Taylor mode is not gated. With `slip_band` on, a patch has a depth in the band
++too: where the body is on the merged branch with a body Knudsen number below 0.1 and the patch's own wall Knudsen number is
++below 0.1, `spray_layer` gives `momentum_layer`'s depth, delta_m^3 = 3 mu^2 I / (rho tau^2 r) from the bridged shear tau and
++its integral I from the nose (`surface_flow.shear_moment`), the liquid's properties and the nose radius `nose_radius()` (the
++fitted radius under --size-feedback current). ASSUMPTIONS the band carries: I assumes a sphere (axisymmetric, r = R sin(theta)),
++an approximation on an eroded body; the whole molten depth may spray, with liquid properties, as below 0.01, the
++liquid-slurry viscosity contrast being future work; delta_m jumps by about 2 to 2.5 times at body Knudsen number 0.01, where
++Eq. (2) hands over to the balance; the thin branch keeps its edge-state wavelength, the bridge's continuum endpoint, which
++the flag accepts knowingly; the thick branch has no viscous gate, so a slurry layer at a Reynolds number near 3 can spray by
++inviscid theory with `--slurry-spray on`; the droplet constant k_r was calibrated on Ranger's depth, so the band's droplet
++sizes carry that; records still label the band's patches as Couette closure. Only the spraying reads the band's depth: the
++feed and the film's transport keep `melt_layer`."""
+ import os
+ from dataclasses import dataclass, field
+ 
+ import numpy as np
+ 
+ from . import dispersion
+-from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN
++from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN, KN_LOCAL_SLIP
+ 
+ K_R, K_T = 0.17, 1.1
+ B_MIN = 1.0e-6                     # m, films thinner than this do not spray (numerical floor)
+@@ -169,6 +188,38 @@
+         am = (alpha * mu) ** (1.0 / 3.0)
+         factor = np.where(girin & np.isfinite(am), am / (1.0 + am), 0.0)
+     return delta_m, factor
++
++
++def momentum_layer(tau, moment, radius, liquid):
++    """delta_m [m] per patch of the slip band from a momentum balance (sub-plan 22 Task 5i; the slip-band plan of 2026-11-06,
++    Asha's decision 2): with I = integral of r tau ds [Pa m2] the gas shear integrated over the meridian from the nose
++    (`moment`) and r = `radius` the patch's distance from the axis, the plan's derivation gives delta_m^3 = 3 mu^2 I / (rho
++    tau^2 r), the liquid's mu and rho and the patch's shear tau. Then the film's surface speed V_s = tau delta_m / mu makes
++    the surface Weber number rho V_s^2 delta_m / sigma equal to 3 I / (r sigma), free of the viscosity. nan where tau or r
++    is not above zero (the nose, a patch with no shear) or I is not finite and above zero (a leeward patch), and no warning."""
++    tau, moment, radius = (np.asarray(x, dtype=float) for x in (tau, moment, radius))
++    with np.errstate(divide="ignore", invalid="ignore"):
++        ok = (tau > 0.0) & (radius > 0.0) & (moment > 0.0) & np.isfinite(moment)
++        d = np.cbrt(3.0 * liquid.mu ** 2 * moment / (liquid.rho * tau ** 2 * radius))
++    return np.where(ok, d, np.nan)
++
++
++def spray_layer(flow, liquid, band=False, theta=None, radius=None):
++    """The depth the spraying reads, delta_m per patch: `melt_layer`'s (Girin's Eq. (2), nan off his closure) except, with
++    `band` on, on the patches in the slip band, where it is `momentum_layer`'s on the windward patches at r = `radius` sin
++    (theta) from the nose radius `radius` and the angles `theta`. A patch is in the band where the body is on the merged
++    branch with a body Knudsen number below 0.1 (`flow.in_slip_band`) and the patch's own wall Knudsen number is below 0.1
++    too (Asha, 2026-11-10; the 2026-11-06 plan with the wall condition added). Only the spraying calls it: the film's
++    transport and the feed keep `melt_layer`. With `band` off, outside the band, or for a flow with no integrated shear (a
++    state from before the band), the result is `melt_layer`'s to the last bit."""
++    delta_m = melt_layer(flow, liquid)[0]
++    moment = getattr(flow, "shear_integral", None)
++    if not band or moment is None or theta is None or radius is None or not getattr(flow, "in_slip_band", False):
++        return delta_m
++    theta = np.asarray(theta, dtype=float)
++    with np.errstate(invalid="ignore"):
++        inside = (np.asarray(flow.kn_local) < KN_LOCAL_SLIP) & (theta <= 0.5 * np.pi)
++    return np.where(inside, momentum_layer(flow.tau, moment, radius * np.sin(theta), liquid), delta_m)
+ 
+ 
+ def rayleigh_taylor_bounded(deceleration, h, extent, liquid):
+@@ -317,14 +368,24 @@
+     `before` (the class default, so that a model pickled before the setting existed behaves as it did) keeps every rule as
+     it stood; `2026-11-10` applies them. So far the one rule: on the crest-limit path (`cap_depth` given, the layered
+     skins) a Rayleigh-Taylor droplet is capped by its crest alone, not by a quarter of the body radius as well. Task 5i
+-    adds the thin branch's Knudsen gate under the same setting."""
++    adds the thin branch's Knudsen gate under the same setting (below).
++
++    The thin branch's continuum gate, under `2026-11-10` (Task 5i; Asha, 2026-11-10): the thin branch, and the rarefied
++    branch with it, release only on patches with a conjugate depth to spray on, a finite `delta_m` -- Girin's closure below
++    a wall Knudsen number of 0.01 (`melt_layer`), or, with `slip_band` on, the slip band's momentum-balance depth
++    (`spray_layer`). Elsewhere a wet patch takes no shear mode, because Girin and Kopyt's edge state comes from a shock-layer
++    construction that the merged branch treats as invalid; the Rayleigh-Taylor mode, a melt-side mode driven by the
++    deceleration, is not gated. `before` keeps the thin branch spraying wherever it did. `slip_band` (class default False,
++    so a model pickled before it existed has it off) says whether the callers read the band's depth: the model itself only
++    gates on the `delta_m` it is given, which the callers take from `spray_layer` with this flag."""
+     spray_gates = "before"
++    slip_band = False
+ 
+     def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_THEORY, table=None,
+-                 rt_spray=True, spray_gates="before"):
++                 rt_spray=True, spray_gates="before", slip_band=False):
+         if spray_gates not in SPRAY_GATES_NAMES:
+             raise ValueError("spray_gates must be one of {}, got {!r}".format(SPRAY_GATES_NAMES, spray_gates))
+-        self.spray_gates = spray_gates
++        self.spray_gates, self.slip_band = spray_gates, bool(slip_band)
+         if k_r <= 0.0 or k_t <= 0.0 or we_critical <= 0.0:
+             raise ValueError("k_r, k_t and the critical Weber number must be > 0")
+         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
+@@ -397,6 +458,12 @@
+         held = np.zeros(n, dtype=bool) if on_slurry is None else has_film & ~np.isfinite(delta_m) & np.asarray(on_slurry, dtype=bool)
+         rarefied = has_film & ~deep & free_molecular & ~held              # no edge state exists: the freestream drives the mode
+         thin = has_film & ~deep & ~rarefied & ~held
++        if self.spray_gates != "before":
++            # Asha, 2026-11-10 (sub-plan 22 Task 5i): the thin and rarefied branches shear-spray only where a conjugate depth
++            # exists, Girin's closure or the slip band's momentum balance; elsewhere the wet patch takes no shear mode
++            # (the Rayleigh-Taylor mode below is not gated)
++            with_depth = np.isfinite(delta_m)
++            rarefied, thin = rarefied & with_depth, thin & with_depth
+         # Girin's (2017) stability criterion, on the thick branch only (2026-10-22). His phi_cr comes from We_s > We_cr
+         # with the sphere's own edge solution substituted in; evaluated locally instead of through that closed form it holds on an eroded
+         # body too, which a single critical angle does not. The shear acts over the liquid it can reach, min(delta_m,
+@@ -513,7 +580,8 @@
+         unstable = mdot > 0.0
+         dm = np.where(unstable, np.minimum(mdot * areas * dt, m_f), 0.0)
+         # a droplet is never larger than a quarter of the body radius (the long near-critical waves Girin excludes; the
+-        # edge dynamic pressure vanishes toward the equator) nor than the film on its patch -- or, given cap_depth, than
++        # edge dynamic pressure vanishes toward the equator; not the Rayleigh-Taylor droplet on the crest-limit path under
++        # spray_gates 2026-11-10, below) nor than the film on its patch -- or, given cap_depth, than
+         # one crest of its own wave on the depth the release can take, (4/3) pi r^3 <= lambda^2 h (2026-10-24); under
+         # spray_gates 2026-11-10 the Rayleigh-Taylor droplet on that path has the crest limit alone (2026-11-10)
+         with np.errstate(invalid="ignore"):
+```
+
+  the skins in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -421,7 +421,7 @@
+ 
+ 
+ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,
+-               v_hat=None):
++               v_hat=None, nose_radius=None):
+     """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
+     the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
+     spray model (`model`) and the skins as they are at its start: a SprayPlan.
+@@ -438,7 +438,14 @@
+     own mode too (`slurry_modes`). The plan keeps where it was evaluated for its records' rows: `theta`, the closure,
+     the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2), and
+     for the history and the release angle the top areas, `centre` [m, (3,)], the centroid of the volume the top surface
+-    encloses, and `v_hat`, the direction of flight (Task 4)."""
++    encloses, and `v_hat`, the direction of flight (Task 4).
++
++    With `model.slip_band` on, delta_m on the patches in the slip band (the body on the merged branch below a body
++    Knudsen number of 0.1, the patch's wall Knudsen number below 0.1) is the momentum balance's (`spray.spray_layer`; sub-plan
++    22 Task 5i, the plan of 2026-11-06 with Asha's change of 2026-11-10), at the nose radius `nose_radius` (default `radius`)
++    the integrated shear was taken at: `b`, the regime layers, the Rayleigh-Taylor pool, the mass run and the cap stay as
++    they are, so the liquid sprays on the flowing depth and a liquid on slurry is held only where delta_m is not finite. The
++    film transport reads Girin's delta_m as before."""
+     mat, liq = sk.material, model.liquid
+     n = sk.n
+     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
+@@ -450,7 +457,7 @@
+     theta = np.asarray(theta, dtype=float)
+     windward = theta <= 0.5 * np.pi
+     w_n = flow.deceleration * np.maximum(np.cos(theta), 0.0)
+-    delta_m, _ = spray_mod.melt_layer(flow, liq)
++    delta_m = spray_mod.spray_layer(flow, liq, model.slip_band, theta, radius if nose_radius is None else nose_radius)
+     v_s = film_mod.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
+     extent = region_extent(edges, L > 0.0, A_top)
+     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
+@@ -459,7 +466,8 @@
+                          b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
+                          cap_depth=cap)
+     if slurry:
+-        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow)
++        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow,
++                                     theta=theta, nose_radius=nose_radius)
+     else:
+         rate_s, modes = np.zeros(n), _no_slurry(n)
+     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
+@@ -474,7 +482,8 @@
+     return out
+ 
+ 
+-def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow):
++def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow, theta=None,
++                 nose_radius=None):
+     """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
+     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
+     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
+@@ -486,7 +495,10 @@
+     (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
+     must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
+     rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and
+-    more viscous, waits for the next macro step's evaluation (`skin.Cascade.T_slurry`)."""
++    more viscous, waits for the next macro step's evaluation (`skin.Cascade.T_slurry`). With `model.slip_band` on and the
++    angles `theta` given, the slurry's delta_m in the slip band is the momentum balance's, with the slurry's density and
++    viscosity (`spray.spray_layer`, at `nose_radius`, default `radius`): `--slurry-spray on` lets the slurry spray in the band
++    (Asha's decision 4 of 2026-11-06); with it off nothing here runs and the release stays capped at the liquid."""
+     mat = sk.material
+     n = sk.n
+     out = _no_slurry(n)
+@@ -504,8 +516,11 @@
+     sub = _rows(flow, rows)
+     viscosity = lambda gamma: rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)
+ 
++    nose = radius if nose_radius is None else nose_radius
++    theta_rows = None if theta is None else np.asarray(theta, dtype=float)[rows]
++
+     def layer(mu):
+-        d, _ = spray_mod.melt_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA))
++        d = spray_mod.spray_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA), model.slip_band, theta_rows, nose)
+         v, _, shear, _ = film_mod.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
+         return d, v, np.minimum(shear, rheology.GAMMA_MAX)
+ 
+@@ -525,7 +540,7 @@
+     for j, i in enumerate(rows):
+         props = material_mod.LiquidProperties(float(rho[j]), float(mu[j]), SLURRY_SIGMA)
+         m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False,
+-                                spray_gates=model.spray_gates)
++                                spray_gates=model.spray_gates, slip_band=model.slip_band)
+         one, cell = slice(j, j + 1), slice(i, i + 1)
+         r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
+                        radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],
+@@ -802,7 +817,7 @@
+                                              self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
+                                              points=surface.points.copy(),
+                                              centre=spray_mod.enclosed_centroid(surface.points, surface.faces),
+-                                             v_hat=self.v_hat)
++                                             v_hat=self.v_hat, nose_radius=self.nose_radius())
+                 self._step_release = self.spray_plan.release
+         sk, mat = self.skins, self.material
+         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
+@@ -1294,7 +1309,8 @@
+         mat, out = self.material, {"b_over_delta_m_median": float("nan"), "sheared_depth_over_delta_m_median": float("nan")}
+         if not (self.flow_on and mat.melts and mat.liquid is not None) or self.last_flow is None:
+             return out
+-        delta_m, _ = spray_mod.melt_layer(self.last_flow, mat.liquid)
++        delta_m = spray_mod.spray_layer(self.last_flow, mat.liquid, getattr(self.spray, "slip_band", False), self.theta,
++                                        self.nose_radius())              # the band's depth too where it is on (Task 5i)
+         if len(delta_m) != self.skins.n:
+             return out
+         with np.errstate(invalid="ignore"):
+```
+
+  and the element model in `reentry_model/body.py`:
+
+```diff
+--- a/reentry_model/body.py
++++ b/reentry_model/body.py
+@@ -779,6 +779,15 @@
+         layer = b + molten + deep
+         regime_layer = layer if nonrigid is None else b + nonrigid + deep
+         v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=regime_layer)
++        # the slip band's depth (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha 2026-11-10): the spraying alone reads the
++        # momentum balance's delta_m on the merged branch's patches inside both Knudsen limits, with the film surface velocity
++        # it gives; the feed, the runoff above and the records of the conjugate depth keep Girin's delta_m, and with the band
++        # off or no patch in it every number is the one before
++        if getattr(self.spray, "slip_band", False):
++            spray_delta = spray_mod.spray_layer(flow, liq, True, self.theta, self.nose_radius())
++            v_spray = self._film_mod.lubrication(flow.tau, flow.G, b, spray_delta, liq.mu, b_layer=regime_layer)[0]
++        else:
++            spray_delta, v_spray = delta_m, v_s
+         # the molten surface: the area over which a wave could form at all, either wetted by the film or molten in its
+         # own right. Its contiguous extent is what every mode's wavelength is measured against (2026-09-24).
+         wetted = (b >= spray_mod.B_MIN) | (molten > 0.0)
+@@ -788,9 +797,9 @@
+         w_n = flow.deceleration * np.maximum(np.cos(self.theta), 0.0)
+         # (iii) spraying. Off Girin's closure a film whose base is slurry takes no shear mode; what it holds is recorded
+         on_slurry = None if nonrigid is None else nonrigid > 0.0
+-        held = None if nonrigid is None else (self.windward & (b >= spray_mod.B_MIN) & ~np.isfinite(delta_m) & on_slurry)
++        held = None if nonrigid is None else (self.windward & (b >= spray_mod.B_MIN) & ~np.isfinite(spray_delta) & on_slurry)
+         held_mass = float("nan") if held is None else float(self.m_f[held].sum())
+-        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f,
++        res = self.spray.evaluate(flow, state, b, spray_delta, v_spray, self.windward, dt, areas, self.m_f,
+                                   self.transverse_radius, b_layer=layer, extent=extent, deceleration_n=w_n,
+                                   regime_layer=None if nonrigid is None else regime_layer, on_slurry=on_slurry)
+         # Girin & Kopyt's patches whose film is shallower than the floor's Stokes layer: outside the inviscid mode's
+```
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -6,13 +6,13 @@
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
+-        --size-feedback current|initial --spray-gates 2026-11-10|before ...]
++        --size-feedback current|initial --spray-gates 2026-11-10|before --slip-band on|off ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
+         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial
+-        --spray-gates 2026-11-10|before]
++        --spray-gates 2026-11-10|before --slip-band on|off]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -156,6 +156,24 @@
+     return args.size_feedback or "current"
+ 
+ 
++def spraying_run(args):
++    """Whether a run of `run`'s arguments has a spray model: --melt on with the layered skins' flow on, or with the element model
++    and Girin's removal (the instant-removal devices and the heat-only skins have none)."""
++    if args.melt != "on":
++        return False
++    return skin_flow_of(args) == "on" if surface_model_of(args) == "skin" else removal_of(args) == "girin"
++
++
++def spray_name_suffix(spray_gates, slip_band, spraying=True):
++    """The run-name suffix of a spraying run's release rules (sub-plan 22 Tasks 5h and 5i): `_gates-before` where the rules
++    decided on 2026-11-10 are off (--spray-gates before; the default `2026-11-10` is unmarked, as the defaults changed
++    then), and `_slipband-on` where the spraying runs in the slip band (--slip-band on; off is unmarked). Empty for a run with
++    no spray model, which the options do not concern."""
++    if not spraying:
++        return ""
++    return ("_gates-before" if spray_gates == "before" else "") + ("_slipband-on" if slip_band else "")
++
++
+ def spread_limit_of(args):
+     """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
+     return None if args.spread_limit == "off" else args.spread_limit
+@@ -199,14 +217,15 @@
+ 
+ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridging_name, wind_name, heating_name=None, melt=None,
+                    deep_runoff=True, molten_cascade=True, seed=DEFAULT_SEED, rigid_substrate=True, dt_continuum="default",
+-                   surface_model=DEFAULT_SURFACE_MODEL, skin_suffix=""):
++                   surface_model=DEFAULT_SURFACE_MODEL, skin_suffix="", spray_suffix=""):
+     """The run name encodes the configuration, so runs of different settings can share an output directory. A melting
+     run with the deep runoff off (amendment of 2026-10-02) ends in `_deeprunoff-off`, one with the molten cascade off
+     (amendment of 2026-10-03) in `_moltencascade-off`, one with the rigid substrate off (amendment of 2026-10-06) in
+     `_rigidsubstrate-off`, one whose continuum step is not its removal mode's default (amendment of 2026-10-07) in
+     `_dtcontinuum-off` or `_dtcontinuum-<s>`; a thermal run with the element model in `_surface-elements`, the layered
+     skins being the default (spec 10.1; sub-plan 22 Task 3), and one with the skins in `skin_suffix`, their non-default
+-    settings (`skin_name_suffix`, empty for the defaults); and any run with a seed other than DEFAULT_SEED (amendment of
++    settings (`skin_name_suffix`, empty for the defaults); a spraying run's release rules in `spray_suffix`
++    (`spray_name_suffix`: `_gates-before`, `_slipband-on`, sub-plan 22 Task 5i); and any run with a seed other than DEFAULT_SEED (amendment of
+     2026-10-05) in `_seed-<n>`. Without a thermal model there is no surface model and no suffix for it."""
+     dtc_default = DEFAULT_DT_CONTINUUM if melt == "girin" else None
+     dtc = dtc_default if dt_continuum == "default" else dt_continuum
+@@ -217,6 +236,7 @@
+             + ("_rigidsubstrate-off" if melt and not rigid_substrate else "")
+             + ("" if not melt or dtc == dtc_default else "_dtcontinuum-off" if dtc is None else "_dtcontinuum-{:g}".format(dtc))
+             + (("_surface-elements" if surface_model == "elements" else skin_suffix) if heating_name else "")
++            + spray_suffix
+             + ("_seed-{}".format(seed) if seed != DEFAULT_SEED else ""))
+ 
+ 
+@@ -351,6 +371,9 @@
+     rs.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default=None,
+                     help="which of the release rules decided on 2026-11-10 apply: 2026-11-10 or before (default: the saved "
+                          "flight's, before for one saved before the option existed)")
++    rs.add_argument("--slip-band", choices=("on", "off"), default=None,
++                    help="Girin's spraying also runs in the slip band, body Knudsen number 0.01 to 0.1 (default: the saved "
++                         "flight's, off for one saved before the option existed)")
+     rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
+                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
+@@ -502,6 +525,14 @@
+                     help="which of the release rules decided on 2026-11-10 apply (sub-plan 22 Task 5h): 2026-11-10, a "
+                          "Rayleigh-Taylor droplet on the skins' crest-limit path is capped by its crest alone, with no "
+                          "quarter-of-the-body-radius cap (default); before: every rule as it stood")
++    me.add_argument("--slip-band", choices=("on", "off"), default="off",
++                    help="with a spraying run: on, Girin's spraying also runs where the body is on the merged branch with a body "
++                         "Knudsen number from 0.01 to 0.1 and the patch's own wall Knudsen number is below 0.1, the film's depth "
++                         "there from a momentum balance on the integrated shear instead of Girin's Eq. (2) (sub-plan 22 Task 5i; "
++                         "Asha, 2026-11-06 and 2026-11-10); with --slurry-spray on the exposed slurry sprays there too, with it "
++                         "off the release stays capped at the liquid; the edge state the thin branch reads there comes from a "
++                         "shock-layer construction the merged branch treats as invalid, and the flag accepts that knowingly "
++                         "(default off, named _slipband-on)")
+     me.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default="depth",
+                     help="with --surface-model skin: what pairs neighbouring columns' cells in the sideways conduction: depth "
+                          "below the tops (spec 6.3), or height above the bases, so that heat passes between cells that touch "
+@@ -651,6 +682,7 @@
+             info.update({"rt_spray": args.rt_spray, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                          "k_r": args.kr, "k_t": args.kt, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+                          "particles": args.particles, "spray_gates": args.spray_gates,
++                         "slip_band": args.slip_band,
+                          "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma}})
+     elif melting:
+         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
+@@ -658,7 +690,7 @@
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+-                     "spray_gates": args.spray_gates,
++                     "spray_gates": args.spray_gates, "slip_band": args.slip_band,
+                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
+                      "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus, "latent_heat_Jkg": mat.latent_heat})
+     return the_body, heating_model, info
+@@ -667,7 +699,7 @@
+ def spray_model_of(args, mat):
+     """The shared spray physics with the command line's constants, for either surface model."""
+     return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on",
+-                            spray_gates=args.spray_gates)
++                            spray_gates=args.spray_gates, slip_band=args.slip_band == "on")
+ 
+ 
+ def skin_settings(args):
+@@ -696,7 +728,9 @@
+                                                                     spread_limit_of(args), part_count_rule_of(args),
+                                                                     hand_down_of(args), args.sideways_heat,
+                                                                     skin_size_feedback_of(args),
+-                                                                    melting_skins=melting_skins_of(args)))
++                                                                    melting_skins=melting_skins_of(args)),
++                                       spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
++                                                                      spraying_run(args)))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -774,6 +808,9 @@
+     if args.slurry_spray == "on" and args.skin_flow != "on":
+         parser.error("--slurry-spray on needs --skin-flow on (with --surface-model skin and --melt on): the exposed slurry "
+                      "sprays by the skins' spraying from their top cells")
++    if args.slip_band == "on" and not spraying_run(args):
++        parser.error("--slip-band on needs a spraying run: --melt on with the layered skins' flow on, or with --surface-model "
++                     "elements and Girin removal; it sets the depth the spraying reads in the slip band")
+     if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
+         parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
+     if part_count_rule_of(args) != "moves" and not (args.surface_model == "skin" and args.melt == "on"):
+@@ -1024,6 +1061,11 @@
+             parser.error("--spray-gates needs a saved flight with spraying (--melt on with Girin removal): it sets the "
+                          "release rules")
+         changed["--spray-gates"] = args.spray_gates
++    if args.slip_band is not None:
++        if getattr(run.body, "spray", None) is None:
++            parser.error("--slip-band needs a saved flight with spraying (--melt on with Girin removal): it sets the depth "
++                         "the spraying reads in the slip band")
++        changed["--slip-band"] = args.slip_band
+     if args.size_feedback is not None:
+         if not skins:
+             parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
+@@ -1078,6 +1120,8 @@
+         run.body.size_feedback = args.size_feedback
+     if "--spray-gates" in changed:
+         run.body.spray.spray_gates = args.spray_gates
++    if "--slip-band" in changed:
++        run.body.spray.slip_band = args.slip_band == "on"
+     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
+         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
+         state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
+@@ -1094,14 +1138,14 @@
+                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
+                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"),
+-                      ("spray_gates", "--spray-gates")):
++                      ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, spray gates {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, spray gates {}, slip band {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+@@ -1112,6 +1156,7 @@
+               run.body.sideways_pairing if skins else "depth",
+               run.body.size_feedback if skins else "n/a",
+               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
++              ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -1135,6 +1180,8 @@
+         thermal_info["size_feedback"] = "current"
+     if getattr(run.body, "spray", None) is not None and run.body.spray.spray_gates != "before":
+         thermal_info["spray_gates"] = run.body.spray.spray_gates      # absent: before, as a state saved without it
++    if getattr(run.body, "spray", None) is not None:
++        thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (685 passed, 1 skipped: Task 5h's 662 and these 23; 30.5 minutes across four processes, 2026-11-10).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/surface_flow.py reentry_model/spray.py reentry_model/skinbody.py reentry_model/body.py reentry_model/cli.py tests/test_reentry_model_surface_flow.py tests/test_reentry_model_spray.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026-11-10 and spraying in the slip band (--slip-band on|off); sub-plan 22 Task 5i"
+```
+
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g and 5h written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h and 5i written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

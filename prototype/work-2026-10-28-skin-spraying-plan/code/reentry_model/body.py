@@ -779,6 +779,15 @@ class MeltingBody(ThermalBody):
         layer = b + molten + deep
         regime_layer = layer if nonrigid is None else b + nonrigid + deep
         v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=regime_layer)
+        # the slip band's depth (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha 2026-11-10): the spraying alone reads the
+        # momentum balance's delta_m on the merged branch's patches inside both Knudsen limits, with the film surface velocity
+        # it gives; the feed, the runoff above and the records of the conjugate depth keep Girin's delta_m, and with the band
+        # off or no patch in it every number is the one before
+        if getattr(self.spray, "slip_band", False):
+            spray_delta = spray_mod.spray_layer(flow, liq, True, self.theta, self.nose_radius())
+            v_spray = self._film_mod.lubrication(flow.tau, flow.G, b, spray_delta, liq.mu, b_layer=regime_layer)[0]
+        else:
+            spray_delta, v_spray = delta_m, v_s
         # the molten surface: the area over which a wave could form at all, either wetted by the film or molten in its
         # own right. Its contiguous extent is what every mode's wavelength is measured against (2026-09-24).
         wetted = (b >= spray_mod.B_MIN) | (molten > 0.0)
@@ -788,9 +797,9 @@ class MeltingBody(ThermalBody):
         w_n = flow.deceleration * np.maximum(np.cos(self.theta), 0.0)
         # (iii) spraying. Off Girin's closure a film whose base is slurry takes no shear mode; what it holds is recorded
         on_slurry = None if nonrigid is None else nonrigid > 0.0
-        held = None if nonrigid is None else (self.windward & (b >= spray_mod.B_MIN) & ~np.isfinite(delta_m) & on_slurry)
+        held = None if nonrigid is None else (self.windward & (b >= spray_mod.B_MIN) & ~np.isfinite(spray_delta) & on_slurry)
         held_mass = float("nan") if held is None else float(self.m_f[held].sum())
-        res = self.spray.evaluate(flow, state, b, delta_m, v_s, self.windward, dt, areas, self.m_f,
+        res = self.spray.evaluate(flow, state, b, spray_delta, v_spray, self.windward, dt, areas, self.m_f,
                                   self.transverse_radius, b_layer=layer, extent=extent, deceleration_n=w_n,
                                   regime_layer=None if nonrigid is None else regime_layer, on_slurry=on_slurry)
         # Girin & Kopyt's patches whose film is shallower than the floor's Stokes layer: outside the inviscid mode's

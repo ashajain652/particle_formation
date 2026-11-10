@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g and 5h (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h and 5i (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2469,7 +2469,7 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
 - Modify: `reentry_model/cli.py` (`--hand-down` and `--part-count-from` default by run on `run`: `off` and `melting` for melting skins,
   `on` and `moves` for every other run; `--spray-gates 2026-11-10|before` on `run` and `resume`; the spread-limit refusal; the name
   suffixes; the records)
-- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 5 changed),
+- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 8 changed),
   `tests/test_reentry_model_restart.py` (2 tests added, four resume tests on `FLIGHT_ON`), `tests/test_reentry_model_skinbody.py` (1 test, the momentum fix)
 
 **Interfaces:**
@@ -2479,7 +2479,8 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
   `part_count_rule_of` resolve an omitted option by it; `skin_name_suffix(..., melting_skins=False)`; `SprayModel.spray_gates`
   (`"2026-11-10"` or `"before"`, `ValueError` for another; Task 5i adds the thin branch's Knudsen gate under it). `run`:
   `--hand-down`, `--part-count-from` and `--spray-gates` (default `2026-11-10`); the name ends in `_handdown-on` or `_parts-moves` only
-  where the value differs from the run's default (melting skins: `on`, `moves`; other runs: `off`, `melting`); JSON
+  on a melting skin run, whose defaults are `off` and `melting`, and in `_handdown-off` or `_parts-melting` only on every other run, whose
+  defaults are `on` and `moves`; JSON
   `settings.skin.hand_down` (`"on"`/`"off"`) and `settings.skin.part_count_from` always, `settings.spray_gates` for a run with a spray
   model; the arguments a saved state carries hold the resolved values. `resume`: `--spray-gates`, default the saved model's (`before` for
   a state without it), exit 2 without spraying; JSON `settings.spray_gates` only when `2026-11-10`, `changed["--spray-gates"]` when given;
@@ -2502,8 +2503,10 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
    run. Why: the default depends on the surface model and on melting, known only after `surface_model_of`. `cmd_run` writes the resolved
    values into the arguments a saved state carries.
 2. *The suffix marks a value that differs from the run's default.* Why: a melting skin run's name is unchanged by the new defaults; the
-   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins.
-3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's.
+   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins; the same suffix-less name now means hand-down off and part count by melting,
+   where it meant hand-down on and part count by the moves before this task.
+3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's
+   (Task 5i adds `_gates-before` for a spraying run given `before`).
 4. *The class default is `before`, the constructor's too,* so every state pickled before and every direct `SprayModel(...)` keeps its
    behaviour; only the command line's `run` turns `2026-11-10` on.
 5. *The resume tests of the spread limit, of the melting rule's change and of the saved flight's options fly `--hand-down on --part-count-from moves`*
@@ -2557,9 +2560,152 @@ git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py te
 git commit -m "Spraying: --hand-down off and --part-count-from melting the defaults of melting skins, the Rayleigh-Taylor droplet without the body-radius cap on the skins' crest-limit path (--spray-gates 2026-11-10|before on run and resume); sub-plan 22 Task 5h"
 ```
 
+### Task 5i: The thin branch's Knudsen gate, and spraying in the slip band
+
+**Files:**
+- Modify: `reentry_model/surface_flow.py` (`KN_BODY_SLIP`, `shear_moment`, the field `SurfaceFlowResult.shear_integral`, the property
+  `in_slip_band`, the integrated shear set in `evaluate`'s last return on the merged branch)
+- Modify: `reentry_model/spray.py` (`momentum_layer`, `spray_layer`, `SprayModel.slip_band` and its constructor argument, the thin and
+  rarefied branches' gate under `spray_gates` `2026-11-10`, the module docstring, two stale comments on the quarter-radius cap)
+- Modify: `reentry_model/skinbody.py` (`girin_plan` reads `spray_layer` and takes `nose_radius`; `slurry_modes` takes `theta` and
+  `nose_radius`; the slurry's one-patch model carries `slip_band`; the history's depth ratios read the band's depth; `advance` passes
+  `nose_radius()`)
+- Modify: `reentry_model/body.py` (`MeltingBody._film_and_spray`: the spraying reads `spray_layer`'s depth and the velocity it gives; the
+  feed, the runoff and the records of the conjugate depth keep Girin's)
+- Modify: `reentry_model/cli.py` (`--slip-band on|off` on `run` and `resume`; `spraying_run`, `spray_name_suffix`; the name suffixes
+  `_gates-before` and `_slipband-on`; the records)
+- Test: `tests/test_reentry_model_surface_flow.py` (3 tests added), `tests/test_reentry_model_spray.py` (8 added, 1 changed),
+  `tests/test_reentry_model_skinbody.py` (8 added), `tests/test_reentry_model_melting.py` (1 added),
+  `tests/test_reentry_model_cli.py` (2 added), `tests/test_reentry_model_restart.py` (1 added, 1 extended, a comment corrected)
+
+**Interfaces:**
+- Consumes: Task 5h's `SprayModel.spray_gates` and `spray.SPRAY_GATES_NAMES`; Task 5g's `SkinBody.nose_radius()` (the fitted radius under
+  `--size-feedback current`), which the band's momentum balance reads; `surface_flow`'s merged branch, `kn_local` and the bridged `tau`;
+  `slurry_modes`, `film.lubrication`.
+- Produces: `surface_flow.KN_BODY_SLIP = 0.1`; `surface_flow.shear_moment(theta, tau, radius, windward)`, I = integral of r tau ds
+  [Pa m2] per patch, nan on leeward patches; `SurfaceFlowResult.shear_integral` (last field, `None` off the merged branch) and the
+  property `in_slip_band` (the merged branch with a body Knudsen number below 0.1: 0.01 is in the band, 0.1 is out);
+  `spray.momentum_layer(tau, moment, radius, liquid)`, delta_m [m]; `spray.spray_layer(flow, liquid, band=False, theta=None, radius=None)`,
+  `melt_layer`'s depth except, with `band` on, on the windward patches whose own wall Knudsen number is below 0.1 where the body is in the
+  band, where it is the momentum balance's; `SprayModel(..., slip_band=False)` with a class default `False`; `girin_plan(..., nose_radius=None)`
+  (default the transverse radius). Under `spray_gates` `2026-11-10` the thin and rarefied branches release only where `delta_m` is finite.
+  `run`: `--slip-band on|off` (default `off`), refused (exit 2) without a spray model; the name ends in `_gates-before` for `--spray-gates
+  before` on a spraying run and `_slipband-on` for the band, after the surface model's suffixes and before the seed's; JSON
+  `settings.slip_band` (`"on"`/`"off"`) for a run with a spray model. `resume`: `--slip-band`, default the saved model's (`off` for a state
+  without it), exit 2 without spraying; JSON `settings.slip_band` always for a spraying flight; `changed["--slip-band"]` when given; the one
+  line before the flight names it.
+
+**What was decided** (Asha, 2026-11-10, "Further decisions" item 3 of the design and its amendment "the slip band follows the plan of
+2026-11-06"; the controller's calls on the points she left open). (1) *The gate*: under `--spray-gates 2026-11-10` the thin branch, and the
+rarefied branch with it, release only where a conjugate depth exists for spraying: Girin's closure below Knudsen 0.01 (`melt_layer`'s finite
+`delta_m`), or the band's momentum-balance depth where `--slip-band on` puts a patch in the band. Elsewhere a wet patch takes no shear mode;
+the Rayleigh-Taylor mode, a melt-side mode driven by the deceleration, is not gated. It applies wherever `SprayModel.evaluate` runs: the
+skins, the slurry's one-patch model and the element model. (2) *The band* follows the side session's plan of 2026-11-06 (Asha's six decisions
+of that day: the body gate stays the model's; the band's `delta_m` from a momentum balance, `delta_m^3 = 3 mu^2 I / (rho tau^2 r)`, with a jump
+of about 2 to 2.5 times at body Knudsen 0.01 accepted; the whole molten depth may spray on liquid properties; `--slurry-spray on` lets the slurry
+spray in the band, with it off the release stays capped at the liquid; the shear is the bridged `flow.tau` and the thin branch keeps its
+edge-state wavelength; the viscous floor already applies on the liquid thin branch and the band changes no gate there), with one change of
+2026-11-10: a patch is in the band only where the body is on the merged branch with a body Knudsen number below 0.1 **and** the patch's own
+wall Knudsen number is below 0.1. The body part is the property `in_slip_band`; the wall part is applied per patch in `spray_layer`.
+(3) *Both models*: the element model's spraying reads the band's depth too (`_film_and_spray`), and the band's depth is the spraying's alone.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *The gate lives under the existing `2026-11-10` value of `--spray-gates`; no new value.* Why: no state was saved between Tasks 5h and
+   5i (no flights were launched after Task 5g; the running diagnostic flight is a frozen copy of older code), so no saved state has
+   `2026-11-10` meaning the rules of Task 5h only. Cost if wrong: a state saved with `2026-11-10` between the two tasks would resume with
+   the thin branch gated; none exists. This changes the default `run`: a thin-branch patch whose wall Knudsen number is between 0.01 and
+   0.1 on the shock-layer branch, or on the merged branch, no longer shear-sprays, where before it did.
+2. *`in_slip_band` is the body's alone and a property of the surface flow's result;* the wall's condition is applied where the depth is
+   computed, per patch, because `kn_local` is per patch and the same flow serves the slurry's rows (`_rows` slices it).
+3. *`spray_layer` falls back to `melt_layer` whenever the band is off, the flow carries no integrated shear (a stub flow, a state saved before
+   the band) or the body is outside the band,* so every output with the band off is identical to the last bit; `getattr` on the flow
+   covers the tests' stand-ins.
+4. *The integral is taken from the nose radius the flow was evaluated at,* and `r = R sin(theta)` in the balance reads `nose_radius()`
+   (the fitted radius, bounded by the flat-face value), not the transverse radius, which stays the size cap's. The skins' call passes
+   `nose_radius=self.nose_radius()` just after `flow_forcing` evaluated the flow at the same value.
+5. *The element model takes a separate `spray_delta` and `v_spray`;* the feed, the runoff and `delta_m_mean_um` keep Girin's `delta_m`. With
+   the band off `spray_delta` is `delta_m` itself and `v_spray` is `v_s`, the same objects. `held` reads `spray_delta`: a film on slurry is
+   held only where no depth exists.
+6. *The rarefied branch is gated with the thin branch,* so under `2026-11-10` it never sprays (a free-molecular body has no `delta_m`); one
+   Task 5h test that expected it to spray under the new gates now expects nothing there.
+7. *`--slip-band on` is accepted with `--spray-gates before`.* Why: the band's depth is finite either way, so thick and thin spray in it;
+   under `before` the thin branch also sprays off the band. The flag is a research device; the pairing is the user's.
+8. *The names:* `_gates-before` and `_slipband-on` come from the run's own arguments, through `spraying_run(args)` (`--melt on`, with the skins'
+   flow on or the element model with Girin removal); a run with no spray model carries neither. This is Task 5h's parked fix 1 (the
+   `_gates-before` suffix) and replaces its ruling 3.
+9. *`resume` records `slip_band` for every spraying flight, `on` or `off`,* as `run` does; an older state reads `off`. (Task 5h's
+   `spray_gates` is recorded only when `2026-11-10`; the band is simpler.)
+10. *What is not measured here.* The band's depth jump at 0.01, the droplet sizes in the band and the thin branch's validity in the merged
+    regime are the flagged assumptions of the plan of 2026-11-06 (its Known limits, copied into `spray.py`'s docstring); the plan's own
+    measurement (the 74 km short case) is replaced by the test flights after the final review, the 100 mm sphere from its snapshot at 22.0 s
+    with the band off and on. The unit tests pin the mechanics (a band patch sprays, an outside patch does not, the transport is unchanged)
+    on constructed columns: 54 um of band depth at 200 Pa of shear and 0.6 radian, a 50 um film on the rigid floor spraying (the viscous
+    floor's gamma tau 0.47) and a 15 um film not (1.19).
+
+Parked fixes of Task 5h's review (`task-2-review.md`, Minor 1-5), done here: the `_gates-before` suffix with its name test; the two stale
+comments in `spray.py` on the quarter-radius cap corrected (the Rayleigh-Taylor droplet on the crest-limit path under `2026-11-10`); the
+restart test of the defaults now makes the `--hand-down on` resume its docstring claimed (`changed == {"--hand-down": "on"}`, no
+`hand_down` key in the JSON); the `FLIGHT_ON` comment says it differs from the default flight only in its hand-down and part count; and Task
+5h's record above (its Files line, the Interfaces parenthetical on the suffixes, ruling 2's cost) corrected.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_surface_flow.py`:
+
+{{DIFF_TEST_SURFACE_FLOW_T5I}}
+
+  in `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T5I}}
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5I}}
+
+  in `tests/test_reentry_model_melting.py`:
+
+{{DIFF_TEST_MELTING_T5I}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5I}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5I}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` for `shear_moment`, `momentum_layer`, `spray_layer`, `KN_BODY_SLIP`; `TypeError` for `slip_band` and `nose_radius`; unrecognised `--slip-band`.
+
+- [ ] **Step 3: The surface flow** in `reentry_model/surface_flow.py`:
+
+{{DIFF_SURFACE_FLOW_T5I}}
+
+  the spray model in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T5I}}
+
+  the skins in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5I}}
+
+  and the element model in `reentry_model/body.py`:
+
+{{DIFF_BODY_T5I}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5I}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (685 passed, 1 skipped: Task 5h's 662 and these 23; 30.5 minutes across four processes, 2026-11-10).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/surface_flow.py reentry_model/spray.py reentry_model/skinbody.py reentry_model/body.py reentry_model/cli.py tests/test_reentry_model_surface_flow.py tests/test_reentry_model_spray.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026-11-10 and spraying in the slip band (--slip-band on|off); sub-plan 22 Task 5i"
+```
+
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g and 5h written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h and 5i written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

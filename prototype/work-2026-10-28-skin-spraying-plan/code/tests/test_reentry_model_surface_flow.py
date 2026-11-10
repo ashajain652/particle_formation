@@ -138,3 +138,45 @@ def test_g_is_the_pressure_gradient_along_the_meridian_and_the_deceleration():
     np.testing.assert_allclose(r.G[windward], -r.dp_ds[windward] - 2400.0 * r.deceleration * np.sin(theta[windward]),
                                rtol=1e-12, atol=1e-9)
     assert np.all(r.dp_ds[windward][1:-1] < 0.0) and np.all(r.dp_ds[~windward] == 0.0) and np.all(r.G[~windward] == 0.0)
+
+
+# -- the integrated shear and the slip band (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha's decisions of 2026-11-06 and 2026-11-10) --
+def test_shear_moment_matches_the_closed_form():
+    """I = integral of r tau ds along the meridian: for tau = 40 sin(theta) Pa on a sphere of radius 0.05 m, I = 40 R^2
+    (theta/2 - sin(2 theta)/4) in Pa m^2, the trapezoid sum within 0.1 % at 2001 angles from 0.2 rad up (very near the nose the
+    integral is a few parts in 1e11 and the first trapezoids' relative error is larger, which no spraying reads)."""
+    theta = np.linspace(0.0, np.pi / 2, 2001)
+    tau = 40.0 * np.sin(theta)
+    moment = sf.shear_moment(theta, tau, 0.05, theta <= np.pi / 2)
+    exact = 40.0 * 0.05 ** 2 * (theta / 2 - np.sin(2 * theta) / 4)
+    far = theta >= 0.2
+    assert moment[far] == pytest.approx(exact[far], rel=1e-3) and moment[0] == 0.0
+
+
+def test_shear_moment_keeps_order_ties_and_leeward():
+    """The columns come in any order and several share an angle: the integral is non-decreasing with angle, equal on equal
+    angles, and nan on the leeward patch, whose shear is not part of the push on the windward melt."""
+    theta = np.array([0.6, 0.2, 0.2, 2.0])
+    moment = sf.shear_moment(theta, np.array([3.0, 1.0, 1.0, 9.0]), 0.05, theta <= np.pi / 2)
+    assert moment[1] == moment[2] and moment[0] > moment[1] > 0.0 and np.isnan(moment[3])
+    assert not np.isnan(sf.shear_moment(np.array([0.1, 0.1]), np.array([5.0, 5.0]), 0.05, np.ones(2, bool))).any()
+
+
+def test_the_slip_band_is_the_merged_branch_below_a_body_knudsen_number_of_a_tenth():
+    """in_slip_band: true on the merged branch (body Knudsen number from 0.01, itself in it, up to 0.1, itself out) and false
+    on the shock-layer branch below 0.01 and the free-molecular branch (0.1 is still the merged branch, outside the band); only the merged branch carries the integrated shear,
+    from the final bridged shear, nan on the leeward patch."""
+    a = aero_state_at(43.5)
+    theta = np.radians(np.array([0.5, 30.0, 60.0, 89.0, 120.0]))
+    flow = sf.SurfaceFlow(gamma_pm=1.15)
+    got = {}
+    for kn in (0.009, 0.01, 0.05, 0.0999, 0.1, 20.0):
+        a.kn = kn
+        r = flow.evaluate(a, theta, 0.05, 2400.0, np.full(theta.size, 908.0))
+        got[kn] = r
+    assert [got[k].in_slip_band for k in (0.009, 0.01, 0.05, 0.0999, 0.1, 20.0)] == [False, True, True, True, False, False]
+    assert sf.KN_BODY_SLIP == 0.1
+    assert got[0.009].shear_integral is None and got[20.0].shear_integral is None and got[0.1].shear_integral is not None
+    r = got[0.05]
+    assert r.branch == sf.BRANCH_MERGED and np.isnan(r.shear_integral[4]) and np.all(np.diff(r.shear_integral[:4]) > 0.0)
+    np.testing.assert_array_equal(r.shear_integral, sf.shear_moment(theta, r.tau, 0.05, theta <= np.pi / 2))
