@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g and 5h (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2367,7 +2367,7 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 
 **Files:**
 - Modify: `reentry_model/skinbody.py` (`NOSE_COLUMNS`, `NoseFit`, the class defaults and `SkinBody(..., size_feedback="current")`,
-  `_fit_nose` called from `_refresh_geometry`, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
+  `_fit_nose`, computed lazily from `nose_fit` at the first read after `_refresh_geometry` clears it, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
 - Modify: `reentry_model/coupled.py` (`SKINBODY_COLUMNS` gains the five columns)
 - Modify: `reentry_model/cli.py` (`--size-feedback current|initial` accepted with `--surface-model skin` on `run`, default `current`,
   and on `resume`; the records; the one refusal of it with the skins goes)
@@ -2459,7 +2459,98 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f and 5g written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5h: The new defaults, and the Rayleigh-Taylor droplet without the body-radius cap
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SPRAY_GATES_NAMES`, `SprayModel(..., spray_gates="before")` with a class default `"before"`, the
+  Rayleigh-Taylor branch's radius on the crest-limit path in `SprayModel.evaluate`)
+- Modify: `reentry_model/skinbody.py` (the slurry's one-patch spray model is built with the parent model's `spray_gates`)
+- Modify: `reentry_model/cli.py` (`--hand-down` and `--part-count-from` default by run on `run`: `off` and `melting` for melting skins,
+  `on` and `moves` for every other run; `--spray-gates 2026-11-10|before` on `run` and `resume`; the spread-limit refusal; the name
+  suffixes; the records)
+- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 5 changed),
+  `tests/test_reentry_model_restart.py` (2 tests added, the flight's options pinned)
+
+**Interfaces:**
+- Consumes: Task 5g's, 5e's and 5d's wiring of an option on `run` and `resume` (`hand_down_of`, `part_count_rule_of`, `skin_name_suffix`,
+  the saved arguments, `thermal_info`); `spray.BRANCH_RT`; `SprayModel.evaluate(..., cap_depth=)`.
+- Produces: `cli.melting_skins_of(args)` (`--surface-model skin`, the default of a thermal run, with `--melt on`); `hand_down_of` and
+  `part_count_rule_of` resolve an omitted option by it; `skin_name_suffix(..., melting_skins=False)`; `SprayModel.spray_gates`
+  (`"2026-11-10"` or `"before"`, `ValueError` for another; Task 5i adds the thin branch's Knudsen gate under it). `run`:
+  `--hand-down`, `--part-count-from` and `--spray-gates` (default `2026-11-10`); the name ends in `_handdown-on` or `_parts-moves` only
+  where the value differs from the run's default (melting skins: `on`, `moves`; other runs: `off`, `melting`); JSON
+  `settings.skin.hand_down` (`"on"`/`"off"`) and `settings.skin.part_count_from` always, `settings.spray_gates` for a run with a spray
+  model; the arguments a saved state carries hold the resolved values. `resume`: `--spray-gates`, default the saved model's (`before` for
+  a state without it), exit 2 without spraying; JSON `settings.spray_gates` only when `2026-11-10`, `changed["--spray-gates"]` when given;
+  the one line before the flight names it. `--hand-down` and `--part-count-from` on `resume` are as before (absent from the JSON means
+  `on` and `moves`, still true).
+
+**What was decided** (Asha, 2026-11-10, "Further decisions" items 1 and 2 of the design; the controller's calls on the options).
+(1) For melting skins the approach the comparison flights of 2026-11-08 chose is the default: `--hand-down off` and `--part-count-from
+melting`. A skin run that does not melt keeps `on` and `moves`, and `off` and `melting` are refused there as before. `--spread-limit` on a
+melting skin run without `--hand-down on` exits 2 saying spreading moves only metal being handed down and to give `--hand-down on`.
+(2) Under `--spray-gates 2026-11-10`, on the crest-limit path (`cap_depth` given: the skins) a Rayleigh-Taylor droplet's radius is
+`min(lambda_RT, crest)`, with no `0.25 * radius` term. The Rayleigh-Taylor droplet is its wavelength, Girin and Kopyt's front-surface
+r_d; the quarter-radius cap is not from the mode's physics and set the 15.8 mm droplets of 2026-11-10 through a transverse radius inflated
+to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Every other branch and the element model's path
+(`cap_depth` None) are unchanged, and `before` keeps today's line to the last bit. The slurry's own Rayleigh-Taylor mode is off
+(`rt_spray=False` on its one-patch model), so it never reaches the changed line; the setting is carried to that model for Task 5i.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *The default is resolved in `cli`, not in the parser*: the options default to None and `hand_down_of` and `part_count_rule_of` read the
+   run. Why: the default depends on the surface model and on melting, known only after `surface_model_of`. `cmd_run` writes the resolved
+   values into the arguments a saved state carries.
+2. *The suffix marks a value that differs from the run's default.* Why: a melting skin run's name is unchanged by the new defaults; the
+   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins.
+3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's.
+4. *The class default is `before`, the constructor's too,* so every state pickled before and every direct `SprayModel(...)` keeps its
+   behaviour; only the command line's `run` turns `2026-11-10` on.
+5. *The resume tests' flight pins `--hand-down on --part-count-from moves`* so that they keep exercising the flight they were written for.
+6. *Found while pinning the test flight: with `--hand-down off` the spraying test flight's momentum books miss.* The command line's
+   spraying flight (65 km, 0.0625 s, dev skins) closes the momentum books to 8e-18 of the impulses with the hand-down on, and misses by
+   4.4e-6 with it off (released mass 0.241666 g against 0.241918 g; the energy residual stays 6e-12); measured at the build of Task 5g
+   (95ed933) with `--hand-down off` given, so it is Task 5e's, not this task's, and `--part-count-from` and `--spray-gates` change
+   neither number. Since `off` is now the default of melting skins, the test flight is pinned to `on` and `moves`; the miss is reported to
+   the controller, not changed here.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T5H}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5H}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5H}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `TypeError` for `spray_gates`, `AttributeError` on `melting_skins_of`, the old defaults.
+
+- [ ] **Step 3: The spray model** in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T5H}}
+
+  and the slurry's one-patch model in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5H}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5H}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (661 passed, 1 skipped: Task 5g's 653 and these 8; 31.4 minutes across four processes with the two long runs sharing the laptop, 2026-11-10).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_spray.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Spraying: --hand-down off and --part-count-from melting the defaults of melting skins, the Rayleigh-Taylor droplet without the body-radius cap on the skins' crest-limit path (--spray-gates 2026-11-10|before on run and resume); sub-plan 22 Task 5h"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g and 5h written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g and 5h (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -11839,7 +11839,7 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 
 **Files:**
 - Modify: `reentry_model/skinbody.py` (`NOSE_COLUMNS`, `NoseFit`, the class defaults and `SkinBody(..., size_feedback="current")`,
-  `_fit_nose` called from `_refresh_geometry`, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
+  `_fit_nose`, computed lazily from `nose_fit` at the first read after `_refresh_geometry` clears it, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
 - Modify: `reentry_model/coupled.py` (`SKINBODY_COLUMNS` gains the five columns)
 - Modify: `reentry_model/cli.py` (`--size-feedback current|initial` accepted with `--surface-model skin` on `run`, default `current`,
   and on `resume`; the records; the one refusal of it with the skins goes)
@@ -12639,7 +12639,804 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f and 5g written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5h: The new defaults, and the Rayleigh-Taylor droplet without the body-radius cap
+
+**Files:**
+- Modify: `reentry_model/spray.py` (`SPRAY_GATES_NAMES`, `SprayModel(..., spray_gates="before")` with a class default `"before"`, the
+  Rayleigh-Taylor branch's radius on the crest-limit path in `SprayModel.evaluate`)
+- Modify: `reentry_model/skinbody.py` (the slurry's one-patch spray model is built with the parent model's `spray_gates`)
+- Modify: `reentry_model/cli.py` (`--hand-down` and `--part-count-from` default by run on `run`: `off` and `melting` for melting skins,
+  `on` and `moves` for every other run; `--spray-gates 2026-11-10|before` on `run` and `resume`; the spread-limit refusal; the name
+  suffixes; the records)
+- Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 5 changed),
+  `tests/test_reentry_model_restart.py` (2 tests added, the flight's options pinned)
+
+**Interfaces:**
+- Consumes: Task 5g's, 5e's and 5d's wiring of an option on `run` and `resume` (`hand_down_of`, `part_count_rule_of`, `skin_name_suffix`,
+  the saved arguments, `thermal_info`); `spray.BRANCH_RT`; `SprayModel.evaluate(..., cap_depth=)`.
+- Produces: `cli.melting_skins_of(args)` (`--surface-model skin`, the default of a thermal run, with `--melt on`); `hand_down_of` and
+  `part_count_rule_of` resolve an omitted option by it; `skin_name_suffix(..., melting_skins=False)`; `SprayModel.spray_gates`
+  (`"2026-11-10"` or `"before"`, `ValueError` for another; Task 5i adds the thin branch's Knudsen gate under it). `run`:
+  `--hand-down`, `--part-count-from` and `--spray-gates` (default `2026-11-10`); the name ends in `_handdown-on` or `_parts-moves` only
+  where the value differs from the run's default (melting skins: `on`, `moves`; other runs: `off`, `melting`); JSON
+  `settings.skin.hand_down` (`"on"`/`"off"`) and `settings.skin.part_count_from` always, `settings.spray_gates` for a run with a spray
+  model; the arguments a saved state carries hold the resolved values. `resume`: `--spray-gates`, default the saved model's (`before` for
+  a state without it), exit 2 without spraying; JSON `settings.spray_gates` only when `2026-11-10`, `changed["--spray-gates"]` when given;
+  the one line before the flight names it. `--hand-down` and `--part-count-from` on `resume` are as before (absent from the JSON means
+  `on` and `moves`, still true).
+
+**What was decided** (Asha, 2026-11-10, "Further decisions" items 1 and 2 of the design; the controller's calls on the options).
+(1) For melting skins the approach the comparison flights of 2026-11-08 chose is the default: `--hand-down off` and `--part-count-from
+melting`. A skin run that does not melt keeps `on` and `moves`, and `off` and `melting` are refused there as before. `--spread-limit` on a
+melting skin run without `--hand-down on` exits 2 saying spreading moves only metal being handed down and to give `--hand-down on`.
+(2) Under `--spray-gates 2026-11-10`, on the crest-limit path (`cap_depth` given: the skins) a Rayleigh-Taylor droplet's radius is
+`min(lambda_RT, crest)`, with no `0.25 * radius` term. The Rayleigh-Taylor droplet is its wavelength, Girin and Kopyt's front-surface
+r_d; the quarter-radius cap is not from the mode's physics and set the 15.8 mm droplets of 2026-11-10 through a transverse radius inflated
+to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Every other branch and the element model's path
+(`cap_depth` None) are unchanged, and `before` keeps today's line to the last bit. The slurry's own Rayleigh-Taylor mode is off
+(`rt_spray=False` on its one-patch model), so it never reaches the changed line; the setting is carried to that model for Task 5i.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *The default is resolved in `cli`, not in the parser*: the options default to None and `hand_down_of` and `part_count_rule_of` read the
+   run. Why: the default depends on the surface model and on melting, known only after `surface_model_of`. `cmd_run` writes the resolved
+   values into the arguments a saved state carries.
+2. *The suffix marks a value that differs from the run's default.* Why: a melting skin run's name is unchanged by the new defaults; the
+   old behaviour is named. Cost: a name from before this task (`_handdown-off`) now means the same flight as no suffix, on melting skins.
+3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's.
+4. *The class default is `before`, the constructor's too,* so every state pickled before and every direct `SprayModel(...)` keeps its
+   behaviour; only the command line's `run` turns `2026-11-10` on.
+5. *The resume tests' flight pins `--hand-down on --part-count-from moves`* so that they keep exercising the flight they were written for.
+6. *Found while pinning the test flight: with `--hand-down off` the spraying test flight's momentum books miss.* The command line's
+   spraying flight (65 km, 0.0625 s, dev skins) closes the momentum books to 8e-18 of the impulses with the hand-down on, and misses by
+   4.4e-6 with it off (released mass 0.241666 g against 0.241918 g; the energy residual stays 6e-12); measured at the build of Task 5g
+   (95ed933) with `--hand-down off` given, so it is Task 5e's, not this task's, and `--part-count-from` and `--spray-gates` change
+   neither number. Since `off` is now the default of melting skins, the test flight is pinned to `on` and `moves`; the miss is reported to
+   the controller, not changed here.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_spray.py`:
+
+```diff
+--- a/tests/test_reentry_model_spray.py
++++ b/tests/test_reentry_model_spray.py
+@@ -446,12 +446,12 @@
+     return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
+ 
+ 
+-def spraying_cases(cap_depth=None, areas=None):
++def spraying_cases(cap_depth=None, areas=None, spray_gates="before"):
+     """One patch of each branch the cap reaches, each evaluated as its own body: (result, the mode's own radius per
+     wavelength) for the thick branch (Girin's closure, 1 mm of liquid), the thin branch (20 um on a floor 20 um down),
+     the rarefied branch (20 um on a floor 1 mm down, where its 7.5 mm wave stays inside the inviscid mode's validity) and
+     the front-surface Rayleigh-Taylor mode (5 mm of liquid at the nose, its lambda* 2 cm at W = 106 m/s2)."""
+-    model = spray.SprayModel(LIQ)
++    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
+     areas = np.full(1, 1e-5) if areas is None else np.asarray(areas, dtype=float)
+     out = {}
+     h = None if cap_depth is None else np.full(1, cap_depth)
+@@ -711,3 +711,66 @@
+     del cols
+     spool.remove()
+     assert not (tmp_path / "spool").exists()
++
++
++# -- the Rayleigh-Taylor droplet without the body-radius cap (Asha, 2026-11-10; sub-plan 22 Task 5h) -------------------
++def rt_droplet(cap_depth, radius, spray_gates):
++    """The Rayleigh-Taylor patch of `spraying_cases` (its lambda* 2 cm), evaluated as a body of `radius`, under `spray_gates`."""
++    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
++    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
++    delta_m, _ = spray.melt_layer(flow, LIQ)
++    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
++    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
++    return model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas,
++                          radius=radius, extent=np.full(1, 0.05), deceleration_n=w_n,
++                          cap_depth=None if cap_depth is None else np.full(1, cap_depth))
++
++
++def test_a_rayleigh_taylor_droplet_is_not_capped_by_the_body_radius():
++    """Under spray_gates 2026-11-10, on the crest-limit path, a deep pool (5 mm of liquid under a 2 cm wave, 1 cm of cap
++    depth) on a body of a 2 cm radius gives a droplet of the crest-limited wavelength, 9.8 mm, above a quarter of the radius
++    (5 mm), which `before` still applies; the wavelength itself is the droplet's size where the crest does not bind."""
++    res_new = rt_droplet(1e-2, 0.02, "2026-11-10")
++    res_old = rt_droplet(1e-2, 0.02, "before")
++    assert res_new.branch[0] == res_old.branch[0] == spray.BRANCH_RT and res_new.wavelength[0] == pytest.approx(0.02)
++    assert res_new.r[0] == pytest.approx(min(res_new.wavelength[0], crest(0.02, 1e-2)), rel=1e-12)
++    assert res_new.r[0] > 0.25 * 0.02 and res_old.r[0] == 0.25 * 0.02
++    assert res_new.mdot[0] == res_old.mdot[0] and res_new.dm[0] == res_old.dm[0]       # only the radius, so only the count
++
++
++def test_the_crest_limit_still_binds_a_rayleigh_taylor_droplet_on_a_shallow_pool():
++    """On a shallow cap depth the crest, not the wavelength, is the droplet: 4.6 mm at 1 mm of depth under the 2 cm wave
++    (the outline's check), and the same on a body of any radius, small or large, under the new gates."""
++    for radius in (0.005, 0.05, 0.5):
++        res = rt_droplet(1e-3, radius, "2026-11-10")
++        assert res.branch[0] == spray.BRANCH_RT and res.r[0] == pytest.approx(crest(0.02, 1e-3), rel=1e-12)
++        assert res.r[0] == pytest.approx(4.57e-3, rel=1e-3) and res.r[0] < 0.02
++
++
++def test_the_new_spray_gates_change_no_other_branch_and_not_the_element_model():
++    """Under 2026-11-10 the thick, thin and rarefied branches' droplets (with a cap depth) and every branch's on the element
++    model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
++    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path."""
++    for cap in (1e-5, 1e-3, None):
++        old, new = spraying_cases(cap_depth=cap), spraying_cases(cap_depth=cap, spray_gates="2026-11-10")
++        for name in old:
++            if cap is not None and name == "Rayleigh-Taylor":
++                continue
++            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
++                assert np.array_equal(getattr(old[name][0], field), getattr(new[name][0], field), equal_nan=True)
++    assert spray.SprayModel(LIQ).spray_gates == "before" and spray.SprayModel(LIQ, spray_gates="2026-11-10").spray_gates == "2026-11-10"
++    with pytest.raises(ValueError):
++        spray.SprayModel(LIQ, spray_gates="maybe")
++
++
++def test_spray_gates_before_reproduces_the_old_radius_to_the_last_bit():
++    """`before` (the class default, and the setting of a model pickled before it existed) keeps the old line: with a cap
++    depth every branch's radius is min(mode, crest, a quarter of the radius), exactly, the Rayleigh-Taylor one too."""
++    assert spray.SprayModel.spray_gates == "before"
++    for cap in (1e-5, 1e-3, 1e-2):
++        for radius in (0.01, 0.05):
++            res = rt_droplet(cap, radius, "before")
++            lam = res.wavelength[0]
++            assert res.r[0] == np.minimum(lam, np.minimum(crest(lam, cap), 0.25 * radius))
++    for name, (res, _) in spraying_cases(cap_depth=1e-3).items():       # the default model, as before the setting
++        assert res.r[0] <= 0.0125
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -391,7 +391,8 @@
+     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
+                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
+                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
+-                         "size_feedback": "current"}                  # always recorded: the default changed (Task 5g)
++                         "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
++                         "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
+     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
+     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+@@ -475,11 +476,16 @@
+     from reentry_model import spray
+     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
+                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
+-                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
++                   "--fine-size", "2", "--skin-flow-cycles", "2", "--hand-down", "on", "--part-count-from", "moves",
++                   "--outdir", str(tmp_path)]
++    # the flight this test was written for, which hands down and counts parts by the moves; the melting skins' defaults
++    # changed to off and melting on 2026-11-10 (Task 5h), and with the hand-down off this flight's momentum books miss
++    # 4.4e-6 of the impulses where they close to 1e-17 with it on (measured at the build before Task 5h too, with
++    # --hand-down off given: a finding of Task 5h, reported, not changed here)
+     assert cli.main(argv) == 0
+     (path,) = glob.glob(str(tmp_path / "*.json"))
+     doc = json.load(open(path))
+-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
++    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_parts-moves_handdown-on")
+     s, r, f = doc["settings"], doc["results"], doc["files"]
+     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
+     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
+@@ -671,8 +677,9 @@
+         raise _Built(kwargs)
+     monkeypatch.setattr(skinbody, "SkinBody", built)
+     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+-    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"], 60.0),
+-                        (melt + ["--skin-flow", "off", "--spread-limit", "75"], 75.0)):
++    on = ["--hand-down", "on"]                  # spreading moves only handed-down metal; off is the melting skins' default (Task 5h)
++    for argv, limit in ((melt, None), (melt + ["--spread-limit", "off"], None), (melt + ["--spread-limit", "60"] + on, 60.0),
++                        (melt + ["--skin-flow", "off", "--spread-limit", "75"] + on, 75.0)):
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["spread_limit"] == limit
+@@ -703,6 +710,27 @@
+         cli.main(melt + ["--skin-flow", "off"])
+     k = got.value.args[0]
+     assert not k["flow"] and k["remove"] and k["spray"] is None and k["surface_flow"] is None and not k["slurry_spray"]
++
++
++def test_the_spray_gates_are_2026_11_10_by_default_and_reach_the_spray_model(tmp_path, monkeypatch):
++    """--spray-gates (sub-plan 22 Task 5h, Asha 2026-11-10) is `2026-11-10` by default on `run` and reaches the spray
++    model the skins are given, and the element model's, as the model's `spray_gates`; `before` gives the old rules; no
++    other setting is accepted. The body is not built: its arguments are."""
++    from reentry_model import skinbody
++    assert cli.build_parser().parse_args(THERMAL).spray_gates == "2026-11-10"
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    for argv, gates in ((melt, "2026-11-10"), (melt + ["--spray-gates", "2026-11-10"], "2026-11-10"),
++                        (melt + ["--spray-gates", "before"], "before")):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["spray"].spray_gates == gates
++    with pytest.raises(SystemExit) as exc:
++        cli.main(melt + ["--spray-gates", "2026-11-09"])
++    assert exc.value.code == 2
+ 
+ 
+ def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch(tmp_path):
+@@ -729,19 +757,27 @@
+     assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)
+ 
+ 
+-def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_for_melting():
+-    """--part-count-from (sub-plan 22 Task 5d) is `moves` by default, so that every existing run keeps its name and its
+-    record; `melting` ends a skin run's settings in _parts-melting, after the spread limit's and before the seed's."""
++def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_only_where_it_differs_from_the_default():
++    """--part-count-from (sub-plan 22 Task 5d) defaults to `melting` for melting skins and `moves` for every other run
++    (Asha, 2026-11-10, Task 5h), and a run's name marks the value only where it differs from its own default: `moves` ends
++    a melting skin run's settings in _parts-moves, after the spread limit's and before the seed's, and `melting` is
++    refused on runs that do not melt."""
+     p = cli.build_parser()
+-    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
++    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+     melt = THERMAL + ["--melt", "on"]
+-    assert p.parse_args(melt).part_count_from == "moves" and cli.part_count_rule_of(p.parse_args(melt)) == "moves"
+-    assert name(melt) == name(melt + ["--part-count-from", "moves"]) == base
+-    assert name(melt + ["--part-count-from", "melting"]) == base + "_parts-melting"
+-    assert (name(melt + ["--spread-limit", "60", "--part-count-from", "melting", "--seed", "7"])
+-            == base + "_spread-60_parts-melting_seed-7")
++    assert p.parse_args(melt).part_count_from is None and cli.part_count_rule_of(p.parse_args(melt)) == "melting"
++    assert cli.part_count_rule_of(p.parse_args(melt + ["--part-count-from", "moves"])) == "moves"
++    assert cli.part_count_rule_of(p.parse_args(THERMAL)) == "moves"                       # skins that do not melt
++    assert cli.part_count_rule_of(p.parse_args(FEM + ["--melt", "on"])) == "moves"        # the element model
++    assert name(melt) == name(melt + ["--part-count-from", "melting"]) == base + "_melt-girin"
++    assert name(melt + ["--part-count-from", "moves"]) == base + "_melt-girin_parts-moves"
++    assert (name(melt + ["--spread-limit", "60", "--hand-down", "on", "--part-count-from", "moves", "--seed", "7"])
++            == base + "_melt-girin_spread-60_parts-moves_handdown-on_seed-7")
++    assert name(THERMAL) == base
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting") == "_parts-melting"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting",
++                                melting_skins=True) == "_handdown-on"
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+ 
+ 
+@@ -758,37 +794,43 @@
+     assert exc.value.code == 2
+ 
+ 
+-def test_the_command_line_gives_the_skins_their_part_count_rule_and_records_it_only_for_melting(tmp_path, monkeypatch):
+-    """--part-count-from reaches the skin body as `moves` or `melting` (sub-plan 22 Task 5d). The body is not built: its
+-    arguments are."""
++def test_the_command_line_gives_the_skins_their_part_count_rule(tmp_path, monkeypatch):
++    """--part-count-from reaches the skin body as `moves` or `melting`, `melting` unless given for melting skins and `moves`
++    for skins that do not melt (sub-plan 22 Tasks 5d and 5h). The body is not built: its arguments are."""
+     from reentry_model import skinbody
+ 
+     def built(*args, **kwargs):
+         raise _Built(kwargs)
+     monkeypatch.setattr(skinbody, "SkinBody", built)
+     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+-    for argv, rule in ((melt, "moves"), (melt + ["--part-count-from", "moves"], "moves"),
++    for argv, rule in ((melt, "melting"), (melt + ["--part-count-from", "moves"], "moves"),
+                        (melt + ["--part-count-from", "melting"], "melting"),
+-                       (melt + ["--skin-flow", "off", "--part-count-from", "melting"], "melting")):
++                       (melt + ["--skin-flow", "off", "--part-count-from", "moves"], "moves"),
++                       (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], "moves")):
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["part_count_from"] == rule
+ 
+ 
+-def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_for_off():
+-    """--hand-down (sub-plan 22 Task 5e) is `on` by default, so that every existing run keeps its name and its record; `off`
+-    ends a skin run's settings in _handdown-off, after the part count's and before the seed's."""
++def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_where_it_differs_from_the_default():
++    """--hand-down (sub-plan 22 Task 5e) defaults to `off` for melting skins (Asha, 2026-11-10, Task 5h) and `on` for every
++    other run; a run's name marks the value only where it differs from its own default: `on` ends a melting skin run's
++    settings in _handdown-on, after the part count's and before the seed's, and `off` is refused on runs that do not melt."""
+     p = cli.build_parser()
+     base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam_melt-girin"
+     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+     melt = THERMAL + ["--melt", "on"]
+-    assert p.parse_args(melt).hand_down == "on" and cli.hand_down_of(p.parse_args(melt)) is True
++    assert p.parse_args(melt).hand_down is None and cli.hand_down_of(p.parse_args(melt)) is False
++    assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "on"])) is True
+     assert cli.hand_down_of(p.parse_args(melt + ["--hand-down", "off"])) is False
+-    assert name(melt) == name(melt + ["--hand-down", "on"]) == base
+-    assert name(melt + ["--hand-down", "off"]) == base + "_handdown-off"
+-    assert (name(melt + ["--part-count-from", "melting", "--hand-down", "off", "--seed", "7"])
+-            == base + "_parts-melting_handdown-off_seed-7")
++    assert cli.hand_down_of(p.parse_args(THERMAL)) is True and cli.hand_down_of(p.parse_args(FEM + ["--melt", "on"])) is True
++    assert name(melt) == name(melt + ["--hand-down", "off"]) == base
++    assert name(melt + ["--hand-down", "on"]) == base + "_handdown-on"
++    assert (name(melt + ["--part-count-from", "moves", "--hand-down", "on", "--seed", "7"])
++            == base + "_parts-moves_handdown-on_seed-7")
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, hand_down=False) == "_handdown-off"
++    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, melting_skins=True,
++                                part_count_from="melting", hand_down=False) == ""
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+ 
+ 
+@@ -798,6 +840,7 @@
+     FEM + ["--melt", "on", "--hand-down", "off"],                                      # the element model has no skins
+     BASE + ["--hand-down", "off"],                                                     # no thermal model at all
+     THERMAL + ["--melt", "on", "--hand-down", "off", "--spread-limit", "60"],          # spreading moves only handed-down metal
++    THERMAL + ["--melt", "on", "--spread-limit", "60"],                                # the same: off is the melting default
+ ])
+ def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_limit_exits_2(argv, tmp_path, capsys):
+     with pytest.raises(SystemExit) as exc:
+@@ -805,19 +848,22 @@
+     assert exc.value.code == 2
+     if "60" in argv:
+         err = capsys.readouterr().err
+-        assert "spreading moves only metal being handed down" in err and "--spread-limit off" in err
+-
+-
+-def test_the_command_line_gives_the_skins_their_hand_down_switch_and_records_it_only_for_off(tmp_path, monkeypatch):
+-    """--hand-down reaches the skin body as True or False (sub-plan 22 Task 5e). The body is not built: its arguments are."""
++        assert "spreading moves only metal being handed down" in err
++        assert ("--spread-limit off" in err) == ("off" in argv) and ("--hand-down on" in err) == ("off" not in argv)
++
++
++def test_the_command_line_gives_the_skins_their_hand_down_switch(tmp_path, monkeypatch):
++    """--hand-down reaches the skin body as True or False: False unless given for melting skins, True for skins that do not
++    melt (sub-plan 22 Tasks 5e and 5h). The body is not built: its arguments are."""
+     from reentry_model import skinbody
+ 
+     def built(*args, **kwargs):
+         raise _Built(kwargs)
+     monkeypatch.setattr(skinbody, "SkinBody", built)
+     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+-    for argv, on in ((melt, True), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
+-                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False)):
++    for argv, on in ((melt, False), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
++                     (melt + ["--skin-flow", "off", "--hand-down", "off"], False),
++                     (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], True)):
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["hand_down"] is on
+@@ -834,8 +880,9 @@
+     assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
+     assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
+     assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
+-    assert (name(melt + ["--hand-down", "off", "--sideways-heat", "height", "--seed", "7"])
+-            == base + "_melt-girin_handdown-off_side-height_seed-7")
++    assert (name(melt + ["--hand-down", "on", "--sideways-heat", "height", "--seed", "7"])
++            == base + "_melt-girin_handdown-on_side-height_seed-7")
++    assert name(melt + ["--sideways-heat", "height"]) == base + "_melt-girin_side-height"
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, sideways_pairing="height") == "_side-height"
+     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+ 
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -12,11 +12,15 @@
+ from reentry_model import trajectory as tj
+ 
+ # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
+-# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s
++# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
++# It hands down and counts parts by the moves, as every flight did before the defaults of melting skins changed to
++# `--hand-down off --part-count-from melting` (Task 5h, Asha 2026-11-10); the resume tests below were written for it
+ FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", "--flight-path-angle", "-0.959331",
+           "--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
+           "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
+-          "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
++          "--fine-size", "2", "--hand-down", "on", "--part-count-from", "moves", "--skin-flow-cycles", "2", "--quiet"]
++DEFAULT_FLIGHT = [a for i, a in enumerate(FLIGHT) if not (a in ("--hand-down", "--part-count-from") or FLIGHT[i - 1] in
++                                                          ("--hand-down", "--part-count-from"))]
+ 
+ 
+ def rows_of(path):
+@@ -453,3 +457,65 @@
+         cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                   "--size-feedback", "current"])
+     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
++
++
++def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
++    """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
++    runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the
++    arguments its saved state carries, and its name carries no suffix for either. `--spray-gates` is `2026-11-10` and
++    recorded; a resume keeps all three, and `--hand-down on` asked of it is the one that changes."""
++    pytest.importorskip("cantera")
++    assert "--hand-down" not in DEFAULT_FLIGHT and "--part-count-from" not in DEFAULT_FLIGHT
++    assert cli.main(DEFAULT_FLIGHT + ["--t-max", "0.075", "--outdir", str(tmp_path), "--save-state-at", "0.05"]) == 0
++    (doc_path,) = [p for p in os.listdir(str(tmp_path)) if p.endswith(".json")]
++    doc = json.load(open(os.path.join(str(tmp_path), doc_path)))
++    assert "handdown" not in doc["run_name"] and "parts-" not in doc["run_name"]
++    assert doc["settings"]["skin"]["hand_down"] == "off" and doc["settings"]["skin"]["part_count_from"] == "melting"
++    assert doc["settings"]["spray_gates"] == "2026-11-10"
++    state_path = os.path.join(str(tmp_path), doc["run_name"] + ".state.pkl")
++    state = restart.load(state_path)
++    assert state["meta"]["args"]["hand_down"] == "off" and state["meta"]["args"]["part_count_from"] == "melting"
++    body = state["run"].body
++    assert body.hand_down is False and body.part_count_from == "melting" and body.spray.spray_gates == "2026-11-10"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
++    doc = json.load(open(str(tmp_path / "same.json")))
++    assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
++    assert "hand_down" in doc["settings"] and doc["settings"]["hand_down"] == "off"
++
++
++def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_state_without_them_resumes_as_before(
++        flown, tmp_path, capsys):
++    """`--spray-gates` on a resume (sub-plan 22 Task 5h). The test flight is `before` through its saved state only if the
++    state carries no setting: a state saved before the option (the setting removed from its spray model, which then reads the
++    class default) resumes as `before`, with no `spray_gates` key in the JSON's settings, named in the line before the
++    flight; `2026-11-10` asked of it is recorded in the JSON's settings and in what was changed, and kept by the state the
++    resumed flight saves. A flight that does not spray refuses the option."""
++    out, flight, records, state_path = flown
++    assert json.load(open(os.path.join(out, "f.json")))["settings"]["spray_gates"] == "2026-11-10"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
++    assert "spray gates 2026-11-10" in capsys.readouterr().out
++    assert json.load(open(str(tmp_path / "same.json")))["settings"]["spray_gates"] == "2026-11-10"
++    state = restart.load(state_path)
++    del vars(state["run"].body.spray)["spray_gates"]                       # a model pickled before the setting existed
++    old = str(tmp_path / "old.state.pkl")
++    restart.save(old, state)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
++    assert "spray gates before" in capsys.readouterr().out
++    assert "spray_gates" not in json.load(open(str(tmp_path / "o.json")))["settings"]
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "n", "--spray-gates", "2026-11-10",
++                     "--save-state-at", "0.2"]) == 0
++    doc = json.load(open(str(tmp_path / "n.json")))
++    assert doc["resumed_from"]["changed"] == {"--spray-gates": "2026-11-10", "--save-state-at": 0.2}
++    assert doc["settings"]["spray_gates"] == "2026-11-10"
++    assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.spray.spray_gates == "2026-11-10"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "b", "--spray-gates", "before"]) == 0
++    doc = json.load(open(str(tmp_path / "b.json")))
++    assert "spray_gates" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
++    k = FLIGHT.index("--melt")
++    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
++    assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
++    capsys.readouterr()
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
++                  "--spray-gates", "before"])
++    assert exc.value.code == 2 and "--spray-gates needs a saved flight with spraying" in capsys.readouterr().err
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `TypeError` for `spray_gates`, `AttributeError` on `melting_skins_of`, the old defaults.
+
+- [ ] **Step 3: The spray model** in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -307,9 +307,24 @@
+     #                                 per-crest cap's lambda (2026-10-24)
+ 
+ 
++SPRAY_GATES_NAMES = ("2026-11-10", "before")
++
++
+ class SprayModel:
++    """Girin's and Girin and Kopyt's release model for one body's patches (`evaluate`).
++
++    `spray_gates` (sub-plan 22 Task 5h; Asha, 2026-11-10) says which of the release rules decided on 2026-11-10 apply:
++    `before` (the class default, so that a model pickled before the setting existed behaves as it did) keeps every rule as
++    it stood; `2026-11-10` applies them. So far the one rule: on the crest-limit path (`cap_depth` given, the layered
++    skins) a Rayleigh-Taylor droplet is capped by its crest alone, not by a quarter of the body radius as well. Task 5i
++    adds the thin branch's Knudsen gate under the same setting."""
++    spray_gates = "before"
++
+     def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_THEORY, table=None,
+-                 rt_spray=True):
++                 rt_spray=True, spray_gates="before"):
++        if spray_gates not in SPRAY_GATES_NAMES:
++            raise ValueError("spray_gates must be one of {}, got {!r}".format(SPRAY_GATES_NAMES, spray_gates))
++        self.spray_gates = spray_gates
+         if k_r <= 0.0 or k_t <= 0.0 or we_critical <= 0.0:
+             raise ValueError("k_r, k_t and the critical Weber number must be > 0")
+         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
+@@ -499,13 +514,22 @@
+         dm = np.where(unstable, np.minimum(mdot * areas * dt, m_f), 0.0)
+         # a droplet is never larger than a quarter of the body radius (the long near-critical waves Girin excludes; the
+         # edge dynamic pressure vanishes toward the equator) nor than the film on its patch -- or, given cap_depth, than
+-        # one crest of its own wave on the depth the release can take, (4/3) pi r^3 <= lambda^2 h (2026-10-24)
++        # one crest of its own wave on the depth the release can take, (4/3) pi r^3 <= lambda^2 h (2026-10-24); under
++        # spray_gates 2026-11-10 the Rayleigh-Taylor droplet on that path has the crest limit alone (2026-11-10)
+         with np.errstate(invalid="ignore"):
+             if cap_depth is None:
+                 r = np.minimum(r, np.minimum((3.0 * m_f / (4.0 * np.pi * liq.rho)) ** (1.0 / 3.0), 0.25 * radius))
+             else:
+                 crest = (3.0 * wavelength ** 2 * h_cap / (4.0 * np.pi)) ** (1.0 / 3.0)
+-                r = np.where(h_cap > 0.0, np.minimum(r, np.minimum(crest, 0.25 * radius)), np.nan)
++                if self.spray_gates == "before":
++                    r = np.where(h_cap > 0.0, np.minimum(r, np.minimum(crest, 0.25 * radius)), np.nan)
++                else:
++                    # Asha, 2026-11-10 (sub-plan 22 Task 5h): the Rayleigh-Taylor droplet is its wavelength, Girin and
++                    # Kopyt's front-surface r_d, and the quarter-radius cap is not from the mode's physics: it set the
++                    # 15.8 mm droplets of the comparison flights through a transverse radius inflated to 57-64 mm by
++                    # misplaced column tops. The crest limit, a supply limit, stays; every other branch keeps both.
++                    limit = np.where(branch == BRANCH_RT, crest, np.minimum(crest, 0.25 * radius))
++                    r = np.where(h_cap > 0.0, np.minimum(r, limit), np.nan)
+         with np.errstate(divide="ignore", invalid="ignore"):
+             dn = np.where(dm > 0.0, dm / (4.0 / 3.0 * np.pi * liq.rho * np.where(dm > 0.0, r, 1.0) ** 3), 0.0)
+         rt_active, _, _ = rayleigh_taylor(w_n, pool, liq)      # the unbounded criterion, still reported for continuity
+```
+
+  and the slurry's one-patch model in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -524,7 +524,8 @@
+     m_s = (sk.m * ((cells >= n_liq[:, None]) & (cells < n_flow[:, None]))).sum(axis=1)     # the slurry run, nominally
+     for j, i in enumerate(rows):
+         props = material_mod.LiquidProperties(float(rho[j]), float(mu[j]), SLURRY_SIGMA)
+-        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False)
++        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False,
++                                spray_gates=model.spray_gates)
+         one, cell = slice(j, j + 1), slice(i, i + 1)
+         r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
+                        radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],
+```
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -6,12 +6,13 @@
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
+-        --size-feedback current|initial ...]
++        --size-feedback current|initial --spray-gates 2026-11-10|before ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
+-        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial]
++        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial
++        --spray-gates 2026-11-10|before]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -122,9 +123,17 @@
+     return value
+ 
+ 
++def melting_skins_of(args):
++    """Whether a run of `run`'s arguments is one of melting skins, `--surface-model skin` (the default of a thermal run)
++    with --melt on: the runs whose defaults changed on 2026-11-10 (sub-plan 22 Task 5h)."""
++    return surface_model_of(args) == "skin" and args.melt == "on"
++
++
+ def part_count_rule_of(args):
+-    """The rule that sets a macro step's part count, `moves` unless --part-count-from says `melting` (sub-plan 22 Task 5d)."""
+-    return args.part_count_from
++    """The rule that sets a macro step's part count: --part-count-from if given, else `melting` for melting skins and `moves`
++    for every other run (sub-plan 22 Task 5d; the default for melting skins changed to `melting` on 2026-11-10, Task 5h,
++    the approach the comparison flights of 2026-11-08 chose)."""
++    return args.part_count_from or ("melting" if melting_skins_of(args) else "moves")
+ 
+ 
+ NO_SPREAD_WITHOUT_HAND_DOWN = ("--hand-down off cannot go with a spread limit: spreading moves only metal being handed down "
+@@ -132,7 +141,11 @@
+ 
+ 
+ def hand_down_of(args):
+-    """Whether the skins pass their re-frozen metal to the 3D model, True unless --hand-down says `off` (sub-plan 22 Task 5e)."""
++    """Whether the skins pass their re-frozen metal to the 3D model: --hand-down if given, else `off` for melting skins
++    (Asha, 2026-11-10, Task 5h: the approach the comparison flights chose; it was on until then) and `on` for every other
++    run (sub-plan 22 Task 5e)."""
++    if args.hand_down is None:
++        return not melting_skins_of(args)
+     return args.hand_down == "on"
+ 
+ 
+@@ -210,7 +223,7 @@
+ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
+                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
+                      slurry_spray=False, spread_limit=None, part_count_from="moves",
+-                     hand_down=True, sideways_pairing="depth", size_feedback="current"):
++                     hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False):
+     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
+     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
+     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
+@@ -224,7 +237,11 @@
+     `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
+     metal stays in the skins (Task 5e); `_side-height` where the sideways conduction pairs cells by height above the bases
+     (Task 5f); `_nose-initial` where the windward loads read the mesh's own radius, not the sphere fitted to the tops
+-    (Task 5g; the default changed to the fit, so the default's name is unchanged); empty for the defaults."""
++    (Task 5g; the default changed to the fit, so the default's name is unchanged); empty for the defaults.
++    `melting_skins` says the run is one of melting skins, whose defaults are `--hand-down off` and `--part-count-from
++    melting` (Asha, 2026-11-10, Task 5h): the suffix then marks the values that differ from those, `_handdown-on` and
++    `_parts-moves`, and `_handdown-off` and `_parts-melting` are the defaults and unmarked; every other run keeps `on` and
++    `moves` as its defaults."""
+     out = "_skin-dev" if preset == "dev" else ""
+     if min_thickness_mm != 0.8:
+         out += "_skinmin{:g}mm".format(min_thickness_mm)
+@@ -252,10 +269,10 @@
+         out += "_slurryspray-on"
+     if spread_limit is not None:
+         out += "_spread-{:g}".format(spread_limit)
+-    if part_count_from != "moves":
++    if part_count_from != ("melting" if melting_skins else "moves"):
+         out += "_parts-{}".format(part_count_from)
+-    if not hand_down:
+-        out += "_handdown-off"
++    if hand_down == melting_skins:               # the default is off for melting skins, on otherwise
++        out += "_handdown-{}".format("on" if hand_down else "off")
+     if sideways_pairing != "depth":
+         out += "_side-{}".format(sideways_pairing)
+     if size_feedback != "current":
+@@ -331,6 +348,9 @@
+                     help="what pairs neighbouring skin columns' cells in the sideways conduction: depth below the tops or "
+                          "height above the bases, heat between cells that touch (default: the saved flight's, depth for one "
+                          "saved before the option existed)")
++    rs.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default=None,
++                    help="which of the release rules decided on 2026-11-10 apply: 2026-11-10 or before (default: the saved "
++                         "flight's, before for one saved before the option existed)")
+     rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
+                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
+@@ -468,16 +488,20 @@
+                     help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
+                          "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
+                          "lands hot (sub-plan 22 Task 5c; off until the flights have tested it; default off)")
+-    me.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default="moves",
++    me.add_argument("--part-count-from", choices=skinbody.PART_COUNT_RULES, default=None,
+                     help="with --surface-model skin and --melt on: what sets the next macro step's part count: moves, the "
+                          "move the draws and the capped hand-down call for, or melting, the draws alone; a capped "
+                          "hand-down made the count grow by a quarter a step on the spreading flights (sub-plan 22 Task 5d; "
+-                         "default moves)")
+-    me.add_argument("--hand-down", choices=("on", "off"), default="on",
++                         "default melting for melting skins, Asha 2026-11-10, moves for every other run)")
++    me.add_argument("--hand-down", choices=("on", "off"), default=None,
+                     help="with --surface-model skin and --melt on: re-frozen metal at the bottom of a skin passes to the 3D "
+                          "model (on) or stays in the skins, which can heat it again, let it flow on or spray it (off; needs "
+                          "--spread-limit off, spreading moves only metal being handed down; Asha, 2026-11-08, sub-plan 22 "
+-                         "Task 5e; default on)")
++                         "Task 5e; default off for melting skins, Asha 2026-11-10, on for every other run)")
++    me.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default="2026-11-10",
++                    help="which of the release rules decided on 2026-11-10 apply (sub-plan 22 Task 5h): 2026-11-10, a "
++                         "Rayleigh-Taylor droplet on the skins' crest-limit path is capped by its crest alone, with no "
++                         "quarter-of-the-body-radius cap (default); before: every rule as it stood")
+     me.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default="depth",
+                     help="with --surface-model skin: what pairs neighbouring columns' cells in the sideways conduction: depth "
+                          "below the tops (spec 6.3), or height above the bases, so that heat passes between cells that touch "
+@@ -612,10 +636,8 @@
+                         "slurry_spray": args.slurry_spray}
+         if spread_limit_of(args) is not None:
+             info["skin"]["spread_limit_deg"] = spread_limit_of(args)
+-        if part_count_rule_of(args) != "moves":
+-            info["skin"]["part_count_from"] = part_count_rule_of(args)
+-        if not hand_down_of(args):
+-            info["skin"]["hand_down"] = "off"
++        info["skin"]["part_count_from"] = part_count_rule_of(args)          # always: the defaults changed (Task 5h)
++        info["skin"]["hand_down"] = "on" if hand_down_of(args) else "off"
+         if args.sideways_heat != "depth":
+             info["skin"]["sideways_heat"] = args.sideways_heat
+         info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
+@@ -628,7 +650,7 @@
+         if the_body.spray is not None:                  # Girin's spraying from the top cells (sub-plan 22)
+             info.update({"rt_spray": args.rt_spray, "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                          "k_r": args.kr, "k_t": args.kt, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
+-                         "particles": args.particles,
++                         "particles": args.particles, "spray_gates": args.spray_gates,
+                          "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma}})
+     elif melting:
+         info.update({"removal": args.removal, "runoff": args.runoff, "deep_runoff": args.deep_runoff,
+@@ -636,6 +658,7 @@
+                      "rarefied_shear": args.rarefied_shear, "we_critical": args.we_critical,
+                      "k_r": args.kr, "k_t": args.kt, "demise_fraction": args.demise_fraction, "particles": args.particles,
+                      "size_feedback": size_feedback, "gamma_pm": args.gamma_pm, "kn_body_shock": args.kn_body_shock,
++                     "spray_gates": args.spray_gates,
+                      "liquid": {"rho": mat.liquid.rho, "mu": mat.liquid.mu, "sigma": mat.liquid.sigma},
+                      "T_solidus_K": mat.T_solidus, "T_liquidus_K": mat.T_liquidus, "latent_heat_Jkg": mat.latent_heat})
+     return the_body, heating_model, info
+@@ -643,7 +666,8 @@
+ 
+ def spray_model_of(args, mat):
+     """The shared spray physics with the command line's constants, for either surface model."""
+-    return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on")
++    return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on",
++                            spray_gates=args.spray_gates)
+ 
+ 
+ def skin_settings(args):
+@@ -671,7 +695,8 @@
+                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
+                                                                     spread_limit_of(args), part_count_rule_of(args),
+                                                                     hand_down_of(args), args.sideways_heat,
+-                                                                    skin_size_feedback_of(args)))
++                                                                    skin_size_feedback_of(args),
++                                                                    melting_skins=melting_skins_of(args)))
+ 
+ 
+ def cmd_run(args, parser):
+@@ -756,7 +781,10 @@
+     if not hand_down_of(args) and not (args.surface_model == "skin" and args.melt == "on"):
+         parser.error("--hand-down off needs --surface-model skin and --melt on: it keeps the skins' re-frozen metal in them")
+     if not hand_down_of(args) and spread_limit_of(args) is not None:
+-        parser.error(NO_SPREAD_WITHOUT_HAND_DOWN)
++        # a melting skin run's hand-down is off unless given, so a spread limit alone lands here too (Task 5h)
++        parser.error(NO_SPREAD_WITHOUT_HAND_DOWN if args.hand_down is not None else
++                     "--spread-limit needs --hand-down on: a melting skin run's hand-down is off unless given, and spreading "
++                     "moves only metal being handed down (Asha, 2026-11-08)")
+     if args.sideways_heat != "depth" and args.surface_model != "skin":
+         parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
+     if args.surface_model == "skin":
+@@ -772,6 +800,9 @@
+     if args.surface_model == "skin" and args.prism_layers is not None and args.prism_layers > 0:
+         parser.error("--prism-layers {} is refused with --surface-model skin: the moving mesh's rebuild cannot reproduce prism "
+                      "layers (a skin run uses 0, the default)".format(args.prism_layers))
++
++    # the options whose defaults depend on the run are written into the arguments a saved state carries (Task 5h)
++    args.hand_down, args.part_count_from = "on" if hand_down_of(args) else "off", part_count_rule_of(args)
+ 
+     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
+                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
+@@ -988,6 +1019,11 @@
+         if args.sideways_heat != "depth" and not skins:
+             parser.error("--sideways-heat height needs a saved flight of skins: it pairs their cells")
+         changed["--sideways-heat"] = args.sideways_heat
++    if args.spray_gates is not None:
++        if getattr(run.body, "spray", None) is None:
++            parser.error("--spray-gates needs a saved flight with spraying (--melt on with Girin removal): it sets the "
++                         "release rules")
++        changed["--spray-gates"] = args.spray_gates
+     if args.size_feedback is not None:
+         if not skins:
+             parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
+@@ -1040,6 +1076,8 @@
+         run.body.sideways_pairing = args.sideways_heat
+     if "--size-feedback" in changed and skins:
+         run.body.size_feedback = args.size_feedback
++    if "--spray-gates" in changed:
++        run.body.spray.spray_gates = args.spray_gates
+     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
+         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
+         state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
+@@ -1055,14 +1093,15 @@
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
+-                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback")):
++                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"),
++                      ("spray_gates", "--spray-gates")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, spray gates {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+@@ -1072,6 +1111,7 @@
+               "off" if skins and not run.body.hand_down else "on",
+               run.body.sideways_pairing if skins else "depth",
+               run.body.size_feedback if skins else "n/a",
++              run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -1093,6 +1133,8 @@
+         thermal_info["sideways_heat"] = run.body.sideways_pairing
+     if skins and run.body.size_feedback == "current":
+         thermal_info["size_feedback"] = "current"
++    if getattr(run.body, "spray", None) is not None and run.body.spray.spray_gates != "before":
++        thermal_info["spray_gates"] = run.body.spray.spray_gates      # absent: before, as a state saved without it
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (661 passed, 1 skipped: Task 5g's 653 and these 8; 31.4 minutes across four processes with the two long runs sharing the laptop, 2026-11-10).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_spray.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Spraying: --hand-down off and --part-count-from melting the defaults of melting skins, the Rayleigh-Taylor droplet without the body-radius cap on the skins' crest-limit path (--spray-gates 2026-11-10|before on run and resume); sub-plan 22 Task 5h"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g and 5h written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

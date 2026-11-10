@@ -524,7 +524,8 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     m_s = (sk.m * ((cells >= n_liq[:, None]) & (cells < n_flow[:, None]))).sum(axis=1)     # the slurry run, nominally
     for j, i in enumerate(rows):
         props = material_mod.LiquidProperties(float(rho[j]), float(mu[j]), SLURRY_SIGMA)
-        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False)
+        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False,
+                                spray_gates=model.spray_gates)
         one, cell = slice(j, j + 1), slice(i, i + 1)
         r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
                        radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],

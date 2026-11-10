@@ -12,11 +12,15 @@ from reentry_model import cli, restart, spray
 from reentry_model import trajectory as tj
 
 # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
-# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s
+# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
+# It hands down and counts parts by the moves, as every flight did before the defaults of melting skins changed to
+# `--hand-down off --part-count-from melting` (Task 5h, Asha 2026-11-10); the resume tests below were written for it
 FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", "--flight-path-angle", "-0.959331",
           "--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
           "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
-          "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
+          "--fine-size", "2", "--hand-down", "on", "--part-count-from", "moves", "--skin-flow-cycles", "2", "--quiet"]
+DEFAULT_FLIGHT = [a for i, a in enumerate(FLIGHT) if not (a in ("--hand-down", "--part-count-from") or FLIGHT[i - 1] in
+                                                          ("--hand-down", "--part-count-from"))]
 
 
 def rows_of(path):
@@ -453,3 +457,65 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
         cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
                   "--size-feedback", "current"])
     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
+    """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
+    runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the
+    arguments its saved state carries, and its name carries no suffix for either. `--spray-gates` is `2026-11-10` and
+    recorded; a resume keeps all three, and `--hand-down on` asked of it is the one that changes."""
+    pytest.importorskip("cantera")
+    assert "--hand-down" not in DEFAULT_FLIGHT and "--part-count-from" not in DEFAULT_FLIGHT
+    assert cli.main(DEFAULT_FLIGHT + ["--t-max", "0.075", "--outdir", str(tmp_path), "--save-state-at", "0.05"]) == 0
+    (doc_path,) = [p for p in os.listdir(str(tmp_path)) if p.endswith(".json")]
+    doc = json.load(open(os.path.join(str(tmp_path), doc_path)))
+    assert "handdown" not in doc["run_name"] and "parts-" not in doc["run_name"]
+    assert doc["settings"]["skin"]["hand_down"] == "off" and doc["settings"]["skin"]["part_count_from"] == "melting"
+    assert doc["settings"]["spray_gates"] == "2026-11-10"
+    state_path = os.path.join(str(tmp_path), doc["run_name"] + ".state.pkl")
+    state = restart.load(state_path)
+    assert state["meta"]["args"]["hand_down"] == "off" and state["meta"]["args"]["part_count_from"] == "melting"
+    body = state["run"].body
+    assert body.hand_down is False and body.part_count_from == "melting" and body.spray.spray_gates == "2026-11-10"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    doc = json.load(open(str(tmp_path / "same.json")))
+    assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
+    assert "hand_down" in doc["settings"] and doc["settings"]["hand_down"] == "off"
+
+
+def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_state_without_them_resumes_as_before(
+        flown, tmp_path, capsys):
+    """`--spray-gates` on a resume (sub-plan 22 Task 5h). The test flight is `before` through its saved state only if the
+    state carries no setting: a state saved before the option (the setting removed from its spray model, which then reads the
+    class default) resumes as `before`, with no `spray_gates` key in the JSON's settings, named in the line before the
+    flight; `2026-11-10` asked of it is recorded in the JSON's settings and in what was changed, and kept by the state the
+    resumed flight saves. A flight that does not spray refuses the option."""
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["spray_gates"] == "2026-11-10"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "spray gates 2026-11-10" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "same.json")))["settings"]["spray_gates"] == "2026-11-10"
+    state = restart.load(state_path)
+    del vars(state["run"].body.spray)["spray_gates"]                       # a model pickled before the setting existed
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "spray gates before" in capsys.readouterr().out
+    assert "spray_gates" not in json.load(open(str(tmp_path / "o.json")))["settings"]
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "n", "--spray-gates", "2026-11-10",
+                     "--save-state-at", "0.2"]) == 0
+    doc = json.load(open(str(tmp_path / "n.json")))
+    assert doc["resumed_from"]["changed"] == {"--spray-gates": "2026-11-10", "--save-state-at": 0.2}
+    assert doc["settings"]["spray_gates"] == "2026-11-10"
+    assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.spray.spray_gates == "2026-11-10"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "b", "--spray-gates", "before"]) == 0
+    doc = json.load(open(str(tmp_path / "b.json")))
+    assert "spray_gates" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
+    k = FLIGHT.index("--melt")
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                  "--spray-gates", "before"])
+    assert exc.value.code == 2 and "--spray-gates needs a saved flight with spraying" in capsys.readouterr().err

@@ -307,9 +307,24 @@ class SprayResult:
     #                                 per-crest cap's lambda (2026-10-24)
 
 
+SPRAY_GATES_NAMES = ("2026-11-10", "before")
+
+
 class SprayModel:
+    """Girin's and Girin and Kopyt's release model for one body's patches (`evaluate`).
+
+    `spray_gates` (sub-plan 22 Task 5h; Asha, 2026-11-10) says which of the release rules decided on 2026-11-10 apply:
+    `before` (the class default, so that a model pickled before the setting existed behaves as it did) keeps every rule as
+    it stood; `2026-11-10` applies them. So far the one rule: on the crest-limit path (`cap_depth` given, the layered
+    skins) a Rayleigh-Taylor droplet is capped by its crest alone, not by a quarter of the body radius as well. Task 5i
+    adds the thin branch's Knudsen gate under the same setting."""
+    spray_gates = "before"
+
     def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_THEORY, table=None,
-                 rt_spray=True):
+                 rt_spray=True, spray_gates="before"):
+        if spray_gates not in SPRAY_GATES_NAMES:
+            raise ValueError("spray_gates must be one of {}, got {!r}".format(SPRAY_GATES_NAMES, spray_gates))
+        self.spray_gates = spray_gates
         if k_r <= 0.0 or k_t <= 0.0 or we_critical <= 0.0:
             raise ValueError("k_r, k_t and the critical Weber number must be > 0")
         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
@@ -499,13 +514,22 @@ class SprayModel:
         dm = np.where(unstable, np.minimum(mdot * areas * dt, m_f), 0.0)
         # a droplet is never larger than a quarter of the body radius (the long near-critical waves Girin excludes; the
         # edge dynamic pressure vanishes toward the equator) nor than the film on its patch -- or, given cap_depth, than
-        # one crest of its own wave on the depth the release can take, (4/3) pi r^3 <= lambda^2 h (2026-10-24)
+        # one crest of its own wave on the depth the release can take, (4/3) pi r^3 <= lambda^2 h (2026-10-24); under
+        # spray_gates 2026-11-10 the Rayleigh-Taylor droplet on that path has the crest limit alone (2026-11-10)
         with np.errstate(invalid="ignore"):
             if cap_depth is None:
                 r = np.minimum(r, np.minimum((3.0 * m_f / (4.0 * np.pi * liq.rho)) ** (1.0 / 3.0), 0.25 * radius))
             else:
                 crest = (3.0 * wavelength ** 2 * h_cap / (4.0 * np.pi)) ** (1.0 / 3.0)
-                r = np.where(h_cap > 0.0, np.minimum(r, np.minimum(crest, 0.25 * radius)), np.nan)
+                if self.spray_gates == "before":
+                    r = np.where(h_cap > 0.0, np.minimum(r, np.minimum(crest, 0.25 * radius)), np.nan)
+                else:
+                    # Asha, 2026-11-10 (sub-plan 22 Task 5h): the Rayleigh-Taylor droplet is its wavelength, Girin and
+                    # Kopyt's front-surface r_d, and the quarter-radius cap is not from the mode's physics: it set the
+                    # 15.8 mm droplets of the comparison flights through a transverse radius inflated to 57-64 mm by
+                    # misplaced column tops. The crest limit, a supply limit, stays; every other branch keeps both.
+                    limit = np.where(branch == BRANCH_RT, crest, np.minimum(crest, 0.25 * radius))
+                    r = np.where(h_cap > 0.0, np.minimum(r, limit), np.nan)
         with np.errstate(divide="ignore", invalid="ignore"):
             dn = np.where(dm > 0.0, dm / (4.0 / 3.0 * np.pi * liq.rho * np.where(dm > 0.0, r, 1.0) ** 3), 0.0)
         rt_active, _, _ = rayleigh_taylor(w_n, pool, liq)      # the unbounded criterion, still reported for continuity

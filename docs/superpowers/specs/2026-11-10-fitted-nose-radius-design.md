@@ -125,3 +125,14 @@ Knudsen number is below 0.1 as well; and the thin branch (with the rarefied bran
 exists, Girin's closure below 0.01 or the band's depth with `--slip-band on`, under `--spray-gates 2026-11-10`, in both
 surface models. With Task 5j the band's shear integral reads the windward corners by the centroid test, through the
 effective angle the surface flow receives.
+
+### Amended by Asha later on 2026-11-10: the bound applies on the flat side (option B)
+
+Decision 2 is replaced on its upper side. Task 5g's review found that with no bound a nearly flat cap reads discontinuously:
+a 30 mm cap sagging by one micrometre fits 450 m read as convex (about 1 % of the original sphere's stagnation heating)
+and takes the bound, 83.8 mm, read as concave (about 77 %); and on the 100 mm flights the cap fitted 95-107 mm from about
+30 s against a bound of about 84 mm. Asha chose option B: the radius used is the fitted radius when the cap is convex and
+no flatter than the flat-face value, and the flat-face value (`NOSE_CAP_FACTOR`, 1.67, times the windward transverse
+radius; Boison and Curtiss 1959) when the convex fit is flatter, when the cap is concave, and when it is flat to rounding.
+There is no lower bound. The fitted radius and the bound are still reported every step. The windward transverse radius is
+taken over the columns whose base normal faces the flow (review finding 1).

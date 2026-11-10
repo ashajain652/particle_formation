@@ -446,12 +446,12 @@ def crest(lam, h):
     return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
 
 
-def spraying_cases(cap_depth=None, areas=None):
+def spraying_cases(cap_depth=None, areas=None, spray_gates="before"):
     """One patch of each branch the cap reaches, each evaluated as its own body: (result, the mode's own radius per
     wavelength) for the thick branch (Girin's closure, 1 mm of liquid), the thin branch (20 um on a floor 20 um down),
     the rarefied branch (20 um on a floor 1 mm down, where its 7.5 mm wave stays inside the inviscid mode's validity) and
     the front-surface Rayleigh-Taylor mode (5 mm of liquid at the nose, its lambda* 2 cm at W = 106 m/s2)."""
-    model = spray.SprayModel(LIQ)
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
     areas = np.full(1, 1e-5) if areas is None else np.asarray(areas, dtype=float)
     out = {}
     h = None if cap_depth is None else np.full(1, cap_depth)
@@ -711,3 +711,66 @@ def test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit(tmp_
     del cols
     spool.remove()
     assert not (tmp_path / "spool").exists()
+
+
+# -- the Rayleigh-Taylor droplet without the body-radius cap (Asha, 2026-11-10; sub-plan 22 Task 5h) -------------------
+def rt_droplet(cap_depth, radius, spray_gates):
+    """The Rayleigh-Taylor patch of `spraying_cases` (its lambda* 2 cm), evaluated as a body of `radius`, under `spray_gates`."""
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
+    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
+    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
+    return model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas,
+                          radius=radius, extent=np.full(1, 0.05), deceleration_n=w_n,
+                          cap_depth=None if cap_depth is None else np.full(1, cap_depth))
+
+
+def test_a_rayleigh_taylor_droplet_is_not_capped_by_the_body_radius():
+    """Under spray_gates 2026-11-10, on the crest-limit path, a deep pool (5 mm of liquid under a 2 cm wave, 1 cm of cap
+    depth) on a body of a 2 cm radius gives a droplet of the crest-limited wavelength, 9.8 mm, above a quarter of the radius
+    (5 mm), which `before` still applies; the wavelength itself is the droplet's size where the crest does not bind."""
+    res_new = rt_droplet(1e-2, 0.02, "2026-11-10")
+    res_old = rt_droplet(1e-2, 0.02, "before")
+    assert res_new.branch[0] == res_old.branch[0] == spray.BRANCH_RT and res_new.wavelength[0] == pytest.approx(0.02)
+    assert res_new.r[0] == pytest.approx(min(res_new.wavelength[0], crest(0.02, 1e-2)), rel=1e-12)
+    assert res_new.r[0] > 0.25 * 0.02 and res_old.r[0] == 0.25 * 0.02
+    assert res_new.mdot[0] == res_old.mdot[0] and res_new.dm[0] == res_old.dm[0]       # only the radius, so only the count
+
+
+def test_the_crest_limit_still_binds_a_rayleigh_taylor_droplet_on_a_shallow_pool():
+    """On a shallow cap depth the crest, not the wavelength, is the droplet: 4.6 mm at 1 mm of depth under the 2 cm wave
+    (the outline's check), and the same on a body of any radius, small or large, under the new gates."""
+    for radius in (0.005, 0.05, 0.5):
+        res = rt_droplet(1e-3, radius, "2026-11-10")
+        assert res.branch[0] == spray.BRANCH_RT and res.r[0] == pytest.approx(crest(0.02, 1e-3), rel=1e-12)
+        assert res.r[0] == pytest.approx(4.57e-3, rel=1e-3) and res.r[0] < 0.02
+
+
+def test_the_new_spray_gates_change_no_other_branch_and_not_the_element_model():
+    """Under 2026-11-10 the thick, thin and rarefied branches' droplets (with a cap depth) and every branch's on the element
+    model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
+    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path."""
+    for cap in (1e-5, 1e-3, None):
+        old, new = spraying_cases(cap_depth=cap), spraying_cases(cap_depth=cap, spray_gates="2026-11-10")
+        for name in old:
+            if cap is not None and name == "Rayleigh-Taylor":
+                continue
+            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
+                assert np.array_equal(getattr(old[name][0], field), getattr(new[name][0], field), equal_nan=True)
+    assert spray.SprayModel(LIQ).spray_gates == "before" and spray.SprayModel(LIQ, spray_gates="2026-11-10").spray_gates == "2026-11-10"
+    with pytest.raises(ValueError):
+        spray.SprayModel(LIQ, spray_gates="maybe")
+
+
+def test_spray_gates_before_reproduces_the_old_radius_to_the_last_bit():
+    """`before` (the class default, and the setting of a model pickled before it existed) keeps the old line: with a cap
+    depth every branch's radius is min(mode, crest, a quarter of the radius), exactly, the Rayleigh-Taylor one too."""
+    assert spray.SprayModel.spray_gates == "before"
+    for cap in (1e-5, 1e-3, 1e-2):
+        for radius in (0.01, 0.05):
+            res = rt_droplet(cap, radius, "before")
+            lam = res.wavelength[0]
+            assert res.r[0] == np.minimum(lam, np.minimum(crest(lam, cap), 0.25 * radius))
+    for name, (res, _) in spraying_cases(cap_depth=1e-3).items():       # the default model, as before the setting
+        assert res.r[0] <= 0.0125
