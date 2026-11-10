@@ -390,7 +390,8 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
-                         "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off"}
+                         "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
+                         "size_feedback": "current"}                  # always recorded: the default changed (Task 5g)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
@@ -602,7 +603,7 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     THERMAL + ["--melt", "on", "--skin-flow", "on", "--deep-runoff", "off"],
     THERMAL + ["--melt", "on", "--molten-cascade", "off"],
     THERMAL + ["--melt", "on", "--skin-flow", "on", "--rigid-substrate", "off"],
-    THERMAL + ["--melt", "on", "--size-feedback", "initial"],                         # ... refused with the skins
+    THERMAL + ["--melt", "on", "--size-feedback", "shrinking"],                       # no such source of the nose radius
     THERMAL + ["--stills"],                                                            # the element model's frames
 ])
 def test_contradictory_skin_settings_exit_2(argv, tmp_path):
@@ -868,3 +869,40 @@ def test_the_command_line_gives_the_skins_their_sideways_pairing(tmp_path, monke
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["sideways_pairing"] == pairing
+
+
+def test_the_size_feedback_is_current_by_default_for_the_skins_and_reaches_the_body(tmp_path, monkeypatch):
+    """--size-feedback is accepted with --surface-model skin (sub-plan 22 Task 5g, Asha 2026-11-10: it was refused until then),
+    `current` by default, whether the skins melt or not; the element model keeps its own default. The body is not built: its
+    arguments are."""
+    from reentry_model import skinbody
+    assert cli.skin_size_feedback_of(cli.build_parser().parse_args(THERMAL)) == "current"
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    melt = dry + ["--melt", "on"]
+    for argv, source in ((dry, "current"), (dry + ["--size-feedback", "initial"], "initial"), (melt, "current"),
+                         (melt + ["--size-feedback", "initial"], "initial"), (melt + ["--size-feedback", "current"], "current")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["size_feedback"] == source
+
+
+def test_the_skins_record_their_size_feedback_and_the_nose_columns(tmp_path):
+    """A skin run's JSON always records `settings.skin.size_feedback` (the default changed to `current`, so it is recorded),
+    and its history has the five nose columns with either setting, the radius used the fitted one under `current` and the
+    mesh's 50 mm under `initial` (sub-plan 22 Task 5g)."""
+    for source, name in (("current", "cur"), ("initial", "ini")):
+        argv = THERMAL + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+                          "--outdir", str(tmp_path), "--name", name]
+        if source == "initial":
+            argv += ["--size-feedback", "initial"]
+        assert cli.main(argv) == 0
+        assert json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]["size_feedback"] == source
+        rows = list(csv.DictReader(open(tmp_path / (name + ".csv"))))
+        assert all(k in rows[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
+                                          "nose_cap_concave"))
+        used, fitted = float(rows[-1]["nose_radius_mm"]), float(rows[-1]["fitted_nose_radius_mm"])
+        assert 45.0 < fitted < 60.0 and (used == fitted if source == "current" else used == 50.0)

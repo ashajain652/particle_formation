@@ -127,7 +127,7 @@ from . import rheology
 from . import skin as skin_mod
 from . import spray as spray_mod
 from . import spreading
-from .body import ThermalBody
+from .body import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, SIZE_FEEDBACK_NAMES, ThermalBody, fit_sphere
 from .thermal import SIGMA_SB
 
 FLOW_DEFAULT = False              # the class's default, the heat-only skins its tests build on: the flow was off until
@@ -190,6 +190,25 @@ SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in
 # since time zero, kg still wanting to move and edges over the limit at the last move, and the largest landing [K] of metal over
 # its node's temperature since the last row
 SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K")
+
+# the history's nose columns (sub-plan 22 Task 5g), every run (`SkinBody.nose_stats`): the radius the windward loads used [mm],
+# the sphere fitted to the tops' cap [mm, nan where there is none], the reported bound [mm], the corners fitted and 1 where
+# the cap was concave
+NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave")
+
+
+@dataclasses.dataclass
+class NoseFit:
+    """The windward cap of the skins' tops and the radius the windward loads read (`SkinBody.nose_fit`): `fitted` [m] the
+    radius of the sphere fitted through the top corners within `body.NOSE_CAP_ANGLE` of the direction of motion (nan where
+    there is no fit), `bound` [m] `body.NOSE_CAP_FACTOR` times the windward transverse radius (reported, never applied),
+    `points` the corners fitted, `concave` whether the fitted centre lies on the flow side of the cap, and `used` [m] the
+    radius the loads read."""
+    fitted: float
+    bound: float
+    points: int
+    concave: bool
+    used: float
 
 
 @dataclasses.dataclass
@@ -565,12 +584,17 @@ class SkinBody(ThermalBody):
     the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down.
     `sideways_pairing`: `depth` (the default) or `height`, what pairs neighbouring columns' cells in the sideways conduction,
     their depth below the tops (`skin.Sideways`) or their height above the bases (`skin.SidewaysByHeight`, heat between
-    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f)."""
+    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f).
+    `size_feedback`: `current` (the default) or `initial` (`body.SIZE_FEEDBACK_NAMES`), where the windward loads' nose radius
+    comes from: under `current` the radius of a sphere fitted to the tops of the columns facing the flow, under `initial` the
+    mesh's own radius. The fit is made and reported either way (`nose_fit`, `NOSE_COLUMNS`; sub-plan 22 Task 5g, below)."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
     hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
     sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
+    size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
+    _nose_raw = None                     # the fit of the tops, made in `_refresh_geometry`; the states saved before Task 5g have none
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -579,7 +603,11 @@ class SkinBody(ThermalBody):
                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
-                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth"):
+                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
+                 size_feedback="current"):
+        if size_feedback not in SIZE_FEEDBACK_NAMES:
+            raise ValueError("size_feedback must be one of {}, got {!r}".format(SIZE_FEEDBACK_NAMES, size_feedback))
+        self.size_feedback = size_feedback
         if sideways_pairing not in skin_mod.SIDEWAYS_PAIRINGS:
             raise ValueError("sideways_pairing must be one of {}, got {!r}".format(skin_mod.SIDEWAYS_PAIRINGS,
                                                                                   sideways_pairing))
@@ -690,6 +718,49 @@ class SkinBody(ThermalBody):
                                                              self.columns.faces)
         self.theta = self.surface.angles_to(self.v_hat)
         self.i_stag, self.i_back = self.surface.patch_toward(self.v_hat), self.surface.patch_toward(-self.v_hat)
+        self._nose_raw = self._fit_nose()                # from the surface as built: nothing the surface or theta feed changes
+
+    def _fit_nose(self):
+        """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
+        bound a comparison and not a limit, on by default): (fitted radius [m] or nan, bound [m], corners fitted,
+        concave). The cap is the top corners whose normals are within `NOSE_CAP_ANGLE` of the direction of motion, fitted
+        unweighted as the element model fits its patch centroids (`body.fit_sphere`); fewer than 4 corners, or a radius
+        not finite and positive, is no fit. Concave: the fitted centre lies on the flow side of the cap's mean point, so no
+        sphere of positive curvature describes it. The bound is `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
+        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
+        through the 3D mesh's mean point along the flight direction of the top corners at most 90 degrees from it, so that
+        a pool standing off the back does not move it. Measured on the comparison flights' frames (2026-11-10): the cap's
+        radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about 30 s, 24.7 mm at 171.0 s on the 50 mm sphere
+        and 83 mm at 176.0 s."""
+        pts, v = self.surface.points, self.v_hat
+        X = pts - self.mesh.points.mean(axis=0)
+        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
+        wind = self.theta <= 0.5 * np.pi
+        bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
+        cap = pts[self.theta <= np.radians(NOSE_CAP_ANGLE)]
+        n, fitted, concave = len(cap), float("nan"), False
+        if n >= 4:
+            centre, r = fit_sphere(cap)
+            if np.isfinite(r) and r > 0.0:
+                fitted = r
+                concave = bool((centre - cap.mean(axis=0)) @ v > 0.0)
+        return fitted, bound, n, concave
+
+    @property
+    def nose_fit(self):
+        """The windward cap's fit and the radius the loads read (`NoseFit`), from the top surface at the last refresh; a body
+        saved before the fit existed makes it from its surface at the first ask."""
+        if self._nose_raw is None:
+            self._nose_raw = self._fit_nose()
+        fitted, bound, n, concave = self._nose_raw
+        r0 = float(self.mesh.params.get("radius_m", 0.05))
+        used = r0
+        if self.size_feedback == "current":
+            if concave and np.isfinite(bound) and bound > 0.0:
+                used = bound                             # the flat-face equivalent where no sphere describes the cap
+            elif np.isfinite(fitted) and not concave:
+                used = fitted                            # the bound is not applied: a flat cap reads above it
+        return NoseFit(fitted, bound, n, concave, float(used))
 
     @property
     def mesh(self):
@@ -1101,7 +1172,15 @@ class SkinBody(ThermalBody):
         return self.solver.temperature()
 
     def nose_radius(self):
-        return float(self.mesh.params.get("radius_m", 0.05))
+        """The nose radius the windward loads read [m] (`CoupledRun.loads_at`, the surface flow): `nose_fit.used`, the radius
+        of the sphere fitted to the tops' cap under `size_feedback` `current`, the mesh's own under `initial` or where there
+        is no fit (sub-plan 22 Task 5g)."""
+        return self.nose_fit.used
+
+    def nose_stats(self):
+        """The history's nose columns (`NOSE_COLUMNS`), after the other skin columns and before the spreading ones."""
+        f = self.nose_fit
+        return dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
 
     def transverse_radius(self):
         """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
@@ -1182,7 +1261,7 @@ class SkinBody(ThermalBody):
                 **self._depth_ratios(flowing),
                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
                 "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
-                **self.spread_stats()}
+                **self.nose_stats(), **self.spread_stats()}
 
     def spread_stats(self):
         """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run

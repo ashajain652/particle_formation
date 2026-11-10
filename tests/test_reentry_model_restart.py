@@ -402,3 +402,54 @@ def test_resuming_with_height_pairing_sets_it_on_the_body_and_records_it(flown, 
                   "--sideways-heat", "height"])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
     assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, tmp_path, capsys):
+    """`--size-feedback` on a resume (sub-plan 22 Task 5g, Asha 2026-11-10). The test flight is `current` by default (its
+    JSON says so in the skins' settings); a resume keeps that, names it in the line before the flight and records it in
+    the JSON's settings, and `initial` asked of it flies the mesh's 50 mm radius, recorded in what was changed with no
+    settings key, and is kept by the state it saves. A state saved before Task 5g (no setting, no fit, no nose columns on
+    its row) resumes as `initial` with the nose columns filled, and `current` asked of it fits the cap at the first load."""
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["size_feedback"] == "current"
+    assert all(k in flight[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
+                                        "nose_cap_concave")) and float(flight[-1]["nose_radius_mm"]) != 50.0
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "size feedback current" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "same.json")))["settings"]["size_feedback"] == "current"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "i", "--size-feedback", "initial",
+                     "--save-state-at", "0.2"]) == 0
+    assert "size feedback initial" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "i.json")))
+    assert doc["resumed_from"]["changed"] == {"--size-feedback": "initial", "--save-state-at": 0.2}
+    assert "size_feedback" not in doc["settings"]
+    rows = rows_of(str(tmp_path / "i.csv"))
+    assert rows[0] == flight[14] and all(float(r["nose_radius_mm"]) == 50.0 for r in rows[1:])
+    assert restart.load(str(tmp_path / "i.state.pkl"))["run"].body.size_feedback == "initial"
+    # a state saved before Task 5g
+    state = restart.load(state_path)
+    body = state["run"].body
+    del vars(body)["size_feedback"], vars(body)["_nose_raw"]
+    for key in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave"):
+        del state["row"][key]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "size feedback initial" in capsys.readouterr().out
+    rows = rows_of(str(tmp_path / "o.csv"))
+    assert "size_feedback" not in json.load(open(str(tmp_path / "o.json")))["settings"]
+    assert all(float(r["nose_radius_mm"]) == 50.0 and float(r["nose_cap_points"]) > 0 for r in rows)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "c", "--size-feedback", "current"]) == 0
+    assert "size feedback current" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "c.json")))
+    assert doc["resumed_from"]["changed"] == {"--size-feedback": "current"} and doc["settings"]["size_feedback"] == "current"
+    rows = rows_of(str(tmp_path / "c.csv"))
+    assert all(float(r["nose_radius_mm"]) == float(r["fitted_nose_radius_mm"]) != 50.0 for r in rows[1:])
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                  "--size-feedback", "current"])
+    assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
