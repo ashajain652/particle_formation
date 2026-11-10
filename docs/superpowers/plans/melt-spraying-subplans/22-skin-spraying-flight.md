@@ -12644,12 +12644,13 @@ git commit -m "Skins: the windward loads read the radius of a sphere fitted to t
 **Files:**
 - Modify: `reentry_model/spray.py` (`SPRAY_GATES_NAMES`, `SprayModel(..., spray_gates="before")` with a class default `"before"`, the
   Rayleigh-Taylor branch's radius on the crest-limit path in `SprayModel.evaluate`)
-- Modify: `reentry_model/skinbody.py` (the slurry's one-patch spray model is built with the parent model's `spray_gates`)
+- Modify: `reentry_model/skinbody.py` (the slurry's one-patch spray model is built with the parent model's `spray_gates`; `_move_base` counts
+  the hand-down's momentum only where a hand-down ran, the defect of ruling 6)
 - Modify: `reentry_model/cli.py` (`--hand-down` and `--part-count-from` default by run on `run`: `off` and `melting` for melting skins,
   `on` and `moves` for every other run; `--spray-gates 2026-11-10|before` on `run` and `resume`; the spread-limit refusal; the name
   suffixes; the records)
 - Test: `tests/test_reentry_model_spray.py` (4 tests), `tests/test_reentry_model_cli.py` (1 test added, 5 changed),
-  `tests/test_reentry_model_restart.py` (2 tests added, the flight's options pinned)
+  `tests/test_reentry_model_restart.py` (2 tests added, four resume tests on `FLIGHT_ON`), `tests/test_reentry_model_skinbody.py` (1 test, the momentum fix)
 
 **Interfaces:**
 - Consumes: Task 5g's, 5e's and 5d's wiring of an option on `run` and `resume` (`hand_down_of`, `part_count_rule_of`, `skin_name_suffix`,
@@ -12685,15 +12686,43 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
 3. *`--spray-gates` has no name suffix* (not in the brief); the JSON records it. Cost: a `before` run's name equals a `2026-11-10` run's.
 4. *The class default is `before`, the constructor's too,* so every state pickled before and every direct `SprayModel(...)` keeps its
    behaviour; only the command line's `run` turns `2026-11-10` on.
-5. *The resume tests' flight pins `--hand-down on --part-count-from moves`* so that they keep exercising the flight they were written for.
-6. *Found while pinning the test flight: with `--hand-down off` the spraying test flight's momentum books miss.* The command line's
-   spraying flight (65 km, 0.0625 s, dev skins) closes the momentum books to 8e-18 of the impulses with the hand-down on, and misses by
-   4.4e-6 with it off (released mass 0.241666 g against 0.241918 g; the energy residual stays 6e-12); measured at the build of Task 5g
-   (95ed933) with `--hand-down off` given, so it is Task 5e's, not this task's, and `--part-count-from` and `--spray-gates` change
-   neither number. Since `off` is now the default of melting skins, the test flight is pinned to `on` and `moves`; the miss is reported to
-   the controller, not changed here.
+5. *The resume tests of the spread limit, of the melting rule's change and of the saved flight's options fly `--hand-down on --part-count-from moves`*
+   (`FLIGHT_ON`), because spreading moves only handed-down metal and those tests change the rules from their old values; the other flights
+   fly the new defaults.
+6. *The defect found while testing the defaults: with the hand-down off, `_move_base` counted a release's momentum twice* (Task 5e's;
+   found by Task 5h on 2026-11-10). It added `sk.momentum_out` to `momentum_lost` as "what the handed-down cells held" even where no
+   hand-down ran, when `momentum_out` still held what the last take (the spray release's) took and its book had counted. Measured: the
+   command line's spraying flight (65 km, 0.0625 s) missed its momentum books by 4.4e-6 of the impulses with the hand-down off (8e-18
+   with it on), and the 50 mm comparison flight by up to 1.4e-5 after spraying began at 186.49 s (at most 2e-16 before). The failing test
+   first (`test_with_the_hand_down_off_a_release_s_momentum_is_not_counted_twice`, 5.5e-5 on the prescribed-release body), then the
+   fix: the line runs only where `self.hand_down`. The energy books were not affected. Flights flown before the fix with the hand-down off
+   (the comparison flights) have a momentum residual that is this double count, not a model error.
 
-- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_spray.py`:
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -2127,3 +2127,16 @@
+     assert b.nose_radius() == 0.05 and b.skin_stats()["nose_radius_mm"] == 50.0 and np.isfinite(b.nose_fit.fitted)
+     b.size_feedback = "current"
+     assert b.nose_radius() == b.nose_fit.fitted != 0.05
++
++
++def test_with_the_hand_down_off_a_release_s_momentum_is_not_counted_twice(coarse_sphere_mesh):
++    """Found by sub-plan 22 Task 5h on 2026-11-10 (a defect of Task 5e): `_move_base` added `momentum_out` to the momentum lost
++    as "what the handed-down cells held" even where no hand-down ran, when it still held what the last take (the spray
++    release's) took, which the release book had already counted. The command line's spraying flight missed its momentum books
++    by 4.4e-6 of the impulses with the hand-down off, and the 50 mm comparison flight by up to 1.4e-5 after spraying began.
++    The prescribed-release body of sub-plan 21 Task 7, with the hand-down off, closes its momentum books to round-off."""
++    b = make(coarse_sphere_mesh, flow=True, remove=False, flow_cycles=1, release=skin.prescribed_release(2.0), hand_down=False)
++    for k in range(2):
++        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
++    assert b.released_mass > 0.0 and np.abs(b.droplet_momentum).max() > 0.0 and b.handed_mass == 0.0
++    assert b.skin_stats()["momentum_residual"] < 1e-12
+```
+
+  in `tests/test_reentry_model_spray.py`:
 
 ```diff
 --- a/tests/test_reentry_model_spray.py
@@ -12797,26 +12826,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
      assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
      assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
      rows = list(csv.DictReader(open(path[:-5] + ".csv")))
-@@ -475,11 +476,16 @@
-     from reentry_model import spray
-     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
-                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
--                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
-+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--hand-down", "on", "--part-count-from", "moves",
-+                   "--outdir", str(tmp_path)]
-+    # the flight this test was written for, which hands down and counts parts by the moves; the melting skins' defaults
-+    # changed to off and melting on 2026-11-10 (Task 5h), and with the hand-down off this flight's momentum books miss
-+    # 4.4e-6 of the impulses where they close to 1e-17 with it on (measured at the build before Task 5h too, with
-+    # --hand-down off given: a finding of Task 5h, reported, not changed here)
-     assert cli.main(argv) == 0
-     (path,) = glob.glob(str(tmp_path / "*.json"))
-     doc = json.load(open(path))
--    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
-+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_parts-moves_handdown-on")
-     s, r, f = doc["settings"], doc["results"], doc["files"]
-     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
-     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
-@@ -671,8 +677,9 @@
+@@ -671,8 +672,9 @@
          raise _Built(kwargs)
      monkeypatch.setattr(skinbody, "SkinBody", built)
      melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
@@ -12828,7 +12838,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
          with pytest.raises(_Built) as got:
              cli.main(argv)
          assert got.value.args[0]["spread_limit"] == limit
-@@ -703,6 +710,27 @@
+@@ -703,6 +705,27 @@
          cli.main(melt + ["--skin-flow", "off"])
      k = got.value.args[0]
      assert not k["flow"] and k["remove"] and k["spray"] is None and k["surface_flow"] is None and not k["slurry_spray"]
@@ -12856,7 +12866,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
  
  
  def test_the_skins_continuum_step_latches_at_their_first_liquid_before_the_knudsen_switch(tmp_path):
-@@ -729,19 +757,27 @@
+@@ -729,19 +752,27 @@
      assert r["dt_switch_altitude_km"] == pytest.approx(float(rows[1]["altitude_km"]), rel=1e-8)
  
  
@@ -12893,7 +12903,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
      assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
  
  
-@@ -758,37 +794,43 @@
+@@ -758,37 +789,43 @@
      assert exc.value.code == 2
  
  
@@ -12950,7 +12960,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
      assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
  
  
-@@ -798,6 +840,7 @@
+@@ -798,6 +835,7 @@
      FEM + ["--melt", "on", "--hand-down", "off"],                                      # the element model has no skins
      BASE + ["--hand-down", "off"],                                                     # no thermal model at all
      THERMAL + ["--melt", "on", "--hand-down", "off", "--spread-limit", "60"],          # spreading moves only handed-down metal
@@ -12958,7 +12968,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
  ])
  def test_a_bad_hand_down_switch_or_off_without_melting_skins_or_with_a_spread_limit_exits_2(argv, tmp_path, capsys):
      with pytest.raises(SystemExit) as exc:
-@@ -805,19 +848,22 @@
+@@ -805,19 +843,22 @@
      assert exc.value.code == 2
      if "60" in argv:
          err = capsys.readouterr().err
@@ -12988,7 +12998,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
          with pytest.raises(_Built) as got:
              cli.main(argv)
          assert got.value.args[0]["hand_down"] is on
-@@ -834,8 +880,9 @@
+@@ -834,8 +875,9 @@
      assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
      assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
      assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
@@ -13007,25 +13017,53 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
 ```diff
 --- a/tests/test_reentry_model_restart.py
 +++ b/tests/test_reentry_model_restart.py
-@@ -12,11 +12,15 @@
+@@ -12,11 +12,17 @@
  from reentry_model import trajectory as tj
  
  # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
 -# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s
 +# the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
-+# It hands down and counts parts by the moves, as every flight did before the defaults of melting skins changed to
-+# `--hand-down off --part-count-from melting` (Task 5h, Asha 2026-11-10); the resume tests below were written for it
++# With the options not given it is a flight of melting skins as they now default: the hand-down off, the part count by the melting
  FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", "--flight-path-angle", "-0.959331",
            "--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
            "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
--          "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
-+          "--fine-size", "2", "--hand-down", "on", "--part-count-from", "moves", "--skin-flow-cycles", "2", "--quiet"]
-+DEFAULT_FLIGHT = [a for i, a in enumerate(FLIGHT) if not (a in ("--hand-down", "--part-count-from") or FLIGHT[i - 1] in
-+                                                          ("--hand-down", "--part-count-from"))]
+           "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
++DEFAULT_FLIGHT = FLIGHT
++# The flight as every one before 2026-11-10 flew, handing down and counting parts by the moves, for the resume tests of the
++# spread limit (spreading moves only handed-down metal), of the melting rule's change and of the state's `flown` saved
++# options, which need those settings and not the new defaults (Task 5h)
++FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
  
  
  def rows_of(path):
-@@ -453,3 +457,65 @@
+@@ -129,7 +135,7 @@
+     tests: (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
+     pytest.importorskip("cantera")
+     out = str(tmp_path_factory.mktemp("flown"))
+-    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
++    assert cli.main(FLIGHT_ON + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+     rows = rows_of(os.path.join(out, "f.csv"))
+     assert len(rows) == 17
+     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
+@@ -195,7 +201,7 @@
+     assert doc["results"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_mass_kg"] == 0.0
+ 
+     limited = str(tmp_path / "limited")
+-    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
++    assert cli.main(FLIGHT_ON + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
+                               "--spread-limit", "60"]) == 0
+     saved = os.path.join(limited, "f.state.pkl")
+     doc = json.load(open(os.path.join(limited, "f.json")))
+@@ -337,7 +343,7 @@
+     a resume of the state it saves. The reverse, a limit given to a state saved with the hand-down off, exits 2 as well."""
+     pytest.importorskip("cantera")
+     limited = str(tmp_path / "limited")
+-    assert cli.main(FLIGHT + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
++    assert cli.main(FLIGHT_ON + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
+                               "--spread-limit", "60"]) == 0
+     state, out = os.path.join(limited, "f.state.pkl"), str(tmp_path / "o")
+     capsys.readouterr()
+@@ -453,3 +459,65 @@
          cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
                    "--size-feedback", "current"])
      assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
@@ -13153,7 +13191,7 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
          rt_active, _, _ = rayleigh_taylor(w_n, pool, liq)      # the unbounded criterion, still reported for continuity
 ```
 
-  and the slurry's one-patch model in `reentry_model/skinbody.py`:
+  and in `reentry_model/skinbody.py`, the slurry's one-patch model and the momentum count:
 
 ```diff
 --- a/reentry_model/skinbody.py
@@ -13168,6 +13206,21 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
          one, cell = slice(j, j + 1), slice(i, i + 1)
          r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
                         radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],
+@@ -1112,8 +1113,12 @@
+                 self.spread_jump = max(self.spread_jump, float(jump.max()))
+             excess = np.where(s.landed, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
+             landed_H = landed_H - excess
+-        if mat.melts:
+-            self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
++        if mat.melts and self.hand_down:
++            # what the handed-down cells held. Only where a hand-down ran: with it off `skin_mod.hand_down` was not called, so
++            # `momentum_out` still holds what the last take (the spray release's) took, which its book had counted, and it
++            # was counted twice -- a defect of Task 5e found by Task 5h on 2026-11-10, measured as 4.4e-6 of the impulses in
++            # the command line's spraying flight and up to 1.4e-5 in the 50 mm comparison flight after spraying began
++            self.momentum_lost += sk.momentum_out.sum(axis=0)
+         moved = (book.drawn - handed_s) / (mat.rho * col.area)                    # m inward by drawing and handing down
+         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
+         inward = book.drawn / mat.rho + depth * col.area - handed_s / mat.rho        # m3 per corner
 ```
 
 - [ ] **Step 4: The command line** in `reentry_model/cli.py`:
@@ -13425,12 +13478,12 @@ to 57-64 mm by misplaced column tops; the crest limit, a supply limit, stays. Ev
      os.makedirs(args.outdir, exist_ok=True)
 ```
 
-- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (661 passed, 1 skipped: Task 5g's 653 and these 8; 31.4 minutes across four processes with the two long runs sharing the laptop, 2026-11-10).
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (662 passed, 1 skipped: Task 5g's 653 and these 9; 34.8 minutes across four processes with the two long runs sharing the laptop, 2026-11-10).
 
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_spray.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_spray.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
 git commit -m "Spraying: --hand-down off and --part-count-from melting the defaults of melting skins, the Rayleigh-Taylor droplet without the body-radius cap on the skins' crest-limit path (--spray-gates 2026-11-10|before on run and resume); sub-plan 22 Task 5h"
 ```
 

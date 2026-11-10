@@ -1113,8 +1113,12 @@ class SkinBody(ThermalBody):
                 self.spread_jump = max(self.spread_jump, float(jump.max()))
             excess = np.where(s.landed, landed_H - handed_s * mat.enthalpy(T_node), 0.0)
             landed_H = landed_H - excess
-        if mat.melts:
-            self.momentum_lost += sk.momentum_out.sum(axis=0)                     # what the handed-down cells held
+        if mat.melts and self.hand_down:
+            # what the handed-down cells held. Only where a hand-down ran: with it off `skin_mod.hand_down` was not called, so
+            # `momentum_out` still holds what the last take (the spray release's) took, which its book had counted, and it
+            # was counted twice -- a defect of Task 5e found by Task 5h on 2026-11-10, measured as 4.4e-6 of the impulses in
+            # the command line's spraying flight and up to 1.4e-5 in the 50 mm comparison flight after spraying began
+            self.momentum_lost += sk.momentum_out.sum(axis=0)
         moved = (book.drawn - handed_s) / (mat.rho * col.area)                    # m inward by drawing and handing down
         depth = self._absorb_depth(np.maximum(MOVE_MAX * col.edge_length.mean() - moved, 0.0))
         inward = book.drawn / mat.rho + depth * col.area - handed_s / mat.rho        # m3 per corner
