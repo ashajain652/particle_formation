@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2363,7 +2363,96 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e and 5f written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5g: The windward loads from a sphere fitted to the skins' tops
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`NOSE_COLUMNS`, `NoseFit`, the class defaults and `SkinBody(..., size_feedback="current")`,
+  `_fit_nose` called from `_refresh_geometry`, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
+- Modify: `reentry_model/coupled.py` (`SKINBODY_COLUMNS` gains the five columns)
+- Modify: `reentry_model/cli.py` (`--size-feedback current|initial` accepted with `--surface-model skin` on `run`, default `current`,
+  and on `resume`; the records; the one refusal of it with the skins goes)
+- Test: `tests/test_reentry_model_skinbody.py` (9 tests), `tests/test_reentry_model_cli.py` (2 tests, one refusal case changed),
+  `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: `body.fit_sphere(points) -> (centre, radius)`, `body.NOSE_CAP_ANGLE` (30.0), `body.NOSE_CAP_FACTOR` (1.67),
+  `body.SIZE_FEEDBACK_NAMES`; `SkinBody.surface` (a `columns.CornerSurface` of the column tops), `SkinBody.theta`, `SkinBody.v_hat`;
+  Task 5e's and 5f's wiring of an option on `run` and `resume`. The element model is not changed.
+- Produces: `SkinBody(..., size_feedback="current")`, also a class default `"initial"` for states pickled before it (`ValueError` for
+  another value); `SkinBody.nose_fit -> NoseFit(fitted, bound, points, concave, used)`; `SkinBody.nose_radius()` returns `nose_fit.used`;
+  history columns `nose_radius_mm`, `fitted_nose_radius_mm` (not-a-number where there is no fit), `nose_bound_mm`, `nose_cap_points`,
+  `nose_cap_concave` with either setting. `run`: `--size-feedback initial|current` with `--surface-model skin`, default `current`, the
+  JSON's `settings.skin.size_feedback` always. `resume`: `--size-feedback`, default the saved body's (`initial` for a state without it),
+  exit 2 for a saved flight without skins; JSON `settings.size_feedback = "current"` only when current, `changed["--size-feedback"]` when
+  given; the one line before the flight names it; a state saved before the columns has them added to its saved row.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-10-fitted-nose-radius-design.md`; Asha, 2026-11-10: fit the gas-molten
+interface, the bound a comparison and not a limit, on by default). `SkinBody.nose_radius()` returned the mesh's original radius whatever
+the shape, and it feeds the stagnation heating and the surface flow (the pressure gradient, the boundary layer, the shock Reynolds number).
+Now the cap is the top corners whose normals are within 30 degrees of the direction of motion, fitted unweighted by the element model's
+`fit_sphere`; fewer than four, or a radius not finite and positive, is no fit and the mesh's radius is used. A cap whose fitted centre lies
+on the flow side of its mean point is concave and uses the bound. The bound is 1.67 times the windward transverse radius (the largest
+distance from the flight axis through the mesh's mean point of the top corners at most 90 degrees from the flight direction, so a pool
+behind the body does not enter it), reported and never applied: a flat cap reads above it. The fit is made in `_refresh_geometry` from the
+top surface as built, never modifying the surface or `theta`, so a macro step's loads read the shape at its start as the angles do, and
+`initial` reproduces every earlier column to the last bit. The droplet cap's radius (`transverse_radius()`) and the body Knudsen number's
+length are not changed. **Measured** on the comparison flights' frames, before the build (2026-11-10): the cap's radius is 49.7 mm at
+22.5 s and about 95-107 mm from about 30 s on the 100 mm sphere, and 24.7 mm at 171.0 s, 83 mm at 176.0 s, 45 mm at 181.0 s on the 50 mm
+sphere; at twice the radius the stagnation heating is about 30 % lower and the pressure gradient half.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *Concave means `(centre - cap mean) . v_hat > 0`*, the controller's reading. Why: the stagnation corner's normal points along `v_hat`, so
+   a convex cap's centre lies behind it. Cost: a nearly flat cap with noise may read either way; concave uses the bound, which is the
+   flat-face value, so the two readings are close in what they give.
+2. *A flat cap's radius is not bounded* (Asha's decision, item 2). A fitted radius of about 1 m on a flat dished cap would be read as it
+   is under `current`; the column `nose_bound_mm` beside `nose_radius_mm` shows it. Cost: heating falls with the square root of the
+   radius, so a nearly flat cap is nearly unheated at the stagnation point.
+3. *`used` is read from the setting at each ask, the fit made once a refresh*: a resume can change the setting without a refit, and a state
+   saved before the task makes its fit at the first ask (`_nose_raw` class default None).
+4. *The run's name carries no suffix for `initial`.* Why: the brief names none; the JSON records the setting always. Cost: two flights
+   differing only in it share a name unless `--name` is given.
+5. *The tests shape the cap by moving the tops* on the coarse sphere and refitting (`with_tops`), not by flying to it; the untouched
+   sphere and the resumed flights are the end-to-end cases.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5G}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5G}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5G}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` on `nose_fit` and `skinbody.NOSE_COLUMNS`, `TypeError` for the
+  argument `size_feedback`, and the command line's `--size-feedback` refused with the skins (exit 2).
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5G}}
+
+- [ ] **Step 4: The history's columns** in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T5G}}
+
+- [ ] **Step 5: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5G}}
+
+- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 651 passed, 1 skipped (Task 5f's 639 and these 12; 36.9 minutes across four processes with the two long runs sharing the laptop, 2026-11-10; the first run had one failure, the skin run's pinned settings, which now carry `size_feedback`, and that test was re-run alone and passed).
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: the windward loads read the radius of a sphere fitted to the tops of the columns facing the flow (--size-feedback current|initial on run and resume, current by default; five nose columns in the history; the bound reported, never applied); sub-plan 22 Task 5g"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f and 5g written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

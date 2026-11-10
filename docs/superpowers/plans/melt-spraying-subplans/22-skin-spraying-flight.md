@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -11835,7 +11835,708 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e and 5f written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5g: The windward loads from a sphere fitted to the skins' tops
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`NOSE_COLUMNS`, `NoseFit`, the class defaults and `SkinBody(..., size_feedback="current")`,
+  `_fit_nose` called from `_refresh_geometry`, `nose_fit`, `nose_radius()`, `nose_stats()`, the five columns in `skin_stats()`)
+- Modify: `reentry_model/coupled.py` (`SKINBODY_COLUMNS` gains the five columns)
+- Modify: `reentry_model/cli.py` (`--size-feedback current|initial` accepted with `--surface-model skin` on `run`, default `current`,
+  and on `resume`; the records; the one refusal of it with the skins goes)
+- Test: `tests/test_reentry_model_skinbody.py` (9 tests), `tests/test_reentry_model_cli.py` (2 tests, one refusal case changed),
+  `tests/test_reentry_model_restart.py` (1 test)
+
+**Interfaces:**
+- Consumes: `body.fit_sphere(points) -> (centre, radius)`, `body.NOSE_CAP_ANGLE` (30.0), `body.NOSE_CAP_FACTOR` (1.67),
+  `body.SIZE_FEEDBACK_NAMES`; `SkinBody.surface` (a `columns.CornerSurface` of the column tops), `SkinBody.theta`, `SkinBody.v_hat`;
+  Task 5e's and 5f's wiring of an option on `run` and `resume`. The element model is not changed.
+- Produces: `SkinBody(..., size_feedback="current")`, also a class default `"initial"` for states pickled before it (`ValueError` for
+  another value); `SkinBody.nose_fit -> NoseFit(fitted, bound, points, concave, used)`; `SkinBody.nose_radius()` returns `nose_fit.used`;
+  history columns `nose_radius_mm`, `fitted_nose_radius_mm` (not-a-number where there is no fit), `nose_bound_mm`, `nose_cap_points`,
+  `nose_cap_concave` with either setting. `run`: `--size-feedback initial|current` with `--surface-model skin`, default `current`, the
+  JSON's `settings.skin.size_feedback` always. `resume`: `--size-feedback`, default the saved body's (`initial` for a state without it),
+  exit 2 for a saved flight without skins; JSON `settings.size_feedback = "current"` only when current, `changed["--size-feedback"]` when
+  given; the one line before the flight names it; a state saved before the columns has them added to its saved row.
+
+**What was decided** (design `docs/superpowers/specs/2026-11-10-fitted-nose-radius-design.md`; Asha, 2026-11-10: fit the gas-molten
+interface, the bound a comparison and not a limit, on by default). `SkinBody.nose_radius()` returned the mesh's original radius whatever
+the shape, and it feeds the stagnation heating and the surface flow (the pressure gradient, the boundary layer, the shock Reynolds number).
+Now the cap is the top corners whose normals are within 30 degrees of the direction of motion, fitted unweighted by the element model's
+`fit_sphere`; fewer than four, or a radius not finite and positive, is no fit and the mesh's radius is used. A cap whose fitted centre lies
+on the flow side of its mean point is concave and uses the bound. The bound is 1.67 times the windward transverse radius (the largest
+distance from the flight axis through the mesh's mean point of the top corners at most 90 degrees from the flight direction, so a pool
+behind the body does not enter it), reported and never applied: a flat cap reads above it. The fit is made in `_refresh_geometry` from the
+top surface as built, never modifying the surface or `theta`, so a macro step's loads read the shape at its start as the angles do, and
+`initial` reproduces every earlier column to the last bit. The droplet cap's radius (`transverse_radius()`) and the body Knudsen number's
+length are not changed. **Measured** on the comparison flights' frames, before the build (2026-11-10): the cap's radius is 49.7 mm at
+22.5 s and about 95-107 mm from about 30 s on the 100 mm sphere, and 24.7 mm at 171.0 s, 83 mm at 176.0 s, 45 mm at 181.0 s on the 50 mm
+sphere; at twice the radius the stagnation heating is about 30 % lower and the pressure gradient half.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *Concave means `(centre - cap mean) . v_hat > 0`*, the controller's reading. Why: the stagnation corner's normal points along `v_hat`, so
+   a convex cap's centre lies behind it. Cost: a nearly flat cap with noise may read either way; concave uses the bound, which is the
+   flat-face value, so the two readings are close in what they give.
+2. *A flat cap's radius is not bounded* (Asha's decision, item 2). A fitted radius of about 1 m on a flat dished cap would be read as it
+   is under `current`; the column `nose_bound_mm` beside `nose_radius_mm` shows it. Cost: heating falls with the square root of the
+   radius, so a nearly flat cap is nearly unheated at the stagnation point.
+3. *`used` is read from the setting at each ask, the fit made once a refresh*: a resume can change the setting without a refit, and a state
+   saved before the task makes its fit at the first ask (`_nose_raw` class default None).
+4. *The run's name carries no suffix for `initial`.* Why: the brief names none; the JSON records the setting always. Cost: two flights
+   differing only in it share a name unless `--name` is given.
+5. *The tests shape the cap by moving the tops* on the coarse sphere and refitting (`with_tops`), not by flying to it; the untouched
+   sphere and the resumed flights are the end-to-end cases.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -1913,3 +1913,184 @@
+     assert made and set(made) == {"SidewaysByHeight"}
+     with pytest.raises(ValueError, match="sideways_pairing"):
+         make(coarse_sphere_mesh, sideways_pairing="width")
++
++
++# -- the windward loads from a sphere fitted to the skins' tops (sub-plan 22 Task 5g, Asha 2026-11-10) --------------------
++
++
++def with_tops(b, points=None, theta=None):
++    """Give the body the top surface of `points` (the corners' tops as they are by default) and `theta` (recomputed from the
++    surface by default) and refit the nose as `_refresh_geometry` does: a way to shape the windward cap without flying to it."""
++    from reentry_model import columns as columns_mod
++    pts = b.surface.points.copy() if points is None else points
++    b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)
++    b.theta = b.surface.angles_to(b.v_hat) if theta is None else theta
++    b._nose_raw = b._fit_nose()
++    return b
++
++
++def flatten_front(b, factor=2.0, rho_max=0.6):
++    """The tops of the front half within `rho_max` of the sphere's radius from the flight axis moved onto a sphere of `factor`
++    times its radius touching it at the nose; returns the new points and the sphere's radius [m]."""
++    R = float(b.mesh.params["radius_m"])
++    pts = b.surface.points.copy()
++    c0, v = b.mesh.points.mean(axis=0), b.v_hat
++    X = pts - c0
++    ax = X @ v
++    rho = np.sqrt(np.maximum((X * X).sum(axis=1) - ax ** 2, 0.0))
++    front = (ax > 0.0) & (rho < rho_max * R)
++    new_ax = -R * (factor - 1.0) + np.sqrt((factor * R) ** 2 - rho[front] ** 2)
++    pts[front] += np.outer(new_ax - ax[front], v)
++    return pts, factor * R
++
++
++def test_the_fitted_nose_radius_of_an_untouched_sphere_is_its_own_radius(coarse_sphere_mesh):
++    """The 4 mm sphere's tops are the bases moved out by the 0.8 mm skins: the cap within 30 degrees of the flow (about 140
++    corners) fits a sphere within 2 % of the mesh's 50 mm radius, which `nose_radius()` returns under the default
++    `current`; the bound is 1.67 times the windward transverse radius and the cap is convex (sub-plan 22 Task 5g)."""
++    b = make(coarse_sphere_mesh)
++    R, f = 0.05, b.nose_fit
++    assert f.points >= 50 and not f.concave and abs(f.fitted / R - 1.0) < 0.02
++    assert b.size_feedback == "current" and b.nose_radius() == f.used == f.fitted
++    assert f.bound == pytest.approx(1.67 * R, rel=0.03)
++
++
++def test_a_flattened_windward_cap_gives_the_radius_of_the_flattened_cap(coarse_sphere_mesh):
++    """Tops on a sphere of twice the radius over the cap (100 mm against 50): the fit is within 5 % of it, and
++    `nose_radius()` returns it under `current` and the mesh's 50 mm under `initial`."""
++    b = make(coarse_sphere_mesh)
++    pts, R2 = flatten_front(b)
++    with_tops(b, pts)
++    assert abs(b.nose_fit.fitted / R2 - 1.0) < 0.05 and not b.nose_fit.concave
++    assert b.nose_radius() == b.nose_fit.fitted
++    b.size_feedback = "initial"
++    assert b.nose_radius() == 0.05 and b.nose_fit.fitted > 0.09
++
++
++def test_the_bound_is_reported_and_never_applied(coarse_sphere_mesh):
++    """A cap flatter than the bound (the 2R sphere's 100 mm against 1.67 times the 50 mm transverse radius, 83.5 mm) is used
++    at its fitted radius, above the bound, and the bound is reported beside it in the history (Asha, 2026-11-10)."""
++    b = make(coarse_sphere_mesh)
++    with_tops(b, flatten_front(b)[0])
++    f = b.nose_fit
++    assert f.used > f.bound and f.used == f.fitted
++    s = b.skin_stats()
++    assert s["nose_radius_mm"] > s["nose_bound_mm"] and s["nose_radius_mm"] == f.used * 1e3
++    assert s["nose_bound_mm"] == f.bound * 1e3 and s["fitted_nose_radius_mm"] == f.fitted * 1e3
++    assert s["nose_cap_points"] == f.points and s["nose_cap_concave"] == 0.0
++
++
++def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_sphere_mesh):
++    """The radius each load is called with, not only what `nose_radius()` returns: the stagnation heating through
++    `CoupledRun.loads_at` and the surface flow through `flow_forcing`."""
++    from types import SimpleNamespace
++    from reentry_model import coupled
++    b = make(coarse_sphere_mesh, flow=True)
++    with_tops(b, flatten_front(b)[0])
++    seen = {}
++    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
++                          heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: seen.setdefault("heating", R)))
++    coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))
++
++    def flow_evaluate(state, theta, R, rho_l, T):
++        seen["flow"] = R
++        return SimpleNamespace(dp_ds=np.zeros(len(theta)), tau=np.zeros(len(theta)), deceleration=0.0)
++    b.surface_flow = SimpleNamespace(evaluate=flow_evaluate)
++    b.flow_forcing("state")
++    assert seen["heating"] == seen["flow"] == b.nose_fit.fitted > 0.09 and seen["flow"] != 0.05
++
++
++def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(coarse_sphere_mesh):
++    """Three corners within 30 degrees of the flow cannot fix a sphere: no fit (not-a-number), the mesh's 50 mm used, the
++    cap's three corners counted, the row says so and the bound is still reported."""
++    b = make(coarse_sphere_mesh)
++    theta = np.full(b.columns.n, 1.0)
++    theta[:3] = 0.1
++    with_tops(b, theta=theta)
++    f = b.nose_fit
++    assert f.points == 3 and np.isnan(f.fitted) and f.used == 0.05 == b.nose_radius() and not f.concave
++    s = b.skin_stats()
++    assert np.isnan(s["fitted_nose_radius_mm"]) and s["nose_radius_mm"] == 50.0 and s["nose_cap_points"] == 3
++    assert s["nose_bound_mm"] > 0.0
++
++
++def test_a_concave_cap_uses_the_flat_face_bound_and_says_so(coarse_sphere_mesh):
++    """Tops dished toward the flow (the cap's edge nearer the flow than its middle): the fitted centre is on the flow side, no
++    sphere of positive curvature describes it, so the radius used is the bound and the row records a concave cap."""
++    b = make(coarse_sphere_mesh)
++    R = 0.05
++    c0, v = b.mesh.points.mean(axis=0), b.v_hat
++    pts = b.surface.points.copy()
++    X = pts - c0
++    ax = X @ v
++    rho = np.sqrt(np.maximum((X * X).sum(axis=1) - ax ** 2, 0.0))
++    cap = (ax > 0.0) & (rho < 0.4 * R)
++    pts[cap] += np.outer(rho[cap] ** 2 / R, v)                   # dished: twice the sphere's sag the other way, so the edge is nearer the flow than the middle
++    theta = np.where(cap, 0.2, 1.0)
++    with_tops(b, pts, theta=theta)
++    f = b.nose_fit
++    assert f.concave and f.used == f.bound == b.nose_radius() and np.isfinite(f.fitted) and f.points == cap.sum()
++    assert b.skin_stats()["nose_cap_concave"] == 1.0
++
++
++def test_a_pool_behind_the_body_does_not_move_the_bound(coarse_sphere_mesh):
++    """Tops on the leeward half pushed 50 % outward from the body's centre, as a pool standing off the back would be: the
++    windward transverse radius ignores corners more than 90 degrees from the flight direction, so the bound is unchanged."""
++    b = make(coarse_sphere_mesh)
++    before = b.nose_fit.bound
++    pts = b.surface.points.copy()
++    centre = b.mesh.points.mean(axis=0)
++    lee = b.theta > 0.5 * np.pi
++    pts[lee] = centre + 1.5 * (pts[lee] - centre)
++    from reentry_model import columns as columns_mod
++    b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)     # theta kept: it is the windward half that counts
++    b._nose_raw = b._fit_nose()
++    assert lee.sum() > 100 and b.nose_fit.bound == before
++
++
++def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
++    """`size_feedback="initial"`, the class default a body saved before Task 5g flies on and the old `nose_radius` (the
++    mesh's radius) are one flight: every pre-existing column of every row, and the final mass and energy, equal to the last
++    bit, 3 MW/m2 on the front from 893 K for two 0.0625 s macro steps; the five nose columns are there, filled from the fit."""
++    legacy = skinbody.SkinBody.nose_radius
++    runs = []
++    for how in ("initial", "default", "legacy"):
++        np.random.seed(12345)
++        if how == "legacy":
++            skinbody.SkinBody.nose_radius = lambda self: float(self.mesh.params.get("radius_m", 0.05))
++        try:
++            b = make(coarse_sphere_mesh, T0=893.0, **({"size_feedback": "initial"} if how == "initial" else {}))
++            if how == "default":
++                del vars(b)["size_feedback"]                     # as a state saved before Task 5g
++                assert b.size_feedback == "initial"
++            rows = []
++            for k in range(2):
++                b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6))
++                rows.append((b.step_parts, timed_out(b.skin_stats())))
++        finally:
++            skinbody.SkinBody.nose_radius = legacy
++        runs.append((b, rows))
++    assert all(k in rows[0][1] for _, rows in runs for k in skinbody.NOSE_COLUMNS)
++    old = lambda rows: [(p, {k: v for k, v in r.items() if k not in ("nose_radius_mm",)}) for p, r in rows]
++    assert same_rows(old(runs[0][1]), old(runs[1][1])) and same_rows(old(runs[0][1]), old(runs[2][1]))
++    assert all(r["nose_radius_mm"] == 50.0 for _, r in runs[0][1]) and runs[0][0].removed_mass > 0.0
++    assert runs[0][0].mass() == runs[1][0].mass() == runs[2][0].mass()
++    assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
++    assert skinbody.SkinBody.size_feedback == "initial" and all(np.isfinite(r["fitted_nose_radius_mm"]) for _, r in runs[0][1])
++    with pytest.raises(ValueError, match="size_feedback"):
++        make(coarse_sphere_mesh, size_feedback="shrinking")
++
++
++def test_a_body_saved_without_size_feedback_flies_on_as_initial(coarse_sphere_mesh):
++    """The states saved before Task 5g have neither `size_feedback` nor a fit on the instance: the class's default gives them
++    the mesh's radius and they advance as before, the fit made at the first ask; a resume can give them `current`, which
++    reads the fit of the top surface as it stands."""
++    b = make(coarse_sphere_mesh, T0=700.0)
++    b.emissivity = 0.0
++    del vars(b)["size_feedback"], vars(b)["_nose_raw"]
++    assert "size_feedback" not in vars(b) and b.size_feedback == "initial" and b._nose_raw is None
++    zero = heating.HeatingResult(np.zeros(b.columns.n), 0.0, 0.0, 0.0, 0.0)
++    b.advance(0.05, 0.05, zero)
++    assert b.nose_radius() == 0.05 and b.skin_stats()["nose_radius_mm"] == 50.0 and np.isfinite(b.nose_fit.fitted)
++    b.size_feedback = "current"
++    assert b.nose_radius() == b.nose_fit.fitted != 0.05
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -390,7 +390,8 @@
+     assert s["surface_model"] == "skin" and s["prism_layers"] == 0
+     assert s["skin"] == {"min_thickness_mm": 0.8, "fine_zone_mm": 0.4, "cell_um": 20.0, "growth": 1.1, "substep_ms": 10.0, "preset": "dev",
+                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
+-                         "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off"}
++                         "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
++                         "size_feedback": "current"}                  # always recorded: the default changed (Task 5g)
+     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
+     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+@@ -602,7 +603,7 @@
+     THERMAL + ["--melt", "on", "--skin-flow", "on", "--deep-runoff", "off"],
+     THERMAL + ["--melt", "on", "--molten-cascade", "off"],
+     THERMAL + ["--melt", "on", "--skin-flow", "on", "--rigid-substrate", "off"],
+-    THERMAL + ["--melt", "on", "--size-feedback", "initial"],                         # ... refused with the skins
++    THERMAL + ["--melt", "on", "--size-feedback", "shrinking"],                       # no such source of the nose radius
+     THERMAL + ["--stills"],                                                            # the element model's frames
+ ])
+ def test_contradictory_skin_settings_exit_2(argv, tmp_path):
+@@ -868,3 +869,40 @@
+         with pytest.raises(_Built) as got:
+             cli.main(argv)
+         assert got.value.args[0]["sideways_pairing"] == pairing
++
++
++def test_the_size_feedback_is_current_by_default_for_the_skins_and_reaches_the_body(tmp_path, monkeypatch):
++    """--size-feedback is accepted with --surface-model skin (sub-plan 22 Task 5g, Asha 2026-11-10: it was refused until then),
++    `current` by default, whether the skins melt or not; the element model keeps its own default. The body is not built: its
++    arguments are."""
++    from reentry_model import skinbody
++    assert cli.skin_size_feedback_of(cli.build_parser().parse_args(THERMAL)) == "current"
++
++    def built(*args, **kwargs):
++        raise _Built(kwargs)
++    monkeypatch.setattr(skinbody, "SkinBody", built)
++    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
++    melt = dry + ["--melt", "on"]
++    for argv, source in ((dry, "current"), (dry + ["--size-feedback", "initial"], "initial"), (melt, "current"),
++                         (melt + ["--size-feedback", "initial"], "initial"), (melt + ["--size-feedback", "current"], "current")):
++        with pytest.raises(_Built) as got:
++            cli.main(argv)
++        assert got.value.args[0]["size_feedback"] == source
++
++
++def test_the_skins_record_their_size_feedback_and_the_nose_columns(tmp_path):
++    """A skin run's JSON always records `settings.skin.size_feedback` (the default changed to `current`, so it is recorded),
++    and its history has the five nose columns with either setting, the radius used the fitted one under `current` and the
++    mesh's 50 mm under `initial` (sub-plan 22 Task 5g)."""
++    for source, name in (("current", "cur"), ("initial", "ini")):
++        argv = THERMAL + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
++                          "--outdir", str(tmp_path), "--name", name]
++        if source == "initial":
++            argv += ["--size-feedback", "initial"]
++        assert cli.main(argv) == 0
++        assert json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]["size_feedback"] == source
++        rows = list(csv.DictReader(open(tmp_path / (name + ".csv"))))
++        assert all(k in rows[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
++                                          "nose_cap_concave"))
++        used, fitted = float(rows[-1]["nose_radius_mm"]), float(rows[-1]["fitted_nose_radius_mm"])
++        assert 45.0 < fitted < 60.0 and (used == fitted if source == "current" else used == 50.0)
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -402,3 +402,54 @@
+                   "--sideways-heat", "height"])
+     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+     assert "--sideways-heat height needs a saved flight of skins" in capsys.readouterr().err
++
++
++def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, tmp_path, capsys):
++    """`--size-feedback` on a resume (sub-plan 22 Task 5g, Asha 2026-11-10). The test flight is `current` by default (its
++    JSON says so in the skins' settings); a resume keeps that, names it in the line before the flight and records it in
++    the JSON's settings, and `initial` asked of it flies the mesh's 50 mm radius, recorded in what was changed with no
++    settings key, and is kept by the state it saves. A state saved before Task 5g (no setting, no fit, no nose columns on
++    its row) resumes as `initial` with the nose columns filled, and `current` asked of it fits the cap at the first load."""
++    out, flight, records, state_path = flown
++    assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["size_feedback"] == "current"
++    assert all(k in flight[0] for k in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points",
++                                        "nose_cap_concave")) and float(flight[-1]["nose_radius_mm"]) != 50.0
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
++    assert "size feedback current" in capsys.readouterr().out
++    assert json.load(open(str(tmp_path / "same.json")))["settings"]["size_feedback"] == "current"
++    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "i", "--size-feedback", "initial",
++                     "--save-state-at", "0.2"]) == 0
++    assert "size feedback initial" in capsys.readouterr().out
++    doc = json.load(open(str(tmp_path / "i.json")))
++    assert doc["resumed_from"]["changed"] == {"--size-feedback": "initial", "--save-state-at": 0.2}
++    assert "size_feedback" not in doc["settings"]
++    rows = rows_of(str(tmp_path / "i.csv"))
++    assert rows[0] == flight[14] and all(float(r["nose_radius_mm"]) == 50.0 for r in rows[1:])
++    assert restart.load(str(tmp_path / "i.state.pkl"))["run"].body.size_feedback == "initial"
++    # a state saved before Task 5g
++    state = restart.load(state_path)
++    body = state["run"].body
++    del vars(body)["size_feedback"], vars(body)["_nose_raw"]
++    for key in ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave"):
++        del state["row"][key]
++    old = str(tmp_path / "old.state.pkl")
++    restart.save(old, state)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
++    assert "size feedback initial" in capsys.readouterr().out
++    rows = rows_of(str(tmp_path / "o.csv"))
++    assert "size_feedback" not in json.load(open(str(tmp_path / "o.json")))["settings"]
++    assert all(float(r["nose_radius_mm"]) == 50.0 and float(r["nose_cap_points"]) > 0 for r in rows)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "c", "--size-feedback", "current"]) == 0
++    assert "size feedback current" in capsys.readouterr().out
++    doc = json.load(open(str(tmp_path / "c.json")))
++    assert doc["resumed_from"]["changed"] == {"--size-feedback": "current"} and doc["settings"]["size_feedback"] == "current"
++    rows = rows_of(str(tmp_path / "c.csv"))
++    assert all(float(r["nose_radius_mm"]) == float(r["fitted_nose_radius_mm"]) != 50.0 for r in rows[1:])
++    k = FLIGHT.index("--melt")
++    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
++    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
++    capsys.readouterr()
++    with pytest.raises(SystemExit) as exc:
++        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
++                  "--size-feedback", "current"])
++    assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` on `nose_fit` and `skinbody.NOSE_COLUMNS`, `TypeError` for the
+  argument `size_feedback`, and the command line's `--size-feedback` refused with the skins (exit 2).
+
+- [ ] **Step 3: The body** in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -127,7 +127,7 @@
+ from . import skin as skin_mod
+ from . import spray as spray_mod
+ from . import spreading
+-from .body import ThermalBody
++from .body import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, SIZE_FEEDBACK_NAMES, ThermalBody, fit_sphere
+ from .thermal import SIGMA_SB
+ 
+ FLOW_DEFAULT = False              # the class's default, the heat-only skins its tests build on: the flow was off until
+@@ -191,6 +191,25 @@
+ # its node's temperature since the last row
+ SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K")
+ 
++# the history's nose columns (sub-plan 22 Task 5g), every run (`SkinBody.nose_stats`): the radius the windward loads used [mm],
++# the sphere fitted to the tops' cap [mm, nan where there is none], the reported bound [mm], the corners fitted and 1 where
++# the cap was concave
++NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave")
++
++
++@dataclasses.dataclass
++class NoseFit:
++    """The windward cap of the skins' tops and the radius the windward loads read (`SkinBody.nose_fit`): `fitted` [m] the
++    radius of the sphere fitted through the top corners within `body.NOSE_CAP_ANGLE` of the direction of motion (nan where
++    there is no fit), `bound` [m] `body.NOSE_CAP_FACTOR` times the windward transverse radius (reported, never applied),
++    `points` the corners fitted, `concave` whether the fitted centre lies on the flow side of the cap, and `used` [m] the
++    radius the loads read."""
++    fitted: float
++    bound: float
++    points: int
++    concave: bool
++    used: float
++
+ 
+ @dataclasses.dataclass
+ class FlowForcing:
+@@ -565,12 +584,17 @@
+     the skins (sub-plan 22 Task 5e); False is refused with a `spread_limit`, which moves only metal being handed down.
+     `sideways_pairing`: `depth` (the default) or `height`, what pairs neighbouring columns' cells in the sideways conduction,
+     their depth below the tops (`skin.Sideways`) or their height above the bases (`skin.SidewaysByHeight`, heat between
+-    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f)."""
++    cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f).
++    `size_feedback`: `current` (the default) or `initial` (`body.SIZE_FEEDBACK_NAMES`), where the windward loads' nose radius
++    comes from: under `current` the radius of a sphere fitted to the tops of the columns facing the flow, under `initial` the
++    mesh's own radius. The fit is made and reported either way (`nose_fit`, `NOSE_COLUMNS`; sub-plan 22 Task 5g, below)."""
+     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
+     spread_limit = None                  # deg
+     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
+     hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
+     sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
++    size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
++    _nose_raw = None                     # the fit of the tops, made in `_refresh_geometry`; the states saved before Task 5g have none
+     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
+     spread_over = 0                      # edges over the limit on the last move's first estimate
+     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
+@@ -579,7 +603,11 @@
+                  v_hat=(1.0, 0.0, 0.0), deform_depth=movemesh.DEFORM_DEPTH, remove=True, demise_fraction=0.01,
+                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
+                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
+-                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth"):
++                 spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
++                 size_feedback="current"):
++        if size_feedback not in SIZE_FEEDBACK_NAMES:
++            raise ValueError("size_feedback must be one of {}, got {!r}".format(SIZE_FEEDBACK_NAMES, size_feedback))
++        self.size_feedback = size_feedback
+         if sideways_pairing not in skin_mod.SIDEWAYS_PAIRINGS:
+             raise ValueError("sideways_pairing must be one of {}, got {!r}".format(skin_mod.SIDEWAYS_PAIRINGS,
+                                                                                   sideways_pairing))
+@@ -690,6 +718,49 @@
+                                                              self.columns.faces)
+         self.theta = self.surface.angles_to(self.v_hat)
+         self.i_stag, self.i_back = self.surface.patch_toward(self.v_hat), self.surface.patch_toward(-self.v_hat)
++        self._nose_raw = self._fit_nose()                # from the surface as built: nothing the surface or theta feed changes
++
++    def _fit_nose(self):
++        """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
++        bound a comparison and not a limit, on by default): (fitted radius [m] or nan, bound [m], corners fitted,
++        concave). The cap is the top corners whose normals are within `NOSE_CAP_ANGLE` of the direction of motion, fitted
++        unweighted as the element model fits its patch centroids (`body.fit_sphere`); fewer than 4 corners, or a radius
++        not finite and positive, is no fit. Concave: the fitted centre lies on the flow side of the cap's mean point, so no
++        sphere of positive curvature describes it. The bound is `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
++        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
++        through the 3D mesh's mean point along the flight direction of the top corners at most 90 degrees from it, so that
++        a pool standing off the back does not move it. Measured on the comparison flights' frames (2026-11-10): the cap's
++        radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about 30 s, 24.7 mm at 171.0 s on the 50 mm sphere
++        and 83 mm at 176.0 s."""
++        pts, v = self.surface.points, self.v_hat
++        X = pts - self.mesh.points.mean(axis=0)
++        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
++        wind = self.theta <= 0.5 * np.pi
++        bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
++        cap = pts[self.theta <= np.radians(NOSE_CAP_ANGLE)]
++        n, fitted, concave = len(cap), float("nan"), False
++        if n >= 4:
++            centre, r = fit_sphere(cap)
++            if np.isfinite(r) and r > 0.0:
++                fitted = r
++                concave = bool((centre - cap.mean(axis=0)) @ v > 0.0)
++        return fitted, bound, n, concave
++
++    @property
++    def nose_fit(self):
++        """The windward cap's fit and the radius the loads read (`NoseFit`), from the top surface at the last refresh; a body
++        saved before the fit existed makes it from its surface at the first ask."""
++        if self._nose_raw is None:
++            self._nose_raw = self._fit_nose()
++        fitted, bound, n, concave = self._nose_raw
++        r0 = float(self.mesh.params.get("radius_m", 0.05))
++        used = r0
++        if self.size_feedback == "current":
++            if concave and np.isfinite(bound) and bound > 0.0:
++                used = bound                             # the flat-face equivalent where no sphere describes the cap
++            elif np.isfinite(fitted) and not concave:
++                used = fitted                            # the bound is not applied: a flat cap reads above it
++        return NoseFit(fitted, bound, n, concave, float(used))
+ 
+     @property
+     def mesh(self):
+@@ -1101,7 +1172,15 @@
+         return self.solver.temperature()
+ 
+     def nose_radius(self):
+-        return float(self.mesh.params.get("radius_m", 0.05))
++        """The nose radius the windward loads read [m] (`CoupledRun.loads_at`, the surface flow): `nose_fit.used`, the radius
++        of the sphere fitted to the tops' cap under `size_feedback` `current`, the mesh's own under `initial` or where there
++        is no fit (sub-plan 22 Task 5g)."""
++        return self.nose_fit.used
++
++    def nose_stats(self):
++        """The history's nose columns (`NOSE_COLUMNS`), after the other skin columns and before the spreading ones."""
++        f = self.nose_fit
++        return dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
+ 
+     def transverse_radius(self):
+         """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
+@@ -1182,7 +1261,7 @@
+                 **self._depth_ratios(flowing),
+                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
+                 "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
+-                **self.spread_stats()}
++                **self.nose_stats(), **self.spread_stats()}
+ 
+     def spread_stats(self):
+         """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run
+```
+
+- [ ] **Step 4: The history's columns** in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -63,7 +63,10 @@
+                     # spec 10.2: b and the resolved sheared depth over Girin's delta_m on the wet windward columns, and
+                     # each rebuild's mass residual beside its energy residual
+                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
+-                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
++                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg",
++                    # the windward loads' nose radius (sub-plan 22 Task 5g, Asha 2026-11-10): the radius the loads used, the
++                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave
++                    "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave"]
+ # with --spread-limit only, skinbody.SPREAD_COLUMNS follow these (sub-plan 22 Task 5c): a run's columns are its first row's, so
+ # a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
+ # particles_summary.csv, one row a macro step: the element model's history columns
+```
+
+- [ ] **Step 5: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -5,12 +5,13 @@
+         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
+         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
+-        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height ...]
++        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
++        --size-feedback current|initial ...]
+                                      (the layered skins, the default with --thermal fem, their flow and spraying the
+                                       default with --melt on; the element model with --surface-model elements)
+     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
+         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
+-        --hand-down on|off --sideways-heat depth|height]
++        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial]
+                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
+     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
+ 
+@@ -133,6 +134,13 @@
+ def hand_down_of(args):
+     """Whether the skins pass their re-frozen metal to the 3D model, True unless --hand-down says `off` (sub-plan 22 Task 5e)."""
+     return args.hand_down == "on"
++
++
++def skin_size_feedback_of(args):
++    """Where a skin run's windward loads take their nose radius from: `current`, the sphere fitted to the tops of the columns
++    facing the flow, unless --size-feedback says `initial`, the mesh's own radius (sub-plan 22 Task 5g; Asha, 2026-11-10: on by
++    default). The element model's own default is resolved where its body is built."""
++    return args.size_feedback or "current"
+ 
+ 
+ def spread_limit_of(args):
+@@ -320,6 +328,10 @@
+                     help="what pairs neighbouring skin columns' cells in the sideways conduction: depth below the tops or "
+                          "height above the bases, heat between cells that touch (default: the saved flight's, depth for one "
+                          "saved before the option existed)")
++    rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
++                    help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
++                         "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
++                         "one saved before the option existed)")
+     rs.add_argument("--save-state-at", type=float, default=None,
+                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
+                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
+@@ -503,8 +515,11 @@
+     me.add_argument("--layer-thickness", type=float, default=mesh.DEFAULT_LAYER_THICKNESS * 1e3, help="outermost layer thickness [mm] (default %(default)s, growth 2)")
+     me.add_argument("--demise-fraction", type=float, default=0.01, help="the run ends when the body mass falls below this fraction of the initial (default %(default)s)")
+     me.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+-                    help="current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap "
+-                         "(default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with --removal instant)")
++                    help="element model: current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the "
++                         "windward cap (default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with "
++                         "--removal instant). With --surface-model skin: current: the windward loads' nose radius is that of a sphere "
++                         "fitted to the tops of the columns facing the flow; initial: the mesh's own radius (Asha, 2026-11-10, sub-plan "
++                         "22 Task 5g; default current)")
+     me.add_argument("--particles", dest="particles", action="store_true", default=True,
+                     help="write the particle source table and the size distribution of a spraying run (default)")
+     me.add_argument("--no-particles", dest="particles", action="store_false")
+@@ -559,7 +574,7 @@
+                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
+                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
+                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
+-                                     sideways_pairing=args.sideways_heat)
++                                     sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args))
+     elif melting:
+         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
+         spray_model = spray_model_of(args, mat)
+@@ -600,6 +615,7 @@
+             info["skin"]["hand_down"] = "off"
+         if args.sideways_heat != "depth":
+             info["skin"]["sideways_heat"] = args.sideways_heat
++        info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
+     if args.heating == "physics":
+         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
+                      "accommodation": args.accommodation, "catalycity": args.catalycity})
+@@ -742,8 +758,7 @@
+     if args.surface_model == "skin":
+         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
+                             ("--molten-cascade off", args.molten_cascade == "off"),
+-                            ("--rigid-substrate off", args.rigid_substrate == "off"),
+-                            ("--size-feedback", args.size_feedback is not None)):
++                            ("--rigid-substrate off", args.rigid_substrate == "off")):
+             if given:
+                 parser.error("{} is the element model's setting: give --surface-model elements (the layered skins, the "
+                              "default since sub-plan 22, have no film, runoff, deep account or element deaths, and their "
+@@ -969,6 +984,10 @@
+         if args.sideways_heat != "depth" and not skins:
+             parser.error("--sideways-heat height needs a saved flight of skins: it pairs their cells")
+         changed["--sideways-heat"] = args.sideways_heat
++    if args.size_feedback is not None:
++        if not skins:
++            parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
++        changed["--size-feedback"] = args.size_feedback
+     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
+     if skins:
+         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
+@@ -1015,6 +1034,11 @@
+         run.body.hand_down = args.hand_down == "on"
+     if "--sideways-heat" in changed and skins:
+         run.body.sideways_pairing = args.sideways_heat
++    if "--size-feedback" in changed and skins:
++        run.body.size_feedback = args.size_feedback
++    if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
++        # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
++        state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -1027,14 +1051,14 @@
+     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
+                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
+                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
+-                      ("sideways_heat", "--sideways-heat")):
++                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback")):
+         if flag in changed:
+             setattr(saved, key, changed[flag])
+     if state_path is not None:
+         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+     limit = run.body.spread_limit if skins else None
+     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
+-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, save state at {}; files {}".format(
++          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, save state at {}; files {}".format(
+               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
+               settings.dt_continuum if settings.dt_continuum is not None else "none",
+               args.seed if args.seed is not None else "saved random state", settings.frames_every,
+@@ -1043,6 +1067,7 @@
+               run.body.part_count_from if skins else "moves",
+               "off" if skins and not run.body.hand_down else "on",
+               run.body.sideways_pairing if skins else "depth",
++              run.body.size_feedback if skins else "n/a",
+               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
+               os.path.join(args.outdir, args.name)), flush=True)
+     history = run.run(resume=state)
+@@ -1062,6 +1087,8 @@
+         thermal_info["hand_down"] = "off"
+     if skins and run.body.sideways_pairing != "depth":
+         thermal_info["sideways_heat"] = run.body.sideways_pairing
++    if skins and run.body.size_feedback == "current":
++        thermal_info["size_feedback"] = "current"
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+     os.makedirs(args.outdir, exist_ok=True)
+```
+
+- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 651 passed, 1 skipped (Task 5f's 639 and these 12; 36.9 minutes across four processes with the two long runs sharing the laptop, 2026-11-10; the first run had one failure, the skin run's pinned settings, which now carry `size_feedback`, and that test was re-run alone and passed).
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Skins: the windward loads read the radius of a sphere fitted to the tops of the columns facing the flow (--size-feedback current|initial on run and resume, current by default; five nose columns in the history; the bound reported, never applied); sub-plan 22 Task 5g"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f and 5g written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

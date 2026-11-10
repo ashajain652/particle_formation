@@ -5,12 +5,13 @@
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
-        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height ...]
+        --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
+        --size-feedback current|initial ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
-        --hand-down on|off --sideways-heat depth|height]
+        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -133,6 +134,13 @@ NO_SPREAD_WITHOUT_HAND_DOWN = ("--hand-down off cannot go with a spread limit: s
 def hand_down_of(args):
     """Whether the skins pass their re-frozen metal to the 3D model, True unless --hand-down says `off` (sub-plan 22 Task 5e)."""
     return args.hand_down == "on"
+
+
+def skin_size_feedback_of(args):
+    """Where a skin run's windward loads take their nose radius from: `current`, the sphere fitted to the tops of the columns
+    facing the flow, unless --size-feedback says `initial`, the mesh's own radius (sub-plan 22 Task 5g; Asha, 2026-11-10: on by
+    default). The element model's own default is resolved where its body is built."""
+    return args.size_feedback or "current"
 
 
 def spread_limit_of(args):
@@ -320,6 +328,10 @@ def resume_arguments(rs):
                     help="what pairs neighbouring skin columns' cells in the sideways conduction: depth below the tops or "
                          "height above the bases, heat between cells that touch (default: the saved flight's, depth for one "
                          "saved before the option existed)")
+    rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                    help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
+                         "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
+                         "one saved before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -503,8 +515,11 @@ def build_parser():
     me.add_argument("--layer-thickness", type=float, default=mesh.DEFAULT_LAYER_THICKNESS * 1e3, help="outermost layer thickness [mm] (default %(default)s, growth 2)")
     me.add_argument("--demise-fraction", type=float, default=0.01, help="the run ends when the body mass falls below this fraction of the initial (default %(default)s)")
     me.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
-                    help="current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the windward cap "
-                         "(default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with --removal instant)")
+                    help="element model: current: Kn on the equivalent diameter of the remaining mass and the stagnation radius fitted to the "
+                         "windward cap (default with --removal girin); initial: D0 and R0 throughout, SESAM's convention (default with "
+                         "--removal instant). With --surface-model skin: current: the windward loads' nose radius is that of a sphere "
+                         "fitted to the tops of the columns facing the flow; initial: the mesh's own radius (Asha, 2026-11-10, sub-plan "
+                         "22 Task 5g; default current)")
     me.add_argument("--particles", dest="particles", action="store_true", default=True,
                     help="write the particle source table and the size distribution of a spraying run (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
@@ -559,7 +574,7 @@ def build_thermal(args, settings, mass, spool=None):
                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
-                                     sideways_pairing=args.sideways_heat)
+                                     sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -600,6 +615,7 @@ def build_thermal(args, settings, mass, spool=None):
             info["skin"]["hand_down"] = "off"
         if args.sideways_heat != "depth":
             info["skin"]["sideways_heat"] = args.sideways_heat
+        info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -742,8 +758,7 @@ def cmd_run(args, parser):
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
-                            ("--rigid-substrate off", args.rigid_substrate == "off"),
-                            ("--size-feedback", args.size_feedback is not None)):
+                            ("--rigid-substrate off", args.rigid_substrate == "off")):
             if given:
                 parser.error("{} is the element model's setting: give --surface-model elements (the layered skins, the "
                              "default since sub-plan 22, have no film, runoff, deep account or element deaths, and their "
@@ -969,6 +984,10 @@ def cmd_resume(args, parser):
         if args.sideways_heat != "depth" and not skins:
             parser.error("--sideways-heat height needs a saved flight of skins: it pairs their cells")
         changed["--sideways-heat"] = args.sideways_heat
+    if args.size_feedback is not None:
+        if not skins:
+            parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
+        changed["--size-feedback"] = args.size_feedback
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -1015,6 +1034,11 @@ def cmd_resume(args, parser):
         run.body.hand_down = args.hand_down == "on"
     if "--sideways-heat" in changed and skins:
         run.body.sideways_pairing = args.sideways_heat
+    if "--size-feedback" in changed and skins:
+        run.body.size_feedback = args.size_feedback
+    if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
+        # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
+        state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
@@ -1027,14 +1051,14 @@ def cmd_resume(args, parser):
     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
-                      ("sideways_heat", "--sideways-heat")):
+                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback")):
         if flag in changed:
             setattr(saved, key, changed[flag])
     if state_path is not None:
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1043,6 +1067,7 @@ def cmd_resume(args, parser):
               run.body.part_count_from if skins else "moves",
               "off" if skins and not run.body.hand_down else "on",
               run.body.sideways_pairing if skins else "depth",
+              run.body.size_feedback if skins else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
     history = run.run(resume=state)
@@ -1062,6 +1087,8 @@ def cmd_resume(args, parser):
         thermal_info["hand_down"] = "off"
     if skins and run.body.sideways_pairing != "depth":
         thermal_info["sideways_heat"] = run.body.sideways_pairing
+    if skins and run.body.size_feedback == "current":
+        thermal_info["size_feedback"] = "current"
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)

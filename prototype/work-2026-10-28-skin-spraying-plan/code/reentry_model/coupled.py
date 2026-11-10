@@ -63,7 +63,10 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     # spec 10.2: b and the resolved sheared depth over Girin's delta_m on the wet windward columns, and
                     # each rebuild's mass residual beside its energy residual
                     "b_over_delta_m_median", "sheared_depth_over_delta_m_median",
-                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg"]
+                    "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg",
+                    # the windward loads' nose radius (sub-plan 22 Task 5g, Asha 2026-11-10): the radius the loads used, the
+                    # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave
+                    "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave"]
 # with --spread-limit only, skinbody.SPREAD_COLUMNS follow these (sub-plan 22 Task 5c): a run's columns are its first row's, so
 # a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
 # particles_summary.csv, one row a macro step: the element model's history columns
