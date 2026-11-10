@@ -476,16 +476,11 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     from reentry_model import spray
     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
-                   "--fine-size", "2", "--skin-flow-cycles", "2", "--hand-down", "on", "--part-count-from", "moves",
-                   "--outdir", str(tmp_path)]
-    # the flight this test was written for, which hands down and counts parts by the moves; the melting skins' defaults
-    # changed to off and melting on 2026-11-10 (Task 5h), and with the hand-down off this flight's momentum books miss
-    # 4.4e-6 of the impulses where they close to 1e-17 with it on (measured at the build before Task 5h too, with
-    # --hand-down off given: a finding of Task 5h, reported, not changed here)
+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_parts-moves_handdown-on")
+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True

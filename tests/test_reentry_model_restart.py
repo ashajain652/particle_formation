@@ -13,14 +13,16 @@ from reentry_model import trajectory as tj
 
 # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
 # the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
-# It hands down and counts parts by the moves, as every flight did before the defaults of melting skins changed to
-# `--hand-down off --part-count-from melting` (Task 5h, Asha 2026-11-10); the resume tests below were written for it
+# With the options not given it is a flight of melting skins as they now default: the hand-down off, the part count by the melting
 FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", "--flight-path-angle", "-0.959331",
           "--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20",
           "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
-          "--fine-size", "2", "--hand-down", "on", "--part-count-from", "moves", "--skin-flow-cycles", "2", "--quiet"]
-DEFAULT_FLIGHT = [a for i, a in enumerate(FLIGHT) if not (a in ("--hand-down", "--part-count-from") or FLIGHT[i - 1] in
-                                                          ("--hand-down", "--part-count-from"))]
+          "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
+DEFAULT_FLIGHT = FLIGHT
+# The flight as every one before 2026-11-10 flew, handing down and counting parts by the moves, for the resume tests of the
+# spread limit (spreading moves only handed-down metal), of the melting rule's change and of the state's `flown` saved
+# options, which need those settings and not the new defaults (Task 5h)
+FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
 
 
 def rows_of(path):
@@ -133,7 +135,7 @@ def flown(tmp_path_factory):
     tests: (the flight's directory, its history rows as text, its droplet records, the saved state's path)."""
     pytest.importorskip("cantera")
     out = str(tmp_path_factory.mktemp("flown"))
-    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
+    assert cli.main(FLIGHT_ON + ["--t-max", "0.2125", "--outdir", out, "--name", "f", "--save-state-at", "0.1875"]) == 0
     rows = rows_of(os.path.join(out, "f.csv"))
     assert len(rows) == 17
     return out, rows, dict(np.load(os.path.join(out, "f", "particles.npz"))), os.path.join(out, "f.state.pkl")
@@ -199,7 +201,7 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
     assert doc["results"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_mass_kg"] == 0.0
 
     limited = str(tmp_path / "limited")
-    assert cli.main(FLIGHT + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
+    assert cli.main(FLIGHT_ON + ["--t-max", "0.2125", "--outdir", limited, "--name", "f", "--save-state-at", "0.1875",
                               "--spread-limit", "60"]) == 0
     saved = os.path.join(limited, "f.state.pkl")
     doc = json.load(open(os.path.join(limited, "f.json")))
@@ -341,7 +343,7 @@ def test_resuming_with_the_hand_down_off_from_a_state_with_a_spread_limit_needs_
     a resume of the state it saves. The reverse, a limit given to a state saved with the hand-down off, exits 2 as well."""
     pytest.importorskip("cantera")
     limited = str(tmp_path / "limited")
-    assert cli.main(FLIGHT + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
+    assert cli.main(FLIGHT_ON + ["--t-max", "0.075", "--outdir", limited, "--name", "f", "--save-state-at", "0.05",
                               "--spread-limit", "60"]) == 0
     state, out = os.path.join(limited, "f.state.pkl"), str(tmp_path / "o")
     capsys.readouterr()
