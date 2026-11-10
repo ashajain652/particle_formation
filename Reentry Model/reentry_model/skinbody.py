@@ -196,6 +196,18 @@ SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "
 # the cap was concave
 NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave")
 
+# The leeward test (sub-plan 22 Task 5j; Asha, 2026-11-10). `facing`, the test as it was: a top corner is windward if its
+# normal is within 90 degrees of the direction of motion. `centroid`: it is windward only if it also lies ahead of the plane
+# through the body's mass centroid at right angles to the direction of motion. Measured on the 50 mm sphere's comparison
+# flights at 186.5-187.3 s: releases came from corners up to 82 mm behind the original centre whose normals faced forward
+# (12-20 degrees off the flow, median), which the first test counted as windward though they sit behind the body; the
+# centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back.
+LEEWARD_TESTS = ("facing", "centroid")
+# the history's two leeward columns (`SkinBody.nose_stats`), with either setting: the centroid's position along the flight
+# direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow but lie behind the
+# plane through it
+LEEWARD_COLUMNS = ("centroid_offset_mm", "leeward_corners")
+
 
 @dataclasses.dataclass
 class NoseFit:
@@ -604,7 +616,12 @@ class SkinBody(ThermalBody):
     cells that touch; `skin.SIDEWAYS_PAIRINGS`, sub-plan 22 Task 5f).
     `size_feedback`: `current` (the default) or `initial` (`body.SIZE_FEEDBACK_NAMES`), where the windward loads' nose radius
     comes from: under `current` the radius of a sphere fitted to the tops of the columns facing the flow, under `initial` the
-    mesh's own radius. The fit is made and reported either way (`nose_fit`, `NOSE_COLUMNS`; sub-plan 22 Task 5g, below)."""
+    mesh's own radius. The fit is made and reported either way (`nose_fit`, `NOSE_COLUMNS`; sub-plan 22 Task 5g, below).
+    `leeward_test`: `facing` (the constructor's default, and the class's, so a state saved before Task 5j flies as it was) or
+    `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
+    to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
+    windward sphere fit (`load_angles`, `windward`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
+    release angle (`spray.enclosed_centroid`) do not change."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
@@ -612,6 +629,9 @@ class SkinBody(ThermalBody):
     sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
     size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
     _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
+    leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
+    _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
+    _moment3d = None                     # the 3D model's (mass, mass moment) since the last move, made at the first read
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -621,7 +641,10 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current"):
+                 size_feedback="current", leeward_test="facing"):
+        if leeward_test not in LEEWARD_TESTS:
+            raise ValueError("leeward_test must be one of {}, got {!r}".format(LEEWARD_TESTS, leeward_test))
+        self.leeward_test = leeward_test
         if size_feedback not in SIZE_FEEDBACK_NAMES:
             raise ValueError("size_feedback must be one of {}, got {!r}".format(SIZE_FEEDBACK_NAMES, size_feedback))
         self.size_feedback = size_feedback
@@ -735,7 +758,51 @@ class SkinBody(ThermalBody):
                                                              self.columns.faces)
         self.theta = self.surface.angles_to(self.v_hat)
         self.i_stag, self.i_back = self.surface.patch_toward(self.v_hat), self.surface.patch_toward(-self.v_hat)
+        self._leeward_raw = None                         # the centroid and what is ahead of it, made at the first read, as `_volume` is
+        self._moment3d = None
         self._nose_raw = None                            # the fit of this surface, made at the first read (`nose_fit`), as `_volume` is
+
+    def mass_centroid(self):
+        """The mass-weighted centre of the body's metal [m, (3,)] (sub-plan 22 Task 5j): the 3D model's active elements (their
+        mass, density times volume, at their centroids) and every skin cell (its mass at the cell's centre along its column,
+        the base point plus the normal times the depth from the base to the cell's mid-height). The 3D model's part is
+        measured once after each move, as the volume is (`_moment3d`); the skins' is measured at every call."""
+        if self._moment3d is None:
+            mm = self.mesh
+            live = mm.active
+            m3 = self.material.rho * mm.element_volumes()[live]
+            self._moment3d = (float(m3.sum()), (m3[:, None] * mm.points[mm.tets[live]].mean(axis=1)).sum(axis=0))
+        sk, col = self.skins, self.columns
+        dz = sk.dz()
+        height = dz.sum(axis=1)[:, None] - (np.cumsum(dz, axis=1) - 0.5 * dz)           # the cells' mid-heights above the bases
+        at = col.points[:, None, :] + col.normal[:, None, :] * height[..., None]
+        mass, moment = self._moment3d[0] + float(sk.m.sum()), self._moment3d[1] + (sk.m[..., None] * at).sum(axis=(0, 1))
+        return moment / mass
+
+    def _leeward(self):
+        """(the mass centroid, which top corners lie ahead of the plane through it at right angles to the flight direction) of
+        the top surface at the last refresh, made at the first read after it (`_leeward_raw`)."""
+        if self._leeward_raw is None:
+            c = self.mass_centroid()
+            self._leeward_raw = (c, (self.surface.points - c) @ self.v_hat > 0.0)
+        return self._leeward_raw
+
+    def windward(self):
+        """Which top corners are windward, bool (n,): their normal within 90 degrees of the direction of motion, and under
+        `leeward_test` `centroid` also ahead of the plane through the mass centroid (sub-plan 22 Task 5j)."""
+        facing = self.theta <= 0.5 * np.pi
+        return facing & self._leeward()[1] if self.leeward_test == "centroid" else facing
+
+    def load_angles(self):
+        """The angles to the flow [rad, (n,)] every windward consumer reads -- the heating (`CoupledRun.loads_at`), the surface
+        flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
+        Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
+        no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
+        under `centroid` `theta` where `windward` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
+        itself, the frames and the release angle do not change."""
+        if self.leeward_test != "centroid":
+            return self.theta
+        return np.where(self.windward(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -756,8 +823,12 @@ class SkinBody(ThermalBody):
         X = pts - self.mesh.points.mean(axis=0)
         r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
         wind = self.columns.normal @ v >= 0.0
+        capped = self.theta <= np.radians(NOSE_CAP_ANGLE)
+        if self.leeward_test == "centroid":              # Task 5j: only corners ahead of the centroid's plane are windward
+            ahead = self._leeward()[1]
+            wind, capped = wind & ahead, capped & ahead
         bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
-        cap = pts[self.theta <= np.radians(NOSE_CAP_ANGLE)]
+        cap = pts[capped]
         n, fitted, concave = len(cap), float("nan"), False
         if n >= 4:
             sv = np.linalg.svd(cap - cap.mean(axis=0), compute_uv=False)
@@ -813,7 +884,7 @@ class SkinBody(ThermalBody):
                     raise ValueError("Girin's spraying reads the surface flow's evaluation and the aero state (its records' "
                                      "altitude and speed): give the aero state, with a forcing only if it has its result")
                 surface = self.surface               # where the plan is evaluated: its corners and its centroid (Task 4)
-                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.theta, surface.areas,
+                self.spray_plan = girin_plan(self.skins, end.result, state, self.spray, self.load_angles(), surface.areas,
                                              self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
                                              points=surface.points.copy(),
                                              centre=spray_mod.enclosed_centroid(surface.points, surface.faces),
@@ -884,7 +955,7 @@ class SkinBody(ThermalBody):
             self.surface_flow = surface_flow.SurfaceFlow()
         mat = self.material
         rho_l = mat.liquid.rho if mat.liquid is not None else mat.rho
-        res = self.surface_flow.evaluate(state, self.theta, self.nose_radius(), rho_l, self.surface_temperature())
+        res = self.surface_flow.evaluate(state, self.load_angles(), self.nose_radius(), rho_l, self.surface_temperature())
         self.last_flow = res
         return FlowForcing(np.asarray(res.dp_ds, dtype=float), np.asarray(res.tau, dtype=float),
                            res.deceleration * self.v_hat, res)
@@ -1208,9 +1279,14 @@ class SkinBody(ThermalBody):
         return self.nose_fit.used
 
     def nose_stats(self):
-        """The history's nose columns (`NOSE_COLUMNS`), after the other skin columns and before the spreading ones."""
+        """The history's nose columns (`NOSE_COLUMNS`) and then the two leeward ones (`LEEWARD_COLUMNS`), after the other skin
+        columns and before the spreading ones."""
         f = self.nose_fit
-        return dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
+        c, ahead = self._leeward()
+        out = dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
+        out["centroid_offset_mm"] = float((c - self.mesh.points.mean(axis=0)) @ self.v_hat * 1e3)
+        out["leeward_corners"] = int(((self.theta <= 0.5 * np.pi) & ~ahead).sum())
+        return out
 
     def transverse_radius(self):
         """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
@@ -1303,18 +1379,24 @@ class SkinBody(ThermalBody):
 
     def _depth_ratios(self, flowing):
         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
-        the windward face (theta <= 90 degrees), with flowing metal (b, the flowing depth, above zero) and Girin's
-        conjugate depth delta_m from the macro step's surface flow (`last_flow`; nan off his closure); the sheared depth
-        `sheared_depth`, on those whose top moves. nan where there are none, or without the flow."""
+        the windward face (`windward`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
+        with flowing metal (b, the flowing depth, above zero) and a conjugate depth delta_m (finite and above zero); the
+        sheared depth `sheared_depth`, on those whose top moves. nan where there are none, or without the flow.
+        The depth is the one the step's spraying read where the step has a plan and the band is on (`spray_plan.result.
+        delta_m`: the band's momentum balance at the step's start angles, nose radius and flow, review of 2026-11-10, Task 5i's
+        Minor 3), else Girin's Eq. (2) from the step's surface flow (`last_flow`; nan off his closure)."""
         mat, out = self.material, {"b_over_delta_m_median": float("nan"), "sheared_depth_over_delta_m_median": float("nan")}
         if not (self.flow_on and mat.melts and mat.liquid is not None) or self.last_flow is None:
             return out
-        delta_m = spray_mod.spray_layer(self.last_flow, mat.liquid, getattr(self.spray, "slip_band", False), self.theta,
-                                        self.nose_radius())              # the band's depth too where it is on (Task 5i)
+        plan = self.spray_plan
+        if getattr(self.spray, "slip_band", False) and plan is not None:
+            delta_m = np.asarray(plan.result.delta_m, dtype=float)
+        else:
+            delta_m = spray_mod.spray_layer(self.last_flow, mat.liquid, False)
         if len(delta_m) != self.skins.n:
             return out
         with np.errstate(invalid="ignore"):
-            wet = (self.theta <= 0.5 * np.pi) & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
+            wet = self.windward() & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
         if wet.any():
             out["b_over_delta_m_median"] = float(np.median(flowing[wet] / delta_m[wet]))
             sheared = sheared_depth(self.skins)

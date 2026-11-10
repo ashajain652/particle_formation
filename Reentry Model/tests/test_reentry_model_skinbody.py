@@ -1925,6 +1925,7 @@ def with_tops(b, points=None, theta=None):
     pts = b.surface.points.copy() if points is None else points
     b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)
     b.theta = b.surface.angles_to(b.v_hat) if theta is None else theta
+    b._leeward_raw = None                           # the centroid test of the new surface, made at the first read
     b._nose_raw = b._fit_nose()
     return b
 
@@ -2269,3 +2270,250 @@ def test_the_skins_hand_girin_plan_their_nose_radius(coarse_sphere_mesh, monkeyp
     monkeypatch.setattr(skinbody, "girin_plan", planned)
     b.advance(0.25, 0.25, front_loads(b, 3e6), state=aero_state_at(93.0))
     assert len(seen) == 1 and seen[0][0] is not None and seen[0][0] == seen[0][1]
+
+
+# -- the leeward test by the body's centroid (sub-plan 22 Task 5j; Asha, 2026-11-10) ----------------------------------------
+def centroid_body(m, **kw):
+    return make(m, leeward_test="centroid", **kw)
+
+
+def put_behind(b, back=0.04):
+    """A corner facing the flow (its base normal within 60 degrees of the flight direction, its top angle 0.5 rad) whose top is
+    moved `back` m behind the plane through the mass centroid at right angles to the flight direction, as a pool standing
+    off the back leaves one: returns its index. The tops, angles and fits are refreshed as `_refresh_geometry` does."""
+    c = b.mass_centroid()
+    front = np.flatnonzero(b.columns.normal @ b.v_hat > 0.5)
+    k = int(front[np.argmin((b.surface.points[front] - c) @ b.v_hat)])      # the one nearest the plane
+    pts, theta = b.surface.points.copy(), b.theta.copy()
+    pts[k] -= ((pts[k] - c) @ b.v_hat + back) * b.v_hat
+    theta[k] = 0.5
+    with_tops(b, pts, theta)
+    return k
+
+
+def test_the_mass_centroid_of_an_untouched_sphere_is_its_centre(coarse_sphere_mesh):
+    """The mass-weighted centre of the 3D model's elements and the skins' cells (sub-plan 22 Task 5j) of the 4 mm test sphere
+    sits within a fifth of a millimetre of its centre, the origin, on a 50 mm radius, and `centroid_offset_mm` (its position
+    along the flight direction relative to the 3D mesh's mean point, positive forward) is that small too."""
+    b = centroid_body(coarse_sphere_mesh)
+    c = b.mass_centroid()
+    assert c.shape == (3,) and np.linalg.norm(c) < 2e-4
+    assert abs(b.skin_stats()["centroid_offset_mm"]) < 0.2 and b.skin_stats()["leeward_corners"] < 10   # a few equator corners
+
+
+def test_a_pool_at_the_back_moves_the_centroid_backward_by_its_mass_moment(coarse_sphere_mesh):
+    """A 5 mm pool on the leeward columns (base normals facing away from the flow): the centroid moves backward, and to the
+    place the mass moment gives, the 3D model's moment (its elements' volumes times the density, at their centroids) plus each
+    column's mass at the middle of its skin (equal cells of one density: base plus normal times half the thickness)."""
+    b = centroid_body(coarse_sphere_mesh)
+    front = b.mass_centroid()
+    lee = b.columns.normal @ b.v_hat < 0.0
+    b.skins.fill(b.skins.column_mass() + np.where(lee, b.material.rho * 5e-3 * b.skins.area, 0.0), 880.0)
+    b._refresh_geometry()
+    c = b.mass_centroid()
+    assert (c - front) @ b.v_hat < -1e-4                                    # backward: against the flight direction
+    mm = b.mesh
+    live = mm.active
+    vol, at = mm.element_volumes()[live], mm.points[mm.tets[live]].mean(axis=1)
+    m3 = b.material.rho * vol
+    mid = b.columns.points + b.columns.normal * (0.5 * b.skins.thickness())[:, None]
+    m = b.skins.column_mass()
+    expected = ((m3[:, None] * at).sum(axis=0) + (m[:, None] * mid).sum(axis=0)) / (m3.sum() + m.sum())
+    np.testing.assert_allclose(c, expected, atol=1e-9)
+    assert b.skin_stats()["centroid_offset_mm"] == pytest.approx(1e3 * (c - b.mesh.points.mean(axis=0)) @ b.v_hat, abs=1e-9)
+
+
+def test_the_effective_angle_leaves_a_corner_ahead_of_the_plane_as_it_is_and_turns_one_behind_it_leeward(coarse_sphere_mesh):
+    """Under `centroid` a corner is windward only if it is ahead of the plane through the centroid AND its normal faces the flow;
+    the effective angle is theta where it is and the larger of theta and 90 degrees plus a microradian where not. `facing`
+    returns `theta` itself. The count of corners that face the flow from behind the plane is the history's `leeward_corners`,
+    with either setting."""
+    b = centroid_body(coarse_sphere_mesh)
+    moved = b.load_angles() != b.theta                                       # only an equator corner or two, a hair behind the plane
+    assert moved.sum() < 10 and (b.theta[moved] > 1.5).all()
+    k = put_behind(b)
+    eff = b.load_angles()
+    other = np.arange(b.theta.size) != k
+    assert b.theta[k] == 0.5 and eff[k] == 0.5 * np.pi + 1e-6
+    assert (eff[other & (b.theta < 1.5)] == b.theta[other & (b.theta < 1.5)]).all()      # every other windward corner is as it was
+    assert (eff[other] >= b.theta[other]).all()                                         # an equator corner a hair behind the plane is only turned leeward
+    away = int([i for i in np.flatnonzero(b.columns.normal @ b.v_hat > 0.5) if i != k][0])
+    theta = b.theta.copy()
+    theta[away] = 2.0                                                    # ahead of the plane but facing away
+    with_tops(b, theta=theta)
+    assert b.load_angles()[away] == 2.0 and b.load_angles()[k] == 0.5 * np.pi + 1e-6
+    assert b.skin_stats()["leeward_corners"] >= 1
+    f = make(coarse_sphere_mesh, leeward_test="facing")
+    put_behind(f)
+    assert f.load_angles() is f.theta and f.skin_stats()["leeward_corners"] >= 1
+
+
+def test_a_corner_behind_the_centroid_that_faces_the_flow_gets_no_shear_no_spray_and_no_rayleigh_taylor(coarse_sphere_mesh,
+                                                                                                         monkeypatch):
+    """The wiring through `SkinBody.advance`: the surface flow and the spray plan both receive the effective angle, so the
+    corner put behind the plane (theta 0.5 rad, its normal facing the flow) has no shear and a non-windward patch; the spray
+    model is told it is not windward and its Rayleigh-Taylor deceleration is zero; and no droplet leaves it. A corner ahead of
+    the plane that faces away gets no shear or spray either."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray, surface_flow
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    seen = {}
+
+    class Model(spray.SprayModel):
+        def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, *a, **k):
+            seen["windward"], seen["w_n"] = windward.copy(), np.array(k["deceleration_n"])
+            return super().evaluate(flow, state, b, delta_m, v_s, windward, dt, areas, m_f, *a, **k)
+
+    class Flow(surface_flow.SurfaceFlow):
+        def evaluate(self, state, theta, *a, **k):
+            seen["flow_theta"] = np.array(theta)
+            seen["result"] = super().evaluate(state, theta, *a, **k)
+            return seen["result"]
+    b = centroid_body(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=Model(mat.liquid),
+                      surface_flow=Flow())
+    k = put_behind(b)
+    away = int([i for i in np.flatnonzero(b.columns.normal @ b.v_hat > 0.5) if i != k][3])
+    theta = b.theta.copy()
+    theta[away] = 2.0
+    with_tops(b, theta=theta)
+    eff = b.load_angles().copy()
+    plans, girin = [], skinbody.girin_plan
+    monkeypatch.setattr(skinbody, "girin_plan", lambda *a, **kw: plans.append((np.array(a[4]), girin(*a, **kw))) or plans[-1][1])
+    b.advance(0.25, 0.25, front_loads(b, 3e6), state=aero_state_at(93.0))
+    np.testing.assert_array_equal(seen["flow_theta"], eff)
+    np.testing.assert_array_equal(plans[0][0], eff)
+    assert eff[k] > 0.5 * np.pi and not seen["windward"][k] and seen["w_n"][k] == 0.0 and seen["w_n"][away] == 0.0
+    res = seen["result"]
+    for j in (k, away):
+        assert res.tau[j] == 0.0 and res.dp_ds[j] == 0.0 and plans[0][1].mass[j] == 0.0 and plans[0][1].result.branch[j] == -1
+
+
+def test_the_heating_reads_the_effective_angle(coarse_sphere_mesh):
+    """`CoupledRun.loads_at` hands the heating model the effective angles: under `centroid` the corner behind the plane is past
+    90 degrees, under `facing` the heating gets `theta` as it always did (sub-plan 22 Task 5j)."""
+    from types import SimpleNamespace
+    from reentry_model import coupled
+    got = {}
+    for how in ("centroid", "facing"):
+        b = make(coarse_sphere_mesh, leeward_test=how)
+        k = put_behind(b)
+        ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
+                              heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: got.setdefault(how, np.array(theta))))
+        coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))
+        if how == "centroid":
+            assert got[how][k] > 0.5 * np.pi and got[how][k] != b.theta[k]
+        else:
+            np.testing.assert_array_equal(got[how], b.theta)
+
+
+def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
+    """`leeward_test="facing"`, the class default a body saved before Task 5j flies on, and the angles read as `theta` (the
+    method replaced by the old attribute) are one flight: every column of every row but the two new ones, and the final mass
+    and energy, equal to the last bit. 3 MW/m2 on the front from 893 K, two 0.0625 s macro steps with the flow on."""
+    legacy = skinbody.SkinBody.load_angles
+    runs = []
+    for how in ("facing", "default", "legacy"):
+        np.random.seed(12345)
+        if how == "legacy":
+            skinbody.SkinBody.load_angles = lambda self: self.theta
+        try:
+            kw = {"leeward_test": "facing"} if how == "facing" else {}
+            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
+            if how == "default":
+                del vars(b)["leeward_test"]                 # as a state saved before Task 5j
+                assert b.leeward_test == "facing"
+            rows = []
+            for k in range(2):
+                loads = front_loads(b, 3e6)
+                wind = b.theta < 0.5 * np.pi
+                push = skinbody.FlowForcing(np.where(wind, -5e2 / 0.05 * np.sin(b.theta), 0.0), np.where(wind, 50.0, 0.0),
+                                            30.0 * b.v_hat)
+                b.advance(0.0625 * (k + 1), 0.0625, loads, forcing=push)
+                rows.append((b.step_parts, timed_out(b.skin_stats())))
+        finally:
+            skinbody.SkinBody.load_angles = legacy
+        runs.append((b, rows))
+    assert all(k in rows[0][1] for _, rows in runs for k in skinbody.LEEWARD_COLUMNS)
+    old = lambda rows: [(p, {k: v for k, v in r.items() if k not in skinbody.LEEWARD_COLUMNS}) for p, r in rows]
+    assert same_rows(old(runs[0][1]), old(runs[1][1])) and same_rows(old(runs[0][1]), old(runs[2][1]))
+    assert runs[0][0].mass() == runs[1][0].mass() == runs[2][0].mass() and runs[0][0].handed_mass > 0.0
+    assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
+    assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
+    with pytest.raises(ValueError, match="leeward_test"):
+        make(coarse_sphere_mesh, leeward_test="behind")
+
+
+def test_the_fit_takes_only_windward_corners_within_the_cap(coarse_sphere_mesh):
+    """Under `centroid` the sphere's cap is the corners windward by the new test within 30 degrees of the flow, and the
+    windward transverse radius for the bound takes the windward corners likewise: ten cap corners put behind the plane drop out
+    of the fit (the count falls by ten) and a faraway corner behind it, with a base normal facing the flow, leaves the bound as
+    it was; under `facing` Task 5g's selection is unchanged (the count stays, the faraway corner raises the bound)."""
+    for how in ("centroid", "facing"):
+        b = make(coarse_sphere_mesh, leeward_test=how)
+        n0, bound0 = b.nose_fit.points, b.nose_fit.bound
+        c = b.mass_centroid()
+        cap = np.flatnonzero(b.theta <= np.radians(30.0))
+        far = int(np.flatnonzero((b.columns.normal @ b.v_hat > 0.5) & (b.theta > np.radians(40.0)))[-1])
+        pts = b.surface.points.copy()
+        for k in cap[:10]:
+            pts[k] -= ((pts[k] - c) @ b.v_hat + 0.04) * b.v_hat
+        pts[far] = c - 0.04 * b.v_hat + 0.3 * np.array([0.0, 1.0, 0.0])
+        theta = b.theta.copy()
+        with_tops(b, pts, theta)
+        f = b.nose_fit
+        if how == "centroid":
+            assert f.points == n0 - 10 and f.bound == pytest.approx(bound0, rel=0.02)
+        else:
+            assert f.points == n0 and f.bound > 1.5 * bound0
+
+
+def test_the_history_has_the_centroid_offset_and_the_leeward_corners_with_either_setting(coarse_sphere_mesh):
+    """Two new skin columns, `centroid_offset_mm` and `leeward_corners`, with either setting; the corners that face the flow
+    from behind the plane through the centroid are counted whatever the setting decides to do with them."""
+    for how in ("centroid", "facing"):
+        b = make(coarse_sphere_mesh, leeward_test=how)
+        s0 = b.skin_stats()
+        assert s0["leeward_corners"] < 10 and abs(s0["centroid_offset_mm"]) < 0.2
+        put_behind(b)
+        s = b.skin_stats()
+        assert s["leeward_corners"] == s0["leeward_corners"] + 1 and all(k in s for k in skinbody.LEEWARD_COLUMNS)
+
+
+# -- the folded-in fixes of the review of Task 5i (sub-plan 22 Task 5j) -----------------------------------------------------
+def test_with_the_band_on_the_depth_ratios_read_the_depth_the_plan_sprayed_on(coarse_sphere_mesh):
+    """Review of Task 5i, Minor 3: with the band on and a plan for the step, `b_over_delta_m_median` is the flowing depth over
+    the plan's own `delta_m` (here 100 um on every column, where a recomputation from the start-of-step flow with the
+    end-of-step angles and radius would give something else), not a depth recomputed in `_depth_ratios`."""
+    from types import SimpleNamespace
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid, slip_band=True))
+    b.last_flow = object()                       # never read: the plan has the depth
+    b.spray_plan = SimpleNamespace(result=SimpleNamespace(delta_m=np.full(b.skins.n, 1e-4)))
+    flowing = np.full(b.skins.n, 5e-5)           # a flowing depth on every column (880 K metal has none to measure)
+    wet = b.windward() & (flowing > 0.0)
+    assert wet.sum() > 50
+    got = b._depth_ratios(flowing)["b_over_delta_m_median"]
+    assert got == pytest.approx(float(np.median(flowing[wet] / 1e-4)), rel=1e-14)
+
+
+def test_a_spraying_body_in_the_slip_band_keeps_the_three_books(coarse_sphere_mesh):
+    """Review of Task 5i, item 4: melting skins advanced with the slip band on (the gas state of the 100 mm flight at 93 s with
+    its body Knudsen number set to 0.04, inside the band, so the spraying reads the momentum balance's depth) keep the mass
+    (the mass left and released is the starting mass to 1e-12 of it), the energy (the balance's residual below 1e-8 of the heat
+    absorbed) and the momentum (the books' residual below 1e-12 of the impulses), with the leeward test by the centroid."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    model = spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True)
+    b = centroid_body(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
+    M0, state = b.mass(), aero_state_at(93.0)
+    state.kn = 0.04
+    for k in range(2):
+        b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
+    assert b.last_flow.in_slip_band and np.isfinite(b.spray_plan.result.delta_m).any()      # the band's depth is in use
+    s = b.skin_stats()
+    assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-12)
+    assert abs(b.energy_balance_residual()) < 1e-8 and s["momentum_residual"] < 1e-12 and b.impulse_size > 0.0

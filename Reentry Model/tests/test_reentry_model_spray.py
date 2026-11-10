@@ -120,9 +120,22 @@ def test_source_rows_and_histogram():
     assert row["closure"] == sf.CLOSURE_GIRIN
     assert row["we_d"] == pytest.approx(8e-5 * 7200.0 ** 2 * 2 * row["r_m"] / LIQ.sigma) and row["oh"] == pytest.approx(LIQ.mu / np.sqrt(LIQ.rho * LIQ.sigma * 2 * row["r_m"]))
     assert row["breakup"] == float(row["we_d"] > 12.0) and row["dm_kg"] == res.dm[0] and row["v_s_ms"] == 5.0
-    n_hist, m_hist = spray.histogram(np.array([2e-6, 5e-5, 5e-5, np.nan, 2e-2]), np.array([1.0, 2.0, 3.0, 4.0, 5.0]), np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
+    n_hist, m_hist = spray.histogram(np.array([2e-6, 5e-5, 5e-5, np.nan, 0.2]), np.array([1.0, 2.0, 3.0, 4.0, 5.0]), np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
     assert n_hist.sum() == 6.0 and m_hist.sum() == 3.0 and n_hist.shape == (spray.N_BINS,)          # nan and out-of-range dropped
-    assert spray.BIN_EDGES[0] == 1e-6 and spray.BIN_EDGES[-1] == 1e-2
+    assert spray.BIN_EDGES[0] == 1e-6 and spray.BIN_EDGES[-1] == pytest.approx(0.1, rel=1e-12)
+
+
+def test_the_size_bins_reach_a_tenth_of_a_metre_and_keep_the_first_forty_exactly():
+    """Sub-plan 22 Task 5j (the controller's ruling of 2026-11-10): the histogram's 40 bins, ten to a decade from 1 um to 10 mm,
+    dropped the Rayleigh-Taylor droplets above 10 mm; ten more bins, the same spacing, reach 0.1 m. The first 40 bins' edges are
+    bit for bit the old ones, so a droplet below 10 mm falls where it did; a 30 mm droplet is counted in the 50th decade bin."""
+    old = np.logspace(np.log10(1.0e-6), np.log10(1.0e-2), 41)
+    assert spray.N_BINS == 50 and len(spray.BIN_EDGES) == 51 and np.array_equal(spray.BIN_EDGES[:41], old)
+    np.testing.assert_allclose(np.diff(np.log10(spray.BIN_EDGES)), 0.1, rtol=1e-9)
+    n, m = spray.histogram(np.array([3e-3, 3e-2, 0.2]), np.array([1.0, 2.0, 4.0]), np.array([0.1, 0.2, 0.4]))
+    assert n.shape == (50,) and n[:40].sum() == 1.0 and n[40:].sum() == 2.0 and m[40:].sum() == pytest.approx(0.2)   # 0.2 m is above the bins
+    j = np.searchsorted(spray.BIN_EDGES, 3e-2) - 1
+    assert 40 <= j < 50 and n[j] == 2.0
 
 
 def test_the_thin_branch_is_not_gated_by_girins_critical_weber_number():
@@ -831,6 +844,18 @@ def test_spray_layer_in_the_band_is_the_momentum_balance_on_windward_patches():
     assert 20e-6 < d[1] < 200e-6                                                # 68 um on this patch: a physical film depth
 
 
+def test_spray_layer_reads_the_radius_the_flow_recorded_over_the_one_it_is_given():
+    """The shear integral and the r it is divided by come from one radius (sub-plan 22 Task 5j, the review of Task 5i, Minor 3):
+    a flow that records the radius its integral was taken at (`nose_radius`) is read at that radius whatever `radius` the caller
+    passes, and a flow that does not (a state from before) reads the one passed, as before."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,))
+    same = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
+    np.testing.assert_array_equal(spray.spray_layer(flow, LIQ, True, theta, 2 * R_NOSE) / same, 2.0 ** (-1.0 / 3.0))   # no record: the radius given
+    flow.nose_radius = R_NOSE
+    np.testing.assert_array_equal(spray.spray_layer(flow, LIQ, True, theta, 2 * R_NOSE), same)
+    np.testing.assert_array_equal(spray.spray_layer(flow, LIQ, True, theta, None), same)
+
+
 def test_a_patch_whose_wall_knudsen_number_is_above_a_tenth_is_outside_the_band():
     """Asha, 2026-11-10: the band needs the patch's own wall Knudsen number below 0.1 too. Body Knudsen number 0.04, wall
     Knudsen numbers 0.05 and 0.12 on two patches at one angle: the second has no band depth and no shear spray."""
@@ -891,9 +916,11 @@ def test_with_the_band_on_the_thin_and_thick_branches_spray_in_it():
 
 
 def test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit():
-    """A model with slip_band left off and before (the class defaults, and what a pickled model has) evaluates every case of
-    `spraying_cases` as the model before this task did, and with the band set on a flow outside the band, or with the new
-    gates on a flow that has a finite depth, the same numbers to the last bit."""
+    """What this checks, and no more (the review of Task 5i, Minor 2): the model as built with its defaults (slip_band off, gates
+    before, the class defaults a pickled model has) evaluates every case of `spraying_cases` to the same bits as the same model
+    with the band set on, for flows that are outside the band, and as one given `spray_gates="before"` explicitly; and the
+    thick case, which has a finite depth, comes out the same under the new gates as under before. It does not compare with
+    numbers pinned from the commit before Task 5i."""
     assert spray.SprayModel.slip_band is False and spray.SprayModel(LIQ).slip_band is False
     base = spraying_cases(cap_depth=None)
     for kwargs in ({"slip_band": True}, {"slip_band": False, "spray_gates": "before"}):
