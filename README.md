@@ -373,10 +373,10 @@ The nine files are:
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the 38 tests from the repository root with
+Run the 43 tests from the repository root with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 38 tests, about 50 s
+"$PY" -m pytest tests/levelset -q                            # 43 tests, about 40 s
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
