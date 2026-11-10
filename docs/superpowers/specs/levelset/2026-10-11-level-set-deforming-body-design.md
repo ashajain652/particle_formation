@@ -3,7 +3,11 @@
 Date: 2026-10-11
 Status: draft for Asha's review. Designed with Asha in the brainstorming session of 2026-10-10 to 2026-10-11; every
 decision is listed with its date in §19. Revised 2026-10-12: the shared-package refactor waits for the skyscrapers
-port of the prototyped Step 3 code to land on `main` (§4.2, §4.4, §13, §14).
+port of the prototyped Step 3 code to land on `main` (§4.2, §4.4, §13, §14). **Amended 2026-11-10 (§20, approved by
+Asha 2026-11-10): two tracked interfaces — the outer surface φ (derived from the skin base β) and the molten-rigid surface ψ, the half-liquid
+isotherm rebuilt each step — with an adaptively refined volume mesh for rigid metal and thick melt, skins on markers in
+two modes, a ray-cast shadow test, and build steps reordered to parity with the skyscrapers first, then the first
+leeward mass-loss mechanisms. §20.12 lists the sections it supersedes.**
 Architecture: **level set**, a second model architecture built in parallel to the existing one, which Asha calls
 **skyscrapers** (the element model of Step 3 and its successor, the layered skins on columns of a moving mesh,
 `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md`). The two are selected by a run flag (§4.3).
@@ -179,7 +183,7 @@ The trajectory sees only mass, area and a temperature through the shared `Body` 
 
 ## 6. Geometry: the level set
 
-### 6.1 The mesh
+### 6.1 The mesh (superseded in part by §20.5, 2026-11-10)
 
 A fixed tetrahedral mesh of a box around the body (generated once with gmsh, cached by geometry like today's meshes).
 The box encloses the original sphere with a margin for spreading (laterally 1.5 times the diameter, setting); its
@@ -299,7 +303,7 @@ mass** as a surface load (its weight and inertia in the frame), since the skin s
 about 4 % of a 60 mm remnant's metal at 0.4 mm (estimated). All act on the zero contour, which lies the skin's thickness
 below the true surface — less than half a cell at 1 mm (approximation, §15).
 
-### 8.5 When the flow solve runs
+### 8.5 When the flow solve runs (superseded by §20.5 and §20.7, 2026-11-10)
 
 At the end of each macro step, the solve is switched on if metal more than half liquid, connected to the surface, forms
 a region at least `--flow-switch-cells` (default 3) cells thick. Before that, thin soft metal under the skins is held in
@@ -345,7 +349,7 @@ cell size) splits in two along the surface, each with the same profile and half 
 closer than a third of the target spacing merge, their columns mixed layer by layer by mass and enthalpy (the hand-over
 rule of the skin designs). Splits and merges conserve mass and enthalpy exactly and are counted.
 
-### 9.3 The skin and its base (decided 2026-10-11)
+### 9.3 The skin and its base (decided 2026-10-11; superseded by §20.6, 2026-11-10)
 
 The skin's **base lies on the zero contour**; the skin stands outward from it. The skin has two zones (decided
 2026-10-11, Asha's proposal that the skin replaces the film and the deep account):
@@ -484,7 +488,7 @@ velocity) for the later droplet step.
   own, never shared with skyscrapers), `tunnel.py`.
 - `tests/levelset/` with its own fixtures; the normal loop runs it with the rest of the unit tier.
 
-## 13. Verification and acceptance (decided 2026-10-11; reordered the same day)
+## 13. Verification and acceptance (decided 2026-10-11; reordered the same day; items 1–5 superseded by §20.11, 2026-11-10)
 
 Each stage is verified before the next is built; exact or published answers first, then agreement with skyscrapers
 where their scopes overlap. The numbers follow the build stages of §14.
@@ -518,7 +522,7 @@ where their scopes overlap. The numbers follow the build stages of §14.
    with the flow on, stage 4's results unchanged before the first switch.
 6. **Tunnel**: the comparison of §11 against the pre-registered metrics.
 
-## 14. Build stages and documents (reordered 2026-10-11; revised 2026-10-12)
+## 14. Build stages and documents (reordered 2026-10-11; revised 2026-10-12; stages 1–5 superseded by §20.11, 2026-11-10)
 
 0+S. **The combined refactor**, after the skyscrapers port of the prototyped Step 3 code has landed on `main`
    (decided 2026-10-12): the Steps 1–2 modules and Step 3's architecture-independent physics move into
@@ -579,6 +583,25 @@ volume correction; pieces other than the largest removed in flight (to the later
    Spheral lacks, so the slurry route may move here; Spheral keeps the tearing of the mush).
 6. **Fallback mesh strategy** at 1 mm (§6.1).
 7. **A cut-cell flow solve** if diffuse smearing matters (§8.6).
+8. **The capillary curvature: take it from the level set** (Asha, 2026-11-10). The skyscrapers' skin flow takes the
+   curvature in its surface-tension term in a thin-film form, the base surface's curvature plus the linear response of
+   the thicknesses (the cotangent Laplacian of the column heights over each column's area; sub-plan 21 Task 6b, Asha,
+   2026-10-21, option A, chosen over the top surface's own mesh curvature because at corners touching an obtuse
+   triangle that curvature took its neighbours' mean, could not see its own height, and drew metal onto pile-ups). The
+   thin-film form holds only while the layer is much thinner than the base's radius of curvature and its top slopes
+   gently. The comparison flights of 2026-11-08 to 2026-11-10 broke both conditions: by 187.0 s the 50 mm sphere's
+   rear pool stood 51.5-66.5 mm deep in its columns on a base about 19-21 mm from the sphere's centre, one to three base
+   radii (`prototype/work-2026-10-28-skin-spraying/measure/task5_compare/`). This architecture's surface tension, in the
+   flow solve's weak form (§8.4) and in any capillary term of the marker skins' runoff (§9.5), takes the curvature of
+   the true outer surface from the level set itself, κ = ∇·(∇φ/|∇φ|), evaluated on the zero contour moved out by the
+   skin thickness, and not the skyscrapers' thin-film rule. Asha's decision of 2026-11-10: the skyscrapers keep the
+   thin-film rule until this is built, and adopt the level set's curvature then.
+
+9. **A banded ψ caps the molten depth the thin test reads** (found by the stage 1 final review, 2026-11-11). With a
+   band b on the distance reset, ψ is clipped to ±b away from its contour, so a molten layer deeper than b reads as
+   depth b and slope 0, and on a surface whose radius of curvature exceeds about 10 b it would be judged thin. Stage 3
+   must either reset ψ without a band for the thin test or use a band at least ten times the largest radius it
+   judges. The library's default is no band.
 
 ## 18. Alternatives considered
 
@@ -625,3 +648,347 @@ volume correction; pieces other than the largest removed in flight (to the later
 - 2026-10-11: isolation (Asha's instruction): copies of changed files in `reentry_model/levelset/`, shared code in
   `reentry_model/shared/` imported by the existing code, `--architecture skyscrapers|levelset`, documents and prototypes
   in their own `levelset` folders.
+- 2026-11-10: the capillary curvature from the level set, §17 item 8 (Asha).
+- 2026-11-10: two tracked interfaces; the molten-rigid surface is the half-liquid isotherm, rebuilt as a level set ψ
+  each step, not advected (Asha, "way 1"; §20.3).
+- 2026-11-10: the fine region reaches a fixed margin d into rigid metal everywhere, even under thick melt (Asha, §20.4).
+- 2026-11-10: the amended hybrid grid — an adaptively refined volume mesh for all rigid metal and thick melt, skins only
+  where the molten layer is thin, by a thin test on the largest principal curvature and the depth's slope (Asha, after
+  checking the options against the Step 4 leeward plan; §20.5).
+- 2026-11-10: build order — step 1 parity with the skyscrapers, the ring-forming runoff included; step 2 the first
+  leeward mechanisms; tearing deferred (Asha; §20.2, §20.9).
+- 2026-11-10: the 10 µm top zone on thick melt carried by marker skins, not a prism band (Asha; §20.6).
+- 2026-11-10: which patches are leeward decided by a ray-cast shadow test through φ (Asha; §20.8).
+- 2026-11-10: hand-down to the volume mesh only for the anchored rigid run deeper than the stub; crusts never
+  handed down; the pass moves no metal, only changes its resolution (Asha; §20.6).
+
+## 20. Amendment of 2026-11-10: two tracked interfaces and the amended hybrid grid
+
+Designed with Asha in the brainstorming session of 2026-11-10, started from the skyscrapers session's handoff note
+(`docs/superpowers/plans/levelset/2026-11-10-two-interface-handoff.md`, in the `subplan20` worktree). Where this
+section and an earlier one disagree, this section governs; §20.12 lists what it supersedes. Numbers marked *estimated*
+are calculations made for this amendment and are measured in the stage named; *measured* numbers come from runs.
+
+### 20.1 Why
+
+Asha, 2026-11-10: "I want the shape of the melt to be driven by physics, not our gridding or column assumptions," with
+an arbitrary shape tracked for both the liquid-gas interface and the molten-rigid interface, and the molten space
+between them discretised as densely as the skyscrapers' cells. The skyscraper comparison flights of 2026-11-08 to
+2026-11-10 (`prototype/work-2026-10-28-skin-spraying/measure/task5_compare/`, *measured*) showed three column
+assumptions setting the geometry: a fixed cross-section, a single height along the base normal, and a thin-film
+curvature. The 100 mm sphere stopped at 39.69 s when a ridge of re-frozen metal travelling over the shoulder (about
+6.8 mm high at about 75 degrees from the nose by 39.5 s) leaned over its own foot; the 50 mm sphere's rear pool stood
+51.5–66.5 mm deep in fixed-area columns, its surface about twice as far out as the same volume as a shell.
+
+### 20.2 Goals, non-goals, anti-goals
+
+- **Goal, step 1 (Asha, 2026-11-10): parity with the skyscrapers.** The level-set architecture does everything the
+  skyscrapers model does at the time step 1's plan is written (the parity target, §20.10), including the runoff that
+  carries melt over the shoulder and builds the ring of re-frozen metal, and Girin's spraying. "Parity" means the same
+  physics, not the same failures: the fold stop and the misplaced rear pool are not to be reproduced, and where the
+  skyscrapers' column assumptions break the level set carries on.
+- **Goal, step 2 (Asha, 2026-11-10): the first set of leeward mass-loss mechanisms** (§20.9).
+- **Non-goals for now:** tearing of semi-solid metal and the fluctuating part of the wake (deferred; the grid is built
+  so that they can be added without changing it, §20.5); resolving Girin's film or the spray itself (stays sub-grid, §2).
+- **Anti-goals:** a melt shape set by the direction, area or height of a column; a grid decision that would have to be
+  undone to add tearing; reproducing a skyscraper failure for the sake of agreement.
+
+### 20.3 The two level sets
+
+- **β, the skin base — the evolved, authoritative level set** (Claude's call while writing, 2026-11-10, for Asha to
+  check). As in §6.2 and §18, the level set that is moved and volume-corrected is the boundary of the volume mesh's
+  metal, which is the base of the skins: 0.8 mm below ψ under a full-depth skin, 0.4 mm below the gas under a top-zone
+  skin, the gas surface itself where no skin exists. β is moved by the volume flow (thick melt) and by each skin's net
+  draw or return at its base (§8.8), reset to a distance and corrected per piece (§6.4) exactly as before. **Mass
+  ownership:** each skin owns the metal in its cells; the volume mesh owns the metal inside β; nothing is counted twice.
+  Where a skin's base depth jumps at a mode boundary, β steps with it (a step of at most a few millimetres, inside the
+  fine region, resolved by the curvature refinement).
+- **φ, the outer surface (gas-metal) — derived, not evolved.** Rebuilt every step as the zero contour of β moved
+  outward by each marker's skin thickness (the thickness extended from the markers to the surrounding nodes along β's
+  normal, then redistanced). φ is what the curvature (§17 item 8), the thin test (§20.5), the shadow test (§20.8), the
+  frontal area and the outputs read. Runoff that changes a skin's height therefore moves φ at the next rebuild with no
+  advection of φ of its own.
+- **ψ, the molten-rigid surface** (decided 2026-11-10, Asha: "way 1"). The rigid region is the metal inside φ that is
+  less than half liquid (below 895.1 K on `AA7075_scheil`) **and connected to the core** (Claude's call: rigid metal
+  not connected to the core is a crust, below). ψ is the signed distance to that region's boundary,
+  negative inside rigid metal, **rebuilt every macro step (and every flow step in a fast phase) from the temperature
+  field; it is never advected on its own.** Where nothing has melted the boundary is φ's zero contour. The rebuild:
+  locate the 895.1 K crossings on the volume mesh's edges (P1 temperature) and inside each skin (its cell profile along
+  the marker's normal), build the zero contour from them, redistance, and clip, ψ = max(ψ_iso, φ), so that rigid metal
+  never lies outside the metal.
+- Consequences: metal that freezes becomes rigid where it sits and metal that melts joins the molten region, with no
+  separate rule (accretion and the re-frozen ring included); the depth of non-rigid metal to the rigid floor, which the
+  spray gates read (Hunt's floor damping, the Rayleigh–Taylor depth), is defined for any shape as the distance from φ to
+  ψ along the outward normal.
+- **Crusts** (Claude's call, following the skyscrapers' floating-crust rule so that parity can hold): metal below half
+  liquid that is not connected to the core through rigid metal is a crust. It is not part of the rigid region and is no
+  wall of the flow. In a skin it floats and moves as one piece, as in the layered skins. On the volume mesh it is carried
+  by the flow as a rigid body (a penalty that holds its strain rate at zero, labelled as a numerical device). The molten
+  depth that the thin test and the spray gates read is the depth from φ to ψ, so a crust over melt does not make a
+  layer look thin; a crust that touches the core joins the rigid region at the next rebuild.
+- Rejected: a separately advected ψ moved by a melting-front speed — AA7075 melts over a range with no sharp front,
+  and two descriptions of the same boundary would need a reconciliation rule. Also rejected (2026-11-10, while
+  writing): φ as the evolved level set with the skins inside it — the volume mesh would then end on an unnamed third
+  surface and the per-piece books would not close.
+
+### 20.4 The fine region and its margin into rigid metal (decided 2026-11-10)
+
+The fine region is all metal with ψ > −d: the whole molten region plus a margin d into rigid metal, **everywhere,
+including under thick melt** (Asha: "fixed margin"). This keeps every boundary between fine and coarse cells off the
+melting front. Why (measured in the skyscrapers): with the skin-3D interface on the front, the cold plate's base node
+rose about 1.6 K above the half-liquid temperature in each part and the plate melted 3.6 % slow over 1.0–2.0 s; moving
+it 0.8 mm into rigid metal halved that (option B′, 2026-10-16); and 2 mm elements could not carry the 2.2–3.4 mm
+warming profile ahead of the hot plate's front, so the plates melted 2–6 % late until the 3D mesh was refined to 0.7 mm
+over the top 4 mm (2026-10-14). The skyscrapers extend into rigid metal only where the molten layer is thinner than
+their minimum; this rule extends the margin everywhere.
+
+- `--fine-margin` d: default 4 mm (the skyscrapers' fine band), fine volume size 0.7 mm (`--fine-size`), to be verified
+  on the plate tests (§20.11) and checked against α/V, the warming length ahead of a front moving at V (α about
+  40 mm²/s; flight fronts move about 0.7–1.24 mm/s, so the flight's warming profile is probably wider and gentler than
+  the plates' — *estimated*).
+- **The fine size applies throughout the molten region, pool interiors included** (Asha, 2026-11-10: "0.7 mm
+  throughout"; a graded interior coarsening to about 2 mm away from the floor and the top was considered and not
+  chosen). **Whether 0.7 mm is fine enough must be shown** (Asha): the results must not shift under finer gridding
+  (§20.11, stages 4 and 5).
+- d must exceed the front's advance between refinements (about 0.6 mm per 0.5 s macro step in flight, *measured* from
+  the recession speeds of §2) plus the warming length, so that refinement always happens in cold, smoothly varying
+  metal.
+
+### 20.5 The grid: the amended hybrid (decided 2026-11-10)
+
+Chosen after checking the options against the Step 4 leeward plan
+(`docs/superpowers/plans/2026-09-27-deformation-ring-shedding.md`).
+
+- **One tetrahedral volume mesh, adaptively refined.** The fixed box mesh of §6.1 becomes the coarsest level of an
+  adaptive mesh (refinement by bisection of tetrahedra, coarsening by undoing it). It holds **all rigid metal**
+  (including the margin d) and **all thick melt** — pools, the ring or cap, necks, overhangs, folds. Refinement criteria:
+  (1) the fine region of §20.4 at `--fine-size`; (2) curvature: cells no larger than a quarter of the smallest principal
+  radius of curvature of φ or ψ nearby, down to a floor `--cell-floor` (default 0.25 mm, *estimated*, to be costed in
+  stage 1); below the floor a feature is sub-grid (§20.9); (3) later, regions the strain check flags in the brittle
+  window (90–97 % solid, 833 K to the solidus) for tearing (not built in steps 1–2). Field transfer on refinement is
+  exact interpolation of P1 fields onto bisected cells; on coarsening, an L2 projection that conserves energy, applied
+  only outside the fine region.
+- **Skins on markers on every gas-facing surface**, in two modes (§20.6): a **full-depth skin** (a column) where the
+  molten layer is thin, and a **top-zone skin** over thick melt.
+- **The thin test**, per marker, with hysteresis: the molten depth h (φ to ψ along the normal) is thin when
+  h is at most c_κ times the smallest principal radius of curvature of φ and of ψ at the marker (`--thin-curvature`, default 0.1) **and** the surface slope of the molten depth,
+  |∇_s h|, is at most c_s (`--thin-slope`, default 0.2). The largest principal curvature is used, not the mean, because
+  a neck has small mean curvature. A marker changes mode only after the test has given the other answer for
+  `--mode-hold` consecutive macro steps (default 3) and for a connected patch of at least `--mode-min-markers` markers
+  (default 7). The defaults are the builder's starting values, to be set by the stage 3–4 verification; their values
+  are recorded with every run.
+- **Why** (2026-11-10): Girin's spraying needs the thin-layer columns, whose lubrication physics is exact where layers
+  are thin; ring collection, pinch-off and later tearing need a volume mesh beneath, which columns cannot provide (no
+  sideways coupling, no neck, no three-dimensional strain field). Rejected: columns everywhere (cross or miss the other
+  surface in pools and folds, collide where opposite sides meet); one anisotropic volume mesh with the flow everywhere
+  (about 2 million stacked cells, about 5 million tetrahedra on the 100 mm sphere, solved every 1–10 ms — tens to
+  hundreds of hours a flight, *estimated*; kept as a possible local verification case).
+
+### 20.6 Skins on markers, in two modes (top-zone mode decided 2026-11-10)
+
+The markers of §9.1–§9.2 (carry, snap, split, merge, trapped) are kept. What each marker carries changes; §9.3's
+two-zone skin (a 0.4 mm metal zone and a liquid zone, no flow in the metal zone) is superseded.
+
+- **Cells.** 10 µm (production; 20 µm development) within the **fine zone**, the top 400 µm below the gas; below it
+  each cell is 10 % thicker than the one above (the skyscrapers' option B′ grading; at 3.4 mm depth cells are about
+  0.3 mm, *estimated*). Each cell holds mass, enthalpy and a velocity in the marker's tangent plane; temperature, liquid
+  fraction and density follow from the material. The skin's cross-section varies with depth z as
+  A(z) = A₀ (1 − κ₁ z)(1 − κ₂ z), κ₁, κ₂ the principal curvatures of φ at the marker (positive convex), so the
+  fixed-area assumption is gone.
+- **Full-depth skin (thin mode).** Runs from the gas down through the molten layer to a stub of rigid metal below ψ
+  (`--skin-stub`, default 0.8 mm, the option B′ minimum). Its flow is the layered column flow (gas shear on the top
+  cell, the pressure gradient, the body force and the capillary pressure through the depth, rigid cells joined to the
+  floor anchored, crusts floating), and runoff is exchange between neighbouring markers' cells with the arrival rule
+  (nothing passes through rigid metal; material arriving on a rigid top lands on it). **Hand-down to the volume
+  mesh** (tightened 2026-11-10, Asha): only the unbroken run of rigid cells joined to the floor at the skin's bottom
+  (anchored), and only the part of that run deeper than the 0.8 mm stub, passes to the volume mesh, at its own
+  enthalpy (exact). A crust — rigid metal with non-rigid metal between it and the floor — is never handed down: it
+  stays in place in the skin, floating per §20.3, until the metal beneath it freezes and joins it to the floor, and
+  metal that refroze on top of liquid can therefore never be carried below that liquid. The pass moves no metal: β
+  steps outward by exactly the handed volume, so the same metal stays in the same place; what changes is only its
+  resolution (10 µm skin cells to volume cells of about 0.7 mm, which is why the stub exists) and the sideways detail
+  within one marker's patch, which the volume cells resolve at their own size. This is free of the mesh-folding reason
+  that turned the skyscrapers' hand-down off (2026-11-08), since the volume mesh does not move.
+- **Top-zone skin (thick mode; Asha, 2026-11-10: "marker skins").** The top 400 µm only (the fine zone, 10 µm cells),
+  riding on the thick melt's free surface. Its base exchanges heat and metal with the volume cells beneath (the
+  interface of §9.4, implicit) and takes the volume flow's tangential velocity there as its bottom boundary condition;
+  the skin's own shear profile is solved through its depth. The volume flow sees the skin as a surface load (its weight
+  and inertia in the frame) and the gas shear passed through it.
+- **Where a thin region meets a thick one** (Claude's call): runoff between a full-depth skin and its neighbouring
+  top-zone skin is the ordinary sideways exchange between markers, layer by layer by depth below the top, for the top
+  400 µm; the full-depth skin's cells deeper than that exchange with the volume cells beside its column as a flux
+  boundary of the volume flow (the column's depth-resolved mass flux and its momentum enter as an inflow, or leave as an
+  outflow, of the volume region), so the ring-forming runoff into a pool and a pool's spill back onto a thin layer both
+  close the books.
+- **Mode changes** conserve mass, enthalpy and momentum exactly (momentum along the surface exactly; the normal
+  component, which a skin cannot carry, booked and reported): thin → thick hands the full-depth skin's metal below
+  its fine zone to the volume cells (and the volume flow starts from the column's velocities); thick → thin absorbs the
+  volume melt beneath the marker, down to the stub, into the skin.
+- **Capillary curvature** from the level set, §17 item 8: κ = ∇·(∇φ/|∇φ|) on φ's zero contour (φ is now the true
+  outer surface, so no offset by the skin thickness is needed).
+- **Spraying** (Girin, thick and thin branches, the Rayleigh–Taylor droplet, the slip-band gate when shared): acts on
+  each marker's top liquid as in §9.5 with b the flowing depth read from the skin, or, on a top-zone skin, from φ to ψ.
+- **The skins remain the level set's own** (the 2026-10-11 rule of §4.2 stands): the physics matches the skyscrapers'
+  layered skins so that parity can hold, but the code is written in `reentry_model/levelset/skin.py` and imports
+  nothing from the skyscrapers' `skin.py` or `columns.py`.
+- **Known limitations** (shown to Asha 2026-11-10): (1) where the surface bends more tightly than the skin's depth
+  (radius under about 0.4 mm), neighbouring skins overlap or gap — treated as sub-grid, as the cell floor is; (2) split
+  and merge smear profiles where the surface stretches or gathers, most where a ring collects (mass and energy exact;
+  measured in stage 3 as the change in spray from a gathering ring); (3) a top-zone skin's flow is one-dimensional on a
+  three-dimensional pool, valid while the pool's flow varies sideways over more than about a millimetre; (4) folds
+  trap markers, whose skins return their metal and heat to the volume cells exactly but lose the 10 µm profile there.
+  Rejected alternative: a prism band in the volume mesh (prism layers folded at 90-degree edges in the skyscrapers,
+  2026-10-15, and the band would be remeshed every step).
+
+### 20.7 The flow solve in step 1
+
+Thick melt flows in the skyscrapers (their columns move melt at any depth), so parity needs the flow solve of §8 in
+step 1, not after spraying as §14 had it. §8.1–§8.4 and §8.6–§8.8 stand, with these changes: the solve runs on the
+volume mesh's thick melt only (thin layers flow in their skins); its rigid wall is ψ's zero contour; its free surface is
+the base of the top-zone skins; §8.5's switch (three cells of metal over half liquid) is replaced by the thin test of
+§20.5. The time stepping of §10 stands, with the warning band reading "a region about to fail the thin test or a
+volume region about to form".
+
+### 20.8 Gas loads: the ray-cast shadow test (decided 2026-11-10)
+
+The loads, the windward fitted nose sphere (skyscrapers Task 5g) and the leeward values come from the shared physics
+(§4.2), so that the two architectures use the same laws. Which patches are leeward is decided by the level set: from
+each patch's centroid, offset outward by a twentieth of its cell (steps of φ but at least a quarter of the smallest cell; a whole-cell offset carried leeward rays near a sphere's outline outside the body, so they missed it), a ray is marched upstream (along the direction of motion) through φ by
+sphere tracing (steps equal to φ); if it re-enters metal before leaving the box, the patch is **shadowed** and takes the
+leeward loads (base pressure, lee shear and lee heating, as bracketed in the Step 4 plan); otherwise it takes the
+angle law. Patches facing away from the flow are leeward by the angle law as before. On a convex body no ray re-enters
+metal, so the test changes nothing there; it differs only on overhangs, pockets and detached pieces, where the
+skyscrapers' mass-centroid test (Task 5j) cannot see. Separated flow behind a ridge is not computed; §17 item 3's CFD
+hook stays the remedy. Cost: a few dozen lookups per ray (*estimated*).
+
+### 20.9 Step 2: the first leeward mass-loss mechanisms (decided 2026-11-10)
+
+From the Step 4 plan, built in step 2: (1) collection into a ring or rear cap, which comes from the flow solve with the
+deceleration, the gas loads and surface tension, with no separate collection rule; (2) resolved pinch-off: the level
+set separates a neck on its own and each detached piece becomes a row of the fragment record (the Step 4 plan's "The
+fragment record") and leaves the run, which settles §6.3's proposal in favour of removal in flight; (3) sub-grid rim
+shedding below the cell floor by Task 10's rule (rim thickness from the Bond number, bulges about nine rim radii apart,
+stripping above a depinning Weber number of 3.5–8 at the rim's height, drops about 1.5 ligament widths); (4) the mean
+wake load on protrusions at their own height (Task 11, flight part). Deferred, grid ready: tearing (needs a viscoplastic
+strain solve on the volume mesh and a critical strain, now a 0.1 % placeholder from castings) and the wake's fluctuating
+part (at most about 1 % of the static deflection in flight, Step 4 fact 6).
+
+### 20.10 The parity target
+
+Pinned to the skyscrapers at the commit on which step 1's plan is written, recorded in the plan. As known on
+2026-11-10 it includes: layered skins with a velocity per cell, the 10 µm fine zone and graded cells; runoff over the
+whole surface, the leeward face included, with the arrival rule and deposits freezing on cold metal; the spreading of
+deposits; Girin's thick and thin branches with the conjugate depth from a momentum balance; the Rayleigh–Taylor
+droplet; the slurry spray switch; the windward loads from the fitted sphere; and, if merged by then, sub-plan 22 Tasks
+5h–5j (new defaults, the slip-band gate, the leeward centroid test, which §20.8 replaces in this architecture) and the
+viscous-film gate of branch `we-critical-308`. Physics the skyscrapers gain later reaches the level set through the
+shared package; skin physics does not, by the 2026-10-11 rule, and is added here by amendment.
+
+### 20.11 Build stages and verification (supersede §13 items 1–5 and §14 stages 1–5)
+
+Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
+
+**Step 1 — parity**
+1. **Geometry.** Both level sets on the adaptive mesh; ψ rebuilt from a prescribed temperature field; the fine region
+   and curvature refinement; the thin test; the shadow test. Tests: a sphere's volume and area; ψ for a radial
+   temperature field is a sphere of the analytic radius; ψ ≥ φ everywhere; the shadow test on a sphere marks exactly the
+   patches facing away, and on a synthetic overhang marks the sheltered face; refinement and coarsening conserve
+   energy; memory and time of the mesh at 0.7 mm in the fine region and the 0.25 mm floor measured.
+2. **Thermal.** §13 item 2, plus ψ tracking a Stefan front within one fine cell, and the plates (level-2 cold and hot)
+   within the skyscrapers' acceptance, with the fine margin d and without it (to confirm why it exists).
+3. **Skins on markers, both modes, flow solve off** (thick regions held, as before the switch): §13 item 3's tests;
+   cross-section varying with curvature against the analytic volume of a spherical shell; mode changes exact in mass,
+   enthalpy and momentum; runoff over a shoulder onto cold metal freezing as a deposit, against the skyscrapers' plate
+   cases; Girin's published cases reproduced through the shared spray model.
+4. **Flow solve in thick melt** (§20.7) with the top-zone skins: §13 item 5's tests; a pool fed past the thin test
+   recirculates and keeps exact books across the hand-over. **Fine-size convergence** (Asha, 2026-11-10): a pool on a
+   heated rigid face under a body force (millimetres to centimetres, seconds) at fine sizes 0.7, 0.5 and 0.35 mm; the
+   pool's shape (depth and extent), its floor's melting rate, its surface speeds and the spray from its top must change
+   by less than the agreed tolerance (proposed: 2 %, or within the seed scatter for spray) from 0.5 to 0.35 mm and from
+   0.7 to 0.5 mm; if 0.7 mm fails, the default becomes the coarsest size that passes, and the cost is re-estimated.
+5. **Parity flights** (judged as in §20.14 item 3, with `--leeward centroid` for the comparison runs). The 50 mm and
+   100 mm flights against the skyscrapers' flights at the parity commit, two seeds each: droplet
+   count, thick share, medians by number and mass, sprayed mass and mass history within the scatter between seeds up to
+   the time the skyscrapers' column assumptions first break (the first base fold above 30 degrees, or a column deeper
+   than its base's radius of curvature, whichever is first); beyond it, the level set runs on past 39.69 s (100 mm) and
+   187 s (50 mm) with closed books, and its shapes are reported, not compared. §13 item 4's convergence campaign applies,
+   with the fine size as one of its axes: one flight window containing a thick pool re-run at the next finer fine size
+   (0.5 mm), on the Mac Studio.
+
+**Step 2 — leeward mechanisms**
+6. The four mechanisms of §20.9, with the Step 4 plan's analytic tests (Rayleigh–Plateau thread, the forced
+   oscillator) and the fragment record's books (body, skins, droplets and fragments sum to the initial mass and
+   enthalpy).
+7. The tunnel configuration (§11), unchanged.
+
+### 20.12 What this amendment supersedes
+
+§6.1 (uniform cells; now the coarsest level of an adaptive mesh); §6.2 (the evolved level set is renamed β and stays the
+skin base; the true outer surface φ is derived from it, §20.3); §8.5 (the switch, replaced by the thin test); §9.3 (the two-zone skin, replaced by the two-mode skin of
+§20.6); §9.5's b (read as in §20.6); §13 items 1–5 and §14 stages 1–5 (replaced by §20.11; stage 0 + S unchanged); §15's
+"thin soft metal under the skins is held in place before the switch" (thin layers now flow in their skins). Everything else stands.
+
+### 20.13 Costs and risks added (estimated)
+
+- Flow-solve run time when thick melt persists (the 50 mm rear pool for tens of seconds): about 10⁴ flow steps of
+  10 ms on about a million cells, of order 30–170 hours a flight on the laptop at 10–60 s a solve (*estimated*, very
+  rough); measured in stage 4. See §20.14 for Asha's decision.
+
+- Geometry cost, *measured* 2026-11-11 (stage 1, laptop, serial, once each; per macro step = every timed operation
+  except the one-off first build, now including the outer-surface rebuild, the molten-rigid-surface rebuild and one
+  motion of the skin base, all with banded distance resets): the 50 mm sphere (1 290 192 cells) about 63 s at a peak of
+  1.56 GB; the 100 mm sphere (5 355 438 cells) about 330 s, that is 5.5 minutes, at a peak of 3.30 GB; about 37 hours
+  over 400 macro steps if every operation ran every step (*estimated*). These replace the earlier 48 s and 228 s, which
+  omitted the three surface operations. The molten-rigid surface (68 s at 100 mm) and the rebuild from fields (51 s) are
+  now the largest costs; stage 3 measures whether they, and the shadow test, can run less often. The cost of cells at
+  the 0.175 mm floor is not yet measured (the sphere has none); stage 3 measures it with a rim or wire.
+- Cells: the 100 mm sphere's fine region at 0.7 mm over a 4 mm margin is about the skyscrapers' fine band (1.21 million
+  elements, *measured* there); curvature refinement to 0.25 mm adds cells only at rims and necks.
+- Markers: about 30 000 at 2 mm spacing, the full-depth ones with up to about 80 cells, the top-zone ones about 40
+  (*estimated* from the skyscrapers' 59 cells at the minimum).
+- ψ's rebuild each step: redistancing on the fine region, linear in its cells.
+- Risks: the thin test chattering at its threshold (hysteresis and the minimum patch size address it; counted); mode
+  changes at a fast-moving front; the cost of the flow solve if thick melt appears early; parity comparisons on a
+  moving target (pinned, §20.10).
+
+### 20.14 Decisions raised by the builder check (all settled by Asha, 2026-11-10)
+
+1. **When step 1 starts — decided 2026-11-10 (Asha: "start step 1").** Stages 1 (geometry) and 2 (thermal) start now in
+   `prototype/levelset/`; they need only the Steps 1–2 modules. Stage 0 + S (the shared-package refactor) is done after
+   the skyscrapers' port lands and before stage 3, the first stage needing shared physics; the parity target (§20.10) is
+   pinned when stage 3's sub-plan is written.
+2. **Acceptable run time — decided 2026-11-10 (Asha):** multi-day flights on the Mac Studio are accepted. Stage 4
+   measures the real cost; the runs are parallelised as in §20.15.
+3. **How parity is judged — decided 2026-11-10 (Asha: "as recommended").** One compatibility switch only,
+   `--leeward shadow|centroid` (default `shadow`; `centroid` uses the skyscrapers' Task 5j test through the shared
+   package; run-name suffix `_lee-centroid`). No switches reproduce the skyscrapers' skin rules (fixed cross-section,
+   thin-film curvature, no hand-down), which would put skyscraper skin code into the level set's skins. Parity is judged
+   quantitatively, within the scatter between two seeds, on the plate tests, Girin's published cases and the early
+   flight while layers are thin and the body convex (where the remaining differences are small: the cross-section
+   correction is about depth over radius of curvature, around 1 %, *estimated*); beyond that, differences are reported
+   and attributed, not required to vanish.
+
+### 20.15 Parallel running on the Mac Studio (decided 2026-11-10, Asha: "three layers")
+
+Facts: the FEniCSx thermal backend solves with PETSc but is written for one process (its nodal loads and dof maps
+assume one rank) and MPI has never been exercised; in serial it is about 3 times slower than the skfem backend (62 s
+against 19 s for 100 s of flight, README); the 3D thermal solve is about 2 % of a skyscrapers skin flight, the skins
+nearly all the rest (measured, fact 149's profile). The level set's thermal solve is on cut cells in skfem (§7.6), which
+FEniCSx does not offer as standard. So the thermal solve is not where parallel effort goes. Three layers, cheapest
+first:
+
+1. **Whole flights side by side**: seeds, sphere sizes and convergence variants run concurrently, about one core each,
+   as many as the Mac Studio's cores and memory allow (the existing practice for long flights).
+2. **Skins split across cores within a flight**: every marker's skin is solved independently on each sub-step except
+   for the sideways exchange, so the markers are partitioned across shared-memory threads (for example numba's parallel
+   loops), with the exchange done between sub-steps. Results must be identical to the serial run (a test), and the
+   books unchanged.
+3. **The flow solve on PETSc's parallel solvers**: the diffuse-interface flow solve (§8.6) is built in FEniCSx with
+   PETSc and run with several MPI ranks on the Mac Studio; its scaling is measured in stage 4 before anything further is
+   decided. Only the flow solve is distributed; the level sets, markers and cut-cell thermal solve stay in one process,
+   exchanging the fields the flow needs each flow step.
+
+Rejected for now: the whole model distributed by MPI from the start (mesh, markers and level sets split across
+processes) — the most scalable, but about twice the work in every stage, and needed only if one flight's flow solve
+outgrows one machine, which nothing measured yet suggests.
+
