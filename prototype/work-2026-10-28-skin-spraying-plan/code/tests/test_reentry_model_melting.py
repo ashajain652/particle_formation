@@ -109,7 +109,7 @@ def test_film_spraying_death_and_balances(layered_mesh):
     # 2026-10-22: viscous_film's floor depth and gamma tau*, finite on Girin & Kopyt's branches and nan elsewhere
     gk = np.isin(rows[:, 8], [1, 2, 4])
     assert np.isfinite(rows[gk, 22:24]).all() and np.isnan(rows[~gk, 22:24]).all() and (rows[gk, 23] < 1.0).all()
-    # the histogram bins 1 um to 10 mm and drops the rest by design. With the rigid substrate on (amendment of 2026-10-06)
+    # the histogram bins 1 um to 0.1 m (to 10 mm until sub-plan 22 Task 5j) and drops the rest by design. With the rigid substrate on (amendment of 2026-10-06)
     # this body, 880 K throughout, is slurry to the core: off Girin's closure its film is held from the shear modes,
     # piles up, and the front-surface Rayleigh-Taylor mode sheds some of it above 10 mm (measured in two unseeded runs:
     # 5 and 6 droplets, 5.2 and 6.1 % of the mass, 10.1-10.9 mm), so the bins hold exactly what was released inside

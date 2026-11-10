@@ -392,6 +392,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
                          "deform_depth_mm": 15.0, "n_columns": r["skin_columns"], "fine_band_mm": 4.0, "fine_size_mm": 2.0,
                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
                          "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
+                         "leeward_test": "centroid",                  # always recorded: new, centroid by default (Task 5j)
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
@@ -963,6 +964,65 @@ def test_the_size_feedback_marks_the_run_s_name_only_for_initial():
             == base + "_side-height_nose-initial_seed-7")
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, size_feedback="initial") == "_nose-initial"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+def test_the_leeward_test_is_centroid_by_default_reaches_the_body_and_is_refused_without_skins(tmp_path, monkeypatch):
+    """--leeward-test (sub-plan 22 Task 5j; Asha, 2026-11-10) is `centroid` by default for a skin run, melting or not, and
+    `facing` where asked; the body is not built, its arguments are. With the element model it is refused (exit 2)."""
+    from reentry_model import skinbody
+    assert cli.skin_leeward_test_of(cli.build_parser().parse_args(THERMAL)) == "centroid"
+    assert cli.build_parser().parse_args(THERMAL).leeward_test is None
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    melt = dry + ["--melt", "on"]
+    for argv, how in ((dry, "centroid"), (dry + ["--leeward-test", "facing"], "facing"), (melt, "centroid"),
+                      (melt + ["--leeward-test", "facing"], "facing"), (melt + ["--leeward-test", "centroid"], "centroid")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["leeward_test"] == how
+    for argv in (FEM + ["--leeward-test", "facing"], THERMAL + ["--leeward-test", "behind"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        assert exc.value.code == 2
+
+
+def test_the_skins_record_their_leeward_test_and_the_two_history_columns(tmp_path):
+    """A skin run's JSON always records `settings.skin.leeward_test`, and its history has `centroid_offset_mm` and
+    `leeward_corners` with either setting, a few tenths of a millimetre and none on the unmelted sphere."""
+    for how, name in (("centroid", "cen"), ("facing", "fac")):
+        argv = THERMAL + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+                          "--outdir", str(tmp_path), "--name", name]
+        if how == "facing":
+            argv += ["--leeward-test", "facing"]
+        assert cli.main(argv) == 0
+        assert json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]["leeward_test"] == how
+        rows = list(csv.DictReader(open(tmp_path / (name + ".csv"))))
+        assert all(k in rows[0] for k in ("centroid_offset_mm", "leeward_corners"))
+        assert abs(float(rows[-1]["centroid_offset_mm"])) < 1.0 and float(rows[-1]["leeward_corners"]) == 0.0
+
+
+def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
+    """`--leeward-test facing` on a skin run ends its settings in _leeward-facing (sub-plan 22 Task 5j), after the nose
+    radius's mark and before the seed's; `centroid`, the default, leaves every name as it was."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert name(THERMAL) == name(THERMAL + ["--leeward-test", "centroid"]) == base
+    assert name(THERMAL + ["--leeward-test", "facing"]) == base + "_leeward-facing"
+    assert (name(THERMAL + ["--size-feedback", "initial", "--leeward-test", "facing", "--seed", "7"])
+            == base + "_nose-initial_leeward-facing_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, leeward_test="facing") == "_leeward-facing"
+
+
+def test_the_spray_gates_help_says_the_thin_and_rarefied_branches_need_a_conjugate_depth():
+    """Review of Task 5i, Minor 1: the `run` help for --spray-gates names the thin branch's gate and the depths that pass it."""
+    help_text = " ".join(next(a for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions
+                              if "--spray-gates" in a.option_strings).help.split())
+    assert "thin and rarefied branches release only where a conjugate depth exists" in help_text
+    assert "Girin's closure" in help_text and "slip band" in help_text
 
 
 def test_the_slip_band_is_off_by_default_reaches_the_spray_model_of_both_surface_models_and_is_recorded(tmp_path, monkeypatch):

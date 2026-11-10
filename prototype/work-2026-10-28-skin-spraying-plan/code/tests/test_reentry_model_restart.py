@@ -462,6 +462,51 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
 
 
+def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown, tmp_path, capsys):
+    """`--leeward-test` on a resume (sub-plan 22 Task 5j, Asha 2026-11-10). The test flight is `centroid` by default; a resume
+    keeps it, names it in the line before the flight and records it in the settings, and `facing` asked of it is recorded in
+    what was changed and kept by the state it saves. A state saved before Task 5j (no setting on its body, no leeward
+    columns on its row) resumes as `facing` with the two columns filled, and `centroid` asked of it is applied. The element
+    model's saved flight refuses it (exit 2)."""
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["skin"]["leeward_test"] == "centroid"
+    assert all(k in flight[0] for k in ("centroid_offset_mm", "leeward_corners"))
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "leeward test centroid" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "same.json")))["settings"]["leeward_test"] == "centroid"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "f", "--leeward-test", "facing",
+                     "--save-state-at", "0.2"]) == 0
+    assert "leeward test facing" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "f.json")))
+    assert doc["resumed_from"]["changed"] == {"--leeward-test": "facing", "--save-state-at": 0.2}
+    assert "leeward_test" not in doc["settings"]
+    assert restart.load(str(tmp_path / "f.state.pkl"))["run"].body.leeward_test == "facing"
+    state = restart.load(state_path)
+    body = state["run"].body
+    del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
+    for key in ("centroid_offset_mm", "leeward_corners"):
+        del state["row"][key]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "leeward test facing" in capsys.readouterr().out
+    rows = rows_of(str(tmp_path / "o.csv"))
+    assert "leeward_test" not in json.load(open(str(tmp_path / "o.json")))["settings"]
+    assert all(k in r for r in rows for k in ("centroid_offset_mm", "leeward_corners"))
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "c", "--leeward-test", "centroid"]) == 0
+    assert "leeward test centroid" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "c.json")))
+    assert doc["resumed_from"]["changed"] == {"--leeward-test": "centroid"} and doc["settings"]["leeward_test"] == "centroid"
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
+                  "--leeward-test", "centroid"])
+    assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
+
+
 def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
     """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
     runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the

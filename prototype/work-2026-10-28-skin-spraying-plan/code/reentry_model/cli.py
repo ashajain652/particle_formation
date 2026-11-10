@@ -6,12 +6,12 @@
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
-        --size-feedback current|initial --spray-gates 2026-11-10|before --slip-band on|off ...]
+        --size-feedback current|initial --leeward-test facing|centroid --spray-gates 2026-11-10|before --slip-band on|off ...]
                                      (the layered skins, the default with --thermal fem, their flow and spraying the
                                       default with --melt on; the element model with --surface-model elements)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
-        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial
+        --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
         --spray-gates 2026-11-10|before --slip-band on|off]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
@@ -156,6 +156,13 @@ def skin_size_feedback_of(args):
     return args.size_feedback or "current"
 
 
+def skin_leeward_test_of(args):
+    """Which top corners a skin run counts as windward: `centroid`, only those ahead of the plane through the body's mass
+    centroid at right angles to the flight direction whose normal also faces the flow, unless --leeward-test says `facing`,
+    the normal alone (sub-plan 22 Task 5j; Asha, 2026-11-10: by the centroid by default)."""
+    return args.leeward_test or "centroid"
+
+
 def spraying_run(args):
     """Whether a run of `run`'s arguments has a spray model: --melt on with the layered skins' flow on, or with the element model
     and Girin's removal (the instant-removal devices and the heat-only skins have none)."""
@@ -243,7 +250,8 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
-                     hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False):
+                     hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
+                     leeward_test="centroid"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -257,7 +265,9 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
     metal stays in the skins (Task 5e); `_side-height` where the sideways conduction pairs cells by height above the bases
     (Task 5f); `_nose-initial` where the windward loads read the mesh's own radius, not the sphere fitted to the tops
-    (Task 5g; the default changed to the fit, so the default's name is unchanged); empty for the defaults.
+    (Task 5g; the default changed to the fit, so the default's name is unchanged); `_leeward-facing` where a corner counts as
+    windward by its normal alone, not by the mass centroid's plane as well (Task 5j; the default is `centroid`, unmarked);
+    empty for the defaults.
     `melting_skins` says the run is one of melting skins, whose defaults are `--hand-down off` and `--part-count-from
     melting` (Asha, 2026-11-10, Task 5h): the suffix then marks the values that differ from those, `_handdown-on` and
     `_parts-moves`, and `_handdown-off` and `_parts-melting` are the defaults and unmarked; every other run keeps `on` and
@@ -297,6 +307,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_side-{}".format(sideways_pairing)
     if size_feedback != "current":
         out += "_nose-{}".format(size_feedback)
+    if leeward_test != "centroid":
+        out += "_leeward-{}".format(leeward_test)
     return out
 
 
@@ -378,6 +390,11 @@ def resume_arguments(rs):
                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
                          "one saved before the option existed)")
+    rs.add_argument("--leeward-test", choices=skinbody.LEEWARD_TESTS, default=None,
+                    help="which top corners are windward for the skins' heating, surface flow and spraying: facing, those whose "
+                         "normal faces the flow, or centroid, those that also lie ahead of the plane through the body's mass "
+                         "centroid at right angles to the flight direction (default: the saved flight's, facing for one saved "
+                         "before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -522,9 +539,11 @@ def build_parser():
                          "--spread-limit off, spreading moves only metal being handed down; Asha, 2026-11-08, sub-plan 22 "
                          "Task 5e; default off for melting skins, Asha 2026-11-10, on for every other run)")
     me.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default="2026-11-10",
-                    help="which of the release rules decided on 2026-11-10 apply (sub-plan 22 Task 5h): 2026-11-10, a "
+                    help="which of the release rules decided on 2026-11-10 apply (sub-plan 22 Tasks 5h and 5i): 2026-11-10, a "
                          "Rayleigh-Taylor droplet on the skins' crest-limit path is capped by its crest alone, with no "
-                         "quarter-of-the-body-radius cap (default); before: every rule as it stood")
+                         "quarter-of-the-body-radius cap, and the thin and rarefied branches release only where a "
+                         "conjugate depth exists (Girin's closure, or the slip band's with --slip-band on) (default); "
+                         "before: every rule as it stood")
     me.add_argument("--slip-band", choices=("on", "off"), default="off",
                     help="with a spraying run: on, Girin's spraying also runs where the body is on the merged branch with a body "
                          "Knudsen number from 0.01 to 0.1 and the patch's own wall Knudsen number is below 0.1, the film's depth "
@@ -578,6 +597,12 @@ def build_parser():
                          "--removal instant). With --surface-model skin: current: the windward loads' nose radius is that of a sphere "
                          "fitted to the tops of the columns facing the flow; initial: the mesh's own radius (Asha, 2026-11-10, sub-plan "
                          "22 Task 5g; default current)")
+    me.add_argument("--leeward-test", choices=skinbody.LEEWARD_TESTS, default=None,
+                    help="with --surface-model skin: which top corners are windward for the heating, the surface flow and the "
+                         "spraying (the Rayleigh-Taylor mode too): centroid, those whose normal faces the flow and that lie "
+                         "ahead of the plane through the body's mass centroid at right angles to the flight direction, so a "
+                         "pool at the back that faces forward is leeward; facing, the normal alone (Asha, 2026-11-10, sub-plan "
+                         "22 Task 5j; default centroid, facing named _leeward-facing)")
     me.add_argument("--particles", dest="particles", action="store_true", default=True,
                     help="write the particle source table and the size distribution of a spraying run (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
@@ -632,7 +657,8 @@ def build_thermal(args, settings, mass, spool=None):
                                      slurry_spray=args.slurry_spray == "on", particles=args.particles,
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
-                                     sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args))
+                                     sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args),
+                                     leeward_test=skin_leeward_test_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -672,6 +698,7 @@ def build_thermal(args, settings, mass, spool=None):
         if args.sideways_heat != "depth":
             info["skin"]["sideways_heat"] = args.sideways_heat
         info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
+        info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -728,7 +755,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     spread_limit_of(args), part_count_rule_of(args),
                                                                     hand_down_of(args), args.sideways_heat,
                                                                     skin_size_feedback_of(args),
-                                                                    melting_skins=melting_skins_of(args)),
+                                                                    melting_skins=melting_skins_of(args),
+                                                                    leeward_test=skin_leeward_test_of(args)),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
                                                                       spraying_run(args)))
 
@@ -824,6 +852,8 @@ def cmd_run(args, parser):
                      "moves only metal being handed down (Asha, 2026-11-08)")
     if args.sideways_heat != "depth" and args.surface_model != "skin":
         parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
+    if args.leeward_test is not None and args.surface_model != "skin":
+        parser.error("--leeward-test needs --surface-model skin: it says which of the skins' top corners are windward")
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
@@ -1070,6 +1100,10 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
         changed["--size-feedback"] = args.size_feedback
+    if args.leeward_test is not None:
+        if not skins:
+            parser.error("--leeward-test needs a saved flight of skins: it says which of their top corners are windward")
+        changed["--leeward-test"] = args.leeward_test
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -1118,6 +1152,9 @@ def cmd_resume(args, parser):
         run.body.sideways_pairing = args.sideways_heat
     if "--size-feedback" in changed and skins:
         run.body.size_feedback = args.size_feedback
+    if "--leeward-test" in changed and skins:
+        run.body.leeward_test = args.leeward_test
+        run.body._leeward_raw = run.body._nose_raw = None      # the saved step's surface read again under the new test
     if "--spray-gates" in changed:
         run.body.spray.spray_gates = args.spray_gates
     if "--slip-band" in changed:
@@ -1137,7 +1174,7 @@ def cmd_resume(args, parser):
     for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
-                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"),
+                      ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
         if flag in changed:
             setattr(saved, key, changed[flag])
@@ -1145,7 +1182,7 @@ def cmd_resume(args, parser):
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, spray gates {}, slip band {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, spray gates {}, slip band {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1155,6 +1192,7 @@ def cmd_resume(args, parser):
               "off" if skins and not run.body.hand_down else "on",
               run.body.sideways_pairing if skins else "depth",
               run.body.size_feedback if skins else "n/a",
+              run.body.leeward_test if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
@@ -1178,6 +1216,8 @@ def cmd_resume(args, parser):
         thermal_info["sideways_heat"] = run.body.sideways_pairing
     if skins and run.body.size_feedback == "current":
         thermal_info["size_feedback"] = "current"
+    if skins and run.body.leeward_test == "centroid":
+        thermal_info["leeward_test"] = "centroid"
     if getattr(run.body, "spray", None) is not None and run.body.spray.spray_gates != "before":
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # absent: before, as a state saved without it
     if getattr(run.body, "spray", None) is not None:

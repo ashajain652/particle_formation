@@ -132,12 +132,13 @@ The thin branch's Knudsen gate and the slip band (sub-plan 22 Task 5i; Asha, 202
 and Ranger's boundary layer are continuum results, so `melt_layer` gives a conjugate depth only on Girin's closure (body
 Knudsen number below 0.01, wall Knudsen number below 0.01). Under `spray_gates` `2026-11-10` the thin and rarefied branches
 shear-spray only where a conjugate depth exists, whichever way it is found: elsewhere (the merged branch, the free-molecular
-one, a patch off Girin's closure) a wet patch takes no shear mode, because their edge state is a shock-layer construction the
-merged branch treats as invalid; the Rayleigh-Taylor mode is not gated. With `slip_band` on, a patch has a depth in the band
+one, a patch off Girin's closure) a wet patch takes no shear mode, because the thin branch sprays only where Girin's continuum
+closure applies, or where the band's momentum balance gives a depth, not because the edge state it reads is invalid (the
+review of Task 5i, Minor 5, 2026-11-10); the Rayleigh-Taylor mode is not gated. With `slip_band` on, a patch has a depth in the band
 too: where the body is on the merged branch with a body Knudsen number below 0.1 and the patch's own wall Knudsen number is
 below 0.1, `spray_layer` gives `momentum_layer`'s depth, delta_m^3 = 3 mu^2 I / (rho tau^2 r) from the bridged shear tau and
-its integral I from the nose (`surface_flow.shear_moment`), the liquid's properties and the nose radius `nose_radius()` (the
-fitted radius under --size-feedback current). ASSUMPTIONS the band carries: I assumes a sphere (axisymmetric, r = R sin(theta)),
+its integral I from the nose (`surface_flow.shear_moment`), the liquid's properties and the nose radius the integral was taken at (the flow's `nose_radius`, Task 5j: the
+radius `nose_radius()` gave the surface flow, the fitted one under --size-feedback current). ASSUMPTIONS the band carries: I assumes a sphere (axisymmetric, r = R sin(theta)),
 an approximation on an eroded body; the whole molten depth may spray, with liquid properties, as below 0.01, the
 liquid-slurry viscosity contrast being future work; delta_m jumps by about 2 to 2.5 times at body Knudsen number 0.01, where
 Eq. (2) hands over to the balance; the thin branch keeps its edge-state wavelength, the bridge's continuum endpoint, which
@@ -155,8 +156,13 @@ from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN, KN_LOCAL_SLIP
 
 K_R, K_T = 0.17, 1.1
 B_MIN = 1.0e-6                     # m, films thinner than this do not spray (numerical floor)
-N_BINS, R_MIN, R_MAX = 40, 1.0e-6, 1.0e-2
-BIN_EDGES = np.logspace(np.log10(R_MIN), np.log10(R_MAX), N_BINS + 1)
+# Size bins, ten to a decade: 1 um to 0.1 m (sub-plan 22 Task 5j, the controller's ruling of 2026-11-10). They stopped at 10 mm
+# (40 bins) until then, and the Rayleigh-Taylor droplets, whose wavelength is centimetres on the layered skins, fell above them
+# and were not counted; the 40 bins' edges and counts are unchanged, 10 bins were added above them (`size_distribution.csv`
+# has ten more rows per window, empty for a run in which no droplet is above 10 mm).
+N_BINS, R_MIN, R_MAX = 50, 1.0e-6, 1.0e-1
+BIN_EDGES = np.logspace(np.log10(1.0e-6), np.log10(1.0e-2), 41)
+BIN_EDGES = np.concatenate([BIN_EDGES, np.logspace(-2.0, np.log10(R_MAX), 11)[1:]])
 WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected above this droplet Weber number
 CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
 # h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
@@ -207,13 +213,15 @@ def momentum_layer(tau, moment, radius, liquid):
 def spray_layer(flow, liquid, band=False, theta=None, radius=None):
     """The depth the spraying reads, delta_m per patch: `melt_layer`'s (Girin's Eq. (2), nan off his closure) except, with
     `band` on, on the patches in the slip band, where it is `momentum_layer`'s on the windward patches at r = `radius` sin
-    (theta) from the nose radius `radius` and the angles `theta`. A patch is in the band where the body is on the merged
+    (theta) from the nose radius the shear integral was taken at (`flow.nose_radius`, which the flow records; `radius` only for
+    a flow that does not, a state from before Task 5j) and the angles `theta`. A patch is in the band where the body is on the merged
     branch with a body Knudsen number below 0.1 (`flow.in_slip_band`) and the patch's own wall Knudsen number is below 0.1
     too (Asha, 2026-11-10; the 2026-11-06 plan with the wall condition added). Only the spraying calls it: the film's
     transport and the feed keep `melt_layer`. With `band` off, outside the band, or for a flow with no integrated shear (a
     state from before the band), the result is `melt_layer`'s to the last bit."""
     delta_m = melt_layer(flow, liquid)[0]
     moment = getattr(flow, "shear_integral", None)
+    radius = getattr(flow, "nose_radius", None) if getattr(flow, "nose_radius", None) is not None else radius
     if not band or moment is None or theta is None or radius is None or not getattr(flow, "in_slip_band", False):
         return delta_m
     theta = np.asarray(theta, dtype=float)
@@ -373,8 +381,9 @@ class SprayModel:
     The thin branch's continuum gate, under `2026-11-10` (Task 5i; Asha, 2026-11-10): the thin branch, and the rarefied
     branch with it, release only on patches with a conjugate depth to spray on, a finite `delta_m` -- Girin's closure below
     a wall Knudsen number of 0.01 (`melt_layer`), or, with `slip_band` on, the slip band's momentum-balance depth
-    (`spray_layer`). Elsewhere a wet patch takes no shear mode, because Girin and Kopyt's edge state comes from a shock-layer
-    construction that the merged branch treats as invalid; the Rayleigh-Taylor mode, a melt-side mode driven by the
+    (`spray_layer`). Elsewhere a wet patch takes no shear mode, because the thin branch sprays only where Girin's continuum
+    closure applies (or the band's depth exists), not because the edge state it reads is invalid (review of Task 5i, Minor 5);
+    the Rayleigh-Taylor mode, a melt-side mode driven by the
     deceleration, is not gated. `before` keeps the thin branch spraying wherever it did. `slip_band` (class default False,
     so a model pickled before it existed has it off) says whether the callers read the band's depth: the model itself only
     gates on the `delta_m` it is given, which the callers take from `spray_layer` with this flag."""

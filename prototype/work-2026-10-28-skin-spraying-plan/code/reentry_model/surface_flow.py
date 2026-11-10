@@ -237,6 +237,9 @@ class SurfaceFlowResult:
                                   # pressure part of G; the skins' push takes it on its own, sub-plan 21 Task 5)
     shear_integral: np.ndarray = None   # I = integral of r tau ds from the nose [Pa m2], the merged branch's only (None
                                   # elsewhere): the momentum balance of the slip band's depth (`spray.momentum_layer`)
+    nose_radius: float = None     # R [m] the shear integral was taken at (None where it is None): `spray.spray_layer` reads
+                                  # the band's r = R sin(theta) at this radius, so that the integral and the r it is divided
+                                  # by cannot come from two radii (sub-plan 22 Task 5j, the review of Task 5i, Minor 3)
 
     @property
     def in_slip_band(self):
@@ -368,4 +371,4 @@ class SurfaceFlow:
                                  decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
                                  np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
                                  closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w,
-                                 shear_integral)
+                                 shear_integral, float(radius) if shear_integral is not None else None)

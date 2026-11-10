@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h and 5i (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h, 5i and 5j (2026-11-10).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2703,9 +2703,132 @@ git add reentry_model/surface_flow.py reentry_model/spray.py reentry_model/skinb
 git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026-11-10 and spraying in the slip band (--slip-band on|off); sub-plan 22 Task 5i"
 ```
 
+### Task 5j: The leeward test by the body's centroid, and the folded-in fixes of Task 5i's review
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`LEEWARD_TESTS`, `LEEWARD_COLUMNS`; `SkinBody.leeward_test` with a class default `"facing"` and the
+  constructor argument; `mass_centroid()`, `_leeward()`, `windward()`, `load_angles()`; the windward sphere fit's selection; `nose_stats`
+  gains the two leeward columns; `advance` and `flow_forcing` read `load_angles()`; `_depth_ratios` reads the plan's own depth)
+- Modify: `reentry_model/coupled.py` (`CoupledRun.loads_at` reads `load_angles()` where the body has it; the two columns in `SKINBODY_COLUMNS`)
+- Modify: `reentry_model/surface_flow.py` (`SurfaceFlowResult.nose_radius`, the radius the shear integral was taken at)
+- Modify: `reentry_model/spray.py` (`spray_layer` reads that radius; the size bins to 0.1 m; two docstrings corrected)
+- Modify: `reentry_model/cli.py` (`--leeward-test facing|centroid` on `run` and `resume`; the record; the name `_leeward-facing`; the help of
+  `--spray-gates` on `run`)
+- Test: `tests/test_reentry_model_skinbody.py`, `tests/test_reentry_model_spray.py`, `tests/test_reentry_model_surface_flow.py`,
+  `tests/test_reentry_model_melting.py` (a comment), `tests/test_reentry_model_cli.py`, `tests/test_reentry_model_restart.py`
+
+**Interfaces:**
+- Consumes: Task 5g's `nose_fit` and `nose_radius()`; Task 5i's slip band (`spray_layer`, `SurfaceFlowResult.shear_integral`), whose integral is
+  built over the windward patches inside `SurfaceFlow.evaluate` from the angles it receives, so passing it the effective angles makes the band
+  follow the test.
+- Produces: `skinbody.LEEWARD_TESTS = ("facing", "centroid")`; `SkinBody(..., leeward_test="facing")` (class default `"facing"`: a state saved
+  before this task flies on `theta` alone); `SkinBody.mass_centroid()` [m, (3,)]; `SkinBody.windward()` (bool per corner) and
+  `SkinBody.load_angles()` (`theta` itself under `facing`; under `centroid` `theta` where windward and the larger of `theta` and
+  90 degrees plus 1e-6 radian where not); two history columns, `centroid_offset_mm` and `leeward_corners`, with either setting;
+  `SurfaceFlowResult.nose_radius` (last field, `None` where there is no shear integral); `spray.N_BINS = 50`, `spray.R_MAX = 0.1`. `run`:
+  `--leeward-test` (default `centroid`, refused with exit 2 for the element model), JSON `settings.skin.leeward_test` always, the name ends in
+  `_leeward-facing` for `facing` (after `_nose-initial`, before the seed's); `resume`: `--leeward-test`, default the saved body's (`facing` for a
+  state without it), exit 2 without skins, `changed["--leeward-test"]` when given, `settings.leeward_test` recorded when `centroid`, the one line
+  before the flight names it.
+
+**What was decided** (Asha, 2026-11-10, "Further decisions" item 4 of the design and her answers to questions 2 and 3; the controller's calls on
+the fit region and on which consumers read the test). The comparison flights' records on the 50 mm sphere at 186.5-187.3 s show releases from
+top corners up to 82 mm behind the original centre whose normals faced the flow (12-20 degrees off it, median), which the angle test counted as
+windward though they sit at the back of the body; the mass centroid was itself 30 mm behind the original centre by 187.0 s, the metal having run
+to the back. A corner is windward under `centroid` only if it lies ahead of the plane through the mass centroid at right angles to the flight
+direction **and** its normal faces the flow. The heating, the surface flow (so the slip band's integral) and the spray plan (the shear modes, and
+through `windward` and `w_n` the Rayleigh-Taylor mode) all read the effective angle; `theta`, the frames and the release angle do not change. The
+windward sphere's cap is the corners windward by this test within 30 degrees of the flow; the windward transverse radius for the bound takes the
+corners whose base normals face the flow and that lie ahead of the plane.
+
+**Measured** (the case that decided it, on the 50 mm sphere's comparison flights, before the build; the build's own checks are tests, and no
+flight has yet been made with the test on): releases from top corners up to 82 mm behind the original centre facing 12 to 20 degrees off the flow
+(median) at 186.5 to 187.3 s, with the mass centroid 30 mm behind the original centre by 187.0 s. On the untouched 4 mm test sphere (once, one
+mesh) the tests assert a centroid within 0.2 mm of the mesh's mean point and fewer than 10 corners facing the flow from behind the plane (the
+equator corners, a hair behind it). The effect on a flight's spraying, heating and fitted radius is not yet measured: it is the controller's
+re-flight of the 100 mm sphere with `--leeward-test centroid`.
+
+**Rulings** (2026-11-10; what, why, cost if wrong):
+1. *The constructor's default is `facing`, the command line's `centroid`.* Why: every direct construction in the tests and every state saved
+   before this task keeps its flight to the last bit; the command line, which decides what flights are flown, takes Asha's decision. Cost if wrong:
+   a script that builds a `SkinBody` itself reads the old test unless it asks.
+2. *The centroid is read at the top surface's refresh, not at every sub-step.* The 3D model's part is measured once after each move (as the volume
+   is) and the skins' at the first read after it; a macro step's loads read the shape at its start, as the angles and the fit do. Cost if wrong: in a
+   step with no move the centroid lags the skins' flow by one refresh.
+3. *The history counts the corners that face the flow from behind the plane with either setting.* On the untouched 4 mm test sphere a few equator
+   corners (3 of 2 254) are a hair behind the plane, so the count is not zero there and the effective angle moves those corners.
+4. *The shear integral's radius is stored on the result and `spray_layer` reads it* (Task 5i's Minor 3): the integral and the `r = R sin(theta)`
+   it is divided by cannot come from two radii; a flow that does not carry one (a stand-in, a state from before) reads the radius the caller gives.
+5. *`_depth_ratios` reads the plan's own depth* where the band is on and the step has a plan, instead of recomputing it from the start-of-step flow
+   with the end-of-step angles and radius; its wet columns are the windward ones by `windward()`.
+6. *The size histogram runs to 0.1 m,* ten bins a decade as before, 50 bins: the 40 old bins' edges are bit for bit the old ones and their counts
+   unchanged, and the Rayleigh-Taylor droplets above 10 mm are counted. **This is the one exception to "every earlier output the same to the last
+   bit":** `size_distribution.csv` has ten more rows per window for every run, empty for a run in which no droplet is above 10 mm. (The controller's
+   ruling, 2026-11-10.)
+7. *Minor 2 of the review* (the test `test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit`): its docstring is cut to what it checks
+   (the default model against the same model with the band on for flows outside it, and against `before` given explicitly); it does not compare with
+   values pinned at the commit before Task 5i. *Minor 1, 5 and the books:* the `--spray-gates` help and the two docstrings in `spray.py` say the
+   thin branch sprays only where Girin's continuum closure applies (or the band's depth exists); a test advances melting skins with the band on
+   (gas state with the body Knudsen number set to 0.04) and checks the three books.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_surface_flow.py`:
+
+{{DIFF_TEST_SURFACE_FLOW_T5J}}
+
+  in `tests/test_reentry_model_spray.py`:
+
+{{DIFF_TEST_SPRAY_T5J}}
+
+  in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5J}}
+
+  in `tests/test_reentry_model_melting.py`:
+
+{{DIFF_TEST_MELTING_T5J}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5J}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5J}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `TypeError` for `leeward_test`, `AttributeError` for `load_angles` and `mass_centroid`, unrecognised `--leeward-test`, `nose_radius` missing on the flow, the bins' count and range.
+
+- [ ] **Step 3: The surface flow** in `reentry_model/surface_flow.py`:
+
+{{DIFF_SURFACE_FLOW_T5J}}
+
+  the spray model in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T5J}}
+
+  the skins in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5J}}
+
+  and the coupled run in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T5J}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5J}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (702 passed, 1 skipped, 29.8 minutes, on mains power; the baseline before the task was 685 passed, 1 skipped).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/surface_flow.py reentry_model/spray.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_surface_flow.py tests/test_reentry_model_spray.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_melting.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "Windward by the body's centroid: --leeward-test facing|centroid, and the review of Task 5i folded in; sub-plan 22 Task 5j"
+```
+
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h and 5i written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h, 5i and 5j written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:
