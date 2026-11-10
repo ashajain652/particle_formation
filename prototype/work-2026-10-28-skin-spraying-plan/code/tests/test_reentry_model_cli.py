@@ -906,3 +906,18 @@ def test_the_skins_record_their_size_feedback_and_the_nose_columns(tmp_path):
                                           "nose_cap_concave"))
         used, fitted = float(rows[-1]["nose_radius_mm"]), float(rows[-1]["fitted_nose_radius_mm"])
         assert 45.0 < fitted < 60.0 and (used == fitted if source == "current" else used == 50.0)
+
+
+def test_the_size_feedback_marks_the_run_s_name_only_for_initial():
+    """`--size-feedback initial` on a skin run ends its settings in _nose-initial (sub-plan 22 Task 5g), after the sideways heat's
+    and before the seed's, so that the flight with the mesh's radius and the one with the fitted radius do not share a name;
+    `current`, the default, leaves every name as it was."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert name(THERMAL) == name(THERMAL + ["--size-feedback", "current"]) == base
+    assert name(THERMAL + ["--size-feedback", "initial"]) == base + "_nose-initial"
+    assert (name(THERMAL + ["--sideways-heat", "height", "--size-feedback", "initial", "--seed", "7"])
+            == base + "_side-height_nose-initial_seed-7")
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, size_feedback="initial") == "_nose-initial"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""

@@ -2371,7 +2371,7 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 - Modify: `reentry_model/coupled.py` (`SKINBODY_COLUMNS` gains the five columns)
 - Modify: `reentry_model/cli.py` (`--size-feedback current|initial` accepted with `--surface-model skin` on `run`, default `current`,
   and on `resume`; the records; the one refusal of it with the skins goes)
-- Test: `tests/test_reentry_model_skinbody.py` (9 tests), `tests/test_reentry_model_cli.py` (2 tests, one refusal case changed),
+- Test: `tests/test_reentry_model_skinbody.py` (10 tests), `tests/test_reentry_model_cli.py` (3 tests, one refusal case changed),
   `tests/test_reentry_model_restart.py` (1 test)
 
 **Interfaces:**
@@ -2381,19 +2381,23 @@ git commit -m "Skins: sideways heat can pass between cells that touch (--sideway
 - Produces: `SkinBody(..., size_feedback="current")`, also a class default `"initial"` for states pickled before it (`ValueError` for
   another value); `SkinBody.nose_fit -> NoseFit(fitted, bound, points, concave, used)`; `SkinBody.nose_radius()` returns `nose_fit.used`;
   history columns `nose_radius_mm`, `fitted_nose_radius_mm` (not-a-number where there is no fit), `nose_bound_mm`, `nose_cap_points`,
-  `nose_cap_concave` with either setting. `run`: `--size-feedback initial|current` with `--surface-model skin`, default `current`, the
-  JSON's `settings.skin.size_feedback` always. `resume`: `--size-feedback`, default the saved body's (`initial` for a state without it),
+  `nose_cap_concave` with either setting; `nose_radius_mm` is the radius of the surface at the end of the step, which the next
+  step's loads read (a row's `q_stag_Wm2` belongs to the previous row's radius). `run`: `--size-feedback initial|current` with `--surface-model skin`, default `current`, the
+  JSON's `settings.skin.size_feedback` always and the name suffix `_nose-initial` for `initial`. `resume`: `--size-feedback`, default the saved body's (`initial` for a state without it),
   exit 2 for a saved flight without skins; JSON `settings.size_feedback = "current"` only when current, `changed["--size-feedback"]` when
   given; the one line before the flight names it; a state saved before the columns has them added to its saved row.
 
 **What was decided** (design `docs/superpowers/specs/2026-11-10-fitted-nose-radius-design.md`; Asha, 2026-11-10: fit the gas-molten
-interface, the bound a comparison and not a limit, on by default). `SkinBody.nose_radius()` returned the mesh's original radius whatever
+interface; on by default; the flat-face value the most a convex cap's radius can be, option B, below). `SkinBody.nose_radius()` returned the mesh's original radius whatever
 the shape, and it feeds the stagnation heating and the surface flow (the pressure gradient, the boundary layer, the shock Reynolds number).
 Now the cap is the top corners whose normals are within 30 degrees of the direction of motion, fitted unweighted by the element model's
 `fit_sphere`; fewer than four, or a radius not finite and positive, is no fit and the mesh's radius is used. A cap whose fitted centre lies
-on the flow side of its mean point is concave and uses the bound. The bound is 1.67 times the windward transverse radius (the largest
-distance from the flight axis through the mesh's mean point of the top corners at most 90 degrees from the flight direction, so a pool
-behind the body does not enter it), reported and never applied: a flat cap reads above it. The fit is made in `_refresh_geometry` from the
+on the flow side of its mean point, or whose corners are coplanar to rounding (smallest singular value below 1e-9 of the largest, a flat
+face), is concave and uses the bound; a convex cap uses its fitted radius or the bound, whichever is smaller. The bound is 1.67 times the
+windward transverse radius (the largest distance from the flight axis through the mesh's mean point of the tops of the columns whose
+base normals are at most 90 degrees from the flight direction; selected by the tops' own angles, a pool reaching the equator tilted its
+step corners forward and moved the bound by 1.7 times its depth, 83.83 to 85.49 mm for 1 mm and 91.90 mm for 5 mm, found in review). Both
+the fitted radius and the bound are reported every step. The fit is made at the first read after `_refresh_geometry` (cleared there, as `_volume` is) from the
 top surface as built, never modifying the surface or `theta`, so a macro step's loads read the shape at its start as the angles do, and
 `initial` reproduces every earlier column to the last bit. The droplet cap's radius (`transverse_radius()`) and the body Knudsen number's
 length are not changed. **Measured** on the comparison flights' frames, before the build (2026-11-10): the cap's radius is 49.7 mm at
@@ -2402,15 +2406,18 @@ sphere; at twice the radius the stagnation heating is about 30 % lower and the p
 
 **Rulings** (2026-11-10; what, why, cost if wrong):
 1. *Concave means `(centre - cap mean) . v_hat > 0`*, the controller's reading. Why: the stagnation corner's normal points along `v_hat`, so
-   a convex cap's centre lies behind it. Cost: a nearly flat cap with noise may read either way; concave uses the bound, which is the
-   flat-face value, so the two readings are close in what they give.
-2. *A flat cap's radius is not bounded* (Asha's decision, item 2). A fitted radius of about 1 m on a flat dished cap would be read as it
-   is under `current`; the column `nose_bound_mm` beside `nose_radius_mm` shows it. Cost: heating falls with the square root of the
-   radius, so a nearly flat cap is nearly unheated at the stagnation point.
-3. *`used` is read from the setting at each ask, the fit made once a refresh*: a resume can change the setting without a refit, and a state
+   a convex cap's centre lies behind it. Exactly coplanar corners are read as concave too (the fit has no unique sphere there; review m-2).
+2. *The flat-face value caps a convex cap's radius* (Asha, 2026-11-10, option B, replacing her earlier "the bound is not applied" on the
+   upper side only; there is no lower bound): used = min(fitted, bound) for a convex fit, the bound for a concave or coplanar cap. Why: a
+   flat face's stagnation heating is that of a sphere of 1.67 times its radius (Boison and Curtiss 1959), so the heating no longer falls
+   toward zero as a cap flattens, and the convex and concave readings of a nearly flat cap now agree. Before it, the reviewer's probe gave
+   450 m (about 1 % of the 50 mm sphere's heating) for a 30 mm cap with a 1 micrometre convex sag and the 83.8 mm bound for the same sag
+   the other way. Both the fitted radius and the bound are still reported, so the flights show how often the cap binds. Cost: the heating
+   of a cap the fit finds flatter than the bound is that of the bound; no lower bound, so a sharper cap reads its small radius.
+3. *`used` is read from the setting at each ask, the fit made once a refresh, at its first read*: a resume can change the setting without a refit, and a state
    saved before the task makes its fit at the first ask (`_nose_raw` class default None).
-4. *The run's name carries no suffix for `initial`.* Why: the brief names none; the JSON records the setting always. Cost: two flights
-   differing only in it share a name unless `--name` is given.
+4. *`initial` ends a skin run's name in `_nose-initial`* (review, 2026-11-10), after the sideways heat's suffix; `current`, the default, leaves
+   names as they were. Why: the comparison of the two would otherwise write into one set of files. Cost: none.
 5. *The tests shape the cap by moving the tops* on the coarse sphere and refitting (`with_tops`), not by flying to it; the untouched
    sphere and the resumed flights are the end-to-end cases.
 
@@ -2441,13 +2448,13 @@ sphere; at twice the radius the stagnation heating is about 30 % lower and the p
 
 {{DIFF_CLI_T5G}}
 
-- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 651 passed, 1 skipped (Task 5f's 639 and these 12; 36.9 minutes across four processes with the two long runs sharing the laptop, 2026-11-10; the first run had one failure, the skin run's pinned settings, which now carry `size_feedback`, and that test was re-run alone and passed).
+- [ ] **Step 6: Run the tests to see them pass,** then the unit tier: 653 passed, 1 skipped (Task 5f's 639 and these 14; 32.2 minutes across four processes with the two long runs sharing the laptop, 2026-11-10, after fix round 1).
 
 - [ ] **Step 7: Commit.**
 
 ```bash
 git add reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
-git commit -m "Skins: the windward loads read the radius of a sphere fitted to the tops of the columns facing the flow (--size-feedback current|initial on run and resume, current by default; five nose columns in the history; the bound reported, never applied); sub-plan 22 Task 5g"
+git commit -m "Skins: the windward loads read the radius of a sphere fitted to the tops of the columns facing the flow (--size-feedback current|initial on run and resume, current by default; five nose columns in the history; the flat-face value the most a convex cap's radius can be, both reported); sub-plan 22 Task 5g"
 ```
 
 ---
