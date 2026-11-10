@@ -210,7 +210,7 @@ def model_run_name(diameter_m, velocity_ms, altitude_m, atmosphere_name, bridgin
 def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, deform_mm, swell=True,
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
-                     hand_down=True, sideways_pairing="depth"):
+                     hand_down=True, sideways_pairing="depth", size_feedback="current"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -223,7 +223,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     `_spread-<deg>` where what the skins hand down is spread past a fold limit (sub-plan 22 Task 5c);
     `_parts-melting` where the part count follows the melting, not the moves (Task 5d); `_handdown-off` where re-frozen
     metal stays in the skins (Task 5e); `_side-height` where the sideways conduction pairs cells by height above the bases
-    (Task 5f); empty for the defaults."""
+    (Task 5f); `_nose-initial` where the windward loads read the mesh's own radius, not the sphere fitted to the tops
+    (Task 5g; the default changed to the fit, so the default's name is unchanged); empty for the defaults."""
     out = "_skin-dev" if preset == "dev" else ""
     if min_thickness_mm != 0.8:
         out += "_skinmin{:g}mm".format(min_thickness_mm)
@@ -257,6 +258,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_handdown-off"
     if sideways_pairing != "depth":
         out += "_side-{}".format(sideways_pairing)
+    if size_feedback != "current":
+        out += "_nose-{}".format(size_feedback)
     return out
 
 
@@ -667,7 +670,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     skin_flow_of(args) == "on" if args.melt == "on" else None,
                                                                     args.skin_flow_cycles, args.slurry_spray == "on",
                                                                     spread_limit_of(args), part_count_rule_of(args),
-                                                                    hand_down_of(args), args.sideways_heat))
+                                                                    hand_down_of(args), args.sideways_heat,
+                                                                    skin_size_feedback_of(args)))
 
 
 def cmd_run(args, parser):

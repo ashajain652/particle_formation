@@ -1957,27 +1957,34 @@ def test_the_fitted_nose_radius_of_an_untouched_sphere_is_its_own_radius(coarse_
 
 def test_a_flattened_windward_cap_gives_the_radius_of_the_flattened_cap(coarse_sphere_mesh):
     """Tops on a sphere of twice the radius over the cap (100 mm against 50): the fit is within 5 % of it, and
-    `nose_radius()` returns it under `current` and the mesh's 50 mm under `initial`."""
+    `nose_radius()` returns the mesh's 50 mm under `initial`. At twice the radius the fit (100 mm) is flatter than the bound
+    (83.5 mm), so under `current` the bound is used (Asha, 2026-11-10, option B); at 1.5 times (75 mm) the fit itself is."""
     b = make(coarse_sphere_mesh)
     pts, R2 = flatten_front(b)
     with_tops(b, pts)
     assert abs(b.nose_fit.fitted / R2 - 1.0) < 0.05 and not b.nose_fit.concave
+    assert b.nose_fit.fitted > b.nose_fit.bound and b.nose_radius() == b.nose_fit.bound
+    pts15, R15 = flatten_front(b, factor=1.5)
+    with_tops(b, pts15)
+    assert abs(b.nose_fit.fitted / R15 - 1.0) < 0.05 and b.nose_fit.fitted < b.nose_fit.bound
     assert b.nose_radius() == b.nose_fit.fitted
     b.size_feedback = "initial"
-    assert b.nose_radius() == 0.05 and b.nose_fit.fitted > 0.09
+    assert b.nose_radius() == 0.05 and b.nose_fit.fitted > 0.07
 
 
-def test_the_bound_is_reported_and_never_applied(coarse_sphere_mesh):
-    """A cap flatter than the bound (the 2R sphere's 100 mm against 1.67 times the 50 mm transverse radius, 83.5 mm) is used
-    at its fitted radius, above the bound, and the bound is reported beside it in the history (Asha, 2026-11-10)."""
+def test_a_cap_flatter_than_the_bound_uses_the_bound_and_reports_both(coarse_sphere_mesh):
+    """A cap flatter than the flat-face value (the 2R sphere's 100 mm against 1.67 times the 50 mm transverse radius, 83.5 mm)
+    is used at the bound, a flat face heating like a sphere of 1.67 times its radius (Asha, 2026-11-10, option B), while the
+    fitted radius is still reported above it; a sharper cap has no lower bound."""
     b = make(coarse_sphere_mesh)
     with_tops(b, flatten_front(b)[0])
     f = b.nose_fit
-    assert f.used > f.bound and f.used == f.fitted
+    assert f.fitted > f.bound and f.used == f.bound == b.nose_radius()
     s = b.skin_stats()
-    assert s["nose_radius_mm"] > s["nose_bound_mm"] and s["nose_radius_mm"] == f.used * 1e3
-    assert s["nose_bound_mm"] == f.bound * 1e3 and s["fitted_nose_radius_mm"] == f.fitted * 1e3
-    assert s["nose_cap_points"] == f.points and s["nose_cap_concave"] == 0.0
+    assert s["fitted_nose_radius_mm"] > s["nose_bound_mm"] and s["nose_radius_mm"] == s["nose_bound_mm"] == f.bound * 1e3
+    assert s["fitted_nose_radius_mm"] == f.fitted * 1e3 and s["nose_cap_concave"] == 0.0
+    f = with_tops(b, flatten_front(b, factor=0.6)[0]).nose_fit
+    assert f.fitted < 0.05 and f.used == f.fitted
 
 
 def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_sphere_mesh):
@@ -1986,7 +1993,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
     from types import SimpleNamespace
     from reentry_model import coupled
     b = make(coarse_sphere_mesh, flow=True)
-    with_tops(b, flatten_front(b)[0])
+    with_tops(b, flatten_front(b, factor=1.5)[0])
     seen = {}
     ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
                           heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: seen.setdefault("heating", R)))
@@ -1997,7 +2004,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
         return SimpleNamespace(dp_ds=np.zeros(len(theta)), tau=np.zeros(len(theta)), deceleration=0.0)
     b.surface_flow = SimpleNamespace(evaluate=flow_evaluate)
     b.flow_forcing("state")
-    assert seen["heating"] == seen["flow"] == b.nose_fit.fitted > 0.09 and seen["flow"] != 0.05
+    assert seen["heating"] == seen["flow"] == b.nose_fit.fitted > 0.07 and seen["flow"] != 0.05 and b.nose_fit.fitted < b.nose_fit.bound
 
 
 def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(coarse_sphere_mesh):
@@ -2034,46 +2041,72 @@ def test_a_concave_cap_uses_the_flat_face_bound_and_says_so(coarse_sphere_mesh):
 
 
 def test_a_pool_behind_the_body_does_not_move_the_bound(coarse_sphere_mesh):
-    """Tops on the leeward half pushed 50 % outward from the body's centre, as a pool standing off the back would be: the
-    windward transverse radius ignores corners more than 90 degrees from the flight direction, so the bound is unchanged."""
+    """Thicker skins on the leeward columns, up to the equator, with the angles recomputed by the real refresh: the windward
+    columns are those whose base normals face the flow, which a pool lying on top cannot tilt, so the bound is unchanged. (Selecting
+    by the tops' own angles let a 1 mm layer raise it from 83.83 to 85.49 mm and a 5 mm one to 91.90 mm: the step at the equator
+    tilts leeward corners forward; review of 2026-11-10.)"""
     b = make(coarse_sphere_mesh)
     before = b.nose_fit.bound
+    ax = (b.columns.points - b.mesh.points.mean(axis=0)) @ b.v_hat
+    lee = b.columns.normal @ b.v_hat < 0.0
+    assert lee.sum() > 100 and ax[lee].max() > 0.0                  # the layer reaches the equator and a little beyond
+    for depth in (1e-3, 5e-3):
+        b.skins.fill(b.skins.column_mass() + np.where(lee, b.material.rho * depth * b.skins.area, 0.0), 880.0)
+        b._refresh_geometry()
+        assert b.nose_fit.bound == before
+
+
+def test_a_cap_coplanar_to_rounding_is_a_flat_face_and_reads_the_bound(coarse_sphere_mesh):
+    """Cap corners set exactly in a plane have no sphere (the least-squares system is rank-deficient and its minimum-norm answer
+    depends on where the plane sits): they are read as concave, no fitted radius, the bound used (review of 2026-11-10)."""
+    b = make(coarse_sphere_mesh)
+    c0, v = b.mesh.points.mean(axis=0), b.v_hat
     pts = b.surface.points.copy()
-    centre = b.mesh.points.mean(axis=0)
-    lee = b.theta > 0.5 * np.pi
-    pts[lee] = centre + 1.5 * (pts[lee] - centre)
-    from reentry_model import columns as columns_mod
-    b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)     # theta kept: it is the windward half that counts
-    b._nose_raw = b._fit_nose()
-    assert lee.sum() > 100 and b.nose_fit.bound == before
+    X = pts - c0
+    ax = X @ v
+    rho = np.sqrt(np.maximum((X * X).sum(axis=1) - ax ** 2, 0.0))
+    cap = (ax > 0.0) & (rho < 0.4 * 0.05)
+    pts[cap] += np.outer(ax[cap].max() - ax[cap], v)                 # every cap corner on the plane of the nose
+    with_tops(b, pts, theta=np.where(cap, 0.2, 1.0))
+    f = b.nose_fit
+    assert f.concave and np.isnan(f.fitted) and f.used == f.bound == b.nose_radius() and f.points == cap.sum()
 
 
 def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
     """`size_feedback="initial"`, the class default a body saved before Task 5g flies on and the old `nose_radius` (the
     mesh's radius) are one flight: every pre-existing column of every row, and the final mass and energy, equal to the last
-    bit, 3 MW/m2 on the front from 893 K for two 0.0625 s macro steps; the five nose columns are there, filled from the fit."""
+    bit. 3 MW/m2 on the front from 893 K for two 0.0625 s macro steps with the flow on, its loads computed through the body's
+    own `nose_radius()` (a heating that falls as one over its square root and a pressure gradient as one over it), so that the radius is really read; a fourth arm under `current` flies a different flight, which shows
+    that it is. The five nose columns are there, filled from the fit (sub-plan 22 Task 5g)."""
     legacy = skinbody.SkinBody.nose_radius
     runs = []
-    for how in ("initial", "default", "legacy"):
+    for how in ("initial", "default", "legacy", "current"):
         np.random.seed(12345)
         if how == "legacy":
             skinbody.SkinBody.nose_radius = lambda self: float(self.mesh.params.get("radius_m", 0.05))
         try:
-            b = make(coarse_sphere_mesh, T0=893.0, **({"size_feedback": "initial"} if how == "initial" else {}))
+            kw = {"size_feedback": "initial"} if how == "initial" else {"size_feedback": "current"} if how == "current" else {}
+            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
             if how == "default":
                 del vars(b)["size_feedback"]                     # as a state saved before Task 5g
                 assert b.size_feedback == "initial"
             rows = []
             for k in range(2):
-                b.advance(0.0625 * (k + 1), 0.0625, front_loads(b, 3e6))
+                R = b.nose_radius()
+                loads = front_loads(b, 3e6 * np.sqrt(0.05 / R))
+                wind = b.theta < 0.5 * np.pi
+                push = skinbody.FlowForcing(np.where(wind, -5e2 / R * np.sin(b.theta), 0.0), np.where(wind, 50.0, 0.0),
+                                            30.0 * b.v_hat)
+                b.advance(0.0625 * (k + 1), 0.0625, loads, forcing=push)
                 rows.append((b.step_parts, timed_out(b.skin_stats())))
         finally:
             skinbody.SkinBody.nose_radius = legacy
         runs.append((b, rows))
     assert all(k in rows[0][1] for _, rows in runs for k in skinbody.NOSE_COLUMNS)
-    old = lambda rows: [(p, {k: v for k, v in r.items() if k not in ("nose_radius_mm",)}) for p, r in rows]
+    old = lambda rows: [(p, {k: v for k, v in r.items() if k not in skinbody.NOSE_COLUMNS}) for p, r in rows]
     assert same_rows(old(runs[0][1]), old(runs[1][1])) and same_rows(old(runs[0][1]), old(runs[2][1]))
-    assert all(r["nose_radius_mm"] == 50.0 for _, r in runs[0][1]) and runs[0][0].removed_mass > 0.0
+    assert not same_rows(old(runs[0][1]), old(runs[3][1]))               # the radius is read: the fitted one flies another flight
+    assert all(r["nose_radius_mm"] == 50.0 for _, r in runs[0][1]) and runs[0][0].handed_mass > 0.0
     assert runs[0][0].mass() == runs[1][0].mass() == runs[2][0].mass()
     assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
     assert skinbody.SkinBody.size_feedback == "initial" and all(np.isfinite(r["fitted_nose_radius_mm"]) for _, r in runs[0][1])

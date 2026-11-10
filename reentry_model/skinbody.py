@@ -191,8 +191,8 @@ SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in
 # its node's temperature since the last row
 SPREAD_COLUMNS = ("spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K")
 
-# the history's nose columns (sub-plan 22 Task 5g), every run (`SkinBody.nose_stats`): the radius the windward loads used [mm],
-# the sphere fitted to the tops' cap [mm, nan where there is none], the reported bound [mm], the corners fitted and 1 where
+# the history's nose columns (sub-plan 22 Task 5g), every run (`SkinBody.nose_stats`): the radius of the surface at the end of
+# the step, which the next step's windward loads read [mm] (so a row's q_stag belongs to the previous row's radius), the sphere fitted to the tops' cap [mm, nan where there is none], the reported bound [mm], the corners fitted and 1 where
 # the cap was concave
 NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave")
 
@@ -201,7 +201,8 @@ NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nos
 class NoseFit:
     """The windward cap of the skins' tops and the radius the windward loads read (`SkinBody.nose_fit`): `fitted` [m] the
     radius of the sphere fitted through the top corners within `body.NOSE_CAP_ANGLE` of the direction of motion (nan where
-    there is no fit), `bound` [m] `body.NOSE_CAP_FACTOR` times the windward transverse radius (reported, never applied),
+    there is no fit), `bound` [m] `body.NOSE_CAP_FACTOR` times the windward transverse radius (the most `used` can be of a
+    cap with a fit, Asha 2026-11-10 option B; both are reported),
     `points` the corners fitted, `concave` whether the fitted centre lies on the flow side of the cap, and `used` [m] the
     radius the loads read."""
     fitted: float
@@ -594,7 +595,7 @@ class SkinBody(ThermalBody):
     hand_down = True                     # re-frozen metal passes to the 3D model (Task 5e): the states saved before it have it on
     sideways_pairing = "depth"           # the sideways conduction's pairing (Task 5f): the states saved before it have none
     size_feedback = "initial"            # the nose radius's source (Task 5g): the states saved before it flew on the mesh's radius
-    _nose_raw = None                     # the fit of the tops, made in `_refresh_geometry`; the states saved before Task 5g have none
+    _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
     spread_jump = 0.0                    # K: the largest landing of metal over its node's temperature this macro step
@@ -718,30 +719,36 @@ class SkinBody(ThermalBody):
                                                              self.columns.faces)
         self.theta = self.surface.angles_to(self.v_hat)
         self.i_stag, self.i_back = self.surface.patch_toward(self.v_hat), self.surface.patch_toward(-self.v_hat)
-        self._nose_raw = self._fit_nose()                # from the surface as built: nothing the surface or theta feed changes
+        self._nose_raw = None                            # the fit of this surface, made at the first read (`nose_fit`), as `_volume` is
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
-        bound a comparison and not a limit, on by default): (fitted radius [m] or nan, bound [m], corners fitted,
+        on by default; the bound a comparison, then on the same day made the cap on the upper side, option B): (fitted radius [m] or nan, bound [m], corners fitted,
         concave). The cap is the top corners whose normals are within `NOSE_CAP_ANGLE` of the direction of motion, fitted
         unweighted as the element model fits its patch centroids (`body.fit_sphere`); fewer than 4 corners, or a radius
         not finite and positive, is no fit. Concave: the fitted centre lies on the flow side of the cap's mean point, so no
         sphere of positive curvature describes it. The bound is `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
         sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
-        through the 3D mesh's mean point along the flight direction of the top corners at most 90 degrees from it, so that
-        a pool standing off the back does not move it. Measured on the comparison flights' frames (2026-11-10): the cap's
+        through the 3D mesh's mean point along the flight direction of the tops of the columns whose base normals are at
+        most 90 degrees from it (the rigid surface's direction, which a pool lying on top cannot tilt: selecting by the
+        tops' own angles let a pool reaching the equator tilt its step corners forward and move the bound by 1.7 times
+        its depth; review of 2026-11-10). A cap whose centred corners are coplanar to rounding (smallest singular value
+        below 1e-9 of the largest) is a flat face: concave, no fitted radius. Measured on the comparison flights' frames (2026-11-10): the cap's
         radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about 30 s, 24.7 mm at 171.0 s on the 50 mm sphere
         and 83 mm at 176.0 s."""
         pts, v = self.surface.points, self.v_hat
         X = pts - self.mesh.points.mean(axis=0)
         r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
-        wind = self.theta <= 0.5 * np.pi
+        wind = self.columns.normal @ v >= 0.0
         bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
         cap = pts[self.theta <= np.radians(NOSE_CAP_ANGLE)]
         n, fitted, concave = len(cap), float("nan"), False
         if n >= 4:
+            sv = np.linalg.svd(cap - cap.mean(axis=0), compute_uv=False)
             centre, r = fit_sphere(cap)
-            if np.isfinite(r) and r > 0.0:
+            if sv[0] > 0.0 and sv[-1] < 1e-9 * sv[0]:
+                concave = True                           # coplanar to rounding: a flat face, which no sphere describes
+            elif np.isfinite(r) and r > 0.0:
                 fitted = r
                 concave = bool((centre - cap.mean(axis=0)) @ v > 0.0)
         return fitted, bound, n, concave
@@ -759,7 +766,10 @@ class SkinBody(ThermalBody):
             if concave and np.isfinite(bound) and bound > 0.0:
                 used = bound                             # the flat-face equivalent where no sphere describes the cap
             elif np.isfinite(fitted) and not concave:
-                used = fitted                            # the bound is not applied: a flat cap reads above it
+                # Asha, 2026-11-10, option B: the flat-face value whenever the fit is flatter than it, a flat face heating
+                # like a sphere of 1.67 times its radius (Boison and Curtiss 1959), so the heating no longer falls toward
+                # zero as a cap flattens and the convex and concave readings of a nearly flat cap agree. No lower bound.
+                used = min(fitted, bound) if np.isfinite(bound) and bound > 0.0 else fitted
         return NoseFit(fitted, bound, n, concave, float(used))
 
     @property
