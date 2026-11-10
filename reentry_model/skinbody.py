@@ -421,7 +421,7 @@ def _rows(flow, idx):
 
 
 def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=False, points=None, centre=None,
-               v_hat=None):
+               v_hat=None, nose_radius=None):
     """Girin's spraying from each column's top cells for the macro step about to run (spec 8; sub-plan 22 Task 1c), from
     the surface flow's evaluation on the corners (`flow`), the aero state (`state`, for the rarefied branch), the shared
     spray model (`model`) and the skins as they are at its start: a SprayPlan.
@@ -438,7 +438,14 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     own mode too (`slurry_modes`). The plan keeps where it was evaluated for its records' rows: `theta`, the closure,
     the aero state, the liquid's properties and `points` [m, (n, 3)], the columns' top corners (sub-plan 22 Task 2), and
     for the history and the release angle the top areas, `centre` [m, (3,)], the centroid of the volume the top surface
-    encloses, and `v_hat`, the direction of flight (Task 4)."""
+    encloses, and `v_hat`, the direction of flight (Task 4).
+
+    With `model.slip_band` on, delta_m on the patches in the slip band (the body on the merged branch below a body
+    Knudsen number of 0.1, the patch's wall Knudsen number below 0.1) is the momentum balance's (`spray.spray_layer`; sub-plan
+    22 Task 5i, the plan of 2026-11-06 with Asha's change of 2026-11-10), at the nose radius `nose_radius` (default `radius`)
+    the integrated shear was taken at: `b`, the regime layers, the Rayleigh-Taylor pool, the mass run and the cap stay as
+    they are, so the liquid sprays on the flowing depth and a liquid on slurry is held only where delta_m is not finite. The
+    film transport reads Girin's delta_m as before."""
     mat, liq = sk.material, model.liquid
     n = sk.n
     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
@@ -450,7 +457,7 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     theta = np.asarray(theta, dtype=float)
     windward = theta <= 0.5 * np.pi
     w_n = flow.deceleration * np.maximum(np.cos(theta), 0.0)
-    delta_m, _ = spray_mod.melt_layer(flow, liq)
+    delta_m = spray_mod.spray_layer(flow, liq, model.slip_band, theta, radius if nose_radius is None else nose_radius)
     v_s = film_mod.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
     extent = region_extent(edges, L > 0.0, A_top)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
@@ -459,7 +466,8 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
                          b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
                          cap_depth=cap)
     if slurry:
-        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow)
+        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow,
+                                     theta=theta, nose_radius=nose_radius)
     else:
         rate_s, modes = np.zeros(n), _no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
@@ -474,7 +482,8 @@ def _no_slurry(n):
     return out
 
 
-def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow):
+def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow, theta=None,
+                 nose_radius=None):
     """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
@@ -486,7 +495,10 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
     must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
     rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and
-    more viscous, waits for the next macro step's evaluation (`skin.Cascade.T_slurry`)."""
+    more viscous, waits for the next macro step's evaluation (`skin.Cascade.T_slurry`). With `model.slip_band` on and the
+    angles `theta` given, the slurry's delta_m in the slip band is the momentum balance's, with the slurry's density and
+    viscosity (`spray.spray_layer`, at `nose_radius`, default `radius`): `--slurry-spray on` lets the slurry spray in the band
+    (Asha's decision 4 of 2026-11-06); with it off nothing here runs and the release stays capped at the liquid."""
     mat = sk.material
     n = sk.n
     out = _no_slurry(n)
@@ -504,8 +516,11 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     sub = _rows(flow, rows)
     viscosity = lambda gamma: rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)
 
+    nose = radius if nose_radius is None else nose_radius
+    theta_rows = None if theta is None else np.asarray(theta, dtype=float)[rows]
+
     def layer(mu):
-        d, _ = spray_mod.melt_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA))
+        d = spray_mod.spray_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA), model.slip_band, theta_rows, nose)
         v, _, shear, _ = film_mod.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
         return d, v, np.minimum(shear, rheology.GAMMA_MAX)
 
@@ -525,7 +540,7 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     for j, i in enumerate(rows):
         props = material_mod.LiquidProperties(float(rho[j]), float(mu[j]), SLURRY_SIGMA)
         m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False,
-                                spray_gates=model.spray_gates)
+                                spray_gates=model.spray_gates, slip_band=model.slip_band)
         one, cell = slice(j, j + 1), slice(i, i + 1)
         r = m.evaluate(_rows(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, A_top[cell], m_s[cell],
                        radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell], regime_layer=depth[one],
@@ -802,7 +817,7 @@ class SkinBody(ThermalBody):
                                              self.columns.edges, self.transverse_radius(), dt, self.slurry_spray,
                                              points=surface.points.copy(),
                                              centre=spray_mod.enclosed_centroid(surface.points, surface.faces),
-                                             v_hat=self.v_hat)
+                                             v_hat=self.v_hat, nose_radius=self.nose_radius())
                 self._step_release = self.spray_plan.release
         sk, mat = self.skins, self.material
         top = np.where(sk.valid[:, 0], sk.T[:, 0], np.nan)
@@ -1294,7 +1309,8 @@ class SkinBody(ThermalBody):
         mat, out = self.material, {"b_over_delta_m_median": float("nan"), "sheared_depth_over_delta_m_median": float("nan")}
         if not (self.flow_on and mat.melts and mat.liquid is not None) or self.last_flow is None:
             return out
-        delta_m, _ = spray_mod.melt_layer(self.last_flow, mat.liquid)
+        delta_m = spray_mod.spray_layer(self.last_flow, mat.liquid, getattr(self.spray, "slip_band", False), self.theta,
+                                        self.nose_radius())              # the band's depth too where it is on (Task 5i)
         if len(delta_m) != self.skins.n:
             return out
         with np.errstate(invalid="ignore"):

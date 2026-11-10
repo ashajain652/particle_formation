@@ -19,9 +19,10 @@ FLIGHT = ["run", "--diameter", "100", "--velocity", "7.24", "--altitude", "65", 
           "--melt", "on", "--prism-layers", "0", "--temperature", "893", "--dt", "0.025", "--skin-preset", "dev",
           "--fine-size", "2", "--skin-flow-cycles", "2", "--quiet"]
 DEFAULT_FLIGHT = FLIGHT
-# The flight as every one before 2026-11-10 flew, handing down and counting parts by the moves, for the resume tests of the
-# spread limit (spreading moves only handed-down metal), of the melting rule's change and of the state's `flown` saved
-# options, which need those settings and not the new defaults (Task 5h)
+# The old flight in its hand-down and its part count only (handing down and counting parts by the moves, as every flight before
+# 2026-11-10 did), for the resume tests of the spread limit (spreading moves only handed-down metal), of the melting rule's
+# change and of the state's `flown` saved options, which need those settings and not the new defaults (Task 5h); it flies
+# `--spray-gates 2026-11-10`, the default, as every other flight here does
 FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
 
 
@@ -483,6 +484,10 @@ def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_par
     doc = json.load(open(str(tmp_path / "same.json")))
     assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
     assert "hand_down" in doc["settings"] and doc["settings"]["hand_down"] == "off"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--hand-down", "on"]) == 0
+    doc = json.load(open(str(tmp_path / "on.json")))
+    assert doc["resumed_from"]["changed"] == {"--hand-down": "on"} and "hand_down" not in doc["settings"]
+    assert doc["settings"]["spray_gates"] == "2026-11-10" and doc["settings"]["part_count_from"] == "melting"
 
 
 def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_state_without_them_resumes_as_before(
@@ -521,3 +526,40 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
         cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
                   "--spray-gates", "before"])
     assert exc.value.code == 2 and "--spray-gates needs a saved flight with spraying" in capsys.readouterr().err
+
+
+def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_without_it_resumes_with_it_off(flown, tmp_path, capsys):
+    """`--slip-band` on a resume (sub-plan 22 Task 5i). The test flight has it off, recorded as `off` in the JSON's settings of the
+    flight and of a plain resume of it, `slip band off` in the line before the flight; `on` asked of it is recorded in the settings and in what
+    was changed and kept by the state the resumed flight saves; a state saved before the option (the attribute removed from the
+    spray model, which reads the class default) resumes with it off, recorded as such; a flight that does not spray refuses the option."""
+    out, flight, records, state_path = flown
+    assert json.load(open(os.path.join(out, "f.json")))["settings"]["slip_band"] == "off"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "same"]) == 0
+    assert "slip band off" in capsys.readouterr().out
+    assert json.load(open(str(tmp_path / "same.json")))["settings"]["slip_band"] == "off"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--slip-band", "on",
+                     "--save-state-at", "0.2"]) == 0
+    assert "slip band on" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "on.json")))
+    assert doc["resumed_from"]["changed"] == {"--slip-band": "on", "--save-state-at": 0.2} and doc["settings"]["slip_band"] == "on"
+    saved = restart.load(str(tmp_path / "on.state.pkl"))
+    assert saved["run"].body.spray.slip_band is True and saved["meta"]["args"]["slip_band"] == "on"
+    assert cli.main(["resume", str(tmp_path / "on.state.pkl"), "--outdir", str(tmp_path), "--name", "kept"]) == 0
+    assert json.load(open(str(tmp_path / "kept.json")))["settings"]["slip_band"] == "on"      # a resume keeps the saved setting
+    state = restart.load(state_path)
+    state["run"].body.spray.slip_band = True
+    vars(state["run"].body.spray).pop("slip_band")                                           # pickled before the option existed
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert "slip band off" in capsys.readouterr().out and json.load(open(str(tmp_path / "o.json")))["settings"]["slip_band"] == "off"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--slip-band", "off"]) == 0
+    assert json.load(open(str(tmp_path / "off.json")))["resumed_from"]["changed"] == {"--slip-band": "off"}
+    k = FLIGHT.index("--melt")
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r", "--slip-band", "on"])
+    assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
