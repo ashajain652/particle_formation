@@ -37,3 +37,14 @@ def test_an_overhang_shelters_a_forward_facing_ledge_and_one_piece_hides_another
     cap_face = (P.normal[:, 0] > 0.9) & (np.abs(P.centroid[:, 0] - 2.3e-3) < 0.05e-3) & (pr < 0.9e-3)
     assert ledge.sum() > 10 and hit[ledge].all()
     assert cap_face.sum() > 10 and not hit[cap_face].any()
+
+
+def test_a_ray_grazing_a_long_face_parallel_to_the_flow_finishes_when_one_cell_is_refined_to_a_small_floor():
+    base = BoxBase.around((0, 0, 0), (30e-3, 4e-3, 4e-3), 0.25e-3)
+    small = lambda x, s: np.where(np.linalg.norm(x - np.array([29e-3, 3.5e-3, 3.5e-3]), axis=1) < 0.2e-3,
+                                  0.0625e-3, np.inf)
+    m = build(base, small)
+    phi = redistance(m, m.points[:, 2] - 2.0e-3)          # metal below a flat face along the flow
+    P = patches(m, phi)
+    hit = shadowed(m, phi, P, (1.0, 0.0, 0.0))
+    assert len(P.cell) > 0 and not hit.any()

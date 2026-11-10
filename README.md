@@ -381,18 +381,23 @@ Run the 38 tests from the repository root with
 ```
 
 The measurement script builds the mesh around a sphere (the box extends 25 mm beyond the sphere on each side), times
-each geometric operation and prints one line of JSON. The figures below were measured on 2026-11-10/11 on the laptop,
-serially (one core), with the work of the three most expensive operations limited to the fine band. Each case was
-measured once, on a laptop shared with a running flight, so the times carry that scatter. The base cube is 2.8 mm and
+each geometric operation, including the outer-surface rebuild, the molten-rigid-surface rebuild and one step of moving
+the skin base, and prints one line of JSON. The figures below were measured on 2026-11-11 on the laptop, serially (one
+core), with the distance resets of every operation limited to the fine band (the outer surface, the molten-rigid
+surface and the motion of the skin base now take the same band as the others). Each case was measured once, on a
+laptop that may have been shared with a running flight, so the times carry that scatter. The base cube is 2.8 mm and
 the fine size 0.7 mm. The cost of geometry per macro step is the sum of every timed operation except the one-off first
-build of the mesh. For the 50 mm sphere (1 290 192 cells) it is about 48 s per macro step, with a peak memory of
-1.16 gigabytes, against about 120 s before the fine-band limit. For the 100 mm sphere, which fills the design's 150 mm
-box (5 355 438 cells), it is about 228 s, that is about 3.8 minutes per macro step, with a peak memory of 2.60
-gigabytes, against about 7.8 minutes before the limit; if every operation ran every step that would be about 25 hours
-over 400 macro steps (estimated from this one measurement). A rerun of the final script reproduced the cell counts
-exactly and peaks of 1.21 gigabytes (50 mm) and 2.60 gigabytes (100 mm), with per-step sums of about 75 s and about
-228 s by the same convention. The sphere's volume before correction is within 0.053 per cent (50 mm) and 0.013 per
-cent (100 mm) of exact, and its area within 0.030 and 0.0074 per cent.
+build of the mesh, so it now includes the three surface operations that the design runs every step. For the 50 mm
+sphere (1 290 192 cells) it is about 63 s per macro step, with a peak memory of 1.56 gigabytes. For the 100 mm sphere,
+which fills the design's 150 mm box (5 355 438 cells), it is about 330 s, that is about 5.5 minutes per macro step,
+with a peak memory of 3.30 gigabytes; if every operation ran every step that would be about 37 hours over 400 macro
+steps (estimated from this one measurement). These totals replace the earlier figures of about 48 s and 228 s, which
+left out the three surface operations and so undercounted the cost; they are larger because of that addition, not
+because anything got slower. In the 100 mm run the single largest operations are the molten-rigid surface (68 s, which
+makes two distance resets) and the rebuild of the mesh from fields (51 s). The sphere's volume before correction is
+within 0.053 per cent (50 mm) and 0.013 per cent (100 mm) of exact, and its area within 0.030 and 0.0074 per cent.
+The sphere has no cells at the 0.175 mm floor (its curvature target is about 12.5 mm at 50 mm radius), so the cost of
+cells at the floor is not yet measured; stage 3 will measure it with a rim or wire.
 
 ## Tests
 

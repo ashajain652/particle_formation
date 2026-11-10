@@ -32,3 +32,13 @@ def test_local_curvature_equals_the_whole_mesh_recovery_at_the_surface():
     assert np.allclose(k_local, k_global, rtol=1e-12)
     km = kappa_max_nodal(m, phi, band=0.3e-3)
     assert (km[np.abs(phi) >= 0.3e-3] == 0).all() and (km[np.abs(phi) < 0.2e-3] > 0).all()
+
+
+def test_the_banded_reset_never_exceeds_the_true_distance_even_for_a_narrow_band():
+    m = _sphere_mesh(0.125e-3)
+    phi0 = 3.0 * (np.linalg.norm(m.points - C, axis=1) - 0.9e-3)
+    full = redistance(m, phi0)
+    for band in (0.2e-3, 0.3e-3, 0.5e-3):
+        banded = redistance(m, phi0, band=band)
+        assert (np.abs(banded) <= np.abs(full) + 1e-15).all()
+        assert np.array_equal(banded[np.abs(full) < 0.15e-3], full[np.abs(full) < 0.15e-3])

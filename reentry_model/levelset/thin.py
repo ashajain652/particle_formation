@@ -5,7 +5,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from .criteria import hessian_field, nodal_average, principal_curvatures
+from .criteria import BIG, finite_values, hessian_field, nodal_average, principal_curvatures
 from .cutcell import cell_gradients
 from .transfer import locate
 
@@ -18,20 +18,29 @@ def thin_candidate(h, kmax, slope, c_kappa=0.1, c_slope=0.2):
 
 
 def patch_measures(mesh, phi, psi, P):
-    """(h, kmax, slope) at the patches P of phi."""
+    """(h, kmax, slope) at the patches P of phi. h is the nearest distance from the patch to the zero contour of psi
+    (never more than the depth along the normal that the design names; an approximation revisited in stage 3).
+    Where psi is infinite at the patch (no rigid metal: fully molten) h is infinite (thick), the slope is 0 and
+    kmax comes from phi alone."""
     x, n = P.centroid, P.normal
     cell, b = locate(mesh, x)
     T = mesh.tets[cell]
-    h = np.maximum(np.einsum("ni,ni->n", b, psi[T]), 0.0)
+    h = np.maximum(np.einsum("ni,ni->n", b, finite_values(psi)[T]), 0.0)
+    h = np.where(h > 0.5 * BIG, np.inf, h)
+    molten = np.isinf(h)
+    psi_c = np.clip(psi, -1e3, 1e3)                         # finite copy for the derivative recoveries
     near = mesh.ring(cell, 1)
-    gpsi = nodal_average(mesh, cell_gradients(mesh, psi, near), near)
+    gpsi = nodal_average(mesh, cell_gradients(mesh, psi_c, near), near)
     g = np.einsum("ni,nik->nk", b, gpsi[T])
     slope = np.linalg.norm(g - np.einsum("nk,nk->n", g, n)[:, None] * n, axis=1)
+    slope = np.where(molten, 0.0, slope)
     k1, k2 = principal_curvatures(mesh, phi, x)
-    foot = x - np.where(np.isfinite(h), h, 0.0)[:, None] * n
-    q1, q2 = principal_curvatures(mesh, psi, foot)
-    kmax = np.max(np.abs(np.stack([k1, k2, q1, q2])), axis=0)
-    kmax = np.where(h > 0, kmax, np.max(np.abs(np.stack([k1, k2])), axis=0))
+    kmax = np.max(np.abs(np.stack([k1, k2])), axis=0)
+    use = ~molten & (h > 0)
+    if use.any():
+        foot = x[use] - h[use][:, None] * n[use]
+        q1, q2 = principal_curvatures(mesh, psi_c, foot)
+        kmax[use] = np.maximum(kmax[use], np.maximum(np.abs(q1), np.abs(q2)))
     return h, kmax, slope
 
 

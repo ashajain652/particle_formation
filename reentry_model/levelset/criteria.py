@@ -58,6 +58,8 @@ def kappa_max_nodal(mesh, phi, band=None, fields=None):
     """Largest |principal curvature| of the level surface through every node; with `band` (m) only nodes with
     |phi| < band are evaluated (others 0), the recovery running on the cells around them."""
     out = np.zeros(len(mesh.points))
+    if not np.isfinite(phi).any():
+        return out
     nodes = np.arange(len(mesh.points)) if band is None else np.flatnonzero(np.abs(phi) < band)
     if len(nodes) == 0:
         return out
@@ -69,9 +71,21 @@ def kappa_max_nodal(mesh, phi, band=None, fields=None):
     return out
 
 
+BIG = 1e30
+
+
+def finite_values(values):
+    """The values with plus or minus infinity replaced by plus or minus 1e30, so that interpolating them gives a
+    zero barycentric weight no contribution (0 * inf would be not-a-number) and infinity stays huge."""
+    values = np.asarray(values, float)
+    return np.where(np.isfinite(values), values, np.copysign(BIG, values))
+
+
 def make_target(mesh, phi, psi, kmax_phi, kmax_psi, fine=0.7e-3, margin=4.0e-3, lead=0.6e-3, floor=0.25e-3,
                 curvature_factor=0.25):
     """target_size(x, size) for boxmesh.build, evaluated from fields on the current mesh."""
+    phi, psi, kmax_phi, kmax_psi = (finite_values(f) for f in (phi, psi, kmax_phi, kmax_psi))
+
     def target(x, size):
         cell, b = locate(mesh, x)
         T = mesh.tets[cell]

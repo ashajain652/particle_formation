@@ -56,3 +56,26 @@ def test_curvature_refines_a_tight_rim_down_to_the_floor():
     new = build(m.base, tgt)
     near = np.abs(np.linalg.norm(new.centroids[:, :2] - C[:2], axis=1) - 0.2e-3) < 0.05e-3
     assert (new.size[near] <= 0.0625e-3 + 1e-15).all()
+
+
+def test_a_fully_molten_sphere_is_fine_everywhere_inside_the_metal_even_on_faces_of_the_old_mesh():
+    base = BoxBase.around((0, 0, 0), (3e-3, 3e-3, 3e-3), 0.5e-3)
+    r0 = lambda x: np.linalg.norm(x - C, axis=1) - 1.2e-3
+    old = build(base, lambda x, s: np.where(r0(x) < 0.94 * s, 0.125e-3, np.inf))     # refined inside: faces at 0.5 mm
+    phi = redistance(old, r0(old.points))
+    psi = np.full(len(old.points), np.inf)                                             # nothing rigid
+    k = kappa_max_nodal(old, phi, band=1e-3)
+    tgt = make_target(old, phi, psi, k, k, fine=0.125e-3, margin=0.3e-3, lead=0.1e-3, floor=0.03e-3)
+    base_centroids = build(base).centroids
+    inside = r0(base_centroids) < -0.1e-3
+    got = tgt(base_centroids, base.h0 * np.ones(len(base_centroids)))
+    assert inside.sum() > 20 and (got[inside] <= 0.125e-3).all() and not np.isnan(got).any()
+    new = build(base, tgt)
+    rc = np.linalg.norm(new.centroids - C, axis=1)
+    assert (new.size[rc < 1.0e-3] <= 0.125e-3 + 1e-15).all()
+
+
+def test_the_curvature_of_a_field_with_no_finite_value_is_zero():
+    m = _mesh(0.25e-3)
+    out = kappa_max_nodal(m, np.full(len(m.points), np.inf))
+    assert (out == 0).all() and out.shape == (len(m.points),)

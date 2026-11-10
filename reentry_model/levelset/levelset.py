@@ -37,8 +37,8 @@ def point_triangle_distance(p, a, b, c):
 def redistance(mesh, phi, k=8, band=None):
     """Signed distance to the zero contour of phi, keeping phi's sign. Nodal values are exact distances to the
     piecewise-flat contour, searched among the k triangles with the nearest centroids. With `band` (m), only nodes
-    within band of a triangle centroid are computed; the rest get +-band, never more than their true distance, so
-    sphere tracing on the result stays safe."""
+    within band of a triangle are computed (exactly, by the search below); the rest get +-band, never more than their
+    true distance."""
     P = patches(mesh, phi)
     if len(P.tris) == 0:
         return np.where(phi < 0, -np.inf, np.inf)
@@ -50,7 +50,8 @@ def redistance(mesh, phi, k=8, band=None):
         sel = np.arange(len(mesh.points))
         _, idx = kd.query(mesh.points, k=kk)
     else:
-        near, _ = kd.query(mesh.points, k=1, distance_upper_bound=band)
+        r_max = np.linalg.norm(tri - tri.mean(axis=1, keepdims=True), axis=2).max()   # centroid to farthest vertex
+        near, _ = kd.query(mesh.points, k=1, distance_upper_bound=band + r_max)
         sel = np.flatnonzero(np.isfinite(near))
         _, idx = kd.query(mesh.points[sel], k=kk)
     idx = idx.reshape(len(sel), kk)
@@ -62,10 +63,10 @@ def redistance(mesh, phi, k=8, band=None):
     return np.where(phi < 0, -d, d)
 
 
-def advect(mesh, phi, velocity, dt):
+def advect(mesh, phi, velocity, dt, band=None):
     """Semi-Lagrangian step: phi_new(x) = phi(x - u(x) dt), then reset to a distance."""
     x = mesh.points
-    return redistance(mesh, interpolate(mesh, phi, x - velocity(x) * dt))
+    return redistance(mesh, interpolate(mesh, phi, x - velocity(x) * dt), band=band)
 
 
 def _face_pairs(mesh, cells):

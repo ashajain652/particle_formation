@@ -179,7 +179,7 @@ function of the base and the targets only.
 each cell is a flat patch; a node exactly on the contour counts as outside, and zero-area patches are dropped. The
 distance reset recomputes each node's geometric distance to the patch triangles (not an eikonal solve), searching the
 eight nearest triangle centroids; with a band, only nodes within the band are computed and the rest take plus or minus
-the band, never more than their true distance.
+the band, never more than their true distance. (The search radius is widened by the largest distance from a triangle's centroid to its vertices, so every node within the band of a triangle is computed exactly.)
 
 **Volume correction.** After motion, each connected piece's level set is shifted so that the piece's volume is restored
 exactly (relative error about 1e-13 in the tests, including two pieces three cells apart). Each shift excludes the other
@@ -191,18 +191,18 @@ farthest vertex (0.935 h for a Kuhn tetrahedron). The larger square root of thre
 by about 1.2 mm at 0.7 mm cells.
 
 **Shadow test.** A ray starts a twentieth of a cell outside each patch and is marched upstream with steps equal to the
-level set but at least a quarter of the smallest cell. A whole-cell start offset carried leeward rays near a sphere's
+level set but at least a quarter of the smallest cell, for at most as many steps as that minimum step needs to cross the box diagonal (plus ten); the test raises an error only if a ray is still marching after the last step. A whole-cell start offset carried leeward rays near a sphere's
 outline outside the body, so they missed it.
 
 **Thin test.** A patch is thin when the molten depth is at most c_kappa times the smallest principal radius of curvature
 and the depth's slope along the surface is at most c_slope. The thresholds are starting values only, to be set by
 verification: c_kappa 0.1, c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
-before a mode changes.
+before a mode changes. The molten depth is the nearest distance from the patch to the zero contour of the molten-rigid surface, which is never more than the depth along the normal that the design names; the two agree where the surfaces are nearly parallel, and the approximation is revisited in stage 3. Where the metal is fully molten (no rigid metal, so the molten-rigid surface is plus infinity), the depth is infinite, the patch is thick, and the curvature comes from the outer surface alone.
 
 **Accuracy and cost.** Cut-cell volume and area of a sphere converge at second order: errors of 2.6 per cent (volume)
 and 1.3 per cent (area) when the radius spans 4.4 cells, and 0.65 and 0.33 per cent at 8.8 cells; the P1 volume is
-always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-10/11: about 48 s of geometry per macro step (every timed operation except the one-off first build) for the 50 mm sphere and about 228 s, or 3.8 minutes, for the 100 mm sphere, at peaks of 1.16 and 2.60 gigabytes.
+always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11: about 63 s of geometry per macro step (every timed operation except the one-off first build, now including the outer-surface rebuild, the molten-rigid-surface rebuild and one motion of the skin base) for the 50 mm sphere and about 330 s, or 5.5 minutes, for the 100 mm sphere, at peaks of 1.56 and 3.30 gigabytes. The cost of cells at the 0.175 mm floor is not yet measured, because the sphere has none.
 
 **Not yet verified.** The thin-test thresholds; behaviour on moving, merging or splitting bodies (the tests move only
 prescribed spheres and boxes); correctness of the derived surfaces against real temperature fields; the shadow test on
-shapes other than the sphere; and whether every operation must run every macro step, which is for stage 3 to measure.
+moving or melting shapes (the overhang test covers a stepped stem under a cap); and whether every operation must run every macro step, which is for stage 3 to measure.

@@ -55,3 +55,13 @@ def test_mode_changes_wait_for_the_hold_and_a_large_enough_group():
     changed = st.update(cand, adj)
     assert changed[2:10].all() and not changed[15] and changed.sum() == 8
     assert (~st.thin[2:10]).all() and st.thin[15]
+
+
+def test_a_fully_molten_body_is_thick_with_the_curvature_of_phi_alone():
+    m = _mesh(0.125e-3)
+    phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 1.0e-3)
+    P = patches(m, phi)
+    h, k, s = patch_measures(m, phi, np.full(len(m.points), np.inf), P)
+    assert np.isinf(h).all() and (s == 0).all() and np.isfinite(k).all()
+    assert abs(np.median(k) - 1 / 1.0e-3) < 0.1 / 1.0e-3
+    assert not thin_candidate(h, k, s).any()
