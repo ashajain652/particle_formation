@@ -66,7 +66,11 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
                     "rebuild_mass_residual_kg", "rebuild_mass_residual_last_kg",
                     # the windward loads' nose radius (sub-plan 22 Task 5g, Asha 2026-11-10): the radius of the surface at the end of the step, which the next step's loads read, the
                     # sphere fitted to the tops' cap, the reported bound, the corners fitted and 1 where the cap was concave
-                    "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave"]
+                    "nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nose_cap_points", "nose_cap_concave",
+                    # the leeward test (sub-plan 22 Task 5j, Asha 2026-11-10): the mass centroid's position along the flight
+                    # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow
+                    # from behind the plane through it
+                    "centroid_offset_mm", "leeward_corners"]
 # with --spread-limit only, skinbody.SPREAD_COLUMNS follow these (sub-plan 22 Task 5c): a run's columns are its first row's, so
 # a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
 # particles_summary.csv, one row a macro step: the element model's history columns
@@ -126,7 +130,10 @@ class CoupledRun:
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
-        return a, self.heating.evaluate(a, self.body.theta, self.body.surface_temperature(), self.body.nose_radius(),
+        # the layered skins' effective angles (`SkinBody.load_angles`, sub-plan 22 Task 5j): a corner behind the centroid's
+        # plane is leeward to the heating whichever way its normal faces; every other body's angles are `theta`
+        angles = self.body.load_angles() if hasattr(self.body, "load_angles") else self.body.theta
+        return a, self.heating.evaluate(a, angles, self.body.surface_temperature(), self.body.nose_radius(),
                                         T_mean=self.body.mean_temperature())
 
     def row(self, t, y, a, loads):

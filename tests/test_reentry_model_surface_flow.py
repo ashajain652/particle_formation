@@ -180,3 +180,6 @@ def test_the_slip_band_is_the_merged_branch_below_a_body_knudsen_number_of_a_ten
     r = got[0.05]
     assert r.branch == sf.BRANCH_MERGED and np.isnan(r.shear_integral[4]) and np.all(np.diff(r.shear_integral[:4]) > 0.0)
     np.testing.assert_array_equal(r.shear_integral, sf.shear_moment(theta, r.tau, 0.05, theta <= np.pi / 2))
+    assert r.nose_radius == 0.05 and got[0.009].nose_radius is None and got[20.0].nose_radius is None     # the integral's radius (Task 5j)
+    a.kn = 0.05
+    assert flow.evaluate(a, theta, 0.04, 2400.0, np.full(theta.size, 908.0)).nose_radius == 0.04
