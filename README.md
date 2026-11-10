@@ -381,15 +381,18 @@ Run the 38 tests from the repository root with
 ```
 
 The measurement script builds the mesh around a sphere (the box extends 25 mm beyond the sphere on each side), times
-each geometric operation and prints one line of JSON. The figures below were measured on 2026-11-11 on the laptop,
-serially (one core), with the work of the three most expensive operations limited to the fine band, and each case was
-measured once, so they carry the scatter of a laptop shared with other jobs. The base cube is 2.8 mm and the fine
-size 0.7 mm. For the 50 mm sphere the mesh has 1 290 192 cells, the peak memory is 1.21 gigabytes and the operations
-take about 79 s in total. For the 100 mm sphere, which fills the design's 150 mm box, the mesh has 5 355 438 cells, the
-peak memory is 2.60 gigabytes and the operations take about 213 s in total, that is, about 3.5 minutes of geometry per
-macro step if every operation ran every step. Before the band limit the same 100 mm case took about 7.8 minutes, so the
-limit roughly halved the cost; much larger values would make a 400-step flight impractical on the laptop. The
-sphere's volume before correction is within 0.013 per cent and its area within 0.0074 per cent of exact.
+each geometric operation and prints one line of JSON. The figures below were measured on 2026-11-10/11 on the laptop,
+serially (one core), with the work of the three most expensive operations limited to the fine band. Each case was
+measured once, on a laptop shared with a running flight, so the times carry that scatter. The base cube is 2.8 mm and
+the fine size 0.7 mm. The cost of geometry per macro step is the sum of every timed operation except the one-off first
+build of the mesh. For the 50 mm sphere (1 290 192 cells) it is about 48 s per macro step, with a peak memory of
+1.16 gigabytes, against about 120 s before the fine-band limit. For the 100 mm sphere, which fills the design's 150 mm
+box (5 355 438 cells), it is about 228 s, that is about 3.8 minutes per macro step, with a peak memory of 2.60
+gigabytes, against about 7.8 minutes before the limit; if every operation ran every step that would be about 25 hours
+over 400 macro steps (estimated from this one measurement). A rerun of the final script reproduced the cell counts
+exactly and peaks of 1.21 gigabytes (50 mm) and 2.60 gigabytes (100 mm), with per-step sums of about 75 s and about
+228 s by the same convention. The sphere's volume before correction is within 0.053 per cent (50 mm) and 0.013 per
+cent (100 mm) of exact, and its area within 0.030 and 0.0074 per cent.
 
 ## Tests
 

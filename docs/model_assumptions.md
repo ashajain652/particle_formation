@@ -194,13 +194,14 @@ by about 1.2 mm at 0.7 mm cells.
 level set but at least a quarter of the smallest cell. A whole-cell start offset carried leeward rays near a sphere's
 outline outside the body, so they missed it.
 
-**Thin test.** The thresholds are starting values only, to be set by verification: curvature factor c_kappa 0.1, slope
-factor c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
+**Thin test.** A patch is thin when the molten depth is at most c_kappa times the smallest principal radius of curvature
+and the depth's slope along the surface is at most c_slope. The thresholds are starting values only, to be set by
+verification: c_kappa 0.1, c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
 before a mode changes.
 
 **Accuracy and cost.** Cut-cell volume and area of a sphere converge at second order: errors of 2.6 per cent (volume)
 and 1.3 per cent (area) when the radius spans 4.4 cells, and 0.65 and 0.33 per cent at 8.8 cells; the P1 volume is
-always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11.
+always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-10/11: about 48 s of geometry per macro step (every timed operation except the one-off first build) for the 50 mm sphere and about 228 s, or 3.8 minutes, for the 100 mm sphere, at peaks of 1.16 and 2.60 gigabytes.
 
 **Not yet verified.** The thin-test thresholds; behaviour on moving, merging or splitting bodies (the tests move only
 prescribed spheres and boxes); correctness of the derived surfaces against real temperature fields; the shadow test on
