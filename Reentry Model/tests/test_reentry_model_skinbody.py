@@ -2140,3 +2140,132 @@ def test_with_the_hand_down_off_a_release_s_momentum_is_not_counted_twice(coarse
         b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), forcing=newtonian(b))
     assert b.released_mass > 0.0 and np.abs(b.droplet_momentum).max() > 0.0 and b.handed_mass == 0.0
     assert b.skin_stats()["momentum_residual"] < 1e-12
+
+
+# -- spraying in the slip band (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha 2026-11-10) -------------------------------
+def band_plan(sk, col, flow, band, slurry=False, theta=0.6, gates="2026-11-10", nose_radius=None):
+    """`girin_plan` on columns at one angle `theta` with a spray model under `gates` and the band `band`."""
+    from reentry_model import spray
+    from test_reentry_model_spray import FakeState
+    model = spray.SprayModel(sk.material.liquid, spray_gates=gates, slip_band=band)
+    return skinbody.girin_plan(sk, flow, FakeState(), model, np.full(sk.n, theta), col.area, col.edges, 0.05, 0.0125,
+                               slurry=slurry, nose_radius=nose_radius)
+
+
+TAU = 200.0                    # Pa, the bridged shear on the band cases
+
+
+def band_case(kn_body=0.04, kn_local=0.05):
+    """Eight columns (four kinds, twice) 20 mm apart at one angle of 0.6 rad, on the merged branch (Couette closure, no Girin
+    delta_m), the bridged shear TAU: 50 um of liquid over 500 um of slurry (at 902 K) over rigid metal; 50 um of liquid on the
+    rigid floor; exposed slurry in the bridge (907.9 K, within a kelvin of the liquidus, the only slurry that sprays); 15 um
+    of liquid on the rigid floor, one cell. The edge speed is 1 500 m/s."""
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    from test_reentry_model_spray import slip_flow
+    col, _ = strip_grid(4, 2, h=20e-3)
+    n = col.n
+    temps = [[LIQUID] * 4 + [SLURRY] * 50 + [RIGID] * 10, [LIQUID] * 4 + [RIGID] * 10, [907.9] * 50 + [RIGID] * 10,
+             [LIQUID] + [RIGID] * 10] * 2
+    sk = stacked(col, temps)
+    flow, _ = slip_flow(kn_body, (kn_local,) * n, (0.6,) * n, tau=TAU)
+    flow.u_eff = flow.u_e = np.full(n, 1500.0)
+    flow.G = np.zeros(n)
+    return sk, col, flow
+
+
+def test_band_off_leaves_a_slipping_film_held():
+    """Without the band the merged branch has no delta_m: a liquid on slurry is held from every shear mode (the element
+    model's reading, 2026-10-29), and the liquid on the rigid floor, with the gate of 2026-11-10 on, releases nothing."""
+    sk, col, flow = band_case()
+    plan = band_plan(sk, col, flow, band=False)
+    assert plan.rate.sum() == 0.0 and plan.rate_slurry.sum() == 0.0
+    assert plan.on_slurry.tolist() == [True, False, True, False] * 2 and (plan.result.branch == -1).all()
+
+
+def test_band_on_sprays_the_liquid_and_reads_the_flowing_depth():
+    """Band on (body Knudsen number 0.04, wall 0.05 everywhere, 200 Pa of shear): the momentum-balance depth is finite on every
+    windward patch (54 um), a liquid on slurry is no longer held, its flowing depth (0.6 mm) is deeper than that depth so
+    the film is on Girin's thick branch, and 50 um of liquid on the rigid floor is shallower than it: the thin branch.
+    Both release; the release is capped by the liquid (slurry spraying off), so the exposed slurry gives nothing."""
+    from reentry_model import spray
+    sk, col, flow = band_case()
+    plan = band_plan(sk, col, flow, band=True)
+    delta = plan.result.delta_m
+    assert np.isfinite(delta).all() and (40e-6 < delta).all() and (delta < 120e-6).all()
+    assert plan.result.branch[:2].tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN]
+    assert plan.rate[0] > 0.0 and plan.rate[1] > 0.0 and plan.rate[2] == 0.0      # no liquid on the exposed slurry
+    assert not plan.on_slurry[0] or plan.rate[0] > 0.0
+    np.testing.assert_array_equal(plan.cap_depth, sk.depth_above(sk.material.T_liquidus))
+    np.testing.assert_array_equal(delta, spray.spray_layer(flow, sk.material.liquid, True, np.full(8, 0.6), 0.05))
+
+
+def test_band_release_is_capped_by_the_liquid_unless_the_slurry_is_on():
+    """Decision 4 of 2026-11-06 and item 3 of 2026-11-10: with --slurry-spray on the exposed slurry in the bridge sprays in the
+    band by its own mode (`slurry_modes`, its depth the momentum balance's with its own viscosity) and the cap is the flowing
+    depth; with it off the cap stays the liquid's depth and the slurry sprays nothing. The liquid's mode is the same."""
+    sk, col, flow = band_case()
+    off, on = band_plan(sk, col, flow, band=True), band_plan(sk, col, flow, band=True, slurry=True)
+    assert off.rate_slurry.sum() == 0.0
+    np.testing.assert_array_equal(on.cap_depth, sk.depth_above(sk.material.T_rigid))
+    assert on.rate_slurry[2] > 0.0 and np.isfinite(on.slurry["delta_m"][2]) and on.slurry["delta_m"][2] < on.slurry["depth"][2]
+    np.testing.assert_array_equal(on.rate[:2], off.rate[:2])
+
+
+def test_the_band_s_thin_branch_keeps_the_viscous_floor():
+    """Decision 6 of 2026-11-06: the viscous film's floor already applies on the liquid thin branch, and the band changes no
+    gate there, at an edge speed of 1 500 m/s: 50 um of liquid on the rigid floor sprays (gamma tau 0.47, below one), 15 um is
+    damped by the floor (gamma tau 1.19, above one) and releases nothing; both record the floor."""
+    from reentry_model import spray
+    sk, col, flow = band_case()
+    res = band_plan(sk, col, flow, band=True).result
+    assert res.branch[[1, 3]].tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]
+    assert np.isfinite(res.h_floor[[1, 3]]).all() and res.gamma_tau[1] < 1.0 and res.mdot[1] > 0.0
+    assert res.mdot[3] == 0.0 and res.gamma_tau[3] > 1.0
+
+
+def test_the_band_above_a_body_knudsen_number_of_a_tenth_or_a_wall_knudsen_number_of_a_tenth_does_nothing():
+    sk, col, flow = band_case(kn_body=0.2)
+    assert band_plan(sk, col, flow, band=True).rate.sum() == 0.0
+    sk, col, flow = band_case(kn_body=0.04, kn_local=0.12)             # Asha, 2026-11-10: the wall's own number too
+    assert band_plan(sk, col, flow, band=True).rate.sum() == 0.0
+    sk, col, flow = band_case()
+    assert band_plan(sk, col, flow, band=True).rate.sum() > 0.0         # the same columns inside both limits
+
+
+def test_the_band_depth_reads_the_nose_radius_it_is_given():
+    """The momentum balance's r is the nose radius times sin(theta): half the radius, half the r, and a depth larger by
+    2^(1/3), the plan's delta_m^3 = 3 mu^2 I / (rho tau^2 r) with the integral I unchanged."""
+    sk, col, flow = band_case()
+    a = band_plan(sk, col, flow, band=True, nose_radius=0.05).result.delta_m
+    b = band_plan(sk, col, flow, band=True, nose_radius=0.025).result.delta_m
+    np.testing.assert_allclose(b / a, 2.0 ** (1.0 / 3.0), rtol=1e-12)
+    np.testing.assert_array_equal(band_plan(sk, col, flow, band=True).result.delta_m, a)      # the default: the transverse radius, 0.05
+
+
+def test_the_thin_gate_leaves_a_slipping_liquid_on_the_floor_unsprayed_with_the_band_off_and_before_sprays_it():
+    """Task 5i's gate on the skins: with the band off the 50 um film on the floor has no conjugate depth and sprays nothing under
+    2026-11-10; under `before` the thin branch sprays it as it did."""
+    sk, col, flow = band_case()
+    assert band_plan(sk, col, flow, band=False).rate[1] == 0.0
+    from reentry_model import spray
+    old = band_plan(sk, col, flow, band=False, gates="before")
+    assert old.result.branch[1] == spray.BRANCH_THIN and old.rate[1] > 0.0                  # as before this task
+
+
+def test_the_skins_hand_girin_plan_their_nose_radius(coarse_sphere_mesh, monkeypatch):
+    """`SkinBody.advance` gives `girin_plan` the nose radius the loads read (`nose_radius()`, Task 5g's fit), for the band's
+    r = R sin(theta), where the transverse radius is the cap's size limit."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid))
+    seen = []
+    girin = skinbody.girin_plan
+
+    def planned(*a, **k):
+        seen.append((k.get("nose_radius"), b.nose_radius()))
+        return girin(*a, **k)
+    monkeypatch.setattr(skinbody, "girin_plan", planned)
+    b.advance(0.25, 0.25, front_loads(b, 3e6), state=aero_state_at(93.0))
+    assert len(seen) == 1 and seen[0][0] is not None and seen[0][0] == seen[0][1]

@@ -963,3 +963,47 @@ def test_the_size_feedback_marks_the_run_s_name_only_for_initial():
             == base + "_side-height_nose-initial_seed-7")
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, size_feedback="initial") == "_nose-initial"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+
+
+def test_the_slip_band_is_off_by_default_reaches_the_spray_model_of_both_surface_models_and_is_recorded(tmp_path, monkeypatch):
+    """--slip-band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10) is `off` by default on `run`, `on` sets the spray
+    model's `slip_band` for the skins and the element model alike, and it is refused (exit 2) where there is no spray model:
+    without melting, with the heat-only skins, or with the element model's instant removal. No other value is accepted."""
+    from reentry_model import skinbody
+    assert cli.build_parser().parse_args(THERMAL).slip_band == "off"
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, band in ((melt, False), (melt + ["--slip-band", "off"], False), (melt + ["--slip-band", "on"], True)):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        assert got.value.args[0]["spray"].slip_band is band
+    for argv in (THERMAL + ["--slip-band", "on"], melt + ["--skin-flow", "off", "--slip-band", "on"],
+                 melt + ["--surface-model", "elements", "--removal", "instant", "--slip-band", "on"], melt + ["--slip-band", "maybe"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv + ["--outdir", str(tmp_path)])
+        assert exc.value.code == 2
+
+
+def test_the_spray_rules_mark_a_spraying_run_s_name_only_where_they_differ_from_the_defaults():
+    """Sub-plan 22 Tasks 5h and 5i: `_gates-before` where --spray-gates before is given to a run with a spray model, the
+    default 2026-11-10 unmarked; `_slipband-on` where the band is on; both ahead of the seed and after the skins' or the
+    element model's suffixes; no mark on a run that has no spray model (no melting, the heat-only skins, instant removal)."""
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert name(melt + ["--spray-gates", "2026-11-10"]) == base + "_fem-sesam_melt-girin"
+    assert name(melt + ["--spray-gates", "before"]) == base + "_fem-sesam_melt-girin_gates-before"
+    assert name(melt + ["--slip-band", "on"]) == base + "_fem-sesam_melt-girin_slipband-on"
+    assert (name(melt + ["--slurry-spray", "on", "--spray-gates", "before", "--slip-band", "on", "--seed", "7"])
+            == base + "_fem-sesam_melt-girin_slurryspray-on_gates-before_slipband-on_seed-7")
+    elements = melt + ["--surface-model", "elements"]
+    assert name(elements + ["--spray-gates", "before"]) == base + "_fem-sesam_melt-girin_surface-elements_gates-before"
+    assert name(elements + ["--slip-band", "on"]) == base + "_fem-sesam_melt-girin_surface-elements_slipband-on"
+    for argv in (THERMAL, melt + ["--skin-flow", "off"], elements + ["--removal", "instant"]):      # no spray model: no mark
+        assert name(argv + ["--spray-gates", "before"]) == name(argv)
+    assert cli.spray_name_suffix("before", True) == "_gates-before_slipband-on"
+    assert cli.spray_name_suffix("2026-11-10", False) == "" and cli.spray_name_suffix("before", True, spraying=False) == ""

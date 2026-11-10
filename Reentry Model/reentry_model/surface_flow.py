@@ -85,6 +85,7 @@ BRANCH_NAMES = ("shock layer", "merged", "free molecular")
 CLOSURE_GIRIN, CLOSURE_COUETTE = 0, 1
 KN_BODY_SHOCK, KN_BODY_FM = 0.01, 10.0            # body-scale gate (module docstring)
 KN_LOCAL_CONTINUUM, KN_LOCAL_SLIP = 0.01, 0.1     # wall-scale closure gate
+KN_BODY_SLIP = 0.1         # top of the slip band, where the merged branch's spraying may run (sub-plan 22 Task 5i; 2026-11-06 plan)
 RE_SHOCK_MERGED = 100.0                            # Re2 below which the shock layer is merged (diagnostic only)
 R_SPECIFIC_AIR = K_BOLTZMANN / M_BAR_AIR          # J/(kg K), 287.06
 RANGER_C = 58.08                                   # 4.84 x 12: Ranger's delta_a from the u_e^4 integral (below)
@@ -184,6 +185,25 @@ def wall_knudsen(p_w, T_wall, mu_wall, length, R_s=R_SPECIFIC_AIR):
     return lam, lam / length
 
 
+def shear_moment(theta, tau, radius, windward):
+    """The shear's moment about the axis integrated from the nose, I = integral of r tau ds [Pa m2] per patch (sub-plan 22
+    Task 5i, the slip-band plan of 2026-11-06): on a sphere of radius `radius`, r = R sin(theta) and ds = R d(theta), so
+    I = R^2 times the integral of sin(theta) tau d(theta) over the windward patches ordered by angle, by the trapezoid
+    rule from (theta, integrand) = (0, 0). The order is the angle's (stable, so patches at one angle share one value and
+    I does not decrease with angle); nan on the patches that are not `windward`, whose shear is not part of the push on the
+    melt ahead of them, and where theta or tau is not finite."""
+    theta, tau = np.asarray(theta, dtype=float), np.asarray(tau, dtype=float)
+    out = np.full(theta.shape, np.nan)
+    idx = np.flatnonzero(np.asarray(windward, dtype=bool) & np.isfinite(theta) & np.isfinite(tau))
+    if not idx.size:
+        return out
+    idx = idx[np.argsort(theta[idx], kind="stable")]
+    x = np.concatenate([[0.0], theta[idx]])
+    y = np.concatenate([[0.0], radius ** 2 * np.sin(theta[idx]) * tau[idx]])
+    out[idx] = cumulative_trapezoid(y, x, initial=0.0)[1:]
+    return out
+
+
 @dataclass
 class SurfaceFlowResult:
     # body-scale diagnostics
@@ -215,6 +235,15 @@ class SurfaceFlowResult:
     G: np.ndarray
     dp_ds: np.ndarray = None      # the wall pressure's gradient along the meridian [Pa/m], from the fine bins (the
                                   # pressure part of G; the skins' push takes it on its own, sub-plan 21 Task 5)
+    shear_integral: np.ndarray = None   # I = integral of r tau ds from the nose [Pa m2], the merged branch's only (None
+                                  # elsewhere): the momentum balance of the slip band's depth (`spray.momentum_layer`)
+
+    @property
+    def in_slip_band(self):
+        """True where the body is on the merged branch with a body Knudsen number below KN_BODY_SLIP: the band, 0.01 up to
+        0.1 (0.01 is in it, being the merged branch; 0.1 is out), where the spraying of the 2026-11-06 plan may run. A patch
+        is in it only if its own wall Knudsen number is below KN_LOCAL_SLIP too (Asha, 2026-11-10; `spray.spray_layer`)."""
+        return bool(self.branch == BRANCH_MERGED and self.kn_body < KN_BODY_SLIP)
 
     @property
     def branch_name(self):
@@ -333,7 +362,10 @@ class SurfaceFlow:
         dp_ds_w = np.where(windward, at(dp_ds), 0.0)
         mach_e = np.where(a_e > 0.0, u_e / np.maximum(a_e, 1e-300), 0.0)
         u_e, rho_e, mu_e = (np.where(np.isfinite(x), x, 0.0) for x in (u_e, rho_e, mu_e))
+        # the integrated shear of the slip band (sub-plan 22 Task 5i), from the final bridged shear: the merged branch only
+        shear_integral = shear_moment(theta, tau, radius, windward) if branch == BRANCH_MERGED else None
         return SurfaceFlowResult(branch, float(state.kn), re_shock, float(state.ma), float(stag.p), p_inf, float(phi_star),
                                  decel, self.gamma_pm, p_w, u_e, u_e * slip, rho_e, T_e, mu_e, mach_e,
                                  np.where(windward, delta_a, np.nan), lam_w, np.where(windward, kn_local, np.inf),
-                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w)
+                                 closure, flagged | ~windward, tau, np.where(windward, tau_c, 0.0), tau_fm, G, dp_ds_w,
+                                 shear_integral)
