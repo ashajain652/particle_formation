@@ -352,6 +352,45 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
 - The transonic tail is compressed isentropically without a shock because the shock fixed point stalls at Ma 1 —
   found by the first full physics-mode run (facts §16).
 
+## Level-set architecture (stage 1: geometry)
+
+The package `reentry_model/levelset/` is the geometry layer of the level-set architecture described in
+`docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` (section 20). A level set is a field
+that is negative inside the metal and positive outside, so the body surface is the place where the field is zero.
+Stage 1 builds and tests only the geometry: everything runs on prescribed fields (a sphere given analytically, or
+fields handed in by a test), and there is no thermal solve, no skins and no flow yet. The package imports nothing from
+the rest of `reentry_model` except `numpy`, `scipy` and `skfem`, and no existing module was changed.
+
+The nine files are:
+
+- `__init__.py` states the conventions (negative inside, normals toward positive values, SI units).
+- `boxmesh.py` builds the adaptive tetrahedral box mesh (six Kuhn tetrahedra per cube, refined by Maubach bisection).
+- `criteria.py` computes the curvature of a distance field and the refinement targets (fine region, curvature rule, floor).
+- `cutcell.py` computes the metal volume in each cell and the flat surface piece (patch) in each cell the surface crosses.
+- `levelset.py` resets a level set to a signed distance, moves it, finds connected pieces and corrects each piece's volume.
+- `shadow.py` is the ray-cast test that marks surface patches lying in the lee of the body.
+- `surfaces.py` derives the outer surface and the molten-rigid surface from the skin base, the skin thickness and the temperature.
+- `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
+- `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
+
+Run the 38 tests from the repository root with
+
+```bash
+"$PY" -m pytest tests/levelset -q                            # 38 tests, about 50 s
+"$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
+```
+
+The measurement script builds the mesh around a sphere (the box extends 25 mm beyond the sphere on each side), times
+each geometric operation and prints one line of JSON. The figures below were measured on 2026-11-11 on the laptop,
+serially (one core), with the work of the three most expensive operations limited to the fine band, and each case was
+measured once, so they carry the scatter of a laptop shared with other jobs. The base cube is 2.8 mm and the fine
+size 0.7 mm. For the 50 mm sphere the mesh has 1 290 192 cells, the peak memory is 1.21 gigabytes and the operations
+take about 79 s in total. For the 100 mm sphere, which fills the design's 150 mm box, the mesh has 5 355 438 cells, the
+peak memory is 2.60 gigabytes and the operations take about 213 s in total, that is, about 3.5 minutes of geometry per
+macro step if every operation ran every step. Before the band limit the same 100 mm case took about 7.8 minutes, so the
+limit roughly halved the cost; much larger values would make a 400-step flight impractical on the laptop. The
+sphere's volume before correction is within 0.013 per cent and its area within 0.0074 per cent of exact.
+
 ## Tests
 
 ```bash

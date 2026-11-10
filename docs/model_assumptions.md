@@ -161,3 +161,47 @@ over the whole area and nothing on the lee side, and the free-molecular cos θ d
 windward distribution than Lees'; the HTG SARA modelling report that would say which is not in hand (measured base
 heating on spheres is only a few percent of q_stag, which does not obviously close the gap). That distribution
 difference — not attitude — is the main reason the physics mode delivers ~0.74 × SESAM's integrated heat.
+
+## 9. Level-set architecture: geometry (stage 1)
+
+This section describes the geometry layer in `reentry_model/levelset/` (design file, section 20). It is built and
+tested but not yet coupled to any physics: every test and measurement uses prescribed fields, with no thermal solve,
+skins or flow.
+
+**Mesh.** The box is a grid of cubes of edge h0, each split into six Kuhn tetrahedra along its main diagonal and refined
+by Maubach's newest-vertex bisection with tags. The refined mesh stays conforming (no hanging nodes; boundary area equal
+to the box's to about 1e-12) and has at most three tetrahedron shapes. Three bisections halve the cube edge, so the
+achieved size is the largest h0/2^k that does not exceed the target: with h0 = 2.8 mm the fine size 0.7 mm is met
+exactly, and the 0.25 mm cell floor becomes 0.175 mm. Coarsening rebuilds the mesh from the base grid, so a mesh is a
+function of the base and the targets only.
+
+**Level sets.** Fields are piecewise linear (P1) on the tetrahedra and negative inside the metal. The zero contour in
+each cell is a flat patch; a node exactly on the contour counts as outside, and zero-area patches are dropped. The
+distance reset recomputes each node's geometric distance to the patch triangles (not an eikonal solve), searching the
+eight nearest triangle centroids; with a band, only nodes within the band are computed and the rest take plus or minus
+the band, never more than their true distance.
+
+**Volume correction.** After motion, each connected piece's level set is shifted so that the piece's volume is restored
+exactly (relative error about 1e-13 in the tests, including two pieces three cells apart). Each shift excludes the other
+pieces' nodes and cells. Pieces closer than about two cells share faces of metal-holding cells and count as one piece,
+so pieces join and separate at the scale of the cell, not of the surface.
+
+**Refinement reach.** A cell's test region is grown by 0.94 of its size, the distance from a cell's centroid to its
+farthest vertex (0.935 h for a Kuhn tetrahedron). The larger square root of three times h would have widened the fine band
+by about 1.2 mm at 0.7 mm cells.
+
+**Shadow test.** A ray starts a twentieth of a cell outside each patch and is marched upstream with steps equal to the
+level set but at least a quarter of the smallest cell. A whole-cell start offset carried leeward rays near a sphere's
+outline outside the body, so they missed it.
+
+**Thin test.** The thresholds are starting values only, to be set by verification: curvature factor c_kappa 0.1, slope
+factor c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
+before a mode changes.
+
+**Accuracy and cost.** Cut-cell volume and area of a sphere converge at second order: errors of 2.6 per cent (volume)
+and 1.3 per cent (area) when the radius spans 4.4 cells, and 0.65 and 0.33 per cent at 8.8 cells; the P1 volume is
+always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11.
+
+**Not yet verified.** The thin-test thresholds; behaviour on moving, merging or splitting bodies (the tests move only
+prescribed spheres and boxes); correctness of the derived surfaces against real temperature fields; the shadow test on
+shapes other than the sphere; and whether every operation must run every macro step, which is for stage 3 to measure.
