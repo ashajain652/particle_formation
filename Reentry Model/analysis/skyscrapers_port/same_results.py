@@ -8,8 +8,8 @@ directory ``--code`` and PYTHONDONTWRITEBYTECODE=1, one after the other, and wri
 of ``pmset -g batt`` at the start and the end, the command's output, the exit code and the wall time).
 
 ``compare`` compares every file of either folder by relative path, except ``*.log *.pkl *.progress *.vtu *.vtp *.pvd``:
-``.csv`` the same header and the same text in every cell except columns whose name starts with ``wall_``; ``.json`` equal
-throughout except the keys ``provenance`` and ``files``, any key starting with ``wall_``, and ``settings.mesh_file`` and
+``.csv`` the same header and the same text in every cell except columns whose name starts with ``wall_`` or is ``runtime_s``; ``.json`` equal
+throughout except the keys ``provenance`` and ``files``, any key starting with ``wall_`` or named ``runtime_s`` (the run's elapsed time), and ``settings.mesh_file`` and
 ``settings.material_file``, which are compared by file name and by the SHA-256 of the file they name; ``.npz`` the same
 arrays, equal element for element (NaN equal to NaN); any other file byte for byte.  Exit 0 when identical (with
 ``--report``: always 0, and for every differing numeric column or field the largest absolute and relative difference
@@ -142,7 +142,7 @@ def _compare_csv(pa, pb, rel):
         return [Difference(rel, f"{len(rows_a) - 1} rows against {len(rows_b) - 1} rows")]
     found = []
     for j, name in enumerate(header):
-        if name.startswith("wall_"):
+        if _is_wall(name):
             continue
         differing, pairs, numeric = 0, [], True
         for ra, rb in zip(rows_a[1:], rows_b[1:]):
@@ -163,8 +163,11 @@ def _compare_csv(pa, pb, rel):
     return found
 
 
+TIMER_KEYS = ("runtime_s",)     # the run's elapsed time (time.perf_counter in trajectory.py), besides wall_*
+
+
 def _is_wall(key):
-    return isinstance(key, str) and key.startswith("wall_")
+    return isinstance(key, str) and (key.startswith("wall_") or key in TIMER_KEYS)
 
 
 def _named_file(value):

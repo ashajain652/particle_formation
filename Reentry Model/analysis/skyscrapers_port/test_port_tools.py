@@ -236,3 +236,18 @@ def test_run_builds_the_documented_command_lines():
     assert cases["element"][-2:] == ["--surface-model", "elements"]
     assert cases["resume"][:2] == ["resume", "/state.pkl"]
     assert "--melt" not in cases["nomelt"]
+
+
+def test_compare_ignores_the_run_time(tmp_path):
+    for name, runtime in (("a", 3.25), ("b", 7.5)):
+        _write_run(tmp_path / name / "run")
+        path = tmp_path / name / "run" / "summary.json"
+        data = json.loads(path.read_text())
+        data["results"] = {"runtime_s": runtime, "peak": 2.0}
+        path.write_text(json.dumps(data))
+    assert same_results.compare(tmp_path / "a", tmp_path / "b") == []
+    path = tmp_path / "b" / "run" / "summary.json"
+    data = json.loads(path.read_text())
+    data["results"]["peak"] = 2.5
+    path.write_text(json.dumps(data))
+    assert len(same_results.compare(tmp_path / "a", tmp_path / "b")) == 1

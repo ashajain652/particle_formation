@@ -40,8 +40,8 @@ flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-mel
 `python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
 the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`.
 `compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,
-`*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` columns; `.json` equal except the
-keys `provenance`, `files` and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
+`*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` and `runtime_s` columns; `.json` equal except the
+keys `provenance`, `files`, `runtime_s` (the run's elapsed time) and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
 and SHA-256 of the file; `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical;
 with `--report` it lists each differing column or field with its largest absolute and relative difference and exits 0.
 It uses only the standard library and numpy and can be imported without running anything. Tests: the last tests of
