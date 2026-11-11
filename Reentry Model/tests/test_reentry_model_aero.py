@@ -39,7 +39,8 @@ class TestTables:
 
     def test_below_mach_5_matches_sesam_clamping(self):
         t = aero.SphereDragTables.from_json()
-        assert t.cd_continuum(3.0) == 0.898818 and t.cd_continuum(1.0) == 0.898818
+        assert t.cd_continuum(3.0) == 0.898818 and t.cd_continuum(1.02) == 0.898818
+        assert t.cd_continuum(1.0) == pytest.approx(0.75 * 0.898818) and t.cd_continuum(0.98) == 0.5 * 0.898818   # the Ma-1 step smoothed over +-2 % (Step 3)
         assert t.cd_continuum(0.5) == pytest.approx(0.449409, abs=1e-6)     # exactly half the Ma-5 value
         assert t.cd_free_molecular(2.0) == 2.360635
 

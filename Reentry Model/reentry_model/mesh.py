@@ -28,9 +28,7 @@ import numpy as np
 from . import OUTPUT_DIR
 
 DEFAULT_MESH_DIR = os.path.join(OUTPUT_DIR, "meshes")
-DEFAULT_H_SURFACE = 2.0e-3          # m; 2 mm / 8 mm gives 18.9 k nodes on the 100 mm sphere at band = 0
-                                    # (the Step 2 field, which every caller here pins); 33.4 k with the
-                                    # 15 mm default band (measured 2026-09-18 and 2026-09-27)
+DEFAULT_H_SURFACE = 2.0e-3          # m; 2 mm / 8 mm with the default 15 mm band gives 33.4 k nodes on the 100 mm
                                     # sphere (measured 2026-09-27; band = 0 reproduces the pre-band 18.9 k instead)
 DEFAULT_H_CORE = 8.0e-3             # m
 DEFAULT_LAYERS = 0                  # prism layers: superseded as the default by the dense band (amendment 2026-09-27)

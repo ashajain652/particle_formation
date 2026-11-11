@@ -109,3 +109,64 @@ def test_has_thermal_needs_all_reference_heat_columns(ref):
         partial = dataclasses.replace(ref, **{name: None})
         assert compare.has_thermal(hist, partial) is False
     assert compare.has_thermal(hist, None) is True
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Step 3: the melting reference, the mass metrics and plots
+
+MELT100 = "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind"
+
+
+@pytest.fixture(scope="module")
+def melt_ref():
+    return sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, MELT100 + ".csv"))
+
+
+def melting_history(ref, lag=0.0, film=0.0):
+    """A synthetic model history that reproduces the reference's mass shifted by `lag` seconds, with the melt columns."""
+    h = synthetic_history(ref, dv=0.0, dh=0.0)
+    c = h.columns
+    n = len(ref.time)
+    c["mass_kg"] = np.interp(ref.time - lag, ref.time, ref.mass) + film
+    for key in ("film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_mass_kg", "spraying_area_m2", "theta_cr_deg", "n_released",
+                "released_mass_kg", "r_median_um", "r_max_um", "closure_fraction_girin", "closure_fraction_couette_slip",
+                "closure_fraction_couette_fm", "kn_body", "kn_local_stag", "film_thickness_mean_mm", "film_thickness_max_mm",
+                "convective_heat_W", "surface_T_max_K"):
+        c[key] = np.zeros(n)
+    c["film_mass_kg"][:] = film
+    c["removed_mass_kg"] = ref.mass[0] - c["mass_kg"] + film
+    c["sprayed_mass_kg"] = c["removed_mass_kg"].copy()
+    c["r_median_um"][:] = 150.0
+    c["closure_fraction_girin"][:] = 0.5
+    c["closure_fraction_couette_slip"][:] = 0.5
+    c["kn_body"][:] = 0.01
+    c["kn_local_stag"][:] = 1e-4
+    return h
+
+
+def test_melting_reference_and_has_melt(ref, melt_ref):
+    assert ref.mass is not None and float(ref.mass.min()) == float(ref.mass[0])                         # no-melt: constant mass
+    assert melt_ref.mass[0] == pytest.approx(1.473) and melt_ref.mass[-1] == 0.0 and melt_ref.thickness[0] == pytest.approx(0.05)
+    assert melt_ref.thickness[-1] == 0.0 and np.all(np.diff(melt_ref.mass) <= 0.0)
+    h = melting_history(melt_ref)
+    assert compare.has_melt(h) and compare.has_melt(h, melt_ref) and not compare.has_melt(h, ref) and not compare.has_melt(synthetic_history(ref))
+
+
+def test_melt_metrics_recover_a_known_lag(melt_ref):
+    m = compare.melt_metrics(melting_history(melt_ref, lag=-1.0), melt_ref)          # the model runs 1 s ahead of SESAM
+    assert m["mass"]["max_rel_m0"] < 0.06 and m["mass"]["max_abs_kg"] > 0.0
+    assert m["demise_time_diff_s"] == pytest.approx(-1.0, abs=0.1) and m["demise_time_rel"] == pytest.approx(-1.0 / m["demise_time_reference_s"], rel=0.1)
+    assert m["onset_time_reference_s"] == pytest.approx(43.55) and m["onset_altitude_reference_km"] == pytest.approx(71.005, abs=0.01)
+    assert m["onset_altitude_diff_km"] is not None and m["demise_time_reference_s"] == pytest.approx(66.8, abs=0.1)
+    exact = compare.melt_metrics(melting_history(melt_ref), melt_ref)
+    assert exact["mass"]["max_rel_m0"] < 1e-12 and abs(exact["demise_time_diff_s"]) < 1e-9
+    with_film = compare.melt_metrics(melting_history(melt_ref, film=0.05), melt_ref)
+    assert with_film["demise_time_diff_s"] == pytest.approx(exact["demise_time_diff_s"], abs=1e-9)   # the crossing is on the body's material
+
+
+def test_melt_plots_are_written(melt_ref, tmp_path):
+    h = melting_history(melt_ref, lag=-1.0)
+    paths = compare.plot_melt(h, str(tmp_path), "melt test", melt_ref)
+    assert [os.path.basename(p) for p in paths] == list(compare.MELT_PLOT_NAMES) and all(os.path.getsize(p) > 5000 for p in paths)
+    alone = compare.plot_melt(h, str(tmp_path / "alone"), "no reference")
+    assert len(alone) == len(compare.MELT_PLOT_NAMES) and all(os.path.isfile(p) for p in alone)

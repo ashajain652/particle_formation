@@ -14,6 +14,8 @@ from . import DATA_DIR
 from .constants import GAMMA_AIR, HARD_SPHERE_DIAMETER, K_BOLTZMANN
 
 DEFAULT_ATDB = os.path.join(DATA_DIR, "atdb_sphere.json")
+DISC_ATDB = os.path.join(DATA_DIR, "atdb_disc.json")     # the flat-disc limit (ATDB_CYLINDER at zero angle of attack)
+MACH_SWITCH_LO, MACH_SWITCH_HI = 0.98, 1.02      # SESAM halves C_D below Ma 1; the step is smoothed over this band (below)
 
 
 def mean_free_path(rho, m_bar):
@@ -39,7 +41,12 @@ class SphereDragTables:
 
     Below Ma 5 SESAM holds the continuum value at the Ma-5 entry down to Ma 1 and uses exactly
     half of it below Ma 1 (measured on 466 rows, facts note s.2); the free-molecular value is
-    simply clamped (Kn is negligible wherever Ma < 5)."""
+    simply clamped (Kn is negligible wherever Ma < 5). The factor-2 step is applied as a smooth
+    (cubic) ramp over Ma 0.98-1.02: a discontinuous C_D stalls the adaptive integrator when a
+    light body hovers at its transonic terminal velocity (a melting remnant, Step 3: 1.3e5 RHS
+    evaluations in one macro step, measured 2026-09-21); the reference spheres cross Ma 1 in a
+    fraction of a second, where the ramp changes nothing measurable (the drag test excludes
+    |Ma - 1| <= 0.02 rows for SESAM's 3-decimal Mach column)."""
 
     def __init__(self, mach_points, cd_free_molecular, cd_continuum):
         self.mach = np.asarray(mach_points, dtype=float)
@@ -56,8 +63,11 @@ class SphereDragTables:
         return float(np.interp(ma, self.mach, self.cd_fm))          # np.interp clamps at both ends
 
     def cd_continuum(self, ma):
-        if ma < 1.0:
+        if ma < MACH_SWITCH_LO:
             return 0.5 * float(self.cd_c[0])
+        if ma < MACH_SWITCH_HI:                                  # SESAM's factor-2 step at Ma 1, smoothed over +-2 % (module docstring)
+            s = (ma - MACH_SWITCH_LO) / (MACH_SWITCH_HI - MACH_SWITCH_LO)
+            return (0.5 + 0.5 * s * s * (3.0 - 2.0 * s)) * float(self.cd_c[0])
         if ma < self.mach[0]:
             return float(self.cd_c[0])
         return float(np.interp(ma, self.mach, self.cd_c))
@@ -146,9 +156,15 @@ def bridging_by_name(name):
     raise ValueError("bridging must be one of {}, got {!r}".format(BRIDGING_NAMES, name))
 
 
-def drag_coefficient(kn, ma, tables, bridging):
-    """SESAM's sphere C_D: continuum and free-molecular table values blended by f(Kn)."""
-    cd_c = tables.cd_continuum(ma)
+def drag_coefficient(kn, ma, tables, bridging, shape_factor=1.0):
+    """SESAM's sphere C_D: continuum and free-molecular table values blended by f(Kn).
+
+    `shape_factor` (Step 3) scales the continuum entry for a body that is no longer a sphere: it is the
+    modified-Newtonian drag of the current windward shape divided by that of a sphere, so 1 for a sphere and 2.00 for
+    a flat face (the ATDB disc entry is exactly 2 x the sphere entry at every Mach number -- HTG's continuum database
+    is itself modified Newtonian). The free-molecular entry is left alone: face-on, a disc and a sphere differ by only
+    3-4 % there (2.24 vs 2.15 at Ma 10), and a melting body is deep in the continuum by the time it flattens."""
+    cd_c = tables.cd_continuum(ma) * shape_factor
     cd_fm = tables.cd_free_molecular(ma)
     f = bridging(kn) if kn > 0.0 else 0.0
     return cd_c + (cd_fm - cd_c) * f

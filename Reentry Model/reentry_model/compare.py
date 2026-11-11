@@ -29,7 +29,10 @@ HYPERSONIC_MS = 1000.0
 PLOT_NAMES = ("velocity_time.png", "altitude_time.png", "altitude_velocity.png", "angles_time.png",
               "ground_track.png", "regime_drag.png")
 THERMAL_PLOT_NAMES = ("heating_time.png", "temperature_time.png", "integrated_heat.png")
+MELT_PLOT_NAMES = ("mass_time.png", "mass_altitude.png", "mass_budget.png", "spraying_time.png", "closures_time.png",
+                   "droplet_size_time.png", "size_distribution.png")
 CONTINUUM_KN = 0.01
+DEMISE_FRACTION = 0.01
 
 
 def align(history, reference):
@@ -230,4 +233,160 @@ def plot_thermal(history, reference, outdir, title):
     rx.set_ylabel("model / SESAM - 1 [%]"); rx.set_xlabel("time [s]"); rx.set_ylim(-20.0, 20.0)
     strip_top_right_spines(rx)
     fig.tight_layout(); fig.savefig(paths[2], dpi=150); plt.close(fig)
+    return paths
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Step 3: mass loss, spraying and size distributions (spec Step 3 sections 12-13)
+
+def has_melt(history, reference=None):
+    """True when the model history carries the melt columns (and, if a reference is given, its mass varies)."""
+    ok = "sprayed_mass_kg" in history.columns and "film_mass_kg" in history.columns
+    if reference is None:
+        return ok
+    return ok and reference.mass is not None and float(reference.mass.min()) < 0.999 * float(reference.mass[0])
+
+
+def _first_time(t, mask):
+    return float(t[mask][0]) if mask.any() else None
+
+
+def _crossing_time(t, m, level):
+    """Time at which the decreasing series m first falls below `level`, interpolated linearly between samples."""
+    below = np.flatnonzero(m < level)
+    if below.size == 0:
+        return None
+    i = int(below[0])
+    if i == 0:
+        return float(t[0])
+    return float(t[i - 1] + (m[i - 1] - level) / (m[i - 1] - m[i]) * (t[i] - t[i - 1]))
+
+
+def melt_metrics(history, reference):
+    """Mass vs SESAM at the reference's time stamps (relative to the initial mass), melt-onset altitude and the time
+    at which the mass falls below DEMISE_FRACTION of the initial (SESAM removes the last gram at its 'demise'; the model
+    stops at the fraction, so the 1 % crossing is the like-for-like end time; for the model it is taken on the body's
+    material, film excluded, since a static leeward film can stay attached)."""
+    c = history.columns
+    t_mod, m_mod = c["time_s"], c["mass_kg"]
+    mask = (reference.time >= t_mod[0]) & (reference.time <= t_mod[-1])
+    t = reference.time[mask]
+    m_ref = reference.mass[mask]
+    m_at = np.interp(t, t_mod, m_mod)
+    m0 = float(reference.mass[0])
+    onset_ref = _first_time(reference.time, reference.mass < 0.999999 * m0)
+    onset_mod = _first_time(t_mod, (c["removed_mass_kg"] + c["film_mass_kg"]) > 0.0)
+    h_ref = float(np.interp(onset_ref, reference.time, reference.altitude)) / 1e3 if onset_ref is not None else None
+    h_mod = float(np.interp(onset_mod, t_mod, c["altitude_km"])) if onset_mod is not None else None
+    end_ref = _crossing_time(reference.time, reference.mass, DEMISE_FRACTION * m0)
+    body_mass = m_mod - c["film_mass_kg"]                                                          # the body's material (a leeward film may stay attached)
+    end_mod = _crossing_time(t_mod, body_mass, DEMISE_FRACTION * float(body_mass[0]))
+    return {
+        "n_points": int(t.size), "initial_mass_model_kg": float(m_mod[0]), "initial_mass_reference_kg": m0,
+        "mass": {"max_abs_kg": float(np.abs(m_at - m_ref).max()), "max_rel_m0": float(np.abs(m_at - m_ref).max() / m0),
+                 "rms_rel_m0": float(math.sqrt(np.mean((m_at - m_ref) ** 2)) / m0)},
+        "onset_time_model_s": onset_mod, "onset_time_reference_s": onset_ref,
+        "onset_altitude_model_km": h_mod, "onset_altitude_reference_km": h_ref,
+        "onset_altitude_diff_km": (h_mod - h_ref) if (h_mod is not None and h_ref is not None) else None,
+        "demise_time_model_s": end_mod, "demise_time_reference_s": end_ref,
+        "demise_time_diff_s": (end_mod - end_ref) if (end_mod is not None and end_ref is not None) else None,
+        "demise_time_rel": ((end_mod - end_ref) / end_ref) if (end_mod is not None and end_ref is not None) else None,
+        "final_mass_model_kg": float(m_mod[-1]), "sprayed_mass_kg": float(c["sprayed_mass_kg"][-1]), "film_mass_kg": float(c["film_mass_kg"][-1]),
+    }
+
+
+def plot_melt(history, outdir, title, reference=None, size_distribution_csv=None):
+    """The Step 3 plots (MELT_PLOT_NAMES); with a melting reference the mass plots carry the SESAM overlay and a
+    residual panel. Returns the paths."""
+    import csv
+    os.makedirs(outdir, exist_ok=True)
+    apply_rcparams(plt)
+    c = history.columns
+    t, h, m = c["time_s"], c["altitude_km"], c["mass_kg"]
+    paths = [os.path.join(outdir, n) for n in MELT_PLOT_NAMES]
+    # 1. mass vs time (+ residual)
+    if reference is not None:
+        mask = (reference.time >= t[0]) & (reference.time <= t[-1])
+        tr, mr = reference.time[mask], reference.mass[mask]
+        fig, (ax, rx) = plt.subplots(2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+        _overlay(ax, tr, mr, t, m, "mass [kg]", title=title)
+        rx.plot(tr, 100.0 * (np.interp(tr, t, m) - mr) / reference.mass[0], color=MODEL_COLOR, lw=1.0)
+        rx.axhline(0.0, color=MUTED, lw=0.6)
+        rx.set_ylabel("model - SESAM [% of m0]"); rx.set_xlabel("time [s]")
+        strip_top_right_spines(rx)
+    else:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(t, m, color=MODEL_COLOR, lw=1.2, label="model")
+        ax.set_ylabel("mass [kg]"); ax.set_xlabel("time [s]"); ax.set_title(title, color=SECOND, fontsize=10)
+        strip_top_right_spines(ax)
+    fig.tight_layout(); fig.savefig(paths[0], dpi=150); plt.close(fig)
+    # 2. mass vs altitude
+    fig, ax = plt.subplots(figsize=(7, 5))
+    if reference is not None:
+        ax.plot(reference.mass, reference.altitude / 1e3, color=REF_COLOR, lw=1.6, label="SESAM")
+    ax.plot(m, h, color=MODEL_COLOR, lw=1.2, ls="--", label="model")
+    ax.set_xlabel("mass [kg]"); ax.set_ylabel("altitude [km]"); ax.set_title(title, color=SECOND, fontsize=10); ax.legend(frameon=False)
+    strip_top_right_spines(ax)
+    fig.tight_layout(); fig.savefig(paths[1], dpi=150); plt.close(fig)
+    # 3. mass budget
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(t, c["sprayed_mass_kg"], color=MODEL_COLOR, lw=1.2, label="sprayed (cumulative)")
+    ax.plot(t, c["removed_mass_kg"] - c["sprayed_mass_kg"], color=SECOND, lw=1.0, ls=":", label="removed instantly (cumulative)")
+    ax.plot(t, c["film_mass_kg"], color=MUTED, lw=1.2, label="film")
+    ax.plot(t, m, color=REF_COLOR, lw=1.2, ls="--", label="remaining (body + film)")
+    ax.set_xlabel("time [s]"); ax.set_ylabel("mass [kg]"); ax.set_title(title, color=SECOND, fontsize=10); ax.legend(frameon=False)
+    strip_top_right_spines(ax)
+    fig.tight_layout(); fig.savefig(paths[2], dpi=150); plt.close(fig)
+    # 4. theta_cr and spraying area
+    fig, (ax, bx) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    ax.plot(t, c["theta_cr_deg"], color=MODEL_COLOR, lw=1.0); ax.set_ylabel("theta_cr [deg]"); ax.set_title(title, color=SECOND, fontsize=10)
+    bx.plot(t, c["spraying_area_m2"] * 1e4, color=MODEL_COLOR, lw=1.0); bx.set_ylabel("spraying area [cm2]"); bx.set_xlabel("time [s]")
+    strip_top_right_spines(ax); strip_top_right_spines(bx)
+    fig.tight_layout(); fig.savefig(paths[3], dpi=150); plt.close(fig)
+    # 5. closure fractions and the two Knudsen numbers
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.stackplot(t, c["closure_fraction_girin"], c["closure_fraction_couette_slip"], c["closure_fraction_couette_fm"],
+                 labels=["Girin closure (Kn_local < 0.01)", "Couette, slip-corrected shear", "Couette, free-molecular shear"],
+                 colors=[INK, MODEL_COLOR, MUTED], alpha=0.8)
+    ax.set_xlabel("time [s]"); ax.set_ylabel("windward area fraction"); ax.set_ylim(0.0, 1.0); ax.legend(frameon=False, loc="upper left", fontsize=8)
+    bx2 = ax.twinx()
+    bx2.semilogy(t, c["kn_body"], color=SECOND, lw=1.0, ls="--")
+    bx2.semilogy(t, c["kn_local_stag"], color=SECOND, lw=1.0, ls=":")
+    bx2.axhline(0.01, color=MUTED, lw=0.6)
+    bx2.set_ylabel("Kn_body (dashed), Kn_local at the nose (dotted)", color=SECOND, fontsize=8)
+    ax.set_title(title, color=SECOND, fontsize=10); strip_top_right_spines(ax)
+    fig.tight_layout(); fig.savefig(paths[4], dpi=150); plt.close(fig)
+    # 6. droplet size and film thickness
+    fig, (ax, bx) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    ax.semilogy(t, c["r_median_um"], color=MODEL_COLOR, lw=1.0, label="median r")
+    ax.semilogy(t, c["r_max_um"], color=MUTED, lw=0.8, ls=":", label="max r")
+    ax.set_ylabel("droplet radius [um]"); ax.legend(frameon=False); ax.set_title(title, color=SECOND, fontsize=10)
+    bx.semilogy(t, np.maximum(c["film_thickness_mean_mm"], 1e-6), color=MODEL_COLOR, lw=1.0, label="mean film thickness")
+    bx.semilogy(t, np.maximum(c["film_thickness_max_mm"], 1e-6), color=MUTED, lw=0.8, ls=":", label="max")
+    bx.set_ylabel("film thickness [mm]"); bx.set_xlabel("time [s]"); bx.legend(frameon=False)
+    strip_top_right_spines(ax); strip_top_right_spines(bx)
+    fig.tight_layout(); fig.savefig(paths[5], dpi=150); plt.close(fig)
+    # 7. size distributions (from size_distribution.csv when present next to the run, else skipped with an empty axes)
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(10, 4.5))
+    path = size_distribution_csv or os.path.join(outdir, "size_distribution.csv")
+    if os.path.isfile(path):
+        with open(path) as fh:
+            rows = list(csv.DictReader(fh))
+        windows = sorted({(float(r["window_start_s"]), float(r["window_end_s"])) for r in rows})
+        for lo, hi in windows:
+            sel = [r for r in rows if float(r["window_start_s"]) == lo and float(r["window_end_s"]) == hi]
+            r_mid = np.sqrt(np.array([float(r["r_lo_m"]) for r in sel]) * np.array([float(r["r_hi_m"]) for r in sel])) * 1e6
+            dn, dm = np.array([float(r["dn"]) for r in sel]), np.array([float(r["dm_kg"]) for r in sel])
+            total = (lo, hi) == windows[-1] and lo == 0.0
+            kw = dict(color=INK, lw=1.6, label="flight") if total else dict(color=MODEL_COLOR, lw=0.7, alpha=0.5)
+            if dn.sum() > 0:
+                ax.loglog(r_mid, np.maximum(dn, 1e-300), **kw)
+                bx.loglog(r_mid, np.maximum(dm, 1e-300), **kw)
+        ax.set_ylim(bottom=max(ax.get_ylim()[0], 1e-1)); bx.set_ylim(bottom=max(bx.get_ylim()[0], 1e-12))
+    ax.set_xlabel("droplet radius [um]"); ax.set_ylabel("dn per bin"); bx.set_xlabel("droplet radius [um]"); bx.set_ylabel("dM per bin [kg]")
+    ax.set_title(title, color=SECOND, fontsize=10)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(frameon=False)
+    strip_top_right_spines(ax); strip_top_right_spines(bx)
+    fig.tight_layout(); fig.savefig(paths[6], dpi=150); plt.close(fig)
     return paths

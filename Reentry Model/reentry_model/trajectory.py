@@ -109,9 +109,11 @@ class Simulator:
         V = float(np.linalg.norm(v_rel))
         ma = aero.mach(V, fs.T, fs.m_bar)
         if fs.rho > 0.0:
-            kn = aero.knudsen(fs.rho, fs.m_bar, self.settings.diameter)
-            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging)
-            a_drag = -0.5 * fs.rho * V * v_rel * cd * self.area / self.body.mass(t)
+            kn = aero.knudsen(fs.rho, fs.m_bar, self.body.reference_length() or self.settings.diameter)   # a melting body's current size (Step 3)
+            cd = aero.drag_coefficient(kn, ma, self.tables, self.bridging, self.body.drag_shape_factor())
+            area = self.body.reference_area() or self.area          # a melting body's projected area (Step 3), else pi D^2/4
+            m = self.body.mass(t)
+            a_drag = -0.5 * fs.rho * V * v_rel * cd * area / m if m > 0.0 else np.zeros(3)      # a consumed body (Step 3) has no drag
         else:
             kn, cd, a_drag = math.inf, self.tables.cd_free_molecular(ma), np.zeros(3)
         return AeroState(h, lat, lon, fs, v_rel, V, kn, ma, cd, a_drag, 0.5 * fs.rho * V * V)
@@ -135,14 +137,18 @@ class Simulator:
         escape.terminal, escape.direction = True, -1
         return [ground, escape]
 
-    def advance(self, dt):
+    def advance(self, dt, snap=0.0):
         """One macro step from the stored state: DOP853 over [t, t + dt] at the Step 1 tolerances, a fresh solve_ivp
         per step (spec section 7). A ground/escape event or t_max truncates the step and sets `end_reason`.
-        Returns the time actually advanced."""
+        Returns the time actually advanced. A step that would end within `snap` [s] short of t_max ends at t_max: the
+        steps' sum, t + dt added again and again, falls short of t_max by round-off, and the loop then took a last step
+        of about 1e-17 s (sub-plan 22 Task 4, fact 179). With `snap` 0, the default, the step is as it always was."""
         if self.end_reason is not None:
             raise RuntimeError("the flight already ended ({})".format(self.end_reason))
         s = self.settings
         t_target = min(self.t + dt, s.t_max)
+        if s.t_max - t_target <= snap:
+            t_target = s.t_max
         sol = solve_ivp(self.rhs, (self.t, t_target), self.y, method="DOP853", rtol=s.rtol,
                         atol=[s.atol_position] * 3 + [s.atol_velocity] * 3, events=self._events())
         if not sol.success:

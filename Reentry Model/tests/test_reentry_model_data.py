@@ -3,6 +3,8 @@ import csv
 import json
 import os
 
+import pytest
+
 import reentry_model
 from reentry_model import constants as c
 
@@ -71,3 +73,18 @@ def test_melting_reference_runs_are_committed_and_consistent():
         rows = list(csv.DictReader(open(csv_path)))
         assert float(rows[-1]["mass_kg"]) == 0.0 and float(rows[-1]["thick_mm"]) == 0.0 and float(rows[-1]["altitude_km"]) > 60.0
         assert abs(float(rows[0]["mass_kg"]) - doc["inputs"]["initial_mass_kg"]) < 1e-3
+
+
+def test_disc_aerothermal_table():
+    """data/atdb_disc.json: ATDB_CYLINDER at zero angle of attack and the thinnest aspect ratio -- the flat-face limit
+    of the sphere-to-disc family (Step 3). HTG's continuum database is modified Newtonian, so the sphere entry is
+    0.49897 of the disc entry at every Mach number, and the free-molecular entries differ by only 3 %."""
+    sphere = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_sphere.json")))
+    disc = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_disc.json")))
+    assert disc["mach"] == sphere["mach"] == [5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
+    assert "ATDB_CYLINDER" in disc["_provenance"] and "angle of attack 0" in disc["_provenance"]
+    cd_c, cd_fm = disc["cd_continuum"], disc["cd_free_molecular"]
+    assert cd_c[1] == pytest.approx(1.824148) and cd_fm[1] == pytest.approx(2.202072)
+    assert all(abs(s / d - 0.49897) < 1e-5 for s, d in zip(sphere["cd_continuum"], cd_c))
+    assert all(0.99 < d / s < 1.08 for s, d in zip(sphere["cd_free_molecular"], cd_fm))
+    assert all(v == pytest.approx(0.329561) for v in disc["heat_flux_factor_continuum"])       # Mach-independent, like the sphere's

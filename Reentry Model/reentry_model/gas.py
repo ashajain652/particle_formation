@@ -14,6 +14,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 AIR = "N2:0.79, O2:0.21"
+AVOGADRO = 6.02214076e23
 T_FLOOR = 200.0
 CP_AIR = 1004.5              # J/(kg K), perfect-gas air: the stagnation-temperature estimate that decides whether to equilibrate
 T_EQUILIBRATE = 1500.0       # K; below this the composition is frozen (no dissociation) and Cantera's equilibrium solver is skipped
@@ -37,6 +38,9 @@ class GasState:
     mu: float         # Pa s
     h_D: float        # J/kg, chemical enthalpy of the free atoms (dissociation enthalpy)
     X: dict           # mole fractions > 1e-6
+    s: float = 0.0    # J/(kg K), specific entropy (Cantera basis) -- Step 3: the isentropic expansion to the edge state
+    a: float = 0.0    # m/s, frozen sound speed
+    m_bar: float = 0.0  # kg, mean molecular mass (Step 3: the edge mean free path)
 
 
 def blottner_viscosity(species, T):
@@ -85,7 +89,8 @@ class EquilibriumAir:
         Y = dict(zip(g.species_names, g.Y))
         h_D = sum(Y[s] * self._h_atoms[s] for s in ("N", "O"))
         return GasState(float(g.P), float(g.T), float(g.density), float(g.enthalpy_mass),
-                        wilke_viscosity(float(g.T), X, self.molar_masses), float(h_D), X)
+                        wilke_viscosity(float(g.T), X, self.molar_masses), float(h_D), X, float(g.entropy_mass),
+                        float(g.sound_speed), float(g.mean_molecular_weight) * 1e-3 / AVOGADRO)
 
     def freestream(self, rho, T):
         self.gas.TDX = max(T, T_FLOOR), rho, AIR
@@ -135,6 +140,15 @@ class EquilibriumAir:
         p_s = math.exp(brentq(residual, math.log(p2), math.log(8.0 * p2), xtol=1e-12))
         g.SPX = s2, p_s, AIR
         if equilibrate:
+            g.equilibrate("SP")
+        return self._state()
+
+    def expand(self, stag, p):
+        """Isentropic expansion of the stagnation state `stag` to pressure p (equilibrium above T_EQUILIBRATE):
+        the boundary-layer edge state (Step 3, spec section 7)."""
+        g = self.gas
+        g.SPX = stag.s, p, AIR
+        if g.T > T_EQUILIBRATE:
             g.equilibrate("SP")
         return self._state()
 
