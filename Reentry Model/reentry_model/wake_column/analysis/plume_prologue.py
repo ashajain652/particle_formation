@@ -12,6 +12,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Ellipse, FancyBboxPatch, Rectangle
+from matplotlib.path import Path
+from matplotlib.transforms import Affine2D
 import numpy as np
 
 from reentry_model.droplet_reentry import parent_trajectory
@@ -24,17 +26,62 @@ from reentry_model.wake_column.species import load_species
 from reentry_model.wake_column.trail import trail_from_rows
 
 FPS = 30
-SCENES = (("parent", 270), ("zoom", 150), ("droplet", 240), ("atoms", 390), ("column", 240))
+SCENES = (("parent", 405), ("zoom", 225), ("droplet", 360), ("atoms", 585), ("column", 675))
 N_FRAMES = sum(n for _, n in SCENES)
 SURFACE, INK, INK2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#8b8a85", "#e4e3df"
 STAGE_ON, STAGE_OFF = "#7f9fc9", "#e9eef5"
-ATOM_COLOUR = {"Al": "#2a78d6", "AlO": "#eb6834", "OAlO": "#1baf7a"}
+ATOM_COLOUR = {"Al": "#2a78d6", "AlO": "#eb6834", "OAlO": "#1baf7a", "OAlO2": "#eda100", "AlCO3": "#e87ba4",
+               "AlOH": "#008300", "AlOH2": "#6250d6"}
 SETTLED_WINDOW_S = 24e-6             # the atoms scene shows this much real time
 N_TRACKS = 500
+T_COLOUR_K = (900.0, 2100.0)         # droplet temperatures spanned by the colour bar, K
+SHADE = (0.25, 0.90)                 # the part of the inferno colour map used for them
+PARENT_SIZE = 3600                   # scatter area of the satellite icon, points squared
 
 
-def compute(case):
-    """Everything the opening draws, for one case."""
+def satellite_marker():
+    """A satellite icon as one matplotlib marker: a body, a strut each side, and a solar panel of three separated
+    cells each side, with a small dish on top, tilted. It is a symbol only and is not to scale."""
+    def box(x0, y0, x1, y1):
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+    boxes = [box(-0.32, -0.32, 0.32, 0.32), box(-0.48, -0.04, -0.32, 0.04), box(0.32, -0.04, 0.48, 0.04),
+             box(-0.06, 0.32, 0.06, 0.46)]
+    for k in range(3):
+        x0 = 0.48 + k * 0.32
+        boxes += [box(x0, -0.3, x0 + 0.27, 0.3), box(-x0 - 0.27, -0.3, -x0, 0.3)]
+    verts, codes = [], []
+    for b in boxes:
+        verts += b
+        codes += [Path.MOVETO] + [Path.LINETO] * 3 + [Path.CLOSEPOLY]
+    dish = Path.arc(200, 340).transformed(Affine2D().scale(0.34).translate(0, 0.72))   # the bowl opens upward
+    verts += list(dish.vertices) + [dish.vertices[0]]
+    codes += [Path.MOVETO] + [Path.CURVE4 if c == Path.CURVE4 else Path.LINETO for c in dish.codes[1:]] + [Path.CLOSEPOLY]
+    return Path(verts, codes).transformed(Affine2D().rotate_deg(-25))
+
+
+SATELLITE = satellite_marker()
+
+
+def tapered_trail(d, main):
+    """The trail at the moment the droplet has laid its length L: at each distance xi behind the droplet, how long ago
+    that piece was laid, its radius and its gas composition, read from the box run at that age. The box itself treats
+    every piece as one age; this is what its clock implies for the real, tapered trail."""
+    q = d["droplet"]
+    t_end = float(np.interp(d["L"], q["x"], q["t"]))
+    lost = q["mAl"][0] - q["mAl"]
+    x_first = float(np.interp(0.001 * lost[-1], lost, q["x"]))        # where aluminium loss really starts
+    xi = np.logspace(-3, np.log10(d["L"] - x_first), 500)
+    age = t_end - np.interp(d["L"] - xi, q["x"], q["t"])
+    lt = np.log10(main["t"])
+    la = np.log10(np.maximum(age, main["t"][0]))
+    r = np.interp(la, lt, main["r"])
+    names = list(main["conc"])
+    shares = np.array([np.interp(la, lt, main["frac"][a]) for a in names]).T
+    return dict(t_end=t_end, xi=xi, age=age, r=r, shares=shares / shares.sum(axis=1, keepdims=True), names=names)
+
+
+def compute(case, main):
+    """Everything the opening draws, for one case; `main` is the box run's data from plume_video.compute."""
     settings = Settings()
     parent = parent_trajectory.load_parent()
     final, rows = run_case(case.d0_um, case.h0_km, parent=parent)
@@ -57,11 +104,13 @@ def compute(case):
     release = float(np.interp(-case.h0_km, -p["h"], p["t"]))
     x_release = float(np.interp(release, p["t"], p["x"]))
     t_loss = float(np.interp(0.999 * (d["mAl"][0] - d["mAl"][-1]), d["mAl"][0] - d["mAl"], d["t"]))
-    return dict(case=case, parent=p, droplet=d, release=release, x_release=x_release, t_loss=t_loss,
-                L=trail.L_m, r0=hot.r0_m, fractions=dict(hot.fractions), collisions=hot.mean_collisions,
-                stop_time=hot.mean_stop_time_s, N_Al=trail.N_Al, T_amb=column.at(trail.z_mean_km).T_K,
-                mid_V=mid.V_ms, mid_T=mid.T_d_K, tracks=traced.tracks, mass_al=species["Al"].mass_amu,
-                masses={s: species[s].mass_amu for s in TRACKED})
+    out = dict(case=case, parent=p, droplet=d, release=release, x_release=x_release, t_loss=t_loss,
+               L=trail.L_m, r0=hot.r0_m, fractions=dict(hot.fractions), collisions=hot.mean_collisions,
+               stop_time=hot.mean_stop_time_s, N_Al=trail.N_Al, T_amb=column.at(trail.z_mean_km).T_K,
+               mid_V=mid.V_ms, mid_T=mid.T_d_K, tracks=traced.tracks, mass_al=species["Al"].mass_amu,
+               masses={s: species[s].mass_amu for s in TRACKED})
+    out["taper"] = tapered_trail(out, main)
+    return out
 
 
 class Fixed:
@@ -72,6 +121,15 @@ class Fixed:
         self.emit = rng.uniform(0.0, SETTLED_WINDOW_S, len(d["tracks"]))
         self.theta = rng.uniform(0, 2 * np.pi, 160)
         self.phase = rng.random(160)
+        # dots along the tapered trail, log-spaced behind the droplet so that some stay in view at every zoom
+        tp = d["taper"]
+        n = 3200
+        self.dot_xi = 10 ** rng.uniform(math.log10(0.01), math.log10(tp["xi"][-1]), n)
+        self.dot_y = rng.normal(0.0, 1.0 / math.sqrt(2.0), n) * np.interp(np.log10(self.dot_xi), np.log10(tp["xi"]), tp["r"])
+        cum = np.cumsum(tp["shares"], axis=1)
+        q = rng.random(n)
+        idx = np.searchsorted(tp["xi"], self.dot_xi).clip(0, len(tp["xi"]) - 1)
+        self.dot_col = [ATOM_COLOUR[tp["names"][int(np.searchsorted(cum[j], u))]] for j, u in zip(idx, q)]
         self.scene_of, self.local, self.length = [], [], []
         for name, n in SCENES:
             self.scene_of += [name] * n
@@ -151,8 +209,8 @@ def scene_parent(fig, d, fx, u, i):
     m = p["t"] <= t
     x, h, V = np.interp(t, p["t"], p["x"]), np.interp(t, p["t"], p["h"]), np.interp(t, p["t"], p["V"])
     ax.plot(p["x"][m], p["h"][m], color="#2a78d6", lw=2.5)
-    ax.scatter([x], [h], s=150, marker="s", c=INK, zorder=5)
-    ax.annotate("parent", xy=(x, h), xytext=(x + 40, h + 7), fontsize=12.5)
+    ax.scatter([x], [h], s=PARENT_SIZE, marker=SATELLITE, c=INK, linewidths=0, zorder=5)
+    ax.annotate("parent", xy=(x, h), xytext=(x + 90, h + 8), fontsize=12.5)
     ax.set_xlim(p["x"][0] - 50, d["x_release"] + 1500); ax.set_ylim(0, 125)
     ax.set_xlabel("distance along the ground track (km)", fontsize=12, color=INK2)
     ax.set_ylabel("altitude (km)", fontsize=12, color=INK2)
@@ -177,7 +235,7 @@ def scene_zoom(fig, d, fx, u, i):
     style(ax)
     xc = d["x_release"]
     ax.plot(p["x"], p["h"], color="#2a78d6", lw=2.5)
-    ax.scatter([xc], [d["case"].h0_km], s=150, marker="s", c=INK, zorder=5)
+    ax.scatter([xc], [d["case"].h0_km], s=PARENT_SIZE, marker=SATELLITE, c=INK, linewidths=0, zorder=5)
     ax.set_xlim(xc - 0.75 * w, xc + 0.25 * w)
     hw = max(0.5 * w / 35.0, 0.5)
     ax.set_ylim(max(d["case"].h0_km - 1.1 * hw, 0), min(d["case"].h0_km + 1.1 * hw, 125))
@@ -192,6 +250,26 @@ def scene_zoom(fig, d, fx, u, i):
 def droplet_at(d, t):
     q = d["droplet"]
     return {k: float(np.interp(t, q["t"], q[k])) for k in ("x", "h", "V", "T", "d", "mAl", "mZn", "mMg", "Kn")}
+
+
+def temperature_shade(T):
+    """The droplet's temperature [K] as a position on the inferno colour map, limited to the bar's range."""
+    heat = (T - T_COLOUR_K[0]) / (T_COLOUR_K[1] - T_COLOUR_K[0])
+    return SHADE[0] + (SHADE[1] - SHADE[0]) * min(max(heat, 0.0), 1.0)
+
+
+def temperature_colourbar(fig, T):
+    """A bar of the colours the droplet takes, with a line at its temperature T [K] now."""
+    cb = fig.add_axes([0.022, 0.15, 0.012, 0.36])
+    cb.imshow(np.linspace(*SHADE, 256)[:, None], origin="lower", aspect="auto", cmap="inferno", vmin=0, vmax=1,
+              extent=(0, 1, *T_COLOUR_K))
+    cb.axhline(min(max(T, T_COLOUR_K[0]), T_COLOUR_K[1]), color="white", lw=2.5)
+    cb.axhline(min(max(T, T_COLOUR_K[0]), T_COLOUR_K[1]), color=INK, lw=1)
+    cb.set_xticks([]); cb.yaxis.tick_right()
+    cb.set_yticks(np.arange(T_COLOUR_K[0], T_COLOUR_K[1] + 1, 200))
+    cb.tick_params(colors=INK2, labelsize=10.5)
+    cb.set_ylabel("droplet temperature (K)", fontsize=11.5, color=INK2, labelpad=4)
+    cb.yaxis.set_label_position("left")
 
 
 def scene_droplet(fig, d, fx, u, i):
@@ -226,8 +304,7 @@ def scene_droplet(fig, d, fx, u, i):
     sp = fig.add_axes([0.06, 0.12, 0.27, 0.42]); sp.set_xlim(-1.2, 1.2); sp.set_ylim(-1.2, 1.2); sp.set_aspect("equal")
     sp.axis("off")
     rad = 0.5 * now["d"] / d["case"].d0_um
-    heat = (now["T"] - 900) / 1000
-    colour = plt.get_cmap("inferno")(0.25 + 0.65 * min(max(heat, 0), 1))
+    colour = plt.get_cmap("inferno")(temperature_shade(now["T"]))
     sp.add_patch(Circle((0, 0), rad, fc=colour, ec=INK, lw=1))
     rate = np.interp(t, q["t"], -np.gradient(q["mAl"], q["t"]))
     peak = np.max(-np.gradient(q["mAl"], q["t"]))
@@ -238,6 +315,7 @@ def scene_droplet(fig, d, fx, u, i):
         sp.scatter([r * math.cos(a)], [r * math.sin(a)], s=14, c=ATOM_COLOUR["Al"], linewidths=0)
     sp.text(0, -1.15, f"droplet {now['d']:.0f} µm across, {now['T']:.0f} K", ha="center", fontsize=13)
     sp.text(0, 1.1, "Al atoms leaving the surface", ha="center", fontsize=12, color=INK2)
+    temperature_colourbar(fig, now["T"])
     # the droplet's state
     for pos, (y, lab, col, marker) in enumerate(((q["T"], "droplet temperature (K)", "#eb6834", now["T"]),
                                                  (q["V"] / 1e3, "speed (km/s)", "#2a78d6", now["V"] / 1e3),
@@ -345,43 +423,86 @@ def scene_atoms(fig, d, fx, u, i):
                  "goes in each collision, and some Al reacts with O₂ to give AlO.")
 
 
+def fmt_len(x):
+    if x < 1:
+        return f"{x * 100:.3g} cm" if x >= 0.01 else f"{x * 1e3:.3g} mm"
+    return f"{x:.3g} m" if x < 1000 else f"{x / 1e3:.3g} km"
+
+
+def nice_length(x):
+    """The largest of 1, 2 or 5 times a power of ten that does not exceed x."""
+    p = 10.0 ** math.floor(math.log10(x))
+    return max(m * p for m in (1, 2, 5) if m * p <= x)
+
+
 def scene_column(fig, d, fx, u, i):
-    ribbon(fig, 2 if u < 0.45 else 3, d)
-    ax = fig.add_axes([0.06, 0.18, 0.88, 0.62]); ax.axis("off")
-    r0, L = d["r0"], d["L"]
-    ax.set_xlim(0, 1); ax.set_ylim(-1, 1)
-    z = smooth(u / 0.55)                                   # 0: a 14 cm view of the trail; 1: the whole trail
-    view = 0.14 * (1.3 * L / 0.14) ** z
-    x0 = 0.05 + 0.0 * z
-    length = min(L / view, 1.0) * 0.9 if z > 0 else 0.9
-    # the trail seen at this zoom; thickness drawn at true scale until it is under a pixel
-    half = max(4.5 * r0 / view, 0.003)                     # 1 y unit is about 335 px and the view spans 1520 px
-    s = smooth((u - 0.5) / 0.35)
-    ax.add_patch(Rectangle((x0, -half), max(length, 0.02), 2 * half, fc=ATOM_COLOUR["AlO"], ec="none",
-                           alpha=0.75 * (1 - s)))
-    w = 1.0 - smooth((u - 0.5) / 0.3)
-    ax.plot([0.05, 0.95], [-0.72, -0.72], color=INK2, lw=2, alpha=max(w, 0.0))
-    ax.text(0.5, -0.82, f"view is {view:,.2f} m across; the trail is {2 * r0 * 1e3:.0f} mm wide and {L / 1e3:.2f} km long",
-            ha="center", fontsize=14, color=INK2, alpha=max(w, 0.0))
+    ribbon(fig, 3, d)
+    tp = d["taper"]
+    a, b, c = smooth(u / 0.36), smooth((u - 0.38) / 0.22), smooth((u - 0.68) / 0.22)
+    span = float(tp["xi"][-1])
+    ax = fig.add_axes([0.05, 0.145, 0.90, 0.675]); ax.axis("off")
+    aspect = 0.675 * 10.8 / (0.90 * 19.2)
+    w = 0.14 * (1.14 * span / 0.14) ** a                   # metres across the view
+    half = 0.5 * w * aspect
+    rmax = float(tp["r"].max())
+    full = 0.72 * 0.5 * (1.14 * span) * aspect / rmax      # the stretch that makes the wide end fill the view
+    stretch = full ** b
+    ax.set_xlim(-0.93 * w, 0.07 * w); ax.set_ylim(-half / stretch, half / stretch)
+    fade = 1.0 - c
+    if fade > 0:
+        ax.fill_between(-tp["xi"], -tp["r"], tp["r"], color="#7f9fc9", alpha=0.35 * fade, linewidth=0)
+        ax.plot(-tp["xi"], tp["r"], color=INK2, lw=1.1, alpha=fade)
+        ax.plot(-tp["xi"], -tp["r"], color=INK2, lw=1.1, alpha=fade)
+        ax.scatter(-fx.dot_xi, fx.dot_y, s=13, c=fx.dot_col, linewidths=0, alpha=0.9 * fade)
+        ax.scatter([0], [0], s=46, c=INK, alpha=fade, zorder=6)
+        ax.text(0.003 * w, half / stretch * 0.1, "droplet", fontsize=12, alpha=fade)
+        # the ruler: its length, not the trail's width, is what changes on screen
+        y = -0.86 * half / stretch
+        bar = nice_length(0.22 * w)
+        x1 = -0.88 * w
+        ax.plot([x1, x1 + bar], [y, y], color=INK, lw=3, alpha=fade, solid_capstyle="butt")
+        for xr in (x1, x1 + bar):
+            ax.plot([xr, xr], [y - 0.025 * half / stretch, y + 0.025 * half / stretch], color=INK, lw=2, alpha=fade)
+        ax.text(x1 + bar / 2, y + 0.05 * half / stretch, fmt_len(bar), ha="center", fontsize=15, fontweight="bold",
+                alpha=fade)
+    if b < 0.5:
+        ax.text(0.5, 0.93, "The camera is pulling back. The trail is not shrinking: only the view is widening.",
+                transform=ax.transAxes, ha="center", fontsize=17, fontweight="bold", alpha=(1 - 2 * b) * (0.0 + min(u / 0.03, 1)))
+        ax.text(0.5, 0.86, f"view {fmt_len(w)} across, trail about {2 * d['r0'] * 1e3:.0f} mm wide at the droplet, drawn "
+                "at true proportions", transform=ax.transAxes, ha="center", fontsize=14, color=INK2, alpha=1 - 2 * b)
+    if b > 0 and fade > 0:
+        ax.text(0.5, 0.93, f"Same trail, with its width stretched {stretch:,.0f} times so the shape can be seen",
+                transform=ax.transAxes, ha="center", fontsize=17, fontweight="bold", alpha=b * fade)
+        old_r, old_age = float(tp["r"][-1]), float(tp["age"][-1])
+        ax.text(0.07, 0.17, f"oldest end: laid {old_age:.2f} s ago\nradius about {fmt_len(old_r)}", transform=ax.transAxes,
+                fontsize=14, alpha=b * fade)
+        ax.text(0.93, 0.70, f"newest end: just laid\nradius {d['r0'] * 1e3:.0f} mm", transform=ax.transAxes, ha="right",
+                fontsize=14, alpha=b * fade)
+        ax.text(0.5, 0.875, "Older vapour has had longer to spread, and its colour shows it has reacted further. Width "
+                "grows with the square root of age, so the edges curve.", transform=ax.transAxes, ha="center", fontsize=13,
+                color=INK2, alpha=b * fade)
+    s = smooth((u - 0.74) / 0.2)
     if s > 0:
-        # the box model's column, the first thing the wake column section draws
-        h = 0.34
+        ax2 = fig.add_axes([0.05, 0.145, 0.90, 0.675]); ax2.axis("off"); ax2.set_xlim(0, 1); ax2.set_ylim(-1, 1)
+        r0, L = d["r0"], d["L"]
+        h = 0.32
         col = "#7f9fc9"
-        ax.add_patch(Rectangle((0.14, -h), 0.72, 2 * h, fc=col, ec=INK2, lw=1.4, alpha=0.45 * s, zorder=3))
-        ax.add_patch(Ellipse((0.86, 0), 0.035, 2 * h, fc=col, ec=INK2, lw=1.4, alpha=0.7 * s, zorder=3))
-        ax.add_patch(Ellipse((0.14, 0), 0.035, 2 * h, fc=SURFACE, ec=INK2, lw=1.4, alpha=s, zorder=4))
+        ax2.add_patch(Rectangle((0.14, -h), 0.72, 2 * h, fc=col, ec=INK2, lw=1.4, alpha=0.45 * s, zorder=3))
+        ax2.add_patch(Ellipse((0.86, 0), 0.035, 2 * h, fc=col, ec=INK2, lw=1.4, alpha=0.7 * s, zorder=3))
+        ax2.add_patch(Ellipse((0.14, 0), 0.035, 2 * h, fc=SURFACE, ec=INK2, lw=1.4, alpha=s, zorder=4))
         rng = np.random.default_rng(3)
         n = 300
         xs, ys = rng.uniform(0.155, 0.85, n), rng.uniform(-0.93, 0.93, n) * h
         names = list(d["fractions"]); pr = np.array([d["fractions"][k] for k in names]); pr = pr / pr.sum()
         ks = rng.choice(len(names), n, p=pr)
-        ax.scatter(xs, ys, s=22, c=[ATOM_COLOUR[names[k]] for k in ks], alpha=s, linewidths=0, zorder=5)
-        ax.text(0.5, 0.62, "One piece of the trail, treated as a well-mixed column", ha="center", fontsize=19,
-                fontweight="bold", alpha=s)
+        ax2.scatter(xs, ys, s=22, c=[ATOM_COLOUR[names[k]] for k in ks], alpha=s, linewidths=0, zorder=5)
+        ax2.text(0.5, 0.74, "The model's simplification: one column, all the same age", ha="center", fontsize=19,
+                 fontweight="bold", alpha=s)
+        ax2.text(0.5, 0.52, f"The taper is ignored: the whole trail starts at t = 0 with one radius. Age differences of "
+                 f"{tp['age'][-1]:.1f} s matter less and less as the plume ages.", ha="center", fontsize=13.5, color=INK2, alpha=s)
         info = (f"radius {r0 * 1e3:.1f} mm     length {L / 1e3:.2f} km     air temperature {d['T_amb']:.0f} K     "
                 f"{d['fractions']['Al']:.0%} Al, {d['fractions']['AlO']:.0%} AlO, {d['fractions']['OAlO']:.1%} OAlO")
-        ax.text(0.5, -0.6, info, ha="center", fontsize=15, alpha=s)
-        ax.text(0.5, -0.78, "The wake column model's clock starts here: t = 0", ha="center", fontsize=19,
-                fontweight="bold", color="#1f5fa8", alpha=s)
-    caption(fig, "Zooming back out: the slowed atoms form a thin trail. Each piece of it starts its own clock, and "
-                 "the box model follows one such piece for 12 hours.")
+        ax2.text(0.5, -0.56, info, ha="center", fontsize=15, alpha=s)
+        ax2.text(0.5, -0.76, "The wake column model's clock starts here: t = 0", ha="center", fontsize=19,
+                 fontweight="bold", color="#1f5fa8", alpha=s)
+    caption(fig, "The slowed atoms form a very thin, very long trail. The box model then follows it for 12 hours.")

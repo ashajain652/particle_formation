@@ -54,8 +54,9 @@ REGIONS = [   # (map label, card title, equation, when it applies)
      r"$C_D = C_{D,cont}\; f(Kn, Wr)$",
      "Kn about 0.03 to 0.2: air slips at the surface (Cunningham), less drag"),
     ("bridge", "Transitional bridge",
-     r"$C_D = (1-w)\,C_{D,cont} f + w\,C_{D,fm}$",
-     "Kn about 0.1 to 2: weighted mix of the two limits, weight w set by Br"),
+     r"$C_D = (1-w)\,C_{D,cont} f + w\,C_{D,fm}$,   $w = Br^{1.8}/(1 + Br^{1.8})$",
+     "Br, the bridging parameter: Kn corrected for speed (about Kn when slow)\n"
+     "Applies for 0.1 < w < 0.9: Kn about 0.25 to 3 when slow, 0.1 to 1.2 at Mach 10"),
     ("free-molecule", "Free-molecule sphere",
      r"$C_D = C_{D,fm}(s,\;T_p/T)$",
      "Kn > about 2: molecules hit one by one (Schaaf & Chambre); no shock"),
@@ -151,13 +152,15 @@ for i, (_, title, eq, when) in enumerate(REGIONS):
     y0 = 1.0 - (i + 1) * step
     C.add_patch(plt.Rectangle((0.0, y0 + 0.012), 1.0, step - 0.024, facecolor=FILLS[i], edgecolor="none"))
     C.add_patch(plt.Rectangle((0.0, y0 + 0.012), 0.012, step - 0.024, facecolor=ACCENTS[i], edgecolor="none"))
-    C.text(0.035, y0 + step - 0.03, title, fontsize=12, weight="bold", va="top", color=INK)
-    C.text(0.035, y0 + step * 0.47, eq, fontsize=12, va="center", color=INK)
-    C.text(0.035, y0 + 0.032, when, fontsize=10, va="bottom", color=INK2)
+    two = "\n" in when             # the bridge card carries two lines of text, so its rows sit tighter
+    C.text(0.035, y0 + step - (0.022 if two else 0.03), title, fontsize=12, weight="bold", va="top", color=INK)
+    C.text(0.035, y0 + step * (0.56 if two else 0.47), eq, fontsize=11 if two else 12, va="center", color=INK)
+    C.text(0.035, y0 + (0.02 if two else 0.032), when, fontsize=9.5 if two else 10, va="bottom", color=INK2,
+           linespacing=1.25)
 
-fig.text(0.04, 0.012, "Re Reynolds number;  s speed ratio V/sqrt(2RT);  Br bridging parameter (about "
-         "Kn at low Mach);  w free-molecule weight;  f slip factor;  T_p/T droplet over air temperature "
-         "(map drawn at 1).",
+fig.text(0.04, 0.012, "Re Reynolds number;  s speed ratio V/sqrt(2RT);  Br bridging parameter (1.1 Kn slow, 2.8 Kn at "
+         "Mach 10);  w free-molecule weight;  f slip factor;  T_p/T droplet over air temperature "
+         "(drawn at 1).",
          fontsize=9.5, color=MUTED)
 for ext in ("png", "pdf", "svg"):
     fig.savefig(os.path.join(FIG, "13_drag_law_diagram." + ext), dpi=200)
