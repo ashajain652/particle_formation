@@ -3,6 +3,7 @@
     same_results.py run --code <folder holding reentry_model> --out <dir> [--state <file>] --cases <list>
     same_results.py compare <dirA> <dirB> [--report]
 
+``run`` refuses (exit 2, nothing run, nothing deleted) when a case's ``<out>/<case>`` folder already holds anything.
 ``run`` runs each case as ``python -B -m reentry_model <args> --outdir <out>/<case> --name <case>`` with the working
 directory ``--code`` and PYTHONDONTWRITEBYTECODE=1, one after the other, and writes ``<out>/<case>.log`` (the first line
 of ``pmset -g batt`` at the start and the end, the command's output, the exit code and the wall time).
@@ -11,7 +12,8 @@ of ``pmset -g batt`` at the start and the end, the command's output, the exit co
 ``.csv`` the same header and the same text in every cell except columns whose name starts with ``wall_`` or is ``runtime_s``; ``.json`` equal
 throughout except the keys ``provenance`` and ``files``, any key starting with ``wall_`` or named ``runtime_s`` (the run's elapsed time), and ``settings.mesh_file`` and
 ``settings.material_file``, which are compared by file name and by the SHA-256 of the file they name; ``.npz`` the same
-arrays, equal element for element (NaN equal to NaN); any other file byte for byte.  Exit 0 when identical (with
+arrays, equal element for element (NaN equal to NaN); any other file byte for byte.  Exit 0 when identical; exit 2, with a message, when either folder does not exist or holds no compared
+file (with
 ``--report``: always 0, and for every differing numeric column or field the largest absolute and relative difference
 is printed).  Standard library and numpy only; importable without running anything.
 """
@@ -79,12 +81,17 @@ def run_case(code, out, name, args):
 
 def run_cases(code, out, cases, state=None):
     table = case_arguments(state)
-    status = 0
-    for name in cases:
+    for name in cases:                      # every refusal comes before anything runs; nothing is ever deleted
         if name not in table:
             raise SystemExit(f"unknown case {name!r}; cases are {sorted(table)}")
         if name == "resume" and state is None:
             raise SystemExit("the resume case needs --state")
+        held = Path(out) / name
+        if held.exists() and (not held.is_dir() or any(held.iterdir())):
+            print(f"refused: {held} already holds results; choose another --out or remove it yourself")
+            return 2
+    status = 0
+    for name in cases:
         returned = run_case(Path(code), out, name, table[name])
         print(f"{name}: exit {returned}", flush=True)
         status = status or returned
@@ -295,6 +302,13 @@ def main(argv=None):
 
     if args.command == "run":
         return run_cases(args.code, args.out, [c for c in args.cases.split(",") if c], args.state)
+    for folder in (args.dir_a, args.dir_b):
+        if not Path(folder).is_dir():
+            print(f"refused: {folder} does not exist (or is not a folder)")
+            return 2
+        if not _files(folder):
+            print(f"refused: {folder} holds no file to compare (a run that wrote nothing?)")
+            return 2
     found = differences(args.dir_a, args.dir_b)
     if not found:
         files = len(_files(args.dir_a))

@@ -252,3 +252,35 @@ def test_compare_ignores_the_run_time(tmp_path):
     data["results"]["peak"] = 2.5
     path.write_text(json.dumps(data))
     assert len(same_results.compare(tmp_path / "a", tmp_path / "b")) == 1
+
+
+def test_compare_refuses_a_missing_folder(tmp_path, capsys):
+    _write_run(tmp_path / "a" / "run")
+    for extra in ([], ["--report"]):
+        assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / "nope")] + extra) != 0
+        assert same_results.main(["compare", str(tmp_path / "nope"), str(tmp_path / "nope2")] + extra) != 0
+    assert "does not exist" in capsys.readouterr().out
+
+
+def test_compare_refuses_an_empty_folder(tmp_path, capsys):
+    _write_run(tmp_path / "a" / "run")
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "logs_only").mkdir()
+    (tmp_path / "logs_only" / "x.log").write_text("log")        # only ignored kinds: nothing to compare
+    for other in ("empty", "logs_only"):
+        for extra in ([], ["--report"]):
+            assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / other)] + extra) != 0
+            assert same_results.main(["compare", str(tmp_path / other), str(tmp_path / other)] + extra) != 0
+    assert "no file to compare" in capsys.readouterr().out
+
+
+def test_run_refuses_a_case_folder_that_already_holds_results(tmp_path, capsys):
+    held = tmp_path / "out" / "nomelt"
+    held.mkdir(parents=True)
+    (held / "nomelt.csv").write_text("a\n1\n")
+    code = tmp_path / "code"
+    code.mkdir()                                  # nothing is run: the refusal comes first
+    assert same_results.main(["run", "--code", str(code), "--out", str(tmp_path / "out"), "--cases", "nomelt"]) != 0
+    assert "already holds" in capsys.readouterr().out
+    assert (held / "nomelt.csv").read_text() == "a\n1\n"       # nothing deleted
+    assert not (tmp_path / "out" / "nomelt.log").exists()

@@ -38,11 +38,11 @@ refactor) computes what the code before it computed. `run --code <folder holding
 <file>] --cases <list>` runs each named case (`skins`, `element`, `resume`, `nomelt`, `nomelt_elements`; the first three are 0.125 s smoke
 flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight; `nomelt_elements` is the same with `--surface-model elements`, which exists because main's command line has no `--surface-model` and the port's default for `--thermal fem` is the skins, which fail without melting) one after the other as
 `python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
-the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`.
+the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`. `run` refuses (exit 2, nothing run, nothing deleted) when a case's `<out>/<case>` folder already holds anything.
 `compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,
 `*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` and `runtime_s` columns; `.json` equal except the
 keys `provenance`, `files`, `runtime_s` (the run's elapsed time) and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
-and SHA-256 of the file; `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical;
+and SHA-256 of the file; `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical; exit 2 with a message when either folder does not exist or holds no compared file (so a mistyped folder or a run that wrote nothing cannot pass);
 with `--report` it lists each differing column or field with its largest absolute and relative difference and exits 0.
 It uses only the standard library and numpy and can be imported without running anything. Tests: the last tests of
 `test_port_tools.py`.
