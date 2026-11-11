@@ -90,8 +90,8 @@ class Element:
 # AA7075 nominal composition (ASM Handbook Vol. 2): Zn 5.6, Mg 2.5, Cu 1.6, Cr 0.23 wt %, balance Al.
 ELEMENTS = (
     Element("Al", 0.026982, 0.9007, True, 2743.0, 294.0e3),
-    Element("Zn", 0.065380, 0.0560, True, 1180.0, 115.3e3),
-    Element("Mg", 0.024305, 0.0250, True, 1363.0, 127.4e3),
+    Element("Zn", 0.065380, 0.0560, True, 1181.5, 115.3e3),
+    Element("Mg", 0.024305, 0.0250, True, 1367.7, 127.8e3),
     Element("Cu", 0.063546, 0.0160, False, 2835.0, 300.4e3),
     Element("Cr", 0.051996, 0.0023, False, 2944.0, 339.5e3),
 )
@@ -99,13 +99,20 @@ VOLATILE = tuple(e for e in ELEMENTS if e.volatile)
 INERT = tuple(e for e in ELEMENTS if not e.volatile)
 
 
+# log10(p/atm) = A + B/T + C log10(T), T in K, for the pure liquid. Al: Alcock, Itkin & Horrigan (1984).
+# Zn, Mg: fits to Gibbs energies of vaporisation from NIST-JANAF (Chase 1998, tables Zn-003/005 and Mg-003/005),
+# 700-2000 K and 900-2000 K, within 5e-5 in log10. JANAF holds the liquid's heat capacity constant at high temperature.
+VAPOUR_PRESSURE = {
+    "Al": (5.911, -16211.0, 0.0),
+    "Zn": (9.56663, -6676.35, -1.27452),
+    "Mg": (10.6888, -7643.84, -1.62629),
+}
+
+
 def p_sat(el, T):
-    """Pure-element vapour pressure [Pa] over the liquid. Al: Alcock, Itkin & Horrigan (1984),
-    log10(p/atm) = 5.911 - 16211/T. Zn, Mg: Clausius-Clapeyron through the normal boiling point with the
-    enthalpy of vaporisation there (accuracy a few tens of percent far below the boiling point)."""
-    if el.name == "Al":
-        return 101325.0 * 10.0 ** (5.911 - 16211.0 / T)
-    return 101325.0 * math.exp(-el.H_vap / R_GAS * (1.0 / T - 1.0 / el.T_boil))
+    """Pure-element vapour pressure [Pa] over the liquid, from VAPOUR_PRESSURE."""
+    A, B, C = VAPOUR_PRESSURE[el.name]
+    return 101325.0 * 10.0 ** (A + B / T + C * math.log10(T))
 
 
 def surface_tension(T):

@@ -1,5 +1,5 @@
 """Checks of the droplet model (from the prototype's verify_droplet_demise.py), the release= entry point, the parent
-snapshot, and the reproduction of the 2026-10-22 demise sweep."""
+snapshot, and the reproduction of the 2026-11-06 demise sweep."""
 import csv
 import math
 import os
@@ -153,13 +153,13 @@ def test_droplet_is_held_where_terminal_velocity_meets_the_updraft(parent):
 
 
 def reference_cases():
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "demise_sweep_2026-10-22_cases.csv")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "demise_sweep_2026-11-06_cases.csv")
     return read_rows(path)
 
 
 @pytest.mark.parametrize("ref", reference_cases(), ids=lambda r: "{}um-{}km".format(r["d0_um"], r["h0_km"]))
-def test_reproduces_the_2026_10_22_demise_sweep(parent, ref):
-    """Cases of the prototype's sweep (runs/demise_sweep/final_states.csv), re-run from the package."""
+def test_reproduces_the_2026_11_06_demise_sweep(parent, ref):
+    """Cases of the 2026-10-22 demise sweep, re-pinned on 2026-11-06 with the NIST-JANAF Zn and Mg vapour pressures."""
     s, _ = dd.run_case(float(ref["d0_um"]), float(ref["h0_km"]), parent)
     assert s["end_reason"] == ref["end_reason"]
     for key in ref:
