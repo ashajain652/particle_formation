@@ -1,0 +1,156 @@
+import numpy as np
+import pytest
+from math import sqrt, pi
+
+from reentry_model.levelset.boxmesh import BoxBase, build
+from reentry_model.levelset.cutcell import inside_volumes
+from reentry_model.levelset.transfer import interpolate
+from lsproto2.cutthermal import CutThermal, inside_subtets, SIGMA_SB, _tvol
+from lsproto2.simplemat import ConstMaterial, LinearMeltMaterial
+
+
+def sphere(h=2e-3, R=10e-3, L=14e-3):
+    m = build(BoxBase.around((-L,) * 3, (L,) * 3, h))
+    return m, np.linalg.norm(m.points, axis=1) - R
+
+
+def slab_column(h, off=0.37, W=4e-3, D=12e-3, top=0.0):
+    lo = np.array([-W / 2 - h * off - h, -W / 2 - h * off - h, -D - h * off - h]); hi = -lo; hi[2] = 2 * h
+    m = build(BoxBase.around(lo, hi, h))
+    x, y, z = m.points.T
+    sx = W / 2 + h * off
+    return m, np.maximum.reduce([z - top, np.abs(x) - sx, np.abs(y) - sx, -z - D]), sx
+
+
+def test_subtets_reproduce_the_cut_volumes():
+    m, phi = sphere()
+    nneg = (phi[m.tets] < 0).sum(axis=1)
+    cut = np.flatnonzero((nneg > 0) & (nneg < 4))
+    assert set(np.unique(nneg[cut])) == {1, 2, 3}
+    S, own = inside_subtets(m, phi, cut)
+    v = np.bincount(own, _tvol(S), minlength=len(cut))
+    assert np.allclose(v, inside_volumes(m, phi, cut), rtol=1e-12, atol=1e-24)
+
+
+def test_mass_rows_and_weights():
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi)
+    assert np.allclose(s.w.sum(axis=1), 1.0, atol=1e-12)
+    assert np.allclose(s.Me.sum(axis=(1, 2)), s.Vin, rtol=1e-12)
+    assert s.metal_volume() == pytest.approx(inside_volumes(m, phi).sum(), rel=1e-13)
+    assert s.metal_volume() == pytest.approx(4 / 3 * pi * 1e-6, rel=0.03)
+
+
+@pytest.mark.parametrize("lumped", [False, True])
+def test_energy_books_close_with_radiation_and_latent_heat(lumped):
+    m, phi = sphere()
+    s = CutThermal(LinearMeltMaterial(), emissivity=0.3, lumped=lumped); s.setup(m, phi); s.set_temperature(860.0)
+    E0, Q = s.energy(), 0.0
+    for _ in range(6):
+        Q += s.step(0.05, 3e6 * np.maximum(-s.P.normal[:, 0], 0), rad=1.0, T_amb=250.0)
+    assert (s.energy() - E0 - Q) / abs(Q) == pytest.approx(0.0, abs=1e-6)
+    assert s.T[s.active].max() > 880.0                                   # some cells went mushy
+
+
+def test_constant_flux_slab_converges_at_second_order():
+    mat, q, t_end, dt = ConstMaterial(), 2e6, 0.5, 0.01
+    alpha = 150 / (2800 * 900)
+    exact = 2 * q / 150 * sqrt(alpha * t_end / pi)
+    errs = []
+    for h in (1e-3, 0.5e-3):
+        m, phi, sx = slab_column(h)
+        s = CutThermal(mat, linear_solver="direct"); s.setup(m, phi); s.set_temperature(300.0)
+        for _ in range(int(round(t_end / dt))):
+            s.step(dt, q * np.maximum(s.P.normal[:, 2], 0.0))
+        up = s.P.normal[:, 2] > 0.99
+        rise = (s.patch_T()[up] * s.P.area[up]).sum() / s.P.area[up].sum() - 300.0
+        errs.append(abs(rise - exact) / exact)
+    assert errs[0] < 0.016 and errs[1] < 0.005 and errs[0] / errs[1] > 3.0
+
+
+def test_skin_base_law_is_implicit_and_reaches_its_steady_state():
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi); s.set_temperature(300.0)
+    for _ in range(5):
+        s.step(50.0, 3.2e5 * 900.0, q1=-3.2e5)                       # q_b = b (900 K - T_b) on every patch
+    assert np.allclose(s.T[s.active], 900.0, atol=1e-6)
+
+
+def test_isothermal_radiative_cooling_matches_the_lumped_ode():
+    m, phi = sphere()
+    mat = ConstMaterial(k=1e6)                                           # isothermal
+    s = CutThermal(mat, emissivity=0.8); s.setup(m, phi); s.set_temperature(1200.0)
+    V, A, T, dt = s.metal_volume(), s.P.area.sum(), 1200.0, 2.0
+    for _ in range(10):
+        s.step(dt, 0.0, rad=1.0, T_amb=0.0)
+        T_prev, Tn = T, T
+        for _ in range(60):                                              # the same backward-Euler step, lumped
+            Tn = Tn - (mat.rho * mat._cp * V * (Tn - T_prev) / dt + 0.8 * SIGMA_SB * Tn ** 4 * A) / (
+                mat.rho * mat._cp * V / dt + 4 * 0.8 * SIGMA_SB * Tn ** 3 * A)
+        T = Tn
+    assert s.T[s.active].mean() == pytest.approx(T, rel=1e-6)
+
+
+def test_ghost_penalty_keeps_slivers_conditioned_and_leaves_constants_alone():
+    m = build(BoxBase.around((-14e-3,) * 3, (14e-3,) * 3, 1e-3))
+    phi = np.linalg.norm(m.points, axis=1) - 10.001e-3
+    ratios = {}
+    for g in (0.0, 0.01):
+        s = CutThermal(ConstMaterial(), ghost=g); s.setup(m, phi); s.set_temperature(300.0)
+        K, M = s.operators(s.T, s.T)
+        idx = np.flatnonzero(s.active)
+        d = (M / 1e-3 + K).diagonal()[idx]
+        ratios[g] = d.min() / d.max()
+        assert np.allclose((K @ np.ones(len(s.T)))[idx], 0.0, atol=1e-12 * abs(K).max())
+    assert ratios[0.0] < 1e-6 and ratios[0.01] > 3e-3
+
+
+def test_move_books_the_enthalpy_it_removes_and_fills_new_nodes():
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi)
+    s.set_temperature(300.0 + 1e4 * (m.points[:, 0] + 14e-3))
+    E0 = s.energy()
+    out = s.move(np.linalg.norm(m.points, axis=1) - 9.3e-3)            # shrink
+    assert out == pytest.approx(E0 - s.energy(), rel=1e-14) and out > 0
+    before = s.active.copy()
+    s.move(np.linalg.norm(m.points, axis=1) - 10.4e-3)                   # grow: new nodes get neighbour values
+    new = s.active & ~before
+    assert new.any() and np.isfinite(s.T[new]).all()
+    assert s.T[new].min() >= 300.0 and s.T[new].max() <= 300.0 + 1e4 * 28e-3
+
+
+def test_receding_surface_through_slivers_gives_no_temperature_jumps():
+    h = 1e-3
+    m = build(BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h))
+    z = m.points[:, 2]
+    s = CutThermal(ConstMaterial(), linear_solver="direct"); s.setup(m, z); s.set_temperature(300.0)
+    probe, Tp, top = np.array([[0.2e-3, 0.1e-3, -3.0e-3]]), [], 0.0
+    for _ in range(60):
+        s.step(0.02, 1e6 * np.maximum(s.P.normal[:, 2], 0))
+        top -= 0.05 * h
+        s.move(z - top)
+        Tp.append(interpolate(m, s.T, probe)[0])
+    d2 = np.abs(np.diff(Tp, 2))[3:]                                      # after the switch-on transient
+    assert d2.max() < 3 * np.median(d2)
+
+
+def test_remesh_closes_the_enthalpy_and_reports_the_residual():
+    h = 1e-3
+    base = BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h)
+    m = build(base)
+    z = m.points[:, 2]
+    s = CutThermal(LinearMeltMaterial()); s.setup(m, z + 0.3e-3)
+    s.set_temperature(894.0 + 2e4 * (z + 0.3e-3) + 3e7 * (z + 0.3e-3) ** 2)   # curved, crossing the melting range
+    E0 = s.energy()
+    m2 = build(base, lambda c, sz: np.where(np.abs(c[:, 2] + 0.3e-3) < 1.5e-3, 0.25e-3, np.inf))
+    r0 = s.remesh(m2, interpolate(m, s.phi, m2.points))
+    assert 0.0 < abs(r0) < 1e-2
+    assert s.energy() == pytest.approx(E0, rel=1e-12)
+
+
+def test_mass_rows_and_weights_on_a_grid_aligned_slab():
+    m = build(BoxBase.around((-3e-3, -3e-3, -6e-3), (3e-3, 3e-3, 3e-3), 1e-3))
+    z = m.points[:, 2]
+    s = CutThermal(ConstMaterial()); s.setup(m, z)
+    assert np.isfinite(s.w).all() and (s.Vin > 0).all()
+    assert s.metal_volume() == pytest.approx(6e-3 * 6e-3 * 6e-3, rel=1e-12)
