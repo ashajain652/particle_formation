@@ -1162,6 +1162,10 @@ def cmd_resume(args, parser):
     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
         state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
+    for name in ("hist_n", "hist_m"):    # a body saved with 40 size bins (before Task 5j) gets the 50: its first 40 edges are unchanged, so zeros are exact
+        h = getattr(run.body, name, None)
+        if h is not None and len(h) < spray.N_BINS:
+            setattr(run.body, name, np.concatenate([h, np.zeros(spray.N_BINS - len(h))]))
     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
