@@ -276,18 +276,20 @@ Newton on the ε σ T⁴ radiation term, energy-exact secant heat capacity) adva
 REF="../DRAMA Sphere Experiments/data/reference_runs"            # run from Reentry Model/
 # verification mode: SESAM's own heat input, uniform over the surface (NOT physical, see below), vs the US76 SESAM reference
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
-    --thermal fem --heating sesam --reference "$REF"/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
+    --thermal fem --surface-model elements --heating sesam --reference "$REF"/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
 # physics mode: Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution, with the surface-temperature animation
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
-    --thermal fem --heating physics --animate
+    --thermal fem --surface-model elements --heating physics --animate
 "$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> output/verification_thermal/summary.md
 ```
+
+Since the port of 2026-11-11 the default surface model of a `--thermal fem` run is the layered skins, so the non-melting Step 2 commands above name `--surface-model elements` (the skins stopped after about 50 s on the 100 mm, 77.5 km case with a moving-mesh "corner move" error). The measured Step 2 numbers below predate the port and were measured on the old solver.
 
 Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
 matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1); `--material` (packaged
 `AA7075_nomelt`), `--emissivity` (material's 0.40), `--t-ambient` (0 K, SESAM's; 200 K optional); `--h-surface 2`,
 `--h-core 8` (mm; 18.9 k nodes on the 100 mm sphere), `--mesh-size` (multiplier); `--thermal-solver skfem|fenicsx`,
-`--linear-solver amg|direct`, `--lumped-mass`; `--dt 0.5`; `--frames-every`, `--animate`, `--stills`. Outputs:
+`--linear-solver amg|direct`, `--consistent-mass` (the nodal-enthalpy lumped capacity is the default; this selects the old consistent capacity matrix, skfem only, for analytic checks); `--dt 0.5`; `--frames-every`, `--animate`, `--stills`. Outputs:
 `<run>.csv` gains `convective_heat_W, rad_cooling_W, integrated_heat_J, absorbed_heat_J, surface_T_max/min/mean_K,
 T_stagnation_K, T_back_K, T_centre_K, q_stag_Wm2, heating_blend_f` (`temperature_K` is the energy-equivalent mean
 temperature, the quantity SESAM's lumped model reports; `heating_blend_f`: SESAM-equivalent mode — the measured heat
@@ -313,7 +315,7 @@ cannot read the macOS 27.0 SDK on this machine while conda's clang can):
 FX=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/python
 FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m pytest tests/test_reentry_model_fenicsx.py -q
 FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -m reentry_model run --diameter 100 --velocity 7.5 \
-    --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 --thermal fem --thermal-solver fenicsx
+    --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 --thermal fem --surface-model elements --thermal-solver fenicsx
 ```
 
 **`--heating sesam` is a verification device, not a physical model.** It applies SESAM's surface-averaged heat input —

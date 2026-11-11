@@ -17,9 +17,9 @@ surface as it melts and flows. The package also keeps the older element model (a
 ## What landed, and where
 
 The work is on the branch `skyscrapers-port`, which is to become `main` (it was not pushed, and nothing here merged
-it). Before the port, `main` stood at commit `8ed75cf`; the port is 186 commits after that, counted up to
-`58d768a` (this note adds one more). The count covers both merged lines: the 96 rewritten build commits, the prototype
-line's own commits, and the port's own commits (below). The first-parent commits, in order:
+it). Before the port, `main` stood at commit `8ed75cf`; the port brought in the two merged lines, counted
+and verified on 2026-11-11: 80 prototype-line commits and 96 rewritten build commits. The port's own first-parent
+commits (below) are listed by `git log --first-parent 8ed75cf..main`. The first-parent commits, in order:
 
 - `595928b`: the port's own tools, in `Reentry Model/analysis/skyscrapers_port/` (the path map, the checks, the
   three-way resolver; later `same_results.py`). Read its `README.md`.
@@ -84,9 +84,12 @@ refuses a case folder that already holds results, so give each run a new folder.
   default, so it is not used for "same results".
 - `nomelt_elements`: the same with `--surface-model elements`; this one runs.
 
+The Step 3 reference-marked tests (`tests/test_reentry_model_reference_melt.py` and two in `tests/test_reentry_model_skinbody.py`) have been collected but not run on the port.
+
 The reference outputs are on Asha's laptop and git-ignored: the port's are in `Reentry Model/output/port_check/port/`
 of the worktree `.claude/worktrees/skyscrapers-port`, and the prototype's in
 `prototype/work-2026-10-28-skin-spraying/measure/port/prototype/` of the worktree `.claude/worktrees/subplan20`.
+The baseline outputs in `Reentry Model/output/port_check/port` (worktree `skyscrapers-port`) name that worktree's mesh-cache and material files, whose checksums `compare` checks, and the resume case's state file lives in the `subplan20` worktree; so neither worktree may be removed until the refactor has been verified against the baseline.
 The commands, from `Reentry Model/` of your worktree, with the interpreter of the conda environment `drama_env`:
 
 ```
@@ -169,7 +172,7 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
   `skin-fixes-flights-macstudio` (which exists only as the remote branch
   `origin/skin-fixes-flights-macstudio`; its results were pushed on 2026-11-11 at `39e8ded`). Do not merge them as part of the refactor. `levelset-stage0` is superseded by the
   refactor itself (design section 14). Resolve conflicts one branch at a time with the path map in
-  `analysis/skyscrapers_port/path_map.py`.
+  `analysis/skyscrapers_port/path_map.py`. Merging such a branch can leave files in the old flat layout without git raising a conflict (dry runs on 2026-11-11: `levelset-two-interface` would leave 62 files at the repository root, under `prototype/levelset`, `reentry_model/levelset`, `tests/levelset` and `analysis/levelset`, and bring back a root `docs/model_assumptions.md` through a modify/delete conflict, with 6 conflicts in all; `origin/skin-fixes-flights-macstudio` would put 20 result files under a root `prototype/work-2026-10-28-skin-spraying-plan/flights/macstudio-fixes/` with 1 conflict). So after such a merge, before committing, run `"$PY" "Reentry Model/analysis/skyscrapers_port/checks.py" outside "$(git write-tree)" --allow .gitignore --allow README.md` from the repository top, and move each path it reports under `Reentry Model/` (the place `path_map.prototype_line_path` gives).
 - **Do not touch** `DRAMA Sphere Experiments/`, `Spheral/`, `reentry_model/droplet_reentry/` and
   `reentry_model/wake_column/` without Asha's say: they were checked unchanged against the old main.
 

@@ -44,7 +44,7 @@ Those two files are the contract with the thesis; keep them true when you change
 - `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
   chemistry and condensation of the aluminium the droplets vaporise (see "The wake column" below). Its committed
   inputs are in `data/wake_column/`.
-- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot.
+- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); and `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README.
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
   mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/` and
   `reentry_model/wake_column/tests/`.
@@ -91,7 +91,8 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference"
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
 "$PY" -m pytest tests/test_reentry_model_mesh.py -q -k prism   # one test
-"$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~35 min (Step 2)
+"$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~35 min (Step 2); the Step 3 reference tests (below) are
+                                                          # collected too but have not yet been run on the port (run time not measured)
 
 cd "DRAMA Sphere Experiments"
 "$PY" -m pytest -m "not drama" -q                        # the wrapper and sweep, seconds
@@ -102,7 +103,8 @@ cd Spheral
 ```
 
 Markers, declared in each project's `pytest.ini`: `reference` (Reentry Model: the slow end-to-end
-flights against the committed SESAM references in `DRAMA Sphere Experiments/data/reference_runs/`),
+flights against the committed SESAM references in `DRAMA Sphere Experiments/data/reference_runs/`, and the Step 3 melting
+references in `Reentry Model/data/reference_runs/`, which `sesam_io.MELTING_REFERENCE_DIR` points at: `tests/test_reentry_model_reference_melt.py` and two tests in `tests/test_reentry_model_skinbody.py`; these Step 3 reference tests were collected but have not yet been run on the port),
 `drama` (DRAMA Sphere Experiments: needs pyDRAMA importable; auto-skipped by its `tests/conftest.py`
 otherwise), and `spheral` / `fe_flight` (Spheral). The thermal tests dominate the Reentry Model
 unit-tier runtime; the session-scoped mesh fixtures in its `conftest.py` exist to keep it that low, so
@@ -114,7 +116,11 @@ From inside `Reentry Model/`:
 
 ```bash
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
-    --atmosphere us76 --thermal fem --heating physics --animate
+    --atmosphere us76 --thermal fem --surface-model elements --heating physics --animate
+# a short melting smoke flight (65 km, 0.125 s), not a production one:
+"$PY" -m reentry_model run --diameter 100 --velocity 7.24 --altitude 65 --flight-path-angle -0.959331 --atmosphere us76 \
+    --thermal fem --heating physics --h-surface 4 --h-core 20 --melt on --temperature 893 --dt 0.025 --t-max 0.125 \
+    --skin-preset dev --fine-size 2 --frames-every 0
 "$PY" -m reentry_model compare --model output/<run>.csv \
     --reference "../DRAMA Sphere Experiments/data/reference_runs/<sesam>.csv"
 "$PY" analysis/reentry_model_verification.py          # Step 1 verification table
@@ -269,7 +275,7 @@ physics or quoting a result.
   and Step 2 (coupled 3D heat transfer) are done and verified. **Step 3 (melting, melt film, Girin melt
   spraying) and the skyscrapers architecture were ported into the package on 2026-11-11** (merge commits 592a77d,
   the prototype line's designs, plans and specs, and d716a24, the build repository's 96 commits rewritten into
-  this layout; the data paths were repointed in b92c4e9). The port changed no model behaviour; how it was made and
+  this layout; the data paths were repointed in b92c4e9). The port changed no model behaviour relative to the prototype. Relative to the old `main`, the Step 2 path changed as the prototype had already changed it: the layered skins are the default surface model with `--thermal fem` (non-melting runs need `--surface-model elements`), the capacity is lumped by default, and temperatures differ by about 1 % (stagnation temperature 4.5 K, 1.2 %, at most, on the 20 s non-melting comparison of 2026-11-11; see the handoff note). Whether that default should change is Asha's decision and is pending. How the port was made and
   checked is in `analysis/skyscrapers_port/README.md` and its design
   `docs/superpowers/specs/2026-11-11-skyscrapers-port-to-main-design.md`.
 - **Next is the refactor of 2026-10-12, and it is another agent's.** `docs/superpowers/plans/shared/README.md`
