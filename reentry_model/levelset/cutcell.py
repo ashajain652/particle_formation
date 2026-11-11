@@ -76,6 +76,59 @@ def inside_volumes(mesh, phi, cells=None):
     return out
 
 
+def subtet_volumes(S):
+    """Volumes of sub-tetrahedra given as an (n, 4, 3) array of vertices."""
+    return _tvol(S[:, 0], S[:, 1], S[:, 2], S[:, 3])
+
+
+def inside_subtets(mesh, phi, cells):
+    """The metal part {phi < 0} of each given cut cell as sub-tetrahedra.
+
+    Returns (S, owner): S is (n, 4, 3) vertices, owner (n,) indexes into `cells`.  One tetrahedron for a lone inside
+    vertex, three for the 2-2 prism (the split used by `inside_volumes`) and three for the wedge left by a lone
+    outside vertex.  Nodes with phi exactly zero count as outside, as in `inside_volumes`."""
+    cells = np.asarray(cells)
+    T = mesh.tets[cells]
+    f, P = phi[T], mesh.points[T]
+    neg = f < 0
+    nneg = neg.sum(axis=1)
+    cut = lambda x, y, fx, fy: x + (fx / (fx - fy))[:, None] * (y - x)
+    rest = np.array([[j for j in range(4) if j != lone] for lone in range(4)])
+    out, owner = [], []
+    m = np.flatnonzero(nneg == 1)
+    if len(m):
+        lone = np.argmax(neg[m], axis=1)
+        others = rest[lone]
+        r = np.arange(len(m))
+        a, fa = P[m][r, lone], f[m][r, lone]
+        pts = [cut(a, P[m][r, others[:, i]], fa, f[m][r, others[:, i]]) for i in range(3)]
+        out.append(np.stack([a] + pts, axis=1)); owner.append(m)
+    m = np.flatnonzero(nneg == 3)
+    if len(m):
+        lone = np.argmax(~neg[m], axis=1)                           # the single outside vertex
+        others = rest[lone]
+        r = np.arange(len(m))
+        d, fd = P[m][r, lone], f[m][r, lone]
+        a, b, c = (P[m][r, others[:, i]] for i in range(3))
+        fa, fb, fc = (f[m][r, others[:, i]] for i in range(3))
+        pa, pb, pc = cut(a, d, fa, fd), cut(b, d, fb, fd), cut(c, d, fc, fd)
+        for tet in ((a, b, c, pa), (b, c, pa, pb), (c, pa, pb, pc)):
+            out.append(np.stack(tet, axis=1)); owner.append(m)
+    m = np.flatnonzero(nneg == 2)
+    if len(m):
+        order = np.argsort(~neg[m], axis=1, kind="stable")          # two negatives first
+        rr = np.arange(len(m))[:, None]
+        Po, fo = P[m][rr, order], f[m][rr, order]
+        a, b, c, d = (Po[:, i] for i in range(4))
+        fa, fb, fc, fd = (fo[:, i] for i in range(4))
+        pac, pad, pbc, pbd = cut(a, c, fa, fc), cut(a, d, fa, fd), cut(b, c, fb, fc), cut(b, d, fb, fd)
+        for tet in ((a, pac, pad, b), (pac, pad, b, pbc), (pad, b, pbc, pbd)):
+            out.append(np.stack(tet, axis=1)); owner.append(m)
+    if not out:
+        return np.zeros((0, 4, 3)), np.zeros(0, int)
+    return np.concatenate(out), np.concatenate(owner)
+
+
 def patches(mesh, phi, cells=None):
     """The patches of every cut cell (or of the cut cells among `cells`)."""
     cells = np.arange(len(mesh.tets)) if cells is None else np.asarray(cells)

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from reentry_model.levelset.boxmesh import BoxBase, build
-from reentry_model.levelset.cutcell import inside_volumes, patches
+from reentry_model.levelset.cutcell import inside_subtets, inside_volumes, patches, subtet_volumes
 
 H0 = 1.0e-3
 
@@ -59,3 +59,15 @@ def test_a_contour_through_nodes_leaves_no_zero_area_patches():
     P = patches(m, phi)
     assert (P.area > 0).all()
     assert P.area.sum() == pytest.approx(4e-6, rel=1e-12)
+
+
+def test_subtets_reproduce_the_cut_volumes():
+    L = 14e-3
+    m = build(BoxBase.around((-L,) * 3, (L,) * 3, 2e-3))
+    phi = np.linalg.norm(m.points, axis=1) - 10e-3
+    nneg = (phi[m.tets] < 0).sum(axis=1)
+    cut = np.flatnonzero((nneg > 0) & (nneg < 4))
+    assert set(np.unique(nneg[cut])) == {1, 2, 3}
+    S, owner = inside_subtets(m, phi, cut)
+    v = np.bincount(owner, subtet_volumes(S), minlength=len(cut))
+    assert np.allclose(v, inside_volumes(m, phi, cut), rtol=1e-12, atol=1e-24)
