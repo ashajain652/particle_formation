@@ -24,14 +24,22 @@ The unknowns are the active nodes (those of a cell with metal in it) only; the o
 Slivers. A ghost penalty (Burman 2010) on every interior face between two active cells of which at least one is cut,
 gamma k h |F| [dN/dn][dN/dn]^T with k the larger of the two cells' conductivities, h the larger cell's size and |F| the
 face area, keeps the system conditioned when a cell holds almost no metal. The jump vector [dN/dn in cell 1, -dN/dn in
-cell 2] annihilates any function that is linear across the face, so constants are untouched. `ghost` is gamma."""
+cell 2] annihilates any function that is linear across the face, so constants are untouched. `ghost` is gamma.
+
+Moving surface. `move(phi_new)` changes the level set on the same mesh: the nodal temperatures are kept, nodes that
+become active are filled ring by ring with the mean of their already-valued neighbours (the previously active nodes
+are the first donors), the geometry is rebuilt, and the enthalpy the move removed (negative if metal was added) is
+returned. `remesh(new_mesh, phi_new)` carries the temperature to a new mesh: it is first extended three rings outside
+the metal (so the projection sees a smooth field across the surface), projected with `transfer.project`, the geometry
+is rebuilt on the new mesh, and one uniform temperature offset, found by bisection to 1e-12 K, makes the stored
+enthalpy equal the old one; the relative enthalpy residual before the offset is returned."""
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from reentry_model.levelset.cutcell import inside_subtets, subtet_volumes
 from reentry_model.levelset.cutcell import patches as cut_patches
-from reentry_model.levelset.transfer import _geom, barycentric
+from reentry_model.levelset.transfer import _geom, barycentric, project
 
 SIGMA_SB = 5.670374419e-8          # Stefan-Boltzmann constant, W/m2/K4
 
@@ -227,3 +235,58 @@ class CutThermal:
         if info != 0:
             raise RuntimeError("CG did not converge (info {})".format(info))
         return x
+
+    # --- moving surface -----------------------------------------------------------------------------------------
+    def _extend(self, donors, targets, rings=50):
+        """Return a copy of T in which each target node without a value (not a donor) takes the mean of its valued
+        neighbours, ring by ring (nodes sharing a cell), the donors being valued from the start; at most `rings`."""
+        T = self.T.copy()
+        tets = self.mesh.tets
+        nc = self.mesh.node_cells()
+        valid = donors.copy()
+        todo = np.flatnonzero(targets & ~valid)
+        for _ in range(rings):
+            if not len(todo):
+                break
+            sub = nc[todo]
+            rows = np.repeat(np.arange(len(todo)), np.diff(sub.indptr))
+            nb = tets[sub.indices]
+            v = valid[nb]
+            s = np.bincount(rows, (T[nb] * v).sum(axis=1), minlength=len(todo))
+            c = np.bincount(rows, v.sum(axis=1), minlength=len(todo))
+            ok = c > 0
+            T[todo[ok]] = s[ok] / c[ok]
+            valid[todo[ok]] = True
+            todo = todo[~ok]
+        return T
+
+    def move(self, phi_new):
+        """Move the surface on the same mesh; returns the enthalpy the move removed from the metal [J] (negative
+        when metal is added)."""
+        E0 = self.energy()
+        donors = self.active.copy()
+        self.setup(self.mesh, phi_new)
+        self.T = self._extend(donors, self.active)
+        return E0 - self.energy()
+
+    def remesh(self, new_mesh, phi_new):
+        """Carry T to a new mesh conservatively and close the stored enthalpy with a uniform offset; phi_new is the
+        level set on the new mesh. Returns the relative enthalpy residual before the offset."""
+        E0 = self.energy()
+        old_mesh = self.mesh
+        T_full = self._extend(self.active.copy(), ~self.active, rings=3)     # a band outside, for the projection
+        T_new = project(old_mesh, new_mesh, T_full)
+        self.setup(new_mesh, phi_new)
+        self.T = T_new
+        r0 = (self.energy() - E0) / max(abs(E0), 1e-300)
+        a, b = -50.0, 50.0                                                   # bisection on the offset (monotone)
+        for _ in range(200):
+            m = 0.5 * (a + b)
+            if self.energy(T_new + m) > E0:
+                b = m
+            else:
+                a = m
+            if b - a < 1e-12:
+                break
+        self.T = T_new + 0.5 * (a + b)
+        return r0

@@ -9,6 +9,7 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import inside_volumes
 from reentry_model.levelset.cutthermal import SIGMA_SB, CutThermal
+from reentry_model.levelset.transfer import interpolate
 
 
 class ConstMaterial:
@@ -135,3 +136,47 @@ def test_ghost_penalty_keeps_slivers_conditioned_and_leaves_constants_alone():
         ratios[g] = d.min() / d.max()
         assert np.allclose((K @ np.ones(len(s.T)))[idx], 0.0, atol=1e-12 * abs(K).max())
     assert ratios[0.0] < 1e-6 and ratios[0.01] > 3e-3
+
+
+def test_move_books_the_enthalpy_it_removes_and_fills_new_nodes():
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi)
+    s.set_temperature(300.0 + 1e4 * (m.points[:, 0] + 14e-3))
+    E0 = s.energy()
+    out = s.move(np.linalg.norm(m.points, axis=1) - 9.3e-3)            # shrink
+    assert out == pytest.approx(E0 - s.energy(), rel=1e-14) and out > 0
+    before = s.active.copy()
+    s.move(np.linalg.norm(m.points, axis=1) - 10.4e-3)                   # grow: new nodes get neighbour values
+    new = s.active & ~before
+    assert new.any() and np.isfinite(s.T[new]).all()
+    assert s.T[new].min() >= 300.0 and s.T[new].max() <= 300.0 + 1e4 * 28e-3
+
+
+def test_receding_surface_through_slivers_gives_no_temperature_jumps():
+    h = 1e-3
+    m = build(BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h))
+    z = m.points[:, 2]
+    s = CutThermal(ConstMaterial(), linear_solver="direct"); s.setup(m, z); s.set_temperature(300.0)
+    probe, Tp, top = np.array([[0.2e-3, 0.1e-3, -3.0e-3]]), [], 0.0
+    for _ in range(60):
+        s.step(0.02, 1e6 * np.maximum(s.P.normal[:, 2], 0))
+        top -= 0.05 * h
+        s.move(z - top)
+        Tp.append(interpolate(m, s.T, probe)[0])
+    d2 = np.abs(np.diff(Tp, 2))[3:]                                      # after the switch-on transient
+    assert d2.max() < 3 * np.median(d2)
+
+
+def test_remesh_closes_the_enthalpy_and_reports_the_residual():
+    h = 1e-3
+    base = BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h)
+    m = build(base)
+    z = m.points[:, 2]
+    s = CutThermal(LinearMeltMaterial()); s.setup(m, z + 0.3e-3)
+    s.set_temperature(894.0 + 2e4 * (z + 0.3e-3) + 3e7 * (z + 0.3e-3) ** 2)   # curved, crossing the melting range
+    E0 = s.energy()
+    m2 = build(base, lambda c, sz: np.where(np.abs(c[:, 2] + 0.3e-3) < 1.5e-3, 0.25e-3, np.inf))
+    r0 = s.remesh(m2, interpolate(m, s.phi, m2.points))
+    assert 0.0 < abs(r0) < 1e-2
+    assert s.energy() == pytest.approx(E0, rel=1e-12)
+
