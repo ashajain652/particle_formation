@@ -17,7 +17,7 @@ and outputs. **Every command in a section runs from inside the project folder th
 | folder | what it is | sections below |
 |---|---|---|
 | `DRAMA Sphere Experiments/` | the SESAM wrapper and sweep (`sphere_reentry.py`, `sphere_sweep.py`, `analysis/`), the SESAM reference runs and DRAMA inputs in `data/`, outputs in `sphere_sweep_output/` | Environment through Analysis / plotting |
-| `Reentry Model/` | the first-principles model: the `reentry_model` package, `analysis/`, `data/`, `docs/` (incl. `model_assumptions.md`), outputs in `output/`, throwaway work copies in `prototype/` | Physics model (Steps 1 and 2) |
+| `Reentry Model/` | the first-principles model: the `reentry_model` package, `analysis/`, `data/`, `docs/` (incl. `model_assumptions.md`), outputs in `output/`, the record of the Step 3 work copies in `prototype/` | Physics model (Steps 1 and 2 verified; Step 3, melting and melt spraying, ported into the package on 2026-11-11, see `Reentry Model/CLAUDE.md`) |
 | `Spheral/` | the `spheral_frag` large-fragment package, `analysis/`, `data/`, `docs/`, outputs in `spheral_output/` | Large fragments |
 
 `Generic_Satellite Reentry/` is the DRAMA GUI project of the parent satellite (git-ignored); `citations/` holds source

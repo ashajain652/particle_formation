@@ -74,3 +74,16 @@ sentinel output and the committed plan in parallel — the two have the same blo
 each sentinel block's counterpart back to disk. A file the generator reads whole comes back exactly;
 one read with `tail_from` comes back as its tail, which you append to the Step 2 version from the
 repo. Regenerating to byte identity then confirms the reconstruction.
+
+## Retired on 2026-11-11: the six skyscrapers folders
+
+The skyscrapers code (the layered-skin moving-mesh model of a melting sphere) was ported into the package
+`Reentry Model/reentry_model/` on 2026-11-11, onto the branch that becomes `main`. As of that port the six
+folders that built it are retired and kept as the record, not edited: `work-2026-10-08-skin`,
+`work-2026-10-11-moving-mesh-plan`, `work-2026-10-12-moving-mesh`, `work-2026-10-12-skin-heat-plan`,
+`work-2026-10-18-column-flow-plan` and `work-2026-10-28-skin-spraying-plan`. Each now has a README saying so.
+The package is the code of record. From here new skyscrapers work goes on short branches off `main`, with no
+prototype folder (Asha, 2026-11-11). The history is reachable from two tags: `skyscrapers-prototype-end`, the
+last commit of the prototype branch, and `skyscrapers-build-end`, the last commit of the build repository (whose
+96 commits are in `main`'s history, each naming its original in a `Build-repository-commit:` trailer). The port
+is described in `Reentry Model/analysis/skyscrapers_port/README.md`.

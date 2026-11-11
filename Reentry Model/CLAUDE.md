@@ -36,7 +36,9 @@ Those two files are the contract with the thesis; keep them true when you change
   everything from inside this folder). Its `__init__.py` defines the folders the code uses:
   `PROJECT_ROOT` (this folder), `DATA_DIR` (`data/`: the US76 table, the ATDB sphere drag table, the
   material JSON), `OUTPUT_DIR` (`output/`), and `DRAMA_DATA_DIR` (`DRAMA Sphere Experiments/data/`,
-  where `sesam_io.REFERENCE_DIR` and `fap.DEFAULT_FAP_DAY` point).
+  where `sesam_io.REFERENCE_DIR`, the non-melting SESAM reference runs, and `fap.DEFAULT_FAP_DAY` point;
+  the two melting SESAM reference runs are in `data/reference_runs/`, which `sesam_io.MELTING_REFERENCE_DIR`
+  points at).
 - `reentry_model/droplet_reentry/` — the droplet stage, a sub-package with its own `analysis/`
   (sweeps and plots) and `tests/` (see "The droplet stage" below).
 - `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
@@ -48,7 +50,8 @@ Those two files are the contract with the thesis; keep them true when you change
   `reentry_model/wake_column/tests/`.
 - `output/` — every run, mesh cache, plot and verification output; git-ignored.
 - `docs/` — `model_assumptions.md`, `milestones/`, and `superpowers/{specs,plans}`.
-- `prototype/` — throwaway working copies (see Repository conventions).
+- `prototype/` — the record of the working copies the Step 3 code was developed in; the code of record is now
+  `reentry_model/` (see Repository conventions).
 
 `compare.py` borrows the plot styling from `DRAMA Sphere Experiments/analysis/plot_style.py` and falls
 back to plain matplotlib without it.
@@ -74,7 +77,11 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
 ## Tests
 
 Each project is tested from inside its own folder; the three `tests/` folders each have a `helpers.py`,
-so they cannot share one pytest session.
+so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
+default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the skyscrapers
+port the unit tier, `pytest tests -m "not drama and not reference" -n 4`, gave 702 passed and 1 skipped in about
+24 minutes across four processes (the skip is the FEniCSx module, which needs `dolfinx`). The port's own tools
+have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
@@ -140,6 +147,20 @@ in serial; `fenicsx_backend` exists for MPI scaling and is verified to agree to 
 `gas` (Cantera equilibrium air + Blottner/Wilke viscosity), `earth`, `fap`, `sesam_io` (a SESAM run as
 a `Reference` in SI), `compare` (model sampled at the reference's time stamps → metrics + six plots),
 `viz` (PyVista animations read only the exported VTK series, never live objects).
+
+Step 3, melting and melt spraying, joined the package on 2026-11-11 (see Repository conventions). Its modules are
+named here by what each holds, from its own docstring. The layered-skin design (the "skyscrapers" architecture)
+is `skin` (a layered skin of cells on every corner column of the 3D mesh's surface: stage 2, heat only, then the
+flow), `skinbody` (the body that couples the moving 3D mesh to those skins each macro step), `columns` (the corner
+columns, each owning the dual cell of one corner of the surface triangulation), `movemesh` (the moving 3D mesh:
+surface corners move by the metal crossing the rigid front, nodes in a deforming zone beneath them follow, the
+temperature field is remapped with the energy books closed exactly), `spreading` (spreading the re-frozen deposit
+where the base would fold), and `restart` (saving a flight's whole state to disk and resuming from it). Physics
+shared with the other architecture is `film` (melt-film lubrication flow and upwind runoff on the patch graph),
+`spray` (Girin's gradient instability per patch and the droplet release bookkeeping), `dispersion` (the numerical
+solution of Girin's dispersion relation), `surface_flow` (the flow-regime gate, wall pressure, boundary-layer
+edge state, wall shear and the film's driving gradient), `rheology` (the viscosity of liquid and slurry AA7075),
+and `girin_case` (Girin's published spraying cases run with his own simplifications, as a validation).
 
 ### The droplet stage (`reentry_model/droplet_reentry/`)
 
@@ -235,18 +256,25 @@ physics or quoting a result.
   `docs/superpowers/specs/<date>-<name>-design.md` is the design and
   `docs/superpowers/plans/<date>-<name>.md` the task-by-task implementation plan (DRAMA Sphere
   Experiments and Spheral keep theirs in `docs/specs/` and `docs/plans/`). Step 1 (trajectory)
-  and Step 2 (coupled 3D heat transfer) are done and verified; **Step 3 (melting, melt film, Girin
-  melt spraying) is planned but not implemented** — nothing in `reentry_model/` melts yet.
-- **The Step 3 plan is generated, never hand-edited.** `prototype/` (code tracked since 2026-10-08,
-  run outputs git-ignored) holds `proto3/`, a throwaway working copy of the package with Step 3
-  applied, and `plan3/make_plan.py`, which assembles `docs/superpowers/plans/2026-09-20-melt-spraying.md`
-  (as `plan3/plan.md`) by reading the code blocks straight out of `proto3/`. Regenerating must produce
-  a byte-identical file. To change a code block, edit `proto3/`, run its tests there, regenerate, copy
-  over. `plan3/audit_docs.py` checks the plan's prose blocks against the prototype's actual flags and
-  column names. Read `prototype/README.md` first. `docs/superpowers/plans/melt-spraying-subplans/`
-  splits that plan into one file per task for sub-agent refinement; `00-shared-context.md` is
-  required reading before any of the others. The prototype copies keep the old flat layout inside
-  themselves and were not re-pathed in the 2026-10-24 restructure.
+  and Step 2 (coupled 3D heat transfer) are done and verified. **Step 3 (melting, melt film, Girin melt
+  spraying) and the skyscrapers architecture were ported into the package on 2026-11-11** (merge commits 592a77d,
+  the prototype line's designs, plans and specs, and d716a24, the build repository's 96 commits rewritten into
+  this layout; the data paths were repointed in b92c4e9). The port changed no model behaviour; how it was made and
+  checked is in `analysis/skyscrapers_port/README.md` and its design
+  `docs/superpowers/specs/2026-11-11-skyscrapers-port-to-main-design.md`.
+- **Next is the refactor of 2026-10-12, and it is another agent's.** `docs/superpowers/plans/shared/README.md`
+  and the level-set design's section 14 record the decision: one combined refactor moves the shared physics into
+  `reentry_model/shared/`. After it, skyscrapers work goes on short branches off `main`, with no prototype
+  folder (Asha, 2026-11-11). Until then do not restructure the new modules.
+- **The Step 3 plan was generated from the prototype; that workflow is retired.** Before the port, `prototype/`
+  held `proto3/`, a throwaway copy of the package with Step 3 applied, and `plan3/make_plan.py`, which assembled
+  `docs/superpowers/plans/2026-09-20-melt-spraying.md` from it. Those, and the six skyscrapers work copies
+  (`work-2026-10-08-skin`, `work-2026-10-11-moving-mesh-plan`, `work-2026-10-12-moving-mesh`,
+  `work-2026-10-12-skin-heat-plan`, `work-2026-10-18-column-flow-plan`, `work-2026-10-28-skin-spraying-plan`),
+  stay as the record and are not edited; each of the six has a README saying so. Read `prototype/README.md`
+  first. `docs/superpowers/plans/melt-spraying-subplans/` holds one file per task; `00-shared-context.md` is
+  required reading before any of the others. The history is reachable from the tags
+  `skyscrapers-prototype-end` and `skyscrapers-build-end`.
 - **Outputs are git-ignored, inputs are committed.** Ignored: `Reentry Model/output/`, the run outputs
   under `Reentry Model/prototype/`, `sphere_sweep_output/` (tens of GB), `spheral_output/` and the
   DRAMA GUI folders. Committed because the verification depends on them: the four SESAM reference
