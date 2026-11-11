@@ -2408,37 +2408,47 @@ def test_the_heating_reads_the_effective_angle(coarse_sphere_mesh):
 
 
 def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
-    """`leeward_test="facing"`, the class default a body saved before Task 5j flies on, and the angles read as `theta` (the
-    method replaced by the old attribute) are one flight: every column of every row but the two new ones, and the final mass
-    and energy, equal to the last bit. 3 MW/m2 on the front from 893 K, two 0.0625 s macro steps with the flow on."""
+    """A body on the class default `facing` (what a body saved before Task 5j flies on) and one whose angles are read as `theta` (the
+    method replaced by the old attribute) are one flight: every column of every row but the two new ones, the surface flow's
+    shear and pressure gradient, the spray plan's depths, the mass released, and the final mass and energy, equal to the last
+    bit. The flight sprays with the surface flow and the spray plan reading the angles (the gas state of the 100 mm flight at
+    93 s, 3e6 W/m2 on the front from 890 K, the slip band on, one 0.25 s macro step, as the books test with the band on), so every consumer of the effective
+    angle is called (review of Task 5j, Minor 1)."""
+    pytest.importorskip("cantera")
+    from test_reentry_model_surface_flow import aero_state_at
+    from reentry_model import spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
     legacy = skinbody.SkinBody.load_angles
     runs = []
-    for how in ("facing", "default", "legacy"):
+    for how in ("default", "legacy"):
         np.random.seed(12345)
         if how == "legacy":
             skinbody.SkinBody.load_angles = lambda self: self.theta
         try:
-            kw = {"leeward_test": "facing"} if how == "facing" else {}
-            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
+            kw = {"leeward_test": "facing"} if how == "legacy" else {}
+            model = spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True)
+            b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model, **kw)
             if how == "default":
                 del vars(b)["leeward_test"]                 # as a state saved before Task 5j
                 assert b.leeward_test == "facing"
+            state = aero_state_at(93.0)
+            state.kn = 0.04
             rows = []
-            for k in range(2):
-                loads = front_loads(b, 3e6)
-                wind = b.theta < 0.5 * np.pi
-                push = skinbody.FlowForcing(np.where(wind, -5e2 / 0.05 * np.sin(b.theta), 0.0), np.where(wind, 50.0, 0.0),
-                                            30.0 * b.v_hat)
-                b.advance(0.0625 * (k + 1), 0.0625, loads, forcing=push)
+            for k in range(1):
+                b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
                 rows.append((b.step_parts, timed_out(b.skin_stats())))
         finally:
             skinbody.SkinBody.load_angles = legacy
         runs.append((b, rows))
     assert all(k in rows[0][1] for _, rows in runs for k in skinbody.LEEWARD_COLUMNS)
+    assert runs[0][0].last_flow.in_slip_band and np.isfinite(runs[0][0].spray_plan.result.delta_m).any()   # the consumers really ran
     old = lambda rows: [(p, {k: v for k, v in r.items() if k not in skinbody.LEEWARD_COLUMNS}) for p, r in rows]
-    assert same_rows(old(runs[0][1]), old(runs[1][1])) and same_rows(old(runs[0][1]), old(runs[2][1]))
-    assert runs[0][0].mass() == runs[1][0].mass() == runs[2][0].mass() and runs[0][0].handed_mass > 0.0
-    assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
+    assert same_rows(old(runs[0][1]), old(runs[1][1]))
+    for b, _ in runs[1:]:
+        for name in ("tau", "dp_ds"):
+            np.testing.assert_array_equal(getattr(b.last_flow, name), getattr(runs[0][0].last_flow, name))
+        np.testing.assert_array_equal(b.spray_plan.result.delta_m, runs[0][0].spray_plan.result.delta_m)
+        assert b.released_mass == runs[0][0].released_mass and b.mass() == runs[0][0].mass() and b.energy() == runs[0][0].energy()
     assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
     with pytest.raises(ValueError, match="leeward_test"):
         make(coarse_sphere_mesh, leeward_test="behind")
@@ -2492,7 +2502,7 @@ def test_with_the_band_on_the_depth_ratios_read_the_depth_the_plan_sprayed_on(co
     b.last_flow = object()                       # never read: the plan has the depth
     b.spray_plan = SimpleNamespace(result=SimpleNamespace(delta_m=np.full(b.skins.n, 1e-4)))
     flowing = np.full(b.skins.n, 5e-5)           # a flowing depth on every column (880 K metal has none to measure)
-    wet = b.windward() & (flowing > 0.0)
+    wet = b.windward_corners() & (flowing > 0.0)
     assert wet.sum() > 50
     got = b._depth_ratios(flowing)["b_over_delta_m_median"]
     assert got == pytest.approx(float(np.median(flowing[wet] / 1e-4)), rel=1e-14)

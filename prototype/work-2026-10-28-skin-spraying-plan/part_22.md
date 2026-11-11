@@ -2707,7 +2707,7 @@ git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026
 
 **Files:**
 - Modify: `reentry_model/skinbody.py` (`LEEWARD_TESTS`, `LEEWARD_COLUMNS`; `SkinBody.leeward_test` with a class default `"facing"` and the
-  constructor argument; `mass_centroid()`, `_leeward()`, `windward()`, `load_angles()`; the windward sphere fit's selection; `nose_stats`
+  constructor argument; `mass_centroid()`, `_leeward()`, `windward_corners()`, `load_angles()`; the windward sphere fit's selection; `nose_stats`
   gains the two leeward columns; `advance` and `flow_forcing` read `load_angles()`; `_depth_ratios` reads the plan's own depth)
 - Modify: `reentry_model/coupled.py` (`CoupledRun.loads_at` reads `load_angles()` where the body has it; the two columns in `SKINBODY_COLUMNS`)
 - Modify: `reentry_model/surface_flow.py` (`SurfaceFlowResult.nose_radius`, the radius the shear integral was taken at)
@@ -2722,7 +2722,7 @@ git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026
   built over the windward patches inside `SurfaceFlow.evaluate` from the angles it receives, so passing it the effective angles makes the band
   follow the test.
 - Produces: `skinbody.LEEWARD_TESTS = ("facing", "centroid")`; `SkinBody(..., leeward_test="facing")` (class default `"facing"`: a state saved
-  before this task flies on `theta` alone); `SkinBody.mass_centroid()` [m, (3,)]; `SkinBody.windward()` (bool per corner) and
+  before this task flies on `theta` alone); `SkinBody.mass_centroid()` [m, (3,)]; `SkinBody.windward_corners()` (bool per corner) and
   `SkinBody.load_angles()` (`theta` itself under `facing`; under `centroid` `theta` where windward and the larger of `theta` and
   90 degrees plus 1e-6 radian where not); two history columns, `centroid_offset_mm` and `leeward_corners`, with either setting;
   `SurfaceFlowResult.nose_radius` (last field, `None` where there is no shear integral); `spray.N_BINS = 50`, `spray.R_MAX = 0.1`. `run`:
@@ -2746,23 +2746,30 @@ flight has yet been made with the test on): releases from top corners up to 82 m
 (median) at 186.5 to 187.3 s, with the mass centroid 30 mm behind the original centre by 187.0 s. On the untouched 4 mm test sphere (once, one
 mesh) the tests assert a centroid within 0.2 mm of the mesh's mean point and fewer than 10 corners facing the flow from behind the plane (the
 equator corners, a hair behind it). The effect on a flight's spraying, heating and fitted radius is not yet measured: it is the controller's
-re-flight of the 100 mm sphere with `--leeward-test centroid`.
+re-flight of the 100 mm sphere with `--leeward-test centroid`. One real saved state, the 100 mm sphere's snapshot at 22.0 s (pickled with 40 size bins), resumed once through
+0.6 s with `--hand-down off --part-count-from melting --size-feedback current --spray-gates 2026-11-10 --leeward-test centroid --sideways-heat height
+--slip-band on`: exit 0, energy balance residual -1.1e-12, momentum residual at most 7e-17, no rebuild mass residual, fitted nose radius 49.8 mm, 28 corners
+facing the flow from behind the plane, centroid 0.027 mm behind the mesh's mean point; it released nothing in those 0.6 s (once, one state).
 
 **Rulings** (2026-11-10; what, why, cost if wrong):
 1. *The constructor's default is `facing`, the command line's `centroid`.* Why: every direct construction in the tests and every state saved
    before this task keeps its flight to the last bit; the command line, which decides what flights are flown, takes Asha's decision. Cost if wrong:
    a script that builds a `SkinBody` itself reads the old test unless it asks.
 2. *The centroid is read at the top surface's refresh, not at every sub-step.* The 3D model's part is measured once after each move (as the volume
-   is) and the skins' at the first read after it; a macro step's loads read the shape at its start, as the angles and the fit do. Cost if wrong: in a
-   step with no move the centroid lags the skins' flow by one refresh.
+   is) and the skins' at the first read after it. Every macro step's last part refreshes the geometry (`_move_base`), so the loads, the flow and the
+   plan read the centroid measured at the end of the previous macro step: the same lag the angles and the fit have. Cost if wrong: within a
+   macro step the centroid lags the skins' own redistribution by up to one step.
 3. *The history counts the corners that face the flow from behind the plane with either setting.* On the untouched 4 mm test sphere a few equator
    corners (3 of 2 254) are a hair behind the plane, so the count is not zero there and the effective angle moves those corners.
 4. *The shear integral's radius is stored on the result and `spray_layer` reads it* (Task 5i's Minor 3): the integral and the `r = R sin(theta)`
    it is divided by cannot come from two radii; a flow that does not carry one (a stand-in, a state from before) reads the radius the caller gives.
 5. *`_depth_ratios` reads the plan's own depth* where the band is on and the step has a plan, instead of recomputing it from the start-of-step flow
-   with the end-of-step angles and radius; its wet columns are the windward ones by `windward()`.
+   with the end-of-step angles and radius; its wet columns are the windward ones by `windward_corners()`.
 6. *The size histogram runs to 0.1 m,* ten bins a decade as before, 50 bins: the 40 old bins' edges are bit for bit the old ones and their counts
-   unchanged, and the Rayleigh-Taylor droplets above 10 mm are counted. **This is the one exception to "every earlier output the same to the last
+   unchanged (one radius moves: a droplet of exactly 10 mm now falls in bin 40, not 39, because the last bin used to close on the right; every other
+   radius bins as before), and the Rayleigh-Taylor droplets above 10 mm are counted. **A state saved with 40 bins is padded with zeros up to 50 on
+   resume** (`cmd_resume`, for skins and elements alike; exact, as the first 40 edges are unchanged), or its first spraying step would add a 50-bin
+   histogram to its 40-bin accumulators and raise `ValueError`. **This is the one exception to "every earlier output the same to the last
    bit":** `size_distribution.csv` has ten more rows per window for every run, empty for a run in which no droplet is above 10 mm. (The controller's
    ruling, 2026-11-10.)
 7. *Minor 2 of the review* (the test `test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit`): its docstring is cut to what it checks
@@ -2817,7 +2824,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 
 {{DIFF_CLI_T5J}}
 
-- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (702 passed, 1 skipped, 29.8 minutes, on mains power; the baseline before the task was 685 passed, 1 skipped).
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (702 passed, 1 skipped, 48.3 minutes on mains power with other long runs sharing the laptop after the fix round, 29.8 minutes before it; the baseline before the task was 685 passed, 1 skipped).
 
 - [ ] **Step 6: Commit.**
 

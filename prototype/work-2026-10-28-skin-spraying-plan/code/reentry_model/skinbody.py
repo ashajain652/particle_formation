@@ -620,7 +620,7 @@ class SkinBody(ThermalBody):
     `leeward_test`: `facing` (the constructor's default, and the class's, so a state saved before Task 5j flies as it was) or
     `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
     to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
-    windward sphere fit (`load_angles`, `windward`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
+    windward sphere fit (`load_angles`, `windward_corners`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
     release angle (`spray.enclosed_centroid`) do not change."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
@@ -787,7 +787,7 @@ class SkinBody(ThermalBody):
             self._leeward_raw = (c, (self.surface.points - c) @ self.v_hat > 0.0)
         return self._leeward_raw
 
-    def windward(self):
+    def windward_corners(self):
         """Which top corners are windward, bool (n,): their normal within 90 degrees of the direction of motion, and under
         `leeward_test` `centroid` also ahead of the plane through the mass centroid (sub-plan 22 Task 5j)."""
         facing = self.theta <= 0.5 * np.pi
@@ -798,11 +798,11 @@ class SkinBody(ThermalBody):
         flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
         Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
         no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
-        under `centroid` `theta` where `windward` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
+        under `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
         itself, the frames and the release angle do not change."""
         if self.leeward_test != "centroid":
             return self.theta
-        return np.where(self.windward(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -1379,7 +1379,7 @@ class SkinBody(ThermalBody):
 
     def _depth_ratios(self, flowing):
         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
-        the windward face (`windward`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
+        the windward face (`windward_corners`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
         with flowing metal (b, the flowing depth, above zero) and a conjugate depth delta_m (finite and above zero); the
         sheared depth `sheared_depth`, on those whose top moves. nan where there are none, or without the flow.
         The depth is the one the step's spraying read where the step has a plan and the band is on (`spray_plan.result.
@@ -1396,7 +1396,7 @@ class SkinBody(ThermalBody):
         if len(delta_m) != self.skins.n:
             return out
         with np.errstate(invalid="ignore"):
-            wet = self.windward() & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
+            wet = self.windward_corners() & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
         if wet.any():
             out["b_over_delta_m_median"] = float(np.median(flowing[wet] / delta_m[wet]))
             sheared = sheared_depth(self.skins)

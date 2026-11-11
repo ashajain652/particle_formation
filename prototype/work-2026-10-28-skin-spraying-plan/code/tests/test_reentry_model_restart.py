@@ -486,10 +486,16 @@ def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_a
     del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
     for key in ("centroid_offset_mm", "leeward_corners"):
         del state["row"][key]
+    n40, m40 = body.hist_n[:40].copy(), body.hist_m[:40].copy()     # and a body saved with 40 size bins, as before Task 5j: padded on resume
+    assert body.hist_n[40:].sum() == 0.0 and n40.sum() > 0.0
+    body.hist_n, body.hist_m = n40.copy(), m40.copy()
     old = str(tmp_path / "old.state.pkl")
     restart.save(old, state)
-    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--save-state-at", "0.2"]) == 0
     assert "leeward test facing" in capsys.readouterr().out
+    after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body       # the flight went on, sprayed, and kept the first 40 bins
+    assert len(after.hist_n) == len(after.hist_m) == 50
+    assert (after.hist_n[:40] >= n40).all() and (after.hist_m[:40] >= m40).all() and after.hist_n.sum() >= n40.sum()
     rows = rows_of(str(tmp_path / "o.csv"))
     assert "leeward_test" not in json.load(open(str(tmp_path / "o.json")))["settings"]
     assert all(k in r for r in rows for k in ("centroid_offset_mm", "leeward_corners"))

@@ -14704,7 +14704,7 @@ git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026
 
 **Files:**
 - Modify: `reentry_model/skinbody.py` (`LEEWARD_TESTS`, `LEEWARD_COLUMNS`; `SkinBody.leeward_test` with a class default `"facing"` and the
-  constructor argument; `mass_centroid()`, `_leeward()`, `windward()`, `load_angles()`; the windward sphere fit's selection; `nose_stats`
+  constructor argument; `mass_centroid()`, `_leeward()`, `windward_corners()`, `load_angles()`; the windward sphere fit's selection; `nose_stats`
   gains the two leeward columns; `advance` and `flow_forcing` read `load_angles()`; `_depth_ratios` reads the plan's own depth)
 - Modify: `reentry_model/coupled.py` (`CoupledRun.loads_at` reads `load_angles()` where the body has it; the two columns in `SKINBODY_COLUMNS`)
 - Modify: `reentry_model/surface_flow.py` (`SurfaceFlowResult.nose_radius`, the radius the shear integral was taken at)
@@ -14719,7 +14719,7 @@ git commit -m "Spraying: the thin branch's Knudsen gate under --spray-gates 2026
   built over the windward patches inside `SurfaceFlow.evaluate` from the angles it receives, so passing it the effective angles makes the band
   follow the test.
 - Produces: `skinbody.LEEWARD_TESTS = ("facing", "centroid")`; `SkinBody(..., leeward_test="facing")` (class default `"facing"`: a state saved
-  before this task flies on `theta` alone); `SkinBody.mass_centroid()` [m, (3,)]; `SkinBody.windward()` (bool per corner) and
+  before this task flies on `theta` alone); `SkinBody.mass_centroid()` [m, (3,)]; `SkinBody.windward_corners()` (bool per corner) and
   `SkinBody.load_angles()` (`theta` itself under `facing`; under `centroid` `theta` where windward and the larger of `theta` and
   90 degrees plus 1e-6 radian where not); two history columns, `centroid_offset_mm` and `leeward_corners`, with either setting;
   `SurfaceFlowResult.nose_radius` (last field, `None` where there is no shear integral); `spray.N_BINS = 50`, `spray.R_MAX = 0.1`. `run`:
@@ -14743,23 +14743,30 @@ flight has yet been made with the test on): releases from top corners up to 82 m
 (median) at 186.5 to 187.3 s, with the mass centroid 30 mm behind the original centre by 187.0 s. On the untouched 4 mm test sphere (once, one
 mesh) the tests assert a centroid within 0.2 mm of the mesh's mean point and fewer than 10 corners facing the flow from behind the plane (the
 equator corners, a hair behind it). The effect on a flight's spraying, heating and fitted radius is not yet measured: it is the controller's
-re-flight of the 100 mm sphere with `--leeward-test centroid`.
+re-flight of the 100 mm sphere with `--leeward-test centroid`. One real saved state, the 100 mm sphere's snapshot at 22.0 s (pickled with 40 size bins), resumed once through
+0.6 s with `--hand-down off --part-count-from melting --size-feedback current --spray-gates 2026-11-10 --leeward-test centroid --sideways-heat height
+--slip-band on`: exit 0, energy balance residual -1.1e-12, momentum residual at most 7e-17, no rebuild mass residual, fitted nose radius 49.8 mm, 28 corners
+facing the flow from behind the plane, centroid 0.027 mm behind the mesh's mean point; it released nothing in those 0.6 s (once, one state).
 
 **Rulings** (2026-11-10; what, why, cost if wrong):
 1. *The constructor's default is `facing`, the command line's `centroid`.* Why: every direct construction in the tests and every state saved
    before this task keeps its flight to the last bit; the command line, which decides what flights are flown, takes Asha's decision. Cost if wrong:
    a script that builds a `SkinBody` itself reads the old test unless it asks.
 2. *The centroid is read at the top surface's refresh, not at every sub-step.* The 3D model's part is measured once after each move (as the volume
-   is) and the skins' at the first read after it; a macro step's loads read the shape at its start, as the angles and the fit do. Cost if wrong: in a
-   step with no move the centroid lags the skins' flow by one refresh.
+   is) and the skins' at the first read after it. Every macro step's last part refreshes the geometry (`_move_base`), so the loads, the flow and the
+   plan read the centroid measured at the end of the previous macro step: the same lag the angles and the fit have. Cost if wrong: within a
+   macro step the centroid lags the skins' own redistribution by up to one step.
 3. *The history counts the corners that face the flow from behind the plane with either setting.* On the untouched 4 mm test sphere a few equator
    corners (3 of 2 254) are a hair behind the plane, so the count is not zero there and the effective angle moves those corners.
 4. *The shear integral's radius is stored on the result and `spray_layer` reads it* (Task 5i's Minor 3): the integral and the `r = R sin(theta)`
    it is divided by cannot come from two radii; a flow that does not carry one (a stand-in, a state from before) reads the radius the caller gives.
 5. *`_depth_ratios` reads the plan's own depth* where the band is on and the step has a plan, instead of recomputing it from the start-of-step flow
-   with the end-of-step angles and radius; its wet columns are the windward ones by `windward()`.
+   with the end-of-step angles and radius; its wet columns are the windward ones by `windward_corners()`.
 6. *The size histogram runs to 0.1 m,* ten bins a decade as before, 50 bins: the 40 old bins' edges are bit for bit the old ones and their counts
-   unchanged, and the Rayleigh-Taylor droplets above 10 mm are counted. **This is the one exception to "every earlier output the same to the last
+   unchanged (one radius moves: a droplet of exactly 10 mm now falls in bin 40, not 39, because the last bin used to close on the right; every other
+   radius bins as before), and the Rayleigh-Taylor droplets above 10 mm are counted. **A state saved with 40 bins is padded with zeros up to 50 on
+   resume** (`cmd_resume`, for skins and elements alike; exact, as the first 40 edges are unchanged), or its first spraying step would add a 50-bin
+   histogram to its 40-bin accumulators and raise `ValueError`. **This is the one exception to "every earlier output the same to the last
    bit":** `size_distribution.csv` has ten more rows per window for every run, empty for a run in which no droplet is above 10 mm. (The controller's
    ruling, 2026-11-10.)
 7. *Minor 2 of the review* (the test `test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit`): its docstring is cut to what it checks
@@ -14861,7 +14868,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
      b._nose_raw = b._fit_nose()
      return b
  
-@@ -2269,3 +2270,250 @@
+@@ -2269,3 +2270,260 @@
      monkeypatch.setattr(skinbody, "girin_plan", planned)
      b.advance(0.25, 0.25, front_loads(b, 3e6), state=aero_state_at(93.0))
      assert len(seen) == 1 and seen[0][0] is not None and seen[0][0] == seen[0][1]
@@ -15003,37 +15010,47 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +
 +
 +def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_mesh):
-+    """`leeward_test="facing"`, the class default a body saved before Task 5j flies on, and the angles read as `theta` (the
-+    method replaced by the old attribute) are one flight: every column of every row but the two new ones, and the final mass
-+    and energy, equal to the last bit. 3 MW/m2 on the front from 893 K, two 0.0625 s macro steps with the flow on."""
++    """A body on the class default `facing` (what a body saved before Task 5j flies on) and one whose angles are read as `theta` (the
++    method replaced by the old attribute) are one flight: every column of every row but the two new ones, the surface flow's
++    shear and pressure gradient, the spray plan's depths, the mass released, and the final mass and energy, equal to the last
++    bit. The flight sprays with the surface flow and the spray plan reading the angles (the gas state of the 100 mm flight at
++    93 s, 3e6 W/m2 on the front from 890 K, the slip band on, one 0.25 s macro step, as the books test with the band on), so every consumer of the effective
++    angle is called (review of Task 5j, Minor 1)."""
++    pytest.importorskip("cantera")
++    from test_reentry_model_surface_flow import aero_state_at
++    from reentry_model import spray
++    mat = material.Material.from_drama_json("AA7075_scheil")
 +    legacy = skinbody.SkinBody.load_angles
 +    runs = []
-+    for how in ("facing", "default", "legacy"):
++    for how in ("default", "legacy"):
 +        np.random.seed(12345)
 +        if how == "legacy":
 +            skinbody.SkinBody.load_angles = lambda self: self.theta
 +        try:
-+            kw = {"leeward_test": "facing"} if how == "facing" else {}
-+            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
++            kw = {"leeward_test": "facing"} if how == "legacy" else {}
++            model = spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True)
++            b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model, **kw)
 +            if how == "default":
 +                del vars(b)["leeward_test"]                 # as a state saved before Task 5j
 +                assert b.leeward_test == "facing"
++            state = aero_state_at(93.0)
++            state.kn = 0.04
 +            rows = []
-+            for k in range(2):
-+                loads = front_loads(b, 3e6)
-+                wind = b.theta < 0.5 * np.pi
-+                push = skinbody.FlowForcing(np.where(wind, -5e2 / 0.05 * np.sin(b.theta), 0.0), np.where(wind, 50.0, 0.0),
-+                                            30.0 * b.v_hat)
-+                b.advance(0.0625 * (k + 1), 0.0625, loads, forcing=push)
++            for k in range(1):
++                b.advance(0.25 * (k + 1), 0.25, front_loads(b, 3e6), state=state)
 +                rows.append((b.step_parts, timed_out(b.skin_stats())))
 +        finally:
 +            skinbody.SkinBody.load_angles = legacy
 +        runs.append((b, rows))
 +    assert all(k in rows[0][1] for _, rows in runs for k in skinbody.LEEWARD_COLUMNS)
++    assert runs[0][0].last_flow.in_slip_band and np.isfinite(runs[0][0].spray_plan.result.delta_m).any()   # the consumers really ran
 +    old = lambda rows: [(p, {k: v for k, v in r.items() if k not in skinbody.LEEWARD_COLUMNS}) for p, r in rows]
-+    assert same_rows(old(runs[0][1]), old(runs[1][1])) and same_rows(old(runs[0][1]), old(runs[2][1]))
-+    assert runs[0][0].mass() == runs[1][0].mass() == runs[2][0].mass() and runs[0][0].handed_mass > 0.0
-+    assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
++    assert same_rows(old(runs[0][1]), old(runs[1][1]))
++    for b, _ in runs[1:]:
++        for name in ("tau", "dp_ds"):
++            np.testing.assert_array_equal(getattr(b.last_flow, name), getattr(runs[0][0].last_flow, name))
++        np.testing.assert_array_equal(b.spray_plan.result.delta_m, runs[0][0].spray_plan.result.delta_m)
++        assert b.released_mass == runs[0][0].released_mass and b.mass() == runs[0][0].mass() and b.energy() == runs[0][0].energy()
 +    assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
 +    with pytest.raises(ValueError, match="leeward_test"):
 +        make(coarse_sphere_mesh, leeward_test="behind")
@@ -15087,7 +15104,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +    b.last_flow = object()                       # never read: the plan has the depth
 +    b.spray_plan = SimpleNamespace(result=SimpleNamespace(delta_m=np.full(b.skins.n, 1e-4)))
 +    flowing = np.full(b.skins.n, 5e-5)           # a flowing depth on every column (880 K metal has none to measure)
-+    wet = b.windward() & (flowing > 0.0)
++    wet = b.windward_corners() & (flowing > 0.0)
 +    assert wet.sum() > 50
 +    got = b._depth_ratios(flowing)["b_over_delta_m_median"]
 +    assert got == pytest.approx(float(np.median(flowing[wet] / 1e-4)), rel=1e-14)
@@ -15119,15 +15136,22 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 ```diff
 --- a/tests/test_reentry_model_melting.py
 +++ b/tests/test_reentry_model_melting.py
-@@ -109,7 +109,7 @@
+@@ -109,11 +109,12 @@
      # 2026-10-22: viscous_film's floor depth and gamma tau*, finite on Girin & Kopyt's branches and nan elsewhere
      gk = np.isin(rows[:, 8], [1, 2, 4])
      assert np.isfinite(rows[gk, 22:24]).all() and np.isnan(rows[~gk, 22:24]).all() and (rows[gk, 23] < 1.0).all()
 -    # the histogram bins 1 um to 10 mm and drops the rest by design. With the rigid substrate on (amendment of 2026-10-06)
-+    # the histogram bins 1 um to 0.1 m (to 10 mm until sub-plan 22 Task 5j) and drops the rest by design. With the rigid substrate on (amendment of 2026-10-06)
++    # the histogram bins 1 um to 0.1 m and drops what is outside by design. With the rigid substrate on (amendment of 2026-10-06)
      # this body, 880 K throughout, is slurry to the core: off Girin's closure its film is held from the shear modes,
      # piles up, and the front-surface Rayleigh-Taylor mode sheds some of it above 10 mm (measured in two unseeded runs:
-     # 5 and 6 droplets, 5.2 and 6.1 % of the mass, 10.1-10.9 mm), so the bins hold exactly what was released inside
+-    # 5 and 6 droplets, 5.2 and 6.1 % of the mass, 10.1-10.9 mm), so the bins hold exactly what was released inside
+-    # their range and nothing is lost below it
++    # 5 and 6 droplets, 5.2 and 6.1 % of the mass, 10.1-10.9 mm). Until sub-plan 22 Task 5j the bins stopped at 10 mm and
++    # those droplets fell above them; now they are inside the bins and counted, so the bins hold exactly what was released
++    # inside their range (1 um to 0.1 m) and nothing is lost below it
+     from reentry_model import spray
+     r_rows, dn_rows, dm_rows = rows[:, 12], rows[:, 13], rows[:, 14]
+     inside = (r_rows >= spray.R_MIN) & (r_rows <= spray.R_MAX)
 ```
 
   in `tests/test_reentry_model_cli.py`:
@@ -15216,7 +15240,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 ```diff
 --- a/tests/test_reentry_model_restart.py
 +++ b/tests/test_reentry_model_restart.py
-@@ -462,6 +462,51 @@
+@@ -462,6 +462,57 @@
      assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
  
  
@@ -15244,10 +15268,16 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +    del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
 +    for key in ("centroid_offset_mm", "leeward_corners"):
 +        del state["row"][key]
++    n40, m40 = body.hist_n[:40].copy(), body.hist_m[:40].copy()     # and a body saved with 40 size bins, as before Task 5j: padded on resume
++    assert body.hist_n[40:].sum() == 0.0 and n40.sum() > 0.0
++    body.hist_n, body.hist_m = n40.copy(), m40.copy()
 +    old = str(tmp_path / "old.state.pkl")
 +    restart.save(old, state)
-+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--save-state-at", "0.2"]) == 0
 +    assert "leeward test facing" in capsys.readouterr().out
++    after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body       # the flight went on, sprayed, and kept the first 40 bins
++    assert len(after.hist_n) == len(after.hist_m) == 50
++    assert (after.hist_n[:40] >= n40).all() and (after.hist_m[:40] >= m40).all() and after.hist_n.sum() >= n40.sum()
 +    rows = rows_of(str(tmp_path / "o.csv"))
 +    assert "leeward_test" not in json.load(open(str(tmp_path / "o.json")))["settings"]
 +    assert all(k in r for r in rows for k in ("centroid_offset_mm", "leeward_corners"))
@@ -15318,7 +15348,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
  an approximation on an eroded body; the whole molten depth may spray, with liquid properties, as below 0.01, the
  liquid-slurry viscosity contrast being future work; delta_m jumps by about 2 to 2.5 times at body Knudsen number 0.01, where
  Eq. (2) hands over to the balance; the thin branch keeps its edge-state wavelength, the bridge's continuum endpoint, which
-@@ -155,8 +156,13 @@
+@@ -155,8 +156,15 @@
  
  K_R, K_T = 0.17, 1.1
  B_MIN = 1.0e-6                     # m, films thinner than this do not spray (numerical floor)
@@ -15327,14 +15357,16 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +# Size bins, ten to a decade: 1 um to 0.1 m (sub-plan 22 Task 5j, the controller's ruling of 2026-11-10). They stopped at 10 mm
 +# (40 bins) until then, and the Rayleigh-Taylor droplets, whose wavelength is centimetres on the layered skins, fell above them
 +# and were not counted; the 40 bins' edges and counts are unchanged, 10 bins were added above them (`size_distribution.csv`
-+# has ten more rows per window, empty for a run in which no droplet is above 10 mm).
++# has ten more rows per window, empty for a run in which no droplet is above 10 mm). One radius moves: a droplet of exactly 10 mm,
++# which closed the last bin on the right and now falls in bin 40, not 39; every other radius bins as before. A body saved
++# with 40 bins is padded with zeros on resume (`cli.cmd_resume`).
 +N_BINS, R_MIN, R_MAX = 50, 1.0e-6, 1.0e-1
 +BIN_EDGES = np.logspace(np.log10(1.0e-6), np.log10(1.0e-2), 41)
 +BIN_EDGES = np.concatenate([BIN_EDGES, np.logspace(-2.0, np.log10(R_MAX), 11)[1:]])
  WE_BREAKUP = 12.0                  # Pilch-Erdman: secondary breakup expected above this droplet Weber number
  CAPILLARY_TAU = 4.0 * np.pi / (2.0 * np.pi) ** 1.5      # 0.798: tau* = 2 x 2 pi / omega_cap(lambda*)
  # h_floor_m and gamma_tau: viscous_film's floor depth and gamma tau* (nan off Girin & Kopyt's branches; 2026-10-22);
-@@ -207,13 +213,15 @@
+@@ -207,13 +215,15 @@
  def spray_layer(flow, liquid, band=False, theta=None, radius=None):
      """The depth the spraying reads, delta_m per patch: `melt_layer`'s (Girin's Eq. (2), nan off his closure) except, with
      `band` on, on the patches in the slip band, where it is `momentum_layer`'s on the windward patches at r = `radius` sin
@@ -15351,7 +15383,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
      if not band or moment is None or theta is None or radius is None or not getattr(flow, "in_slip_band", False):
          return delta_m
      theta = np.asarray(theta, dtype=float)
-@@ -373,8 +381,9 @@
+@@ -373,8 +383,9 @@
      The thin branch's continuum gate, under `2026-11-10` (Task 5i; Asha, 2026-11-10): the thin branch, and the rarefied
      branch with it, release only on patches with a conjugate depth to spray on, a finite `delta_m` -- Girin's closure below
      a wall Knudsen number of 0.01 (`melt_layer`), or, with `slip_band` on, the slip band's momentum-balance depth
@@ -15398,7 +15430,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +    `leeward_test`: `facing` (the constructor's default, and the class's, so a state saved before Task 5j flies as it was) or
 +    `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
 +    to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
-+    windward sphere fit (`load_angles`, `windward`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
++    windward sphere fit (`load_angles`, `windward_corners`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
 +    release angle (`spray.enclosed_centroid`) do not change."""
      # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
      spread_limit = None                  # deg
@@ -15458,7 +15490,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +            self._leeward_raw = (c, (self.surface.points - c) @ self.v_hat > 0.0)
 +        return self._leeward_raw
 +
-+    def windward(self):
++    def windward_corners(self):
 +        """Which top corners are windward, bool (n,): their normal within 90 degrees of the direction of motion, and under
 +        `leeward_test` `centroid` also ahead of the plane through the mass centroid (sub-plan 22 Task 5j)."""
 +        facing = self.theta <= 0.5 * np.pi
@@ -15469,11 +15501,11 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 +        flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
 +        Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
 +        no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
-+        under `centroid` `theta` where `windward` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
++        under `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
 +        itself, the frames and the release angle do not change."""
 +        if self.leeward_test != "centroid":
 +            return self.theta
-+        return np.where(self.windward(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
++        return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
  
      def _fit_nose(self):
          """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -15533,7 +15565,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
 -        the windward face (theta <= 90 degrees), with flowing metal (b, the flowing depth, above zero) and Girin's
 -        conjugate depth delta_m from the macro step's surface flow (`last_flow`; nan off his closure); the sheared depth
 -        `sheared_depth`, on those whose top moves. nan where there are none, or without the flow."""
-+        the windward face (`windward`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
++        the windward face (`windward_corners`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
 +        with flowing metal (b, the flowing depth, above zero) and a conjugate depth delta_m (finite and above zero); the
 +        sheared depth `sheared_depth`, on those whose top moves. nan where there are none, or without the flow.
 +        The depth is the one the step's spraying read where the step has a plan and the band is on (`spray_plan.result.
@@ -15553,7 +15585,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
              return out
          with np.errstate(invalid="ignore"):
 -            wet = (self.theta <= 0.5 * np.pi) & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
-+            wet = self.windward() & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
++            wet = self.windward_corners() & (flowing > 0.0) & np.isfinite(delta_m) & (delta_m > 0.0)
          if wet.any():
              out["b_over_delta_m_median"] = float(np.median(flowing[wet] / delta_m[wet]))
              sheared = sheared_depth(self.skins)
@@ -15752,7 +15784,18 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
      if "--spray-gates" in changed:
          run.body.spray.spray_gates = args.spray_gates
      if "--slip-band" in changed:
-@@ -1137,7 +1174,7 @@
+@@ -1125,6 +1162,10 @@
+     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
+         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
+         state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
++    for name in ("hist_n", "hist_m"):    # a body saved with 40 size bins (before Task 5j) gets the 50: its first 40 edges are unchanged, so zeros are exact
++        h = getattr(run.body, name, None)
++        if h is not None and len(h) < spray.N_BINS:
++            setattr(run.body, name, np.concatenate([h, np.zeros(spray.N_BINS - len(h))]))
+     if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+     if args.seed is not None:
+@@ -1137,7 +1178,7 @@
      for key, flag in (("t_max", "--t-max"), ("dt_continuum", "--dt-continuum"), ("seed", "--seed"),
                        ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                        ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
@@ -15761,7 +15804,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
                        ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
          if flag in changed:
              setattr(saved, key, changed[flag])
-@@ -1145,7 +1182,7 @@
+@@ -1145,7 +1186,7 @@
          settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
      limit = run.body.spread_limit if skins else None
      print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
@@ -15770,7 +15813,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
                os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
                settings.dt_continuum if settings.dt_continuum is not None else "none",
                args.seed if args.seed is not None else "saved random state", settings.frames_every,
-@@ -1155,6 +1192,7 @@
+@@ -1155,6 +1196,7 @@
                "off" if skins and not run.body.hand_down else "on",
                run.body.sideways_pairing if skins else "depth",
                run.body.size_feedback if skins else "n/a",
@@ -15778,7 +15821,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
                run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
                ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
                "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
-@@ -1178,6 +1216,8 @@
+@@ -1178,6 +1220,8 @@
          thermal_info["sideways_heat"] = run.body.sideways_pairing
      if skins and run.body.size_feedback == "current":
          thermal_info["size_feedback"] = "current"
@@ -15789,7 +15832,7 @@ re-flight of the 100 mm sphere with `--leeward-test centroid`.
      if getattr(run.body, "spray", None) is not None:
 ```
 
-- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (702 passed, 1 skipped, 29.8 minutes, on mains power; the baseline before the task was 685 passed, 1 skipped).
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (702 passed, 1 skipped, 48.3 minutes on mains power with other long runs sharing the laptop after the fix round, 29.8 minutes before it; the baseline before the task was 685 passed, 1 skipped).
 
 - [ ] **Step 6: Commit.**
 
