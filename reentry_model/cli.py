@@ -382,10 +382,12 @@ def resume_arguments(rs):
                          "saved before the option existed)")
     rs.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default=None,
                     help="which of the release rules decided on 2026-11-10 apply: 2026-11-10 or before (default: the saved "
-                         "flight's, before for one saved before the option existed)")
+                         "flight's, before for one saved before the option existed); refused for a saved flight without a "
+                         "spray model")
     rs.add_argument("--slip-band", choices=("on", "off"), default=None,
                     help="Girin's spraying also runs in the slip band, body Knudsen number 0.01 to 0.1 (default: the saved "
-                         "flight's, off for one saved before the option existed)")
+                         "flight's, off for one saved before the option existed); refused for a saved flight without a spray "
+                         "model")
     rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
@@ -988,10 +990,11 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
                       res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
                       res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
         if args.thermal == "fem" and args.surface_model == "skin":
-            print("  skins: {} columns, removed {:.4g} kg, drawn {:.4g} kg, {} rebuilds, {} interface repeats, {} base faults; "
-                  "wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
+            print("  skins: {} columns, removed {:.4g} kg, drawn {:.4g} kg, {} rebuilds, {} interface repeats, {} base faults ({} by the bottom cell "
+                  "alone); wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
                       res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
-                      res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
+                      res["interface_repeats"], res["jump_faults"], res["jump_faults_bottom_cell"], res["wall_skins_s"],
+                      res["wall_3d_s"]))
         if spraying_skins:
             print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}".format(
                       res["released_mass_kg"], res["n_released"], res["n_source_rows"],
@@ -1161,7 +1164,11 @@ def cmd_resume(args, parser):
         run.body.spray.slip_band = args.slip_band == "on"
     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
-        state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
+        # (Task 5k, review minor 2: under a changed --size-feedback or --leeward-test the saved row's own nose and leeward
+        # columns were computed under the old setting, while the first resumed step's loads read the new one, so they are
+        # recomputed here, as the saved step's surface reads under the new setting)
+        redo = "--size-feedback" in changed or "--leeward-test" in changed
+        state["row"].update({k: v for k, v in run.body.nose_stats().items() if redo or k not in state["row"]})
     for name in ("hist_n", "hist_m"):    # a body saved with 40 size bins (before Task 5j) gets the 50: its first 40 edges are unchanged, so zeros are exact
         h = getattr(run.body, name, None)
         if h is not None and len(h) < spray.N_BINS:
@@ -1222,9 +1229,8 @@ def cmd_resume(args, parser):
         thermal_info["size_feedback"] = "current"
     if skins and run.body.leeward_test == "centroid":
         thermal_info["leeward_test"] = "centroid"
-    if getattr(run.body, "spray", None) is not None and run.body.spray.spray_gates != "before":
-        thermal_info["spray_gates"] = run.body.spray.spray_gates      # absent: before, as a state saved without it
     if getattr(run.body, "spray", None) is not None:
+        thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}

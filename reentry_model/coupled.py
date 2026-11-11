@@ -42,7 +42,7 @@ MELT_COLUMNS = ["film_mass_kg", "sprayed_mass_kg", "runoff_mass_kg", "removed_ma
 SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
                     "rebuilds", "rebuild_residual_J", "rebuild_residual_last_J", "drawn_mass_kg", "absorbed_mass_kg",
-                    "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
+                    "handed_mass_kg", "shortfall_kg", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_mismatch_J",
                     "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
                     "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
                     "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
@@ -285,7 +285,7 @@ class CoupledRun:
         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
-        out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
+        out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_repeats")})
         if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
             out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
         return out
