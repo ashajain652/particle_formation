@@ -32,7 +32,6 @@ import numpy as np
 from scipy.linalg import solve_banded
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import reentry_model  # noqa: E402
 from reentry_model import material  # noqa: E402
 
 
@@ -114,7 +113,7 @@ def main():
     p.add_argument("--t-end", type=float, default=2.0)
     p.add_argument("--swell", choices=SWELL_MODES, default="off")
     p.add_argument("--remove-at", choices=REMOVE_AT, default="feed")
-    p.add_argument("--out", default=os.path.join(reentry_model.OUTPUT_DIR, "ablation_1d.json"))
+    p.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "ablation_1d.json"))
     a = p.parse_args()
     mat = material.Material.from_drama_json(material.MATERIAL_NAMES["AA7075_scheil"])
     t, r, nr = run(mat, a.q, a.t0, a.length_mm * 1e-3, a.cell_um * 1e-6, a.dt_ms * 1e-3, a.t_end, swell=a.swell,

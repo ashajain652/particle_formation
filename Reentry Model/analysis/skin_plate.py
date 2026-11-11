@@ -78,7 +78,6 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import reentry_model  # noqa: E402
 from reentry_model import heating, material, mesh, movemesh, skin, skinbody  # noqa: E402
 from reentry_model.thermal import thermal_solver  # noqa: E402
 
@@ -308,7 +307,7 @@ def main():
     a.add_argument("--swell", choices=("off", "on"), default="off",
                    help="off: the skins at the solid's density, as the references hold their metal (default); on: the "
                         "skins' own law, each cell at its phase's density")
-    a.add_argument("--out", default=os.path.join(reentry_model.OUTPUT_DIR, "skin_plate.json"))
+    a.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "skin_plate.json"))
     a.add_argument("--flow", choices=("off", "on"), default="off",
                    help="on: the skins' liquid stays and flows (sub-plan 21 Task 8); off: removed as it forms (default)")
     a.add_argument("--push", choices=tuple(PUSHES), default="none",

@@ -21,7 +21,6 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import reentry_model  # noqa: E402
 from reentry_model import material, mesh, movemesh  # noqa: E402
 from reentry_model.thermal import thermal_solver  # noqa: E402
 
@@ -30,7 +29,7 @@ DT, NOSE_STEP, Q_STAG = 0.5, 0.5e-3, 1.0e6
 parser = argparse.ArgumentParser()
 parser.add_argument("--nose-total-mm", type=float, default=30.0)
 parser.add_argument("--solver", default="skfem")
-parser.add_argument("--out", default=os.path.join(reentry_model.OUTPUT_DIR, "movemesh_recession.json"))
+parser.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "movemesh_recession.json"))
 parser.add_argument("--no-smoothing", action="store_true", help="corners move along their normals only")
 parser.add_argument("--smooth-lambda", type=float, default=None)
 parser.add_argument("--smooth-clamp", type=float, default=None)
