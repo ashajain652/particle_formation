@@ -550,6 +550,29 @@ def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resum
     assert after.hist_n[40:].sum() == 0.0 and after.hist_m[40:].sum() == 0.0
 
 
+def test_a_state_saved_before_the_bottom_cell_count_resumes_with_it_continuing_from_the_saved_fault_count(flown, tmp_path):
+    """Task 5k, fix round 1 (controller's ruling, 2026-11-11): a state saved before `jump_faults_bottom_cell` existed (the attribute
+    deleted from its body, the column from its saved row, as the old-state tests of this file do) resumes, takes base moves, and
+    reports the old-rule count as the saved `jump_faults` plus the old-rule faults of the new steps; `jump_faults` continues under the
+    new rule from the resume. Before the fix the first base move raised AttributeError."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    body = state["run"].body
+    del vars(body)["jump_faults_bottom_cell"]
+    del state["row"]["jump_faults_bottom_cell"]
+    body.jump_faults = state["row"]["jump_faults"] = 7                 # a saved count, made by the old rule
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    rows = rows_of(str(tmp_path / "o.csv"))
+    assert len(rows) == 3 and rows[0]["jump_faults_bottom_cell"] == "7" and rows[0]["jump_faults"] == "7"
+    last = rows[-1]
+    assert float(last["jump_faults_bottom_cell"]) >= 7 and float(last["jump_faults"]) >= 7
+    assert float(last["jump_faults_bottom_cell"]) - 7 >= float(last["jump_faults"]) - 7      # the new rule never counts more
+    doc = json.load(open(str(tmp_path / "o.json")))["results"]
+    assert doc["jump_faults_bottom_cell"] == int(float(last["jump_faults_bottom_cell"]))
+
+
 def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
     """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
     runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the
