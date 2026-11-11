@@ -579,6 +579,19 @@ volume correction; pieces other than the largest removed in flight (to the later
    Spheral lacks, so the slurry route may move here; Spheral keeps the tearing of the mush).
 6. **Fallback mesh strategy** at 1 mm (§6.1).
 7. **A cut-cell flow solve** if diffuse smearing matters (§8.6).
+8. **The capillary curvature: take it from the level set** (Asha, 2026-11-10). The skyscrapers' skin flow takes the
+   curvature in its surface-tension term in a thin-film form, the base surface's curvature plus the linear response of
+   the thicknesses (the cotangent Laplacian of the column heights over each column's area; sub-plan 21 Task 6b, Asha,
+   2026-10-21, option A, chosen over the top surface's own mesh curvature because at corners touching an obtuse
+   triangle that curvature took its neighbours' mean, could not see its own height, and drew metal onto pile-ups). The
+   thin-film form holds only while the layer is much thinner than the base's radius of curvature and its top slopes
+   gently. The comparison flights of 2026-11-08 to 2026-11-10 broke both conditions: by 187.0 s the 50 mm sphere's
+   rear pool stood 51.5-66.5 mm deep in its columns on a base about 19-21 mm from the sphere's centre, one to three base
+   radii (`prototype/work-2026-10-28-skin-spraying/measure/task5_compare/`). This architecture's surface tension, in the
+   flow solve's weak form (§8.4) and in any capillary term of the marker skins' runoff (§9.5), takes the curvature of
+   the true outer surface from the level set itself, κ = ∇·(∇φ/|∇φ|), evaluated on the zero contour moved out by the
+   skin thickness, and not the skyscrapers' thin-film rule. Asha's decision of 2026-11-10: the skyscrapers keep the
+   thin-film rule until this is built, and adopt the level set's curvature then.
 
 ## 18. Alternatives considered
 
