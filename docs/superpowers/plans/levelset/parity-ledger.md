@@ -54,11 +54,16 @@ builds on.
     degrees. That is the half of the surface facing the flow, cut by the plane through the mass centroid normal to the
     flight direction.
   - *Two differences from the skyscrapers, both deliberate:* the skyscrapers select by the surface normal within 30
-    degrees of the flow; the level set selects by position relative to the mass centroid within 90 degrees. Whether the
-    flat-face bound of 1.67 times the transverse radius also applies is not yet decided for the level set.
+    degrees of the flow; the level set selects by position relative to the mass centroid within 90 degrees.
+  - *The flat-face bound applies (decided by Asha, 2026-11-11):* the fitted radius is capped at 1.67 times the windward
+    transverse radius, as in the skyscrapers.
+  - *The near-shoulder areas use the skyscrapers' piecewise fit (decided by Asha, 2026-11-11).* The skyscrapers' piecewise
+    fit for the near-shoulder areas was not found in the build up to ef5e826, in the fitted-radius design or plan, or in
+    the planning copy's uncommitted edits as searched on 2026-11-11; its definition is to be recorded here from wherever
+    it is written before stage 3 is planned.
 - **Stage.** 3, the first stage that applies gas loads.
-- **Status.** Decided (route and selection rule). Open: whether the flat-face bound applies, and whether the fit is
-  weighted by patch area.
+- **Status.** Decided (route, selection rule, the bound, the piecewise shoulder fit). Open: where the piecewise fit is
+  defined, and whether the fit is weighted by patch area.
 
 ### 2. New defaults for melting skins (sub-plan 22 Task 5h)
 
