@@ -147,3 +147,92 @@ def test_the_rewrite_check_passes_a_faithful_rewrite_and_fails_a_dropped_file(tm
     run("rm", "-q", "--", "Reentry Model/reentry_model/y.py", cwd=clone)
     run("commit", "-q", "-m", "delete y", cwd=clone)
     assert check().returncode != 0
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# same_results.py: the comparison of two result folders
+
+import csv
+import hashlib
+import json
+
+import numpy as np
+
+import same_results
+
+
+def _write_run(folder, *, wall=1.5, provenance="a", files=("x.vtu",), mesh_dir="m1", mesh_bytes=b"mesh",
+               cell="0.1234567890123456", npz=None):
+    """A small result folder: history.csv, summary.json (with settings.mesh_file under mesh_dir), fields.npz."""
+    folder.mkdir(parents=True)
+    mesh = folder.parent.parent / f"meshes_{folder.parent.name}_{mesh_dir}" / "sphere.msh"
+    mesh.parent.mkdir(exist_ok=True)
+    mesh.write_bytes(mesh_bytes)
+    material = mesh.parent / "aa7075.json"
+    material.write_bytes(b"{}")
+    with open(folder / "history.csv", "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["t_s", "T_K", "wall_skins_s"])
+        writer.writerow(["0.025", cell, repr(wall)])
+        writer.writerow(["0.05", "0.5", repr(wall * 2)])
+    (folder / "summary.json").write_text(json.dumps({
+        "provenance": {"git": provenance}, "files": list(files), "wall_total_s": wall,
+        "result": {"peak": 1.0, "wall_inner": wall},
+        "settings": {"mesh_file": str(mesh), "material_file": str(material), "dt": 0.025}}))
+    np.savez(folder / "fields.npz", **(npz if npz is not None else {"T": np.array([1.0, np.nan, 3.0])}))
+    (folder / "run.log").write_text(f"log {wall}")
+    return mesh
+
+
+def test_compare_ignores_timers_paths_and_provenance(tmp_path):
+    _write_run(tmp_path / "a" / "run", wall=1.5, provenance="a", files=("x.vtu",), mesh_dir="m1")
+    _write_run(tmp_path / "b" / "run", wall=9.75, provenance="b", files=("y.vtu", "z.vtu"), mesh_dir="m2")
+    assert same_results.compare(tmp_path / "a", tmp_path / "b") == []
+
+
+def test_compare_finds_one_changed_history_cell(tmp_path):
+    _write_run(tmp_path / "a" / "run")
+    _write_run(tmp_path / "b" / "run", cell="0.12345678901234568")      # the 17th significant digit
+    found = same_results.compare(tmp_path / "a", tmp_path / "b")
+    assert len(found) == 1 and "history.csv" in found[0] and "T_K" in found[0]
+
+
+def test_compare_finds_a_changed_npz_array(tmp_path):
+    _write_run(tmp_path / "a" / "run")
+    _write_run(tmp_path / "b" / "run", npz={"T": np.array([1.0, np.nan, np.nextafter(3.0, 4.0)])})
+    found = same_results.compare(tmp_path / "a", tmp_path / "b")
+    assert len(found) == 1 and "fields.npz" in found[0]
+
+
+def test_compare_finds_a_different_mesh_file_under_the_same_name(tmp_path):
+    _write_run(tmp_path / "a" / "run", mesh_dir="m1", mesh_bytes=b"mesh")
+    _write_run(tmp_path / "b" / "run", mesh_dir="m2", mesh_bytes=b"mesh!")
+    found = same_results.compare(tmp_path / "a", tmp_path / "b")
+    assert len(found) == 1 and "mesh_file" in found[0]
+
+
+def test_compare_finds_a_file_in_one_folder_only_and_cli_exit_codes(tmp_path):
+    _write_run(tmp_path / "a" / "run")
+    _write_run(tmp_path / "b" / "run")
+    assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / "b")]) == 0
+    (tmp_path / "b" / "run" / "extra.csv").write_text("a\n1\n")
+    assert any("extra.csv" in line for line in same_results.compare(tmp_path / "a", tmp_path / "b"))
+    assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / "b")]) == 1
+    assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / "b"), "--report"]) == 0
+
+
+def test_report_gives_largest_absolute_and_relative_difference(tmp_path, capsys):
+    _write_run(tmp_path / "a" / "run", cell="2.0")
+    _write_run(tmp_path / "b" / "run", cell="2.5")
+    assert same_results.main(["compare", str(tmp_path / "a"), str(tmp_path / "b"), "--report"]) == 0
+    out = capsys.readouterr().out
+    assert "T_K" in out and "0.5" in out and "0.2" in out      # absolute 0.5, relative 0.5/2.5 = 0.2
+
+
+def test_run_builds_the_documented_command_lines():
+    cases = same_results.case_arguments(Path("/state.pkl"))
+    assert set(cases) == {"skins", "element", "resume", "nomelt"}
+    assert cases["skins"][:1] == ["run"] and "--skin-preset" in cases["skins"]
+    assert cases["element"][-2:] == ["--surface-model", "elements"]
+    assert cases["resume"][:2] == ["resume", "/state.pkl"]
+    assert "--melt" not in cases["nomelt"]

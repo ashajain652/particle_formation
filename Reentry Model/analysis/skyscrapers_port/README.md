@@ -32,3 +32,17 @@ as same, main's change reapplied, main's copy kept, removed or fix-up (the fix-u
 on a file missing from the port. `history <ref>` checks that blame of `Reentry Model/reentry_model/skinbody.py` reaches
 only commits carrying the trailer, that `skyscrapers-prototype-end` is an ancestor of the ref, and that the tag
 `skyscrapers-build-end` exists.
+
+**`same_results.py`** runs short cases of the model and compares two result folders, to show that a port (or a
+refactor) computes what the code before it computed. `run --code <folder holding reentry_model> --out <dir> [--state
+<file>] --cases <list>` runs each named case (`skins`, `element`, `resume`, `nomelt`; the first three are 0.125 s smoke
+flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight) one after the other as
+`python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
+the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`.
+`compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,
+`*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` columns; `.json` equal except the
+keys `provenance`, `files` and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
+and SHA-256 of the file; `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical;
+with `--report` it lists each differing column or field with its largest absolute and relative difference and exits 0.
+It uses only the standard library and numpy and can be imported without running anything. Tests: the last tests of
+`test_port_tools.py`.
