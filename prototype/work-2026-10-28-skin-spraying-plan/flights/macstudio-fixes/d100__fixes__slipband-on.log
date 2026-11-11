@@ -1,0 +1,28 @@
+start 2026-11-11 00:01:09 Now drawing from 'AC Power'
+resuming /Users/ashajain/MIT/particle_formation/prototype/work-2026-10-28-skin-spraying-plan/code/reentry_model_output/task5_snapshots/d100__physics__skin.state.pkl (saved at 22 s, step 44) to 45 s: dt_continuum 0.0125, seed saved random state, frames every 1, slurry spray off, spread limit off, part count from melting, hand-down off, sideways heat height, size feedback current, leeward test centroid, spray gates 2026-11-10, slip band on, save state at 32.5 s; files /Users/ashajain/MIT/particle_formation/prototype/work-2026-10-28-skin-spraying-plan/code/reentry_model_output/task5_fixes/d100__fixes__slipband-on
+d100__fixes__slipband-on (seed 12345): t_max at t = 45.0 s, final V 7.2297 km/s, Kn 0.0189 -> 0.0109, 24828 RHS evaluations in 39025.5 s
+  thermal: peak surface T 909 K at t = 39 s, peak mean T 711 K, integrated heat 6.4e+05 J, energy balance residual -1.2e-12, 1757 macro steps, 3.0 Newton iterations/step
+  skins: 9417 columns, removed 0 kg, drawn 0.05784 kg, 4 rebuilds, 45 interface repeats, 0 base faults; wall time 30778 s in the skins, 5009 s in the 3D solve
+  spraying: released 0.008257 kg as 1.1e+05 droplets in 32150 source rows (particles.npz, particles_summary.csv, size_distribution.csv)
+  csv  -> /Users/ashajain/MIT/particle_formation/prototype/work-2026-10-28-skin-spraying-plan/code/reentry_model_output/task5_fixes/d100__fixes__slipband-on.csv
+  json -> /Users/ashajain/MIT/particle_formation/prototype/work-2026-10-28-skin-spraying-plan/code/reentry_model_output/task5_fixes/d100__fixes__slipband-on.json
+    41539.21 real     34050.30 user      5264.48 sys
+          8323825664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+           129193312  page reclaims
+                 519  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                6785  voluntary context switches
+            20623076  involuntary context switches
+     452442530247780  instructions retired
+     120613136799607  cycles elapsed
+          2338446488  peak memory footprint
+exit 0
+end 2026-11-11 11:33:28 Now drawing from 'AC Power'
