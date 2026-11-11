@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 from reentry_model import girin_case as gc
-from helpers import REPO_ROOT
+from helpers import PROJECT_ROOT
 
-TABLE = json.load(open(os.path.join(REPO_ROOT, "data", "reference_values", "girin2017_table1.json")))
+TABLE = json.load(open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin2017_table1.json")))
 
 
 def variant(name):

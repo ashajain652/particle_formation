@@ -3,18 +3,18 @@
 thresholds of spec section 13.1 -- mass within 2 % of the initial at every reference time, melt-onset altitude within
 0.5 km, the 1 %-mass time within 2 % (measured 2026-09-21: 0.98 % / +0.10 km / -1.3 % for 100 mm, 1.29 % / +0.17 km /
 -0.2 % for 50 mm). The resolved and physics-mode runs are analysis/melt_verification.py's business (reported). Metrics
-are written to reentry_model_output/verification_melt/reference_tests/."""
+are written to output/verification_melt/reference_tests/."""
 import json
 import os
 
 import pytest
 
-from reentry_model import aero, atmosphere, body, compare, coupled, heating, material, mesh, sesam_io, thermal
+from reentry_model import OUTPUT_DIR, aero, atmosphere, body, compare, coupled, heating, material, mesh, sesam_io, thermal
 from reentry_model import trajectory as tj
 
 NAMES = {"d100": "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind",
          "d050": "sphere_d050.00mm_T0300.0K_v07.50000kms_h115.000km_nowind"}
-OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reentry_model_output", "verification_melt", "reference_tests")
+OUTDIR = os.path.join(OUTPUT_DIR, "verification_melt", "reference_tests")
 THRESHOLDS = {"mass_rel_m0": 0.02, "onset_km": 0.5, "demise_time_rel": 0.02}
 
 
@@ -34,7 +34,7 @@ def bookkeeping_run(ref):
 @pytest.mark.reference
 @pytest.mark.parametrize("key", ["d100", "d050"])
 def test_bookkeeping_device_follows_sesam(key):
-    ref = sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, NAMES[key] + ".csv"))
+    ref = sesam_io.load_reference(os.path.join(sesam_io.MELTING_REFERENCE_DIR, NAMES[key] + ".csv"))
     hist = bookkeeping_run(ref)
     mm = compare.melt_metrics(hist, ref)
     os.makedirs(OUTDIR, exist_ok=True)

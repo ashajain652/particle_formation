@@ -2,7 +2,7 @@
 """Run the melting model against the two melting US76 SESAM references and tabulate the mass-loss errors (Step 3
 verification, spec section 13.1).
 
-    "$PY" analysis/melt_verification.py [--outdir reentry_model_output/verification_melt] [--cases d100,d050]
+    "$PY" analysis/melt_verification.py [--outdir output/verification_melt] [--cases d100,d050]
         [--modes bookkeeping,resolved,physics] [--animate]
 
 Modes: `bookkeeping` -- SESAM-equivalent heating, AA7075 (DRAMA's single melting temperature), --removal instant,
@@ -24,7 +24,7 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from reentry_model import cli, sesam_io  # noqa: E402
+from reentry_model import OUTPUT_DIR, cli, sesam_io  # noqa: E402
 
 CASES = {
     "d100": ("sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind", ["--diameter", "100", "--altitude", "77.500133"]),
@@ -42,7 +42,7 @@ COLUMNS = ["case", "mode", "max |dm| (of m0)", "melt onset [km] (model / SESAM)"
 
 def run_case(key, mode, outdir, animate):
     name, args = CASES[key]
-    ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
+    ref = os.path.join(sesam_io.MELTING_REFERENCE_DIR, name + ".csv")
     label = "{}__{}".format(key, mode)
     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
                              "--melt", "on", "--surface-model", "elements"] + MODES[mode] + ["--reference", ref, "--outdir",
@@ -76,7 +76,7 @@ def row_from_doc(key, mode, doc):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--outdir", default=os.path.join(REPO_ROOT, "reentry_model_output", "verification_melt"))
+    p.add_argument("--outdir", default=os.path.join(OUTPUT_DIR, "verification_melt"))
     p.add_argument("--cases", default=",".join(CASES))
     p.add_argument("--modes", default=",".join(MODES))
     p.add_argument("--animate", action="store_true")

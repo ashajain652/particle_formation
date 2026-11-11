@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from reentry_model import dispersion, material, spray, surface_flow as sf
-from helpers import REPO_ROOT
+from helpers import PROJECT_ROOT
 
 LIQ = material.LiquidProperties(2400.0, 1.3e-3, 0.86)
 
@@ -20,7 +20,7 @@ def test_thin_film_mode_reproduces_the_1994_table_1_scaling():
     """r_d = lambda*/4 and tau_d = tau* for the six (rho_2, V0) cases: one shock-layer factor on rho_2 V0^2 (fitted on
     the first entry, 7.8) reproduces every r_d within 0.5 % and tau_d within 1 %; the printed mass rates are
     rho_1 r_d / (2 tau_d) within 1 %."""
-    t = json.load(open(os.path.join(REPO_ROOT, "data", "reference_values", "girin1994_tables.json")))["table1"]
+    t = json.load(open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin1994_tables.json")))["table1"]
     rho2, V0 = np.array(t["rho2_kgm3"]), np.array(t["V0_ms"])
     lam, tau = spray.thin_film_mode(np.full((3, 2), t["mach"]), rho2[:, None] * V0[None, :] ** 2, Iron)
     r_tab, tau_tab, m_tab = (np.array(t[k]) for k in ("r_d_m", "tau_d_s", "m_kgm2s"))
@@ -33,7 +33,7 @@ def test_thin_film_mode_reproduces_the_1994_table_1_scaling():
 
 
 def test_rayleigh_taylor_mode_reproduces_the_1994_table_2():
-    t = json.load(open(os.path.join(REPO_ROOT, "data", "reference_values", "girin1994_tables.json")))["table2"]
+    t = json.load(open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin1994_tables.json")))["table2"]
     for W, lam_ref, tau_ref in zip(t["W_ms2"], t["lambda_star_m_eq14"], t["tau_star_s"]):
         active, lam, tau = spray.rayleigh_taylor(W, np.array([1e-3, 1e-5]), Iron)
         assert lam[0] == pytest.approx(lam_ref, rel=2e-2) and tau[0] == pytest.approx(tau_ref, rel=1e-2)

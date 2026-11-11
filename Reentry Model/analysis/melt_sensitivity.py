@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sensitivity and convergence table of the melting model (spec Step 3 section 13.5).
 
-    "$PY" analysis/melt_sensitivity.py [--outdir reentry_model_output/verification_melt/sensitivity] [--cases d100,d050]
+    "$PY" analysis/melt_sensitivity.py [--outdir output/verification_melt/sensitivity] [--cases d100,d050]
         [--variants base,seed1,layers2,layers6,dt025,dtcoff,bridged,norunoff,nodeep,nocascade,norigid,we462,kr-30,kr+30,
                     kt-30,kt+30,AA7075,range,sizeinitial,gammapm14,knbody003,fenicsx]
 
@@ -31,6 +31,7 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
+from reentry_model import OUTPUT_DIR  # noqa: E402
 
 CASES = {"d100": ["--diameter", "100", "--altitude", "77.500133"], "d050": ["--diameter", "50", "--altitude", "115"]}
 VARIANTS = {
@@ -54,7 +55,7 @@ def argv_for(key, variant, outdir):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--outdir", default=os.path.join(REPO_ROOT, "reentry_model_output", "verification_melt", "sensitivity"))
+    p.add_argument("--outdir", default=os.path.join(OUTPUT_DIR, "verification_melt", "sensitivity"))
     p.add_argument("--cases", default=",".join(CASES))
     p.add_argument("--variants", default=",".join(v for v in VARIANTS if v != "fenicsx"))
     p.add_argument("--python", default=sys.executable, help="interpreter for the runs (default: this one; the fenicsx variant needs fenicsx_env's)")

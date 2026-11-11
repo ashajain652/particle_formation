@@ -9,8 +9,9 @@ import pytest
 from reentry_model import aero
 from reentry_model import constants as c
 
-from reentry_model.sesam_io import REFERENCE_DIR                      # DRAMA Sphere Experiments/data/reference_runs
-REFERENCE_CSVS = sorted(f for f in os.listdir(REFERENCE_DIR) if f.endswith(".csv"))
+from reentry_model.sesam_io import MELTING_REFERENCE_DIR, REFERENCE_DIR   # DRAMA Sphere Experiments/data/, data/
+REFERENCE_FOLDERS = {f: d for d in (REFERENCE_DIR, MELTING_REFERENCE_DIR) for f in os.listdir(d) if f.endswith(".csv")}
+REFERENCE_CSVS = sorted(REFERENCE_FOLDERS)
 
 
 def test_knudsen_reproduces_sesam_at_the_break_off_altitude():
@@ -88,7 +89,7 @@ class TestDragCoefficient:
     def test_reproduces_the_reference_drag_column(self, name):
         t = aero.SphereDragTables.from_json()
         f = aero.SesamTable()
-        rows = list(csv.DictReader(open(os.path.join(REFERENCE_DIR, name))))
+        rows = list(csv.DictReader(open(os.path.join(REFERENCE_FOLDERS[name], name))))
         hyper, low = [], []
         for r in rows:
             kn, ma, cd = float(r["knudsen"]), float(r["mach"]), float(r["drag"])

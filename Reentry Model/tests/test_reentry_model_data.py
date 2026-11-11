@@ -8,7 +8,8 @@ import pytest
 import reentry_model
 from reentry_model import constants as c
 
-from reentry_model.sesam_io import REFERENCE_DIR                      # DRAMA Sphere Experiments/data/reference_runs
+from reentry_model.sesam_io import MELTING_REFERENCE_DIR, REFERENCE_DIR   # DRAMA Sphere Experiments/data/, data/
+from helpers import PROJECT_ROOT
 
 REFERENCE_NAMES = [
     "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_msis",
@@ -64,8 +65,8 @@ def test_melting_reference_runs_are_committed_and_consistent():
     """The two Step 3 melting references: DRAMA's drama-AA7075 (850 K, 400 kJ/kg) on the US76 table, winds off; the
     sphere melts completely (mass 0 at the end, 'demised')."""
     for name, onset_km, end_km in zip(MELTING_REFERENCE_NAMES, (71.005, 77.104), (66.476, 73.094)):
-        csv_path = os.path.join(REFERENCE_DIR, name + ".csv")
-        doc = json.load(open(os.path.join(REFERENCE_DIR, name + ".json")))
+        csv_path = os.path.join(MELTING_REFERENCE_DIR, name + ".csv")
+        doc = json.load(open(os.path.join(MELTING_REFERENCE_DIR, name + ".json")))
         assert doc["run_name"] == name and doc["status"] == "ok" and doc["inputs"]["material"] == "drama-AA7075"
         assert doc["inputs"]["atmosphere"] == "static" and doc["inputs"]["use_wind"] is False
         assert doc["results"]["melting_temperature_K"] == 850.0 and abs(doc["results"]["altitude_first_melt_km"] - onset_km) < 1e-3
@@ -79,8 +80,8 @@ def test_disc_aerothermal_table():
     """data/atdb_disc.json: ATDB_CYLINDER at zero angle of attack and the thinnest aspect ratio -- the flat-face limit
     of the sphere-to-disc family (Step 3). HTG's continuum database is modified Newtonian, so the sphere entry is
     0.49897 of the disc entry at every Mach number, and the free-molecular entries differ by only 3 %."""
-    sphere = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_sphere.json")))
-    disc = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_disc.json")))
+    sphere = json.load(open(os.path.join(PROJECT_ROOT, "data", "atdb_sphere.json")))
+    disc = json.load(open(os.path.join(PROJECT_ROOT, "data", "atdb_disc.json")))
     assert disc["mach"] == sphere["mach"] == [5.0, 10.0, 15.0, 20.0, 25.0, 30.0]
     assert "ATDB_CYLINDER" in disc["_provenance"] and "angle of attack 0" in disc["_provenance"]
     cd_c, cd_fm = disc["cd_continuum"], disc["cd_free_molecular"]

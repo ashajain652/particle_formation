@@ -203,13 +203,13 @@ def test_drag_shape_factor_between_the_two_atdb_endpoints(layered_mesh):
     sphere/disc ratio being 0.49897 at every Mach number, and the same integral over a meshed flat plate gives 2.00."""
     import json
     from reentry_model import aero, mesh as mesh_mod
-    from helpers import REPO_ROOT
+    from helpers import PROJECT_ROOT
     b = melting_body(layered_mesh)
     assert b.drag_shape_factor() == pytest.approx(1.0, abs=1e-12)
     cd, area = b.newtonian_drag()
     assert cd == pytest.approx(0.92, rel=0.02) and area == pytest.approx(math.pi * 0.05 ** 2, rel=0.02)
-    sphere = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_sphere.json")))
-    disc = json.load(open(os.path.join(REPO_ROOT, "reentry_model", "data", "atdb_disc.json")))
+    sphere = json.load(open(os.path.join(PROJECT_ROOT, "data", "atdb_sphere.json")))
+    disc = json.load(open(os.path.join(PROJECT_ROOT, "data", "atdb_disc.json")))
     ratios = np.array(sphere["cd_continuum"]) / np.array(disc["cd_continuum"])
     assert np.allclose(ratios, 0.49897, atol=1e-5) and disc["mach"] == sphere["mach"]
     assert np.allclose(np.array(disc["cd_free_molecular"]) / np.array(sphere["cd_free_molecular"]), 1.03, atol=0.04)

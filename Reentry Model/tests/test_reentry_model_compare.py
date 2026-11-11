@@ -119,7 +119,7 @@ MELT100 = "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind"
 
 @pytest.fixture(scope="module")
 def melt_ref():
-    return sesam_io.load_reference(os.path.join(sesam_io.REFERENCE_DIR, MELT100 + ".csv"))
+    return sesam_io.load_reference(os.path.join(sesam_io.MELTING_REFERENCE_DIR, MELT100 + ".csv"))
 
 
 def melting_history(ref, lag=0.0, film=0.0):

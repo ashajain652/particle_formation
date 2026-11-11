@@ -9,9 +9,10 @@ from datetime import datetime
 
 import numpy as np
 
-from . import DRAMA_DATA_DIR
+from . import DATA_DIR, DRAMA_DATA_DIR
 
 REFERENCE_DIR = os.path.join(DRAMA_DATA_DIR, "reference_runs")
+MELTING_REFERENCE_DIR = os.path.join(DATA_DIR, "reference_runs")     # the two melting SESAM references (Step 3)
 
 
 @dataclass(frozen=True)

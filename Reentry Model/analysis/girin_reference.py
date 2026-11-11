@@ -1,6 +1,6 @@
 """Girin's published spraying cases against the model's transcription of his theory (spec Step 3 sections 13.2-13.3).
 
-    "$PY" analysis/girin_reference.py [--outdir reentry_model_output/verification_melt/girin] [--re-density ambient|shock|both]
+    "$PY" analysis/girin_reference.py [--outdir output/verification_melt/girin] [--re-density ambient|shock|both]
 
 Runs the three variants of Girin (2017) Table 1 in Girin-as-published mode (reentry_model.girin_case) and checks the
 Girin & Kopyt (1994) Tables 1-2 with the model's thin-film and Rayleigh-Taylor modes (reentry_model.spray). Writes
@@ -20,10 +20,10 @@ import numpy as np
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
-from reentry_model import girin_case, spray  # noqa: E402
+from reentry_model import OUTPUT_DIR, girin_case, spray  # noqa: E402
 from reentry_model.compare import INK, MODEL_COLOR, MUTED, SECOND, apply_rcparams, strip_top_right_spines  # noqa: E402
 
-DEFAULT_OUTDIR = os.path.join(REPO_ROOT, "reentry_model_output", "verification_melt", "girin")
+DEFAULT_OUTDIR = os.path.join(OUTPUT_DIR, "verification_melt", "girin")
 TABLE_2017 = os.path.join(REPO_ROOT, "data", "reference_values", "girin2017_table1.json")
 TABLE_1994 = os.path.join(REPO_ROOT, "data", "reference_values", "girin1994_tables.json")
 

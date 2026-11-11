@@ -216,7 +216,7 @@ def test_the_seed_makes_a_run_reproducible_and_another_seed_changes_it(tmp_path,
 # ---------------------------------------------------------------------------------------------------------------
 # Step 3: melting flags, the melting run's files, the bookkeeping device against the melting reference
 
-MELT_100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv")
+MELT_100 = os.path.join(sesam_io.MELTING_REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_nowind.csv")
 MELT = FEM + ["--melt", "on", "--prism-layers", "0", "--h-surface", "4", "--h-core", "20"]
 
 
