@@ -1,7 +1,8 @@
 """Tests of the cut-cell thermal solve (design section 7, stage 2): mass rows and weights, the energy books with
-radiation and latent heat, second-order convergence on an off-grid slab, the implicit skin base law, and the
-isothermal limit against the lumped ordinary differential equation."""
-from math import pi, sqrt
+radiation and latent heat, second-order convergence on an off-grid slab, the implicit skin base law, the
+isothermal limit against the lumped ordinary differential equation, and the molten-rigid surface psi tracking a
+one-phase Stefan melting front."""
+from math import erf, exp, pi, sqrt
 
 import numpy as np
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import inside_volumes
 from reentry_model.levelset.cutthermal import SIGMA_SB, CutThermal
+from reentry_model.levelset.surfaces import molten_rigid_surface
 from reentry_model.levelset.transfer import interpolate, project
 
 
@@ -196,3 +198,36 @@ def test_remesh_widens_the_offset_bracket_when_the_metal_volume_changes_a_lot():
     s.remesh(m2, m2.points[:, 2] + 0.9e-3)
     assert abs((s.T - T_proj)[s.active].mean()) > 50.0                     # beyond the first bracket (about 71 K)
     assert s.energy() == pytest.approx(E0, rel=1e-12)
+
+
+def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
+    """Design section 20.11 item 2: a 4.2 mm square column, 22 mm deep, on a uniform 0.7 mm mesh (the fine cell),
+    starts solid at the bottom of an 890-900 K melting range; its top, 0.3 mm above a node layer, is held near
+    T_hot = T_m + 100 K by the implicit base law with H = 1e7 W/m2/K; its sides and bottom are the insulated mesh
+    boundary. The depth of psi = 0 (the 895.1 K isotherm) on the centre line must stay within one cell of the
+    Neumann front s(t) = 2 lambda sqrt(alpha t)."""
+    from scipy.optimize import brentq
+    h, dt, z_top, H = 0.7e-3, 0.01, 0.3e-3, 1e7
+    mat = LinearMeltMaterial(L=390e3, T_s=890.0, T_l=900.0)
+    T_m = 0.5 * (mat.T_s + mat.T_l)
+    T_hot = T_m + 100.0
+    m = build(BoxBase.around((-3 * h, -3 * h, -31 * h), (3 * h, 3 * h, h), h))
+    phi = m.points[:, 2] - z_top
+    alpha = mat._k / (mat.rho * mat._cp)
+    St = mat._cp * (T_hot - T_m) / mat.L
+    lam = brentq(lambda x: x * exp(x * x) * erf(x) - St / sqrt(pi), 1e-6, 5.0)
+    s = CutThermal(mat, linear_solver="direct"); s.setup(m, phi); s.set_temperature(mat.T_s)
+    zs = z_top - np.linspace(0.0, 20e-3, 4001)
+    line = np.column_stack([np.zeros_like(zs), np.zeros_like(zs), zs])
+    errs = {}
+    for n in range(1, 201):
+        s.step(dt, H * T_hot, q1=-H)
+        if n in (50, 100, 200):
+            t = n * dt
+            psi, _ = molten_rigid_surface(m, phi, s.T)
+            p = interpolate(m, psi, line)
+            i = np.flatnonzero((p[:-1] > 0) & (p[1:] <= 0))[0]
+            depth = (z_top - zs[i]) + (zs[i] - zs[i + 1]) * p[i] / (p[i] - p[i + 1])
+            errs[t] = depth - 2 * lam * sqrt(alpha * t)
+    msg = ", ".join("t = {:.1f} s: {:+.3f} mm".format(t, e * 1e3) for t, e in errs.items())
+    assert all(abs(e) < h for e in errs.values()), msg

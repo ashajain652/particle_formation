@@ -361,7 +361,7 @@ Stage 1 builds and tests only the geometry: everything runs on prescribed fields
 fields handed in by a test), and there is no thermal solve, no skins and no flow yet. The package imports nothing from
 the rest of `reentry_model` except `numpy`, `scipy` and `skfem`, and no existing module was changed.
 
-The nine files are:
+Stage 1's nine files are (stage 2 adds a tenth, `cutthermal.py`, below):
 
 - `__init__.py` states the conventions (negative inside, normals toward positive values, SI units).
 - `boxmesh.py` builds the adaptive tetrahedral box mesh (six Kuhn tetrahedra per cube, refined by Maubach bisection).
@@ -373,10 +373,10 @@ The nine files are:
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the tests (43 from stage 1; 56 since stage 2, below) from the repository root with
+Run the tests (43 from stage 1; 57 since stage 2, below) from the repository root with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 56 tests, about 80 s (43 tests and about 40 s at stage 1)
+"$PY" -m pytest tests/levelset -q                            # 57 tests, about 95 s (43 tests and about 40 s at stage 1)
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -410,9 +410,12 @@ cells keeps the system solvable when a cell holds only a sliver of metal. `move`
 and raises an error if any node that becomes active is left without a temperature; `remesh` carries the temperature to
 a rebuilt mesh, closes the stored enthalpy with one uniform temperature offset (widening its search until the offset is
 bracketed) and raises an error if the enthalpy does not close to 10⁻¹⁰ relative. `cutcell.py` gains `inside_subtets`
-and `subtet_volumes`, which split each cell's metal part into sub-tetrahedra. Stage 2 adds 13 tests, so the tier now
-has 56, which took about 80 s on 2026-11-11 (one run, on the shared laptop). There are still no skins, no flow and no
-coupling to the flight loop; `docs/model_assumptions.md` §10 records the choices and the measured accuracy.
+and `subtet_volumes`, which split each cell's metal part into sub-tetrahedra. Stage 2 adds 14 tests, so the tier now
+has 57, which took about 95 s on 2026-11-11 (one run, on the shared laptop). One of them checks that the
+molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm cells: the front was
+within 0.049, 0.006 and 0.010 mm of the exact depth at 0.5, 1.0 and 2.0 s, against a bound of one 0.7 mm cell.
+There are still no skins, no flow and no coupling to the flight loop; `docs/model_assumptions.md` §10 records the choices and the
+measured accuracy.
 
 The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the uncommitted prototype folder
 `prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional
@@ -437,7 +440,9 @@ flights, it measured on 1 055 790 cells (659 028 holding metal, 121 191 active n
 4.7 and 4.7 s with 5 Newton iterations each, and a peak memory of 1.99 gigabytes. The prototype's single measurement on
 the same mesh earlier that day was 8.6 s, 6.6 s a step and 1.79 gigabytes; the times are about 27 per cent lower and
 the memory about 11 per cent higher, which is within the scatter of a shared laptop. A thermal step therefore costs
-about a tenth of the 63 s of geometry per macro step at 50 mm, so it does not set the cost of a flight. The 100 mm
+under a tenth (about 7.5 per cent) of the 63 s of geometry per macro step at 50 mm, so it does not set the cost of a
+flight; the geometry was measured on a different mesh of the same sphere (1 290 192 cells), so the ratio is
+approximate. The 100 mm
 sphere is *estimated* at about four times as much, about 30 s a step, against about 330 s of geometry; it has not been
 measured.
 

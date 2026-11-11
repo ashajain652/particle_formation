@@ -214,7 +214,8 @@ file, §7 and §20.11 item 2), added on 2026-11-11. It solves heat conduction in
 boundary conditions applied on the surface pieces (patches) of the cells the surface crosses. It is built and tested but
 not coupled to the flight loop, and it has no skins (stage 3), no flow and no heat carried by a flow (stage 4). The
 package's tests use test-only materials (constant properties, and a linear melting range); the plate comparisons that
-use the real Scheil alloy were run outside the package, as described under "Plates" below.
+use the real Scheil alloy (AA7075, whose melting follows the Scheil solidification model, with a step of latent heat
+at the eutectic) were run outside the package, as described under "Plates" below.
 
 **Metal-only integration.** The temperature is piecewise linear (P1) at the nodes. Each cell holding metal (an active
 cell) has its metal part split into sub-tetrahedra, and its heat capacity (the consistent mass matrix) and conduction
@@ -235,8 +236,9 @@ flights, each case measured once): the books close to 3 × 10⁻¹³ relative wi
 a linear melting range (up to 67 iterations on the first step, about 11 after). Closure at the tolerance is the point:
 a books error much larger than the tolerance would mean heat created or lost by the scheme.
 
-**Boundary heat.** On each patch the heat into the metal is q0 + q1 T_p − ε σ (T_p⁴ − T_amb⁴), with T_p the
-temperature at the patch centroid, q1 at most zero (the skins' base law, implicit), ε the emissivity and σ the
+**Boundary heat.** On each patch the heat into the metal is q0 + q1 T_p − ε σ (T_p⁴ − T_amb⁴), with q0 the prescribed
+flux part of the law (watts per square metre into the metal), T_p the temperature at the patch centroid, q1 at most
+zero (the skins' base law, implicit), ε the emissivity and σ the
 Stefan–Boltzmann constant; the radiation is linearised in the Newton iteration. A flow's heat flux is supplied by the
 caller per patch, by projected area: q times max(n·d, 0), with n the patch normal and d the direction the flow comes
 from. Applying the flux only to patches tilted less than about 25 degrees from the flow (tried first) lost 41 per cent
@@ -250,10 +252,28 @@ step (0.01 against 0.0025 s) and lumped against consistent mass change it by und
 both the top and a side wall of a body (a sharp corner) its patch tilts, and on 1 mm cells the projected heat on a 4 mm
 wide slab was 3.3 per cent short; rounded bodies have no such corners.
 
+**The molten-rigid surface tracks a Stefan front.** The design (§20.11 item 2) asks that the molten-rigid surface ψ
+(the 895.1 K isotherm, built by stage 1's `molten_rigid_surface` from the computed temperature, negative in rigid
+metal) follow a melting front to within one fine cell, 0.7 mm. The test
+`test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell`, added on 2026-11-11, heats a 4.2 mm square column,
+22 mm deep, on uniform 0.7 mm cells, its top 0.3 mm above a layer of nodes and its sides and bottom insulated. The metal
+has constant properties (density 2800 kg/m³, conductivity 150 W/m/K, specific heat 900 J/kg/K) and a latent heat of
+390 kJ/kg released linearly between 890 and 900 K; it starts at 890 K, solid at the melting point, so only the liquid
+conducts (the one-phase problem). The top is held near 995 K, 100 K above the middle of the melting range, by the
+implicit base law with a conductance of 10⁷ W/m²/K, for 2 s in 0.01 s steps, and no metal is removed. The depth of
+ψ = 0 on the column's centre line is compared with the exact (Neumann) front depth 2λ√(αt), where α is the thermal
+diffusivity, about 6.0 × 10⁻⁵ m²/s, and λ = 0.328 is the root of λ exp(λ²) erf(λ) = St/√π with the Stefan number
+St = c_p (T_hot − T_m)/L = 0.231 (the ratio of sensible heat in the liquid to latent heat). The computed front was
+0.049 mm deeper than the exact 3.575 mm at 0.5 s, 0.006 mm deeper than 5.056 mm at 1.0 s and 0.010 mm shallower than
+7.150 mm at 2.0 s, that is at most 7 per cent of a cell, against the bound of one cell; the error shrinks as the front
+crosses more cells (it was 0.112 mm at 0.25 s in a trial run), so it most likely comes from the first steps, when the front is within a cell or two of the surface. The
+test takes about 24 s and was run once. It checks a planar front with a narrow (10 K) melting range only; the Scheil
+alloy's wide range is covered through the plates' non-rigid depth, below.
+
 **The ghost penalty and its weight.** A cell holding a sliver of metal would make the system ill-conditioned. A ghost
 penalty (Burman 2010) on every interior face between two active cells of which at least one is cut penalises the jump
-of the normal temperature gradient, with weight γ times the larger conductivity, the larger cell size and the face
-area; it leaves functions linear across the face, and so constants, untouched. Without it (prototype, 2026-11-11,
+of the normal temperature gradient, with the ghost weight γ times the larger conductivity, the larger cell size and
+the face area; it leaves functions linear across the face, and so constants, untouched. Without it (prototype, 2026-11-11,
 measured once) a cell holding 10⁻¹⁰ to 10⁻⁴⁵ of its volume gives a diagonal entry 10⁻¹⁰ to 10⁻⁴⁵ times the largest,
 the sliver node's temperature is undetermined, and plain conjugate gradients fail in 5 000 iterations. With γ = 0.01
 the ratio is about 6 × 10⁻³ and plain conjugate gradients converge in about 330 iterations. A larger weight conditions
@@ -295,8 +315,8 @@ T is at or above T_feed = 910 K (the feed temperature); the reference runs at 2 
   1.5 and 2.0 s against the reference's 0.788, 2.712 and 5.216 mm (1.5 per cent ahead, then 0.9 and 1.6 per cent
   behind); the hot plate (880 K, 2 MW/m²) recedes 0.798, 1.806 and 2.904 mm against 0.788, 1.816 and 2.916 mm
   (1.3 per cent ahead, 0.6 and 0.4 per cent behind), and its non-rigid depth (the depth of metal that is not rigid,
-  under the surface ψ built by stage 1's `molten_rigid_surface`) is 1.514, 1.630 and 1.724 mm against 1.488, 1.570
-  and 1.676 mm (1.7, 3.8 and 2.9 per cent thicker). The energy books close to 10⁻⁸. At 0.35 mm cells the cold plate's
+  under the molten-rigid surface ψ built by stage 1's `molten_rigid_surface`) is 1.514, 1.630 and 1.724 mm against
+  1.488, 1.570 and 1.676 mm (1.7, 3.8 and 2.9 per cent thicker). The energy books close to 10⁻⁸. At 0.35 mm cells the cold plate's
   recession moves by at most 2.3 per cent, a first look at fine-size convergence that stage 4 judges on a pool. These
   runs took 8 s of wall time for 2 s of plate.
 - At 0.5 s steps the same columns fail: the cold plate is 1.8 per cent ahead, then 10.9 and 12.8 per cent behind, and
@@ -318,9 +338,10 @@ iterations, the AMG hierarchy rebuilt every iteration) and a peak memory of 1.79
 `analysis/levelset/measure_thermal.py`, run once on 2026-11-11 on the same mesh (laptop on mains power, shared with
 running flights), measured a setup of 6.3 s, steps of 4.9, 4.7 and 4.7 s (5 Newton iterations each) and a peak of
 1.99 gigabytes; the times are about 27 per cent below the prototype's and the memory about 11 per cent above, within
-the scatter of a shared laptop. The thermal step is thus about a tenth of the 63 s of geometry per macro step at
-50 mm (stage 1), so it does not set the cost of a flight. The 100 mm sphere is *estimated* at about four times as
-much (about 30 s a step), against about 330 s of geometry a step; it was not measured.
+the scatter of a shared laptop. The thermal step is thus under a tenth (about 7.5 per cent) of the 63 s of geometry
+per macro step at 50 mm (stage 1), so it does not set the cost of a flight; the two were measured on different meshes
+of the 50 mm sphere (1 055 790 cells here, 1 290 192 for the geometry), so the ratio is approximate. The 100 mm sphere is
+*estimated* at about four times as much (about 30 s a step), against about 330 s of geometry a step; it was not measured.
 
 **Not yet verified.** The solve with skins on its patches (stage 3), with a flow and advection (stage 4) and in a
 flight; the plates at 0.5 s steps (stage 3); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the

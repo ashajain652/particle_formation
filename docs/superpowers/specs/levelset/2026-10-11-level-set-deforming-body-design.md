@@ -941,8 +941,13 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
    properties and to the Newton tolerance with latent heat; a slab's surface temperature converges at second order
    (1.38, 0.37 and 0.04 % from the semi-infinite solution at 1, 0.5 and 0.25 mm cells); the ghost weight γ = 0.01
    conditions sliver cells without the jumps that γ = 0.1 and 1 cause when a receding surface crosses a layer of nodes.
-   Item 2's ψ tracking a Stefan front within one fine cell is covered here only through the plates' non-rigid depth;
-   no separate Stefan test was built. Detail in `docs/model_assumptions.md` §10.
+   Item 2's ψ tracking a Stefan front within one fine cell is tested (2026-11-11, once, in
+   `test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell`): a 4.2 mm column on uniform 0.7 mm cells, starting
+   solid at the bottom of an 890–900 K melting range (latent heat 390 kJ/kg), its top held near 995 K by the implicit
+   base law (conductance 10⁷ W/m²/K) with 0.01 s steps; the depth of ψ = 0 is 0.049 mm deeper, 0.006 mm deeper and
+   0.010 mm shallower than the Neumann one-phase front at 0.5, 1.0 and 2.0 s (3.575, 5.056 and 7.150 mm), at most
+   7 % of a fine cell. The Scheil alloy's wide melting range is covered through the plates' non-rigid depth. Detail in
+   `docs/model_assumptions.md` §10.
 3. **Skins on markers, both modes, flow solve off** (thick regions held, as before the switch): §13 item 3's tests;
    cross-section varying with curvature against the analytic volume of a spherical shell; mode changes exact in mass,
    enthalpy and momentum; runoff over a shoulder onto cold metal freezing as a deposit, against the skyscrapers' plate
@@ -995,7 +1000,8 @@ skin base; the true outer surface φ is derived from it, §20.3); §8.5 (the swi
   multigrid hierarchy rebuilt every iteration) and a peak of 1.79 GB. The package's
   `analysis/levelset/measure_thermal.py`, run once on the same mesh, measured a setup of 6.3 s, three steps of 4.9,
   4.7 and 4.7 s (5 Newton iterations each) and a peak of 1.99 GB, within the scatter of a shared laptop. A thermal
-  step is thus about a tenth of the 63 s of geometry per macro step at 50 mm. The 100 mm sphere is *estimated* at about
+  step is thus under a tenth (about 7.5 %) of the 63 s of geometry per macro step at 50 mm, measured on a different
+  mesh of the same sphere (1 290 192 cells), so the ratio is approximate. The 100 mm sphere is *estimated* at about
   four times that (about 30 s a step) against about 330 s of geometry a step; not measured.
 - Stage 2's module (amended 2026-11-11, stage 2 plan Decision D): `reentry_model/levelset/cutthermal.py` rather than
   §7.6's `levelset/thermal/skfem_cut.py`; see §7.6.
