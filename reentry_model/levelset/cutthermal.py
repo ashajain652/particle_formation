@@ -14,13 +14,17 @@ Conduction. P1 gradients are constant per cell, so the stiffness is k(T*) grad N
 
 Boundary. Per patch p (area A_p, weights w_pa = the shape functions at its centroid, exact for a flat patch):
     q_p = q0_p + q1_p T_p - rad_p eps sigma (T_p^4 - T_amb^4),     T_p = sum_a w_pa T_a,
-heat into the metal in W/m2; q1 <= 0 is the skins' base law (implicit), rad_p is 0 or 1. Newton on the nonlinear
-terms, damped when the change stops falling (a kink of the effective capacity).
+heat into the metal in W/m2; q1 <= 0 is the skins' base law (implicit), rad_p is 0 or 1. The boundary flux is
+linearised by Newton; k and the secant capacity are lagged at the iterate (a Picard iteration), so the step is damped
+when the change stops falling (a kink of the effective capacity).
 
 The material is duck-typed: `rho` (kg/m3) and vectorised `k(T)` (W/m/K), `cp_eff(T)` (J/kg/K), `enthalpy(T)` (J/kg).
 The unknowns are the active nodes (those of a cell with metal in it) only; the other nodes keep their values.
 
-`ghost` (the Burman ghost-penalty coefficient on slivers) is stored here and used by the stabilisation added later."""
+Slivers. A ghost penalty (Burman 2010) on every interior face between two active cells of which at least one is cut,
+gamma k h |F| [dN/dn][dN/dn]^T with k the larger of the two cells' conductivities, h the larger cell's size and |F| the
+face area, keeps the system conditioned when a cell holds almost no metal. The jump vector [dN/dn in cell 1, -dN/dn in
+cell 2] annihilates any function that is linear across the face, so constants are untouched. `ghost` is gamma."""
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
@@ -34,6 +38,7 @@ SIGMA_SB = 5.670374419e-8          # Stefan-Boltzmann constant, W/m2/K4
 # Four-point rule on a tetrahedron, exact for quadratics (barycentric coordinates of the points, weights 1/4 each).
 _A, _B = 0.5854101966249685, 0.1381966011250105
 _QP = np.array([[_A, _B, _B, _B], [_B, _A, _B, _B], [_B, _B, _A, _B], [_B, _B, _B, _A]])
+_FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])     # face i of a tetrahedron is opposite vertex i
 
 
 class _Pattern:
@@ -100,11 +105,40 @@ class CutThermal:
         self.active = np.zeros(n, bool)
         self.active[T.ravel()] = True
         self.pattern = _Pattern(np.repeat(T, 4, axis=1).ravel(), np.tile(T, (1, 4)).ravel(), n)
+        self._ghost_faces(~full)
         self.P = cut_patches(mesh, self.phi, self.cells[~full])
         Pc = self.P.cell
         self.Pw = barycentric(mesh, Pc, self.P.centroid)
         self.Pnodes = tets[Pc]
         self.Ppattern = _Pattern(np.repeat(self.Pnodes, 4, axis=1).ravel(), np.tile(self.Pnodes, (1, 4)).ravel(), n)
+
+    def _ghost_faces(self, is_cut):
+        """Interior faces between two active cells, at least one of them cut: node slots, normal-gradient jump
+        vectors, scale h |F| and the two cells of each face. Faces are matched by sorting each cell's vertex triples."""
+        T = self.mesh.tets[self.cells]
+        E = len(T)
+        keys = np.sort(T[:, _FACES], axis=2).reshape(-1, 3)                   # (4E, 3)
+        owner = np.repeat(np.arange(E), 4)
+        order = np.lexsort(keys.T[::-1])
+        ks = keys[order]
+        same = np.all(ks[1:] == ks[:-1], axis=1)
+        i1, i2 = order[:-1][same], order[1:][same]
+        e1, e2 = owner[i1], owner[i2]
+        keep = is_cut[e1] | is_cut[e2]
+        e1, e2, i1 = e1[keep], e2[keep], i1[keep]
+        f = keys[i1]
+        p = self.mesh.points
+        nrm = np.cross(p[f[:, 1]] - p[f[:, 0]], p[f[:, 2]] - p[f[:, 0]])
+        area = 0.5 * np.linalg.norm(nrm, axis=1)
+        nrm = nrm / np.maximum(2 * area, 1e-300)[:, None]
+        g1 = np.einsum("fai,fi->fa", self.G[e1], nrm)                       # dN_a/dn in cell 1, its 4 nodes
+        g2 = np.einsum("fai,fi->fa", self.G[e2], nrm)
+        nodes = np.concatenate([T[e1], T[e2]], axis=1)                        # (F, 8), shared nodes repeat
+        jump = np.concatenate([g1, -g2], axis=1)
+        h = self.mesh.size[self.cells][np.stack([e1, e2], 1)].max(axis=1)
+        self.gf_nodes, self.gf_jump, self.gf_scale, self.gf_cells = nodes, jump, h * area, np.stack([e1, e2], 1)
+        self.gpattern = _Pattern(np.repeat(nodes, 8, axis=1).ravel(), np.tile(nodes, (1, 8)).ravel(),
+                                 len(self.mesh.points))
 
     # --- state --------------------------------------------------------------------------------------------------
     def set_temperature(self, T):
@@ -129,7 +163,7 @@ class CutThermal:
     # --- step ---------------------------------------------------------------------------------------------------
     def operators(self, T, T_old):
         """Stiffness K (W/K) at the cell temperatures of T and the secant-capacity mass M (J/K) between T_old and T,
-        both (n, n) sparse over all nodes. The ghost-penalty term arrives with the sliver stabilisation."""
+        both (n, n) sparse over all nodes. K includes the ghost-penalty term."""
         Te, Te_old = self.cell_T(T), self.cell_T(T_old)
         k = self.mat.k(Te)
         c = self.mat.cp_eff(Te)
@@ -144,7 +178,9 @@ class CutThermal:
                               shape=(len(self.T), len(self.T)))
         else:
             M = self.pattern.assemble(self.Me * (self.mat.rho * c)[:, None, None])
-        return K, M
+        kf = k[self.gf_cells].max(axis=1)
+        J = np.einsum("fa,fb->fab", self.gf_jump, self.gf_jump) * (self.ghost * kf * self.gf_scale)[:, None, None]
+        return K + self.gpattern.assemble(J), M
 
     def step(self, dt, q0, q1=None, rad=None, T_amb=0.0):
         """One backward-Euler step; q0, q1, rad per patch (heat into the metal). Returns heat in over the step [J]."""

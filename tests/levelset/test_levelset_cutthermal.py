@@ -121,3 +121,17 @@ def test_mass_rows_and_weights_on_a_grid_aligned_slab():
     s = CutThermal(ConstMaterial()); s.setup(m, z)
     assert np.isfinite(s.w).all() and (s.Vin > 0).all()
     assert s.metal_volume() == pytest.approx(6e-3 * 6e-3 * 6e-3, rel=1e-12)
+
+
+def test_ghost_penalty_keeps_slivers_conditioned_and_leaves_constants_alone():
+    m = build(BoxBase.around((-14e-3,) * 3, (14e-3,) * 3, 1e-3))
+    phi = np.linalg.norm(m.points, axis=1) - 10.001e-3
+    ratios = {}
+    for g in (0.0, 0.01):
+        s = CutThermal(ConstMaterial(), ghost=g); s.setup(m, phi); s.set_temperature(300.0)
+        K, M = s.operators(s.T, s.T)
+        idx = np.flatnonzero(s.active)
+        d = (M / 1e-3 + K).diagonal()[idx]
+        ratios[g] = d.min() / d.max()
+        assert np.allclose((K @ np.ones(len(s.T)))[idx], 0.0, atol=1e-12 * abs(K).max())
+    assert ratios[0.0] < 1e-6 and ratios[0.01] > 3e-3
