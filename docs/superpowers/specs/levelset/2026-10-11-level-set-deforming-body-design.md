@@ -253,6 +253,10 @@ neighbour exactly. The Péclet number is about 30 at 1 m/s and 1 mm cells (estim
 (streamline-upwind Petrov–Galerkin). Every other change of the metal — draws and returns at skin bases, the per-piece
 volume correction, the metal of trapped markers — is booked to the nodes as a deferred load.
 
+*Amended 2026-11-11 (stage 2 plan, Decision C):* the advection term moves to stage 4, where the flow solve supplies the
+velocity it needs (§20.11 already moved the flow there). Stage 2's solve (`CutThermal`) has conduction, capacity and
+boundary heat only; heat carried by a flow is not built.
+
 ### 7.5 Boundary conditions on the zero contour
 
 Patches carrying skins: the skins' base flux law q_b(T_b) = a + b T_b, applied implicitly as in the skin designs, with
@@ -265,6 +269,13 @@ they touch.
 A new backend, `levelset/thermal/skfem_cut.py`, a copy of `thermal/skfem_backend.py` changed for cut cells. Uncut
 interior cells keep their precomputed element matrices; only the cut layer, about one cell thick, is recomputed each
 step. A FEniCSx port is made only if MPI scaling is needed.
+
+*Amended 2026-11-11 (stage 2 plan, Decision D):* the backend was built as `reentry_model/levelset/cutthermal.py`
+(class `CutThermal`) rather than `levelset/thermal/skfem_cut.py`, because stage 1's package is flat and the solve uses
+no scikit-fem assembly: it assembles its own sparse matrices. Each `setup` (after every move or rebuild) forms the
+unit element matrices of all active cells, in closed form for uncut cells and by quadrature over the sub-tetrahedra of
+the metal part for cut ones, and every Newton iteration scales them by the cells' coefficients. The ghost penalty of
+§7.3 is assembled the same way, with weight γ = 0.01 (its choice is in §20.11 item 2).
 
 ## 8. The flow solve
 
@@ -896,6 +907,42 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
    energy; memory and time of the mesh at 0.7 mm in the fine region and the 0.25 mm floor measured.
 2. **Thermal.** §13 item 2, plus ψ tracking a Stefan front within one fine cell, and the plates (level-2 cold and hot)
    within the skyscrapers' acceptance, with the fine margin d and without it (to confirm why it exists).
+
+   *Stage 2's measured results (amended 2026-11-11).* Measured on the 2026-11-11 prototype on the laptop on mains
+   power, shared with running flights, each case once. The plate comparisons were run in the uncommitted prototype
+   folder `prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and
+   one-dimensional reference (build commit 3c16f4a), because both exist only in that build until stage 0 + S brings
+   them (stage 2 plan, Decision B); the package's own tests use test-only materials (constant properties, a linear
+   melting range). The plate is a column of the level-2 plate's centre with insulated walls; liquid is removed after
+   every step wherever the temperature is at or above T_feed = 910 K; the reference runs at 2 µm cells and 1 ms steps.
+   - *Uniform 0.7 mm cells, 0.05 s steps:* the cold plate (700 K, 6 MW/m²) recedes 0.800, 2.688 and 5.130 mm at 1.0,
+     1.5 and 2.0 s against the reference's 0.788, 2.712 and 5.216 mm (1.5 % ahead, then 0.9 and 1.6 % behind); the
+     hot plate (880 K, 2 MW/m²) 0.798, 1.806 and 2.904 mm against 0.788, 1.816 and 2.916 mm (1.3 % ahead, 0.6 and 0.4 %
+     behind), its non-rigid depth (under ψ, built from the computed temperature by stage 1's `molten_rigid_surface`)
+     1.514, 1.630 and 1.724 mm against 1.488, 1.570 and 1.676 mm (1.7, 3.8 and 2.9 % thicker). The energy books close
+     to 10⁻⁸ relative. At 0.35 mm cells the cold plate's recession moves by at most 2.3 %, a first look at the
+     fine-size convergence that item 4 judges on a pool. The runs took 8 s of wall time for 2 s of plate.
+   - *0.5 s steps fail:* the same columns are cold 1.8 % ahead, then 10.9 and 12.8 % behind, and hot 24.6, 15.1 and
+     11.9 % behind. The liquid stays on the plate through each long step and absorbs heat until the removal at its end,
+     where the reference removes it every millisecond. **Decision A (stage 2 plan):** the plates are judged at 0.05 s
+     steps in stage 2, and the judgement at 0.5 s steps moves to stage 3, where the skins hold and release the liquid
+     continuously as the skyscrapers' do.
+   - *Adaptive mesh with the fine margin* (2.8 mm base cells, 0.7 mm where ψ > −d and above, rebuilt after every step,
+     walls on grid lines), d = 4 mm: the cold plate recedes 3.6, 4.0 and 4.2 % behind the reference at 1.0, 1.5 and
+     2.0 s, inside the skyscrapers' 5 %; the hot plate 9.6 % behind at 1.0 s (not judged), 4.3 and 2.6 % at 1.5 and
+     2.0 s, its non-rigid depth 3.8 to 4.3 % thicker, inside 10 %. Each rebuild's stored enthalpy before the uniform
+     offset was within 3 × 10⁻⁶ of the old (cold) and 3 × 10⁻⁹ (hot).
+   - *Without the margin* (d = 0, 0.7 mm only above ψ): the cold plate 7.4 % behind at 1.0 s, which fails, the hot
+     plate's non-rigid depth up to 6.6 % thick, and each rebuild's enthalpy residual up to 4.6 × 10⁻⁴ (cold) and
+     2.4 × 10⁻³ (hot): the coarse cells rebuilt just under the front carry the error that the offset then spreads over
+     the body. The margin earns its place, as §20.4 expected.
+
+   The solver's own checks (same prototype, once each): the energy books close to 3 × 10⁻¹³ relative with constant
+   properties and to the Newton tolerance with latent heat; a slab's surface temperature converges at second order
+   (1.38, 0.37 and 0.04 % from the semi-infinite solution at 1, 0.5 and 0.25 mm cells); the ghost weight γ = 0.01
+   conditions sliver cells without the jumps that γ = 0.1 and 1 cause when a receding surface crosses a layer of nodes.
+   Item 2's ψ tracking a Stefan front within one fine cell is covered here only through the plates' non-rigid depth;
+   no separate Stefan test was built. Detail in `docs/model_assumptions.md` §10.
 3. **Skins on markers, both modes, flow solve off** (thick regions held, as before the switch): §13 item 3's tests;
    cross-section varying with curvature against the analytic volume of a spherical shell; mode changes exact in mass,
    enthalpy and momentum; runoff over a shoulder onto cold metal freezing as a deposit, against the skyscrapers' plate
@@ -942,6 +989,16 @@ skin base; the true outer surface φ is derived from it, §20.3); §8.5 (the swi
   omitted the three surface operations. The molten-rigid surface (68 s at 100 mm) and the rebuild from fields (51 s) are
   now the largest costs; stage 3 measures whether they, and the shadow test, can run less often. The cost of cells at
   the 0.175 mm floor is not yet measured (the sphere has none); stage 3 measures it with a rim or wire.
+- Thermal cost, *measured* 2026-11-11 (stage 2, laptop on mains power, shared with running flights, once each). The
+  50 mm sphere, fine 0.7 mm over a 4.6 mm shell (1 055 790 cells, 659 028 holding metal, 121 191 active nodes): the
+  prototype measured a setup of 8.6 s, one 0.5 s step with radiation of 6.6 s (5 Newton iterations, the algebraic
+  multigrid hierarchy rebuilt every iteration) and a peak of 1.79 GB. The package's
+  `analysis/levelset/measure_thermal.py`, run once on the same mesh, measured a setup of 6.3 s, three steps of 4.9,
+  4.7 and 4.7 s (5 Newton iterations each) and a peak of 1.99 GB, within the scatter of a shared laptop. A thermal
+  step is thus about a tenth of the 63 s of geometry per macro step at 50 mm. The 100 mm sphere is *estimated* at about
+  four times that (about 30 s a step) against about 330 s of geometry a step; not measured.
+- Stage 2's module (amended 2026-11-11, stage 2 plan Decision D): `reentry_model/levelset/cutthermal.py` rather than
+  §7.6's `levelset/thermal/skfem_cut.py`; see §7.6.
 - Cells: the 100 mm sphere's fine region at 0.7 mm over a 4 mm margin is about the skyscrapers' fine band (1.21 million
   elements, *measured* there); curvature refinement to 0.25 mm adds cells only at rims and necks.
 - Markers: about 30 000 at 2 mm spacing, the full-depth ones with up to about 80 cells, the top-zone ones about 40

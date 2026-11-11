@@ -373,10 +373,10 @@ The nine files are:
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the 43 tests from the repository root with
+Run the tests (43 from stage 1; 56 since stage 2, below) from the repository root with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 43 tests, about 40 s
+"$PY" -m pytest tests/levelset -q                            # 56 tests, about 80 s (43 tests and about 40 s at stage 1)
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -398,6 +398,48 @@ makes two distance resets) and the rebuild of the mesh from fields (51 s). The s
 within 0.053 per cent (50 mm) and 0.013 per cent (100 mm) of exact, and its area within 0.030 and 0.0074 per cent.
 The sphere has no cells at the 0.175 mm floor (its curvature target is about 12.5 mm at 50 mm radius), so the cost of
 cells at the floor is not yet measured; stage 3 will measure it with a rim or wire.
+
+### Stage 2: the thermal solve on cut cells
+
+Stage 2 (2026-11-11) adds `cutthermal.py`, whose class `CutThermal` solves heat conduction in the metal of a level-set
+mesh: the temperature is piecewise linear at the nodes, the heat capacity and conduction are integrated over the metal
+part of each cell only, and the boundary heat (a prescribed flux per surface patch, an implicit linear law for the
+skins' base, and radiation) is applied on the patches. A secant heat capacity makes the change of stored enthalpy equal
+the heat that came in to the Newton tolerance, latent heat included; a ghost penalty of weight 0.01 on the faces of cut
+cells keeps the system solvable when a cell holds only a sliver of metal. `move` moves the surface on the same mesh,
+and raises an error if any node that becomes active is left without a temperature; `remesh` carries the temperature to
+a rebuilt mesh, closes the stored enthalpy with one uniform temperature offset (widening its search until the offset is
+bracketed) and raises an error if the enthalpy does not close to 10⁻¹⁰ relative. `cutcell.py` gains `inside_subtets`
+and `subtet_volumes`, which split each cell's metal part into sub-tetrahedra. Stage 2 adds 13 tests, so the tier now
+has 56, which took about 80 s on 2026-11-11 (one run, on the shared laptop). There are still no skins, no flow and no
+coupling to the flight loop; `docs/model_assumptions.md` §10 records the choices and the measured accuracy.
+
+The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the uncommitted prototype folder
+`prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional
+reference (build commit 3c16f4a), because neither exists in this branch until the shared-package refactor (stage 0 +
+S); the results are recorded in the design (§20.11 item 2) and in `docs/model_assumptions.md` §10. In short, at 0.05 s
+steps on uniform 0.7 mm cells the recession of both plates agrees with the reference to within 1.6 per cent at 1.0,
+1.5 and 2.0 s, and the adaptive mesh with its 4 mm fine margin passes the skyscrapers' acceptance (5 per cent on
+recession, 10 per cent on the non-rigid depth), except that the hot plate's recession at 1.0 s, 9.6 per cent behind,
+is not judged; at 0.5 s steps the solve lags by up to 25 per cent,
+because the liquid is removed only at the end of each step, and that judgement moves to stage 3, whose skins take the
+liquid continuously.
+
+```bash
+"$PY" analysis/levelset/measure_thermal.py 50                # sphere diameter in mm; optional number of 0.5 s steps (default 3)
+```
+
+The script builds the sphere's mesh as the prototype did (a box of 1.5 diameters a side, 2.8 mm base cells, 0.7 mm
+cells from 4.6 mm inside the surface to 1.5 mm outside), starts it at 300 K, heats the windward half at 2 MW/m² by
+projected area with radiation, times the setup and each 0.5 s step, and prints one line of JSON, also written to
+`reentry_model_output/levelset/`. Run once on 2026-11-11 for 50 mm, on the laptop on mains power and shared with running
+flights, it measured on 1 055 790 cells (659 028 holding metal, 121 191 active nodes) a setup of 6.3 s, steps of 4.9,
+4.7 and 4.7 s with 5 Newton iterations each, and a peak memory of 1.99 gigabytes. The prototype's single measurement on
+the same mesh earlier that day was 8.6 s, 6.6 s a step and 1.79 gigabytes; the times are about 27 per cent lower and
+the memory about 11 per cent higher, which is within the scatter of a shared laptop. A thermal step therefore costs
+about a tenth of the 63 s of geometry per macro step at 50 mm, so it does not set the cost of a flight. The 100 mm
+sphere is *estimated* at about four times as much, about 30 s a step, against about 330 s of geometry; it has not been
+measured.
 
 ## Tests
 

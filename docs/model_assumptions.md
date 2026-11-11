@@ -206,3 +206,122 @@ always low. Costs are in the README; they were measured once, serially, on the l
 **Not yet verified.** The thin-test thresholds; behaviour on moving, merging or splitting bodies (the tests move only
 prescribed spheres and boxes); correctness of the derived surfaces against real temperature fields; the shadow test on
 moving or melting shapes (the overhang test covers a stepped stem under a cap); and whether every operation must run every macro step, which is for stage 3 to measure.
+
+## 10. Level-set architecture: the thermal solve (stage 2)
+
+This section describes the heat solve on cut cells, `CutThermal` in `reentry_model/levelset/cutthermal.py` (design
+file, §7 and §20.11 item 2), added on 2026-11-11. It solves heat conduction in the metal of a level-set mesh, with the
+boundary conditions applied on the surface pieces (patches) of the cells the surface crosses. It is built and tested but
+not coupled to the flight loop, and it has no skins (stage 3), no flow and no heat carried by a flow (stage 4). The
+package's tests use test-only materials (constant properties, and a linear melting range); the plate comparisons that
+use the real Scheil alloy were run outside the package, as described under "Plates" below.
+
+**Metal-only integration.** The temperature is piecewise linear (P1) at the nodes. Each cell holding metal (an active
+cell) has its metal part split into sub-tetrahedra, and its heat capacity (the consistent mass matrix) and conduction
+are integrated over that part only, so no heat is stored in or conducted through empty space. The unknowns are the
+nodes of active cells; other nodes keep their values and leave the system.
+
+**The cell temperature for coefficients.** Each cell evaluates its conductivity and heat capacity at one temperature,
+T*, the average of its nodal temperatures weighted by the mean of each shape function over the metal part. With this
+choice the heat the cell's mass matrix stores equals density times specific heat times metal volume times the change
+of T*, exactly, so the stored enthalpy is the sum over cells of density times metal volume times h(T*), where h is the
+specific enthalpy in joules per kilogram.
+
+**The secant capacity.** The heat capacity in a step is the secant [h(T*) − h(T*_old)] / (T* − T*_old) rather than the
+tangent c_p(T), so that the change of stored enthalpy equals the heat that came in to the Newton tolerance whatever the
+shape of h(T), latent heat included. Measured on the 2026-11-11 prototype (laptop on mains power, shared with running
+flights, each case measured once): the books close to 3 × 10⁻¹³ relative with constant properties, and to about
+4 × 10⁻⁸ relative on the Scheil alloy at a Newton tolerance of 10⁻⁸ (6 to 8 Newton iterations a step), and 8 × 10⁻⁸ on
+a linear melting range (up to 67 iterations on the first step, about 11 after). Closure at the tolerance is the point:
+a books error much larger than the tolerance would mean heat created or lost by the scheme.
+
+**Boundary heat.** On each patch the heat into the metal is q0 + q1 T_p − ε σ (T_p⁴ − T_amb⁴), with T_p the
+temperature at the patch centroid, q1 at most zero (the skins' base law, implicit), ε the emissivity and σ the
+Stefan–Boltzmann constant; the radiation is linearised in the Newton iteration. A flow's heat flux is supplied by the
+caller per patch, by projected area: q times max(n·d, 0), with n the patch normal and d the direction the flow comes
+from. Applying the flux only to patches tilted less than about 25 degrees from the flow (tried first) lost 41 per cent
+of a plate column's heat once its receding top crossed cells cut by its walls; the projected-area rule delivered 98 to
+99 per cent (prototype, 2026-11-11, measured once).
+
+**Accuracy.** A slab under a constant 2 megawatts per square metre for 0.5 s, its sides cut off the grid: the rise of
+its surface temperature differs from the semi-infinite solution by 1.38 per cent at 1 mm cells, 0.37 per cent at
+0.5 mm and 0.04 per cent at 0.25 mm, which is second-order convergence (prototype, 2026-11-11, measured once). The time
+step (0.01 against 0.0025 s) and lumped against consistent mass change it by under 0.2 per cent. Where one cell holds
+both the top and a side wall of a body (a sharp corner) its patch tilts, and on 1 mm cells the projected heat on a 4 mm
+wide slab was 3.3 per cent short; rounded bodies have no such corners.
+
+**The ghost penalty and its weight.** A cell holding a sliver of metal would make the system ill-conditioned. A ghost
+penalty (Burman 2010) on every interior face between two active cells of which at least one is cut penalises the jump
+of the normal temperature gradient, with weight γ times the larger conductivity, the larger cell size and the face
+area; it leaves functions linear across the face, and so constants, untouched. Without it (prototype, 2026-11-11,
+measured once) a cell holding 10⁻¹⁰ to 10⁻⁴⁵ of its volume gives a diagonal entry 10⁻¹⁰ to 10⁻⁴⁵ times the largest,
+the sliver node's temperature is undetermined, and plain conjugate gradients fail in 5 000 iterations. With γ = 0.01
+the ratio is about 6 × 10⁻³ and plain conjugate gradients converge in about 330 iterations. A larger weight conditions
+the system better (γ = 0.1 gives 5 × 10⁻² and 140 iterations) but disturbs the solution: with a surface receding
+0.05 mm a step through 1 mm cells under 1 megawatt per square metre, the temperature 4 mm below changes smoothly at
+γ = 0 or 0.01, while γ = 0.1 gives one jump of 0.07 K and γ = 1 four jumps of up to 0.24 K, each when the surface
+crossed a layer of nodes and the set of penalised faces changed at once. The default is therefore γ = 0.01.
+
+**Newton iteration and damping.** Each backward-Euler step iterates to a relative change of the temperature of 10⁻⁸,
+at most 100 iterations. The boundary flux is linearised by Newton; the conductivity and the secant capacity are lagged
+at the current iterate (a Picard iteration). Because the effective heat capacity has kinks (the solidus, the liquidus),
+the update is halved, down to a floor of one sixteenth, whenever an iteration changes the temperature by more than
+0.9 of the previous change. Linear systems are solved by conjugate gradients with a smoothed-aggregation algebraic
+multigrid (AMG) preconditioner to 10⁻¹², or by a direct solver. A step that does not converge raises an error.
+
+**A moving surface on the same mesh.** `move` changes the level set without changing the mesh. The nodal temperatures
+are kept; nodes that become active are filled ring by ring with the mean of their already-valued neighbours, and if any
+such node is still without a value after the rings the method raises a RuntimeError rather than keep a stale value.
+It returns the enthalpy the move removed with the metal.
+
+**The uniform offset on rebuilds.** `remesh` carries the temperature to a rebuilt mesh: it extends the field three rings
+outside the metal, projects it conservatively onto the new mesh, and then adds one uniform temperature offset to every
+node, found by bisection to 10⁻¹² K, so that the stored enthalpy equals the old one. The search for the offset starts
+at plus or minus 50 K and doubles until it brackets the old enthalpy; if, after that, the enthalpy does not close to
+10⁻¹⁰ relative, the method raises a RuntimeError. The residual before the offset is returned and is the measure of
+the transfer's quality: the offset spreads it over the whole body, so it must be small. On the prototype plates (below)
+it was within 3 × 10⁻⁶ (cold plate) and 3 × 10⁻⁹ (hot plate) with the fine margin into rigid metal, and up to
+4.6 × 10⁻⁴ and 2.4 × 10⁻³ without it, because without the margin coarse cells rebuilt just under the melting front
+carry the error.
+
+**Plates.** The comparisons with the skyscrapers' plates were run on 2026-11-11 in the uncommitted prototype folder
+`prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional
+reference (build commit 3c16f4a), because both exist only in that build until the shared-package refactor (stage 0 +
+S) brings them (plan Decision B). Each case was measured once on the laptop on mains power, shared with running
+flights. The column is the level-2 plate's centre with insulated walls; liquid is removed after every step wherever
+T is at or above T_feed = 910 K (the feed temperature); the reference runs at 2 µm cells and 1 ms steps.
+
+- On uniform 0.7 mm cells with 0.05 s steps, the cold plate (700 K, 6 MW/m²) recedes 0.800, 2.688 and 5.130 mm at 1.0,
+  1.5 and 2.0 s against the reference's 0.788, 2.712 and 5.216 mm (1.5 per cent ahead, then 0.9 and 1.6 per cent
+  behind); the hot plate (880 K, 2 MW/m²) recedes 0.798, 1.806 and 2.904 mm against 0.788, 1.816 and 2.916 mm
+  (1.3 per cent ahead, 0.6 and 0.4 per cent behind), and its non-rigid depth (the depth of metal that is not rigid,
+  under the surface ψ built by stage 1's `molten_rigid_surface`) is 1.514, 1.630 and 1.724 mm against 1.488, 1.570
+  and 1.676 mm (1.7, 3.8 and 2.9 per cent thicker). The energy books close to 10⁻⁸. At 0.35 mm cells the cold plate's
+  recession moves by at most 2.3 per cent, a first look at fine-size convergence that stage 4 judges on a pool. These
+  runs took 8 s of wall time for 2 s of plate.
+- At 0.5 s steps the same columns fail: the cold plate is 1.8 per cent ahead, then 10.9 and 12.8 per cent behind, and
+  the hot plate 24.6, 15.1 and 11.9 per cent behind. The liquid stays on the plate through each long step and absorbs
+  heat until the removal at the end of the step, where the reference removes it every millisecond. Stage 2 removes
+  liquid only once a step; the skins, which take it continuously, are stage 3, so the judgement at 0.5 s steps moves
+  to stage 3 (plan Decision A).
+- On the adaptive mesh with the fine margin (2.8 mm base cells, 0.7 mm where ψ > −d and above, with d = 4 mm, rebuilt
+  after every step, walls on grid lines), the cold plate recedes 3.6, 4.0 and 4.2 per cent behind the reference at
+  1.0, 1.5 and 2.0 s, inside the skyscrapers' 5 per cent acceptance; the hot plate is 9.6 per cent behind at 1.0 s (not
+  judged) and 4.3 and 2.6 per cent behind at 1.5 and 2.0 s, and its non-rigid depth is 3.8 to 4.3 per cent thicker,
+  inside the 10 per cent acceptance.
+- Without the margin (d = 0, 0.7 mm only above ψ) the cold plate is 7.4 per cent behind at 1.0 s, which fails, and the
+  hot plate's non-rigid depth is up to 6.6 per cent thick. The margin therefore earns its place.
+
+**Cost.** On the 50 mm sphere (0.7 mm fine cells over a 4.6 mm shell; 1 055 790 cells, 659 028 active, 121 191 active
+nodes) the prototype measured on 2026-11-11 a setup of 8.6 s, 6.6 s for one 0.5 s step with radiation (5 Newton
+iterations, the AMG hierarchy rebuilt every iteration) and a peak memory of 1.79 gigabytes. The package's script
+`analysis/levelset/measure_thermal.py`, run once on 2026-11-11 on the same mesh (laptop on mains power, shared with
+running flights), measured a setup of 6.3 s, steps of 4.9, 4.7 and 4.7 s (5 Newton iterations each) and a peak of
+1.99 gigabytes; the times are about 27 per cent below the prototype's and the memory about 11 per cent above, within
+the scatter of a shared laptop. The thermal step is thus about a tenth of the 63 s of geometry per macro step at
+50 mm (stage 1), so it does not set the cost of a flight. The 100 mm sphere is *estimated* at about four times as
+much (about 30 s a step), against about 330 s of geometry a step; it was not measured.
+
+**Not yet verified.** The solve with skins on its patches (stage 3), with a flow and advection (stage 4) and in a
+flight; the plates at 0.5 s steps (stage 3); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
+cost at 100 mm.
