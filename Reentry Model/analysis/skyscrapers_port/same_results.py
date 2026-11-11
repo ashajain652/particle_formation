@@ -49,6 +49,9 @@ NOMELT = ("--diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angl
 def case_arguments(state=None):
     """{case name: command-line arguments after ``-m reentry_model``, without --outdir and --name}."""
     return {
+        # Step 1 only: no --thermal, the default NRLMSISE atmosphere, the whole flight
+        "step1": ["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.500133",
+                  "--flight-path-angle", "-0.959331"],
         "skins": ["run"] + COMMON + ["--skin-preset", "dev", "--fine-size", "2"],
         "element": ["run"] + COMMON + ["--surface-model", "elements"],
         "resume": ["resume", str(state)] + RESUME,

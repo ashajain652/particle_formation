@@ -231,12 +231,17 @@ def test_report_gives_largest_absolute_and_relative_difference(tmp_path, capsys)
 
 def test_run_builds_the_documented_command_lines():
     cases = same_results.case_arguments(Path("/state.pkl"))
-    assert set(cases) == {"skins", "element", "resume", "nomelt", "nomelt_elements"}
+    assert set(cases) == {"step1", "skins", "element", "resume", "nomelt", "nomelt_elements"}
     assert cases["skins"][:1] == ["run"] and "--skin-preset" in cases["skins"]
     assert cases["element"][-2:] == ["--surface-model", "elements"]
     assert cases["resume"][:2] == ["resume", "/state.pkl"]
     assert "--melt" not in cases["nomelt"]
     assert cases["nomelt_elements"] == cases["nomelt"] + ["--surface-model", "elements"]
+
+
+def test_step1_case_is_a_whole_step1_flight():
+    assert same_results.case_arguments()["step1"] == ["run", "--diameter", "100", "--velocity", "7.5", "--altitude",
+                                                      "77.500133", "--flight-path-angle", "-0.959331"]
 
 
 def test_compare_ignores_the_run_time(tmp_path):
