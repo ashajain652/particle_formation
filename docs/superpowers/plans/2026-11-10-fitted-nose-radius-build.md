@@ -72,7 +72,9 @@ measured radii). Pattern for an option on `run` and `resume`: Tasks 5d-5f in
    first refresh.
 2. **The loads actually read it**: both the heating (`CoupledRun.loads_at`) and the surface flow (`SkinBody` at about line
    790) call `nose_radius()`; a test must show each receiving the fitted radius, not only that `nose_radius()` returns it.
-3. **The bound is reported, never applied**: a cap flatter than the bound must give a used radius above the bound.
+3. **The bound applies on the flat side** (Asha's option B, 2026-11-10, replacing "reported, never applied"): a convex
+   cap flatter than the bound, a concave cap and a cap flat to rounding must give the bound as the used radius; a convex
+   cap no flatter than the bound gives its fitted radius; there is no lower bound.
 4. **Degenerate caps**: fewer than four cap corners, and a concave cap, must give the documented radius and flags, not a
    crash or a negative radius.
 5. **The leeward pool**: the windward transverse radius must ignore corners more than 90 degrees from the direction of
