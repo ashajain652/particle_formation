@@ -39,7 +39,7 @@ from reentry_model.wake_column.trail import trail_for
 from reentry_model.wake_column.transport import D_molecular
 
 FPS = 30
-SECONDS = 70                      # of time-lapse, logarithmic in model time; holds at both ends are added on top
+SECONDS = 105                     # of time-lapse, logarithmic in model time; holds at both ends are added on top
 HOLD_START_S, HOLD_END_S = 3.0, 5.0
 SURFACE, INK, INK2, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#8b8a85", "#e4e3df"
 SPECIES_COLOUR = dict(zip(AL_SPECIES, ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6")))
@@ -50,6 +50,7 @@ TYPES = (("Al2O3", "Al₂O₃", "no hydrogen", "#2a78d6"), ("Orich", "Al₂O₄ 
          ("Hother", "other with H", "e.g. Al₂O₃H₃, Al₂O₅H₂", "#eda100"))
 SMOKE_COLOUR, EDDY_COLOUR, SETTLE_COLOUR = "#8a7a66", "#0e8f8f", "#7a4a1e"
 N_DOTS, N_GLYPHS, N_SMOKE = 460, 150, 26
+RING_FRAMES = 50                       # a new nanoparticle or newly coated smoke particle keeps its fading ring this long
 
 
 # ---- the data --------------------------------------------------------------------------------------------------------
@@ -214,6 +215,15 @@ class Static:
         self.smoke = np.column_stack([rng.uniform(0.05, 0.95, N_SMOKE), rng.uniform(-1.12, 1.12, N_SMOKE)])
         self.h_min = math.log10(d["r0"] * 0.35)
         self.h_max = math.log10(d["r"][-1] * 1.12)
+        # each smoke particle inside the column picks up aluminium once: when the plume's uptake passes an evenly spaced
+        # share of its final value (from the uptake that first shows, 1e-6) and the column has reached it
+        uptake = np.maximum.accumulate(d["frac"]["smoke"])
+        lt = np.log10(d["t"])
+        heights = (np.log10(d["r"]) - self.h_min) / (self.h_max - self.h_min)
+        taken = np.argsort(np.argsort(rng.random(N_SMOKE)))
+        levels = np.geomspace(1e-6, max(uptake[-1], 1e-6), N_SMOKE)[taken]
+        arrive = np.interp(np.abs(self.smoke[:, 1]), np.maximum.accumulate(heights), lt, right=np.inf)
+        self.smoke_t = 10 ** np.maximum(np.interp(np.log10(levels), np.log10(np.maximum(uptake, 1e-300)), lt, right=np.inf), arrive)
 
     def height(self, r):
         return (math.log10(r) - self.h_min) / (self.h_max - self.h_min)
@@ -244,13 +254,13 @@ def draw_column(ax, d, st, t, dt_flash, f):
     ax.add_patch(Ellipse((0.94, 0), capw, 2 * h, fc=body, ec=INK2, lw=1.2, alpha=min(alpha * 1.5, 1), zorder=2))
     ax.add_patch(Ellipse((0.06, 0), capw, 2 * h, fc=SURFACE, ec=INK2, lw=1.2, zorder=2))
     # background smoke: fixed in the air; the plume sweeps over it and aluminium collects on it
-    sm = lerp(d, t, d["frac"]["smoke"])
-    coat = np.clip((math.log10(max(sm, 1e-12)) + 6) / 5, 0, 1)
-    inside = np.abs(st.smoke[:, 1]) < h
     ax.scatter(st.smoke[:, 0], st.smoke[:, 1], s=46, c=SMOKE_COLOUR, alpha=0.75, zorder=3, linewidths=0)
-    if coat > 0 and inside.any():
-        ax.scatter(st.smoke[inside, 0], st.smoke[inside, 1], s=46 + 170 * coat, facecolors="none",
-                   edgecolors=SPECIES_COLOUR["AlOH2"], linewidths=1.8, alpha=0.9, zorder=3)
+    with np.errstate(divide="ignore"):
+        age = np.log10(t / st.smoke_t)
+    for (x, y), a in zip(st.smoke[(age >= 0) & (age < dt_flash)], age[(age >= 0) & (age < dt_flash)]):
+        grow = 1 - a / dt_flash
+        ax.scatter([x], [y], s=46 + 170 * grow, facecolors="none", edgecolors=SPECIES_COLOUR["AlOH2"],
+                   linewidths=1.8, alpha=grow, zorder=3)
     # gas aluminium: each dot one fixed share of the aluminium, coloured by the molecule that share is in now
     shares = np.array([lerp(d, t, d["frac"][a]) for a in AL_SPECIES])
     edges = np.cumsum(shares)
@@ -291,9 +301,17 @@ def draw_column(ax, d, st, t, dt_flash, f):
             phase = ((f * 0.012 + i * 0.37) % 1.0)
             ax.scatter([x], [-h - 0.015 - phase * 0.13], s=26, marker="h", c=SETTLE_COLOUR, alpha=(1 - phase) * 0.9,
                        linewidths=0, zorder=8)
-    ax.text(0.5, 1.2, f"Trail length {fmt_len(d['L'])}; drawn shorter than true scale. "
-            f"Now {sci(sum(lerp(d, t, d['conc'][a]) for a in AL_SPECIES) * 1e-6)} Al molecules per cm³ of plume",
+    ax.text(0.5, 1.2, f"Now {sci(sum(lerp(d, t, d['conc'][a]) for a in AL_SPECIES) * 1e-6)} Al molecules per cm³ of plume",
             ha="center", va="center", fontsize=11, color=INK2)
+    # the column's length, as a ruler; the box's volume adds the spreading along the axis once r nears L
+    y = -1.235
+    ax.annotate("", xy=(0.94, y), xytext=(0.06, y), arrowprops=dict(arrowstyle="|-|", color=INK, lw=1.6, mutation_scale=7))
+    effective = lerp(d, t, d["V"]) / (math.pi * r * r)
+    text = f"column length {fmt_len(d['L'])}"
+    if effective > 1.01 * d["L"]:
+        text += f" ({fmt_len(effective)} with spreading along the axis)"
+    ax.text(0.5, y, f"  {text}, not drawn to the radius scale  ", ha="center", va="center", fontsize=11.5, color=INK,
+            bbox=dict(fc=SURFACE, ec="none", pad=1.5), zorder=9)
 
 
 def eddy_now(d, t):
@@ -447,7 +465,8 @@ def render(args):
              f"{sci(d['N_Al'])} aluminium atoms vaporised ({sci(d['m_Al'] * 1e6)} mg)     air {d['T_K']:.0f} K     "
              f"model output on a schematic drawing", fontsize=12, color=INK2, va="center")
     draw_timeline(fig.add_axes([0.012, 0.885, 0.976, 0.022]), d, t)
-    draw_column(fig.add_axes([0.012, 0.335, 0.60, 0.515]), d, st, t, 0.45, i)
+    ring_decades = RING_FRAMES * math.log10(times[-1] / times[0]) / (len(times) - 1)     # frames are evenly spaced in log time
+    draw_column(fig.add_axes([0.012, 0.335, 0.60, 0.515]), d, st, t, ring_decades, i)
     draw_key(fig.add_axes([0.03, 0.305, 0.59, 0.03]))
     draw_concentrations(fig.add_axes([0.70, 0.525, 0.175, 0.31]), d, t)
     draw_reactions(fig.add_axes([0.625, 0.235, 0.363, 0.25]), d, t)
@@ -498,9 +517,10 @@ def main(argv=None):
     frames_dir = os.path.join(folder, "frames")
     os.makedirs(frames_dir, exist_ok=True)
     data_path = cached(os.path.join(folder, "data.pkl"), lambda: compute(case, settings))
-    opening_path = cached(os.path.join(folder, "opening.pkl"), lambda: plume_prologue.compute(case))
     with open(data_path, "rb") as f:
-        n = len(frame_times(pickle.load(f)))
+        main_data = pickle.load(f)
+    n = len(frame_times(main_data))
+    opening_path = cached(os.path.join(folder, "opening.pkl"), lambda: plume_prologue.compute(case, main_data))
     def job(prefix, path, i):
         return path, i, os.path.join(frames_dir, f"{prefix}{i:05d}.png")
     picked = a.frames is not None or a.opening_frames is not None

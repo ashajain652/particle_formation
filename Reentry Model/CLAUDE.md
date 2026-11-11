@@ -190,6 +190,11 @@ settling to the ground. Promoted on 2026-10-26 from `prototype/work-2026-10-21-d
   starts from a given `InitialState` instead of the parent's state at `h0_km`; that is the seam for the
   fragment model, which will release each droplet with its velocity at separation (Asha, 2026-10-24).
   Melting (Step 3) joined the package on 2026-11-11; the connection itself is still not built.
+- Oxidation (2026-10-27, a bounding model, off by default): `run_case(..., sticking=γ, f_skin=f)` adds
+  Genge (2016)-style oxygen capture at sticking efficiency γ, Al → Al₂O₃ heat into the droplet, and two
+  oxide masses in the state (skin and entrained). The skin closes the surface (evaporation and further
+  oxidation) over a few nanometres. With `sticking=0` the state and the results are the old model
+  exactly. `analysis/oxidation_sweep.py` and `plot_oxidation_sweep.py` sweep γ and f.
 - Copies of its dependencies, so the package stands alone: `particle_trajectory.py` and
   `droplet_heating_sweep.py` from `prototype/work-2026-10-14-particle-settling/`, and the parent-
   trajectory section of `DRAMA Sphere Experiments/sphere_sweep.py` as `parent_trajectory.py`. Only

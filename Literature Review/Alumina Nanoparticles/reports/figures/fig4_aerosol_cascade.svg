@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1150" height="760" viewBox="0 0 1150 760" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1150" height="760" fill="#ffffff"/>
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#111111">Figure 4. From condensable molecules to particles: the aerosol cascade</text>
+  <text x="20" y="56" font-size="13" fill="#444444">Top: the processes in order. Bottom: why the primary-particle size stops changing (schematic timescales, not computed values).</text>
+
+  <!-- Cascade boxes -->
+  <g font-size="12.5" fill="#222222">
+    <rect x="25" y="76" width="200" height="180" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+    <text x="125" y="100" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#111111">1. Gas-phase oxidation</text>
+    <text x="35" y="126">Al gives AlO, then suboxides</text>
+    <text x="35" y="143">and (AlO)x clusters</text>
+    <text x="35" y="160">(Figure 1).</text>
+    <text x="35" y="184">Sets how fast condensable</text>
+    <text x="35" y="201">units appear, and whether</text>
+    <text x="35" y="218">oxygen supply runs out.</text>
+
+    <rect x="250" y="76" width="200" height="180" rx="8" fill="#e3edf9" stroke="#3b6fb6" stroke-width="1.5"/>
+    <text x="350" y="100" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#111111">2. Nucleation</text>
+    <text x="260" y="126">Chemically driven. The</text>
+    <text x="260" y="143">critical nucleus is at or</text>
+    <text x="260" y="160">below one molecule, so each</text>
+    <text x="260" y="177">new unit acts as a particle</text>
+    <text x="260" y="194">(collision-limited).</text>
+    <text x="260" y="218">Classical theory is off by</text>
+    <text x="260" y="235">tens of orders of magnitude.</text>
+
+    <rect x="475" y="76" width="200" height="180" rx="8" fill="#ece4f5" stroke="#6a4c93" stroke-width="1.5"/>
+    <text x="575" y="100" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#111111">3. Surface growth</text>
+    <text x="485" y="126">Suboxides and Al2O3 units</text>
+    <text x="485" y="143">condense on particles that</text>
+    <text x="485" y="160">already exist, adding mass</text>
+    <text x="485" y="177">without adding particles.</text>
+    <text x="485" y="201">Must be reversible above</text>
+    <text x="485" y="218">about 3000 to 4000 K.</text>
+
+    <rect x="700" y="76" width="200" height="180" rx="8" fill="#e3f4e6" stroke="#1a7f37" stroke-width="1.5"/>
+    <text x="800" y="100" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#111111">4. Coagulation</text>
+    <text x="710" y="126">Brownian collisions, in the</text>
+    <text x="710" y="143">free-molecular regime at</text>
+    <text x="710" y="160">mesospheric pressure.</text>
+    <text x="710" y="184">Number falls and size rises;</text>
+    <text x="710" y="201">dilution slows it. The width</text>
+    <text x="710" y="218">settles to a geometric</text>
+    <text x="710" y="235">standard deviation near 1.45.</text>
+
+    <rect x="925" y="76" width="200" height="180" rx="8" fill="#f4f4f4" stroke="#555555" stroke-width="1.5"/>
+    <text x="1025" y="100" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#111111">5. Fuse or stick</text>
+    <text x="935" y="126">Liquid: colliding particles</text>
+    <text x="935" y="143">fuse into one sphere.</text>
+    <text x="935" y="167">Solid: they stick as fractal</text>
+    <text x="935" y="184">aggregates (fractal</text>
+    <text x="935" y="201">dimension about 1.6 in</text>
+    <text x="935" y="218">aluminum flames, about 2</text>
+    <text x="935" y="235">in laser-ablation plumes).</text>
+  </g>
+  <line x1="225" y1="166" x2="248" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="450" y1="166" x2="473" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="675" y1="166" x2="698" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="900" y1="166" x2="923" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+
+  <!-- Timescale plot -->
+  <text x="110" y="300" font-size="14" font-weight="bold" fill="#111111">When does the primary-particle size freeze?</text>
+  <!-- region shading -->
+  <rect x="110" y="320" width="425" height="360" fill="#e3f4e6"/>
+  <rect x="535" y="320" width="60" height="360" fill="#fff6d6"/>
+  <rect x="595" y="320" width="165" height="360" fill="#eeeeee"/>
+  <text x="322" y="342" font-size="13" font-weight="bold" text-anchor="middle" fill="#1a7f37">A. Fusing into spheres</text>
+  <text x="565" y="342" font-size="13" font-weight="bold" text-anchor="middle" fill="#8a6d00">B</text>
+  <text x="695" y="342" font-size="13" font-weight="bold" text-anchor="middle" fill="#444444">C. Aggregating</text>
+
+  <!-- collision time: straight line -->
+  <line x1="115" y1="560" x2="760" y2="420" stroke="#1f5fa8" stroke-width="3"/>
+  <!-- coalescence time -->
+  <polyline points="115,665 380,655 470,610 540,500 600,400 630,360" fill="none" stroke="#c62828" stroke-width="3" stroke-linejoin="round"/>
+  <text x="700" y="410" font-size="13" font-weight="bold" text-anchor="middle" fill="#1f5fa8">Collision time</text>
+  <text x="588" y="380" font-size="13" font-weight="bold" text-anchor="end" fill="#c62828">Coalescence time</text>
+  <!-- crossing -->
+  <circle cx="562" cy="463" r="8" fill="none" stroke="#111111" stroke-width="2.5"/>
+  <line x1="570" y1="468" x2="786" y2="607" stroke="#111111" stroke-width="1"/>
+
+  <!-- axes -->
+  <line x1="110" y1="320" x2="110" y2="680" stroke="#333333" stroke-width="1.5"/>
+  <line x1="110" y1="680" x2="760" y2="680" stroke="#333333" stroke-width="1.5"/>
+  <text x="80" y="500" font-size="13" text-anchor="middle" fill="#222222" transform="rotate(-90 80 500)">Characteristic time (log scale, schematic)</text>
+  <text x="435" y="702" font-size="13" text-anchor="middle" fill="#222222">Time after particle birth (log scale, schematic); temperature falls to the right</text>
+
+  <!-- Right panel -->
+  <g font-size="12.5" fill="#222222">
+    <text x="790" y="342"><tspan font-weight="bold" fill="#1f5fa8">Blue:</tspan> collision time, which rises as particles</text>
+    <text x="790" y="359">grow and the gas dilutes. <tspan font-weight="bold" fill="#c62828">Red:</tspan> coalescence</text>
+    <text x="790" y="376">time, tiny while alumina is liquid, then rising</text>
+    <text x="790" y="393">steeply on cooling.</text>
+    <text x="790" y="411"><tspan font-weight="bold" fill="#1a7f37">A.</tspan> Coalescence is far faster than collisions.</text>
+    <text x="790" y="428">For liquid alumina a 10 nm droplet fuses in</text>
+    <text x="790" y="445">about 1 ns (viscous-flow estimate); molecular</text>
+    <text x="790" y="462">dynamics shows 8 nm particles fusing in 0.7 ns</text>
+    <text x="790" y="479">at 2000 K. Wake collisions take milliseconds to</text>
+    <text x="790" y="496">seconds (estimate), so particles stay spherical.</text>
+
+    <text x="790" y="524"><tspan font-weight="bold" fill="#8a6d00">B.</tspan> The two times are similar: sinter necks</text>
+    <text x="790" y="541">form and hard aggregates appear.</text>
+
+    <text x="790" y="569"><tspan font-weight="bold" fill="#444444">C.</tspan> Collisions win: primary size is fixed and</text>
+    <text x="790" y="586">only loose fractal agglomerates grow.</text>
+
+    <text x="790" y="614" font-weight="bold">Circle: primary size freezes where the</text>
+    <text x="790" y="631" font-weight="bold">two curves cross.</text>
+    <text x="790" y="655">Faster cooling or stronger dilution moves</text>
+    <text x="790" y="672">the crossing earlier and gives smaller</text>
+    <text x="790" y="689">primaries. The freeze-out temperature for</text>
+    <text x="790" y="706">alumina is uncertain (about 1800 to 2327 K).</text>
+  </g>
+  <text x="20" y="744" font-size="12" fill="#555555">Sources: Buesser and Pratsinis 2012; Chakraborty and Zachariah 2014; Zarko and Glotov 2013; Kautz et al. 2023; Lam et al. 2015; researchers' estimates in the notes.</text>
+</svg>

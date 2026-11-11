@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="910" viewBox="0 0 1160 910" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+    <marker id="aY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888888"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1160" height="910" fill="#ffffff"/>
+
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#111111">Figure 2. Five routes by which aluminum from spacecraft demise can end up as alumina particles</text>
+  <text x="20" y="56" font-size="13" fill="#444444">Sizes are those reported for each route's laboratory or natural analogue. None has yet been measured at reentry formation altitudes.</text>
+
+  <!-- Source -->
+  <rect x="360" y="74" width="440" height="58" rx="8" fill="#eeeeee" stroke="#555555" stroke-width="1.5"/>
+  <text x="580" y="98" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">Spacecraft demise, about 60 to 100 km altitude</text>
+  <text x="580" y="119" font-size="13" text-anchor="middle" fill="#333333">aluminum leaves the melting structure as</text>
+
+  <rect x="110" y="168" width="340" height="50" rx="8" fill="#fde3cf" stroke="#b5651d" stroke-width="1.5"/>
+  <text x="280" y="199" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">Molten aluminum droplets</text>
+  <rect x="710" y="168" width="340" height="50" rx="8" fill="#e3edf9" stroke="#3b6fb6" stroke-width="1.5"/>
+  <text x="880" y="199" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">Aluminum vapor (atoms)</text>
+  <text x="580" y="190" font-size="13" font-style="italic" text-anchor="middle" fill="#c62828">split between the two</text>
+  <text x="580" y="207" font-size="13" font-style="italic" text-anchor="middle" fill="#c62828">is not known</text>
+
+  <line x1="480" y1="132" x2="320" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="680" y1="132" x2="840" y2="166" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+
+  <!-- Arrows to cards -->
+  <line x1="230" y1="218" x2="140" y2="258" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="300" y1="218" x2="345" y2="258" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="420" y1="218" x2="555" y2="258" stroke="#888888" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#aY)"/>
+  <line x1="740" y1="218" x2="605" y2="258" stroke="#888888" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#aY)"/>
+  <line x1="860" y1="218" x2="810" y2="258" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <line x1="930" y1="218" x2="1030" y2="258" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+
+  <!-- Card 1 -->
+  <rect x="20" y="260" width="212" height="340" rx="8" fill="#ffffff" stroke="#b5651d" stroke-width="1.5"/>
+  <rect x="20" y="260" width="212" height="40" rx="8" fill="#fde3cf"/>
+  <text x="126" y="286" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">1. Envelope-flame smoke</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="30" y="322"><tspan font-weight="bold">Where:</tspan> a detached vapor-</text>
+    <text x="30" y="339">phase flame round a burning</text>
+    <text x="30" y="356">droplet, 2 to 5 droplet</text>
+    <text x="30" y="373">diameters across.</text>
+    <text x="30" y="394"><tspan font-weight="bold">How:</tspan> gas-phase oxidation,</text>
+    <text x="30" y="411">then condensation in a shell</text>
+    <text x="30" y="428">about one radius off the surface.</text>
+    <text x="30" y="449"><tspan font-weight="bold">Size:</tspan> spherules 5 to 150 nm</text>
+    <text x="30" y="466">(means 17 to 68 nm), joined in</text>
+    <text x="30" y="483">aggregates of 0.1 to several µm.</text>
+    <text x="30" y="504"><tspan font-weight="bold">Share:</tspan> about 80 to 90 % of</text>
+    <text x="30" y="521">the oxide in propellant flames.</text>
+    <text x="30" y="546" fill="#555555"><tspan font-weight="bold">Analogue:</tspan> aluminum</text>
+    <text x="30" y="563" fill="#555555">particle and dust combustion</text>
+  </g>
+
+  <!-- Card 2 -->
+  <rect x="247" y="260" width="212" height="340" rx="8" fill="#ffffff" stroke="#777777" stroke-width="1.5"/>
+  <rect x="247" y="260" width="212" height="40" rx="8" fill="#e6e6e6"/>
+  <text x="353" y="286" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">2. Oxide cap and residue</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="257" y="322"><tspan font-weight="bold">Where:</tspan> on the droplet surface.</text>
+    <text x="257" y="343"><tspan font-weight="bold">How:</tspan> suboxides and smoke</text>
+    <text x="257" y="360">diffuse back and condense;</text>
+    <text x="257" y="377">the surface also oxidizes.</text>
+    <text x="257" y="398"><tspan font-weight="bold">Size:</tspan> coarse residue of</text>
+    <text x="257" y="415">micrometers (about 20 µm from</text>
+    <text x="257" y="432">a 30 µm propellant particle).</text>
+    <text x="257" y="449">Not a nanoparticle source.</text>
+    <text x="257" y="470"><tspan font-weight="bold">Share:</tspan> about 10 to 20 % of</text>
+    <text x="257" y="487">the oxide; about 10 % for</text>
+    <text x="257" y="504">100 µm particles; grows with</text>
+    <text x="257" y="521">droplet size.</text>
+    <text x="257" y="546" fill="#555555"><tspan font-weight="bold">Analogue:</tspan> propellant</text>
+    <text x="257" y="563" fill="#555555">residue measurements</text>
+  </g>
+
+  <!-- Card 3 -->
+  <rect x="474" y="260" width="212" height="340" rx="8" fill="#ffffff" stroke="#6a4c93" stroke-width="1.5"/>
+  <rect x="474" y="260" width="212" height="40" rx="8" fill="#ece4f5"/>
+  <text x="580" y="286" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">3. Growth on existing particles</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="484" y="322"><tspan font-weight="bold">Where:</tspan> wherever particles</text>
+    <text x="484" y="339">already exist (smoke, droplets,</text>
+    <text x="484" y="356">meteoric smoke).</text>
+    <text x="484" y="377"><tspan font-weight="bold">How:</tspan> heterogeneous</text>
+    <text x="484" y="394">condensation of suboxides;</text>
+    <text x="484" y="411">adds mass but makes no new</text>
+    <text x="484" y="428">particles.</text>
+    <text x="484" y="449"><tspan font-weight="bold">Size:</tspan> moves existing modes</text>
+    <text x="484" y="466">upward. Reentry aluminum is</text>
+    <text x="484" y="483">found in about 10 % of</text>
+    <text x="484" y="500">stratospheric sulfate particles</text>
+    <text x="484" y="517">larger than 120 nm.</text>
+    <text x="484" y="546" fill="#555555"><tspan font-weight="bold">Analogue:</tspan> smoke-growth</text>
+    <text x="484" y="563" fill="#555555">models; aircraft sampling</text>
+  </g>
+
+  <!-- Card 4 -->
+  <rect x="701" y="260" width="212" height="340" rx="8" fill="#ffffff" stroke="#3b6fb6" stroke-width="1.5"/>
+  <rect x="701" y="260" width="212" height="40" rx="8" fill="#e3edf9"/>
+  <text x="807" y="286" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">4. Wake nucleation</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="711" y="322"><tspan font-weight="bold">Where:</tspan> free vapor mixing</text>
+    <text x="711" y="339">into cooling, diluting air.</text>
+    <text x="711" y="360"><tspan font-weight="bold">How:</tspan> chemically driven,</text>
+    <text x="711" y="377">collision-limited nucleation,</text>
+    <text x="711" y="394">then coagulation.</text>
+    <text x="711" y="415"><tspan font-weight="bold">Size:</tspan> primaries of a few nm</text>
+    <text x="711" y="432">(laser ablation: radius 3 to 7</text>
+    <text x="711" y="449">nm; plasma: 15 to 50 nm; rocket</text>
+    <text x="711" y="466">smoke modes near 5 and 90 nm).</text>
+    <text x="711" y="487"><tspan font-weight="bold">Control:</tspan> dilution and cooling</text>
+    <text x="711" y="504">rate; denser vapor gives</text>
+    <text x="711" y="521">bigger particles.</text>
+    <text x="711" y="546" fill="#555555"><tspan font-weight="bold">Analogue:</tspan> laser ablation,</text>
+    <text x="711" y="563" fill="#555555">plasma, wire explosion, rockets</text>
+  </g>
+
+  <!-- Card 5 -->
+  <rect x="928" y="260" width="212" height="340" rx="8" fill="#ffffff" stroke="#1f7a7a" stroke-width="1.5"/>
+  <rect x="928" y="260" width="212" height="40" rx="8" fill="#ddf1f1"/>
+  <text x="1034" y="286" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">5. Dilute polymerization</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="938" y="322"><tspan font-weight="bold">Where:</tspan> very dilute vapor,</text>
+    <text x="938" y="339">above about 80 km.</text>
+    <text x="938" y="360"><tspan font-weight="bold">How:</tspan> AlO and AlOH</text>
+    <text x="938" y="377">reservoirs polymerize with no</text>
+    <text x="938" y="394">free-energy barrier, as in</text>
+    <text x="938" y="411">meteoric smoke.</text>
+    <text x="938" y="432"><tspan font-weight="bold">Size:</tspan> starts near 0.2 nm</text>
+    <text x="938" y="449">radius; radar smoke radii 0.6</text>
+    <text x="938" y="466">to 1.5 nm; laboratory primaries</text>
+    <text x="938" y="483">about 6 nm radius, then fractal</text>
+    <text x="938" y="500">aggregates.</text>
+    <text x="938" y="521"><tspan font-weight="bold">Chemistry:</tspan> hydroxide-rich;</text>
+    <text x="938" y="538">may not start as alumina.</text>
+    <text x="938" y="563" fill="#555555"><tspan font-weight="bold">Analogue:</tspan> meteoric smoke</text>
+  </g>
+
+  <!-- Downstream -->
+  <line x1="126" y1="600" x2="300" y2="638" stroke="#333333" stroke-width="1.5" marker-end="url(#aK)"/>
+  <line x1="353" y1="600" x2="420" y2="638" stroke="#333333" stroke-width="1.5" marker-end="url(#aK)"/>
+  <line x1="580" y1="600" x2="580" y2="638" stroke="#333333" stroke-width="1.5" marker-end="url(#aK)"/>
+  <line x1="807" y1="600" x2="740" y2="638" stroke="#333333" stroke-width="1.5" marker-end="url(#aK)"/>
+  <line x1="1034" y1="600" x2="860" y2="638" stroke="#333333" stroke-width="1.5" marker-end="url(#aK)"/>
+  <rect x="110" y="640" width="940" height="46" rx="8" fill="#f4f4f4" stroke="#777777" stroke-width="1.5"/>
+  <text x="580" y="660" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#111111">All routes then feed coagulation, dilution, sedimentation and uptake into stratospheric sulfate aerosol</text>
+  <text x="580" y="678" font-size="12.5" text-anchor="middle" fill="#333333">(Figure 4 shows the aerosol steps; the residue of route 2 is coarse and settles quickly)</text>
+
+  <!-- Size scale -->
+  <text x="20" y="722" font-size="14" font-weight="bold" fill="#111111">Reported diameters on a logarithmic scale (analogue systems, not reentry measurements)</text>
+  <g font-size="12.5" fill="#222222">
+    <!-- Route 5: 0.4 to 3 nm diameter -->
+    <rect x="213" y="738" width="136" height="14" fill="#1f7a7a"/>
+    <text x="356" y="750">Route 5: meteoric smoke, radar radii 0.6 to 1.5 nm (from 0.2 nm start)</text>
+    <!-- Route 4: 6 to 50 nm -->
+    <rect x="396" y="762" width="142" height="14" fill="#3b6fb6"/>
+    <text x="545" y="774">Route 4: laser-ablation and plasma primaries, 6 to 50 nm</text>
+    <!-- Route 1: spherules 5-150 nm dark; aggregates 0.1-5 um light -->
+    <rect x="383" y="786" width="229" height="14" fill="#b5651d"/>
+    <rect x="585" y="786" width="263" height="14" fill="#f1c39c"/>
+    <text x="855" y="798">Route 1: spherules, then aggregates</text>
+    <!-- Route 2: 4 to 20 um -->
+    <rect x="833" y="810" width="109" height="14" fill="#777777"/>
+    <text x="826" y="822" text-anchor="end">Route 2: oxide residue, a few to about 20 µm</text>
+  </g>
+  <line x1="120" y1="842" x2="1050" y2="842" stroke="#333333" stroke-width="1.5"/>
+  <g stroke="#333333" stroke-width="1.5">
+    <line x1="120" y1="842" x2="120" y2="850"/>
+    <line x1="275" y1="842" x2="275" y2="850"/>
+    <line x1="430" y1="842" x2="430" y2="850"/>
+    <line x1="585" y1="842" x2="585" y2="850"/>
+    <line x1="740" y1="842" x2="740" y2="850"/>
+    <line x1="895" y1="842" x2="895" y2="850"/>
+    <line x1="1050" y1="842" x2="1050" y2="850"/>
+  </g>
+  <g font-size="12.5" fill="#222222" text-anchor="middle">
+    <text x="120" y="866">0.1 nm</text>
+    <text x="275" y="866">1 nm</text>
+    <text x="430" y="866">10 nm</text>
+    <text x="585" y="866">100 nm</text>
+    <text x="740" y="866">1 µm</text>
+    <text x="895" y="866">10 µm</text>
+    <text x="1050" y="866">100 µm</text>
+  </g>
+  <text x="585" y="892" font-size="12.5" text-anchor="middle" fill="#555555">Particle diameter. Sources: Zarko and Glotov 2013; Dokhan et al. 2001, 2002; Kautz et al. 2023; Johnston et al. 1992; Plane et al. 2015; Murphy et al. 2023.</text>
+</svg>

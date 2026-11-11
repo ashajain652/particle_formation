@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="540" viewBox="0 0 680 540" font-family="Helvetica, Arial, sans-serif">
+<rect width="680" height="540" fill="#ffffff"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5"/></marker></defs>
+<path d="M258 196 L40 168 L40 292 L258 264 Z" fill="#B4B2A9" fill-opacity="0.25"/>
+<text x="48" y="160" font-size="12" fill="#5F5E5A">Parent's wake</text>
+<path d="M150 50 Q 470 90 452 230 Q 470 370 150 410" fill="none" stroke="#888780" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="474" y="120" font-size="12" fill="#5F5E5A">Parent's bow shock</text>
+<path d="M258.0 230.0 A72 72 0 0 1 280.9 177.3 L259.1 153.9 A104 104 0 0 0 226.0 230.0 Z M258.0 230.0 A72 72 0 0 0 280.9 282.7 L259.1 306.1 A104 104 0 0 1 226.0 230.0 Z" fill="#1D9E75" fill-opacity="0.55" stroke="#0F6E56" stroke-width="0.5"/>
+<path d="M280.9 177.3 A72 72 0 0 1 383.5 181.8 L407.3 160.4 A104 104 0 0 0 259.1 153.9 Z M280.9 282.7 A72 72 0 0 0 383.5 278.2 L407.3 299.6 A104 104 0 0 1 259.1 306.1 Z" fill="#EF9F27" fill-opacity="0.5" stroke="#BA7517" stroke-width="0.5"/>
+<path d="M383.5 181.8 A72 72 0 0 1 386.0 184.7 L410.8 164.6 A104 104 0 0 0 407.3 160.4 Z M383.5 278.2 A72 72 0 0 0 386.0 275.3 L410.8 295.4 A104 104 0 0 1 407.3 299.6 Z" fill="#5F5E5A" stroke="#444441" stroke-width="0.5"/>
+<path d="M386.0 184.7 A72 72 0 0 1 402.0 230.0 L434.0 230.0 A104 104 0 0 0 410.8 164.6 Z M386.0 275.3 A72 72 0 0 0 402.0 230.0 L434.0 230.0 A104 104 0 0 1 410.8 295.4 Z" fill="#D85A30" fill-opacity="0.6" stroke="#993C1D" stroke-width="0.5"/>
+<circle cx="330" cy="230" r="72" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="330" y="235" font-size="14" text-anchor="middle" fill="#2C2C2A">Parent</text>
+<line x1="298.8" y1="165.1" x2="278.8" y2="123.7" stroke="#0F6E56" stroke-width="1.2" stroke-dasharray="4 3"/>
+<line x1="298.8" y1="294.9" x2="278.8" y2="336.3" stroke="#0F6E56" stroke-width="1.2" stroke-dasharray="4 3"/>
+<line x1="366.0" y1="167.6" x2="389.0" y2="127.8" stroke="#993C1D" stroke-width="1.2" stroke-dasharray="4 3"/>
+<line x1="366.0" y1="292.4" x2="389.0" y2="332.2" stroke="#993C1D" stroke-width="1.2" stroke-dasharray="4 3"/>
+<line x1="476" y1="230" x2="560" y2="230" stroke="#888780" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="476" y="214" font-size="12" fill="#5F5E5A">Flight direction</text>
+<text x="214" y="234" font-size="12" text-anchor="end" fill="#5F5E5A">θ = 0°</text>
+<text x="568" y="254" font-size="12" fill="#5F5E5A">θ = 180° ahead</text>
+<rect x="40" y="436" width="16" height="12" fill="#1D9E75" fill-opacity="0.55" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="64" y="446" font-size="12" fill="#2C2C2A">Trapped in near wake: θ below 47° (64° for 400 mm)</text>
+<rect x="40" y="458" width="16" height="12" fill="#EF9F27" fill-opacity="0.5" stroke="#BA7517" stroke-width="0.5"/>
+<text x="64" y="468" font-size="12" fill="#2C2C2A">Far wake, drifts back along it: 47° to about 138°</text>
+<rect x="40" y="480" width="16" height="12" fill="#5F5E5A" stroke="#444441" stroke-width="0.5"/>
+<text x="64" y="490" font-size="12" fill="#2C2C2A">Rides the shock: narrow band near 138° to 141°</text>
+<rect x="40" y="502" width="16" height="12" fill="#D85A30" fill-opacity="0.6" stroke="#993C1D" stroke-width="0.5"/>
+<text x="64" y="512" font-size="12" fill="#2C2C2A">Escapes to independent flight: θ above about 141° (120° for 400 mm)</text>
+<line x1="400" y1="442" x2="430" y2="442" stroke="#888780" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="436" y="446" font-size="12" fill="#2C2C2A">400 mm boundaries</text>
+</svg>
