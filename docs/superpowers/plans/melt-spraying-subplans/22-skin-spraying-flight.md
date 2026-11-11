@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h, 5i and 5j (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h, 5i and 5j (2026-11-10), and 5k (2026-11-10/11).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -15843,7 +15843,497 @@ git commit -m "Windward by the body's centroid: --leeward-test facing|centroid, 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h, 5i and 5j written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5k: The jump-fault test reads the skin's profile at the base, and the final review's minors
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`base_temperature`; `jump_faults` gains `T_base`; `advance`'s base move counts both rules; the counter
+  `jump_faults_bottom_cell` and its entry in `skin_stats`)
+- Modify: `reentry_model/coupled.py` (the history column and the result `jump_faults_bottom_cell`)
+- Modify: `reentry_model/spray.py` (`spray_layer`'s radius selection in two lines)
+- Modify: `reentry_model/cli.py` (`resume`: `spray_gates` recorded always where the body sprays; the saved row's nose and leeward columns
+  recomputed when `--size-feedback` or `--leeward-test` is changed; the help of `--spray-gates` and `--slip-band` on `resume`; the run's printed
+  line gives both fault counts)
+- Test: `tests/test_reentry_model_skinbody.py`, `tests/test_reentry_model_cli.py`, `tests/test_reentry_model_restart.py`
+
+**Interfaces:**
+- Consumes: `Skins.dz()`, `Skins.T`, `Skins.count`; Task 5j's `windward_corners()`, `load_angles()` and `cmd_resume`'s 40-to-50-bin padding.
+- Produces: `skinbody.base_temperature(T, dz, count)` [K per column]; `skinbody.jump_faults(..., T_base=None)` (without `T_base` the rule is as
+  before); the skins' history column and the results key `jump_faults_bottom_cell` beside `jump_faults`.
+
+**What was decided** (Asha, 2026-11-10 about 23:55, "yes, do 1, 2a": the final review's minors, and option (a) for the jump-fault test; the
+controller's call on the exact form). The skin's temperature at its base is extrapolated linearly from the centres of its bottom two cells
+(`T_base = T_b + (T_b - T_{b-1}) (dz_b/2) / ((dz_{b-1} + dz_b)/2)`; `T_b` for a one-cell column), read after the reconciliation as `T_bottom` is.
+**A crossed column is a fault only if both its bottom cell and `T_base` lie outside the range** [min(T_node, T_deep) - tol, max(T_node, T_deep) + tol],
+so the change can only remove faults the profile explains. The hand-down branch is unchanged. The count is a diagnostic only: nothing in the code
+reads `jump_faults` beyond adding it up, writing it to the history and the results, and printing it (checked 2026-11-10 by search of the package
+and the analysis scripts). The old count is kept as `jump_faults_bottom_cell`.
+
+**Measured** (2026-11-10, the controller's instrumented re-run of the 50 mm hand-down-off flight from its state at 178.5 s, one run, 185.3-185.96 s):
+faults began at 185.45 s (1 column) and reached 336 a step by 185.96 s; every faulted bottom cell was **warmer** than both the base node and the 3D
+profile at the depth swept, by 5-12 K (about 900-903 K against 895.1-895.3 K), in columns 20-25 mm deep with bottom cells 1.5-2.7 mm thick; the
+reconciliation did not cause it (bottom cell before and after `exchange_bottom` equal to 0.1 K). In 300 healthy columns a step the bottom cell's
+excess over the base grew with its thickness: about 0.3 K under 0.5 mm, 1.25 K at 0.5-1 mm, 3.2 K at 1-2 mm, 4.5 K at 2-5 mm; no column with a
+bottom cell under 1 mm faulted. The build's own checks are unit tests on constructed columns (a 2 mm bottom cell 8 K warm on a profile rising 8 K/mm
+is a fault by the old rule and none by the new; the same column with the cell 8 K above the line through the cells above it extrapolates to 907.6 K,
+12.6 K above the node, and is still a fault); the new rule has not been flown.
+
+**Rulings** (2026-11-11; what, why, cost if wrong):
+1. *Both the bottom cell and the extrapolated base must be outside.* Why: a thin bottom cell of fresh metal at the node's temperature under a steep
+   step would be pushed out of range by the extrapolation (0.1 mm at 895 K under a cell at 1 100 K extrapolates to 876 K); on its own temperature it
+   passes. Cost if wrong: a genuine fault the extrapolation alone would see, in a column whose bottom cell happens to be in range, goes uncounted.
+2. *The review's minors:* 1, `resume` writes `spray_gates` always where the body sprays, as `run` does (the two tests that expected no key for
+   `before` now expect `before`); 2, a changed `--size-feedback` or `--leeward-test` recomputes the saved row's nose and leeward columns; 3, the
+   facing bit-identity test gains a third arm under `centroid` and `facing` with a corner put behind the plane, asserting the shear and pressure
+   gradient there are zero under one and not the other; 4, `spray_layer`'s radius selection in two lines; 6, the two `resume` helps say the options
+   are refused for a saved flight without a spray model.
+3. *The parked gap of Task 5j's re-review:* an element-model state with 40-bin accumulators resumes padded to 50. **Found while writing it, and
+   reported, not fixed here:** no flight of the element model can save such a state today (an element-model flight with `--melt on` fails its
+   save with `state_save_error: TypeError: cannot pickle 'module' object`; the one without melting runs a `ThermalBody`, which has no
+   accumulators and, found with it, no `source_rows`, so a plain `resume` of it raises `AttributeError` in `cmd_resume`). The test therefore
+   makes the state by hand: a saved thermal-body state given a `source_rows` list and 40-bin accumulators of known counts, resumed, its
+   saved state's accumulators 50 long with the first 40 bins exact; it fails with the padding switched off.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+```diff
+--- a/tests/test_reentry_model_skinbody.py
++++ b/tests/test_reentry_model_skinbody.py
+@@ -3,7 +3,7 @@
+ import numpy as np
+ import pytest
+ 
+-from reentry_model import heating, material, mesh, movemesh, skin, skinbody
++from reentry_model import coupled, heating, material, mesh, movemesh, skin, skinbody
+ from reentry_model.thermal import thermal_solver
+ 
+ DEV = skin.SkinSettings(cell=20e-6)
+@@ -454,6 +454,77 @@
+     assert skinbody.jump_faults(T_bottom, T_node, T_deep, inward, handed=(handed, lo, hi)).tolist() == [
+         False, False, True, True, False, False]                       # the handed cells alone
+     assert skinbody.jump_faults(T_bottom, T_node, T_deep, inward).tolist() == [False, False, False, False, True, False]
++
++
++def graded_column(bottom_excess, dz=(0.5e-3, 1.0e-3, 1.5e-3, 2.0e-3), T_base=895.0, slope=8000.0):
++    """One column of graded cells (top first): a linear profile rising from `T_base` at the base by `slope` K/m, the bottom
++    cell `bottom_excess` K above the line at its centre (Task 5k's measured case: a bottom cell about 2 mm thick and 8 K
++    warmer at its centre than the base, on a profile rising 8 K/mm)."""
++    dz = np.array(dz)[None, :]
++    height = np.cumsum(dz[:, ::-1], axis=1)[:, ::-1] - 0.5 * dz            # each centre's height above the base [m]
++    T = T_base + slope * height
++    T[0, -1] += bottom_excess
++    return T, dz, np.array([dz.shape[1]])
++
++
++def test_a_thick_bottom_cell_on_a_smooth_profile_is_not_a_jump_fault():
++    """Task 5k, Asha's option (a), 2026-11-10: a bottom cell 2 mm thick, 8 K warmer at its centre than the base on a linear
++    profile (so the base itself is at the node's temperature) is no fault under the new rule, as the 50 mm flight's 336
++    faults a step were not; the bottom cell's rule, kept as `jump_faults_bottom_cell`, counts it (8 K against 5 K)."""
++    T, dz, count = graded_column(0.0)
++    T_base = skinbody.base_temperature(T, dz, count)
++    assert T_base[0] == pytest.approx(895.0, abs=1e-9) and T[0, -1] - 895.0 == pytest.approx(8.0)
++    node, crossed = np.array([895.0]), np.array([True])
++    args = (T[:, -1], node, node, crossed)
++    assert skinbody.jump_faults(*args).tolist() == [True]                          # today's rule: the bottom cell alone
++    assert skinbody.jump_faults(*args, T_base=T_base).tolist() == [False]
++
++
++def test_a_genuine_jump_in_a_thick_bottom_cell_is_still_a_fault():
++    """The same column with the bottom cell 8 K above the line through the cells above it (16 K above the base node): the
++    extrapolation to the base does not hide it (it lands 12.6 K above the node, above the 5 K tolerance)."""
++    T, dz, count = graded_column(8.0)
++    T_base = skinbody.base_temperature(T, dz, count)
++    assert T_base[0] > 895.0 + skin.JUMP_TOLERANCE
++    node, crossed = np.array([895.0]), np.array([True])
++    assert skinbody.jump_faults(T[:, -1], node, node, crossed, T_base=T_base).tolist() == [True]
++
++
++def test_fresh_metal_at_the_node_under_a_steep_step_is_still_not_a_fault():
++    """A thin bottom cell (0.1 mm) at the node's temperature below a cell 205 K warmer: the extrapolation would put the base
++    18.6 K below the node, outside the range, but the bottom cell is in it, so the column passes on its own temperature: the
++    change can only remove faults the profile explains, never add one."""
++    T, dz = np.array([[1100.0, 895.0]]), np.array([[1.0e-3, 0.1e-3]])
++    T_base = skinbody.base_temperature(T, dz, np.array([2]))
++    node, crossed = np.array([895.0]), np.array([True])
++    assert T_base[0] < 895.0 - skin.JUMP_TOLERANCE                                 # the extrapolation alone would fault it
++    assert skinbody.jump_faults(T[:, -1], node, node, crossed, T_base=T_base).tolist() == [False]
++    assert skinbody.jump_faults(T[:, -1], node, node, crossed).tolist() == [False]
++
++
++def test_a_one_cell_column_is_judged_by_its_own_temperature():
++    """With one cell there is no profile to extrapolate: the base temperature is the cell's, so the two rules agree, in both
++    directions (897 K passes, 903 K faults, against a node at 895 K and a tolerance of 5 K)."""
++    T, dz = np.array([[897.0, 0.0], [903.0, 0.0]]), np.array([[2.0e-3, 0.0], [2.0e-3, 0.0]])
++    count = np.array([1, 1])
++    T_base = skinbody.base_temperature(T, dz, count)
++    assert T_base.tolist() == [897.0, 903.0]
++    node, crossed = np.full(2, 895.0), np.full(2, True)
++    assert skinbody.jump_faults(T[:, 0], node, node, crossed, T_base=T_base).tolist() == [False, True]
++    assert skinbody.jump_faults(T[:, 0], node, node, crossed).tolist() == [False, True]
++
++
++def test_the_history_and_the_results_carry_both_fault_counts(coarse_sphere_mesh):
++    """`jump_faults` (the new rule) and `jump_faults_bottom_cell` (today's, kept so that earlier flights stay comparable) are
++    both skin columns, next to each other, and in the skins' stats; the new rule never counts a column the old does not."""
++    assert "jump_faults_bottom_cell" in coupled.SKINBODY_COLUMNS
++    i = coupled.SKINBODY_COLUMNS.index("jump_faults")
++    assert coupled.SKINBODY_COLUMNS[i + 1] == "jump_faults_bottom_cell"
++    b = make(coarse_sphere_mesh, T0=890.0)
++    s = b.skin_stats()
++    assert s["jump_faults"] == 0 and s["jump_faults_bottom_cell"] == 0
++    b.jump_faults_bottom_cell = 3
++    assert b.skin_stats()["jump_faults_bottom_cell"] == 3 and b.skin_stats()["jump_faults"] <= 3
+ 
+ 
+ def stepped_deposit(body, cols, cold=4, T_warm=760.0, depth=0.5e-3, T_dep=890.0):
+@@ -2449,6 +2520,21 @@
+             np.testing.assert_array_equal(getattr(b.last_flow, name), getattr(runs[0][0].last_flow, name))
+         np.testing.assert_array_equal(b.spray_plan.result.delta_m, runs[0][0].spray_plan.result.delta_m)
+         assert b.released_mass == runs[0][0].released_mass and b.mass() == runs[0][0].mass() and b.energy() == runs[0][0].energy()
++    # a third arm with teeth (final review, Minor 3; Task 5k): the two arms above are one code path, so they cannot fail on the
++    # angle plumbing. Under `centroid` a corner facing the flow from behind the plane (ruling 3 of Task 5j: 3 of 2254 on the
++    # 4 mm test sphere's equator, here put there) gets no shear and no pressure gradient; under `facing` the same corner does
++    flows = {}
++    for how in ("centroid", "facing"):
++        np.random.seed(12345)
++        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1,
++                 spray=spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True), leeward_test=how)
++        k = put_behind(b)
++        state = aero_state_at(93.0)
++        state.kn = 0.04
++        b.advance(0.25, 0.25, front_loads(b, 3e6), state=state)
++        flows[how] = b.last_flow
++    assert flows["centroid"].tau[k] == 0.0 and flows["centroid"].dp_ds[k] == 0.0
++    assert flows["facing"].tau[k] != 0.0 or flows["facing"].dp_ds[k] != 0.0
+     assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
+     with pytest.raises(ValueError, match="leeward_test"):
+         make(coarse_sphere_mesh, leeward_test="behind")
+```
+
+  in `tests/test_reentry_model_cli.py`:
+
+```diff
+--- a/tests/test_reentry_model_cli.py
++++ b/tests/test_reentry_model_cli.py
+@@ -396,6 +396,7 @@
+                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
+     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
+     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
++    assert 0 <= r["jump_faults"] <= r["jump_faults_bottom_cell"]       # the base's rule never counts more than the cell's (Task 5k)
+     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
+     assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS) and float(rows[-1]["skin_cells"]) > 0.0
+     surf = sorted(glob.glob(str(tmp_path / "**" / "surface_*.vtp"), recursive=True))
+```
+
+  and in `tests/test_reentry_model_restart.py`:
+
+```diff
+--- a/tests/test_reentry_model_restart.py
++++ b/tests/test_reentry_model_restart.py
+@@ -431,7 +431,9 @@
+     assert doc["resumed_from"]["changed"] == {"--size-feedback": "initial", "--save-state-at": 0.2}
+     assert "size_feedback" not in doc["settings"]
+     rows = rows_of(str(tmp_path / "i.csv"))
+-    assert rows[0] == flight[14] and all(float(r["nose_radius_mm"]) == 50.0 for r in rows[1:])
++    assert all(float(r["nose_radius_mm"]) == 50.0 for r in rows)       # the saved row too (Task 5k, minor 2), not the old setting's
++    assert {k: v for k, v in rows[0].items() if k != "nose_radius_mm"} == {k: v for k, v in flight[14].items() if k != "nose_radius_mm"}
++    assert flight[14]["nose_radius_mm"] != rows[0]["nose_radius_mm"]
+     assert restart.load(str(tmp_path / "i.state.pkl"))["run"].body.size_feedback == "initial"
+     # a state saved before Task 5g
+     state = restart.load(state_path)
+@@ -481,6 +483,11 @@
+     assert doc["resumed_from"]["changed"] == {"--leeward-test": "facing", "--save-state-at": 0.2}
+     assert "leeward_test" not in doc["settings"]
+     assert restart.load(str(tmp_path / "f.state.pkl"))["run"].body.leeward_test == "facing"
++    fresh = restart.load(state_path)["run"].body                  # Task 5k, minor 2: the saved row's nose and leeward columns are
++    fresh.leeward_test = "facing"                                 # the saved step's surface read under the new test, not the old one's
++    fresh._leeward_raw = fresh._nose_raw = None
++    first = rows_of(str(tmp_path / "f.csv"))[0]
++    assert all(float(first[k]) == pytest.approx(v, rel=1e-7) for k, v in fresh.nose_stats().items())      # the CSV keeps 9 digits
+     state = restart.load(state_path)
+     body = state["run"].body
+     del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
+@@ -513,6 +520,36 @@
+     assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
+ 
+ 
++def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
++    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
++    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose body (`body.Body`) holds
++    `hist_n` and `hist_m` as the skins do. **No flight of the element model can save such a state today** (found 2026-11-11, reported,
++    not fixed here): the flight that sprays (`--melt on`) fails its save with `state_save_error` "TypeError: cannot pickle
++    'module' object", and the one that saves (no melting) runs a `ThermalBody`, which has no accumulators. So the state is made
++    by hand: a saved element-model state (the thermal body, as the other tests of this file use) is given a `source_rows` list
++    and 40-bin accumulators holding known counts, saved again, and resumed: the state the resumed flight saves has them 50 long, the first 40 bins exactly
++    as they were and the added ten empty."""
++    pytest.importorskip("cantera")
++    k = FLIGHT.index("--melt")
++    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
++    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
++    state = restart.load(str(tmp_path / "el.state.pkl"))
++    body = state["run"].body
++    assert not hasattr(body, "skins")
++    body.source_rows = []          # which `cmd_resume` reads, and a thermal body has not (a plain resume of it raises AttributeError: also found
++    #                                2026-11-11, outside this task); the spraying element model's body has it with the accumulators
++    body.hist_n, body.hist_m = np.arange(1.0, 41.0), 1e-9 * np.arange(1.0, 41.0)         # as saved with 40 bins before Task 5j
++    old = str(tmp_path / "old.state.pkl")
++    restart.save(old, state)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--t-max", "0.125",
++                     "--save-state-at", "0.075"]) == 0
++    after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body
++    assert len(after.hist_n) == len(after.hist_m) == spray.N_BINS == 50
++    np.testing.assert_array_equal(after.hist_n[:40], np.arange(1.0, 41.0))
++    np.testing.assert_array_equal(after.hist_m[:40], 1e-9 * np.arange(1.0, 41.0))
++    assert after.hist_n[40:].sum() == 0.0 and after.hist_m[40:].sum() == 0.0
++
++
+ def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
+     """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
+     runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the
+@@ -545,7 +582,8 @@
+         flown, tmp_path, capsys):
+     """`--spray-gates` on a resume (sub-plan 22 Task 5h). The test flight is `before` through its saved state only if the
+     state carries no setting: a state saved before the option (the setting removed from its spray model, which then reads the
+-    class default) resumes as `before`, with no `spray_gates` key in the JSON's settings, named in the line before the
++    class default) resumes as `before`, with `spray_gates: before` in the JSON's settings (written always, as `run` writes it:
++    Task 5k, final review minor 1), named in the line before the
+     flight; `2026-11-10` asked of it is recorded in the JSON's settings and in what was changed, and kept by the state the
+     resumed flight saves. A flight that does not spray refuses the option."""
+     out, flight, records, state_path = flown
+@@ -559,7 +597,7 @@
+     restart.save(old, state)
+     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+     assert "spray gates before" in capsys.readouterr().out
+-    assert "spray_gates" not in json.load(open(str(tmp_path / "o.json")))["settings"]
++    assert json.load(open(str(tmp_path / "o.json")))["settings"]["spray_gates"] == "before"      # recorded always (Task 5k, minor 1)
+     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "n", "--spray-gates", "2026-11-10",
+                      "--save-state-at", "0.2"]) == 0
+     doc = json.load(open(str(tmp_path / "n.json")))
+@@ -568,7 +606,7 @@
+     assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.spray.spray_gates == "2026-11-10"
+     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "b", "--spray-gates", "before"]) == 0
+     doc = json.load(open(str(tmp_path / "b.json")))
+-    assert "spray_gates" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
++    assert doc["settings"]["spray_gates"] == "before" and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
+     k = FLIGHT.index("--melt")
+     dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
+```
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` for `base_temperature`, `KeyError` for `jump_faults_bottom_cell`, the saved
+  row's `nose_radius_mm` not 50 under `--size-feedback initial`, `spray_gates` absent from the JSON for `before`.
+
+- [ ] **Step 3: The spray model** in `reentry_model/spray.py`:
+
+```diff
+--- a/reentry_model/spray.py
++++ b/reentry_model/spray.py
+@@ -223,7 +223,8 @@
+     state from before the band), the result is `melt_layer`'s to the last bit."""
+     delta_m = melt_layer(flow, liquid)[0]
+     moment = getattr(flow, "shear_integral", None)
+-    radius = getattr(flow, "nose_radius", None) if getattr(flow, "nose_radius", None) is not None else radius
++    recorded = getattr(flow, "nose_radius", None)                  # the radius the flow's shear integral was taken at
++    radius = recorded if recorded is not None else radius
+     if not band or moment is None or theta is None or radius is None or not getattr(flow, "in_slip_band", False):
+         return delta_m
+     theta = np.asarray(theta, dtype=float)
+```
+
+  the skins in `reentry_model/skinbody.py`:
+
+```diff
+--- a/reentry_model/skinbody.py
++++ b/reentry_model/skinbody.py
+@@ -35,7 +35,8 @@
+    1.56 s parts were split six times in vain, eight of the last fifteen were kept over the allowance and the 12.4 g
+    held came down in 0.039 s. What the tolerance and the cap keep in the skins is recorded at every base move
+    (`held_mass`; unbounded, Asha 2026-10-26), and the bottom cell, read after the reconciliation, is judged against the
+-   metal that crossed, for a hand-down the handed cells and the cell it uncovered (`jump_faults`).
++   metal that crossed, for a hand-down the handed cells and the cell it uncovered (`jump_faults`); a crossed column also passes
++   where the skin's temperature at its base, extrapolated from its bottom two cells, is (Asha, 2026-11-10, Task 5k).
+ 
+ A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part
+ (Asha, 2026-10-12): a part whose draws would move a base further is run again as shorter parts, and the next macro
+@@ -565,7 +566,22 @@
+     return rate, out
+ 
+ 
+-def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None):
++def base_temperature(T, dz, count):
++    """The skin's temperature at its base [K], extrapolated linearly from the centres of its bottom two cells: with `T_b`
++    and `dz_b` the bottom cell's temperature and thickness and `T_p`, `dz_p` those of the cell above it,
++    `T_b + (T_b - T_p) * (dz_b / 2) / ((dz_p + dz_b) / 2)`; `T_b` itself for a one-cell column (or none). `T` and `dz` are
++    the skins' (n, cells) arrays, `count` the cells of each column. Asha, 2026-11-10, Task 5k: the fault test compared the
++    bottom cell's mean temperature, centred half a cell above the base, with the base node's (see `jump_faults`)."""
++    n = np.arange(len(count))
++    b = np.maximum(count - 1, 0)
++    p = np.maximum(b - 1, 0)
++    T_b, T_p, dz_b, dz_p = T[n, b], T[n, p], dz[n, b], dz[n, p]
++    one = b < 1
++    apart = np.where(one, 1.0, 0.5 * (dz_p + dz_b))                  # m between the two centres (1 where there is one cell)
++    return np.where(one, T_b, T_b + (T_b - T_p) * (0.5 * dz_b) / apart)
++
++
++def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None, T_base=None):
+     """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
+     that crossed their base (spec 6.6): where metal was drawn or absorbed (`crossed`), between the base node's and the
+     3D profile's at the depth swept, `T_deep` (equal to T_node where nothing was taken from the 3D model); with `handed`,
+@@ -578,10 +594,22 @@
+     hand-down counted the warmer cell it uncovers where runoff deposits, 199 faults on a reduced pushed plate to 1.0 s,
+     rather than the 270 bottom cells the reconciliation then superheated; and judged by the handed cells alone, after the
+     build, it still counted that cell where the skin warms steeply above its base, 1 900 of the 1 942 faults on Task 8's
+-    pushed plate to 1.5 s, none of them heated by the reconciliation)."""
++    pushed plate to 1.5 s, none of them heated by the reconciliation).
++    With `T_base`, the skin's temperature at its base (`base_temperature`; Asha, 2026-11-10, Task 5k, her option (a)), a
++    crossed column is a fault only if both its bottom cell and `T_base` lie outside the range, so the change can only
++    remove faults the profile explains and never add one. Measured on the 50 mm hand-down-off flight from its state at
++    178.5 s (one run, 185.3-185.96 s): faults began at 185.45 s (1 column) and reached 336 a step by 185.96 s, every
++    faulted bottom cell 5-12 K warmer than both the base node and the 3D profile (about 900-903 K against 895.1-895.3 K), in
++    columns 20-25 mm deep whose bottom cells were 1.5-2.7 mm thick (growth 1.10 below the 0.4 mm fine zone), and none with a
++    bottom cell under 1 mm; in 300 healthy columns a step the bottom cell's excess over the base grew with its thickness
++    (about 0.3 K under 0.5 mm, 1.25 K at 0.5-1 mm, 3.2 K at 1-2 mm, 4.5 K at 2-5 mm). The reconciliation did not cause it
++    (the bottom cell before and after `exchange_bottom` equal to 0.1 K): the test compared a cell mean, centred a millimetre
++    or more above the base, with the base's temperature against a fixed tolerance. Without `T_base` the rule is as before."""
+     tol = skin_mod.JUMP_TOLERANCE if tol is None else tol
+     lo, hi = np.minimum(T_node, T_deep), np.maximum(T_node, T_deep)
+     inside = crossed & (T_bottom >= lo - tol) & (T_bottom <= hi + tol)
++    if T_base is not None:                           # the profile explains it: the base itself is in range
++        inside = inside | (crossed & (T_base >= lo - tol) & (T_base <= hi + tol))
+     judged = crossed
+     if handed is not None:
+         mask, coldest, warmest = handed[:3]
+@@ -706,7 +734,7 @@
+         self.removed_mass = self.removed_enthalpy = 0.0
+         self.drawn_mass = self.absorbed_mass = self.handed_mass = 0.0
+         self.held_mass = self.held_depth_max = 0.0           # kg, m: what the tolerance and the cap hold at the last move
+-        self.jump_faults = self.interface_repeats = self.absorb_capped = 0
++        self.jump_faults = self.jump_faults_bottom_cell = self.interface_repeats = self.absorb_capped = 0
+         self.last_mismatch = self.last_shortfall = 0.0
+         self.last_trigger = {"columns_over": 0, "worst_ratio": 0.0, "total_ratio": 0.0}    # the first pass's mismatch
+         self.last_passes, self.last_total = 1, 0.0           # the damped rule's passes and final total mismatch ratio
+@@ -1222,8 +1250,10 @@
+         self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
+         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
+         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
+-        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, (book.drawn > 0.0) | (depth > 0.0),
+-                                            handed=(handed > 0.0, coldest, warmest, uncovered)).sum())
++        crossed, judged_by = (book.drawn > 0.0) | (depth > 0.0), (handed > 0.0, coldest, warmest, uncovered)
++        T_base = base_temperature(sk.T, sk.dz(), sk.count)       # the skin's profile at its base (Task 5k)
++        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed, handed=judged_by, T_base=T_base).sum())
++        self.jump_faults_bottom_cell += int(jump_faults(T_bottom, T_node, T_deep, crossed, handed=judged_by).sum())
+         sk.regrid()
+         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
+         self.handed_mass += float(handed.sum())
+@@ -1332,7 +1362,8 @@
+                 "rebuild_residual_J": mm.rebuild_residual_total,
+                 "rebuild_residual_last_J": mm.last_rebuild.residual if mm.last_rebuild is not None else 0.0,
+                 "drawn_mass_kg": self.drawn_mass, "absorbed_mass_kg": self.absorbed_mass, "handed_mass_kg": self.handed_mass,
+-                "shortfall_kg": self.last_shortfall, "jump_faults": self.jump_faults, "absorb_capped": self.absorb_capped,
++                "shortfall_kg": self.last_shortfall, "jump_faults": self.jump_faults,
++                "jump_faults_bottom_cell": self.jump_faults_bottom_cell, "absorb_capped": self.absorb_capped,
+                 "interface_mismatch_J": self.last_mismatch, "interface_repeats": self.interface_repeats,
+                 "repeat_columns_over": self.last_trigger["columns_over"],
+                 "mismatch_worst_ratio": self.last_trigger["worst_ratio"],
+```
+
+  and the coupled run in `reentry_model/coupled.py`:
+
+```diff
+--- a/reentry_model/coupled.py
++++ b/reentry_model/coupled.py
+@@ -42,7 +42,7 @@
+ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "flowing_depth_mean_mm", "flowing_depth_max_mm",
+                     "liquid_depth_mean_mm", "liquid_depth_max_mm", "surface_quality_min", "surface_fold_deg", "zone_ratio_min",
+                     "rebuilds", "rebuild_residual_J", "rebuild_residual_last_J", "drawn_mass_kg", "absorbed_mass_kg",
+-                    "handed_mass_kg", "shortfall_kg", "jump_faults", "absorb_capped", "interface_mismatch_J",
++                    "handed_mass_kg", "shortfall_kg", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_mismatch_J",
+                     "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
+                     "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
+                     "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
+@@ -285,7 +285,7 @@
+         out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
+                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
+                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
+-        out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "absorb_capped", "interface_repeats")})
++        out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_repeats")})
+         if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
+             out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
+         return out
+```
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+```diff
+--- a/reentry_model/cli.py
++++ b/reentry_model/cli.py
+@@ -382,10 +382,12 @@
+                          "saved before the option existed)")
+     rs.add_argument("--spray-gates", choices=spray.SPRAY_GATES_NAMES, default=None,
+                     help="which of the release rules decided on 2026-11-10 apply: 2026-11-10 or before (default: the saved "
+-                         "flight's, before for one saved before the option existed)")
++                         "flight's, before for one saved before the option existed); refused for a saved flight without a "
++                         "spray model")
+     rs.add_argument("--slip-band", choices=("on", "off"), default=None,
+                     help="Girin's spraying also runs in the slip band, body Knudsen number 0.01 to 0.1 (default: the saved "
+-                         "flight's, off for one saved before the option existed)")
++                         "flight's, off for one saved before the option existed); refused for a saved flight without a spray "
++                         "model")
+     rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
+                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
+                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
+@@ -988,10 +990,11 @@
+                       res["peak_surface_T_K"], res["time_of_peak_surface_T_s"], res["peak_mean_T_K"], res["integrated_heat_J"],
+                       res["energy_balance_residual"], res["n_macro_steps"], res["mean_newton_iterations"]))
+         if args.thermal == "fem" and args.surface_model == "skin":
+-            print("  skins: {} columns, removed {:.4g} kg, drawn {:.4g} kg, {} rebuilds, {} interface repeats, {} base faults; "
+-                  "wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
++            print("  skins: {} columns, removed {:.4g} kg, drawn {:.4g} kg, {} rebuilds, {} interface repeats, {} base faults ({} by the bottom cell "
++                  "alone); wall time {:.0f} s in the skins, {:.0f} s in the 3D solve".format(
+                       res["skin_columns"], res["removed_mass_kg"], res["drawn_mass_kg"], res["rebuilds"],
+-                      res["interface_repeats"], res["jump_faults"], res["wall_skins_s"], res["wall_3d_s"]))
++                      res["interface_repeats"], res["jump_faults"], res["jump_faults_bottom_cell"], res["wall_skins_s"],
++                      res["wall_3d_s"]))
+         if spraying_skins:
+             print("  spraying: released {:.4g} kg as {:.3g} droplets in {} source rows{}".format(
+                       res["released_mass_kg"], res["n_released"], res["n_source_rows"],
+@@ -1161,7 +1164,11 @@
+         run.body.spray.slip_band = args.slip_band == "on"
+     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
+         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
+-        state["row"].update({k: v for k, v in run.body.nose_stats().items() if k not in state["row"]})
++        # (Task 5k, review minor 2: under a changed --size-feedback or --leeward-test the saved row's own nose and leeward
++        # columns were computed under the old setting, while the first resumed step's loads read the new one, so they are
++        # recomputed here, as the saved step's surface reads under the new setting)
++        redo = "--size-feedback" in changed or "--leeward-test" in changed
++        state["row"].update({k: v for k, v in run.body.nose_stats().items() if redo or k not in state["row"]})
+     for name in ("hist_n", "hist_m"):    # a body saved with 40 size bins (before Task 5j) gets the 50: its first 40 edges are unchanged, so zeros are exact
+         h = getattr(run.body, name, None)
+         if h is not None and len(h) < spray.N_BINS:
+@@ -1222,9 +1229,8 @@
+         thermal_info["size_feedback"] = "current"
+     if skins and run.body.leeward_test == "centroid":
+         thermal_info["leeward_test"] = "centroid"
+-    if getattr(run.body, "spray", None) is not None and run.body.spray.spray_gates != "before":
+-        thermal_info["spray_gates"] = run.body.spray.spray_gates      # absent: before, as a state saved without it
+     if getattr(run.body, "spray", None) is not None:
++        thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
+         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state
+     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
+                "run_name": state["meta"]["name"], "changed": changed}
+```
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (baseline 702 passed, 1 skipped).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "The jump-fault test reads the skin's profile at the base, and the final review's minors; sub-plan 22 Task 5k"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h, 5i, 5j and 5k written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

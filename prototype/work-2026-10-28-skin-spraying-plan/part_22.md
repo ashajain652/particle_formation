@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > Read `00-shared-context.md` first, then the spec. **Written at code level: Tasks 1a, 1b, 1c, 2, 3 and 3b (2026-10-28/29),
-> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h, 5i and 5j (2026-11-10).**
+> 4 and 4b (2026-10-31), 5a (2026-11-01), 5b and 5c (2026-11-06), and 5d, 5e and 5f (2026-11-08), and 5g, 5h, 5i and 5j (2026-11-10), and 5k (2026-11-10/11).**
 > Task 1 is split in three, in the order the amendment of 2026-10-28 sets: 1a brings the element model's two spraying
 > amendments of 2026-10-22 across, 1b adds the droplet's cap per crest to the shared spray physics, and 1c sprays from
 > each column's top cells, by Asha's decisions of 2026-10-29 on how the skins' depths are read where liquid lies on slurry
@@ -2835,7 +2835,99 @@ git commit -m "Windward by the body's centroid: --leeward-test facing|centroid, 
 
 ---
 
-## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h, 5i and 5j written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
+### Task 5k: The jump-fault test reads the skin's profile at the base, and the final review's minors
+
+**Files:**
+- Modify: `reentry_model/skinbody.py` (`base_temperature`; `jump_faults` gains `T_base`; `advance`'s base move counts both rules; the counter
+  `jump_faults_bottom_cell` and its entry in `skin_stats`)
+- Modify: `reentry_model/coupled.py` (the history column and the result `jump_faults_bottom_cell`)
+- Modify: `reentry_model/spray.py` (`spray_layer`'s radius selection in two lines)
+- Modify: `reentry_model/cli.py` (`resume`: `spray_gates` recorded always where the body sprays; the saved row's nose and leeward columns
+  recomputed when `--size-feedback` or `--leeward-test` is changed; the help of `--spray-gates` and `--slip-band` on `resume`; the run's printed
+  line gives both fault counts)
+- Test: `tests/test_reentry_model_skinbody.py`, `tests/test_reentry_model_cli.py`, `tests/test_reentry_model_restart.py`
+
+**Interfaces:**
+- Consumes: `Skins.dz()`, `Skins.T`, `Skins.count`; Task 5j's `windward_corners()`, `load_angles()` and `cmd_resume`'s 40-to-50-bin padding.
+- Produces: `skinbody.base_temperature(T, dz, count)` [K per column]; `skinbody.jump_faults(..., T_base=None)` (without `T_base` the rule is as
+  before); the skins' history column and the results key `jump_faults_bottom_cell` beside `jump_faults`.
+
+**What was decided** (Asha, 2026-11-10 about 23:55, "yes, do 1, 2a": the final review's minors, and option (a) for the jump-fault test; the
+controller's call on the exact form). The skin's temperature at its base is extrapolated linearly from the centres of its bottom two cells
+(`T_base = T_b + (T_b - T_{b-1}) (dz_b/2) / ((dz_{b-1} + dz_b)/2)`; `T_b` for a one-cell column), read after the reconciliation as `T_bottom` is.
+**A crossed column is a fault only if both its bottom cell and `T_base` lie outside the range** [min(T_node, T_deep) - tol, max(T_node, T_deep) + tol],
+so the change can only remove faults the profile explains. The hand-down branch is unchanged. The count is a diagnostic only: nothing in the code
+reads `jump_faults` beyond adding it up, writing it to the history and the results, and printing it (checked 2026-11-10 by search of the package
+and the analysis scripts). The old count is kept as `jump_faults_bottom_cell`.
+
+**Measured** (2026-11-10, the controller's instrumented re-run of the 50 mm hand-down-off flight from its state at 178.5 s, one run, 185.3-185.96 s):
+faults began at 185.45 s (1 column) and reached 336 a step by 185.96 s; every faulted bottom cell was **warmer** than both the base node and the 3D
+profile at the depth swept, by 5-12 K (about 900-903 K against 895.1-895.3 K), in columns 20-25 mm deep with bottom cells 1.5-2.7 mm thick; the
+reconciliation did not cause it (bottom cell before and after `exchange_bottom` equal to 0.1 K). In 300 healthy columns a step the bottom cell's
+excess over the base grew with its thickness: about 0.3 K under 0.5 mm, 1.25 K at 0.5-1 mm, 3.2 K at 1-2 mm, 4.5 K at 2-5 mm; no column with a
+bottom cell under 1 mm faulted. The build's own checks are unit tests on constructed columns (a 2 mm bottom cell 8 K warm on a profile rising 8 K/mm
+is a fault by the old rule and none by the new; the same column with the cell 8 K above the line through the cells above it extrapolates to 907.6 K,
+12.6 K above the node, and is still a fault); the new rule has not been flown.
+
+**Rulings** (2026-11-11; what, why, cost if wrong):
+1. *Both the bottom cell and the extrapolated base must be outside.* Why: a thin bottom cell of fresh metal at the node's temperature under a steep
+   step would be pushed out of range by the extrapolation (0.1 mm at 895 K under a cell at 1 100 K extrapolates to 876 K); on its own temperature it
+   passes. Cost if wrong: a genuine fault the extrapolation alone would see, in a column whose bottom cell happens to be in range, goes uncounted.
+2. *The review's minors:* 1, `resume` writes `spray_gates` always where the body sprays, as `run` does (the two tests that expected no key for
+   `before` now expect `before`); 2, a changed `--size-feedback` or `--leeward-test` recomputes the saved row's nose and leeward columns; 3, the
+   facing bit-identity test gains a third arm under `centroid` and `facing` with a corner put behind the plane, asserting the shear and pressure
+   gradient there are zero under one and not the other; 4, `spray_layer`'s radius selection in two lines; 6, the two `resume` helps say the options
+   are refused for a saved flight without a spray model.
+3. *The parked gap of Task 5j's re-review:* an element-model state with 40-bin accumulators resumes padded to 50. **Found while writing it, and
+   reported, not fixed here:** no flight of the element model can save such a state today (an element-model flight with `--melt on` fails its
+   save with `state_save_error: TypeError: cannot pickle 'module' object`; the one without melting runs a `ThermalBody`, which has no
+   accumulators and, found with it, no `source_rows`, so a plain `resume` of it raises `AttributeError` in `cmd_resume`). The test therefore
+   makes the state by hand: a saved thermal-body state given a `source_rows` list and 40-bin accumulators of known counts, resumed, its
+   saved state's accumulators 50 long with the first 40 bins exact; it fails with the padding switched off.
+
+- [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
+
+{{DIFF_TEST_SKINBODY_T5K}}
+
+  in `tests/test_reentry_model_cli.py`:
+
+{{DIFF_TEST_CLI_T5K}}
+
+  and in `tests/test_reentry_model_restart.py`:
+
+{{DIFF_TEST_RESTART_T5K}}
+
+- [ ] **Step 2: Run them to see them fail.** Expected: `AttributeError` for `base_temperature`, `KeyError` for `jump_faults_bottom_cell`, the saved
+  row's `nose_radius_mm` not 50 under `--size-feedback initial`, `spray_gates` absent from the JSON for `before`.
+
+- [ ] **Step 3: The spray model** in `reentry_model/spray.py`:
+
+{{DIFF_SPRAY_T5K}}
+
+  the skins in `reentry_model/skinbody.py`:
+
+{{DIFF_SKINBODY_T5K}}
+
+  and the coupled run in `reentry_model/coupled.py`:
+
+{{DIFF_COUPLED_T5K}}
+
+- [ ] **Step 4: The command line** in `reentry_model/cli.py`:
+
+{{DIFF_CLI_T5K}}
+
+- [ ] **Step 5: Run the tests to see them pass,** then the unit tier (baseline 702 passed, 1 skipped).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add reentry_model/spray.py reentry_model/skinbody.py reentry_model/coupled.py reentry_model/cli.py tests/test_reentry_model_skinbody.py tests/test_reentry_model_cli.py tests/test_reentry_model_restart.py
+git commit -m "The jump-fault test reads the skin's profile at the base, and the final review's minors; sub-plan 22 Task 5k"
+```
+
+---
+
+## The outline (Tasks 5–6, and Tasks 1–4, 5a, 5b, 5c, 5d, 5e, 5f, 5g, 5h, 5i, 5j and 5k written out above: 1 as Tasks 1a, 1b and 1c, 3 with 3b, 4 with 4b)
 
 1. **Spraying per column** -- written out above as Tasks 1a (the amendments of 2026-10-22), 1b (the cap per crest)
    and 1c (the spraying from the top cells, by Asha's decisions of 2026-10-29). The outline's item, as it stood:

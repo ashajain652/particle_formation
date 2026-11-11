@@ -475,7 +475,21 @@ ignored hand-downs, so where runoff deposits it counted the warmer cell a hand-d
 rather than the superheating; on the reduced pushed plate to 1.0 s it counted 199 faults before the fixes above and
 200 after, where the comparison with the handed cells counts 270 and none. Amended after the build, 2026-10-26, Asha:
 judged against the handed cells alone it counted the cell a hand-down uncovers where the skin warms steeply above its
-base, which the reconciliation had not heated, 1 900 of 1 942 faults on Task 8's full pushed plate to 1.5 s.) A column whose
+base, which the reconciliation had not heated, 1 900 of 1 942 faults on Task 8's full pushed plate to 1.5 s. Amended 2026-11-10, Asha,
+her option (a), sub-plan 22 Task 5k: the 50 mm sphere's hand-down-off flight, re-run from its state at 178.5 s with the test instrumented
+(one run, 185.3-185.96 s), began to count faults at 185.45 s (1 column) and reached 336 a step by 185.96 s, every faulted bottom cell 5-12 K
+**warmer** than both the base node and the 3D profile at the depth swept (about 900-903 K against 895.1-895.3 K), none colder, in columns
+20-25 mm deep whose bottom cells were 1.5-2.7 mm thick (graded cells, growth 1.10 below the 0.4 mm fine zone); the reconciliation did not
+cause it (the bottom cell before and after `exchange_bottom` equal to 0.1 K). In a sample of 300 healthy columns a step the bottom cell's
+excess over the base grew with its thickness, about 0.3 K under 0.5 mm, 1.25 K at 0.5-1 mm, 3.2 K at 1-2 mm and 4.5 K at 2-5 mm, and no column
+with a bottom cell under 1 mm faulted: the test compared a cell mean, centred a millimetre or more above the base, with the base's
+temperature against a fixed tolerance. **The skin's temperature at its base is now extrapolated linearly from the centres of its bottom two
+cells** (`T_base = T_b + (T_b - T_{b-1}) (dz_b/2) / ((dz_{b-1} + dz_b)/2)`, `T_b` for a one-cell column, after the reconciliation and before
+the regrid), and **a crossed column is a fault only if both its bottom cell and `T_base` lie outside the range** (the controller's call on the
+exact form): the change can only remove faults the profile explains, never add one, a thin bottom cell of fresh metal at the node's temperature
+under a steep step still passes on its own temperature, and a genuine jump in a thick bottom cell is amplified by the extrapolation, about 1.5-2
+times, and still caught. The hand-down branch (the handed cells' range) is unchanged. The count is a diagnostic only: nothing acts on it. The
+old count, the bottom cell alone, is kept as `jump_faults_bottom_cell` beside `jump_faults` so that earlier flights stay comparable.) A column whose
 flowing material drains away entirely draws rigid metal back to its minimum; no skin is ever created or removed.
 
 ### 6.7 Depths read from the skin
@@ -1306,3 +1320,4 @@ Each stage is tested and measured before the next begins.
   and to build with subagents. The controller's calls, in the description Asha approved: the defaults stay today's (`depth`, `on`, `moves`), a macro step that would start
   with more than `PARTS_MAX = 1 000` parts stops the run, and the offset `s_ij = (p_j - p_i) . unit(n_i + n_j)`. Checked once each on the 50 mm sphere (2026-11-08): the melting
   rule held `step_parts` at 1 for 95 macro steps where the stalled flight reached 9 765; hand-down off with height heat held the base fold at 37.2 degrees at 177.0 s (at most 39.3, at 176.5 s) against 116.75 in the snapshot flight (not like with like: the 5e flight's continuum step had not latched (13 macro steps of 0.5 s) while the snapshot flight latched the 12.5 ms step at 176.5 s); the comparison flights are not yet flown.
+- 2026-11-10 (sub-plan 22 Task 5k): Asha chose option (a) for the base-fault test ("yes, do 1, 2a"): the skin's temperature at its base is extrapolated from its bottom two cells, and a crossed column is a fault only if both its bottom cell and that temperature are outside the range (§6.6); the old count stays as `jump_faults_bottom_cell`. The controller's call: the "both" form, so the change only removes faults.

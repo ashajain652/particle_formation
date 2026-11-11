@@ -132,6 +132,12 @@ TASKS = (
             ("DIFF_SURFACE_FLOW_T5J", "reentry_model/surface_flow.py"), ("DIFF_SPRAY_T5J", "reentry_model/spray.py"),
             ("DIFF_SKINBODY_T5J", "reentry_model/skinbody.py"), ("DIFF_COUPLED_T5J", "reentry_model/coupled.py"),
             ("DIFF_CLI_T5J", "reentry_model/cli.py"))),
+
+    ("5k", (("DIFF_TEST_SKINBODY_T5K", "tests/test_reentry_model_skinbody.py"),
+            ("DIFF_TEST_CLI_T5K", "tests/test_reentry_model_cli.py"),
+            ("DIFF_TEST_RESTART_T5K", "tests/test_reentry_model_restart.py"),
+            ("DIFF_SPRAY_T5K", "reentry_model/spray.py"), ("DIFF_SKINBODY_T5K", "reentry_model/skinbody.py"),
+            ("DIFF_COUPLED_T5K", "reentry_model/coupled.py"), ("DIFF_CLI_T5K", "reentry_model/cli.py"))),
 )
 
 

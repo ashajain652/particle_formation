@@ -396,6 +396,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
+    assert 0 <= r["jump_faults"] <= r["jump_faults_bottom_cell"]       # the base's rule never counts more than the cell's (Task 5k)
     rows = list(csv.DictReader(open(path[:-5] + ".csv")))
     assert all(k in rows[0] for k in coupled.SKINBODY_COLUMNS) and float(rows[-1]["skin_cells"]) > 0.0
     surf = sorted(glob.glob(str(tmp_path / "**" / "surface_*.vtp"), recursive=True))

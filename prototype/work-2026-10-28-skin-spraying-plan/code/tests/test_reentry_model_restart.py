@@ -431,7 +431,9 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
     assert doc["resumed_from"]["changed"] == {"--size-feedback": "initial", "--save-state-at": 0.2}
     assert "size_feedback" not in doc["settings"]
     rows = rows_of(str(tmp_path / "i.csv"))
-    assert rows[0] == flight[14] and all(float(r["nose_radius_mm"]) == 50.0 for r in rows[1:])
+    assert all(float(r["nose_radius_mm"]) == 50.0 for r in rows)       # the saved row too (Task 5k, minor 2), not the old setting's
+    assert {k: v for k, v in rows[0].items() if k != "nose_radius_mm"} == {k: v for k, v in flight[14].items() if k != "nose_radius_mm"}
+    assert flight[14]["nose_radius_mm"] != rows[0]["nose_radius_mm"]
     assert restart.load(str(tmp_path / "i.state.pkl"))["run"].body.size_feedback == "initial"
     # a state saved before Task 5g
     state = restart.load(state_path)
@@ -481,6 +483,11 @@ def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_a
     assert doc["resumed_from"]["changed"] == {"--leeward-test": "facing", "--save-state-at": 0.2}
     assert "leeward_test" not in doc["settings"]
     assert restart.load(str(tmp_path / "f.state.pkl"))["run"].body.leeward_test == "facing"
+    fresh = restart.load(state_path)["run"].body                  # Task 5k, minor 2: the saved row's nose and leeward columns are
+    fresh.leeward_test = "facing"                                 # the saved step's surface read under the new test, not the old one's
+    fresh._leeward_raw = fresh._nose_raw = None
+    first = rows_of(str(tmp_path / "f.csv"))[0]
+    assert all(float(first[k]) == pytest.approx(v, rel=1e-7) for k, v in fresh.nose_stats().items())      # the CSV keeps 9 digits
     state = restart.load(state_path)
     body = state["run"].body
     del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
@@ -511,6 +518,36 @@ def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_a
         cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r",
                   "--leeward-test", "centroid"])
     assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
+
+
+def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
+    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
+    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose body (`body.Body`) holds
+    `hist_n` and `hist_m` as the skins do. **No flight of the element model can save such a state today** (found 2026-11-11, reported,
+    not fixed here): the flight that sprays (`--melt on`) fails its save with `state_save_error` "TypeError: cannot pickle
+    'module' object", and the one that saves (no melting) runs a `ThermalBody`, which has no accumulators. So the state is made
+    by hand: a saved element-model state (the thermal body, as the other tests of this file use) is given a `source_rows` list
+    and 40-bin accumulators holding known counts, saved again, and resumed: the state the resumed flight saves has them 50 long, the first 40 bins exactly
+    as they were and the added ten empty."""
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    state = restart.load(str(tmp_path / "el.state.pkl"))
+    body = state["run"].body
+    assert not hasattr(body, "skins")
+    body.source_rows = []          # which `cmd_resume` reads, and a thermal body has not (a plain resume of it raises AttributeError: also found
+    #                                2026-11-11, outside this task); the spraying element model's body has it with the accumulators
+    body.hist_n, body.hist_m = np.arange(1.0, 41.0), 1e-9 * np.arange(1.0, 41.0)         # as saved with 40 bins before Task 5j
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--t-max", "0.125",
+                     "--save-state-at", "0.075"]) == 0
+    after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body
+    assert len(after.hist_n) == len(after.hist_m) == spray.N_BINS == 50
+    np.testing.assert_array_equal(after.hist_n[:40], np.arange(1.0, 41.0))
+    np.testing.assert_array_equal(after.hist_m[:40], 1e-9 * np.arange(1.0, 41.0))
+    assert after.hist_n[40:].sum() == 0.0 and after.hist_m[40:].sum() == 0.0
 
 
 def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
@@ -545,7 +582,8 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
         flown, tmp_path, capsys):
     """`--spray-gates` on a resume (sub-plan 22 Task 5h). The test flight is `before` through its saved state only if the
     state carries no setting: a state saved before the option (the setting removed from its spray model, which then reads the
-    class default) resumes as `before`, with no `spray_gates` key in the JSON's settings, named in the line before the
+    class default) resumes as `before`, with `spray_gates: before` in the JSON's settings (written always, as `run` writes it:
+    Task 5k, final review minor 1), named in the line before the
     flight; `2026-11-10` asked of it is recorded in the JSON's settings and in what was changed, and kept by the state the
     resumed flight saves. A flight that does not spray refuses the option."""
     out, flight, records, state_path = flown
@@ -559,7 +597,7 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
     restart.save(old, state)
     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
     assert "spray gates before" in capsys.readouterr().out
-    assert "spray_gates" not in json.load(open(str(tmp_path / "o.json")))["settings"]
+    assert json.load(open(str(tmp_path / "o.json")))["settings"]["spray_gates"] == "before"      # recorded always (Task 5k, minor 1)
     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "n", "--spray-gates", "2026-11-10",
                      "--save-state-at", "0.2"]) == 0
     doc = json.load(open(str(tmp_path / "n.json")))
@@ -568,7 +606,7 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
     assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.spray.spray_gates == "2026-11-10"
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "b", "--spray-gates", "before"]) == 0
     doc = json.load(open(str(tmp_path / "b.json")))
-    assert "spray_gates" not in doc["settings"] and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
+    assert doc["settings"]["spray_gates"] == "before" and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
     k = FLIGHT.index("--melt")
     dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
