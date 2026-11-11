@@ -35,8 +35,8 @@ only commits carrying the trailer, that `skyscrapers-prototype-end` is an ancest
 
 **`same_results.py`** runs short cases of the model and compares two result folders, to show that a port (or a
 refactor) computes what the code before it computed. `run --code <folder holding reentry_model> --out <dir> [--state
-<file>] --cases <list>` runs each named case (`skins`, `element`, `resume`, `nomelt`; the first three are 0.125 s smoke
-flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight) one after the other as
+<file>] --cases <list>` runs each named case (`skins`, `element`, `resume`, `nomelt`, `nomelt_elements`; the first three are 0.125 s smoke
+flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight; `nomelt_elements` is the same with `--surface-model elements`, which exists because main's command line has no `--surface-model` and the port's default for `--thermal fem` is the skins, which fail without melting) one after the other as
 `python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
 the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`.
 `compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,

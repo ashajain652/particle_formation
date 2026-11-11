@@ -51,6 +51,9 @@ def case_arguments(state=None):
         "element": ["run"] + COMMON + ["--surface-model", "elements"],
         "resume": ["resume", str(state)] + RESUME,
         "nomelt": ["run"] + NOMELT,
+        # main's command line has no --surface-model, and the port's default for --thermal fem is the skins (which fail
+        # without melting): this case is the nearest to main's non-melting run
+        "nomelt_elements": ["run"] + NOMELT + ["--surface-model", "elements"],
     }
 
 
@@ -283,7 +286,7 @@ def main(argv=None):
     run.add_argument("--code", required=True, help="the folder holding the reentry_model package")
     run.add_argument("--out", required=True)
     run.add_argument("--state", help="the saved state the resume case starts from")
-    run.add_argument("--cases", required=True, help="comma-separated: skins, element, resume, nomelt")
+    run.add_argument("--cases", required=True, help="comma-separated: skins, element, resume, nomelt, nomelt_elements")
     cmp_ = sub.add_parser("compare", help="compare two result folders")
     cmp_.add_argument("dir_a")
     cmp_.add_argument("dir_b")

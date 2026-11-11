@@ -231,11 +231,12 @@ def test_report_gives_largest_absolute_and_relative_difference(tmp_path, capsys)
 
 def test_run_builds_the_documented_command_lines():
     cases = same_results.case_arguments(Path("/state.pkl"))
-    assert set(cases) == {"skins", "element", "resume", "nomelt"}
+    assert set(cases) == {"skins", "element", "resume", "nomelt", "nomelt_elements"}
     assert cases["skins"][:1] == ["run"] and "--skin-preset" in cases["skins"]
     assert cases["element"][-2:] == ["--surface-model", "elements"]
     assert cases["resume"][:2] == ["resume", "/state.pkl"]
     assert "--melt" not in cases["nomelt"]
+    assert cases["nomelt_elements"] == cases["nomelt"] + ["--surface-model", "elements"]
 
 
 def test_compare_ignores_the_run_time(tmp_path):
