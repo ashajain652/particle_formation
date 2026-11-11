@@ -1,0 +1,10 @@
+Apple M3
+4
+8
+25769803776
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+3.12.14 (main, Sep  3 2026, 03:46:19) [Clang 21.1.8 ]
+2.5.3 1.18.1 12.0.2 4.15.2 5.3.0 3.2.0
+build repository f6e12fb (skin flight); the element flight d100__sesam rerun 2026-10-17 from the same commit

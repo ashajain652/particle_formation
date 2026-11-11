@@ -1,0 +1,64 @@
+{"t": 0.25, "recession_mm": -0.0, "top_recession_mm": -0.005688, "removed_recession_mm": 0.0, "centre_area_ratio": 1.0, "T_top_centre": 828.686124, "mass_error": -0.0, "energy_residual": 0.0, "fold_deg": 89.55025, "quality": 0.822052, "zone_ratio": 0.652194, "rebuilds": 0, "faults": 0, "repeats": 5, "cells": 138248, "columns_over": 6681, "worst_ratio": 866.902845, "total_ratio": 0.003881, "absorbed_kg": 0.0, "handed_kg": 0.000384, "wall_s": 13.626809}
+{"t": 0.5, "recession_mm": -0.0, "top_recession_mm": -0.0179, "removed_recession_mm": 0.0, "centre_area_ratio": 1.0, "T_top_centre": 885.439928, "mass_error": -0.0, "energy_residual": 0.0, "fold_deg": 88.946394, "quality": 0.775192, "zone_ratio": 0.555141, "rebuilds": 0, "faults": 0, "repeats": 10, "cells": 138311, "columns_over": 6786, "worst_ratio": 364.876005, "total_ratio": 0.014568, "absorbed_kg": 0.0, "handed_kg": 0.000489, "wall_s": 31.504596}
+{"t": 0.75, "recession_mm": 0.06, "top_recession_mm": 0.014273, "removed_recession_mm": 0.06, "centre_area_ratio": 1.0, "T_top_centre": 909.129793, "mass_error": -0.0, "energy_residual": 0.0, "fold_deg": 88.790154, "quality": 0.726276, "zone_ratio": 0.456905, "rebuilds": 0, "faults": 0, "repeats": 15, "cells": 138497, "columns_over": 6774, "worst_ratio": 87190.209494, "total_ratio": 0.015785, "absorbed_kg": 0.0, "handed_kg": 0.000547, "wall_s": 53.798598}
+{"t": 1.0, "recession_mm": 0.803869, "top_recession_mm": 0.755776, "removed_recession_mm": 0.80387, "centre_area_ratio": 1.0, "T_top_centre": 909.620117, "mass_error": -0.0, "energy_residual": -0.0, "fold_deg": 88.72214, "quality": 0.682367, "zone_ratio": 0.359395, "rebuilds": 0, "faults": 0, "repeats": 20, "cells": 141035, "columns_over": 6833, "worst_ratio": 547.26477, "total_ratio": 0.03568, "absorbed_kg": 0.0, "handed_kg": 0.000593, "wall_s": 78.913276}
+{"t": 1.25, "recession_mm": 1.748741, "top_recession_mm": 1.698477, "removed_recession_mm": 1.748729, "centre_area_ratio": 0.999946, "T_top_centre": 909.373695, "mass_error": -0.0, "energy_residual": -0.0, "fold_deg": 88.676714, "quality": 0.646504, "zone_ratio": 0.265708, "rebuilds": 0, "faults": 0, "repeats": 25, "cells": 141245, "columns_over": 6784, "worst_ratio": 1549.687964, "total_ratio": 0.057951, "absorbed_kg": 0.000269, "handed_kg": 0.000634, "wall_s": 109.937088}
+{"t": 1.5, "recession_mm": 2.709688, "top_recession_mm": 2.653228, "removed_recession_mm": 2.707724, "centre_area_ratio": 1.001266, "T_top_centre": 909.453293, "mass_error": -0.0, "energy_residual": -0.0, "fold_deg": 88.638675, "quality": 0.620225, "zone_ratio": 0.21115, "rebuilds": 1, "faults": 0, "repeats": 30, "cells": 142846, "columns_over": 6755, "worst_ratio": 118.338571, "total_ratio": 0.044431, "absorbed_kg": 0.001255, "handed_kg": 0.000671, "wall_s": 136.73293}
+{"t": 1.75, "recession_mm": 3.970415, "top_recession_mm": 3.911656, "removed_recession_mm": 3.974469, "centre_area_ratio": 1.004709, "T_top_centre": 909.760123, "mass_error": -0.0, "energy_residual": -0.0, "fold_deg": 88.604176, "quality": 0.60415, "zone_ratio": 0.073788, "rebuilds": 1, "faults": 0, "repeats": 35, "cells": 143722, "columns_over": 6725, "worst_ratio": 71.684703, "total_ratio": 0.057884, "absorbed_kg": 0.004828, "handed_kg": 0.000708, "wall_s": 161.569393}
+{"t": 2.0, "recession_mm": 5.181626, "top_recession_mm": 5.111773, "removed_recession_mm": 5.189227, "centre_area_ratio": 1.012377, "T_top_centre": 909.398387, "mass_error": -0.0, "energy_residual": -0.0, "fold_deg": 88.572098, "quality": 0.596269, "zone_ratio": 0.086156, "rebuilds": 2, "faults": 0, "repeats": 40, "cells": 146217, "columns_over": 6689, "worst_ratio": 144.492257, "total_ratio": 0.033445, "absorbed_kg": 0.009978, "handed_kg": 0.000755, "wall_s": 192.635535}
+{
+ "failure": null,
+ "completed_s": 2.000000000000001,
+ "h_mm": 2.0,
+ "dt": 0.05,
+ "width_mm": 110.0,
+ "r_flat_mm": 32.0,
+ "r_zero_mm": 45.0,
+ "repeat_rule": "column",
+ "preset": "dev",
+ "deform_mm": 4.0,
+ "n_columns": 6932,
+ "n_centre": 4,
+ "compare": {
+  "1.0": {
+   "centre_mm": 0.8038687623768256,
+   "removed_mm": 0.8038696289062484,
+   "fine_mm": 0.8045429106359476,
+   "ref1d_mm": 0.789,
+   "rel_fine": -0.000837927039328612,
+   "rel_1d": 0.018845072720944822,
+   "removed_rel_1d": 0.018846170983838118
+  },
+  "1.5": {
+   "centre_mm": 2.709687858282903,
+   "removed_mm": 2.7077241119921256,
+   "fine_mm": 2.7290099024519927,
+   "ref1d_mm": 2.712,
+   "rel_fine": -0.007080239669240096,
+   "rel_1d": -0.0008525596301980354,
+   "removed_rel_1d": -0.0015766548701602323
+  },
+  "2.0": {
+   "centre_mm": 5.181625938735929,
+   "removed_mm": 5.189227400079794,
+   "fine_mm": 5.205957176737689,
+   "ref1d_mm": 5.219,
+   "rel_fine": -0.004673729955075645,
+   "rel_1d": -0.007161153719883351,
+   "removed_rel_1d": -0.005704656049091095
+  }
+ },
+ "worst_mass_error": 1.4432899320127035e-15,
+ "worst_energy_residual": 2.3968344954310837e-09,
+ "fold_max_deg": 92.79948915001867,
+ "rebuilds": 2,
+ "faults": 0,
+ "repeats": 40,
+ "wall_s": 192.63553483388387,
+ "wall_split": {
+  "skins": 168.08222604356706,
+  "3d": 9.712895452743396,
+  "move": 13.224421084858477,
+  "rebuild": 3.651866208994761
+ }
+}

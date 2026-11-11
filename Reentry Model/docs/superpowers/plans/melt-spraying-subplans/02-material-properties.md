@@ -8,6 +8,61 @@
 **Read before implementing:** Measured facts 4, 5, and 25 in the shared context describe two specific wrong implementations that were tried and rejected during prototyping (debiting only the destination element on feed; booking the film at mixture enthalpy instead of liquid-only enthalpy) — both reproduced real bugs (melt reappearing, a "free melting" runaway). Do not collapse the four enthalpy functions into one general-purpose formula; that simplification is exactly what caused the rejected version. Read the amendment of 2026-09-27 below as well: Scheil is a separate material variant, and `AA7075_range` must not be edited to implement it.
 **Refinement goal for the sub-agent:** turn the section below into a standalone implementation plan — file list, function signatures, test plan, and acceptance criteria.
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** `material` (Scheil's curve, the liquid properties) and the slurry viscosity law (later `shared/rheology.py`).
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/material.py` → **`reentry_model/shared/material.py`**: every "Modify (replace)" and diff below applies
+  there. The material JSON files stay in `reentry_model/data/materials/`.
+- The slurry viscosity law (Li Yageng et al. 2014 with its bridge to the liquid) goes to **`reentry_model/shared/rheology.py`**,
+  not into `material.py`.
+- These modules are built by stage S's sub-plan **S1** (`docs/superpowers/plans/shared/`). If S1 has landed, this task's
+  module-creation steps are already done; its remaining steps import from `shared`.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §6.2, §6.6, §6.7, §9 and
+> §10.3; built in sub-plans 20 (skin heat) and 21 (flow). This sub-plan stays and `material.py` is shared.
+
+The layered skin uses this module's material exactly as the 3D model does (spec §6.2): each skin cell holds mass and
+enthalpy, and its temperature, liquid fraction and density come from `Material.enthalpy`, `temperature_from_enthalpy`
+and `liquid_fraction`, with `k` and `cp` for the through-depth conduction. `Material.T_rigid` (the 2026-10-06 amendment,
+895.10 K for `AA7075_scheil`) stays the boundary between rigid and flowing metal: the skin's flowing depth, the base
+operation that absorbs metal turning non-rigid, and the rigid cells held still in the flow are all defined with it (spec
+§6.6, §6.7). `AA7075_scheil` stays the melting default and its latent heat, surface tension and liquid properties are
+the values spec §2 quotes. The one addition is outside this sub-plan: the slurry viscosity law of Li et al. (2014) with
+its bridge to liquid aluminium over 906.4 to 908 K goes into `material.py` in sub-plan 21 (spec §10.3). The functions
+written for the film and deep accounts and the feed rule (`enthalpy_liquid`, `enthalpy_mixed`, `cp_mixed`,
+`temperature_from_enthalpy_mixed`, `feed_fraction`, `T_feed`) are not used by the skin path, because the skin holds the
+mixture enthalpy per cell and no liquid exists outside the skins (spec §9); they stay, tested and unchanged, for
+`--surface-model elements`. The header's warning not to collapse the four enthalpy functions applies to that element
+model only. Do not delete any of them, and do not edit the checked material JSON files.
+
+---
+
 ## Amendment of 2026-10-07 — `AA7075_scheil` is now the melting default
 
 > Asha's decision of 2026-10-07 (facts 88–96 in `00-shared-context.md`). No change to `material.py` or its tests.

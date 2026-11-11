@@ -3,6 +3,62 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 6652–7193). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): no flag, and the exit code of a model failure** (the section after the seed's). **Amended 2026-10-06: `--rigid-substrate on|off`** (the section after the runoff flux's). **Amended 2026-10-07: `AA7075_scheil` is the melting default** (the section after the rigid substrate's). **Amended 2026-10-07 (continuum step): `--dt-continuum`** (the section after the Scheil default's).
 
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** the common run arguments and provenance (later `shared/cli_common.py`) and the `Body` protocol with `ConstantBody`; the skyscrapers run driver and its melting flags stay in `cli.py`. The `--architecture` flag arrives with the combined refactor, not with this port.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/cli.py` keeps the **skyscrapers run driver** and all its melting flags. The common flight arguments,
+  `parse_epoch`, `make_atmosphere`, `provenance` and `git_commit` live in **`reentry_model/shared/cli_common.py`**, and
+  the `--architecture skyscrapers|levelset` flag is added by stage 0. Skyscrapers run names gain no suffix (it is the
+  default); level-set runs carry `_arch-levelset`.
+- `body.py`: the `Body` protocol and `ConstantBody` move to **`reentry_model/shared/body.py`** (stage 0); the melting body
+  stays in `body.py`.
+- `sesam_io`, `compare`, `trajectory` and `earth` are imported from `reentry_model.shared`.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9, §10.1, §10.3.
+
+The flags above, with the 2026-10-02 to 2026-10-07 amendments, stay as the interface of the current model and remain
+bit-identical under the new switch `--surface-model skin|elements` (default `skin`, spec §10.1): with `elements` every
+flag means what it did and every run name is unchanged except the suffix `_surface-elements`. The settings of spec
+§10.1 are added to this CLI in the stages of sub-plans 20-22: `--surface-model`, `--skin-min-thickness` (0.4 mm),
+`--skin-cell` (10 micrometres), `--skin-growth` (1.10), `--skin-substep` (10 ms), `--skin-preset dev|production`,
+`--deform-depth` (15 mm) and `--slurry-spray on|off` (off), each with the run-name suffix the spec lists when not at
+its default, so runs of different settings still never overwrite one another, and a malformed value exits with code 2.
+`--seed`, `--material`, `--melt` and `--rigid-substrate` (the regime test is kept, spec §9) stay meaningful on the
+skin path; `--deep-runoff`, `--molten-cascade` and the other film-account controls act only on the element model, and
+how the skin path treats them is for sub-plan 20's CLI task. The 2026-09-27 block at the top of this file (`--remesh`,
+`--remesh-min-steps`, `--derived-surface`, the `_remesh` suffix, `--prism-layers` default 0) belongs to deprecated
+sub-plans 16 and 17 and must not be followed: spec §10.1 lists no remesh or derived-surface setting (the rebuild
+thresholds are constants in code). The skin path's macro-step defaults are fixed by the level 3 convergence study
+(spec §7.1), not by the 2026-10-07 `--dt-continuum` amendment.
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

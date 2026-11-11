@@ -1,0 +1,907 @@
+"""spray.py: delta_m, the thin-film and Rayleigh-Taylor modes against Girin & Kopyt (1994), the thick branch, release
+bookkeeping, size caps and histograms."""
+import json
+import os
+
+import numpy as np
+import pytest
+
+from reentry_model import dispersion, material, spray, surface_flow as sf
+from helpers import REPO_ROOT
+
+LIQ = material.LiquidProperties(2400.0, 1.3e-3, 0.86)
+
+
+class Iron:
+    rho, mu, sigma = 7800.0, 5.8e-3, 1.2
+
+
+def test_thin_film_mode_reproduces_the_1994_table_1_scaling():
+    """r_d = lambda*/4 and tau_d = tau* for the six (rho_2, V0) cases: one shock-layer factor on rho_2 V0^2 (fitted on
+    the first entry, 7.8) reproduces every r_d within 0.5 % and tau_d within 1 %; the printed mass rates are
+    rho_1 r_d / (2 tau_d) within 1 %."""
+    t = json.load(open(os.path.join(REPO_ROOT, "data", "reference_values", "girin1994_tables.json")))["table1"]
+    rho2, V0 = np.array(t["rho2_kgm3"]), np.array(t["V0_ms"])
+    lam, tau = spray.thin_film_mode(np.full((3, 2), t["mach"]), rho2[:, None] * V0[None, :] ** 2, Iron)
+    r_tab, tau_tab, m_tab = (np.array(t[k]) for k in ("r_d_m", "tau_d_s", "m_kgm2s"))
+    f_s = (lam / 4.0)[0, 0] / r_tab[0, 0]
+    assert 7.5 < f_s < 8.1
+    assert np.abs(lam / 4.0 / f_s / r_tab - 1.0).max() < 5e-3 and np.abs(tau / f_s ** 1.5 / tau_tab - 1.0).max() < 1e-2
+    assert np.abs(Iron.rho * (lam / 4.0 / f_s) / (2.0 * tau / f_s ** 1.5) / m_tab - 1.0).max() < 1e-2
+    assert spray.CAPILLARY_TAU == pytest.approx(0.798, rel=1e-3)                                  # tau* = 2 x 2 pi / omega_cap
+    assert np.isinf(spray.thin_film_mode(np.array([3.0]), np.array([0.0]), Iron)[0][0])
+
+
+def test_rayleigh_taylor_mode_reproduces_the_1994_table_2():
+    t = json.load(open(os.path.join(REPO_ROOT, "data", "reference_values", "girin1994_tables.json")))["table2"]
+    for W, lam_ref, tau_ref in zip(t["W_ms2"], t["lambda_star_m_eq14"], t["tau_star_s"]):
+        active, lam, tau = spray.rayleigh_taylor(W, np.array([1e-3, 1e-5]), Iron)
+        assert lam[0] == pytest.approx(lam_ref, rel=2e-2) and tau[0] == pytest.approx(tau_ref, rel=1e-2)
+        assert active[0] == (W * 1e-6 * Iron.rho > 3.0 * Iron.sigma) and not active[1]
+    assert not spray.rayleigh_taylor(30.0, np.array([1e-4]), LIQ)[0][0]                          # our deceleration: inactive
+
+
+class FakeFlow:
+    """The fields spray.py reads: a shock-layer branch with the Girin closure unless told otherwise."""
+
+    def __init__(self, n, closure=sf.CLOSURE_GIRIN, branch=sf.BRANCH_SHOCK_LAYER, u=2000.0, rho=7e-4, mu=1.6e-4,
+                 delta_a=7e-3, mach=1.0, decel=30.0):
+        self.closure = np.full(n, closure)
+        self.branch = branch
+        self.u_eff = self.u_e = np.full(n, u)
+        self.rho_e, self.mu_e, self.delta_a, self.mach_e = np.full(n, rho), np.full(n, mu), np.full(n, delta_a), np.full(n, mach)
+        self.deceleration = decel
+
+
+class FakeState:
+    class freestream:
+        rho = 8e-5
+    V = 7200.0
+    ma = 24.0
+    h = 71e3
+
+
+def test_melt_layer_and_branches():
+    flow = FakeFlow(3)
+    delta_m, factor = spray.melt_layer(flow, LIQ)
+    alpha, mu = 7e-4 / 2400.0, 1.6e-4 / 1.3e-3
+    assert np.allclose(delta_m, (alpha / mu ** 2) ** (1 / 3) * 7e-3) and np.allclose(factor, (alpha * mu) ** (1 / 3) / (1 + (alpha * mu) ** (1 / 3)))
+    assert 5e-5 < delta_m[0] < 2e-4                                                                 # ~0.1 mm (spec estimate)
+    model = spray.SprayModel(LIQ)
+    b = np.array([1e-3, 2e-5, 0.0])                                                                 # thick, thin, dry
+    v_s = np.array([5.0, 20.0, 0.0])          # both films supercritical: Girin's criterion now gates every branch
+    areas, m_f = np.full(3, 1e-5), b * LIQ.rho * 1e-5
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.array([True, True, True]), 0.5, areas, m_f)
+    assert res.branch.tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN, -1]
+    we_s = LIQ.rho * 25.0 * delta_m[0] / LIQ.sigma
+    assert res.we_s[0] == pytest.approx(we_s) and res.unstable[0] == (we_s > 3.08)
+    d_f, im_f, _ = dispersion.DispersionTable()(we_s)
+    lam = 2 * np.pi * delta_m[0] / d_f
+    assert res.r[0] == pytest.approx(min(0.17 * lam, (3 * m_f[0] / (4 * np.pi * LIQ.rho)) ** (1 / 3), 0.0125))
+    assert res.mdot[0] == pytest.approx(LIQ.rho * np.pi * (0.17 * lam) ** 2 / (lam * 1.1 * delta_m[0] / (5.0 * im_f)))
+    lam_t, tau_t = spray.thin_film_mode(np.array([1.0]), np.array([7e-4 * 2000.0 ** 2]), LIQ)
+    assert res.r[1] == pytest.approx(min(lam_t[0] / 4.0, (3 * m_f[1] / (4 * np.pi * LIQ.rho)) ** (1 / 3), 0.0125))
+    assert res.mdot[1] == pytest.approx(LIQ.rho * min(2e-5, lam_t[0] / 8.0) / tau_t[0])
+    assert res.dm[1] == pytest.approx(min(res.mdot[1] * 1e-5 * 0.5, m_f[1])) and res.dm[2] == 0.0
+    assert res.dn[1] == pytest.approx(res.dm[1] / (4 / 3 * np.pi * LIQ.rho * res.r[1] ** 3))
+    assert not res.rt_active
+    # Couette closure (the gate declined to certify the patch): no delta_m, so the thin mode with the edge state
+    flow_c = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    dm_c, factor_c = spray.melt_layer(flow_c, LIQ)
+    assert np.all(np.isnan(dm_c)) and np.all(factor_c == 0.0)
+    res = model.evaluate(flow_c, FakeState(), np.array([2e-5, 1e-3]), dm_c, np.array([20.0, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9)
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]          # a thick film cannot take Girin's branch here
+    # free-molecular branch: no edge state exists, the freestream drives the mode
+    # (a floor a millimetre down: the rarefied lambda* of 7.5 mm has a Stokes layer of 0.14 mm on its floor, deeper
+    # than a 20 um film, which would put that film outside the inviscid mode's validity -- spray.viscous_film)
+    flow_fm = FakeFlow(2, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    res = model.evaluate(flow_fm, FakeState(), np.array([2e-5, 1e-3]), dm_c, np.array([20.0, 20.0]), np.array([True, True]), 0.5, areas[:2], m_f[:2] + 1e-9,
+                         b_layer=np.full(2, 1e-3), regime_layer=np.full(2, 1e-3))
+    assert res.branch.tolist() == [spray.BRANCH_RAREFIED, spray.BRANCH_RAREFIED]
+    lam_r, _ = spray.thin_film_mode(np.array([24.0]), np.array([8e-5 * 7200.0 ** 2]), LIQ)
+    assert res.r[0] == pytest.approx(min(lam_r[0] / 4.0, (3 * (m_f[0] + 1e-9) / (4 * np.pi * LIQ.rho)) ** (1 / 3), 0.0125))
+    # leeward or dry: nothing
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.array([False, False, False]), 0.5, areas, m_f)
+    assert not res.unstable.any() and res.dm.sum() == 0.0
+    with pytest.raises(ValueError):
+        spray.SprayModel(LIQ, k_r=0.0)
+
+
+def test_source_rows_and_histogram():
+    flow = FakeFlow(2)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([1e-3, 1e-3])
+    m_f = b * LIQ.rho * 1e-5
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.array([5.0, 5.0]), np.array([True, True]), 0.5, np.full(2, 1e-5), m_f)
+    rows = spray.source_rows(10.0, 71e3, 7200.0, np.radians([30.0, 60.0]), np.zeros((2, 3)), np.tile([0.0, 1.0, 0.0], (2, 1)), flow, res, b, LIQ, FakeState())
+    assert len(rows) == 2 and len(rows[0]) == len(spray.SOURCE_COLUMNS)
+    row = dict(zip(spray.SOURCE_COLUMNS, rows[0]))
+    assert row["time_s"] == 10.0 and row["altitude_km"] == 71.0 and row["theta_deg"] == pytest.approx(30.0) and row["branch"] == spray.BRANCH_THICK
+    assert row["closure"] == sf.CLOSURE_GIRIN
+    assert row["we_d"] == pytest.approx(8e-5 * 7200.0 ** 2 * 2 * row["r_m"] / LIQ.sigma) and row["oh"] == pytest.approx(LIQ.mu / np.sqrt(LIQ.rho * LIQ.sigma * 2 * row["r_m"]))
+    assert row["breakup"] == float(row["we_d"] > 12.0) and row["dm_kg"] == res.dm[0] and row["v_s_ms"] == 5.0
+    n_hist, m_hist = spray.histogram(np.array([2e-6, 5e-5, 5e-5, np.nan, 2e-2]), np.array([1.0, 2.0, 3.0, 4.0, 5.0]), np.array([1.0, 1.0, 1.0, 1.0, 1.0]))
+    assert n_hist.sum() == 6.0 and m_hist.sum() == 3.0 and n_hist.shape == (spray.N_BINS,)          # nan and out-of-range dropped
+    assert spray.BIN_EDGES[0] == 1e-6 and spray.BIN_EDGES[-1] == 1e-2
+
+
+def test_the_thin_branch_is_not_gated_by_girins_critical_weber_number():
+    """Girin & Kopyt's Eq. (5), solved, has no critical Weber number: the growth rate is positive at every We, and the
+    threshold it has once the wavelength is bounded is the wave fitting in the molten region (2026-10-22). So Girin's
+    (2017) We_s > We_cr, which gated the thin branch from 2026-09-24, no longer does; We_s is still reported."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE)                # no delta_m: the thin branch
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([2e-5, 2e-5])
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    v_s = np.array([0.5, 20.0])                                   # below and above Girin's 3.08
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.array([True, True]), 0.5, areas, m_f)
+    we = LIQ.rho * v_s ** 2 * b / LIQ.sigma                       # layer = b here, and delta_m is nan
+    assert res.we_s == pytest.approx(we) and we[0] < 3.08 < we[1]
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]
+    assert res.unstable.all() and (res.dm > 0.0).all()                            # both spray: We_s does not decide
+    assert res.r[0] == pytest.approx(res.r[1])                    # the mode is the gas's: same lambda*, same droplet
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.array([True, True]), 0.5, areas, m_f,
+                         extent=np.array([1e-4, 1e-2]))           # lambda* = 0.46 mm: fits only in the 10 mm region
+    assert not res.unstable[0] and res.dm[0] == 0.0 and res.unstable[1] and res.dm[1] > 0.0
+
+
+def lamb(lam, tau, liquid):
+    return 2.0 * liquid.mu / liquid.rho * (2.0 * np.pi / lam) ** 2 * tau
+
+
+def capillary_tau(lam, liquid):
+    return spray.CAPILLARY_TAU * lam ** 1.5 * np.sqrt(liquid.rho / liquid.sigma)
+
+
+def test_on_deep_liquid_the_film_damping_is_lambs():
+    """Far above the floor (k h >> 1) Hunt's bottom term vanishes and gamma tau* is Lamb's 2 nu k^2 tau* alone, which
+    binds only below a wavelength of about 3.3 um for this liquid."""
+    lam = np.array([1e-6, 3.0e-6, 3.6e-6, 1e-4])
+    tau = capillary_tau(lam, LIQ)
+    gt, out = spray.viscous_film(lam, tau, np.full(4, 1.0), LIQ)
+    assert gt == pytest.approx(lamb(lam, tau, LIQ), rel=1e-12) and not out.any()
+    assert (gt >= 1.0).tolist() == [True, True, False, False]
+
+
+def test_a_thin_layer_is_damped_more_than_lamb_predicts():
+    """On a layer of a few wavelengths' depth or less the floor's Stokes layer adds k sqrt(nu omega/2)/sinh(2kh), and
+    omega itself falls with tanh(kh); the layer is still deeper than that Stokes layer, so the mode applies."""
+    lam = np.full(3, 1e-4)
+    tau = capillary_tau(lam, LIQ)
+    h = np.array([1.0, 3e-5, 1e-5])                            # deep, k h = 1.9, k h = 0.63
+    gt, out = spray.viscous_film(lam, tau, h, LIQ)
+    assert not out.any()
+    assert gt[0] == pytest.approx(lamb(lam[0], tau[0], LIQ), rel=1e-12) and gt[0] < gt[1] < gt[2]
+    k = 2 * np.pi / lam[2]
+    omega = np.sqrt(LIQ.sigma * k ** 3 / LIQ.rho * np.tanh(k * h[2]))
+    nu = LIQ.mu / LIQ.rho
+    assert gt[2] == pytest.approx((2 * nu * k ** 2 + k * np.sqrt(nu * omega / 2) / np.sinh(2 * k * h[2])) * tau[2], rel=1e-12)
+
+
+def test_a_layer_thinner_than_the_stokes_depth_is_rejected_and_flagged():
+    """Where h < sqrt(2 nu / omega) the floor's boundary layer fills the liquid and Girin & Kopyt's inviscid mode does
+    not apply: nothing leaves by it, and the patch is flagged so the body can count it and the film it holds."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE)                # no delta_m: the thin branch, lambda* 0.46 mm
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([2e-6, 5e-5])                                    # 2 um: inside the Stokes layer; 50 um: outside it
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    res = model.evaluate(flow, FakeState(), b, delta_m, np.full(2, 20.0), np.array([True, True]), 0.5, areas, m_f)
+    lam, tau = spray.thin_film_mode(flow.mach_e, flow.rho_e * flow.u_eff ** 2, LIQ)
+    k = 2 * np.pi / lam[0]
+    omega = np.sqrt(LIQ.sigma * k ** 3 / LIQ.rho * np.tanh(k * b))
+    stokes = np.sqrt(2 * LIQ.mu / LIQ.rho / omega)
+    assert b[0] < stokes[0] and b[1] > stokes[1]
+    assert res.branch.tolist() == [spray.BRANCH_THIN] * 2 and res.outside.tolist() == [True, False]
+    assert res.dm[0] == 0.0 and res.dm[1] > 0.0
+    assert res.h_floor == pytest.approx(b) and np.isfinite(res.gamma_tau).all()
+
+
+def test_the_damping_uses_the_non_rigid_depth_not_the_film():
+    """The floor is where the liquid stops: the non-rigid depth the regime test reads, not the film thickness b."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(2, 5e-6)                                          # the same film on both
+    regime = np.array([5e-6, 1e-3])                               # floor right under it, floor a millimetre down
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    res = model.evaluate(flow, FakeState(), b, delta_m, np.full(2, 20.0), np.array([True, True]), 0.5, areas, m_f,
+                         b_layer=regime, regime_layer=regime)
+    lam, tau = spray.thin_film_mode(flow.mach_e, flow.rho_e * flow.u_eff ** 2, LIQ)
+    gt, out = spray.viscous_film(lam, tau, regime, LIQ)
+    assert res.branch.tolist() == [spray.BRANCH_THIN] * 2         # no delta_m: thin however deep the slurry
+    assert res.h_floor == pytest.approx(regime) and res.gamma_tau == pytest.approx(gt, rel=1e-12)
+    assert res.outside.tolist() == [True, False] and res.dm[0] == 0.0 and res.dm[1] > 0.0
+    assert gt[1] < gt[0]                                          # the deeper floor damps less
+
+
+def test_a_wave_longer_than_its_melt_region_cannot_form():
+    """A mode cannot develop in a puddle narrower than itself, and the domain is the contiguous molten region, not the
+    mesh facet. The thin-branch wavelength diverges as the edge dynamic pressure falls, so near the stagnation point it
+    is the fit that has to decide (2026-09-24)."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, v_s = np.full(2, 2e-5), np.full(2, 20.0)                   # both supercritical
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    lam, _ = spray.thin_film_mode(np.array([1.0]), np.array([7e-4 * 2000.0 ** 2]), LIQ)
+    tight, loose = 0.5 * lam[0], 2.0 * lam[0]
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.array([True, True]), 0.5, areas, m_f,
+                         extent=np.array([tight, loose]))
+    assert not res.unstable[0] and res.dm[0] == 0.0               # the wave is twice as wide as its melt
+    assert res.unstable[1] and res.dm[1] > 0.0                    # here it fits
+    assert spray.wave_fits(lam, None).all()                       # no extent given disables the test
+    assert not spray.wave_fits(lam, np.zeros(1))[0]               # a region of no extent admits nothing
+
+
+def test_the_rayleigh_taylor_driving_is_the_deceleration_normal_to_the_film():
+    """Girin & Kopyt's dispersion relation carries the deceleration as W sin(Theta), Theta being the angle between the
+    relative velocity of the media and the deceleration vector; on this body that is W cos(phi). It is the whole
+    deceleration at the stagnation point and zero at the equator, where W lies in the surface and cannot lift the
+    interface. Passing the whole deceleration instead over-drove every patch off the nose by 1/cos(phi)."""
+    W, h = 95.0, np.full(4, 6e-3)          # deep enough that the flank still qualifies at cos 60 = 1/2:
+    #                                       W cos(phi) h^2 rho_l > 3 Sigma needs h > 4.76 mm there, 3.37 mm at the nose
+    phi = np.radians([0.0, 60.0, 90.0, 150.0])                    # nose, flank, equator, leeward
+    w_n = W * np.maximum(np.cos(phi), 0.0)
+    on, lam, tau = spray.rayleigh_taylor(w_n, h, LIQ)
+    assert on[0] and on[1] and not on[2] and not on[3]            # driven at the nose, dead at and past the equator
+    assert lam[0] == pytest.approx(2 * np.pi * np.sqrt(3 * LIQ.sigma / (W * LIQ.rho)))
+    assert lam[1] == pytest.approx(lam[0] * np.sqrt(2.0))          # cos 60 = 1/2, and lambda* goes as W^-1/2
+    assert lam[2] > 1e3                                           # cos 90 is round-off: kilometres of wavelength, no mode
+    assert not np.isfinite(lam[3]) and not np.isfinite(tau[3])     # leeward, clamped to zero: no mode at all
+    assert spray.rayleigh_taylor(W, h, LIQ)[0].tolist() == [True] * 4          # a scalar still broadcasts
+    # and the bounded form takes the same normal component
+    onb, lamb, taub = spray.rayleigh_taylor_bounded(w_n, h, np.full(4, 0.2), LIQ)
+    assert onb[0] and not onb[2] and not onb[3] and taub[0] < taub[1] < np.inf
+
+
+def test_the_front_surface_rayleigh_taylor_mode_is_applied_where_it_is_the_faster_mode():
+    """Girin & Kopyt assign the front surface to their aperiodic Rayleigh-Taylor mode, not to the side mode, and with
+    Girin's critical angle gating the shear branches the stagnation cap otherwise has no mechanism at all. The mode is
+    applied where it passes *both* criteria -- the depth threshold W cos(phi) h^2 rho_l > 3 Sigma, which is what confines
+    it to the nose, and an admissible wave in the molten region -- and where its growth time beats the shear mode's,
+    since two modes of one interface cannot both break it up. Near the stagnation point the edge velocity vanishes and
+    the thin mode's lambda* = 1.5 M Sigma / (rho V^2) outgrows the molten region (2026-10-22: no longer Girin's We_s)."""
+    flow = FakeFlow(3, closure=sf.CLOSURE_COUETTE)            # no delta_m: the shear mode here is the thin one
+    flow.u_eff = flow.u_e = np.array([5.0, 5.0, 2000.0])     # at the nose, at the nose, on the side
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-4)
+    layer = np.array([5e-3, 1e-3, 5e-3])                      # deep, too shallow for the threshold, deep
+    v_s = np.array([0.1, 0.1, 40.0])
+    w_n = np.full(3, 95.0)                                    # at the stagnation point cos(phi) = 1
+    areas, m_f = np.full(3, 1e-5), b * LIQ.rho * 1e-5
+    extent = np.full(3, 0.05)                                 # a 5 cm molten cap: the thin lambda* is 7.4 cm at 5 m/s
+    deep, _, _ = spray.rayleigh_taylor(w_n, layer, LIQ)
+    assert deep.tolist() == [True, False, True]               # h > lambda*/2 pi only for the deep pair
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(3, True), 0.5, areas, m_f,
+                         b_layer=layer, extent=extent, deceleration_n=w_n)
+    assert res.branch.tolist() == [spray.BRANCH_RT, spray.BRANCH_THIN, spray.BRANCH_THIN]
+    assert res.dm[0] > 0.0 and res.dm[1] == 0.0 and res.dm[2] > 0.0
+    _, lam_rt, tau_rt = spray.rayleigh_taylor_bounded(w_n, layer, np.full(3, np.inf), LIQ)
+    assert res.growth[0] == pytest.approx(tau_rt[0])          # the winning mode's growth time is the RT one
+    assert res.growth[2] < res.growth[0]                      # and the shear mode is the faster one on patch 2
+    assert res.mdot[0] == pytest.approx(LIQ.rho * min(b[0], lam_rt[0] / 2.0) / tau_rt[0])
+    cap = (3 * m_f[0] / (4 * np.pi * LIQ.rho)) ** (1 / 3)
+    assert lam_rt[0] > 1e-2 and res.r[0] == pytest.approx(cap)   # lambda* is centimetres; the film-mass cap binds
+    # with the mode reported but not applied -- every run before 2026-09-24 -- the deep stable patch releases nothing
+    off = spray.SprayModel(LIQ, rt_spray=False).evaluate(
+        flow, FakeState(), b, delta_m, v_s, np.full(3, True), 0.5, areas, m_f, b_layer=layer, extent=extent,
+        deceleration_n=w_n)
+    assert off.branch.tolist() == [spray.BRANCH_THIN] * 3 and off.dm[0] == 0.0 and off.dm[2] > 0.0
+    assert off.dm[2] == pytest.approx(res.dm[2])              # the shear-dominated patch is untouched either way
+
+
+def test_the_applied_rayleigh_taylor_mode_needs_the_wave_to_fit_its_melt_region():
+    """The lateral bound applies to this mode as it does to the shear ones: a pool narrower than half the marginal
+    wavelength admits nothing at all, however deep it is."""
+    flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE, u=1.0)     # at the nose: the thin lambda* is 1.8 m and fits nowhere
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, layer, v_s = np.full(2, 1e-4), np.full(2, 5e-3), np.full(2, 0.1)
+    w_n = np.full(2, 95.0)
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    lam_c = 2 * np.pi * np.sqrt(LIQ.sigma / (95.0 * LIQ.rho))          # the marginal wavelength
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f,
+                         b_layer=layer, extent=np.array([0.4 * lam_c, 20.0 * lam_c]), deceleration_n=w_n)
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_RT]   # too narrow, then wide enough
+    assert res.dm[0] == 0.0 and res.dm[1] > 0.0
+
+
+def test_regime_2_gives_a_deep_film_with_a_viscous_melt_the_step_profile_mode():
+    """Regime 2: where delta_m has formed and the melt is the more viscous medium, the patch takes Girin's
+    Kelvin-Helmholtz cell -- the 1994 step-profile mode -- and not regime 3's gradient instability.
+
+    delta_m is supplied directly rather than through `melt_layer`, and it has to be: Eq. (2) puts the predicted melt
+    boundary layer at metres for a melt this viscous, which is Girin's own observation that for a high-viscosity melt the
+    layer "becomes comparable with the radius of the meteoroid remnant". On a body this size such a melt therefore never
+    passes stage one and lands in regime 1 instead, which the next test measures. Here the branch itself is exercised on
+    the state stage two would hand it."""
+    nu_gas = 1.6e-4 / 7e-4                                     # the edge state FakeFlow carries, 0.229 m2/s
+    MELT_VISCOUS = material.LiquidProperties(2400.0, 10.0 * nu_gas * 2400.0, 0.86)   # nu_melt = 10 x nu_gas
+    assert MELT_VISCOUS.mu / MELT_VISCOUS.rho > nu_gas
+    flow = FakeFlow(2)
+    model = spray.SprayModel(MELT_VISCOUS)
+    delta_m = np.full(2, 1e-4)                                 # a conjugate depth the film can exceed
+    b, v_s = np.full(2, 1e-3), np.full(2, 10.0)                # deep film
+    areas, m_f = np.full(2, 1e-5), np.full(2, 1e-3 * 2400.0 * 1e-5)
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f)
+    assert res.branch.tolist() == [spray.BRANCH_REGIME2] * 2    # not BRANCH_THICK, and the RT mode does not take it
+    # its wave is Girin & Kopyt's Eqs. (11) and (12), the thin branch's pair -- and a melt more viscous than the gas
+    # damps it: Lamb's term alone, 2 nu k^2 tau* = 63 nu sqrt(rho/Sigma) lambda^-1/2, is above 1 for any nu above the
+    # smallest edge nu_gas measured (0.018 m2/s) at any wavelength below kilometres, and the floor only adds to it. So
+    # since 2026-10-22 the branch is classified but releases nothing, for any melt that can reach it.
+    lam = 1.5 * flow.mach_e[0] * MELT_VISCOUS.sigma / (flow.rho_e[0] * flow.u_eff[0] ** 2)
+    tau = spray.CAPILLARY_TAU * lam ** 1.5 * np.sqrt(MELT_VISCOUS.rho / MELT_VISCOUS.sigma)
+    gt, out = spray.viscous_film(np.array([lam]), np.array([tau]), b[:1], MELT_VISCOUS)    # h = the film: no slurry here
+    assert gt[0] >= 1.0 and (res.h_floor == pytest.approx(b))
+    assert not res.unstable.any() and (res.dm == 0.0).all() and np.isnan(res.growth).all()
+
+
+def test_a_kelvin_helmholtz_melt_fails_girins_first_stage_on_this_body():
+    """A melt viscous enough for regime 2 cannot satisfy stage one here, so it routes to regime 1 -- correctly.
+
+    delta_m/delta_a = (alpha/mu^2)^(1/3) = ((nu_melt/nu_gas)^2 rho_l/rho_e)^(1/3), so at the viscosity threshold itself
+    the predicted melt boundary layer is already (rho_l/rho_e)^(1/3) ~ 151 air boundary-layer thicknesses, of order a
+    metre at delta_a = 7 mm, and no film a 100 mm sphere can hold accommodates it. Stage one then says the layer never
+    formed, which is Girin's dominant-ablation case and his Girin & Kopyt (1994) mode: the thin branch. That is what his
+    own ordering produces and not a gap in it -- recorded so the regime-2 branch is not later mistaken for dead code that
+    ought to have fired."""
+    flow = FakeFlow(1)
+    nu_gas = flow.mu_e[0] / flow.rho_e[0]
+    for ratio in (1.0, 10.0, 100.0):
+        liq = material.LiquidProperties(2400.0, ratio * nu_gas * 2400.0, 0.86)
+        delta_m, _ = spray.melt_layer(flow, liq)
+        expected = (ratio ** 2 * liq.rho / flow.rho_e[0]) ** (1.0 / 3.0)            # delta_m / delta_a
+        assert delta_m[0] / flow.delta_a[0] == pytest.approx(expected, rel=1e-12)
+        assert delta_m[0] > 1.0                                  # metres of liquid would be needed to out-deepen it
+    # at the threshold itself the factor is (rho_l/rho_e)^(1/3), and no film the body can hold reaches it
+    liq = material.LiquidProperties(2400.0, nu_gas * 2400.0, 0.86)
+    delta_m, _ = spray.melt_layer(flow, liq)
+    assert delta_m[0] / flow.delta_a[0] == pytest.approx((liq.rho / flow.rho_e[0]) ** (1.0 / 3.0), rel=1e-12)
+    b = np.full(1, 1e-2)                                         # 10 mm of melt: a tenth of the sphere's radius
+    res = spray.SprayModel(liq, rt_spray=False).evaluate(flow, FakeState(), b, delta_m, np.full(1, 10.0),
+                                                        np.full(1, True), 0.5, np.full(1, 1e-5), b * liq.rho * 1e-5)
+    assert res.branch.tolist() == [spray.BRANCH_THIN]            # regime 1, the stabilised-core case, as Girin has it
+    assert res.dm[0] == 0.0                   # and a melt this viscous damps the thin mode's wave (2026-10-22)
+
+
+def test_regime_2_never_fires_for_liquid_aluminium():
+    """The regression guard: for the real melt the branch is inert, so every earlier run is reproduced exactly.
+
+    Liquid aluminium has nu_melt = 5.42e-7 m2/s against a post-shock edge nu_gas measured at 0.018-3.75 m2/s over the
+    two physics flights, a ratio of 3.3e4 to 6.9e6, so the melt is far the less viscous medium everywhere and a formed
+    layer is always regime 3 -- Girin's gradient instability, the thick branch -- exactly as before 2026-09-25 (0 of
+    533 960 windward wet patch-steps on the 100 mm flight and 0 of 42 268 on the 50 mm one were assigned regime 2)."""
+    flow = FakeFlow(2)
+    assert LIQ.mu / LIQ.rho < flow.mu_e[0] / flow.rho_e[0]       # aluminium is far the less viscous medium
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, v_s = np.full(2, 1e-3), np.full(2, 10.0)
+    assert (b > delta_m).all()                                   # a genuinely deep film by Girin's own conjugate depth
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, v_s, np.full(2, True), 0.5, areas, m_f)
+    assert res.branch.tolist() == [spray.BRANCH_THICK] * 2
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Step 3 amendment of 2026-10-06: the thin branch needs a rigid substrate
+
+def test_a_thin_film_on_slurry_deeper_than_the_conjugate_depth_takes_the_thick_branch():
+    """Girin's dominant ablation -- the thin branch, Girin & Kopyt's (1994) mode -- is the case where "the rigid core
+    still stabilises the disturbances". Slurry (more than half liquid) is no rigid core, so the regime test reads the
+    non-rigid layer, the film plus everything above 50 % liquid beneath it (`regime_layer`), against delta_m. A film on
+    slurry deeper than delta_m is deep melt and takes Girin's (2017) thick branch with his Weber number on delta_m; one
+    whose slurry ends within delta_m keeps the thin branch, its Weber number unchanged. Under Girin's closure the
+    `on_slurry` flag holds nothing back: the depth decides."""
+    flow = FakeFlow(2)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(2, 2e-5)                                    # a film well inside the conjugate depth, nothing molten beneath
+    regime = np.array([0.5, 3.0]) * delta_m                 # slurry ending within delta_m / slurry deeper than delta_m
+    v_s = np.full(2, 20.0)
+    areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+    res = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.ones(2, bool), 0.5, areas, m_f, b_layer=b,
+                         regime_layer=regime, on_slurry=np.array([True, True]))
+    assert res.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THICK]
+    assert res.we_s[1] == pytest.approx(LIQ.rho * 400.0 * delta_m[1] / LIQ.sigma)       # Girin's, on delta_m
+    assert res.we_s[0] == pytest.approx(LIQ.rho * 400.0 * b[0] / LIQ.sigma)             # the thin branch's, on the film
+    assert res.dm[0] > 0.0                                   # rigid material within the shear's reach: the thin mode acts
+    old = model.evaluate(flow, FakeState(), b, delta_m, v_s, np.ones(2, bool), 0.5, areas, m_f, b_layer=b)
+    assert old.branch.tolist() == [spray.BRANCH_THIN, spray.BRANCH_THIN]                 # the liquid layer alone: both thin
+
+
+def test_the_rayleigh_taylor_criteria_keep_the_liquid_layer():
+    """The slurry counts for the regime test only: the Rayleigh-Taylor depth criterion W h^2 rho_l > 3 Sigma describes a
+    liquid pool, so it still reads the liquid layer (`b_layer`), not the non-rigid one."""
+    flow = FakeFlow(1, decel=1e5)                            # deep enough a regime layer would pass the depth criterion
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, regime = np.array([2e-5]), 3.0 * delta_m
+    assert spray.rayleigh_taylor(1e5, regime, LIQ)[0][0] and not spray.rayleigh_taylor(1e5, b, LIQ)[0][0]
+    res = model.evaluate(flow, FakeState(), b, delta_m, np.array([20.0]), np.ones(1, bool), 0.5, np.full(1, 1e-5),
+                         b * LIQ.rho * 1e-5, b_layer=b, regime_layer=regime)
+    assert not res.rt_active and res.branch[0] == spray.BRANCH_THICK
+
+
+def test_without_a_conjugate_depth_a_film_on_slurry_takes_no_shear_mode():
+    """Off Girin's closure there is no conjugate depth and so no deep-melt mode, and the thin mode needs a rigid wall:
+    a film whose base is slurry (`on_slurry`) is not sprayed by either, under the Couette closure and in the
+    free-molecular branch alike. A film on a rigid wall keeps the thin (or rarefied) mode."""
+    model = spray.SprayModel(LIQ)
+    for branch, code in ((sf.BRANCH_SHOCK_LAYER, spray.BRANCH_THIN), (sf.BRANCH_FREE_MOLECULAR, spray.BRANCH_RAREFIED)):
+        flow = FakeFlow(2, closure=sf.CLOSURE_COUETTE, branch=branch)
+        delta_m, _ = spray.melt_layer(flow, LIQ)
+        b = np.full(2, 2e-5)
+        areas, m_f = np.full(2, 1e-5), b * LIQ.rho * 1e-5
+        res = model.evaluate(flow, FakeState(), b, delta_m, np.full(2, 20.0), np.ones(2, bool), 0.5, areas, m_f,
+                             on_slurry=np.array([True, False]), b_layer=np.full(2, 1e-3), regime_layer=np.full(2, 1e-3))
+        # (the floor a millimetre down keeps the rarefied 7.5 mm wave inside the inviscid mode's validity, viscous_film)
+        assert res.branch.tolist() == [-1, code]
+        assert res.dm[0] == 0.0 and not res.unstable[0] and res.dm[1] > 0.0
+
+
+# -- the droplet-size cap per crest (2026-10-24, Asha; sub-plan 22 Task 1a) ------------------------------------------
+def crest(lam, h):
+    return (3.0 * lam ** 2 * h / (4.0 * np.pi)) ** (1.0 / 3.0)
+
+
+def spraying_cases(cap_depth=None, areas=None, spray_gates="before", slip_band=False):
+    """One patch of each branch the cap reaches, each evaluated as its own body: (result, the mode's own radius per
+    wavelength) for the thick branch (Girin's closure, 1 mm of liquid), the thin branch (20 um on a floor 20 um down),
+    the rarefied branch (20 um on a floor 1 mm down, where its 7.5 mm wave stays inside the inviscid mode's validity) and
+    the front-surface Rayleigh-Taylor mode (5 mm of liquid at the nose, its lambda* 2 cm at W = 106 m/s2)."""
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
+    areas = np.full(1, 1e-5) if areas is None else np.asarray(areas, dtype=float)
+    out = {}
+    h = None if cap_depth is None else np.full(1, cap_depth)
+    flow = FakeFlow(1)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(1, 1e-3)
+    out["thick"] = (model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 5.0), np.ones(1, bool), 0.5, areas,
+                                   b * LIQ.rho * areas, cap_depth=h), 0.17)
+    b = np.full(1, 2e-5)
+    out["thin"] = (model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 20.0), np.ones(1, bool), 0.5, areas,
+                                  b * LIQ.rho * areas, cap_depth=h), 0.25)
+    flow_fm = FakeFlow(1, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    dm_fm, _ = spray.melt_layer(flow_fm, LIQ)
+    out["rarefied"] = (model.evaluate(flow_fm, FakeState(), b, dm_fm, np.full(1, 20.0), np.ones(1, bool), 0.5, areas,
+                                      b * LIQ.rho * areas, b_layer=np.full(1, 1e-3), regime_layer=np.full(1, 1e-3),
+                                      cap_depth=h), 0.25)
+    flow_rt = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)       # at the nose: the thin lambda* is metres, no fit
+    dm_rt, _ = spray.melt_layer(flow_rt, LIQ)
+    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)     # lambda* = 2 pi (3 Sigma / (W rho))^1/2
+    b = np.full(1, 5e-3)
+    out["Rayleigh-Taylor"] = (model.evaluate(flow_rt, FakeState(), b, dm_rt, np.full(1, 0.1), np.ones(1, bool), 0.5,
+                                             areas, b * LIQ.rho * areas, extent=np.full(1, 0.05), deceleration_n=w_n,
+                                             cap_depth=h), 1.0)
+    return out
+
+
+def test_a_droplet_holds_no_more_than_one_crest_of_its_own_wave_on_the_depth_given():
+    """With a cap depth h (the layered skins, 2026-10-24) every branch's droplet is capped by one crest of the wave that
+    sprays it, (4/3) pi r^3 <= lambda^2 h, and by a quarter of the body radius, instead of by the film on the patch:
+    lambda is the thick branch's 2 pi delta_m / Delta_f, Girin & Kopyt's lambda* on the thin and rarefied branches and the
+    Rayleigh-Taylor lambda*. The outline's check: at lambda = 2 cm and h = 1 mm the Rayleigh-Taylor droplet is 4.6 mm."""
+    codes = {"thick": spray.BRANCH_THICK, "thin": spray.BRANCH_THIN, "rarefied": spray.BRANCH_RAREFIED,
+             "Rayleigh-Taylor": spray.BRANCH_RT}
+    for h in (1e-3, 5e-6):
+        for name, (res, k) in spraying_cases(cap_depth=h).items():
+            lam = res.wavelength[0]
+            assert res.branch[0] == codes[name] and res.dm[0] > 0.0 and np.isfinite(lam)
+            assert res.r[0] == pytest.approx(min(k * lam, crest(lam, h), 0.0125), rel=1e-12)
+    res, _ = spraying_cases(cap_depth=1e-3)["thick"]
+    flow = FakeFlow(1)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    d_f, _, _ = dispersion.DispersionTable()(res.we_s)
+    assert res.wavelength[0] == pytest.approx(2.0 * np.pi * delta_m[0] / d_f[0], rel=1e-12)     # the thick lambda
+    lam_t, _ = spray.thin_film_mode(np.array([1.0]), np.array([7e-4 * 2000.0 ** 2]), LIQ)
+    assert spraying_cases(cap_depth=1e-3)["thin"][0].wavelength[0] == pytest.approx(lam_t[0], rel=1e-12)
+    res, _ = spraying_cases(cap_depth=1e-3)["Rayleigh-Taylor"]
+    assert res.wavelength[0] == pytest.approx(0.02, rel=1e-12)
+    assert res.r[0] == pytest.approx(4.57e-3, rel=1e-3)                       # the outline's 4.6 mm
+    film = spraying_cases()["Rayleigh-Taylor"][0]
+    assert film.r[0] == pytest.approx((3.0 * 5e-3 * 1e-5 / (4.0 * np.pi)) ** (1.0 / 3.0), rel=1e-12)   # 2.3 mm on 5 mm
+    # where it binds: on the thick and thin branches only on layers shallower than a few per cent of the wavelength,
+    # on the Rayleigh-Taylor branch on any layer shallower than about four wavelengths
+    for name, (res, k) in spraying_cases(cap_depth=1e-3).items():
+        assert (res.r[0] < k * res.wavelength[0]) == (name == "Rayleigh-Taylor")
+    for name, (res, k) in spraying_cases(cap_depth=5e-6).items():
+        assert res.r[0] < k * res.wavelength[0]
+
+
+def test_the_crest_cap_does_not_see_the_patch_s_area():
+    """lambda^2 h is a crest's volume whatever the mesh facet: four times the area changes no capped radius and no rate,
+    where the film-mass cap grows with the area as its cube root."""
+    for name in ("thick", "thin", "rarefied", "Rayleigh-Taylor"):
+        small, _ = spraying_cases(cap_depth=2e-5, areas=[1e-5])[name]
+        large, _ = spraying_cases(cap_depth=2e-5, areas=[4e-5])[name]
+        assert large.r[0] == small.r[0] and large.mdot[0] == small.mdot[0] and large.dm[0] == pytest.approx(4.0 * small.dm[0])
+    small, _ = spraying_cases(areas=[1e-5])["Rayleigh-Taylor"]
+    large, _ = spraying_cases(areas=[4e-5])["Rayleigh-Taylor"]
+    assert large.r[0] == pytest.approx(4.0 ** (1.0 / 3.0) * small.r[0], rel=1e-12)
+
+
+def test_a_cap_depth_of_nothing_releases_nothing():
+    """One crest gives nothing on no depth: where the release can take nothing, no droplet forms and nothing leaves,
+    though the patch keeps its branch."""
+    flow = FakeFlow(2)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(2, 1e-3)
+    areas = np.full(2, 1e-5)
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(2, 5.0), np.ones(2, bool), 0.5, areas,
+                                         b * LIQ.rho * areas, cap_depth=np.array([0.0, 1e-4]))
+    assert res.branch.tolist() == [spray.BRANCH_THICK] * 2 and np.isfinite(res.wavelength).all()
+    assert res.mdot[0] == 0.0 and res.dm[0] == 0.0 and res.dn[0] == 0.0 and not res.unstable[0] and np.isnan(res.r[0])
+    assert res.mdot[1] > 0.0 and res.dm[1] > 0.0 and np.isfinite(res.r[1])
+
+
+def test_without_a_cap_depth_the_film_mass_caps_the_droplet_as_before():
+    """The element model keeps its cap (2026-10-24): with no cap depth every branch's radius is the mode's own, capped by
+    the film on the patch and a quarter of the body radius, to the last bit, and the rates and releases are untouched by
+    the wavelength the result now carries."""
+    for name, (res, k) in spraying_cases().items():
+        lam = res.wavelength[0]
+        r_mode = lam if name == "Rayleigh-Taylor" else (0.17 * lam if name == "thick" else lam / 4.0)
+        m_f = {"thick": 1e-3, "thin": 2e-5, "rarefied": 2e-5, "Rayleigh-Taylor": 5e-3}[name] * LIQ.rho * 1e-5
+        film = (3.0 * m_f / (4.0 * np.pi * LIQ.rho)) ** (1.0 / 3.0)
+        assert res.r[0] == np.minimum(r_mode, np.minimum(film, 0.25 * 0.05))          # exactly, the same arithmetic
+        assert res.dm[0] == min(res.mdot[0] * 1e-5 * 0.5, m_f)
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.array([1e-3, 2e-5, 0.0])
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.array([5.0, 20.0, 0.0]), np.ones(3, bool),
+                                         0.5, np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+    assert np.isfinite(res.wavelength[:2]).all() and np.isnan(res.wavelength[2])        # no mode on the dry patch
+
+
+def test_the_rayleigh_taylor_mode_can_read_a_liquid_pool_shallower_than_the_film():
+    """Asha, 2026-10-29 (sub-plan 22 Task 1c, decision 1, option B): where liquid lies on slurry the layered skins'
+    front-surface Rayleigh-Taylor mode reads the liquid pool, not the flowing film b -- its depth criterion, its bounded
+    growth and the depth it sheds within a growth time -- as the element model's mode reads its liquid layer (the
+    amendment of 2026-10-06). `rt_layer` is that depth; without it the mode reads the liquid layer as before, and given
+    that same depth it is the same to the last bit. 5 mm of flowing metal at the nose under a lambda* of 2 cm: as one
+    pool the mode takes it; with 0.3 mm of liquid on top it does not (h < lambda*/2 pi, 3.2 mm here), and nothing else
+    can (the thin lambda* at 5 m/s is metres); with 4 mm of liquid it does, at that pool's growth time and rate."""
+    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
+    model = spray.SprayModel(LIQ)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
+    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
+    run = lambda **k: model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas,
+                                     b * LIQ.rho * areas, extent=np.full(1, 0.05), deceleration_n=w_n, **k)
+    whole, same = run(), run(rt_layer=b)
+    assert whole.branch[0] == spray.BRANCH_RT and whole.rt_active and whole.dm[0] > 0.0
+    for key in ("branch", "unstable", "r", "mdot", "dm", "dn", "growth", "wavelength"):
+        assert np.array_equal(getattr(whole, key), getattr(same, key), equal_nan=True), key
+    shallow = run(rt_layer=np.full(1, 3e-4))
+    assert shallow.branch[0] == spray.BRANCH_THIN and shallow.mdot[0] == 0.0 and shallow.dm[0] == 0.0
+    assert not shallow.rt_active
+    pool = run(rt_layer=np.full(1, 4e-3))
+    _, lam, tau = spray.rayleigh_taylor_bounded(w_n, np.full(1, 4e-3), np.full(1, 0.05), LIQ)
+    assert pool.branch[0] == spray.BRANCH_RT and pool.growth[0] == tau[0] > whole.growth[0]
+    assert pool.wavelength[0] == lam[0] and pool.mdot[0] == pytest.approx(LIQ.rho * 4e-3 / tau[0], rel=1e-12)
+
+
+def test_the_source_table_carries_the_droplets_solid_fraction_and_enthalpy_and_takes_their_properties_per_patch():
+    """Spec 8 and 10.2 (sub-plan 22 Task 2): two columns end the source table, `solid_fraction` and `h_kg`, the droplets'
+    solid share and the enthalpy per kilogram they carry, 0 and nan where the caller gives none; the droplets' density,
+    viscosity and surface tension may be one per patch, a slurry droplet's Weber and Ohnesorge numbers being its own
+    phase's (the 2026-10-07 design 8.4); `source_block` is `source_rows` as an array, and `spray.source_table` reads a
+    body's rows or blocks of rows alike. The element model's form is unchanged in every other column. (Sub-plan 22 Task
+    4 adds a 27th column after them, the release angle.)"""
+    assert spray.SOURCE_COLUMNS[24:26] == ["solid_fraction", "h_kg"] and len(spray.SOURCE_COLUMNS) == 27
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-3)
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
+                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
+             res, b)
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    plain = np.array(spray.source_rows(*where, LIQ, FakeState()))
+    assert plain.shape == (2, 27) and (plain[:, C["solid_fraction"]] == 0.0).all() and np.isnan(plain[:, C["h_kg"]]).all()
+    slurry = material.LiquidProperties(np.array([2400.0, 2500.0, 2550.0]), np.array([1.3e-3, 0.02, 0.05]),
+                                       np.array([0.86, 0.80, 0.80]))
+    block = spray.source_block(*where, slurry, FakeState(), solid_fraction=np.array([0.0, 0.1, 0.03]),
+                               h_kg=np.array([1.1e6, 1.0e6, 0.9e6]))
+    assert block.shape == (2, 27) and block[:, C["solid_fraction"]].tolist() == [0.0, 0.03]
+    assert block[:, C["h_kg"]].tolist() == [1.1e6, 0.9e6]
+    np.testing.assert_array_equal(block[:, :C["we_d"]], plain[:, :C["we_d"]])
+    np.testing.assert_array_equal(block[0, :C["solid_fraction"]], plain[0, :C["solid_fraction"]])   # the liquid's patch
+    r = block[1, C["r_m"]]
+    assert block[1, C["we_d"]] == pytest.approx(8e-5 * 7200.0 ** 2 * 2.0 * r / 0.80, rel=1e-14)
+    assert block[1, C["oh"]] == pytest.approx(0.05 / np.sqrt(2550.0 * 0.80 * 2.0 * r), rel=1e-14)
+    np.testing.assert_array_equal(spray.source_block(*where, LIQ, FakeState()), plain)        # rows as an array
+    table = spray.source_table([block, block[:1]])
+    assert table.shape == (3, 27) and np.array_equal(table[:2], block, equal_nan=True)
+    assert np.array_equal(spray.source_table(plain.tolist()), plain, equal_nan=True) and spray.source_table([]).shape == (0, 27)
+
+
+# -- the outputs of a spraying flight (sub-plan 22 Task 4) -------------------------------------------------------------
+def test_register_s_release_angle_is_180_at_the_stagnation_point_90_at_the_equator_and_0_behind_from_the_actual_vector():
+    """Register et al. (2020) section 4.2 (Asha, 2026-10-29; the 23-notes' first two tests): the angle between the larger
+    body's trajectory axis and the line from its centroid to the release point, from downstream: 180 degrees at the
+    stagnation point, 90 at the equator, 0 directly behind, wherever the body is and whichever way it flies. It is the
+    position's angle, not the surface normal's: on the flat face of a flattened body the normal points along the flight
+    (theta_deg 0) but a point 30 mm off the axis 20 mm ahead of the centroid is at 180 - atan(30/20); and a body whose
+    nose has receded, its centroid moved back, sees the same point at a larger angle."""
+    v = np.array([0.0, 0.6, 0.8])
+    c = np.array([0.01, -0.02, 0.03])
+    side = np.cross(v, [1.0, 0.0, 0.0])
+    side /= np.linalg.norm(side)
+    points = c + 0.05 * np.array([v, side, -v, (v + side) / np.sqrt(2.0)])
+    np.testing.assert_allclose(spray.register_angle(points, c, v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
+    np.testing.assert_allclose(spray.register_angle(points, c, 3.0 * v), [180.0, 90.0, 0.0, 135.0], atol=1e-12)
+    flat = np.array([[0.02, 0.03, 0.0]])                        # on a flat front face x = 20 mm, 30 mm off the axis
+    assert spray.register_angle(flat, np.zeros(3), [1.0, 0.0, 0.0])[0] == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.02)))
+    receded = spray.register_angle(flat, [-0.01, 0.0, 0.0], [1.0, 0.0, 0.0])[0]
+    assert receded == pytest.approx(180.0 - np.degrees(np.arctan2(0.03, 0.03))) and receded > 180.0 - 56.4
+
+
+def test_the_enclosed_centroid_is_the_volume_s_whichever_way_its_triangles_turn(coarse_sphere_mesh):
+    """`spray.enclosed_centroid`: the centroid of the volume a closed triangulated surface encloses, by the divergence
+    theorem -- the 100 mm test sphere's moved anywhere is its tetrahedra's volume-weighted centroid to round-off; turning
+    every triangle gives the same point, and with one outward normal per triangle a surface whose triangles are mixed
+    gives it too (the element model's surface)."""
+    m = coarse_sphere_mesh
+    s = m.surface()
+    shift = np.array([0.3, -0.1, 0.25])
+    P = m.points + shift
+    w = m.element_volumes()
+    exact = (w[:, None] * P[m.tets].mean(axis=1)).sum(axis=0) / w.sum()
+    got = spray.enclosed_centroid(P, s.faces)
+    np.testing.assert_allclose(got, exact, rtol=0.0, atol=1e-15)
+    np.testing.assert_allclose(spray.enclosed_centroid(P, s.faces[:, [0, 2, 1]]), got, rtol=0.0, atol=1e-15)
+    mixed = s.faces.copy()
+    mixed[::3] = mixed[::3][:, [0, 2, 1]]
+    np.testing.assert_allclose(spray.enclosed_centroid(P, mixed, s.normals), got, rtol=0.0, atol=1e-15)
+
+
+def test_the_release_angle_rides_in_the_source_table_and_a_step_s_statistics_are_by_mass():
+    """The source table's last column is the release angle, nan where the caller gives none; a step's history columns
+    are its mass-weighted mean, least and largest over the records that released, and nan where none did: the history's
+    mean equals the mean recomputed from the step's rows (the 23-notes' third test)."""
+    assert spray.SOURCE_COLUMNS[-1] == "release_angle_register_deg" and spray.RELEASE_ANGLE_COLUMNS == (
+        "release_angle_register_mean_deg", "release_angle_register_min_deg", "release_angle_register_max_deg")
+    flow = FakeFlow(3)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    b = np.full(3, 1e-3)
+    res = spray.SprayModel(LIQ).evaluate(flow, FakeState(), b, delta_m, np.full(3, 5.0), np.array([True, False, True]), 0.5,
+                                         np.full(3, 1e-5), b * LIQ.rho * 1e-5)
+    where = (10.0, 71e3, 7200.0, np.radians([30.0, 45.0, 60.0]), np.zeros((3, 3)), np.tile([0.0, 1.0, 0.0], (3, 1)), flow,
+             res, b, LIQ, FakeState())
+    C = {name: i for i, name in enumerate(spray.SOURCE_COLUMNS)}
+    angle = np.array([150.0, 135.0, 120.0])
+    rows = spray.source_block(*where, release_angle=angle)
+    assert rows[:, C["release_angle_register_deg"]].tolist() == [150.0, 120.0]
+    assert np.isnan(spray.source_block(*where)[:, C["release_angle_register_deg"]]).all()
+    np.testing.assert_array_equal(spray.source_block(*where)[:, :-1], rows[:, :-1])
+    assert np.array_equal(spray.source_rows(*where, release_angle=angle), rows, equal_nan=True)
+    mean, lo, hi = spray.release_angle_stats(rows[:, C["dm_kg"]], rows[:, C["release_angle_register_deg"]])
+    dm = res.dm[[0, 2]]
+    assert mean == (dm * [150.0, 120.0]).sum() / dm.sum() and (lo, hi) == (120.0, 150.0)
+    assert mean == spray.release_angle_stats(res.dm, angle)[0]                     # the rows' own mean, to the last bit
+    assert all(np.isnan(x) for x in spray.release_angle_stats(np.zeros(3), angle))
+    assert all(np.isnan(x) for x in spray.release_angle_stats([], []))
+
+
+def test_a_spool_on_disk_gives_back_the_blocks_it_was_given_to_the_last_bit(tmp_path):
+    """`spray.SourceSpool` (sub-plan 22 Task 4): the skins' blocks of rows written to disk as they come, one file per
+    column, read back column by column -- the source table's columns to the last bit, nan included, in the order the
+    blocks came; `len` counts the blocks given rows, as the in-memory list does, `n_rows` the rows; `source_table` and
+    `source_columns` read a spool as they read a list; an empty spool gives empty columns; `remove` deletes it."""
+    rng = np.random.default_rng(1)
+    blocks = [rng.normal(size=(k, len(spray.SOURCE_COLUMNS))) for k in (5, 1, 7)]
+    blocks[1][0, 26] = np.nan
+    spool = spray.SourceSpool(str(tmp_path / "spool"))
+    assert len(spool) == 0 and all(len(c) == 0 for c in spool.columns().values()) and spray.source_table(spool).shape == (0, 27)
+    for blk in blocks[:2] + [np.zeros((0, 27))] + blocks[2:]:
+        spool.append(blk)
+    assert len(spool) == 3 and spool.n_rows == 13
+    table = spray.source_table(blocks)
+    cols = spray.source_columns(spool)
+    assert list(cols) == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(cols[name], table[:, i], equal_nan=True) for i, name in enumerate(spray.SOURCE_COLUMNS))
+    assert np.array_equal(spray.source_table(spool), table, equal_nan=True)
+    listed = spray.source_columns(blocks)
+    assert all(np.array_equal(listed[name], cols[name], equal_nan=True) for name in spray.SOURCE_COLUMNS)
+    with pytest.raises(ValueError):
+        spool.append(np.zeros((2, 26)))
+    del cols
+    spool.remove()
+    assert not (tmp_path / "spool").exists()
+
+
+# -- the Rayleigh-Taylor droplet without the body-radius cap (Asha, 2026-11-10; sub-plan 22 Task 5h) -------------------
+def rt_droplet(cap_depth, radius, spray_gates):
+    """The Rayleigh-Taylor patch of `spraying_cases` (its lambda* 2 cm), evaluated as a body of `radius`, under `spray_gates`."""
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates)
+    flow = FakeFlow(1, closure=sf.CLOSURE_COUETTE, u=5.0)
+    delta_m, _ = spray.melt_layer(flow, LIQ)
+    w_n = np.full(1, 3.0 * LIQ.sigma * (2.0 * np.pi / 0.02) ** 2 / LIQ.rho)
+    b, areas = np.full(1, 5e-3), np.full(1, 1e-5)
+    return model.evaluate(flow, FakeState(), b, delta_m, np.full(1, 0.1), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas,
+                          radius=radius, extent=np.full(1, 0.05), deceleration_n=w_n,
+                          cap_depth=None if cap_depth is None else np.full(1, cap_depth))
+
+
+def test_a_rayleigh_taylor_droplet_is_not_capped_by_the_body_radius():
+    """Under spray_gates 2026-11-10, on the crest-limit path, a deep pool (5 mm of liquid under a 2 cm wave, 1 cm of cap
+    depth) on a body of a 2 cm radius gives a droplet of the crest-limited wavelength, 9.8 mm, above a quarter of the radius
+    (5 mm), which `before` still applies; the wavelength itself is the droplet's size where the crest does not bind."""
+    res_new = rt_droplet(1e-2, 0.02, "2026-11-10")
+    res_old = rt_droplet(1e-2, 0.02, "before")
+    assert res_new.branch[0] == res_old.branch[0] == spray.BRANCH_RT and res_new.wavelength[0] == pytest.approx(0.02)
+    assert res_new.r[0] == pytest.approx(min(res_new.wavelength[0], crest(0.02, 1e-2)), rel=1e-12)
+    assert res_new.r[0] > 0.25 * 0.02 and res_old.r[0] == 0.25 * 0.02
+    assert res_new.mdot[0] == res_old.mdot[0] and res_new.dm[0] == res_old.dm[0]       # only the radius, so only the count
+
+
+def test_the_crest_limit_still_binds_a_rayleigh_taylor_droplet_on_a_shallow_pool():
+    """On a shallow cap depth the crest, not the wavelength, is the droplet: 4.6 mm at 1 mm of depth under the 2 cm wave
+    (the outline's check), and the same on a body of any radius, small or large, under the new gates."""
+    for radius in (0.005, 0.05, 0.5):
+        res = rt_droplet(1e-3, radius, "2026-11-10")
+        assert res.branch[0] == spray.BRANCH_RT and res.r[0] == pytest.approx(crest(0.02, 1e-3), rel=1e-12)
+        assert res.r[0] == pytest.approx(4.57e-3, rel=1e-3) and res.r[0] < 0.02
+
+
+def test_the_new_spray_gates_change_no_other_branch_and_not_the_element_model():
+    """Under 2026-11-10 the thick and thin branches' droplets (with a cap depth, both on a finite delta_m) and every branch's on
+    the element model's path (no cap depth, the Rayleigh-Taylor one too) are the same to the last bit as under before: the
+    quarter-radius cap stays wherever the mode is not the Rayleigh-Taylor one on the crest-limit path. The rarefied branch,
+    with no conjugate depth, is the one the thin-branch gate of Task 5i (below) removes."""
+    for cap in (1e-5, 1e-3, None):
+        old, new = spraying_cases(cap_depth=cap), spraying_cases(cap_depth=cap, spray_gates="2026-11-10")
+        for name in old:
+            if cap is not None and name == "Rayleigh-Taylor":
+                continue
+            if name == "rarefied":              # Task 5i's gate: no conjugate depth on the free-molecular branch, nothing leaves
+                assert old[name][0].dm[0] > 0.0 and new[name][0].dm[0] == 0.0 and new[name][0].branch[0] == -1
+                continue
+            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
+                assert np.array_equal(getattr(old[name][0], field), getattr(new[name][0], field), equal_nan=True)
+    assert spray.SprayModel(LIQ).spray_gates == "before" and spray.SprayModel(LIQ, spray_gates="2026-11-10").spray_gates == "2026-11-10"
+    with pytest.raises(ValueError):
+        spray.SprayModel(LIQ, spray_gates="maybe")
+
+
+def test_spray_gates_before_reproduces_the_old_radius_to_the_last_bit():
+    """`before` (the class default, and the setting of a model pickled before it existed) keeps the old line: with a cap
+    depth every branch's radius is min(mode, crest, a quarter of the radius), exactly, the Rayleigh-Taylor one too."""
+    assert spray.SprayModel.spray_gates == "before"
+    for cap in (1e-5, 1e-3, 1e-2):
+        for radius in (0.01, 0.05):
+            res = rt_droplet(cap, radius, "before")
+            lam = res.wavelength[0]
+            assert res.r[0] == np.minimum(lam, np.minimum(crest(lam, cap), 0.25 * radius))
+    for name, (res, _) in spraying_cases(cap_depth=1e-3).items():       # the default model, as before the setting
+        assert res.r[0] <= 0.0125
+
+
+# -- the thin branch's Knudsen gate and spraying in the slip band (sub-plan 22 Task 5i; Asha, 2026-11-06 and 2026-11-10) --
+R_NOSE = 0.05
+
+
+def slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,), tau=40.0, branch=sf.BRANCH_MERGED):
+    """What `spray.py` reads from a merged-branch evaluation: Couette closure everywhere (no Girin delta_m), the bridged
+    shear, its integral from the nose, the body Knudsen number and the patches' own wall Knudsen numbers."""
+    theta = np.asarray(theta, dtype=float)
+    f = FakeFlow(theta.size, closure=sf.CLOSURE_COUETTE, branch=branch)
+    f.kn_body, f.kn_local, f.tau = kn_body, np.asarray(kn_local, dtype=float), np.full(theta.size, tau)
+    f.shear_integral = sf.shear_moment(theta, f.tau, R_NOSE, theta <= 0.5 * np.pi)
+    f.in_slip_band = branch == sf.BRANCH_MERGED and kn_body < sf.KN_BODY_SLIP
+    return f, theta
+
+
+def test_momentum_layer_values():
+    """delta_m^3 = 3 mu^2 I / (rho tau^2 r) in metres; at the film's surface velocity tau delta_m / mu the surface Weber
+    number rho V^2 delta_m / sigma is 3 I / (r sigma) however viscous the liquid is."""
+    d = spray.momentum_layer(np.array([40.0]), np.array([1e-2]), np.array([0.02]), LIQ)
+    assert d[0] == pytest.approx((3 * 1.3e-3 ** 2 * 1e-2 / (2400 * 40.0 ** 2 * 0.02)) ** (1 / 3), rel=1e-12)
+    assert 2400 * (40.0 * d[0] / 1.3e-3) ** 2 * d[0] / 0.86 == pytest.approx(3 * 1e-2 / (0.02 * 0.86), rel=1e-12)
+
+
+def test_momentum_layer_is_nan_at_the_nose_and_where_nothing_is_integrated_without_a_warning():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        d = spray.momentum_layer(np.array([0.0, 40.0, 40.0, 40.0]), np.array([0.0, 1e-2, np.nan, 0.0]),
+                                 np.array([0.0, 0.0, 0.02, 0.02]), LIQ)
+    assert np.isnan(d).all()
+
+
+def test_spray_layer_is_melt_layer_outside_the_band_and_with_it_off_to_the_last_bit():
+    """With the band off, with it on but the body not in it (Knudsen number 0.1 itself, or the shock layer), for a flow with
+    no integrated shear at all (a FakeFlow, a state from before the band) the depth is melt_layer's, nan included."""
+    flow, theta = slip_flow()
+    flow_old = FakeFlow(2)
+    for f, band in ((flow, False), (slip_flow(kn_body=0.1)[0], True), (flow_old, True),
+                    (slip_flow(branch=sf.BRANCH_SHOCK_LAYER)[0], True)):
+        np.testing.assert_array_equal(spray.spray_layer(f, LIQ, band, theta[:1] if f is not flow_old else np.zeros(2), R_NOSE),
+                                      spray.melt_layer(f, LIQ)[0])
+
+
+def test_spray_layer_in_the_band_is_the_momentum_balance_on_windward_patches():
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05, 0.05), theta=(0.0, 0.6, 2.0))
+    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
+    assert np.isnan(d[0]) and np.isnan(d[2]) and np.isfinite(d[1])            # the nose, a leeward patch
+    assert d[1] == pytest.approx((3 * 1.3e-3 ** 2 * flow.shear_integral[1] / (2400 * 40.0 ** 2 * R_NOSE * np.sin(0.6))) ** (1 / 3))
+    assert 20e-6 < d[1] < 200e-6                                                # 68 um on this patch: a physical film depth
+
+
+def test_a_patch_whose_wall_knudsen_number_is_above_a_tenth_is_outside_the_band():
+    """Asha, 2026-11-10: the band needs the patch's own wall Knudsen number below 0.1 too. Body Knudsen number 0.04, wall
+    Knudsen numbers 0.05 and 0.12 on two patches at one angle: the second has no band depth and no shear spray."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.12), theta=(0.6, 0.6))
+    d = spray.spray_layer(flow, LIQ, True, theta, R_NOSE)
+    assert np.isfinite(d[0]) and np.isnan(d[1])
+    model = spray.SprayModel(LIQ, spray_gates="2026-11-10", slip_band=True)
+    b = np.full(2, 1e-3)
+    res = model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, np.full(2, 1e-5), b * LIQ.rho * 1e-5)
+    assert res.dm[0] > 0.0 and res.dm[1] == 0.0 and res.branch[1] == -1
+
+
+def band_cases(spray_gates, slip_band, rt=False):
+    """A thick film (1 mm), a thin one (20 um, on a floor 20 um down) in the band, from `slip_flow`'s patches at 0.6 rad."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05, 0.05), theta=(0.6, 0.6))
+    model = spray.SprayModel(LIQ, spray_gates=spray_gates, slip_band=slip_band)
+    d = spray.spray_layer(flow, LIQ, slip_band, theta, R_NOSE)
+    b = np.array([1e-3, 2e-5])
+    areas = np.full(2, 1e-5)
+    return model.evaluate(flow, FakeState(), b, d, np.full(2, 10.0), np.ones(2, bool), 0.5, areas, b * LIQ.rho * areas,
+                          b_layer=np.array([1e-3, 2e-5]), regime_layer=np.array([1e-3, 2e-5])), d
+
+
+def test_under_the_new_gates_the_thin_branch_does_not_spray_outside_both_depths():
+    """The merged branch with the band off has no depth (the Couette closure everywhere, no Girin delta_m): under 2026-11-10
+    the thin branch releases nothing, where under before it releases; the Rayleigh-Taylor mode, a melt-side mode, is not
+    gated and still takes a deep pool at the nose."""
+    flow, theta = slip_flow(kn_body=0.04, kn_local=(0.05,), theta=(0.6,))
+    b = np.full(1, 2e-5)
+    areas = np.full(1, 1e-5)
+    args = (flow, FakeState(), b, spray.melt_layer(flow, LIQ)[0], np.full(1, 10.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
+    old = spray.SprayModel(LIQ).evaluate(*args)
+    new = spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args)
+    assert old.branch[0] == spray.BRANCH_THIN and old.dm[0] > 0.0              # the rule as it was
+    assert new.branch[0] == -1 and new.dm[0] == 0.0 and not new.unstable[0]
+    # the rarefied branch is gated with it
+    fm = FakeFlow(1, closure=sf.CLOSURE_COUETTE, branch=sf.BRANCH_FREE_MOLECULAR)
+    args = (fm, FakeState(), b, spray.melt_layer(fm, LIQ)[0], np.full(1, 20.0), np.ones(1, bool), 0.5, areas, b * LIQ.rho * areas)
+    kw = dict(b_layer=np.full(1, 1e-3), regime_layer=np.full(1, 1e-3))
+    assert spray.SprayModel(LIQ).evaluate(*args, **kw).branch[0] == spray.BRANCH_RAREFIED
+    assert spray.SprayModel(LIQ).evaluate(*args, **kw).dm[0] > 0.0
+    assert spray.SprayModel(LIQ, spray_gates="2026-11-10").evaluate(*args, **kw).dm[0] == 0.0
+    # Rayleigh-Taylor: not gated (flow_rt of spraying_cases: Couette closure, no delta_m)
+    for gates in ("before", "2026-11-10"):
+        res, _ = spraying_cases(spray_gates=gates)["Rayleigh-Taylor"]
+        assert res.branch[0] == spray.BRANCH_RT and res.dm[0] > 0.0
+
+
+def test_with_the_band_on_the_thin_and_thick_branches_spray_in_it():
+    """Band on: the 1 mm film on the band depth (68 um) is the thick branch and the 20 um film (shallower than the depth) the
+    thin branch, both finite-depth patches, so both pass the gate and release; with the band off under the new gates
+    neither does."""
+    res, d = band_cases("2026-11-10", True)
+    assert np.isfinite(d).all() and d[0] > 2e-5
+    assert res.branch.tolist() == [spray.BRANCH_THICK, spray.BRANCH_THIN] and (res.dm > 0.0).all()
+    res_off, d_off = band_cases("2026-11-10", False)
+    assert np.isnan(d_off).all() and (res_off.dm == 0.0).all() and (res_off.branch == -1).all()
+
+
+def test_spray_gates_before_and_band_off_change_nothing_to_the_last_bit():
+    """A model with slip_band left off and before (the class defaults, and what a pickled model has) evaluates every case of
+    `spraying_cases` as the model before this task did, and with the band set on a flow outside the band, or with the new
+    gates on a flow that has a finite depth, the same numbers to the last bit."""
+    assert spray.SprayModel.slip_band is False and spray.SprayModel(LIQ).slip_band is False
+    base = spraying_cases(cap_depth=None)
+    for kwargs in ({"slip_band": True}, {"slip_band": False, "spray_gates": "before"}):
+        model_cases = spraying_cases(cap_depth=None, **kwargs)
+        for name in base:
+            for field in ("r", "mdot", "dm", "dn", "branch", "wavelength", "delta_m"):
+                assert np.array_equal(getattr(base[name][0], field), getattr(model_cases[name][0], field), equal_nan=True)
+    for name in ("thick",):                                                      # finite depth: the gate passes it
+        old, new = spraying_cases()[name][0], spraying_cases(spray_gates="2026-11-10")[name][0]
+        for field in ("r", "mdot", "dm", "dn", "branch", "wavelength"):
+            assert np.array_equal(getattr(old, field), getattr(new, field), equal_nan=True)

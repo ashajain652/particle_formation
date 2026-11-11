@@ -10,6 +10,59 @@
 
 ---
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** the edits to `sesam_io`, `compare` and the general parts of `viz`; the overlays drawn on the skyscrapers mesh stay skyscrapers'.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The edits to `sesam_io.py` and `compare.py` → **`reentry_model/shared/sesam_io.py`** and
+  **`reentry_model/shared/compare.py`**.
+- `viz.py`'s replacement is split: frame reading, time-series plots → **`reentry_model/shared/viz.py`**; size-distribution
+  plots → **`reentry_model/shared/droplets.py`** (S6); the overlays drawn on the skyscrapers mesh (emitting patches,
+  film-thickness frame, liquidus and solidus isolines, melt stills) stay in `reentry_model/viz.py`, which imports the
+  shared parts.
+- `material`, `heating` and `body`'s protocol are imported from `reentry_model.shared`.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §4, §9, §10.2.
+
+The code of this sub-plan (`sesam_io.Reference`, `compare.melt_metrics` and the melt plots, `viz`'s melt overlays)
+stays, unchanged, for `--surface-model elements`, and `compare` and `viz` remain readers of exported files and
+histories only; the skin path must not make them import the body or the skin. What changes is the data they are given.
+Metrics and plots that use only the mass, sprayed mass, onset and demise times, closure fractions and Knudsen numbers
+apply to the skin path as long as its history keeps those columns. Anything that reads a film or deep-account column
+(`film_mass_kg`, the conjugate-depth, deep-liquid and cascade columns) or an element-model frame field (patch film
+thickness, emitting patches, deep liquid) has no source on the skin path and must be re-pointed at the history columns
+and surface-frame fields of spec §10.2: flowing and liquid depths, skin thickness, top temperature, top speed, base
+position, and the rebuild and books columns. That re-pointing, and any plots those columns call for, belong to sub-
+plan 22 (task 4); the section-view animation must also draw a mesh whose surface nodes move (sub-plan 19), which this
+sub-plan's fixed-mesh `viz` does not do. Add skin-path variants rather than editing the element model's plots.
+
+---
+
 ### Task 12: Comparison metrics, plots and visualisation of the melting run
 
 **Files:**

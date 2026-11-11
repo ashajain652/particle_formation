@@ -1685,6 +1685,36 @@ copy was frozen; no run uses the driver.
      that ends this way, so it belongs in a change of its own with the runs re-measured. (c) Facts 96 (b) — the thick
      branch's drift at the finest step — and 96 (c) — the run name does not carry the material — stand.
 
+## Amendment of 2026-10-08 — the melt-layer skin, stage 0: the grid gate (fact 101)
+
+Design: `docs/superpowers/specs/2026-10-07-melt-layer-skin-design.md`, approved 2026-10-07. Plan: sub-plan 18 (stages 0
+and 1); stages 2 and 3 follow in sub-plan 19. Facts 1–100 stand. Stage 1's code (sub-plan 18, Tasks 1–8) is built and
+reviewed in `prototype/work-2026-10-08-skin/` and is recorded in the sub-plans when Task 9 writes its amendment.
+
+101. **The converged droplet population depends on the surface mesh.** The 100 mm flight to 120 s with every default
+     (Scheil, the rule on, `--dt-continuum` 0.0125 s, which switches at 49.5 s and 69.93 km) on a 1.4 mm surface mesh
+     (506 310 elements, 38 208 patches) against the 2.0 mm runs of facts 91–95 (177 363 elements, 18 830 patches), seeds
+     12345 and 1 on each, over the continuum window 49.5–120 s (copy `prototype/work-2026-10-08-gridgate/`; its script
+     `grid_compare.py` reproduces fact 93's 2.0 mm numbers exactly). Droplets 76.49 and 77.06 million at 2.0 mm, 69.24
+     and 69.17 million at 1.4 mm: the mean falls by 9.9 %, 13 times the 0.74 % scatter between seeds at 2.0 mm (0.10 % at
+     1.4 mm). The thick branch's share of the sprayed mass 71.2 and 70.9 % against 76.9 and 77.1 %: up 5.9 points, 19
+     times the 0.31-point scatter. The median radius by number 68.46 and 68.58 µm against 68.76 and 68.79 µm (+0.37 %,
+     2.3 times its 0.16 % scatter), by mass 187.3 and 187.2 µm against 186.7 and 186.6 µm (−0.33 %, 5 times its 0.07 %
+     scatter). The mass sprayed in the window 1 067.1 and 1 068.8 g against 1 070.1 and 1 069.3 g (+0.17 %, within its
+     0.16 % scatter); by 120 s 1 165.4 and 1 167.0 g against 1 172.9 and 1 171.7 g (+0.53 %, 3.7 times its 0.14 %
+     scatter); the body's mass at 120 s 306.6 and 305.0 g against 299.5 and 300.7 g (−1.9 %, 3.5 times its 0.53 %
+     scatter). Run time 3.73 and 3.74 h against 8.43 and 8.35 h (each pair run two at a time); both 1.4 mm energy
+     balances close, to 3.0e-9 and 2.9e-9. **Verdict: mesh-dependent.** The count and the branch split — the quantities
+     the time-step series converged (facts 92–94) — move far beyond the seed scatter when only the surface mesh is
+     refined, so the 0.0125 s population of facts 92–94 is converged in the time step but not in space: it is the 2.0 mm
+     mesh's population. The droplet sizes barely move (both medians by under 0.4 %) and the sprayed mass in the window
+     not at all; what changes is how the same mass divides between the branches — more thick-branch release and fewer
+     droplets on the finer surface. Two meshes give a direction, not a convergence study: the 1.4 mm surface elements
+     are still several times δ_m deep, so the converged spatial answer is unknown and may move further. The skin (stages
+     1–3) is therefore needed for correctness, not only for cost — the case stage 0 was written to decide. Not compared:
+     fact 95's runoff measures, which need the switched-step harness's per-step record that the model's own runs do not
+     write. Measured once per mesh and seed.
+
 ## Amendment of 2026-10-08 (frame export) — the frames carry what the Spheral replay reads (facts 101–107)
 
 The large-fragment model's core (Spheral M1, plan `docs/superpowers/plans/2026-10-07-spheral-m1.md`) was built on frames
@@ -1801,7 +1831,1469 @@ made on mains power under `caffeinate -i`.
        **Decided (Asha, 2026-10-09):** for development the older (reconstruction's) frames remain Spheral's input;
        Spheral M2 (plan `2026-10-09-spheral-m2.md`) is built and checked on them, and M1's thresholds stay as they are.
 
+
+## Index of 2026-10-11 — the layered-skin redesign: sub-plans 19–22, and the deprecated folder
+
+Stage 1 of the 2026-10-07 skin design (sub-plan 18) was built in `prototype/work-2026-10-08-skin/code/` and failed its
+box test for architectural reasons: on a fixed mesh the surface recedes element by element, deaths uncover tilted and
+cooler faces, and skins created at the solidus empty small elements (diagnosis and the two fixes tried:
+`prototype/work-2026-10-08-skin/analysis/box/` and `experiments/x1/`). Asha redesigned the model with Claude between
+2026-10-09 and 2026-10-11; the design of record is `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md`
+(committed cc15b3f), which supersedes the 2026-10-07 skin spec and the derived surface of the 2026-09-27 remeshing
+design. In one sentence: every corner of the 3D mesh's surface carries a layered skin holding the whole flowing layer
+(liquid and slurry) with a velocity in every cell, on a 3D mesh that moves with the rigid front and is rebuilt instead
+of losing elements. Its sub-plans, one per build stage (spec §11.2):
+
+- `19-moving-mesh.md` — stage 1, the moving 3D mesh with prescribed motion. **Built and reviewed 2026-10-12**; every
+  block generated by `prototype/work-2026-10-11-moving-mesh-plan/make_plan19.py` from the code as built. Its
+  measurements are facts 102–107.
+- `20-layered-skin-heat.md` — stage 2, skins on every corner with heat only. **Built and reviewed 2026-10-12**
+  (`prototype/work-2026-10-12-skin-heat/code/`, branch `skin-heat`); every block generated by
+  `prototype/work-2026-10-12-skin-heat-plan/make_plan20.py` from the code as built. Planning amended the spec (own
+  sweeps, the rebuild's projection, level 2 on a plate) and measured facts 108–114; the build measured facts 115–120.
+  **Amended after the build** (Asha, 2026-10-12; facts 121–125): damped repetition is the interface's default, the
+  metal crossing the base is valued along the 3D profile, and a macro step runs as parts. The coupling now converges at
+  0.5 s and level 2 passes there; a melting step on the 100 mm sphere costs up to 1 041 s (fact 125), because long
+  parts during melting are rejected and need many passes (fact 126). Built (Asha, option 1): while melting, a 0.5 s
+  macro step runs as parts of at most 0.0625 s with the heating interpolated in time, and the melting steps cost 122–226
+  s (fact 129). The absorption cap stranded non-rigid metal; absorption is now limited only by the move allowance,
+  the hot plate is level 2b, and coarse surface meshes are not supported under strong melting (facts 130–131).
+- `21-column-flow.md` — stage 3, flow in the columns. Scoped outline; written in full after 20.
+- `22-skin-spraying-flight.md` — stage 4, spraying from the skins and the flights. Scoped outline; written in full
+  after 21.
+
+**Deprecated** (moved to `deprecated/` on 2026-10-11, Asha's instruction; kept as the record of what was built and
+why): `06-melt-film.md` (the film account and its runoff, replaced by the skin's liquid top and the column flow),
+`09-melting-body.md` (element fill fractions, deaths, feed, deep runoff, cascade and freeze-back, all retired by the
+redesign), `16-surface-recession.md` and `17-remeshing.md` (the derived surface and its remeshing, replaced by the
+moving mesh and its rebuild; the dense band, gmsh generation and validity gate are reused by sub-plan 19), and
+`18-melt-layer-skin.md` (the one-dimensional skins). The other sub-plans stay in place as the record of code the
+redesign keeps — the material, the thermal core, the dispersion table, the flow-regime gate, the spray laws, the Girin
+validation, the coupled loop, the reference runs, the metrics, the CLI, the verification runs and the documentation.
+Each of them (01–05, 07, 08, 10–15) carries an "Amendment of 2026-10-12 — the layered-skin redesign" at the top, saying
+what in it still holds, what is kept only for `--surface-model elements`, what the redesign changes and in which of
+sub-plans 19–22, and which earlier blocks (notably the 2026-09-27 recession and remeshing blocks of 10, 13, 14 and 15,
+which belong to the deprecated 16 and 17 and were never built) must not be followed for the new design. An audit of
+2026-10-12 found none of them whose subject is retired with nothing kept, so none was deprecated beyond the five above.
+
+## Amendment of 2026-10-12 — the moving 3D mesh, stage 1 of the layered-skin design (facts 102–107)
+
+Sub-plan 19, built subagent-driven in `prototype/work-2026-10-12-moving-mesh/code/` (15 commits from 49d88e0), its plan
+copy made identical to the build. Each fact below was measured once, on the case named, with gmsh on one thread.
+
+102. **A rebuild is cheap and nearly exact.** On the 100 mm sphere (2 mm surface, 15 mm dense band) receding at its nose
+     by 0.5 mm per 0.5 s step in proportion to how directly each corner faces the flow, with 1 MW/m² of heating on the
+     same pattern (`analysis/movemesh_recession.py`): a rebuild inside the unchanged surface triangulation took
+     1.63–2.06 s for 126 000–161 000 tetrahedra, against the 2026-09-27 design's estimate of about 42 s for its own path.
+     Before the offset that makes the total exact, the interpolation residual was 0.07–0.27 % of the total enthalpy,
+     always negative (the interpolation gains energy on a convex near-surface profile), 99–186 J per rebuild and 2.3 kJ
+     over the run; the offset is spread over the new deforming zone only. A move's own offset was at most 1.3 % of the
+     enthalpy the corners swept. Every rebuilt boundary was exactly the corner set (9 417 corners).
+103. **The policy's record.** The first rebuild came at 10.5 mm of nose recession, when the zone had been pressed to half
+     its 15 mm depth and the 20-step gap was met; every later one was forced by a move that would have degraded an
+     element below a radius ratio of 0.05 — almost every step from 21 mm. 20 rebuilds by the counter (19 recorded, the
+     20th tried inside the final failed move). The worst element radius ratio reached was 0.054.
+104. **The corners need tangential smoothing from stage 1, and it is not enough on its own.** With smoothing the run
+     lasted to 29.5 mm of nose recession and the worst surface triangle stayed at 0.71 (2 r_in / R_circ); without it,
+     25.0 mm and 0.36. Either way the run ended on the shape: the largest angle between neighbouring surface triangles
+     grew from 19.5 degrees at 10 mm and 51.9 at 20 mm to 95.4 (97.8 without smoothing), and the elements that refused
+     the last moves had all four nodes on that fold, which their own corners' motion flattens and no rebuild inside the
+     same surface can undo. The failure point depends on the meshes gmsh happens to make: with four gmsh threads the same
+     runs failed at 27.0 and 20.5 mm. The motion law sharpens the shoulder; Asha decided (2026-10-11) to measure folds
+     under heating-driven recession in stage 2 before building surface refinement.
+105. **What each corner books.** Each corner's swept volume is the exact prism its surface triangles swept (three
+     tetrahedra per triangle, a third to each corner, a third-order remainder spread in proportion to what each swept):
+     an inward 0.3 mm move books every corner's dual area times 0.3 mm to within 1.0 %, a move along the surface at most
+     0.6 % of each corner's dual area times its displacement. Scaling first-order volumes to the total, as first
+     planned, blew up wherever they nearly cancelled (scale factor about -7e14 for a move along the surface). The
+     enthalpy booked with it is the corner's own, before the move: booking inward slabs at the mean of old and remapped
+     enthalpy shrank the books' offset (-16.2 J to +0.29 J per 0.3 mm move) but made the exact moving-front test nine
+     times worse (0.0010 to 0.0093 of the rise). The tangential smoothing alone sweeps second-order volume of either sign
+     per corner (up to about 1 µm of equivalent depth; 4 856 of 9 417 corners negative in one move); Asha decided on
+     2026-10-12 to make the smoothing volume-neutral per corner (spec §5.1, sub-plan 20 Task 0).
+106. **Accuracy and cost of a move.** A heated front moving at 10 mm/s into a bar of 0.1 mm cells follows Carslaw and
+     Jaeger's exact solution to 0.0010 of the temperature rise after 0.5 s, and the two thermal backends agree to
+     4.3e-11 K. A macro step's mesh work (frame, smoothing, zone motion, remap, books, geometry update) took a median
+     0.43 s with smoothing and 0.26 s without, against 0.19–0.20 s for the conduction step; most of it is recomputing
+     element matrices and nodal gradients over the zone.
+107. **Two environment facts.** fenicsx_env's gmsh 4.15.2 segfaults meshing a discrete surface's volume with HXT on four
+     threads (drama_env's does not), so a rebuild runs gmsh on one thread. The scikit-fem backend kept its AMG
+     hierarchy across `setup` on a new mesh and crashed on the first solve that reused it ("matrix and preconditioner
+     have different shapes"); `setup` now drops it. A flight that does not use the moving mesh is bit-identical to the
+     base's (100 mm to 30 s: 61 rows, 31 columns, 28 result fields).
+
+## Amendment of 2026-10-12 — planning sub-plan 20: own sweeps, the rebuild's projection, level 2 on a plate (facts 108–114)
+
+Measured while writing sub-plan 20 in `prototype/work-2026-10-12-skin-heat-plan/code/` (its tests and harnesses), each
+once, on the case named. Asha's decisions from them (2026-10-12): each corner is booked its own sweep (spec §5.2), level
+2 is a plate with tapered heating and local surface remeshing the back-up (§11.1, §13), and a task measures what
+triggers the interface repeat; under the spec's own fallback clause the rebuild carries enthalpy by L2 projection (§5.3).
+
+108. **A third of each prism to each corner folds a box's edges.** With skins on every corner of the q6p box (8 × 10 ×
+     10 mm, 2 mm elements, 6 MW/m² on one face), the side-wall corners beside the receding front were credited a third
+     of the prisms the front's corners swept, handed that metal down, bulged out by up to 0.33 mm and folded the surface
+     (159 degrees) at 1.3 s. Booking each corner its own sweep, A_t (u_k · n_t)/3 with the prism's second-order rest in
+     proportion, removed the bulge; the plain tangential smoothing then books at most 0.46 µm at a corner of the 100 mm
+     sphere (1.03 µm before), and three normal corrections bring it to 3·10⁻¹¹ m (0.37 µm before).
+109. **Corner columns cannot follow a 90-degree edge on a fixed triangulation.** Even with own sweeps the box failed at
+     its edges: 1.4 s on 2 mm elements (fold 99 degrees when a move could no longer be absorbed), 0.9 s on 1 mm. Hence
+     the plate (fact 111).
+110. **Interpolating at a rebuild moves heat to the melting front.** Under real melting the rebuild's interpolation
+     residuals were one-signed and ten times fact 102's: two rebuilds of the level-2 plate gained 2 768 J at the front,
+     and the uniform offset took it back from the whole zone — 4.9 % of the heat absorbed moved from the cold bulk to
+     the front, and the centre melted 9.5 % ahead of the exact solution by 2 s. The L2 projection (consistent mass
+     matrix, 4-point rule) left 14 J; on the tests' kinked field −1.8 J of 63 219 J where interpolation left −4.1 %. A
+     lumped projection kept the energy local but moved a linear field's surface values by up to 7 K. The moves' own
+     gradient remap still offsets 442 J over the plate's 42 moves (0.8 %), one-signed.
+111. **Level 2 passes on the plate.** A plate 8 mm deep and 110 × 110 mm across, 2 mm elements, 700 K, Scheil, heated
+     at 6 MW/m² within 32 mm of its centre tapering to zero at 45 mm, liquid removed as it forms, 0.05 s steps: the
+     centre's recession is within +1.9, −0.1 and −0.7 % of the 1 µm one-dimensional reference (0.789, 2.712, 5.219 mm at
+     1.0, 1.5, 2.0 s) with 20 µm cells and +2.9, −0.1, −1.2 % with 10 µm; mass closed to 1e-15, energy to 2.4e-9; the
+     fold stays at the plate's own 93-degree unheated edges. Sub-plan 18's fine box (0.8045, 2.7290, 5.2060 mm) is within
+     2 % of the reference. With full flux only to 12 mm the centre lost heat sideways and lagged 9 % by 2 s (the
+     diffusion length 2√(αt) is about 19 mm at 2 s). (Planning code; the built code's numbers are fact 116.)
+112. **The interface repeats every step, and must.** On the plate a median 6 783 of 6 932 columns exceed 10⁻³ of their
+     throughput (mostly columns with almost no heat through them), and the total mismatch is a median 3.4 % of the
+     total throughput, so the per-column and total rules both repeat every step (193 s for the plate); with no repeat
+     (114 s) the centre is 6.7 % ahead at 1.0 s. On the 4 mm test sphere with 0.5 s steps, no repeat runs away at
+     3 MW/m² — the 3D base overshoots T_feed and every sub-step removes and redraws a whole skin, 0.13 kg in one step —
+     and a predictor for the linearisation temperature runs away at 2 MW/m² even with the repeat; it was dropped.
+     (Planning code; the built code's numbers are facts 117 and 118.)
+113. **A skin draws rigid metal.** A 4 mm 3D element under 6 MW/m² reached 930 K in one 0.5 s step; drawing at its
+     temperature fed liquid that the next sub-step removed, 30 minimum masses a step. The draw is capped at T_rigid.
+114. **What a step costs.** The 100 mm sphere at production settings (9 417 columns, 10 µm cells, 0.5 s macro steps,
+     10 ms sub-steps, the per-column repeat): 55–57 s per macro step below melting (374 708 cells), 64, 110 and 131 s
+     melting (449 911 cells, rising as more columns melt); the 3D solve 0.45–0.77 s and moving the mesh 0.50–0.65 s of
+     that. The skins' passes are the cost; tabulating the material at 0.01 K, re-splitting only the columns that need
+     it and an exact Newton tangent took 30 % off. Steady ablation on a single skin is 2.1 % slow with 20 µm cells and
+     0.5 ms sub-steps, 1.1 % with 10 µm and 0.25 ms. (Planning code; the built code's numbers are fact 120.)
+
+## Amendment of 2026-10-12 — building sub-plan 20 (facts 115–120)
+
+Measured on the built code (`prototype/work-2026-10-12-skin-heat/code/`, branch `skin-heat`, 70ecbdd..f5d6633), each
+once unless stated, on the case named; the raw outputs are in `prototype/work-2026-10-12-skin-heat/measure/` (git-ignored).
+The build differs from the planning copy chiefly in that metal drawn at the T_rigid cap carries no sensitivity to the
+base, so the base law keeps its slope (sub-plan 20, ruling 4), and in the rebuild transfer's retry (fact 115); together
+they moved the plate's numbers by one to two points, and which of the two did it was not separated.
+
+115. **A rebuild's transfer had misplaced points, and the recession harness is unchanged.** `locate` put 0.41 % of a
+     rebuild's quadrature points on the coarse test sphere and 0.28 % on the 100 mm sphere in a wrong element, all
+     interior (worst barycentric coordinate −0.15 and −0.27), so they were extrapolated; retrying them with 256
+     candidates finds every one. With own sweeps and the projection, the prescribed-recession harness still fails at
+     30.0 mm (29.5 mm completed, fact 104's fold), its rebuilds' residuals 4·10⁻⁶–1.6·10⁻⁵ of the total enthalpy (were
+     0.07–0.26 %), each rebuild 6.2–7.5 s.
+116. **Level 2 passes on the built code, at 0.05 s macro steps.** The plate of fact 111: the centre's recession is
+     +4.17, −1.30 and −2.13 % from the one-dimensional reference at 1.0, 1.5 and 2.0 s with 20 µm cells (163 s) and
+     +3.45, −0.53, −1.59 % with 10 µm (323 s); against the fine box +2.2, −1.9, −1.9 % and +1.5, −1.2, −1.4 %; the two
+     cell sizes agree to 0.8 %; mass to 1.4e-15, energy to 2.4e-9, 2 rebuilds, no base faults. The tightest entry is
+     0.83 points inside the 5 % criterion. Rerun on the same code, the 20 µm case agreed to every printed digit to 1.5 s
+     and gave −2.04 % at 2.0 s: the run is not bit-reproducible after its second rebuild.
+117. **The interface repeats on every step, under both repeating rules.** On the plate a median 6 783 of 6 932 columns
+     (never fewer than 6 248) exceed 10⁻³ of their throughput, and the total mismatch is a median 3.3 % of the total
+     (0.28 % on the first step, at most 6.0 %), so the per-column and the total rule repeat on all 40 steps; they agree
+     to 1.5 s and part by 0.16 points at 2.0 s (−2.04 against −2.20 %). With no repeat the plate runs in 90 s instead of
+     161 s (44 % less) but the centre is +6.71 % at 1.0 s, outside the criterion.
+118. **On 4 mm elements at 0.5 s the repeat lets a step complete, not be right.** On the 4 mm test sphere from 880 K,
+     three 0.5 s steps: at 2 MW/m² both rules complete with no base faults (11.8 g removed with the repeat, 12.6 g
+     without). At 3 MW/m² with the repeat the steps complete with 75 base faults and a last-step total mismatch of 66 %;
+     without it the first step asks for a 4.65 mm corner move, which the mesh mover refuses. The base reconciliation
+     books the difference between the move's sweep (at the node's enthalpy) and the skins' draw (at the T_rigid
+     enthalpy) or hand-down (at the cells' own) into one bottom cell: at 6 MW/m² 42 buried cells end above T_feed, the
+     hottest at 2 910 K while the 3D maximum is 901 K; at 3 MW/m² 13, the hottest 1 898 K; at 2 MW/m² none (final
+     review). This departs from spec §6.6.
+119. **At 0.5 s macro steps the interface coupling parks half the heat and nothing melts.** The plate of fact 116 at
+     0.5 s: by 2 s the deferred mismatch (heat owed to the 3D nodes, held in no metal) is 29.9 kJ of the 56.2 kJ
+     absorbed (53 %); the centre's top stays at 826–880 K and nothing recedes, against 5.2 mm in the reference; the
+     energy residual is 5e-11 because the parked heat is counted. At 0.25 s the same stall, 0.4 mm by 1.75 s, then a
+     refused move at 2.0 s. At 0.05 s the parked heat is 16 J at 1.5 s (0.04 %; the final review's measurement). Iterating the passes converges on the first
+     step but from the second alternates between two states (72, 29, 71, 29 % at 1.0 s): the linear base law is too
+     weak once the skins near melting. The cure changes spec §7's interface; Asha's decision. Level 3 against SESAM,
+     whose flights run at 0.5 s, is held until then.
+120. **What a step costs on the built code.** The 100 mm sphere at production settings (9 417 columns, 10 µm cells,
+     0.5 s macro steps, the per-column repeat): 62, 70 and 66 s per macro step below melting (374 708 cells), 82, 115
+     and 133 s melting (456 769 cells), 98–99 % of it in the skins' passes; the 3D solve 0.54–0.71 s and moving the mesh
+     0.58–0.67 s a step; no rebuild; energy residuals 2.5e-11 and −1.4e-10. A 600 s flight at 0.5 s is therefore about
+     20 hours, and each repeat doubles the skins' share. (One-repeat rule; the amended default's cost is fact 125.)
+
+## Amendment of 2026-10-12 — the interface at 0.5 s diagnosed and amended (facts 121–131)
+
+Measured on `prototype/work-2026-10-12-skin-heat/code/` after the build, each once unless stated; the spike's scripts
+and outputs are in `prototype/work-2026-10-12-skin-heat/measure/spike/` (git-ignored). Asha's decisions from them
+(2026-10-12): damped repetition is the default (spec §7.2), the metal crossing the base is valued along the 3D model's
+linear profile (§6.6), and a macro step runs as parts so that no base moves more than a quarter of the mean surface
+edge in one (§5.3, §7.1); built at a45f204 on branch `skin-heat`.
+
+121. **The skins' base heat has a cliff, and undamped repeats jump it.** On the level-2 plate at the step from 0.5 to
+     1.0 s with 0.5 s macro steps, at the centre: the real pass's base heat with the base held at the start-of-step
+     temperature (861 K) plus 15 K is within a few per cent of the law's line (slopes −4 800 to −10 500 W/m²K against
+     the law's −7 800), but at +30 K it is 5.0 MW/m² and at +60 K −7.1 MW/m²: a base held above the melting band for a
+     whole step melts the skin, which draws metal at T_rigid and melts that too, heat flowing up out of the 3D model.
+     The 3D surface's admittance is about 29 000 W/m²K, so the first pass sends the base to 920 K and the repeats
+     alternate between about 828 and 927 K; the step after, the unresolved mismatch becomes a 5.3 MW/m² load that sends
+     the first pass to 1 020 K. At 0.05 s each pass moves the base about 3 K, all slopes are about ten times larger and
+     the passes converge (3.5 %, 0.5 %, 0.1 %). Damped repetition (Aitken's relaxation of the linearisation
+     temperature) converges every step at 0.05–0.5 s with at most 0.44 % of a step's heat deferred; at 0.05 s it takes a
+     median of 4 passes a step against the one-repeat rule's 2.
+122. **The node's enthalpy overstated the metal crossing the base.** With the coupling converged and the swept metal
+     valued at the base node's enthalpy, the plate at 0.5 s had receded 1.55 mm by 1.0 s against 0.79 mm exact (97 %
+     ahead), and 1.24 mm at 0.25 s (57 %). The 3D temperature falls 22 K/mm below the surface; over the 1.55 mm the
+     base swept in the onset step (895 K at the node, 861 K at that depth) the node's enthalpy is about 99 000 J/kg
+     above the profile's average on the Scheil curve, which predicts 0.72 mm of extra melting against 0.76 mm observed
+     (0.46 against 0.45 mm at 0.25 s; 0.014 mm per step at 0.05 s). The books balanced throughout: the move's uniform
+     offset paid for the excess, an instant transfer of heat from the bulk to the skins. Single steps also asked for
+     moves of 1.3 mm (2 mm elements) to 5.2 mm (4 mm), which the mesh refused.
+123. **Level 2 under the amended default.** The plate's centre against the one-dimensional reference at 1.0, 1.5 and
+     2.0 s: 0.05 s steps, 20 µm cells +0.3, −4.9, −3.3 % (fine box −1.6, −5.5, −3.0 %); 10 µm cells +0.1, −3.5, −4.6 %
+     (−1.8, −4.1, −4.4 %), the two cell sizes 1.4 % apart; 0.1 s +8.0, −0.6, −3.6 %; 0.25 s +12.7, +0.4, −2.6 %; 0.5 s
+     +4.5, −0.5, −4.0 % (fine box +2.5, −1.1, −3.7 %). Mass to 1.4e-15, energy to 2.4e-9. The excess at 1.0 s with 0.1
+     and 0.25 s steps is an offset made in the onset steps; taking the profile's slope at the step's end made it worse,
+     and its cause is not found. The base-fault counter, comparing the bottom cell with the node, reads 0 at 0.05 s and
+     812–1 694 at 0.1–0.5 s, because the drawn metal is now legitimately colder than the node.
+124. **The 4 mm test sphere under the amended default** (three 0.5 s steps from 880 K): at 3 MW/m² 47.4 g removed, no
+     base faults, no buried cell above T_feed (497 up to 984 K with damping alone; 11 up to 1 898 K under the
+     one-repeat rule), energy residual 3.9e-9; at 6 MW/m² 169.0 g removed, near the 190 g the 47 kW on the front could
+     melt from 880 K in 1.5 s (8.1 g under the one-repeat rule, which left the heat parked), 289 buried cells above
+     T_feed up to 959 K (2 910 K before), energy residual 6.9e-9; each step ran as 5 to 7 parts. Absorption runs at its
+     cap there: the converged base sits a few kelvin above T_rigid and the 4 mm elements' gradient is shallow. The two
+     thermal backends agree to round-off over one 0.5 s step (mass 8e-12, 5 parts, 31 passes each, the same on a second
+     run) but not across a rebuild, whose mesher answers round-off in the corner positions with a different mesh.
+125. **What a step costs under the amended default.** On the plate over 2 s the skins' work, counted as passes times
+     sub-steps, is 1 346 sub-step passes at 0.05 s macro steps (880 with damping alone, about 400 under the one-repeat
+     rule), 1 630 at 0.1 s, 2 151 at 0.25 s and 2 437 at 0.5 s: a longer part needs more damped passes, so a large
+     macro step no longer saves time. On the 100 mm sphere at production settings and 0.5 s steps (run alone): 82, 93
+     and 60 s a step below melting (62–70 s before), and 123, 307 and 1 041 s melting (82, 115 and 133 s before), 48
+     repeats in all, the skins 1 449 s of the 1 470 s; energy residuals 2.5e-11 and −7.5e-9. At the third melting
+     step's rate a 600 s flight would take about two weeks.
+126. **Why a melting step was so dear: long parts.** The 100 mm sphere's first 1.5 s of melting (production cells, 880
+     K, 2 MW/m² at the nose), every part and pass logged: at 0.5 s macro steps it took 1 454 s, 773 s of them (53 %)
+     on parts that converged and were then rejected because their move came out 1.26–1.46 times the limit (the next
+     step's parts are sized from the last step's moves, which lag while recession accelerates; the first pass's drawn
+     mass overshoots the converged one by 50–250 % in melting parts, so it cannot size a part either); the accepted parts
+     needed 4.4 passes on average (up to 12), the residual often held up by a few nose columns swinging ±1–3 K while
+     the rest had settled; a skin pass costs about 0.65 s per 10 ms sub-step once melting (0.31 s before), 4.8 Newton
+     iterations a sub-step. The same 1.5 s at 0.125 s macro steps: 425 s, 7 % rejected, 2.0 passes per part; at 0.0625
+     s: 341 s, nothing rejected, 1.8 passes; the fully melting last quarter-second 1 011, 78 and 44 s. Removed by 1.5 s:
+     16.6, 21.15 and 21.28 g. (Corrected 2026-10-12: that difference is not the small steps' accuracy, as first read, but
+     the absorption cap being per macro step, fact 129.) Each case measured once; heating was re-evaluated at every
+     macro step.
+127. **A base fault is a bottom cell outside the temperatures of the metal that crossed** (Asha, 2026-10-12; spec
+     §6.6): between the base node's and the 3D profile's at the depth swept (`skinbody.jump_faults`). Compared with the
+     node alone, the level-2 plate counted 812–1 694 faults at 0.1–0.5 s steps (none at 0.05 s), all of them the profile
+     valuation's colder drawn metal; with the new definition the plate at 0.25 s counts none at any step, its recession
+     unchanged to 1.5 s (fb4fe25; unit tier 388 passed, FEniCSx 19).
+128. **A 0.5 s macro step tracks the flight's heating.** From the committed SESAM references without melting (100 mm
+     from 77.5 km, peak 31.7 kW at 94.5 s and 59.9 km; 50 mm from 115 km, peak 9.1 kW at 221.6 s and 62.9 km), the
+     convective heating changes by at most 0.56 % (100 mm) and 0.74 % (50 mm) per 0.5 s within 90 % of its peak, 2.1 and
+     2.3 % within 50 %, and 7.0 and 6.4 % down to 10 %, the fastest on the falling tail where the body decelerates at
+     about 8 g (heating goes as about the square root of density times the cube of speed); its shortest time scale is
+     about 7 s. Held at the end-of-step value for 0.5 s, a step's heat is off by a median of 0.2 % (100 mm) and 0.8 %
+     (50 mm), at most 3.5 % on the tail, and the whole flight's by 0.11 % and 0.0005 % (mostly a 0.25 s shift in time).
+     In SESAM's lumped model the solidus is reached at 36.5 s (100 mm; heating at 72 % of peak, rising 0.4 % per 0.5 s)
+     and 173.6 s (50 mm; 43 %, 1.7 % per 0.5 s). The melting references' last samples (up to 19 % per 0.5 s) are the
+     lumped body's area collapsing at demise, not the flight. So the skins' need for short steps while melting is their
+     own, not the heating's (Asha, 2026-10-12: option 1, short parts under a 0.5 s macro step, with the heating
+     interpolated in time across the parts).
+129. **Option 1 built and measured; the absorption cap makes the result depend on the macro step.** While some skin's
+     top is non-rigid, a macro step runs as parts of at most 0.0625 s, each taking the heating interpolated in time at
+     its middle (d1b5636; unit tier 389 passed, FEniCSx 19). Level 2: at 0.5 s macro steps +4.5, −0.2, −2.5 % against
+     the one-dimensional reference at 1.0, 1.5, 2.0 s and +2.5, −0.8, −2.3 % against the fine box (parts 1, 4, 8, 8;
+     energy to 4.5e-10); at 0.05 s +0.3, −3.6, −3.8 % and −1.6, −4.3, −3.6 % (the heating's interpolation moved 1.5 s by
+     about a point) — both pass against both references. The 100 mm sphere at 0.5 s: below melting 80, 90, 59 s a step
+     (unchanged, no cap), melting 122, 121, 226 s (123, 307, 1 041 s before), energy residual −9.9e-9 against the 1e-8
+     criterion; its first 1.5 s of melting in 536 s against 1 454 s. The 4 mm sphere at 6 MW/m²: 5, 8 and 8 parts,
+     164 g removed, no base faults, energy residual 5.8e-9. But the removed mass on the 100 mm sphere is 16.5 g by 1.5 s
+     at 0.5 s macro steps (as before) against 21.2 g at 0.0625 s macro steps, and the difference is absorption: the cap,
+     a quarter of the mean edge per macro step shared by its parts, bound 18 848 times by 1.0 s at 0.5 s steps (14.7 g
+     absorbed) and never at 0.0625 s (30.0 g absorbed, 53.8 g by 1.5 s); with the cap scaled to the 0.5 s steps' rate
+     per second the 0.0625 s steps absorb 12.9 g and remove 4.50 g by 1.0 s against 4.61 g. Which absorption is physical
+     is open: the converged base sits a few kelvin above T_rigid, and on coarse elements the 3D gradient that sets the
+     absorbed depth is shallow. (Settled by facts 130 and 131.)
+130. **The base above T_rigid is physics; the absorption cap stranded the metal.** The plate started at 880 K under
+     2 MW/m² against its exact one-dimensional solution (1 µm, 0.5 ms): the non-rigid layer, from the melt front to the
+     T_rigid isotherm, is 1.49, 1.57 and 1.67 mm thick at 1.0, 1.5 and 2.0 s, the gradient at the isotherm 5–8 K/mm,
+     and the isotherm advances about 2.3 mm/s — three to four times the skin's 0.4 mm minimum, so metal below the base
+     is genuinely non-rigid when a body starts near its melting range. The cap (a quarter of the mean edge per macro
+     step, about 1 mm/s at 0.5 s steps on 2 mm elements) could not keep up: the skins held 0.54–0.59 mm, 1.0–1.3 mm of
+     non-rigid metal stayed below the base 7–8 K above T_rigid, and the plate receded −7.7, −3.9 and −5.3 % against the
+     exact solution; the same cap at the same rate per second with 0.0625 s steps gave −6.5, −2.1, −6.3 %, and with no
+     cap the skins held 1.49–1.60 mm, the base sat 0.1 K above T_rigid and the plate was +6.8, +1.9, +1.1 %. The
+     absorbed depth is not the fault: extrapolated from the node it agrees with the 3D field traced along the normal (the
+     spec's line method) within 0.07 mm on 2 mm elements, the 3D gradient 6.2 K/mm against the exact 5–8. On the 4 mm
+     test sphere at 6 MW/m² the cap left 350 buried cells above T_feed and no cap none: the stranded metal, drawn at
+     T_rigid's enthalpy from a hotter base, was what overheated them. The cold level-2 plate is unaffected (the centre's
+     base stays 3–4 K below T_rigid). Each case once, 2026-10-14.
+131. **Absorption limited by the move allowance (option 1), built.** A part absorbs at most what its draws and
+     hand-downs leave of a quarter of the mean edge; the rest waits for the next part, and absorption never splits a
+     part (Asha, 2026-10-14). Level 2 and 2b pass at 0.5 and 0.05 s macro steps (hot plate at 0.5 s +1.4, +2.5, +1.2 %,
+     the skins' flowing depth within 3.6 % of the exact non-rigid depth, the base at most 0.08 K above T_rigid; cold
+     plate +4.5, −0.2, −2.8 %). On the 4 mm test sphere at 6 MW/m² it is refused in the third step: at the rim of the
+     melting region a corner absorbs a 0.7 mm lens its neighbours do not have (0.686 mm extrapolated, 0.710 mm by the
+     line method, no gradient-floor corner involved), a 0.86 mm single-corner move no rebuild absorbs; per-second caps
+     of 1.5 and 2 mean edges per second fail too (the rim step builds up over the parts), while a rim limit (at most
+     the shallowest neighbour's depth plus a twentieth of the mean edge per part) passes and is the fallback. On 2 mm
+     surfaces the same case completes: the test sphere with 2 mm surface elements removed 172.2 g in 1.5 s and the
+     production mesh 172.9 g (largest move 0.49 mm, the full allowance; one rebuild; the base at most 1.2 K above
+     T_rigid; no buried cells). So coarse surface meshes are not supported under strong melting: the unit test heats the
+     4 mm sphere at 3 MW/m² (53.0 g removed, the base 0.3 K above T_rigid), and the strong case and the hot plate run
+     in the reference tier. On the 100 mm sphere at 2 MW/m² the first 1.5 s of melting remove 19.75 g at 137, 118 and
+     91 s a step. The books drifted by about 5e-5 J a 3D solve at the solver's linear tolerance of 1e-10, 1.1e-8 of the
+     heat absorbed over 17 short parts; at 1e-13 (as with a direct solve) 2e-11, at no cost, so skin runs tighten it.
+132. **The onset excess at 0.1 and 0.25 s macro steps was cured by the part cap while melting.** Under the current
+     code the level-2 plate is 0.3 and 4.4 % ahead of the one-dimensional reference at 1.0 s (recorded +8.0 and
+     +12.7 % before fact 128's cap); with the cap removed the 0.25 s case is 11.7 % ahead again (2026-10-14).
+133. **The skins swell and the plates' references do not.** Each skin cell is its mass over its own phase's density
+     (spec §5.2: liquid 2 400 kg/m³, solid 2 813, the Scheil liquid fraction 0.29 already at 880 K); a swollen layer
+     conducts more slowly, so the surface reaches T_feed sooner. The exact slab with that law given to its non-rigid
+     metal melts sooner by 0.033 mm on the cold plate (4.2 % at 1.0 s, 0.7 % at 2.0 s) and 0.094–0.101 mm on the hot one
+     (11.9 %, 3.5 %); the skins reproduce it (the narrow hot plate with and without swelling: 0.079 mm on 2 mm elements,
+     0.088 on 1 mm, against the exact 0.090 at 0.8 s). Compared like with like (skins at the solid's density) the plates
+     melt late on 2 mm elements: cold at 0.1 and 0.25 s steps 6.2, 5.4, 4.8 % and 3.4, 1.5, 3.1 % at 1.0, 1.5, 2.0 s;
+     hot 4.9, 3.7, 2.5 % and 6.3, 3.0, 2.0 %. The passes of facts 123 and 131 rested on the cancellation.
+134. **The delay is the 3D model's resolution in depth.** Narrow plates at one density: the cold onset 0.060 mm late
+     at 1.0 s on 2 mm elements, 0.002 mm ahead on 1 mm; the hot plate 0.044 and 0.024 mm late at 0.8 s, its surface
+     1.0 K and 0.35 K cold before melting. The layer ahead of the hot plate's rigid front is 2.2–3.4 mm thick (to 1/e
+     of its rise), about one 2 mm element. Not the cause: the skins' cells (the one-dimensional solve at 20 µm and 10 ms
+     is 1.1 % slow at 1.0 s), the moves' book-closing offsets (spread over the whole body instead of the moved nodes:
+     identical results on 2 and 1 mm elements), the depth where the skin meets the 3D model (a 1.2 mm minimum skin
+     removed a 2 K early surface cold bias but left the delay at 0.044 mm). The macro step changes the like-for-like
+     error by 1.4–2.8 points between 0.1 and 0.25 s, in no consistent direction.
+135. **Verification with the skins at the solid's density (Asha, 2026-10-14, option A), built.** `SkinSettings.swell`
+     (default True, the spec's law; False holds every cell at the solid's density), `--skin-swell on|off` with the
+     run-name suffix `_noswell`; `analysis/skin_plate.py` runs both plates with `--swell off` by default and the
+     reference-tier hot plate passes `swell=False`; `analysis/ablation_1d.py --swell off|all|nonrigid`; the level-1 test
+     of the swelling against `data/reference_values/skin_swell_1d.json` (one column 8 mm deep from 880 K under 2 MW/m²:
+     the exact advance 0.113 mm on average over 0.7–1.0 s, the skins' 1.3 % above it). With swelling off: the hot plate
+     passes level 2b at 0.5 s (2.9 and 2.0 % late at 1.5 and 2.0 s, flowing depth within 3.4 %, base at most 0.08 K
+     above T_rigid) and at 0.05 s (3.6, 1.7 %; flowing depth within 8.5 %); the cold plate passes level 2 at 0.5 s
+     (1.2, 2.2, 3.9 % late against the reference, 3.1, 2.8, 3.7 % against the fine box) and fails at 0.05 s (6.2, 6.2,
+     6.4 %; 8.0, 6.8, 6.1 % against the fine box).
+136. **Why 0.5 mm elements fail on the plate.** The fill moves every corner in by the minimum thickness at once; at
+     the box's 90-degree edges and the face corners beside them the sweep misses the request, so the skins start at
+     0.65–1.07 of their minimum on 2 mm elements and 0.89–1.31 on 0.5 mm. The first steps correct it by draws and
+     hand-downs that do not shrink with the part; on 0.5 mm elements they exceed the quarter-edge allowance (0.125 mm),
+     the part is split six times in vain, and at an edge the corrections alternate and grow (0.12, 0.13, 0.16, 0.17,
+     0.21, 0.22 mm) until a sweep takes more than the skin holds ("cannot take more metal from a skin's bottom"). A box
+     artefact: the sphere has no edges.
+137. **Element layers in depth, spiked (Asha, 2026-10-14, option B).** Kuhn-split layers 1 mm thick to 4 mm (or
+     throughout) under the 2 mm surface edges, blended to uniform within 4 mm of the plate's sides: until the first
+     rebuild they reproduce the 1 mm results (cold onset 0.001 mm ahead at 0.8 s and 0.008 mm late at 1.0 s; the hot
+     plate's removed metal 0.020–0.029 mm late over 0.6–0.8 s against 0.012–0.024 on 1 mm and 0.042–0.054 on 2 mm; the
+     surface 0.4 K cold before melting). The 3D solve stays about 3 % of the wall time. But the rebuild meshes the volume
+     isotropically at the surface size, losing the layers, and the run is then worse than on 2 mm elements (cold
+     0.21 mm late after a rebuild at 1.1 s against 0.05 mm); on the plate the rebuilds come early (0.55–1.1 s), from
+     elements near the back corners that degrade, and 0.5 mm layers are crushed at the front edges by the fill unless
+     blended. Adoption needs a rebuild that regenerates the layers by extrusion along the corner normals.
+138. **Prism layers by extrusion could not be built on the plate (2026-10-15).** Option 1 (Asha) as first built:
+     every corner pushed inward to each layer's depth, the shells joined by prisms, gmsh meshing inside the innermost
+     shell, at the start and at every rebuild. Along the vertex normal the shell folds over its neighbours at a
+     90-degree edge (a 1 mm step there leaves the corner 0.71 mm from each face); stepping each corner the layer's depth
+     away from every face around it (the bisector times the square root of two on an edge) cures that, but at the box's
+     corners, where three faces meet, three 1 mm layers could not be built above a radius ratio of 0.054 under any of
+     18 tapers tried (twice the move floor, 0.1, was asked), and the count falls for the whole body, so one sharp feature
+     would take the layers away everywhere.
+139. **The fine band, built (option 1 as built).** gmsh fills the volume under the fixed surface with elements of
+     `--fine-size` (0.7 mm) to `--fine-band` (4 mm) below it, growing to the surface size over one surface element, at
+     the start (`movemesh.refined_mesh`) and at every rebuild (the sizes read from the mesh's parameters); skin runs have
+     it by default (run name `_fine<depth>x<size>mm` or `_fine0` otherwise), and so do both plates. Under a fixed 2 mm
+     surface gmsh fills coarser than asked (1 mm asked: shortest edges about 1.1 mm, about half the delay recovered).
+     With 0.7 mm asked, at one density: the narrow cold plate's onset within 0.019 mm of the exact solution from 0.8 to
+     1.2 s (2 mm elements 0.051–0.099 mm late, 1 mm elements within 0.017 mm), the hot plate's 0.016–0.026 mm late over
+     0.6–0.8 s (2 mm 0.042–0.054, 1 mm 0.009–0.023) and its surface 0.42–0.45 K cold before melting (2 mm 0.92–1.06 K);
+     a rebuild makes the band again and the results stay. Levels 2 and 2b pass at 0.5 and 0.05 s: hot 1.9, 0.7 % and
+     1.6, 1.0 % late at 1.5 and 2.0 s (flowing depth within 0.7 %, base at most 0.10 K above T_rigid); cold 4.9 % ahead,
+     2.5 and 3.3 % late at 0.5 s, 1.6 % ahead, 2.2 and 2.7 % late at 0.05 s (fine box 0.3, 2.8, 2.5 % late). The plates
+     cost 50–80 % more (446 870 elements on the plate against 72 600) and rebuild every 1 mm or so of recession instead
+     of 2 mm, their 4 mm deforming zone compressing the band directly.
+140. **The fine band on the 100 mm sphere.** 177 363 elements become 1 211 188 (meshing 10.6 s), a 3D step 0.16 s
+     becomes 1.17 s. The reference tier's strong-melting case (6 MW/m² on the front from 880 K, three 0.5 s steps, dev
+     cells): 172.0 g removed against 172.9 g, the base at most 0.56 K above T_rigid against 1.17 K, one rebuild each,
+     books to 3e-13; 1 010 s against 695 s, the extra in the 3D solves (175 against 22 s), the moves' remap (141 against
+     22 s) and the rebuild (63 against 8 s), the skins unchanged (691 against 650 s). Asha accepted the fine band in
+     place of prism layers and its cost until level 3 times real flights (2026-10-15).
+141. **The late slow bias is the cold plate's, and not the skins'.** With the fine band the level-2 cold plate (700 K,
+     6 MW/m²) melts 3.6 % slow from 1.0 to 2.0 s, its lag growing from 0.013 mm ahead to 0.148 mm behind; the hot
+     plate's rate is within 1.6 %. One skin column standing for the whole 8 mm plate, with an insulated base and no 3D
+     model, is within 1.1 % of the exact slab and 0.7–1.1 % slow late (0.5 % with 2 ms sub-steps); the removed liquid
+     carries 0.2–1.1 kJ/kg above h(T_feed); 10 µm cells in the plate change nothing (3.5 %). The bias is in the coupling.
+142. **Rebuilds cost recession on 2 mm elements.** Between rebuilds the cold plate keeps pace (0.05 mm gained over 14
+     steps); its rebuilds at 1.30 and 1.80 s cost 0.15 and 0.21 mm over the next three steps, the base nodes coming out
+     of the L2 transfer 4.5 and 6.2 K cold and the skins sending 54 and 69 kJ/m² extra into the 3D model in the step
+     after. Offline (the exact cold profile at 1.3 s below a front moved 2 mm into a 4 mm zone): the transfer moves
+     35 kJ/m² from the top 0.5 mm to 0.5–2 mm, conserving the total to 6 kJ/m²; the base error is 1.3 K after 0.2 mm of
+     compression and 4.8 K after 2 mm (0.07 and 2.2 K with the fine band): the rebuild resets surface elements the zone
+     had made finer. Keeping the base's temperature through the rebuild removes the losses but, with the books closed
+     by a uniform offset over the plate's zone, puts heat at the centre (2.1 % ahead by 2.0 s); imposing it in the
+     projection overheats the metal beneath by up to 10 K at 1 mm on 2 mm elements. With the fine band the base drop is
+     1.3–1.5 K and imposing it changes little (0.148 against 0.167 mm at 2.0 s); a lower quality floor (0.02) rebuilt 4
+     times instead of 5 and lost as much.
+143. **With the fine band the cold plate's interface sits on its rigid front.** Its non-rigid layer (0.39–0.49 mm) is
+     about the 400 µm minimum: each step the skins draw 0.16–0.28 mm from below the base, the base node rises to 896.7 K
+     (1.6 K above T_rigid) by the end of each part before absorption resets it, the metal entering the skins is
+     5.9 kJ/kg below h(T_rigid), and the heat through the base matches the exact flux at the T_rigid isotherm to 0.1 %
+     over 1.0–2.0 s -- the flux of the front passed at a base lying below it. Parts of 0.0125 s (base node 895.85 K)
+     made the late rate 1.6 % slow, an 800 µm minimum (base node 887.8 K) 1.9 %, 10 µm cells 3.5 %.
+144. **Options timed alone** (2026-10-15/16, mains power, one run at a time). The reference tier's strong-melting case
+     on the 100 mm sphere (fine band, three 0.5 s steps): 990 s by default (172.0 g removed), 1 027 s with an all-fine
+     800 µm minimum (B, 175.1 g, 401 034 cells against 248 196), 954 s with 0.0125 s parts while melting (C, 174.3 g),
+     914 s with an 800 µm minimum and a 400 µm fine zone (B′, 175.0 g, 333 131 cells). The cold plate at 0.05 s: 1 267,
+     732, 874 and 675 s, late rates 3.6, 1.8, 0.9 and 1.7 % slow, C failing level 2 (3.7 % late at 1.0 s, 5.5 % behind
+     the fine box) and C as a 0.0125 s macro step (the `--dt-continuum` route) the same at 1 093 s; the hot plate 317,
+     388, 640 and 313 s, all passing. `--dt-continuum` (2026-10-07, default 0.0125 s) shortens the whole macro step from
+     the first step with a continuum body Knudsen number, latched, on by default only with Girin removal: not option C.
+145. **Option B′ built (Asha, 2026-10-16).** `SkinSettings.min_thickness` 0.8 mm (0.4 before) and a new
+     `SkinSettings.fine_zone` 0.4 mm, read by the cells' targets and the sideways depth grid in place of the minimum;
+     `--skin-min-thickness` (default 0.8) and `--skin-fine-zone` (0.4) with run-name suffixes `_skinmin<mm>mm` and
+     `_skinfine<mm>mm` for other values. A column at its minimum holds 59 cells (40 fine of 10 µm, 19 growing to 39 µm)
+     instead of 40. The cell tests keep a 0.4 mm skin of fine cells (`CELLS_04`); the trial-pass law misses by 2.3e-3 of
+     the top's energy 2 K from its linearisation (7.6e-4 for 0.4 mm), and the fill on the 4 mm test sphere leaves a
+     column up to 2.4 % off its minimum (under 2 % for 0.4 mm). With B′ alone the cold plate failed level 2 at 0.5 s
+     macro steps: 14.2 % ahead at 1.0 s (12.0 % against the fine box), its top at 884.8 K at 0.5 s so the step in which
+     it melted ran as one part; the hot plate was 9.0 % late at 1.0 s at 0.5 s (5.6 % with 0.4 mm, not judged).
+146. **The part cap's look-ahead (Asha, 2026-10-16).** A macro step whose tops are all below T_rigid at its start is
+     capped too when a top's rise over the last macro step, carried on across this one, reaches T_rigid
+     (`SkinBody.capped_ahead` counts them). On the cold plate at 0.5 s it fires once, for the step from 0.5 to 1.0 s:
+     3.2 % ahead at 1.0 s (passing), 0.4 % ahead and 0.9 % late at 1.5 and 2.0 s, in 611 s against 936 s (both on
+     battery power, so indicative); the hot plate is unchanged (its top is non-rigid at the second step's start). With
+     both, every tier passes (unit 397, FEniCSx 19, the reference tier's strong melting and hot plate), and levels 2 and
+     2b pass at 0.05 and 0.5 s (spec §11.1).
+147. **Where a skin flight's time goes (2026-10-17).** Level 3's 100 mm flight (SESAM-equivalent heating, no melting,
+     733 macro steps, 2026-10-16/17) took 52 720 s (14.6 h), 71.9 s a macro step, against 32 s for the element model's
+     whole flight on the same laptop: 81 % in the skins, 4 % in the moves, 1.8 % in the 3D solve; peak memory 3.3 GB
+     against 0.5 GB. Profiled over its first six steps (380 s): the skins' sideways conduction 61 % (three explicit
+     sub-cycles a 10 ms sub-step, 2 400 evaluations, each making the depth grid's interpolation weights again), the
+     conduction through the depth 13 %, the trajectory's mass queries 12 % (187 in six steps, each measuring the volume
+     of the fine band's 1 211 188 elements), the 3D solve 4 %, the moves 4 %. The smallest columns set the sub-cycles:
+     dual areas of 1.26-4.59 mm² (median 3.31) give a stable cycle of 3.8 ms (236 1/s at the material's highest
+     conductivity, 182.6 W/m/K, and lowest heat capacity, 877.5 J/kg/K, which come from different temperatures); 982 of
+     the 9 417 columns need more than one cycle and two more than two, and with the cells' own properties it is still
+     three at 300 K, two from about 900 K.
+148. **Option A (Asha, 2026-10-17).** `SkinBody.mass` measures the 3D volume once per move (cleared in
+     `_refresh_geometry`), and the sub-cycles of `skin.sideways_heat` share the step's geometry (`_sideways_geometry`: the
+     depth grid clipped to each column, each column's share of each bin, the depth each edge shares, and the
+     interpolation weights, `_interp_weights` and `_interp_apply`), the temperatures after the last sub-cycle not
+     computed. The six steps take 254 s (235 s of processor time) against 385 s (353 s), 34 % (33 %) less, every physical
+     column of the history identical to the last bit; two more runs under the laptop's background load (the app and
+     Spotlight using about two cores) took 284 and 297 s. A sparse matrix in place of `np.add.at` would save 10 s more
+     but changes the round-off (2e-15 relative), and was left out. After option A the sideways conduction is still 58 %
+     of a profiled step and the depth conduction 18 %; sub-plan 21 makes the sideways conduction implicit. A test pins
+     the sub-cycled heat to the build's routine to the last bit over 25 sub-cycles, another the mass to a fresh
+     measurement after every move; unit tier 405 passed (1 skipped), FEniCSx 19.
+149. **Level 3 passes (2026-10-16/17).** The two no-melt SESAM reference flights with a skin on every corner
+     (`analysis/reentry_model_thermal_verification.py --surface-model skin`, from 97475f7, before option A), each flown
+     once: the 100 mm sphere under SESAM-equivalent heating on the laptop (Apple M3, alone) and the other three side by
+     side on the Mac Studio (Apple M5 Max, 6 performance cores, 64 GB), whose element flights reproduce the laptop's to
+     every printed digit. Judged, against Step 2's thresholds (3, 3, 3, 2 and 8 %): the 100 mm sphere 0.68 % (convective
+     power, of SESAM's peak), 0.96 % (point-wise, continuum), +0.46 % (heat by the end of the hypersonic phase), 24.5 K
+     or 1.21 % (energy-equivalent temperature) and 6.61 % (radiated power, of SESAM's peak), against the element model's
+     0.46, 2.23, +0.31, 24.6 K or 1.20 and 6.66 %; the 50 mm sphere 0.51, 0.83, +0.15, 31.1 K or 1.38 and 3.07 %, against
+     0.37, 2.36, +0.03, 28.0 K or 1.22 and 3.40 %. Reported, physics heating: heat taken in 0.745 and 0.771 of SESAM's
+     against the element model's 0.744 and 0.770; hottest surface 2 322 K at 118 s and 2 497 K at 240 s against 2 319 K
+     and 2 494 K at 239 s. Every flight reaches the ground; no rebuild, no base fault; books 1.2-4.8e-12 (the element
+     model's 3.3e-9 to 1.5e-8); the skins drew 0.66 g (100 mm) and 0.12 g (50 mm), topping up columns the starting fill
+     left short of their minimum (assumed, not checked); interface repeats 318 and 335 (733 steps), 792 and 835 (1 118).
+     The skin body's mass is the faceted mesh's, 1.47202 against 1.47288 kg (100 mm) and 0.183677 against 0.184110 kg
+     (50 mm) for the element model's exact sphere, so its hypersonic speed differs from SESAM by up to 5.2 and 6.1 m/s
+     against 3.9 and 3.6 m/s; left as it is (Asha, 2026-10-17). Cost, awake: 52 720 s (71.9 s a step, 3.3 GB) alone on
+     the laptop; on the Mac Studio side by side 78 815 s for the 100 mm physics flight (107.5 s a step, 7.1 GB), 56 749
+     and 57 206 s for the 50 mm flights (50.8 and 51.2 s a step, 2.8 GB); the element flights 8-39 s. The 50 mm flights
+     have a quarter of the columns (2 367) at about 70 % of the cost a step. The Mac Studio slept about 3.2 h mid-run
+     (11 390 s between each flight's elapsed and processor time), which pauses a flight and changes nothing. Results in
+     `prototype/work-2026-10-12-skin-heat-plan/level3/` (`laptop/`, `macstudio/`, the joint `summary_skin.md`).
+150. **The implicit sideways conduction, designs (a) and (b) (2026-10-17/18).** Spikes in
+     `prototype/work-2026-10-12-skin-heat/measure/implicit/`, on the 100 mm level-3 sphere (9 417 columns, 555 604 cells,
+     58 depth bins). Design (b), the sideways step split from the depth solve and solved by conjugate gradients on the
+     bins: the first six steps 200 s (171 s of processor time) against 254 s (235 s) for the explicit exchange after
+     option A, 5.4 iterations a sub-step; over the first 20 steps under physics heating the hottest surface within
+     0.06 K of the explicit exchange's; on a warm spot (100 K, 6 mm, 2 mm columns) 0.32 K from a 0.5 ms explicit run at
+     10 ms sub-steps against the explicit exchange's 0.29 K, growing in proportion to the sub-step (1.5 K at 50 ms).
+     Design (a), the exchange coupled into each sub-step's Newton iteration (`skin._coupled_solve`, conjugate gradients
+     preconditioned by the columns' tridiagonal solves): each coupled solve stopped at 10⁻³ of its right-hand side takes
+     1.13 iterations from the columns' own solve; the six steps 308 s as first built, 260 s (224 s of processor time,
+     measured under a passing load average of 42) once the line search takes the sideways heat from the solve's
+     products and the geometry is reused while the cells keep their thicknesses, against 254 s (235 s) explicit; no
+     history column moves by more than 6e-9 between solves stopped at 10⁻², 10⁻³ and 10⁻⁶, the last 61 % dearer. Asha
+     chose (a) (2026-10-18): one backward-Euler sub-step, no splitting error. Its tests: the map sums to zero and is
+     symmetric and negative semi-definite on random-depth sphere skins; a warm spot (100 K, 4 mm, 2 mm columns) within
+     the grid's own 1.29 K of the exact solution, its time errors at 40, 20 and 10 ms 2.79, 1.32 and 0.57 K against a
+     2.5 ms run (first order); a 400/800 K checkerboard on 1 mm columns smoothed to 622-629 K in one 0.2 s sub-step,
+     its heat kept to 3.5e-13; unit tier 409 passed (1 skipped), FEniCSx 19, the reference tier's strong melting and
+     hot plate. Level 2 with (a) (the four plates side by side, each once): all pass, no judged number more than 0.2
+     points from the explicit exchange's -- the cold plate +3.7, +0.2, -0.9 % at 0.05 s and +3.2, +0.5, -0.9 % at 0.5 s,
+     the hot plate -1.5, -0.8 % and -3.0, -1.1 % at 1.5 and 2.0 s, flowing depth within 1.1 %, base at most 0.09 K above
+     T_rigid, books to 2.2e-10.
+151. **The surface operators and the cells' velocity (sub-plan 21 Task 2, 2026-10-18).** On the 50 mm-radius sphere
+     (`prototype/work-2026-10-18-column-flow/measure/curvature.py`): the mean curvature from the cotangent Laplacian
+     over the barycentric dual area scatters 7.6 % (4 mm test sphere, 2 254 corners) and 3.9 % (2 mm, 9 417) from
+     corner to corner; over the mixed Voronoi area 4.8 % and 0.45 %, all of it at the corners touching an obtuse
+     triangle (33 and 48, off by up to 176 % and 23 %), every other corner within 1.1e-4 of 2/R. With those corners
+     taking their neighbours' mean, every corner is within 8.4e-5 (test sphere) and 1.3e-5 (2 mm) of 2/R. The
+     tangential gradient of a linear field (area-weighted triangle gradients, projected) is exact on a flat surface and
+     within 0.09 % on average of its tangential part on the test sphere (0.8 % at its one irregular corner), 0.02 % on
+     the 2 mm sphere. Every skin cell carries a velocity (`Skins.U`), its momentum exact through split, merge, take and
+     add; with every velocity zero the 100 mm sphere's first six steps give Task 1's history in every column, in 221 s
+     of processor time against 224 s.
+152. **Momentum through the depth (sub-plan 21 Task 4, 2026-10-19/20).** `skin.momentum_step` against exact solutions
+     on 10 um cells over rigid metal: shear alone gives Couette's line to 1.1e-10 in one pass; a push alone the
+     half-parabola to 2.8e-4 of its top speed at 30 cells, 6.9e-5 at 60, 1.7e-5 at 120 (second order); 1 Pa on 15
+     liquid cells over 15 of slurry at 900 K (37 % solid) the two joined lines, the slurry at 3.46 Pa s and 0.29 1/s,
+     to 1.1e-5 in two passes; Stokes' first problem (1 Pa suddenly on 0.9 mm of liquid for 18.5 ms, a diffusion
+     length of 100 um) the top cell to 1.3e-3, 6.6e-4 and 3.3e-4 at 100, 200 and 400 steps (first order), the
+     momentum the shear's impulse exactly. The viscosity is each cell's at its own shear rate (the stress on its faces
+     over its viscosity): Task 3's rate taken across an interface, the velocity difference over the centres' distance,
+     mixes the liquid's 770 1/s with the slurry's 0.3 1/s at a jump and gives the slurry's half-cell five times too low
+     a viscosity. A crust floats (Asha, 2026-10-20, option B): under 1 Pa of gas shear three rigid cells on 15 of slurry
+     at 900 K ride its Couette line's top as one piece, to 1e-4. The layer's spin-up from rest at 10 ms sub-steps, against
+     0.1 ms on the same cells over 1 s: 0.1 mm of liquid under 10 kPa/m (viscous time 0.018 s, 90 % of its speed at 1 s
+     reached by 0.020 s) 15 % off in the first sub-step and 0.04 % after 0.1 s; 0.5 mm of liquid under the same push
+     (0.46 s; 90 % by 0.44 s) and under 10 Pa of gas shear (90 % by 0.39 s) within 1.0 % and 1.9 %; 0.5 mm of slurry at
+     900 K under 100 kPa/m (viscous time 0.2 ms) 1.1 % off in the first sub-step, then exact.
+153. **The push (sub-plan 21 Task 5, 2026-10-20).** The pressure term from the corners' own p_w carries their normals'
+     scatter amplified some 25 times (the radius over the spacing): a Newtonian pressure's push on the 2 mm sphere was
+     1.1 % off on average and 13 % at worst (normals 0.06 deg off radial on average, 0.87 at worst; 1.5 and 10 % on the
+     4 mm test sphere), against 0.1 and 1.2 % from each corner's exact angle, and normals from the curvature vector or
+     averaged over neighbours did no better; so the push takes the surface flow's dp/ds along the meridian
+     (`SurfaceFlowResult.dp_ds`, every other field unchanged to the last bit). The capillary push of a cosine bump is
+     second order, 2.45 % off at 20 spacings a wavelength and 0.62 % at 40; uniform skins on the 4 mm sphere get at
+     most 11 Pa/m of spurious capillary push from its mesh (0.28 on average). Estimated sizes at peak heating on the
+     100 mm sphere (93 s, 60 km, dynamic pressure 6.1 kPa, not run): the pressure push up to about 2.2e5 Pa/m, the
+     deceleration (30 m/s2) up to 7.2e4 Pa/m the other way, their ratio 1.84 x 4 rho_s / (3 rho_l C_D) = 3.1 for a
+     solid sphere at any size and moment; a 0.1 mm bump 4 mm long about 3e5 Pa/m of capillary push.
+154. **The sideways transport (sub-plan 21 Task 6a, 2026-10-21).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6a/`, on the 100 mm sphere's skins (9 417 columns, 10 um cells)
+     flowing along the meridian. The linearly implicit upwind scheme on the cells, (I + dt C) m' = m, with every cell
+     moving (584 000 unknowns, 2.3 million arrivals): its sparse LU took 19.6 s in the cells' own order, 0.66 s in
+     COLAMD's and 54 s in minimum degree, and 0.06 s with no fill in upwind order -- scipy's strong components, which
+     come out in reverse topological order (0.06 s; checked every call, COLAMD the fallback); the largest cycle 7 cells.
+     A whole transport sub-step: 0.95 s with every cell moving, 0.27 s with the front hemisphere's top 0.3 mm flowing
+     (124 000 of 553 000 cells), the same at Courant numbers of 1, 9.6 and 96, against 0.6-0.8 s for a coupled
+     conduction sub-step at 700 K and 0.54 s for a momentum sub-step on the same skins; the regrid after it 0.09-0.25 s.
+     The momentum projected at every arrival, by a second system in each column's tangent frame (0.30 s of the 0.95):
+     projected once at the sub-step's end instead, a uniform meridian flow kept 99.7, 90 and 24 % of its kinetic energy
+     in one sub-step at Courant numbers of 1, 9.6 and 96, against 99.8, 96 and 49 % at arrival. A dual face is crossed
+     at its vector (its segments' normals times their lengths, `Columns.face_vector`): the edge's direction times the
+     face's length gathered or spread a column's metal at up to 539 1/s under a uniform 1 m/s on a jittered plane, the
+     faces' vectors 2.9e-13. Each donor cell's pieces are normalised to sum to one: as differences of cumulative
+     fractions they had left a cell's outflow distributed 5.5e-14 short or over, 7.6e-13 of the mass after ten
+     sub-steps. A pulse 50 K warmer and half again as thick on 1 mm columns at 0.1 m/s keeps its mass and heat, moves
+     10 mm in 0.1 s to 8.3e-4 mm or better, and spreads by the one-dimensional implicit upwind scheme's h^2 nu (1 + nu) a
+     sub-step less 2.4-4.2 % (nu 0.5-2); on mixed sphere skins every book to 4e-15; a 10 s sub-step (Courant numbers to
+     875) positive, within the old enthalpies and speeds; a velocity carried 4.5-4.9 degrees round the 4 mm sphere loses
+     2.3-7.7 % of its momentum to the wall. Estimated: 0.5 mm of liquid under Task 5's peak pressure push moves at about
+     20 m/s at its top, a Courant number near 100 on 2 mm columns at 10 ms sub-steps.
+155. **The thickness terms implicit (sub-plan 21 Task 6b, 2026-10-21).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6b/`. Task 5's capillary term, from Task 2's curvature of the top
+     surface, ran backwards at corners touching an obtuse triangle, which take their neighbours' mean curvature: raising
+     each of the test sphere's 33 such corners by 1 um lowered its own curvature at 32 (by up to 0.083 1/m) and left the
+     other unchanged; the faces' exchange times its linearisation had eigenvalues down to -1.48e10 1/m4 (test sphere)
+     and -2.40e11 (2 mm sphere, 48 such corners), about 80 and 1 300 1/s of growth for 0.3 mm of liquid, and a uniform
+     0.3 mm layer's 1 um of noise grew to 4.0 um in 30 sub-steps of 10 ms. Asha chose (option A) the thin film's
+     curvature: Task 2's of the base plus minus the cotangent Laplacian of the top over each column's area
+     (`Columns.film_curvature`, `film_operator`), whose product with the exchange has no negative eigenvalue on a rough
+     top; surface tension only where a column's top flows. The cotangents are angle-only, so for a uniform layer they
+     are the base's (0.35 % apart at 3.4 mm), and with the column's area a thick layer's bump curvature stays about
+     2 H / R above the top's own. The scheme: the momentum step's response to a unit push (one more tridiagonal solve);
+     the heights at the end of the transport predicted by the transport linearised on the columns, Newton's method on the
+     crossing cells stopped on the flux it misses (1-3 solves on the test sphere, 3 on the melting state); the cells'
+     velocities corrected by the column push's change; each face's own two-point push in the transport (with the
+     columns' centred pushes alone a one-column bump stayed at 99.8 % of its height, with the faces' it fell to 12.5 % in
+     a 10 ms sub-step). On 1 mm of slurry at 902 K pulled out at 100 m/s2 a 24 mm cosine grows at the thin-film rate
+     within 0.42 % at 1-10 ms and an 8 mm one decays within 1.2 % at 1 ms (0.10-0.26 % of backward Euler's own rate);
+     0.3 mm of liquid alternating from column to column on 2 mm columns falls to at most 0.12 of itself in one sub-step
+     of 10 ms to 1 s; a uniform layer on the test sphere stays within 26 nm over 0.2 s; books to 9e-13; with sigma = 0
+     and g = 0 the step is the momentum step and the transport to the last bit. Each floating crust is now one unknown of
+     the momentum step: its books closed to 1.2e-5 of the largest impulse with 1e9 Pa s, now to 6e-13, and the
+     velocities moved by 1.1e-3, the coupled crust's own round-off (1.1e-5 at 1e7 Pa s); crust-free columns unchanged
+     to the last bit. On the 100 mm sphere's melting state (the g . n > 0 face melted 0.3 mm deep, 141 000 cells moving)
+     the thickness step costs 0.29-0.30 s and the response 0.03-0.05 s a sub-step, against 0.31-0.37 s for the transport;
+     the transport made the predicted heights to 6.5 um of a 0.15-0.17 mm change at the melt's rim. In a quiescent
+     liquid layer ringing under surface tension the transport's cycles grew to 23 700 of its 33 810 cells in five 10 ms
+     sub-steps and its LU to 4 s, whatever the ordering (fill 20-37 times).
+156. **The flow in the skin body (sub-plan 21 Task 6c, 2026-10-22).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6c/`, on the 100 mm sphere's 9 417 columns of 10 um cells under
+     the surface flow of the 100 mm flight at 93 s (stagnation pressure 11.9 kPa, -dp/ds up to 3.4e5 Pa/m at 45 deg, gas
+     shear up to 87 Pa, deceleration 29.8 m/s2; at 115 s 5.6e5 Pa/m and 48.4 m/s2), processor times under other
+     sessions' load. The front hemisphere's top 0.3 mm liquid over rigid metal, from rest, 50 ms of flow alone: at
+     flow sub-steps of 10, 5, 2.5, 2, 1, 0.5 and 0.25 ms the largest Courant numbers 1 266, 26, 12.6, 9.9, 4.8, 2.4 and
+     1.2; the transport destroys 0.59, 0.62, 0.52, 0.43, 0.27, 0.28 and 0.27 of the kinetic energy made; the kinetic
+     energy at 50 ms 4.81, 0.31, 0.36, 0.48, 1.04, 1.02 of the 0.25 ms run's, where the metal went 95, 85, 59, 44, 3.9
+     and 1.4 % off (L1). The drainage off the front agrees within 1.1 % at 5 ms and below; the runoff over the rigid rear
+     reaches 105, 120, 135, 150 and 180 deg at 10, 5, 2.5, 2 and 1 ms, because metal landing on a rigid top flows on only
+     in the next flow sub-step (6a's arrival rule): a front crossing rigid metal advances at most one column a flow
+     sub-step, 2 m/s on 2 mm columns at 1 ms. At 10 ms the thickness step's linearisations stop at their cap of 8 with
+     its predictions 13 times the change off, and with every column melted 10 ms blows up (the fastest cell 2 563 m/s
+     at the fourth sub-step); at 1 ms it is stable there (Courant to 4.7, 2 linearisations). Rayleigh-Taylor growth
+     dt s at 10, 5, 2 and 1 ms: 0.018, 0.0048, 8.3e-4, 2.1e-4 for 0.3 mm at 29.8 m/s2, up to 0.67, 0.17, 0.027, 0.0067
+     for 3.4 mm at 48.4 m/s2. Ruling: ten flow sub-steps a heat sub-step (1 ms); the flow off by default until stage 4's
+     spraying, the liquid kept with it on; on the command line `--skin-flow on` with `--removal girin`. Flow off
+     reproduces Task 6b's code to the last bit (the 3 MW/m2 removal run, numpy's generator seeded: unseeded, pyamg's
+     starting vectors make two runs differ in round-off). On a heating-sustained state (the front's skins 1.6 mm at the
+     conduction profile of 3 MW/m2: 0.30 mm liquid over 0.55 mm slurry, 310 000 cells flowing) the trial pass's base
+     law with the flow differs from the one without by 6.0 % of the throughput in total, 3 428 columns beyond the 1e-3
+     tolerance, so the trial pass runs the flow (1 216 s against 17 s for one 0.0625 s part); a 10 ms heat sub-step
+     costs 48 s with ten flow sub-steps (conduction 4.5, momentum 9.4, thickness 3.4, transport 29, regrid 1.5, push
+     0.5) against 8 s with one and 4.5 s of conduction alone. Quiescent melt under surface tension: the
+     transport's cycles grow to 10 315 of 141 000 cells in 12 sub-steps of 1 ms, 4-5 s a transport, 2.3 of 3.35 s in
+     SuperLU's factorisation; with every column melted the cycles at the rear stagnation point reach 18 000-57 000 cells
+     and 35-651 s a transport. The iteration x <- x + L^-1 (b - A x) from the upwind triangle reaches 1e-13 in 2-9
+     corrections: 0.05 against 0.30 s and 0.16 against 1.23 s (quiescent), 0.19 against 7.4 s and 0.41 against 41.8 s
+     (all melted), the books missing 2e-17; measured, not built. The thickness step's predicted heights miss the
+     transport's by 11-16 % of the change at the shoulder's pile at 1 ms, no less at shorter sub-steps. Tests: skin 72,
+     skin body 16, command line 66; unit tier 481 passed, 1 skipped.
+157. **Making the flow affordable (sub-plan 21 Task 6d, 2026-10-22).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task6d/`, on 6c's states of the 100 mm sphere (made once with 6c's
+     code: heated, driven at 93 s, quiescent, every column melted), processor times under other sessions' load (4 to
+     80). The transport's systems are solved by the iteration x <- M^-1 (b - U x) from the upwind solve, U the
+     back-couplings of cycles over 500 cells, the smaller cycles factored: 0.16 and 0.25 s against 6c's LU's 4.65 and
+     25.3 s with every column melted (one cycle of 18 379 cells, 9 corrections), 0.10 and 0.28 s against 0.20 and 0.76 s
+     quiescent, 0.14 and 0.21 s against 0.43 and 2.04 s heated, within 1.5e-13 of the LU; every cell installed from the
+     solve's fluxes, so the books are exact by construction (the masses 1.9e-4 off the LU at a tolerance of 1e-3, the
+     books still to 4e-16 and every mass positive: a regular splitting rises to the masses from below). Metal landing on
+     a rigid top now flows on in the same solve, coasting at the velocity it arrived with until the next momentum step:
+     on a strip it crosses 15 rigid columns in one sub-step at a Courant number of 5, each holding 5/6 of the last as
+     implicit upwind does; a sheared runoff onto rigid metal is 0.435, 0.209, 0.135 and 0.068 off the 0.25 ms run at 5,
+     2, 1 and 0.5 ms (6a's rule 1.25, 0.28, 0.195, 0.10; a one-cell momentum estimate for the landed metal 0.36, 0.25,
+     0.174, 0.104). 6c's sub-step study repeated: where the metal went 0.665, 0.432, 0.159, 0.081, 0.036, 0.025, 0.022
+     and 0.014 off at 10, 5, 2.5, 2, 1.5, 1.25, 1 and 0.5 ms (6c 0.953, 0.854, 0.586, 0.439, -, -, 0.039, 0.014), the
+     kinetic energy at 50 ms 2.98, 0.90, 0.95, 1.06, 1.12, 1.05, 1.03 and 1.01 of the finest run's, the largest Courant
+     numbers 4 143, 26.4, 12.6, 9.9, 7.3, 6.1, 4.8 and 2.4, the thickness step's linearisations at their cap at 10, 5, 2
+     and 1.5 ms; 10 ms still unstable through 6b's thickness step. The flow sub-steps are chosen each heat sub-step from
+     the last one's largest Courant number and growth against 6 and 0.02 (Courant in proportion to the sub-step, growth
+     to its square), at most doubling, between 1 and 40, starting at 6c's 10; the real pass takes its trial pass's
+     counts, the memory part of the skins' state. The momentum step solves the moving columns alone, to the last bit:
+     1.34-1.39 s against 1.90-1.96 s on the heated state (6 450 of 9 417 columns). Task 4's shear-rate fixed point
+     reaches its five-pass cap where bridge and slurry cells sit on the falling branch of Li et al.'s flow curve
+     (228-367 1/s): an unstable root the iteration drifts from at 1.1-1.8 a pass, not an unreachable tolerance or an
+     oscillation; the cap costs 5.3e-4 of the fastest speed at worst (1 571 of 35 419 bridge cells still moving after
+     five passes on the heated state). 6b's predicted heights at the shoulder's pile miss because the transport puts
+     arriving metal at the same fraction of the receiver's flowing depth, so fast top layers pass it on within the
+     sub-step, while the column model spreads a gain over the moving thickness: 0.16, 0.22 and 0.08 of the largest
+     change at 1, 0.25 and 0.05 ms. A heat sub-step on the heated state: 54-59 s with 6c's code, 43 s with 6d's at ten
+     flow sub-steps, 30-33 s at the nine chosen. One melting part (0.0625 s) with its trial pass: 1 113 s and 924 s
+     (trial, real) with 6c's code, 124 s and 115 s with 6d's (counts 8, 7, 5, 3, 2, 2, 2), 14-17 s without the flow, so
+     a melting macro step is about an hour against about eight; a trial pass at a fixed two flow sub-steps (64 s) would
+     make a base law 0.97 % of the throughput off. Tests: skin 80, skin body 17, command line 66; unit tier 490 passed,
+     1 skipped.
+158. **The droplet momentum sink (sub-plan 21 Task 7, 2026-10-24).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task7/`. The placeholder for stage 4's spraying: a release rate per
+     column [kg/(m2 s) of top area], which sub-plan 22 supplies from Girin's model, is taken in every flow sub-step
+     after the transport from the top cells (`skin.release_top`): the run of liquid cells (at or above the liquidus)
+     from the top and, with the slurry flag, every flowing cell down to the first rigid one; never rigid metal; at most
+     what those hold. Each cell's metal leaves at its own specific enthalpy and velocity, so the droplets' momentum is
+     the top cells' -- fact 29's mdot V_s with V_s the resolved surface speed -- and the books close with nothing new:
+     each column to 2e-16, the flow sub-steps' momentum to 2e-12 of the largest impulse, a skin body releasing 0.53 g
+     over two 0.25 s steps its mass to the last bit, energy to 9.8e-13 and momentum to 2.3e-17. Released once a heat
+     sub-step instead, metal the runoff had carried some 25 columns (5 m/s on 2 mm columns), up to 240 at the count's
+     cap, would spray. The trial pass releases what its real pass does, to the last bit; the release moves a heated
+     strip's base law by 0.20 % of the throughput. Fact 29's Pi per column per macro step is |released momentum| / |gas
+     shear's impulse|; the history's is the shear-weighted mean over the sheared tops and its flag counts the sheared
+     columns above 0.2, unsheared tops left out because 6d's runoff crosses the 100 mm sphere's rigid rear at 2.5-4.7
+     m/s under no gas shear (2 403 liquid tops on the driven state). By hand, on a Couette layer released at its top,
+     Pi_i = mdot (H - dz_0 / 2) / mu, 0.42 at 1 mm/s, to 2.2e-15. On the driven state at 93 s a windward release of
+     rho_l v_melt gives Pi 0.145 at 1 mm/s (1 146 of the 4 705 sheared columns flagged, the largest 0.26) and 0.015 at
+     0.1 mm/s, a third of fact 29's 0.48 and 0.048: the 0.3 mm layer, its viscous time 0.17 s, is far from its steady
+     Couette speed after 30 ms (4.3 against 15 m/s). The release costs 0.054 s a call on 9 417 columns against about 2 s
+     a flow sub-step. With no release every result is 6d's to the last bit (109 arrays: flow off, flow on, the flow
+     sub-steps). Tests: skin 87, skin body 18; unit tier 498 passed, 1 skipped.
+159. **Level 2 with the flow on, the flow's cost on the plate, and the share at short wavelengths (sub-plan 21 Task 8,
+     2026-10-24).** Spikes in `prototype/work-2026-10-18-column-flow/measure/task8/`. `analysis/skin_plate.py --flow on`:
+     flow off the plate is sub-plan 20's to the last bit. The push: on the plate the flight direction is the face's
+     normal, so `along_meridian` gives no direction along it; the flight direction is tilted 45 degrees (the face a patch
+     of the 100 mm sphere's shoulder at 93 s) and the face's columns take that point's surface flow, dp/ds -3.42e5 Pa/m
+     and 80.3 Pa down the meridian, with 29.8 m/s2 of deceleration along the tilted direction (net 2.9e5 Pa/m down the
+     face), on a plate 170 mm across so that the runoff stays off the edges. Regression (no push, the liquid released as
+     it forms, swelling off): the release takes liquid at the liquidus (908 K), instant removal at T_feed (910 K), whose
+     liquid layer about 2 K k_l / q thick moves the exact recession by 1.5-6.1 % (cold) and 5.4-17.6 % (hot) and the hot
+     non-rigid depth by 9 % (`ablation_1d.py --remove-at liquidus`); against those references both plates pass level 2 at
+     0.5 s as the flow-off plates pass against stage 2's (cold +2.4, +0.3, -0.8 % against the one-dimensional reference
+     and +0.6, -0.3, -0.6 % against the moved fine box; hot -1.6, -1.1 % at 1.5 and 2.0 s, flowing depth within 1.2 %,
+     base within 0.10 K), books to 2.2e-16, 5.2e-13 and 1.3e-16. The pushed plate's skins alone (the 170 mm flow-off plate
+     at 1.0 s pushed 0.2 s, base held, conduction on): books 3.5e-16, 1.4e-15, 4.4e-18; downstream 108 times the upstream
+     gain, the face's flux 0.8 degrees from -y; the liquid (45 um) at 0.78 of its Couette-Poiseuille speed (the
+     transport's 27-30 % loss); a ridge of deposit ending 18 mm past the heat, where a thin film's speed times the 10 ms
+     skin sub-step puts it (the flow sub-steps conduct no heat: 5 ms skin sub-steps pull 11 % of the deposit 5-10 mm back);
+     the grid scale's share of the face's thickness variance 0.14-0.16 % as the ridge grows; nothing at the edges. Flow
+     sub-step at the chosen count (Courant 5.9): 25 % off the 0.25 ms run in where the metal went (2.5 % on 6d's sphere),
+     two thirds the deposit's coasting front. Swelling off moves a third less metal. Cost alone on the 170 mm plate: a
+     10 ms skin sub-step 6.7 s with the flow against 3.5 s without, the transport a third of the flow. The coupled pushed
+     plate ran to 1.0 s (5 747 s alone; to 2.0 s about 6.5 h): books 4.4e-16, 6.5e-11, 1.2e-17, the runoff down the face
+     (12 times the upstream gain, the flux 2.2 degrees from -y), the liquid at 0.75 of Couette-Poiseuille, a deposit
+     tapering over 15 mm past the heat, nothing at the edges; its first melting macro step 5 229 s, because the deposits
+     are handed down and move bases, so every melting part is rejected for its moves and run again down to 0.0104 s
+     (880-950 s of processor time for each 0.0625 s against about 90 s), a real pass runs at its trial pass's counts up
+     to Courant 18.8, and a flow sub-step costs 0.25 s however few cells flow; and 1 761 base faults, 90 columns at the
+     heat's downstream rim and the deposit with bottom cells 5-400 K above their node (to 1 253 K), none flow off or on
+     the skins alone: spec 12's buried superheated cells back where runoff deposits. Short waves (`analysis/flow_wavelengths.py`): the share of the
+     flowing layers' volume flux at kh > 0.56 over flowing depths of at least 1 mm, on the surface Laplacian's modes, with
+     the flux-weighted excess of sqrt(kh / tanh kh) (inertial) and of the lubrication over the Stokes rate (viscous; 2.77
+     at kh = 1). On the 100 mm sphere given the element model's mean flowing depth (1.225 mm at 105 s, 3.384 mm at 120 s;
+     slurry under its 0.05 mm film) and 0.1 s of flow alone: at 1.2 mm 0.1-1.2 %, excess 0.2 % (inertial) and 1.7 %
+     (viscous); at 3.4 mm 5-7 % after 10 ms and 26-36 % after 100 ms, excess 5-8 % and 94-201 %, on the fronts of a pile
+     8-9 mm deep that the draining slurry builds at the shoulder (wavelengths 18-36 mm), 78 % at 0.4 s of a flux six times
+     smaller as the pile comes to rest; liquid 5 %. Measured again on the flow-on flight's own states in sub-plan 22
+     before deciding whether it is significant; the base where runoff lands is fixed first, in a Task 9 of sub-plan 21
+     (Asha, 2026-10-25, both option a). Tests: skin body 21, flow wavelengths 5; unit tier 506 passed, 1 skipped.
+
+160. **The base where runoff lands (sub-plan 21 Task 9, 2026-10-25/27).** Spikes in
+     `prototype/work-2026-10-18-column-flow/measure/task9/`. *The cause* of Task 8's base faults and superheated bottom
+     cells, traced column by column on its pushed plate reduced to 60 mm (the same faults, bottom cells to 1 111 K and
+     rejections; 262 s to 1.0 s): sub-plan 20's moving mesh booked an outward sweep at the base node's enthalpy while
+     the skins handed down their bottom cells at their own -- 35-67 K/mm warmer than the node where a deposit's heat is
+     conducting down -- and the reconciliation put the difference into the skin's new bottom cell, often a sliver the
+     hand-down left (1.4 % of a cell at 3 709 K); summed over a part it is the handed metal's excess to 0.1 %, and no
+     neighbour's draw plays a part. The counter judged a hand-down against the node alone and counted the warmer cell a
+     hand-down uncovers, not the superheating. The rejected parts were the move allowance doing its job: a rigid deposit
+     grows as conduction into cold metal allows, 0.6-1.75 mm in 0.0625 s on 850-735 K metal, 1.1-3.2 allowances a part.
+     *Decided* (Asha, 2026-10-26; spec 6.6, 16): handed metal booked at its own enthalpy (A), only metal within 5 K of
+     the node handed down (C), a fault judged after the reconciliation against the metal that crossed, for a hand-down
+     the handed cells and the cell it uncovers as the hand-down left it (K2, in the wording Asha adopted after the
+     build), and the real pass taking the larger of its trial pass's flow count and its own, its own where the trial
+     flowed nothing. *Landing*: the columns metal lands on top of have their top 0.4 mm conducted adiabatically in every
+     flow sub-step after; at 10 ms heat sub-steps the share of the pushed plate's deposit landing 5-10 mm past the heat
+     falls from 9.9 % to 3.0 % (0.9 and 0.7 % at 5 and 2.5 ms), at 2-3 % of the flow's cost. *Task 8's pushed plate
+     again*: its first melting macro step rejects no part (every part from the fifth before), no bottom cell is heated
+     by the reconciliation (the hottest cell 910.8 K against 1 253 K), real passes at most at a Courant number of 9.2
+     (18.8), 3 878 s (5 229 s) -- each part still four or five damped passes, the real passes now at the Courant target;
+     the first macro step's real pass 54 flow sub-steps (380). Judged by the handed cells alone the counter counted the
+     cell a hand-down uncovers where the skin's gradient is steep (456 to 1.0 s, none a heated cell); with that cell in
+     the range it counts none of the reduced plate's 17 to 1.0 s. C holds the warm deposit in the skins, unbounded
+     (Asha, 2026-10-26: recorded in the history, `held_mass_kg` and `held_depth_max_mm`, for sub-plan 22's flow-on
+     flight to report, a bound set only if the skins grow too thick), and the held metal had not levelled off by 1.5 s:
+     12.0 g in 632 columns, up to 4.05 mm, rising at 11 g/s at the end (about 0.3 kg over 30 s of melting if the 100 mm
+     sphere's runoff deposited as the plate's does), the plate's cells 2.5 % more. In the plate's last part to 1.5 s the
+     base surface's sharpest fold reached 95.3 degrees and 33 faults were not uncovered cells (the runoff had spilled
+     over the plate's edge; below). Flow off, A alone moves results (C bit-identical): the level-2 plates' centres by
+     1e-8 mm at 1.0 s and up to 0.004 mm at 2.0 s, both still passing; the flow-on regression passes against the
+     liquidus's references (cold +2.4, +0.5, -1.2 %; hot -3.4, -1.5 % at 1.5 and 2.0 s, 1.8 points behind Task 8's at
+     1.5 s, no single change accounting for it). *Run on to 2.0 s* (2026-10-27) the pushed plate closed its books to
+     1.5 s and failed at 1.60 s, its base surface folded to 159 degrees: the deposit folds it -- handed down, it ridges
+     at the scale of one triangle in the heating's taper (the face's own fold rising about 90 degrees a second from 1.0
+     s) and piles up where the runoff spills over the plate's square edge, and the reduced plate fails without C too
+     (1.92 s) -- but C made it fast, releasing a held cell whole once near its node's temperature: a thick skin's deep
+     cells are as thick as the move allowance (0.18 mm median, up to 0.79 mm, against 0.556 mm), so from 1.56 s parts
+     were split in vain (1.026 allowances at 62.5 to 7.8 ms), 8 of the last 15 kept over the allowance, and the 12.4 g
+     held came down in 0.039 s. *Decided* (Asha, 2026-10-27, option 1 then 2; spec 6.6, 7.1, 12, 16): a part hands
+     down at most its move allowance, a cell going in part, so a hand-down never splits a part; the pushed plate is
+     judged at 1.5 s, the deposit's folding a watched risk for sub-plan 22 (a neighbour-depth limit or local refinement
+     the fallback). With the cap the reduced plate is the same to the last bit until the cap first holds metal back
+     (1.4375 s; flow off, never, to 2.0 s), and at 2.0 s folds to 103 degrees against 132, 2 rebuilds against 8. From
+     1.5 s with the cap the full plate split no part, its held metal fell at about 26 g/s (260 without), and it failed
+     on the deposit's folding at 1.80 s (the face's fold 99 degrees, the spilled edge's 127.5). Tests: movemesh one,
+     skin body seven (6d's counts test rewritten; two of them the cap's), skin three, the coupled run's results one
+     assertion; unit tier 517 passed, 1 skipped.
+
+## Amendment of 2026-10-28 — sub-plan 22 Tasks 1a and 1b: the element model's spraying amendments of 2026-10-22 brought across, and the droplet's cap per crest (facts 161–171)
+
+> Decided by Asha on 2026-10-28 (sub-plan 22's amendment of that date: the two amendments come into this line first, with
+> their tests, the viscous film's floor on the skins the flowing depth) and on 2026-10-24 (the cap). Facts 161–168 are
+> branch `we-critical-308`'s facts 108–115 (commits fa02a4c and a54520c, cut from `main` at 612b916, not merged),
+> renumbered by 53 because this line's 101–160 hold other facts: each says which it was, their references to one
+> another follow the new numbers, a reference to that branch's 101–107 (its frame export of 2026-10-08, not on this
+> line) says so, and their paths are on that branch. Facts 1–100 are the same on both lines. Facts 1–160 stand except
+> where these say otherwise; 169–171 are Task 1's own (1a, 1b, and the measurements for 1c).
+
+**On `we-critical-308`: its amendment of 2026-10-22 (critical Weber number), facts 108–110 there.** Girin (2017, A&A 606, A63) states the gradient instability's threshold as a surface Weber number of 3.08 and then, in
+his Section 3, recommends 4.62 "in practice" (GI ≥ 0.6 instead of 0.4, after Girin 2011a), because near the threshold
+the fastest wave is longer than the meteoroid's radius and its induction period longer than the meteor's life; his
+Appendix C explains what the threshold means (the melt's inertia against the surface tension of a disturbance of
+curvature radius about δ_m) and uses 4.62 without deriving it. Both reasons are represented explicitly in this model,
+so Asha decided on 2026-10-22 that 3.08 is the default. It amends sub-plans 04 (the constants' comments), 07 (the
+spray model's default), 13 (the flag's default), 14 (the sensitivity variant) and 15 (the README, the assumptions and
+the spec). That branch's facts 1–107 stood except where these say otherwise. Made in `prototype/work-2026-10-22-we-critical/`
+(tracked; run outputs ignored); its base is the frame-export copy of that branch's facts 101–107 (its amendment of 2026-10-08, which this line does not have), and the six diffs in `amendment/`
+rebuild `code/` from it exactly.
+
+161. **Girin's theoretical threshold is the default.** (`we-critical-308`'s fact 108.)
+     - Why: the two effects his 4.62 stands in for are in the model. `spray.wave_fits` lets a patch spray only if one
+       whole fastest wavelength fits inside the contiguous molten region it belongs to (sub-plan 07), and the growth
+       period k_t δ_m/(V_s Im Ω_f) sets the stripping rate, which falls to zero with Im Ω_f as We_s falls to 3.08
+       (sub-plan 04's table: Im Ω_f is 0.049 at 4.62 against 0.24 at large We_s). Keeping 4.62 on top of them counts the
+       near-threshold restriction twice. His 4.62 was set on 3 mm bodies lasting seconds; the 100 mm sphere is about 30
+       times his radius and flies for minutes.
+     - `--we-critical` and `SprayModel(we_critical=...)` default to `dispersion.WE_CRITICAL_THEORY` (3.08);
+       `WE_CRITICAL_PRACTICAL` (4.62) stays for `girin_case`, whose Girin-as-published mode reproduces his Table 1
+       critical angles only with it (fact 10), and as the sensitivity variant `we462`, which replaces `we308`.
+     - The same threshold gates the thin, rarefied and regime-2 branches (fact 32, 2026-09-24), whose
+       Girin & Kopyt modes have none of their own; they now borrow 3.08 instead of 4.62 (superseded the same day by
+       the thin-gate amendment, facts 164–168: they no longer borrow it).
+     - Tests: unit tier 261 passed, 1 skipped, with only Task 11's five known reference failures, as on the
+       frame-export copy (`unit_code.log`); the two spray tests and the CLI settings test now compare with 3.08.
+
+162. **Measured: the 100 mm flight changes by less than its known uncertainties.** (`we-critical-308`'s fact 109.)
+     - Two flights of the 100 mm Scheil sphere to 120 s with every default of the continuum-step copy
+       (`prototype/work-2026-10-07-dt-continuum/meas/`, checksum manifest verified unchanged before the second run;
+       the frame-export additions are write-only, that branch's fact 105), differing only in `--we-critical`: `runs/default_d100`
+       (4.62, 2026-10-07) and `runs/wecr308_d100` (3.08, 2026-10-22). Compared by `compare_wecr.py` in this amendment's
+       folder (`compare_wecr.out`). Each measured once.
+     - Sprayed mass 1.1654 → 1.1669 kg (+0.13 %); spraying onset unchanged (25.0 s, 74.04 km); final mass 0.3066 →
+       0.3051 kg; refrozen mass 0.486 → 0.440 kg; the runoff account 3.85 → 3.71 kg.
+     - Droplets: number-median radius 68.5 → 69.0 µm, mass-median 189.2 → 188.1 µm (both under 1 %); count
+       76.9 → 83.0 million (+7.9 %, inside the 9 % the count moved on a 1.4 mm surface mesh in the abstract's
+       grid-gate check).
+     - Underneath, 215 g (18 % of the spray) now leaves at 3.08 < We_s ≤ 4.62 — 192 g by the thin branch and 23 g by the
+       thick (Girin 2017) one — against 0.24 g (Rayleigh–Taylor only) at 4.62. By branch: thick 0.777 → 0.730 kg, thin
+       0.321 → 0.370 kg, Rayleigh–Taylor 0.068 → 0.067 kg. The total is limited by the melt supply, not by the
+       threshold: what the lower threshold releases earlier would otherwise have run off and sprayed elsewhere.
+     - Cost 8,207 → 8,578 s (+4.5 %).
+
+163. **Not done, and for Asha to decide.** (`we-critical-308`'s fact 110.)
+     - (a) **The borrowed threshold.** Most of what the switch moves is on the thin branch, whose inviscid mode has no
+       threshold of its own; 3.08 there is as borrowed as 4.62 was. A threshold derived for Girin & Kopyt's thin mode
+       (or the measured sensitivity standing in for one) is open.
+     - (b) **Not re-run:** the 50 mm flight, another mesh, and Girin removal past 120 s. The ASCEND 2027 abstract's
+       numbers were made at 4.62; by fact 162 they move by under 1 % except the count.
+     - (c) **The layered-skin line** (`step3-rigid-substrate-scheil`, sub-plans 19–22) numbers its own facts 101–155
+       and carries copies of `cli.py` with the 4.62 default; this amendment reaches it when `main` is merged into it,
+       and the facts need renumbering then (101–107 already collide). (Since 2026-10-28 on this line: brought across in sub-plan 22's Task 1a and renumbered, fact 169.)
+
+**On `we-critical-308`: its amendment of 2026-10-22 (thin gate), Girin & Kopyt's branches losing the borrowed threshold and gaining a viscous film, facts 111–115 there.** Fact 163 (a) left the thin branch borrowing Girin 2017's critical surface Weber number. Asked to find a threshold for
+it the way Girin found 3.08, Girin & Kopyt's Eq. 5 was solved (`prototype/work-2026-10-22-thin-threshold/`, its
+`REPORT.md`), and it has none (fact 164). Asha then decided on 2026-10-22 that the thin, rarefied and regime-2 branches
+lose the borrowed gate, so the wave fit decides, and that they gain a viscous gate for a film on a rigid floor (fact
+165). It amends sub-plans 07 (the spray model), 09 (the body records the gate's reject), 10 (two history columns, two
+result fields), 13 (the flag's help) and 15 (the README, the assumptions and the spec). That branch's facts 1–110 stood except where
+these say otherwise; **fact 161's third bullet and fact 163 (a) — the thin branches borrow 3.08 — are superseded.** Made
+in `prototype/work-2026-10-22-thin-gate/` (tracked; run outputs ignored); its base is the critical-Weber copy of facts
+161–163, and the six diffs in `amendment/` rebuild `code/` from it exactly. The measurement copy `meas/` was frozen with
+a checksum manifest before its run; `code/` differs from it only in the help text of `--we-critical` and the place
+of one comment in `spray.py`, both changed after.
+
+164. **Girin & Kopyt's Eq. 5 has no critical Weber number** (`we-critical-308`'s fact 111.) (`gk_dispersion.py`, `scan_we.py`, `REPORT.md` in the
+     thin-threshold folder).
+     - Eq. 5 was re-derived from the paper's Fig. 2 (inviscid layer at rest on a rigid floor, compressible gas at V0) and
+       matches as printed. Solved with the gas root on its decaying branch, checked against the closed form at M = 0
+       (four digits) and against its own large-wavenumber expansion.
+     - The largest growth rate over all wavelengths is positive at every gas Weber number ρ_g V0² b/σ: supersonic gas
+       radiates (wave drag) at every wavelength down to nanometres; subsonic gas is Kelvin–Helmholtz, whose long waves
+       always grow. So no We_cr exists as Girin's 3.08 does for his Eq. 1.
+     - Bounded by the molten region L and their dissipation limit (their Eq. 9) a threshold appears, and the film depth
+       cancels from it: subsonic, the capillary cutoff 2πσ/(ρ_g V0²) must fit in L; supersonic, the shortest surviving
+       wave 0.5Mσ/(ρ_g V0²) must. Measured on α = 4×10⁻⁷, b = 20 µm, L = 10 mm: 0.0126 against 0.0126 predicted
+       (subsonic), 0.0025 and 0.0032 against 0.0020 and 0.0030 (M = 2, 3). `wave_fits` on λ* = 1.5Mσ/(ρ_g V0²) is the
+       same criterion on the dominant wave, three times stricter.
+     - Their asymptotic Eq. 8 does not follow from Eq. 5 as printed (it puts the capillary frequency into the growth);
+       Eq. 5's root does reproduce their Eq. 9, so λ* and τ* (their Eqs. 11, 12), which `thin_film_mode` uses, stand.
+
+165. **The gates on Girin & Kopyt's branches** (`we-critical-308`'s fact 112.) (`spray.py`).
+     - Girin's We_s > We_cr gates the thick branch only; the thin, rarefied and regime-2 branches are gated by
+       `wave_fits` on λ* and by `viscous_film`. We_s is still computed and written to the source table.
+     - `viscous_film(lam, tau, h, liquid)`: the amplitude damping rate of the dominant wave on a layer of depth h over a
+       rigid floor, Γ = 2νk² + k√(νω/2)/sinh(2kh) with ω² = (σk³/ρ_l) tanh(kh) — Lamb's interior damping plus the
+       floor's Stokes layer (Hunt 1952, as in Mei). The patch releases nothing where Γτ* ≥ 1. Where h < √(2ν/ω) the
+       floor's boundary layer fills the liquid and the inviscid mode does not apply: the patch is rejected and recorded
+       (a validity limit, not a finding that nothing leaves; the factor 2 is a convention).
+     - h is the depth to the rigid floor: the non-rigid depth the regime test uses (`regime_layer`, falling back to
+       `b_layer`, then b), not the film. **Open assumption:** mushy material more than half liquid counts as non-rigid
+       there but is far more viscous, so the effective floor may lie inside that layer and the damping be larger.
+     - Regime 2 is classified but never sprays: for any melt more viscous than the gas, Lamb's term alone gives
+       Γτ* = 63ν√(ρ/σ)λ^−½, above 1 at every wavelength below kilometres (ν above 0.018 m²/s, the smallest edge ν_gas
+       measured). For liquid aluminium it never fired anyway.
+     - An interim gate of Lamb's term alone was tested and its flight stopped unfinished (`runs/thingate_d100_oldgate_stopped.log`)
+       when this one replaced it; no result of it is used.
+
+166. **What the reject removes is recorded, and the tests.** (`we-critical-308`'s fact 113.)
+     - The spray result carries `h_floor`, `gamma_tau` and `outside` per patch (nan / False off Girin & Kopyt's
+       branches, and where the Rayleigh–Taylor mode took the patch). The body counts the windward patches outside the
+       mode's validity and the film they hold: history `thin_invalid_patches` and `thin_invalid_mass_kg` (per step),
+       results `thin_invalid_patch_steps` and `thin_invalid_mass_max_kg` (the most film held in one step). The source
+       table gains `h_floor_m` and `gamma_tau` (24 columns).
+     - Five new tests: on deep liquid the damping is Lamb's; a thin layer is damped more than Lamb predicts; a layer
+       below the Stokes depth is rejected and flagged; the damping uses the non-rigid depth, not b; the body counts the
+       reject and the film it holds (a 2 µm film at 70 km: 2,034 of 2,043 thin patches outside). Nine tests changed
+       because the thin branch now sprays where the borrowed gate held it: the old gate test (now its absence), two
+       Rayleigh–Taylor tests (their nose patches now carry a near-stagnation edge velocity, so λ* does not fit), two
+       regime-2 tests (fully damped), two with rarefied cases (a floor 1 mm down, since the 7.5 mm wave's Stokes
+       layer, 0.14 mm, exceeds a 20 µm film), the slurry test (the classification read from the spray result) and the
+       source-table width.
+     - Unit tier 266 passed, 1 skipped, with only Task 11's five known reference failures: the base copy's 261 and the
+       five new tests (`unit_code.log`). `b_m` in the source table is the film thickness m_f/(ρ_l A) before the step's
+       release (`body.py`), the shallowest of the depths.
+
+167. **Measured: the 100 mm flight sprays the same mass, as twice as many droplets, half the mass median.** (`we-critical-308`'s fact 114.)
+     - The 100 mm Scheil sphere to 120 s, every default, on `meas/` (`runs/thingate_d100`, 2026-10-22, 8,725 s), against
+       fact 162's 3.08 flight (`wecr308_d100`), by `compare_thin.py` (`compare_thin.out`). Each measured once.
+     - Sprayed 1.1669 → 1.1836 kg (+1.4 %); onset unchanged (25.0 s, 74.04 km); final mass 0.3051 → 0.2884 kg;
+       refrozen 0.440 → 0.086 kg; the runoff account 3.71 → 1.99 kg.
+     - By branch: thick 0.730 → 0.253 kg, thin 0.370 → 0.866 kg, Rayleigh–Taylor 0.067 → 0.066 kg. 0.836 kg of the
+       thin spray (150 million droplets) leaves at We_s ≤ 3.08, which the borrowed gate held back: the melt is stripped
+       while the film is thin instead of running off, refreezing or deepening into the thick branch.
+     - Droplets: count 83.0 → 158.3 million (+91 %); number-median radius 69.0 → 69.4 µm; mass-median 188.1 → 110.7 µm.
+     - Where: thin spray by angle from the stagnation point, 0–10° / 10–30° / 30–60° / 60–90°: 0.000 / 0.051 / 0.193 /
+       0.127 kg before, 0.022 / 0.176 / 0.415 / 0.252 kg now — 22 g inside 10°, where none left before.
+     - The viscous gate binds now: on the thin releases Γτ* reaches 1.0 (median 0.24, mass-weighted mean 0.44; on the
+       3.08 flight, computed on the film, 0.12 / 0.87 max), the floor depth h has a median of 65 µm, and h reaches one
+       Stokes depth (median 11). The reject took 8.18 million patch-steps over the 5,739 macro steps, holding at most
+       0.20 g of film in one step. On 16 % of the thin rows (4.4 % of the thin mass) the droplet radius was capped, so
+       the statistics use the gate's recorded Γτ*, and h over the Stokes depth only the uncapped rows.
+
+168. **Not done, and for Asha to decide.** (`we-critical-308`'s fact 115.)
+     - (a) **Spray inside 10°.** 22 g of thin spray now leaves within 10° of the stagnation point, the region the
+       borrowed gate was added to stop on 2026-09-24 (fact 32: 2.2 g, measured before `wave_fits` read the molten
+       region). Whether λ* fitting in the nose's molten cap is physical there, where Girin & Kopyt assign the front
+       surface to their Rayleigh–Taylor mode, is open (spray.py's KNOWN LIMITATION: no front/side split).
+     - (b) **What Γτ* ≥ 1 held back** is not recorded; only the validity reject is. A per-step mass like the reject's
+       would say whether the damping gate or the reject moves the totals.
+     - (c) **The droplet population changes:** the ASCEND 2027 abstract's mass median (189 µm) and count (77 million)
+       came from the gated flight; on this one they are 111 µm and 158 million.
+     - (d) **Subsonic patches** are outside Girin & Kopyt's derivation (supersonic side surface); how much thin spray
+       comes from patches with edge Mach number below 1 was not measured.
+     - (e) **Not re-run:** the 50 mm flight and another mesh. The layered-skin line (`step3-rigid-substrate-scheil`)
+       carries none of this until `main` is merged into it (fact 163 (c)). (Since 2026-10-28 it carries both amendments' code and tests, fact 169.)
+169. **The amendments brought across (sub-plan 22 Task 1a, 2026-10-28).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task1/` (`cmp/`). The twelve diffs of facts 161 and 166 (the two
+     `amendment/` folders on `we-critical-308`) apply with `patch` to the planning copy, sub-plan 21's tested code at
+     0f0425e, but for three hunks taken by hand where this line's code differs from that branch's base for reasons outside
+     the amendments: the element model's step record ends in sub-plan 18's resolved depths (`**depths`), `MELT_COLUMNS`
+     lacks `p_w_stag_step_Pa`, and the CLI test's settings line lacks `v_hat_body` -- the last two that branch's frame
+     export of 2026-10-08 (its facts 101–107), which this line does not have. `spray.py`, `dispersion.py`,
+     `analysis/melt_sensitivity.py` and the spray and melting tests are then that branch's to the byte, but for
+     `dispersion.WE_CRITICAL_THEORY`'s comment, which cites fact 161 for its 108. This line's element model also carries
+     sub-plan 18's one-dimensional skins (off by default) with 23 skin and resolved-depth history columns, and sub-plan
+     21's `dp_ds` in the surface flow; none changes a number. On the CLI test's short melting case (15 s from 71 km at
+     7.24 km/s, 800 K, physics heating, the continuum step at 0.1 s: 76 history rows, about 30 s a run) this line's element
+     model and the branch's tested copy agree to the last bit in all 92 history columns they share, all 24 fields of the
+     25 266 source rows and every result they share. The case exercises the thick branch (12 899 rows, 0.190 kg; 242 of
+     them, 5.0 g, at 3.08 < We_s ≤ 4.62, which 4.62 held back), the thin branch (11 722 rows, 0.113 kg; 6 985, 8.5 g, at
+     We_s ≤ 3.08, which the borrowed gate held back), the viscous film (Γτ* up to 1.0, median 0.19, the floor's median
+     132 µm), its validity reject (28 590 patch-steps, at most 0.069 g of film in a step) and the Rayleigh–Taylor mode
+     (645 rows, 0.213 kg); the rarefied and regime-2 branches only in the unit tests (nothing melts under free-molecular
+     flow in the case, and regime 2 never sprays liquid aluminium, fact 165). Against this line before: sprayed 0.51587
+     rising to 0.51611 kg, thin rows 4 586 to 11 722 (0.103 to 0.113 kg), droplets 7.63 to 8.15 million, the history's
+     median radius 198 to 193 µm. Each run once, on mains power. The branch's sub-plan amendments (04, 07, 09, 10, 13,
+     14, 15) are not brought across: they describe `main`'s element-model plans and reach this line with the merge.
+170. **The droplet's cap per crest (sub-plan 22 Task 1b, 2026-10-28; decided by Asha 2026-10-24).**
+     `SprayModel.evaluate(..., cap_depth=None)`: with a depth h the radius is capped at (3 λ² h / (4π))^⅓ and a quarter
+     of the body radius, λ the spraying mode's wavelength, which the result now carries (`SprayResult.wavelength`: the
+     thick branch's 2π δ_m / Δ_f, Girin & Kopyt's λ* on the thin, rarefied and regime-2 branches, the admitted
+     Rayleigh–Taylor wavelength), and nothing leaves where h is zero; without it the film-mass cap, bit for bit: the short
+     case of fact 169 with the cap's code is the same as without it in all 115 history columns, the source table and the
+     results. It binds on the thick branch only where h is under about 0.021 λ (k_r = 0.17; 18 µm at λ = 0.89 mm), on the
+     thin branch under 0.065 λ* (30 µm at 0.46 mm), and on the Rayleigh–Taylor mode on any layer under about 4.2 λ, so
+     always. The outline's check holds: 4.57 mm at λ = 2 cm and h = 1 mm. On the element model's thin-gate flight (fact
+     167) the Rayleigh–Taylor droplets, held by the film cap on films of 12.7 mm (median), were 1.8–2.6 mm (10th to 90th
+     percentile of 620 rows; 2.26 mm the median by mass, 3.15 mm the largest; 65.5 g, 5.5 % of the spray); on the 100 mm
+     sphere's skins with 3.4 mm flowing under 103 m/s² (fact 171) they are 3.05, 4.56 and 6.72 mm on 0.3, 1.0 and 3.3 mm
+     of liquid (λ 19.7 mm). For the size bins: where the Rayleigh–Taylor depth criterion reads the cap's own depth h, it
+     admits only λ* < 2π h, so r < (3π)^⅓ h, about 2.1 h -- inside the top bin's 10 mm while h is under 4.7 mm, and below
+     the 100 mm sphere's quarter-radius cap of 12.5 mm. A 4.6 mm droplet holds about 1 g, so these move the count by
+     almost nothing and the mass in the top bins by what the mode releases. Tests: four (each mode's crest on two depths,
+     the area, a depth of nothing, the film cap as before); spray tests 23.
+171. **Girin on the skins: its cost, and what the depths decide where liquid lies on slurry (sub-plan 22 Task 1c's,
+     2026-10-28; `spray_skins.py`, `cascade_gate.py`).** On the 100 mm sphere's 9 417 columns, once a macro step: the
+     flowing and liquid depths read from the skins 0.036–0.045 s, δ_m and Girin's V_s 0.4 ms, the molten region on the
+     corner graph 1 ms, `SprayModel.evaluate` with the cap 1.3–1.6 ms, 0.04–0.05 s in all (the mean of 20 on each of five
+     states, under other sessions' load), against 0.06 s for the surface flow the flow already evaluates each macro step,
+     about 2 s a flow sub-step and about an hour of processor time a melting macro step (fact 157). On sub-plan 21's
+     heated state at 93 s (0.15 mm liquid over 0.57 mm slurry, medians) and on states built with 0.3 mm of liquid over
+     0.9 and 3.1 mm of slurry at 105 and 120 s (the constant-mass trajectory's 39 and 53 m/s²) every windward column is
+     under Girin's closure and flows deeper than δ_m, so takes the thick branch (4 618–4 636 of 4 705 release), and the
+     Rayleigh–Taylor mode is nowhere. At 103 m/s², the ablating flight's 10.5 g, with 3.4 mm flowing, the reading decides
+     the nose: with the Rayleigh–Taylor criteria on the flowing depth (one flowing film) the mode takes 79 columns 1–10
+     degrees from the stagnation point from the thick branch (λ 19.7 mm, droplets 3.05 mm on 0.3 mm of liquid, a demand of
+     0.27 kg/s on the 0.19 g of liquid they hold); on the liquid depth (the element model's split, amendment of
+     2026-10-06) none, and 69 of the 79 release nothing; with the layer all liquid both give the 79. Off Girin's closure
+     the element flight held liquid on slurry from every shear mode (the same amendment) up to 17.9 g, at 48 s, in 51
+     steps (fact 167's run). The slurry cascade's thin mode with Li et al.'s 0.87–5.6 Pa s at 93 s has Γτ* = 24–526 on
+     every windward column (liquid aluminium's 0.13): under the viscous film the cascade releases nothing. Measured once
+     each.
+
+## Amendment of 2026-10-29 — sub-plan 22 Task 1c: Girin's spraying from the top cells, and where the cascade releases (facts 172–173)
+
+> Decided by Asha on 2026-10-29 (spec §8 and §16 as amended that day): where liquid lies on slurry the skins read their
+> depths as the element model does (option B), the slurry cascade is built as spec §8 has it (option i), and Task 1c's
+> two choices within the spec stand (Girin once a macro step at its start; his closure's surface velocity). Facts 1–171
+> stand except where these say otherwise; **fact 171's last finding, that the cascade releases nothing under the viscous
+> film, is corrected by fact 173**: it held for Li et al.'s slurry, not for the bridge to the liquid.
+
+172. **Girin from the top cells, built (sub-plan 22 Task 1c, 2026-10-29).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task1c/`. `skinbody.girin_plan` evaluates Girin at the start of
+     every macro step on the corners from the surface flow the flow's forcing evaluates (`FlowForcing.result`) and the
+     skins' depths then: b, the regime test and the viscous film's floor on the flowing depth, the Rayleigh–Taylor mode on
+     the liquid pool (the shared model's new `rt_layer`, its depth criterion, growth and shed depth), the molten region
+     the liquid columns' contiguous region on the columns' graph, a liquid on slurry held off Girin's closure (judged on
+     the cells), the cap on the liquid with slurry spraying off and the flowing depth with it on, his closure's surface
+     velocity, the windward columns only, the quarter-body cap on the top surface's transverse radius. `SprayPlan.release`
+     gives the same `skin.Cascade` of rates in every flow sub-step of the macro step, and `skin.cascade_mass` takes the top
+     cells in time order, each at its phase's rate. On the 4 mm test sphere heated at 3 MW/m² from 890 K under the 100 mm
+     flight's gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step: the tops melt in the first; the
+     second's plan finds liquid on 156 columns and a mode on 144, all thick, which release 1.54 g as 71 000 droplets (radius
+     median 126 µm, the liquid 16.5 µm deep at the start, median); mass to 1.5e-16, energy to 2.9e-11 of the heat absorbed,
+     momentum to 1.1e-17; Pi 0.008. Without a spray model the skin body is Task 1b's to the last bit in all 147 arrays of
+     three runs (flow off with removal, flow on, flow on with a prescribed release), and the element model's short case
+     (fact 169) in all 115 history columns, the source table and the results. The plan costs 0.09 s of processor time on
+     the 100 mm sphere's heated state, 0.51 s with the cascade (one shared-model evaluation per column with slurry beneath
+     its liquid, 4 705). Tests: spray one, skin two, skin body four; unit tier 533 passed, 1 skipped.
+173. **Where the cascade releases (sub-plan 22 Task 1c, 2026-10-29; `cascade_where.py`, `bridge_mass.py`, `body_run.py`).**
+     The exposed slurry's mode takes its first cell's properties: Li et al.'s viscosity with the log-linear bridge to the
+     liquid over 906.4–908 K (no data) at the cell's solid fraction and its sheared layer's shear rate by fixed point, its
+     mixture density, 0.80 N/m. Swept on the 100 mm sphere's columns with the slurry exposed (a top cell at T over 0.5 mm
+     of slurry at 902 K): at T ≤ 907.0 K (μ 0.033–5.0 Pa·s) the viscous film blocks every column, Γτ* 3.2–470 at 93 s and
+     4.3–610 at 120 s under 103 m/s²; at 907.2 K (17 mPa·s) 20 and 7 columns spray, at 907.4 K (9.1 mPa·s) 3 223 and
+     1 422, from 907.5 K (6.6 mPa·s) nearly all (4 618 and 4 636 of 4 705), by the thick branch from 907.7 K, at rates of
+     0.2–2.5 t/(m² s), the liquid's 2.3. So the cascade releases only slurry within about 0.6–0.8 K of the liquidus. On a
+     heated surface that is the slurry beneath the liquid: on sub-plan 21's heated state at 93 s the first slurry cell
+     under every windward column's liquid is at 907.78–908.00 K (median 907.98), and a flow sub-step of 1 or 10 ms that
+     strips the 6.57 g of liquid takes 0.35 g of it with the flag on (5.1 %, from 4 618 columns; one cell, about 10 µm).
+     A per-cell evaluation in every flow sub-step (the 2026-10-07 design to the letter) would take within the macro step
+     the slurry down to about 907.3 K, 1.56 g (about 40 µm); the floor Task 1c rules (the rate for slurry at least as warm
+     as the cell that gave it) takes the first cell and the rest over the next macro steps. On the 4 mm test sphere's step
+     above, with the flag on: 4.98 g of slurry from 615 columns (471 of them with no liquid at the step's start, their top
+     in the bridge at 907.19–908.00 K) and 0.79 g of liquid, against 1.54 g of liquid with it off; 89 000 droplets, the
+     slurry's radius median 187 µm; the books as with it off (mass 1.5e-16, energy 1.4e-11, momentum 3.8e-17). Metal
+     heated through the last kelvin before the liquidus is stripped there, as slurry of a few per cent solid. Off by
+     default; measured once each.
+174. **The droplet records from the skins, built (sub-plan 22 Task 2, 2026-10-29; `body_records.py`, `cost_records.py`).**
+     Spikes in `prototype/work-2026-10-28-skin-spraying/measure/task2/`. The release books what it took by the cells it
+     came from (`Skins.take_top_mass(..., phase=)`, `ReleaseBook.by_phase`, `FlowBook.phase_*`): the fully liquid cells
+     are the liquid's mode's, the others the exposed slurry's, since the cascade takes each cell at its own phase's rate;
+     a column that took one kind gives it its totals to the last bit. The skin body adds an accepted pass's split to the
+     plan's record (`SprayPlan.book`) and at the macro step's end writes it as rows of `spray.SOURCE_COLUMNS` through the
+     shared `spray.source_block` (`SprayPlan.source_block`), one per column and mode, at the plan's radius, kept one
+     array a macro step in `SkinBody.source_rows` and read by `coupled.write_particles` through `spray.source_table`;
+     the plan's `Cascade` bins each flow sub-step's release at the plan's radii (`SprayPlan.histogram`), an accepted
+     pass's bins added to `hist_n`, `hist_m`. On the 4 mm test sphere's spraying run of fact 172 with slurry spraying on,
+     the second step's 759 rows (144 of the liquid's thick mode, 615 of the slurry's; the 144 liquid columns give both)
+     carry the books' released mass to the last bit printed (5.76888 g), their enthalpy (dm h_kg summed) to 1.5e-16 and
+     the droplets' momentum to 4.7e-17; the sub-steps' histograms have the rows' 14 bins, to 1.6e-12 droplets of the
+     89 173 (3.4e-11 of a bin holding 0.065: numpy's weighted histogram takes each bin as a difference of running sums
+     over every droplet, so its error is the step's, not the bin's). Liquid records: solid fraction 0 to 2.3e-11 (the
+     property table's interpolation across the liquidus), h_kg 1.043-1.044 MJ/kg; slurry records: solid fraction
+     8.5e-6 to 0.041 (median 0.0061), h_kg 1.026-1.043 MJ/kg, radius median 187 um, We_d by 0.80 N/m 3.8-108 (36 rows
+     above 12), Oh by the slurry's viscosity 5.2e-4 to 9.2e-3. The skin body's state is Task 1c's to the last bit with
+     the flag off and on (the plan's record differing in round-off, 1.8e-15 at most, against Task 1c's subtraction of the
+     cascade's slurry share), and without a spray model in all 147 arrays of fact 172's three runs. Cost on the 100 mm
+     sphere's heated state with the flag on (a 1 ms release of 6.9 g, 4 613 columns giving both kinds): the release
+     0.113 s of processor time against 0.079 s without the split, the histogram 1.1 ms, the macro step's 9 231 rows
+     1.4 ms; about 2 s a flow sub-step. Volume: a row per spraying column and mode per macro step, 4 600-9 200 at 93 s, so
+     0.37-0.74 million a second of flight (75-150 MB) at the 12.5 ms continuum step. The summary file waits for sub-plan
+     22 Task 4's history columns. Tests: spray one, skin two, skin body two, the melting and coupled tests extended.
+175. **The release velocity of a skin record (sub-plan 22 Task 2, 2026-10-29; confirmed by Asha the same day).** The source table's
+     `v_s_ms` and `tx, ty, tz` are the release velocity relative to the body (the 2026-09-20 design 9: body velocity +
+     V_s t); on a skin record they are the mean velocity of the metal released, its momentum over its mass, the momentum
+     the books lose with the droplets (spec 6.4 and 8), and the rows' momentum is that sink to 4.7e-17. Girin's closure
+     velocity stays the gates' (Task 1c) and enters the table in `we_s`. They differ: on the 4 mm test sphere the
+     liquid's records leave at 0.45-1.62 m/s, 1.04 m/s by mass, within 0.4-20 degrees (median 3.8) of the meridian,
+     where the closure gives 2.7-9.7 m/s, 5.6 m/s by mass (resolved over closure 0.14-0.24); the slurry's leave at 0.88
+     m/s by mass; on sub-plan 21's heated state at 93 s the top cells ran at 0.48 of the closure's speed with 0.15 mm of
+     liquid and 0.06 of it once the liquid had run off (Task 1's `speed_steady.py`). The element model's table carries
+     its film's lubrication speed, the closure's, so the two models' `v_s_ms` columns differ in meaning by this factor.
+176. **The element model's two new columns (sub-plan 22 Task 2, 2026-10-29; `runs/line2_short`).** Its rows carry a
+     solid fraction of 0 (its film is liquid by construction) and h_kg its film's own liquid enthalpy `h_p`, which its
+     removed enthalpy books for the sprayed film. On the CLI test's short melting case (fact 169) its 115 history columns
+     (the history file byte for byte), the 24 old fields of its 25 266 source rows, its results, its summary and its size
+     distribution are Task 1c's to the last bit; h_kg is 0.94/1.04/1.35 MJ/kg (minimum, median, maximum: films on patches
+     below the liquidus carry less), and the sum of dm h_kg is its removed enthalpy, 540 843 J, to the last bit.
+
+## Amendment of 2026-10-29 — sub-plan 22 Task 3: stage 1's skins retired, the skins the default surface model, and the spraying skin flight from the command line (facts 177–179)
+
+> Written within the spec (§9, §10.1 as amended that day); no decision of Asha's was needed to build it. Two decisions
+> are left open for her, in sub-plan 22's "Inputs to settle": the flow's default (`--skin-flow`, off), and the macro step
+> of a spraying skin flight (the continuum step, 12.5 ms, that Girin's removal brings). Facts 1–176 stand.
+
+177. **Stage 1's skins retired (sub-plan 22 Task 3, 2026-10-29; `element_files.py`, `runs/line3_short`).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task3/`. What used `skin1d`, found before anything was removed: the
+     module (503 lines); `body.py`'s `SURFACE_MODEL_NAMES`, `DEATH_TOLERANCE` and `MeltSettings`'s `surface_model` and
+     `skin`, and in `MeltingBody` the skins with thirteen counters, `_advance_with_skins`, skin branches in `melt_step`,
+     `_defer_to_patches`, `_film_nodal`, `_film_and_spray` and `_kill`, nine skin methods and seven skin-aware readers
+     (`body.py` 1 671 lines, 1 251 after); `coupled.py`'s 23 `SKIN_COLUMNS`, eight results and four frame fields; a
+     comment in `cli.py`; the tests `test_reentry_model_skin1d.py` (21), `test_reentry_model_melting_skin.py` (14) and
+     the FEniCSx tier's `test_skins_match_the_skfem_backend` (the tier 19 becomes 18); no analysis script. Kept: the
+     thermal backends' facet interface law (`step(..., interface=)`), which only sub-plan 18 called and which their own
+     tests check, and `nonrigid_depth_wet_median_um` (fact 94), which every element run fills, now last in
+     `MELT_COLUMNS`. On the CLI test's short melting case (fact 169) `--surface-model elements` is Task 2's to the last
+     bit: the text of the 93 history columns kept, in their order, in all 76 rows; the 26 fields of `particles.npz`'s
+     25 266 rows; `particles_summary.csv` and `size_distribution.csv` byte for byte; the run's settings, and its 61
+     results kept but the run time. The 22 history columns and eight results removed held 0 or nan in every row. The
+     FEniCSx tier (now 18 tests) has one failure that is not Task 3's: `test_the_thick_film_flux_matches_the_skfem_backend`
+     ends with an energy balance of 1.0496e-8 against its 1e-8 bound, the same to the last digit on Task 1a's, 1b's, 2's
+     and 3's code, and passes on sub-plan 21's (602b262).
+178. **The skins the default surface model, and the run names (sub-plan 22 Task 3, 2026-10-29).** `--surface-model`
+     not given is the skins with `--thermal fem` (`cli.surface_model_of`; none without a thermal model, and `skin` given
+     without one exits 2 as before). Run names (`cli.run_name_of`, `model_run_name(..., surface_model="skin")`): a skin
+     run loses `_surface-skin` and keeps its non-default settings' suffixes (`_skin-dev`, `_skinflow-on`,
+     `_flowcycles<n>`, then the new `_slurryspray-on`); an element-model thermal run gains `_surface-elements`, after the
+     removal's and its own suffixes (`_deeprunoff-off`, `_moltencascade-off`, `_rigidsubstrate-off`, `_dtcontinuum-…`)
+     and before `_seed-<n>`; a run without a thermal model has no surface suffix. `--removal` not given
+     (`cli.removal_of`) is Girin's, except for the heat-only skins (`--skin-flow off`, the default), where it is instant
+     removal: with the skins Girin's removal is required with the flow (spec 10.1) and is the flow run's, so a melting
+     run with no flags is the heat-only skins, `_melt-instant`, on 0.5 s macro steps. Exit 2 for `--removal girin`
+     without the flow, `--removal instant` with it, `--slurry-spray on` without the flow or with the element model, and
+     the element model's `--runoff off`, `--deep-runoff off`, `--molten-cascade off`, `--rigid-substrate off` and
+     `--size-feedback` given to the skins. In the planning copy the old names or default were assumed by three name
+     assertions of the CLI tests and its element-model tests, the thermal verification test, and
+     `analysis/reentry_model_thermal_verification.py`, `melt_verification.py` and `melt_sensitivity.py` (named by
+     `--name`, but they would have run the skins); each now names its surface model. A Step 2 thermal run with no flags
+     now runs the skins, heat only: 71.9 s a macro step on the 100 mm sphere before option A, against 32 s for the
+     element model's whole flight (fact 147); and on the CLI tests' coarse mesh (4 mm surface) the default fine band
+     (0.7 mm asked) makes the skins' first move fail, exit 1 ("a corner move of up to 0.0008 m degrades the mesh even
+     after a rebuild"), unless `--fine-size 2` is given, as the skin tests do.
+179. **The spraying skin flight from the command line (sub-plan 22 Task 3, 2026-10-29; `run_smoke.sh`,
+     `smoke_check.py`).** With `--skin-flow on` the CLI gives the skin body `spray.SprayModel` with `--kr`, `--kt`,
+     `--we-critical`, `--rt-spray`, and `--slurry-spray`, `--particles`, and writes `coupled.write_particles`'s
+     `particles.npz` and `size_distribution.csv`; the summary, recorded as null, waits for Task 4. Smoke flights: the
+     100 mm sphere on the CLI tests' coarse mesh (4 mm surface, 20 mm core; 2 367 columns of the dev preset's 20 um
+     cells), 125 ms from 65 km at 7.24 km/s (body Knudsen number 0.005, Girin's closure; q_stag 4.57 MW/m2), the body at
+     893 K, the flow's sub-steps chosen each skin sub-step, a 25 ms first step and then Girin's continuum step of
+     12.5 ms. The nose's liquid appears in the third step (0.084 mm at 50 ms, 0.31 mm at 125 ms) and the next six steps
+     spray. Slurry spraying off: 1.956 g as 76 300 droplets in 1 196 rows, all thick, radius 108/133/1 808 um
+     (minimum/median/maximum), solid fraction under 1.1e-11; the rows' mass is the released mass exactly, the initial
+     less the final mass less the released 6e-17 of the mass, energy residual 4.3e-11, momentum 4.0e-17;
+     `size_distribution.csv` the rows' histogram within 5e-10 (it prints nine digits). On: 2.983 g, 915 liquid rows
+     (1.246 g) and 1 308 slurry rows (1.737 g; solid fraction up to 0.063, radius median 289 um, largest 7.97 mm), books
+     1.3e-16, 4.2e-11, 5.6e-18. Cost (laptop, mains power): 84 s and 68 s beside the unit tests; the first run again
+     alone 61 s, 1.5–6.2 s of skins a 12.5 ms macro step once melting (three quarters in the flow), 0.09–0.13 s in the
+     3D solve, 0.46–0.61 s in the moves; peak memory 744 and 824 MB. The same 125 ms at 62.5 ms macro steps with the
+     continuum step off (a 0.5 s melting macro step runs as eight such parts): 116 s alone, 45.6 and 67.5 s of skins
+     with three repeated passes and up to ten flow sub-steps a heat sub-step (Courant number 9.0), 1.947 g released
+     against 1.956 g, 74 600 droplets against 76 300, 210 rows against 1 196; on this case the continuum step cost about
+     half as much a second of flight. Each measured once. The loop's last macro step is 1.4e-17 s long (the steps' floating-point sum
+     falls short of t_max), and its droplet-momentum ratio reads 5.5 and 8.6 against at most 0.083 before: an artefact
+     of a vanishing step, for Task 4's history columns. The CLI test's shorter case (62.5 ms, two flow sub-steps a skin
+     sub-step) sprays 0.24 g in its last step in about 20 s. At the CLI tests' 71 km instead (body Knudsen number 0.011,
+     above Girin's closure), two 0.25 s steps from 880 K made 0.23 mm of liquid over 1.3 mm of flowing metal at the nose
+     and sprayed nothing: off Girin's closure a liquid on slurry is held from the shear modes (option B), as in the
+     element model. Tests: command line five added (one parametrized eleven times), one replaced, five changed; melting
+     one; unit tier 519 passed, 1 skipped (Task 2's 538 less stage 1's 35 skin tests, plus 16), 58 minutes on mains
+     power beside another session's eight-worker sweep.
+
+## Amendment of 2026-10-29 — sub-plan 22 Task 3b: the flow on by default, and the continuum step from the skins' first liquid (facts 180–182)
+
+> Decided by Asha on 2026-10-29 on Task 3's two questions (spec 10.1 and 16 as amended that day): the flow on by
+> default for a melting skin run (option B), and on the skins the continuum step also latched at their first liquid.
+> Facts 1–179 stand; fact 178's "a melting run with no flags is the heat-only skins" is superseded by fact 180.
+
+180. **The flow on by default (sub-plan 22 Task 3b, 2026-10-29; `runs/line3b_short`).** Spikes in
+     `prototype/work-2026-10-28-skin-spraying/measure/task3b/`. `--skin-flow` not given (`cli.skin_flow_of`) is on for a
+     melting run with the skins, off where `--removal instant` is given (each of the flow and the removal not given takes
+     the value the other one given needs; only two given that disagree exit 2) and off for a run the flow does not
+     concern; the resolved value is the run's setting. Names: a flow run loses `_skinflow-on`, the heat-only skins of a
+     melting run are `_skinflow-off`, a run that does not melt carries nothing for the flow. `skinbody.FLOW_DEFAULT`, the
+     class's default the heat-only skins' tests build on, stays off. Task 3's 65 km smoke case with no flow flag sprays
+     as it did, 1.95572 g as 76 300 droplets in 1 196 rows. The element model's short case (fact 169) is Task 3's to
+     the last bit: the history file byte for byte, the 26 source fields of 25 266 rows, the summary, the size
+     distribution, the settings and the 61 results but the run time.
+181. **The continuum step from the skins' first liquid (sub-plan 22 Task 3b, 2026-10-29; `onset_check.py`,
+     `run_evidence.sh`).** `coupled.CoupledSettings.switch_on_melt` (set by the CLI for the skins) latches the continuum
+     step at the first macro step at whose end `body.liquid_present()` -- a column's top cell above the liquidus, where
+     the liquid depth of option B is not zero -- if the Knudsen switch has not; the results record `dt_switch_trigger`
+     (`knudsen`, `melting`, `both`) beside the switch's time, Knudsen number and altitude; without it the body is never
+     asked. The CLI tests' 71 km case (the 100 mm sphere on the coarse mesh, 2 367 columns of 20 um cells, from 880 K,
+     physics heating, a 0.25 s first step, the default flow, to 0.5 s; body Knudsen number 0.0112–0.0113, so the
+     Knudsen switch never fires): the nose holds 0.12 mm of liquid at 0.25 s and the step latches there, `melting`, at
+     70.97 km; over the next 20 steps of 12.5 ms the liquid grows to 0.20 mm over a flowing layer rising from 0.73 to
+     1.29 mm and nothing is released, a liquid on slurry being held from the shear modes off Girin's closure (option B);
+     49 s, 0.64 GB. The 65 km case (Knudsen number 0.005): `knudsen` at the first step's end (25 ms), the first liquid
+     at 50 ms. Read at T_rigid or the solidus, onset comes at the same macro step at 71 km (the first), and at 65 km the
+     Knudsen switch is first whichever is read; on the element model's 100 mm thin-gate flight (0.5 s history) the
+     hottest surface reaches the solidus at 13.5 s, T_rigid at 23.0 s and the liquidus at 24.5 s, so a T_rigid onset
+     would latch three 0.5 s steps earlier and a solidus onset 22. Each run once.
+182. **What the melting trigger adds to the flights (sub-plan 22 Task 3b, 2026-10-29; estimated, not measured on a skin
+     flight).** The skins' first liquid taken as the element model's hottest surface reaching the liquidus: on the
+     100 mm flight 24.5 s (74.1 km, Knudsen number 0.018) against the Knudsen switch at 49.5 s (fact 69), so 25.0 s of
+     12.5 ms steps, 2 000 macro steps where 0.5 s steps made 50: 1 950 more. On the 50 mm flight (the element model's of
+     2026-10-07 from 115 km with the linear melting range, AA7075_range; no Scheil 50 mm flight was found) 174.5 s
+     (78.3 km, Knudsen number 0.068), and the Knudsen number never falls below 0.01 before the demise at 199.5 s, so the
+     continuum step, which never latched on that flight, now runs 25.0 s: 1 950 more macro steps. The skins' tops ran
+     2–3 K above the element model's surface in level 3 (fact 149), so their onset may be a little earlier. On Task 3's
+     coarse case the continuum step cost about half as much a second of flight as 62.5 ms steps (fact 179); the fixed
+     work of each extra macro step -- the surface flow (0.06 s), Girin's plan (0.09–0.51 s), a 3D solve each pass on the
+     fine band (1.17 s, fact 140) -- is about 3 s, so about 1.6 h of processor time a flight, besides a history row and
+     the source rows of every spraying column per step. Where option B's hold applies before the Knudsen switch, as at
+     71 km, the extra steps spray little (fact 181). Tests: command line one added and nine changed, coupled one, skin
+     body one; unit tier 523 passed, 1 skipped (21 minutes, mains power).
+
+## Amendment of 2026-10-31 — sub-plan 22 Task 4: the outputs of a spraying skin flight, Register's release angle, the records on disk (facts 183–187)
+
+> Asha's requirement of 2026-10-29 (the release angle on both models' records, `23-notes.md` item 1) and the outline's
+> item 4. Facts 1–182 stand; fact 179's 1 196 rows of the smoke flight included 191 that its vanishing last macro step
+> wrote (fact 185).
+
+183. **Register's release angle (sub-plan 22 Task 4, 2026-10-31; `element_files.py`, `body_outputs.py`).** Every source
+     row of both surface models carries `release_angle_register_deg`, 180 degrees less the angle between the body's
+     direction of flight and the line from its centroid to the row's position (Register et al. 2020, Icarus 337,
+     113468, section 4.2: 180 at the stagnation point, 90 at the equator, 0 behind; `spray.register_angle`); the centroid
+     is the geometric one, of the volume the outer surface encloses (`spray.enclosed_centroid`), from the surface the
+     positions are on and at their instant: the element model's at its spray step, the skins' top surface where the
+     plan is evaluated, the macro step's start. Each history carries the step's mean by mass, least and largest
+     (`release_angle_register_{mean,min,max}_deg`), nan where nothing was released. The element model's short case
+     (fact 169): 92.0/116.1/177.8 degrees (minimum/median/maximum); its history the rows' within 4.7e-9 (nine printed
+     digits); the angle differs from 180 - theta_deg by -64.8 to +87.6 degrees (median 7.1), the facet normals of its
+     element deaths' staircase. The skins (Task 2's 4 mm test sphere at 3 MW/m2 from 890 K, slurry spraying on, the
+     second 0.25 s step's 759 rows): 111.5/135.4/169.9 degrees, 134.9 by mass, within 7.3 degrees of 180 - theta_deg; the
+     columns within 10.9 degrees of the nose do not spray; the body's mass centre (3D model and skins' cells) lay
+     0.083 mm from the geometric centroid at the step's end, which would move the angles by at most 0.088 degrees, and
+     the centroid moved back 0.33 mm over the step. The 65 km smoke flight (fact 179's case): 123.5/145.5/168.7 degrees,
+     148.9 by mass, slurry spraying off. Each measured once.
+184. **A spraying skin flight's history, summary and results (sub-plan 22 Task 4, 2026-10-31; `smoke_check.py`,
+     `bitid.py`).** The skin history gains the element model's per-step droplet columns under their names and meanings
+     -- `n_released` (since time zero), `r_median_um` and `r_max_um` over the step's rows, `theta_cr_deg` and
+     `spraying_area_m2` over the columns whose plan sprays -- and `released_step_mass_kg`, the step's released mass, its
+     `released_mass_kg` staying since time zero; so `coupled.write_particles` writes its `particles_summary.csv`
+     (`coupled.SKIN_SUMMARY_COLUMNS`: the element model's columns, the released mass the step's, the skins' mean liquid
+     and flowing depths where the element model has its film). Spec 10.2's missing items: b over delta_m and the
+     resolved sheared depth over delta_m, medians over the wet windward columns at the step's end, the sheared depth at
+     a tenth of the top cell's speed (`skinbody.sheared_depth`, 0.9 delta_m on Girin's linear profile; Task 4b made it
+     the straight-line equivalent, fact 188), and each
+     rebuild's mass residual (zero to the last bit on two rebuilds of the coarse test sphere); the results gain
+     `sprayed_mass_kg`, `n_released`, `n_source_rows`, `wall_flow_s`, `rebuild_mass_residual_kg`. `shortfall_kg`, which
+     spec 10.2 called cumulative, is the current shortfall and is left so (Asha corrected the spec's word, 2026-10-31). On the 65 km smoke flight (slurry spraying off)
+     the summary's 10 rows agree with the rows within 3.4e-9 (nine printed digits) in each step's mass, droplets, radius
+     median and largest and release angle, the size distribution the rows' histogram within 5.4e-10; b over delta_m runs
+     2.8 to 7.6 and the sheared depth over delta_m 2.5 to 0.43; on the test sphere 5.5 and 10.7, 0.46 and 1.91. The skin
+     body with these outputs is Task 3b's to the last bit in all 12 arrays of `bitid.py` (3D field, mesh, skins, books,
+     histograms, the rows' 26 old columns), the history read after every step or not.
+185. **The vanishing last macro step (sub-plan 22 Task 4, 2026-10-31; fact 179).** The loop asks the trajectory for
+     min(t + dt, t_max) again and again; the floating-point sum falls short of t_max (ten 0.0125 s steps reach
+     0.12499999999999999 s, ten of 0.1 s 0.9999999999999999 s), so a last step of 1.4e-17 or 1.1e-16 s followed, a whole
+     macro step of the body. The element model has it too (its short case ends with two rows printed at 15 s, the last
+     releasing 1.5e-13 kg) and keeps it: the fix changes its outputs. For the skins `CoupledSettings.snap_to_t_max` (set
+     by the CLI) ends a step within 1e-6 of a macro step short of t_max at t_max (`Simulator.advance(dt, snap=)`; with
+     `snap` 0 the arithmetic is as it was). On the 65 km smoke flight: 9 macro steps where Task 3b's had 10, every old
+     history column of the first 9 rows the same text and the last step its same step's but in round-off (interface
+     mismatch 1.3e-9 relative, momentum residual 2.2e-17 against 4.0e-17); the released mass the same in all 12 digits,
+     1.95571981656 g, in 1 005 rows against 1 196 -- the vanishing step had written 191 rows holding 3.4e-17 kg -- and the
+     largest Pi 0.083 against 5.50; with slurry spraying on 1 811 rows against 2 223 (412 vanishing), Pi 0.079 against
+     8.59.
+186. **The droplet records on disk (sub-plan 22 Task 4, 2026-10-31; `spool_cost.py`).** With the continuum step from the
+     first liquid (Task 3b) the 100 mm flight runs 12.5 ms steps from about 24.5 s to 120 s: 7 640 macro steps, at
+     Task 2's 4 600-9 200 rows a step (slurry spraying off, on) 35-70 million rows of 27 columns, 216 bytes a row: 7.6-15.2
+     GB as arrays and twice that while they are joined, against the laptop's 24 GB. A spraying skin run from the CLI
+     therefore appends each macro step's block to one file per column (`spray.SourceSpool`, `<run>/source_rows/`), which
+     the coupled writer reads back column by column (`spray.source_columns`) and the CLI removes. Measured on 3.0 million
+     rows in blocks of 9 231: an append 1.4-2.9 ms (a melting 12.5 ms macro step's skins take 1.5-6.2 s); the same
+     `particles.npz` fields and size distribution byte for byte from disk as from memory; the writer's own allocations
+     123 MB from disk (41 bytes a row) against the rows' 616 MB held and 739 MB more from memory (453 bytes a row), so
+     about 1.4-2.9 GB at the end of the 100 mm flight against 16-32 GB. Nothing is combined over more than a macro step.
+187. **The FEniCSx tier's thick-film failure (sub-plan 22 Task 4, 2026-10-31; `fenicsx_books.py`).** The test's element
+     model books close on the FEniCSx backend to 1.1e-11 (sub-plan 21's code) and 8.9e-12 (Task 3b's) of the heat
+     absorbed after ten 0.05 s steps, and on scikit-fem's wander from 2.2e-9 to 1.07e-8 (sub-plan 21; 5.1e-9 at the
+     last) and to 1.17e-8 (Task 3b; 1.05e-8 at the last), the amended spraying taking another path (2.2 % more removed
+     enthalpy). With scikit-fem's conjugate gradients at 1e-13 against the default 1e-10, its Newton iterations the same,
+     the residual is 4.5e-12; with a tighter Newton tolerance alone 5.8e-9. It is the scikit-fem backend's linear
+     tolerance, not the books; the test now gives both solvers 1e-13 and keeps its 1e-8 bound, passing in 22 s.
+
+## Amendment of 2026-10-31 — sub-plan 22 Task 4b: the resolved sheared depth as the straight-line equivalent (fact 188)
+
+> Asha's decision on Task 4's ruling 6. Facts 1–187 stand; fact 184's sheared depths were read at a tenth of the top
+> cell's speed.
+
+188. **The resolved sheared depth (sub-plan 22 Task 4b, 2026-10-31; `measure/task4b/shear_cutoffs.py`).** Below a
+     fast top the computed speed has a long slow tail, the slurry creeping on to the rigid front. On Task 4's test
+     sphere after its two 0.25 s steps (919 and 937 wet windward columns, delta_m about 160 um, cells about 18 um), the
+     depth over delta_m at which the speed falls to half the top cell's is 0.19 and 0.19 (Girin's line: 0.5), to a
+     tenth 0.46 and 1.91, to a hundredth 4.2 and 7.5, to a thousandth 5.3 and 10.1 against b over delta_m 5.5 and
+     10.7: a cut-off near rest reads the flowing depth. `skinbody.sheared_depth` is now the straight-line equivalent,
+     twice the flow per unit width over the top cell's speed, with no cut-off (delta_m and about half a top cell on
+     Girin's profile): 0.71 and 1.47 there (quartiles 0.58-0.79 and 1.17-1.85, against 0.35-0.52 and 0.86-3.16 at a
+     tenth); on the 65 km smoke flight 2.9 falling to 0.72-0.78 over its last five steps (a tenth: 2.5 to 0.43), every
+     other history column the same as text. The model's dragged layer is within about a factor of 1.5 of Girin's
+     depth on these cases, measured once each.
+
+## Amendment of 2026-10-31 — sub-plan 22 Task 5: the cost of a melting skin step on the production mesh (fact 189)
+
+> Asha's decision (1) for Task 5: a cost probe before the flights are sized. Facts 1–188 stand.
+
+189. **The cost probe (sub-plan 22 Task 5, 2026-10-31; `measure/task5/probe/report.md`).** One second of Task 3's
+     65 km smoke case (the 100 mm sphere at 7.24 km/s, its body at 893 K, 2 K below the rigid point) on the production
+     mesh (2 mm surface, 9 417 columns, 10 um cells), at build caad816, alone on the laptop: 4 425 s of wall time for
+     80 rows; the skins 88 %, of which the metal's flow 79 % of the whole, the moves 8 %, the 3D solve 1.6 %; at most
+     5.4 GB resident; 115 068 source rows, 2.28 million droplets and 59.6 g released, particles.npz 15 MB. A 12.5 ms
+     step cost 15.4 s over the first 0.1 s and 88.6 s over the last quarter, rising with the mean flowing depth
+     (0.27 to 2.64 mm; about 2.2 s plus 32 s a millimetre) and the flow sub-steps (about 3 to 5 in a heat sub-step) while
+     the skin cells rose only 27 %: the cost follows the depth of the slowly creeping slurry, which deepens as the body
+     warms through the rigid point. Extrapolated (not measured): the 100 mm flight's about 7 840 melting steps take at
+     least about 8 days alone on one core, more if the slurry keeps deepening; its early melting, with the interior
+     still cold, should be cheaper. Measured once, in one state. Asha (2026-10-31): the flights run as they are, on
+     the Mac Studio (runbook `docs/superpowers/plans/2026-10-31-skin-spraying-flights.md`).
+
+## Amendment of 2026-11-01 — sub-plan 22 Task 5a: a flight's state saved on its way, and resumed from it (fact 190)
+
+> Asha's decisions of 2026-11-01: the restart scoped, then built as scoped, the 100 mm skin flight held until it can
+> save. Facts 1–189 stand.
+
+190. **The saved flight (sub-plan 22 Task 5a, 2026-11-01; `measure/task5/restart_scope/`, `measure/task5a/`).** A coupled
+     run pickles whole but for pyamg's coarse-grid solver (a class made inside a function), which `restart.save` writes
+     as its solver's name and cached factor: on the production mesh after one macro step 1 429 MB in 127 parts, the heat
+     solver's matrices most of it. numpy's global random state is saved with it; its only draws are pyamg's, at each
+     hierarchy the skfem backend builds (every 30 solves, two solves a macro step on the test's flight). The probe case
+     to 0.1 s saved at 0.05 s (1.38 GB) is the unsaved run in every history column at full precision and every droplet
+     record, and resumed in a fresh process its 5 rows and 2 311 records are the unbroken run's to the last bit; on the
+     coarse test flight a resume across a hierarchy rebuild is exact with the saved random state and differs with the
+     generator re-seeded. Each measured once. So a convergence repeat resumed from the base flight's state at 88 s
+     differs from the base only by the setting it changes.
+
+## Amendment of 2026-11-06 — sub-plan 22 Task 5 snapshot flights, Tasks 5b and 5c: the resume command and the deposit spread to lower corners (facts 191–192)
+
+> Asha's decisions of 2026-11-06: her idea, "Could we smooth the re-frozen mass by spreading the re-frozen mass around to
+> neighboring cells to keep the angles reasonable?", answered with snapshot flights and a design drafted on paper
+> (`docs/superpowers/specs/2026-11-06-deposit-spreading-design.md`); then, with the snapshots in, that spread metal lands
+> hot and that it is built with subagents (`docs/superpowers/plans/2026-11-06-deposit-spreading-build.md`). The
+> `--spread-limit` is off by default until flights have tested it: The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it. Facts
+> 1–190 stand.
+
+191. **The snapshot flights (sub-plan 22 Task 5, 2026-11-06; `measure/task5/snapshots/findings.md`).** The two skin flights
+     of 2026-11-05 flown again from the same code (055c313) with a frame every macro step (`--frames-every 1`, frames 0.5 s
+     apart; 3.1 GB) and a state saved one step before the flow (1.38 GB at 22.0 s on the 100 mm sphere, 0.29 GB at 170.5 s
+     on the 50 mm). Both stopped with the same error at the same place, and every column but the timers matched the first
+     flights' exactly: 769 rows and a stop at 33.00 s, 557 rows and a stop at 179.04 s. Each sphere flown once, on one mesh.
+     *Where the fold is:* at the toe of a ring of re-frozen metal that travels outward ahead of the flow at about 4 mm/s on
+     both spheres (mean front 26.6 to 59.4 degrees from the point of highest heating from 26 to 33 s on the 100 mm sphere;
+     41.0 to 89.9 degrees from 174 to 179 s on the 50 mm). At the stops 347 base edges (100 mm) were folded over 60 degrees,
+     all between 50.6 and 66.5 degrees from the hottest point, and 149 (50 mm), between 72.9 and 117.1 degrees; none sits
+     on the receded nose (mean recession within 15 degrees of the hottest point 6.8 mm and 8.5 mm). The ridge of re-frozen
+     metal stands a median 3.55 mm above the start (highest corner 5.13 mm) on the 100 mm sphere, 9 mm wide at half height,
+     about five triangles, and 2.35 mm (3.36 mm) on the 50 mm, 2 to 6 mm wide, one to three triangles; metal lost from
+     below the start 33 g and 24 g, gained above it 26 g and 7.8 g. At the 100 mm sphere's worst edge the base steps about
+     1.4 mm across a triangle about 1.5 mm wide, between a corner with flowing metal and a dry one. *A ridge, not a
+     sawtooth:* a corner's roughness correlates positively with its neighbours' (0.25 to 0.73), and the top surface folds
+     as much as the base or more (178.4 and 179.3 degrees at the stops against 137 and 130). The ridge is resolved on the
+     100 mm sphere, its toe is not, and on the 50 mm the ridge itself is marginal. *Lobes and pools:* the front stays round,
+     then breaks into lobes (100 mm: root-mean-square spread of the front about 1 degree to 31 s, then wavenumbers 10 to 11
+     grow from 0.45 to 3.84 degrees by 33 s; 50 mm: 1.6 degrees to 176 s, wavenumbers 3 to 4 growing to 12.6 degrees by
+     179 s), at spacings of about 25 mm and 45 mm, far above the 2 mm grid; whether the mesh seeds them is unknown. The fold
+     is already 109 degrees by 29 s on the 100 mm sphere, so it comes first. Metal gathers at the lobes' tips: on the 50 mm
+     sphere at 179.0 s four pools 95 to 105 degrees from the hottest point, 101 corners deeper than 5 mm holding 12.4 g,
+     every one with deep neighbours; the deepest skin rose from 4.5 mm to 22.4 mm in the last 2 s, the element flight
+     having sprayed 3.7 g by then. *What stops a flight:* the 3D radius-ratio floor of 0.05, not the fold itself; the lowest
+     ratio reached 0.098 at the 100 mm stop, from about 0.15 before, in tetrahedra at the same place as the worst folded
+     edges (63 and 51 degrees), while surface triangles kept their shape (quality 0.57 and 0.72); the refused move itself
+     is not recorded. *Heat across the folds:* the 3D temperature jumps by a median 62 K (100 mm) and 31 K (50 mm) across
+     folded edges, about 90 % of them above 5 K. *A radius ratio near 0.05 is not a measure of mesh health on its own:*
+     it is where a rebuild fires by design (controller's note, 2026-11-07). What stops a flight is a move refused on a
+     freshly rebuilt mesh, and that record is not kept. Measured once on each sphere.
+
+192. **The resume command and the spreading, as built and checked (sub-plan 22 Tasks 5b and 5c, 2026-11-06;
+     `measure/task5b/check.md`, `measure/task5c/check.md`; `part_22.md`).** *Task 5b:* `python -m reentry_model resume
+     STATE --outdir DIR --name NAME [--t-max --dt-continuum --seed --frames-every --slurry-spray --spread-limit
+     --save-state-at]` continues a flight
+     saved with `--save-state-at` to the last bit, writing the files `run` writes through one shared writer
+     (`finish_run`); exit 2 for a missing or foreign state, an end of flight not after the saved time, or a continuum step
+     outside (0, `--dt`]. The two real states resumed through the launcher on mains power: the 50 mm flight's (saved at
+     170.5 s, step 341) to 172.0 s in 190 s (3 macro steps, peak 1.47 GB) and the 100 mm flight's (saved at 22.0 s, step 44)
+     to 23.0 s in 330 s (2 steps, 3.95 GB); in both, 84 of 89 history columns (all but the five wall-time timers) equal the
+     snapshot flights' at full precision; neither flight had released a droplet, so the droplet records are pinned by the
+     unit test only. Unit tier 549 passed, 1 skipped. *Task 5c:* `--spread-limit DEG|off` on `run` and `resume`
+     (`reentry_model/spreading.py`, `SPREAD_PASSES` 4, `SPREAD_SHARE` 0.25 as designed): where the base as it would stand
+     folds past the limit, part of what the skins hand down goes to lower neighbouring corners, the metal landing hot -- it
+     crosses the base at the receiving node's enthalpy and the rest of its heat goes to that node through `pending`, not
+     through `h_outward`, which would share it over the whole moving zone (Asha's decision, 2026-11-06). **Off by default
+     until flights have tested it, so every existing run is as before.** The draft Asha read left the default unstated ("set by a command-line option, with `off` available so that a flight can compare"); the controller set it off when writing her decision of 2026-11-06 into the design, because no flight has tested the pass and every existing run should stay as it is, and told her so; it stands unless she changes it. The history gains `spread_mass_kg`, `spread_unplaced_kg`, `spread_edges_over` and `spread_jump_max_K` with a
+     limit only; a limit that does not bind changes nothing to the last bit; the two states pickled before this resume with
+     or without one. On the test plate a crest passes 90 degrees by part 31 with the pass off and stays between 59.96 and
+     60.03 degrees at a limit of 60 over 200 parts. *The check (50 mm state, one limit, one mesh, flown once):* to 172.0 s
+     with a limit of 60 that cannot bind, 3 macro steps in 193 s, all 84 shared columns equal; to 177.0 s (91 macro steps,
+     2 014 s, peak 2.34 GB) the limit first binds at 174.0 s and the largest fold is 64.86 degrees, at 176.0 s, against
+     116.75 over the same flight time in the snapshot flight (82 of 91 rows above 60 degrees, 4 above 62, none above 65, the
+     last 61.82); edges past 60 degrees at 177.0 s 5 against 108, all five with flowing metal on both corners where 45 of
+     the 108 had neither wet, in the same band (65.8 to 71.6 degrees from the hottest point against 60.8 to 78.2); 1.704 g
+     spread against 13.63 g handed down (12.5 %, each hop counted); the largest unplaced mass at a move 0.25 mg; the largest
+     landing 57.4 K above its node; mass closed to 4.5e-16, energy residual -1.76e-11, momentum residual 3.76e-17; no fault
+     against 2 in the snapshot flight. **These numbers describe the code just before the fix of the review's
+     `Spread.landed` finding** (outer 928f961, build 27603f1): corners that took hot metal and gave more onward sent their
+     landing heat across the base, and were left out of the recorded largest landing (the review measured 16 to 127 corners
+     missed against 174 to 273 caught on a jittered plate); the fix reads where metal arrived pass by pass. It was not flown
+     and the check not re-run. *Not like with like after 176.0 s:* the continuum switch latched at 176.0 s with the
+     spreading and 176.5 s without (a 0.12 K difference at the nose about the 908.0 K liquidus, 908.11 K against 907.98 K;
+     why spreading changes the nose is not traced), so later rows ran different steps (91 rows against 52). To 176.0 s, the
+     same 11 macro steps and 95 parts: largest fold 64.86 against 114.59 degrees, lowest 3D radius ratio 0.0756 against
+     0.0678, rebuilds 6 against 10, deepest skin 2.22 mm against 3.04 mm, faults 0 against 2. The radius ratio and rebuild
+     counts are not a measure of mesh health on their own (the floor of 0.05 is where a rebuild fires by design); the
+     like-with-like comparison to 175.5 s is 5 rebuilds against 8 and a lowest ratio of 0.0945 against 0.0787, the ratio in
+     the rows of a rebuild having a median of 0.162 against 0.125 (controller's note, 2026-11-07; one flight each, the two
+     identical to 174 s). *Untested:* whether a flight gets past the old stops, 33.0 s on the 100 mm sphere and 179.04 s on
+     the 50 mm; the check ended 2.04 s before the latter and the resumed flights have not been flown. Neither is the
+     sensitivity to the limit, nor whether the metal stays deeper with the spreading (shallower to 176.0 s; the later
+     figures follow 40 steps against one). Unit tier 587 passed, 1 skipped.
+
+## Amendment of 2026-11-08 — the spreading flights' stall, and the three options built against it: the part count set by melting, the hand-down switched off, sideways heat between cells that touch (facts 193–194)
+
+> Asha's decisions of 2026-11-08, after the two spreading flights stalled: to build and compare `--hand-down off` (re-frozen metal stays in the skins; spreading off with it,
+> because it moves only handed metal) and `--part-count-from melting` (flown with `--spread-limit 60`); to pair the sideways heat by height on all four comparison flights, none
+> started early (her idea, first written in a side session's draft, `docs/superpowers/specs/2026-11-08-refrozen-metal-in-skins-design.md` section 3, where tracking every cell's Cartesian
+> position was her alternative, set aside by Claude); to re-run the flight once the comparison decides the part-count fix; and to build with subagents
+> (`docs/superpowers/specs/2026-11-08-hand-down-and-part-count-design.md`, `docs/superpowers/plans/2026-11-08-hand-down-and-part-count-build.md`). The controller's calls, in the description Asha approved: the
+> defaults stay today's, the stall guard is at `PARTS_MAX = 1 000` parts, and the sideways offset is `s_ij = (p_j - p_i) . unit(n_i + n_j)`. Facts 1–192 stand.
+
+193. **The spreading flights and their stall (sub-plan 22 Task 5, 2026-11-07 to 2026-11-08; rows in `reentry_model_output/task5_spreading`).** The two snapshot states resumed with
+     `--spread-limit 60` both got past the points where the earlier skin flights stopped: the 50 mm sphere passed 179.04 s after about 2.1 h of running and reached 179.66 s, its base fold at
+     most 68.0 degrees against 144 when the earlier flight stopped; the 100 mm sphere passed 33.0 s after about 4.1 h and reached 36.18 s, fold at most 86.5 degrees against 138. The mesh stayed above
+     its radius-ratio floor, mass closed to 1e-15 kg, and the rebuilds' energy residual was 3.7e-4 and 3.9e-4 of the heat absorbed (4.9e-4 and 4.4e-4 in the earlier flights). Both then
+     stalled: the number of parts a 12.5 ms macro step runs as grew by a quarter every step, on the 50 mm sphere from 9 at the old stop to 9 765 (24 at 179.26 s, 342 at 179.48 s, 9 765 at 179.66 s),
+     on the 100 mm sphere from 1 to 1 537, the last steps taking 6.7 h and 3.75 h, while the metal handed down stayed about 0.2-0.3 g a step; Asha stopped them on 2026-11-08 at 16:55. The cause,
+     **inferred from the code and not instrumented**: the next step's count is the largest move ratio times `MOVE_HINT_MARGIN`; the move ratio includes the hand-down, which since the cap of
+     2026-10-27 never splits a part but, not shrinking with the part, reads as a part needing the whole allowance, so the next step gets 25 % more parts (each of the 50 mm sphere's last eleven
+     counts is the previous times 1.25 rounded up; the earlier 50 mm flight was already climbing, 134 parts at its stop). Asha then asked why metal is handed down at all: the 100 mm sphere handed
+     down 64.1 g in all but only about 26 g stood above the starting surface at its stop, the 50 mm sphere 27.7 g and 7.8 g, most of what froze melting again, today by a round trip through the 3D
+     model. One flight on each sphere, one mesh each.
+
+194. **The three options and the guard, as built and checked (sub-plan 22 Tasks 5d, 5e, 5f, 2026-11-08; `measure/task5d/check.md`, `measure/task5e/check.md`; `part_22.md`).** Each is on `run` and
+     `resume` and defaults to today's behaviour, so every earlier run is as before to the last bit. *Task 5d* (outer 289fbb4): `--part-count-from moves|melting`; with `melting` the next step's count is
+     set by the draws alone (largest `drawn / (rho area)` over the allowance, times `dt_macro / dt`, times the margin, kept parts only) and **the split test is unchanged**; a macro step that would start with
+     more than `PARTS_MAX = 1000` parts raises `RuntimeError` under both rules (the one change for every run). *Task 5e* (57774b5): `--hand-down on|off`; `off` keeps every rigid cell in its skin, `held_mass_kg` and
+     `held_depth_max_mm` record every handable kilogram, and a spread limit, given or carried by a resumed state, exits 2. *Task 5f* (bb7165f; build repository c33b4a2): `--sideways-heat depth|height`; with
+     `height` cells are paired by height above their column's base, the neighbour's shifted by `s_ij`, conductance `0.5 (k_a + k_b) w l_ab`, symmetric and negative semi-definite; the part of a taller column
+     above its neighbour's top exchanges no heat and is not heated from the gas (stated). Unit tier 639 passed, 1 skipped. *The checks, on the 50 mm sphere, mains power, side by side, each once.* **5d**: resumed
+     from the stalled flight's state at 178.5 s (limit 60 carried) with `--part-count-from melting` to 179.7 s, 87.4 min, exit 0: `step_parts` 1 in all 95 macro steps after the saved row, against 24 at 179.26 s,
+     342 at 179.48 s and 9 765 at 179.66 s; **the count no longer grows, supporting the inferred cause**; fold 61.3-68.8 degrees (68.0 at most in the stalled flight), lowest radius ratio 0.0553 (0.0512), rebuilds 23 at the saved row and 31 at 179.7 s (37 in the stalled flight over the same window), held at most 3.41e-4 kg and 1.84 mm deep (5.3e-5 kg, 1.48 mm); dearer per step, 55.9 s of skins time to 179.3 s against 21.0 s over the same 63 steps, mostly in the flow (not traced, load
+     not matched); books: mass closed (3.8e-17 kg), energy residual -1.56e-10 (gate 1e-8), momentum 1.95e-17. **5e and 5f together**: resumed from the snapshot state at 170.5 s with `--hand-down off --sideways-heat
+     height` to 177.0 s, 74.9 min, exit 0: base fold 37.2 degrees at 177.0 s and at most 39.3 (at 176.5 s) against 116.75 in the snapshot flight and 64.86 with spreading, nothing handed down (0.905 g unchanged), 1 rebuild against 18, lowest
+     radius ratio 0.0625 against 0.0678, deepest skin 7.10 mm against 4.48, 8.35 g held in the skins up to 3.70 mm deep and still growing about 1.4 g per 0.5 s; the continuum step had not latched by 177.0 s (nose
+     907.97 K against the snapshot's 908.31 K at 176.5 s, not traced), so the flight ran 13 macro steps of 0.5 s; skins time 285.3 s a step against 210.3 s over the 12 equal steps (1.36 times, the hand-down's
+     effect not separated); books: mass closed (-3.8e-17 kg), energy residual -7.96e-13, momentum 2.05e-17, no fault. **Stated limitations, each measured once:** the height map's sub-step on the 100 mm sphere about
+     14 % slower (3.6-3.8 s against 3.2-3.3 s, line-search residuals 49 against 32, not traced), its build holding up to 0.37 GB at 75 cells a column and growing in proportion to the deepest column; the Task 5d tests
+     raised the unit tier from about 12 to about 15 minutes (15 min 16 s for the final 639 tests, 17 min 15 s at Task 2, 22.8 minutes at Task 1) across four processes. *Untested:* the top's fold under `--hand-down off`, whether the deposit's depth against pools of 22-45 mm on the 50 mm sphere lets a flight reach 190 s, and
+     the 100 mm sphere; the four comparison flights (hand-down off and melting on each sphere, all with `--sideways-heat height`) are to be flown after the final review.
+
 Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body` → `film`, `spray`, `surface_flow`, `thermal`, `material`; `coupled` → everything; `viz`, `compare` read exported files and histories only; `girin_case` → `dispersion`, `surface_flow.ranger_psi`.
 
 ---
+
+## Amendment of 2026-10-11 — the shared physics package and the second architecture (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14. Required reading for every sub-plan from now on.
+
+1. **Two architectures.** This plan's model is now called **skyscrapers**; a second architecture, the **level set**, is
+   built in parallel (`reentry_model/levelset/`, its documents in `docs/superpowers/specs/levelset/` and
+   `docs/superpowers/plans/levelset/`, its prototypes in `prototype/levelset/`, its tests in `tests/levelset/`).
+   `reentry_model run --architecture skyscrapers|levelset` chooses between them; the default is `skyscrapers`, whose
+   runs, run names and results do not change.
+2. **The shared package.** Code both use lives in `reentry_model/shared/`, and the package's own modules import it
+   from there. Moved in stage 0 (behaviour-preserving, on its own branch, merged before anything else):
+   `trajectory`, `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`,
+   `compare`; the `Body` protocol and `ConstantBody` (`shared/body.py`); the Step 2 thermal protocol, `StepResult`,
+   `MissingBackend`, `SIGMA_SB` (`shared/thermal.py`); the common run arguments and provenance (`shared/cli_common.py`);
+   frame reading and time-series plots (`shared/viz.py`). Each old path stays importable as a one-line re-export.
+3. **Step 3's shared physics** is promoted by stage S's six sub-plans in `docs/superpowers/plans/shared/`:
+   S1 `material` (Scheil, liquid properties) and `rheology` (slurry viscosity); S2 `dispersion`; S3 `surface_flow` and
+   the `gas` additions; S4 `spray` (the physics only: modes, `SprayModel`, droplet radius and release rate,
+   `SOURCE_COLUMNS`, `source_rows`, `histogram`); S5 `girin_case`; S6 `droplets` (`write_particles`, size distributions
+   and their plots). Where a skyscrapers sub-plan creates one of these modules, the matching S sub-plan is the
+   authoritative build; if it has landed, the skyscrapers task only imports it.
+4. **What stays skyscrapers'.** `mesh.py`, `movemesh.py`, `columns.py`, `skin.py`, `film.py`, the melting body in
+   `body.py`, `coupled.py`, the thermal backends and the extended thermal protocol of sub-plan 03, the run driver in
+   `cli.py`, and every rule that decides the film depth and mass handed to the shared spray model. **The skins are
+   never shared** with the level set, and the level set never imports skyscrapers' own modules.
+5. **Changing a shared module** requires both architectures' tests to pass.
+6. **Amended sub-plans** (each carries a block "Amendment of 2026-10-11 — the shared physics package"): 02, 03, 04, 05,
+   07, 08, 10, 12, 13, 14, 15, 19, 20, 21, 22. Sub-plans 01 and 11 touch no shared file and are unchanged.
+
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. Supersedes the timing and paths of items 2, 3
+> and 6 of the amendment of 2026-10-11 above; its items 1, 4 and 5 stand.
+
+1. **Port first.** The prototyped Step 3 code is ported into the package at the module paths the prototype uses
+   (`reentry_model/<module>.py`). No sub-plan creates `reentry_model/shared/` or anything inside it. Each amended
+   sub-plan carries a block "Amendment of 2026-10-12 — port first, move into `shared/` afterwards" saying so.
+2. **Refactor afterwards.** Once the skyscrapers port has landed on `main`, one combined refactor (the level-set
+   design's stage 0 + S) moves the Steps 1–2 modules and Step 3's architecture-independent physics into
+   `reentry_model/shared/`. It keeps every old path as an alias of the same module object, splits the spray physics
+   from the skyscrapers bookkeeping, adds `run --architecture skyscrapers|levelset`, and requires every flight's
+   history (Step 1, Step 2 and a melting flight) to be identical before and after. Its plan is written once the port
+   has landed. The 2026-10-11 amendments remain the record of which modules it will move.
+3. **The earlier branch is a reference, not a merge.** Branch `levelset-stage0` (head da4c549, built and verified on
+   2026-10-11/12 from the old `main`) will not be merged. Its alias mechanism, guard tests, bit-identity script and
+   flag are reused by the combined refactor.
+4. **Helpful, not required:** where it costs nothing, keep the shared physics (`material`, `dispersion`,
+   `surface_flow`, the physics in `spray`, `girin_case`, the droplet outputs) free of imports from the skyscrapers-only
+   modules (`skin`, `columns`, `film`, `movemesh`, `mesh`, `coupled`), so that the move stays mechanical.
 

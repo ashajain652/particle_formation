@@ -1,1 +1,12 @@
 power: Now drawing from 'AC Power' Thu Oct  8 10:30:55 EDT 2026
+/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/probe_freeze/probe_freeze_cap.py:48: RuntimeWarning: invalid value encountered in divide
+  return mat.temperature_from_enthalpy_mixed(E / tot, np.where(tot > 0, ll / tot, 0.0))
+/Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/code/reentry_model/film.py:74: RuntimeWarning: overflow encountered in divide
+  rate = np.where(thick, V / np.where(thick, d, 1.0), np.where(b > 0.0, V / np.where(b > 0.0, b, 1.0), 0.0))
+
+model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev (seed 12345): t_max at t = 75.0 s, final V 6.4949 km/s, Kn 0.0298 -> 0.00548, 4308 RHS evaluations in 2507.1 s
+  thermal: peak surface T 955 K at t = 62 s, peak mean T 807 K, integrated heat 1.07e+06 J, energy balance residual -6.4e-11, 150 macro steps, 3.6 Newton iterations/step
+  melt: onset 74.2 km, spraying onset 74.0 km, demise n/a km at t = n/a s; sprayed 0.4766 kg of 1.4720, film left 0.0010 kg, 5.18e+06 droplets (median r 190.7 um), 92378 source rows, melt balance -6.4e-11
+  csv  -> /Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/probe_freeze/run_dt05/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev.csv
+  json -> /Users/ashajain/Documents/University Documents /MIT Graduate Work/Research/Space Sustainability/Particle Wake Evolution/prototype/work-2026-10-08-skin/probe_freeze/run_dt05/model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-physics_melt-girin_dtcontinuum-off_surface-skin_skin-dev.json
+exit 0 calls 103

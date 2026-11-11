@@ -1,0 +1,83 @@
+{
+  "_source": "Girin, A. G. & Kopyt, N. Kh. (1994), J. Aerosol Sci. 25(7), 1353-1357, Tables 1-2 and Eqs. (9)-(14). Table 1: side-surface KH mode, sigma_t = 1200 dyn/cm, rho_1 = 7.8 g/cm3, M = 3, r_d = lambda*/4, tau_d = tau*, mass rate m per unit area; the printed r_d imply an effective dynamic pressure 7.8 x rho_2 V0^2 (their shock-layer treatment: 'deceleration ~10 times ... acceleration to M = 2-3'), fitted on the first row and checked on the other five (measured 2026-09-20); m = rho_1 r_d / (2 tau_d) reproduces the printed rates. Table 2: front-surface Rayleigh-Taylor mode, Eq. (14); the printed lambda* are 10 x smaller than Eq. (14) gives (a units slip in the table), tau* matches to three digits.",
+  "table1": {
+    "sigma_Nm": 1.2,
+    "rho1_kgm3": 7800.0,
+    "mach": 3.0,
+    "rho2_kgm3": [
+      0.0001,
+      0.001,
+      0.01
+    ],
+    "V0_ms": [
+      3000.0,
+      10000.0
+    ],
+    "r_d_m": [
+      [
+        0.000193,
+        1.73e-05
+      ],
+      [
+        1.93e-05,
+        1.73e-06
+      ],
+      [
+        1.93e-06,
+        1.73e-07
+      ]
+    ],
+    "tau_d_s": [
+      [
+        0.00138,
+        3.71e-05
+      ],
+      [
+        4.34e-05,
+        1.17e-06
+      ],
+      [
+        1.38e-06,
+        3.71e-08
+      ]
+    ],
+    "m_kgm2s": [
+      [
+        547.0,
+        1830.0
+      ],
+      [
+        1740.0,
+        5800.0
+      ],
+      [
+        5470.0,
+        18300.0
+      ]
+    ]
+  },
+  "table2": {
+    "sigma_Nm": 1.2,
+    "rho1_kgm3": 7800.0,
+    "W_ms2": [
+      1000.0,
+      10000.0,
+      100000.0
+    ],
+    "lambda_star_m_as_printed": [
+      0.00042,
+      0.000135,
+      4.27e-05
+    ],
+    "lambda_star_m_eq14": [
+      0.0042,
+      0.00135,
+      0.000427
+    ],
+    "tau_star_s": [
+      0.001,
+      0.00018,
+      3.19e-05
+    ]
+  }
+}

@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "run_name": "d100__sesam",
+  "inputs": {
+    "diameter_mm": 100.0,
+    "initial_velocity_kms": 7.5,
+    "initial_altitude_km": 77.500133,
+    "flight_path_angle_deg": -0.959331,
+    "heading_deg": 347.168296,
+    "latitude_deg": 29.546067,
+    "longitude_deg": -82.134333,
+    "epoch_utc": "2024-08-01T12:53:07",
+    "material_density_kgm3": 2813.0,
+    "mass_kg": 1.472883355758015,
+    "initial_temperature_K": 300.0
+  },
+  "settings": {
+    "atmosphere": "us76",
+    "wind": "none",
+    "bridging": "sesam-table",
+    "gravity": "j2",
+    "rtol": 1e-09,
+    "atol_position_m": 1e-06,
+    "atol_velocity_ms": 1e-09,
+    "cadence_s": 1.0,
+    "t_max_s": 3600.0,
+    "seed": 12345,
+    "thermal": "fem",
+    "heating": "sesam",
+    "material": "AA7075_nomelt",
+    "material_file": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model/data/materials/AA7075_nomelt.json",
+    "emissivity": 0.4,
+    "t_ambient_K": 0.0,
+    "mesh_file": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/meshes/sphere_R50.000mm_hs2.000mm_hc8.000mm_b0.000mm_r8.000mm.msh",
+    "h_surface_mm": 2.0,
+    "h_core_mm": 8.0,
+    "prism_layers": 0,
+    "layer_thickness_mm": 0.25,
+    "n_nodes": 18896,
+    "n_elements": 87632,
+    "n_patches": 18078,
+    "thermal_solver": "skfem",
+    "linear_solver": "amg",
+    "lumped_mass": true,
+    "k_scale": 1.0,
+    "melt": "off",
+    "surface_model": "elements",
+    "macro_step_s": 0.5,
+    "frames_every": 0,
+    "dt_continuum_s": null
+  },
+  "results": {
+    "end_reason": "ground",
+    "final_time_s": 366.1571346522325,
+    "impact_time_s": 366.1571346522325,
+    "final_velocity_kms": 0.08314231912824809,
+    "final_altitude_km": 0.0,
+    "max_deceleration_g": 8.18905712150552,
+    "altitude_of_max_deceleration_km": 41.151456511395985,
+    "time_of_max_deceleration_s": 152.0,
+    "max_dynamic_pressure_Pa": 16557.39643395148,
+    "knudsen_start": 0.02980126114867431,
+    "knudsen_crossings": {
+      "10": 77.50013300000131,
+      "1": 77.50013300000131,
+      "0.1": 77.50013300000131,
+      "0.01": 70.11608096073661
+    },
+    "n_samples": 734,
+    "rhs_evaluations": 22793,
+    "runtime_s": 32.230023209005594,
+    "peak_surface_T_K": 2089.0866135390133,
+    "time_of_peak_surface_T_s": 139.0,
+    "altitude_of_peak_surface_T_km": 45.810514938244594,
+    "peak_mean_T_K": 2082.3198861919764,
+    "time_of_peak_mean_T_s": 143.0,
+    "peak_convective_heat_W": 31831.78383405922,
+    "time_of_peak_heating_s": 94.5,
+    "altitude_of_peak_heating_km": 59.887175201512875,
+    "integrated_heat_J": 3727363.100969695,
+    "absorbed_heat_J": 1752817.7775696034,
+    "radiated_heat_J": 1974545.323400093,
+    "energy_balance_residual": 4.297257064035832e-09,
+    "n_macro_steps": 733,
+    "mean_newton_iterations": 2.0354706684856754,
+    "n_frames": 0
+  },
+  "comparison": {
+    "reference": "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind",
+    "reference_csv": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/data/reference_runs/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv",
+    "reference_sha256": "069e433998561164a64b62d2a124874e2400b4b7feaddccae9357df3f624c297",
+    "metrics": {
+      "n_points": 375,
+      "model_end_time_s": 366.1571346522325,
+      "reference_end_time_s": 366.227,
+      "d_end_time_s": -0.06986534776746112,
+      "d_end_time_rel": -0.00019077060885041552,
+      "final_velocity_model_ms": 83.14231912824809,
+      "final_velocity_reference_ms": 83.0,
+      "d_final_velocity_ms": 0.14231912824809,
+      "all": {
+        "n_points": 375,
+        "dV_max_ms": 3.8688543315624884,
+        "dV_rms_ms": 1.7401879078630618,
+        "dV_rel_max": 0.013079426471376328,
+        "dV_rel_rms": 0.0027279319763894045,
+        "dh_max_m": 24.418946799019977,
+        "dh_rms_m": 12.86779488735902
+      },
+      "hypersonic": {
+        "n_points": 187,
+        "dV_max_ms": 3.8688543315624884,
+        "dV_rms_ms": 2.251543407659892,
+        "dV_rel_max": 0.0023729014483091283,
+        "dV_rel_rms": 0.0008082216884665712,
+        "dh_max_m": 17.88168163793307,
+        "dh_rms_m": 10.566823758035614
+      }
+    },
+    "plots": [
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/velocity_time.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/altitude_time.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/altitude_velocity.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/angles_time.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/ground_track.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/regime_drag.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/heating_time.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/temperature_time.png",
+      "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam/integrated_heat.png"
+    ],
+    "thermal_metrics": {
+      "n_points": 375,
+      "n_continuum_points": 112,
+      "Q_conv": {
+        "max": 0.004550445041806444,
+        "rms": 0.002362857256013297,
+        "peak_reference": 31693.694,
+        "continuum_rel_max": 0.022349603609873148,
+        "continuum_rel_rms": 0.005652579967052555
+      },
+      "integrated_heat": {
+        "rel_error_end_of_hypersonic": 0.0030906202518130588,
+        "rel_error_end": 0.002957567309206821,
+        "model_end_J": 3727361.9349558945,
+        "reference_end_J": 3716370.519,
+        "ratio_end": 1.0029575673092068
+      },
+      "temperature": {
+        "dT_max_K": 24.550175642657678,
+        "dT_rel_max": 0.011997814031150866,
+        "dT_rms_K": 10.807048256588116,
+        "model_peak_K": 2082.277439926033,
+        "reference_peak_K": 2103.875
+      },
+      "radiated": {
+        "max": 0.06656496123954438,
+        "rms": 0.04083381649070647,
+        "peak_reference": 13960.833
+      }
+    }
+  },
+  "provenance": {
+    "package_version": "0.1.0",
+    "git_commit": "97475f7e39c51e616b661ab4de67bd207ae39279",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "pymsis": "0.13.0",
+    "python": "3.12.15",
+    "skfem": "12.0.2",
+    "gmsh": "4.15.2",
+    "pyamg": "5.3.0",
+    "pyvista": "0.49.0",
+    "cantera": "3.2.0",
+    "dolfinx": null,
+    "reference_sha256": "069e433998561164a64b62d2a124874e2400b4b7feaddccae9357df3f624c297",
+    "replay_sha256": null
+  },
+  "files": {
+    "csv": "/Users/ashajain/MIT/particle_formation/prototype/work-2026-10-12-skin-heat-plan/code/reentry_model_output/verification_thermal/d100__sesam.csv",
+    "vtk_dir": null
+  }
+}

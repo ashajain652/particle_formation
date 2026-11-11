@@ -3,6 +3,58 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 5704–6029). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-06: the rigid substrate's four history columns and its frame field** (the section after that). **Amended 2026-10-07 (continuum step): the macro step shortens where Girin's closure begins** (the section after the rigid substrate's).
 
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** `write_particles` (to a shared droplet-output module); the coupled loop stays skyscrapers'.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `write_particles` (the particle file, the per-step summary and the size distribution) moves to
+  **`reentry_model/shared/droplets.py`** (stage S's sub-plan **S6**), so both architectures write droplets in one format;
+  `coupled.py` imports it. The coupled loop itself stays skyscrapers'.
+- `surface_flow`, `spray` and `trajectory` are imported from `reentry_model.shared`.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §4, §7.1, §9, §10.2, §10.3.
+
+Everything above still describes `--surface-model elements`, which spec §9 keeps unchanged for the comparison of level
+3: its `MELT_COLUMNS`, results, frame fields and amendments (deep runoff, cascade, rigid substrate, continuum step) stay
+bit-identical and are not to be edited. `coupled.py` is shared and is extended, not replaced: the lockstep macro step is
+the frame into which spec §4 puts the skin sequence, and the skin body of sub-plans 20-22 plugs in at the seam
+`MeltingBody` uses. For `--surface-model skin` the history, frame and result outputs are those of spec §10.2 (column
+cells, depths, rebuild residuals, drawn, absorbed and handed-down mass, interface mismatch, `solid_fraction` and `h_kg`
+in the droplet records), added in sub-plan 20 (those that exist at heat-only stage), 21 and 22 (task 4); the film and
+deep-account columns above have no counterpart there. The skin path's macro step is 0.5 s by default, provisional, with
+10 ms skin sub-steps (spec §7.1); the `dt_continuum` switch of the 2026-10-07 amendment is an element-model device, and
+whether it applies to the skin path is settled by the macro-step study of spec §11 level 3, not decided here. The
+2026-09-27 block at the top of this file (the recession and remesh stage in the melt step, its surface and remesh
+columns, re- seating the film after a remesh) belongs to deprecated sub-plans 16 and 17 and must not be followed: the
+moving mesh and its rebuild (sub-plan 19) replace it.
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

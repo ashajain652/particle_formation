@@ -1,0 +1,271 @@
+{
+  "_comment": "AA7075_range (see AA7075_range.json, which stays as it is) with the latent heat released along Scheil's non-equilibrium solidification curve instead of linearly: f_l = ((T_pure - T)/(T_pure - T_liquidus))^(1/(k - 1)), partition coefficient k 0.4, T_pure 933 K (pure aluminium), liquidus 908 K, solidus 750 K. Half of the latent heat is released in the 13 K below the liquidus (f_l = 0.5 at 895.1 K) against 8 % for the linear range; the eutectic remainder f_l(750 K) = 3.6 % melts or freezes over +-2 K at the solidus. One Scheil material for the whole body -- heat, liquid fraction and the viscosity law that uses it (user decision 2026-09-27). Step 4 values (user decision 2026-09-28): latent heat 390 kJ/kg instead of DRAMA's 400 (Modulus Metal AA7075-T6 data sheet, 384-393 kJ/kg, which cites no primary source; alternatives 397 kJ/kg pure aluminium NIST-JANAF, 358 kJ/kg Mills 2002) and liquid surface tension 0.80 N/m (see liquid._sources); the heat capacity above 850 K is held at 1131.6 J/kgK, which the literature supports (see AA7075-empiricaldata.json). Known limitation, labelled: wrought 7075 first melts on heating at 769-818 K (Brehm et al. 2022, SAND2022-9908; Gu et al. 2023, Materials 16, 6145), not at the 750 K solidus of a casting, so melting starts 20-70 K early -- though with only 3.6 % liquid at 750 K and 6 % at 800 K, against 32 % at 800 K for the linear range.",
+  "name": "AA7075_scheil",
+  "materialType": "metal",
+  "catalycity": 1.0,
+  "density": 2813.0,
+  "meltingHeat": 390000.0,
+  "meltingTemperature": 908.0,
+  "solidusTemperature": 750.0,
+  "liquidusTemperature": 908.0,
+  "solidification": "scheil",
+  "partitionCoefficient": 0.4,
+  "pureMeltingTemperature": 933.0,
+  "specificHeatCapacity": [
+    [
+      293.0,
+      877.5
+    ],
+    [
+      313.0,
+      885.5
+    ],
+    [
+      333.0,
+      893.5
+    ],
+    [
+      353.0,
+      901.5
+    ],
+    [
+      373.0,
+      911.5
+    ],
+    [
+      393.0,
+      923.5
+    ],
+    [
+      413.0,
+      936.6
+    ],
+    [
+      433.0,
+      947.6
+    ],
+    [
+      453.0,
+      965.6
+    ],
+    [
+      473.0,
+      1002.6
+    ],
+    [
+      493.0,
+      1068.6
+    ],
+    [
+      513.0,
+      1106.6
+    ],
+    [
+      533.0,
+      1084.6
+    ],
+    [
+      553.0,
+      1049.6
+    ],
+    [
+      573.0,
+      1042.6
+    ],
+    [
+      593.0,
+      1079.6
+    ],
+    [
+      613.0,
+      1120.6
+    ],
+    [
+      633.0,
+      1159.6
+    ],
+    [
+      653.0,
+      1198.7
+    ],
+    [
+      673.0,
+      1233.7
+    ],
+    [
+      693.0,
+      1259.7
+    ],
+    [
+      713.0,
+      1257.7
+    ],
+    [
+      733.0,
+      1102.7
+    ],
+    [
+      753.0,
+      1069.7
+    ],
+    [
+      773.0,
+      1069.7
+    ],
+    [
+      793.0,
+      1077.7
+    ],
+    [
+      813.0,
+      1086.4
+    ],
+    [
+      833.0,
+      1096.1
+    ],
+    [
+      850.0,
+      1131.6
+    ]
+  ],
+  "heatConductivity": [
+    [
+      293.0,
+      163.89
+    ],
+    [
+      313.0,
+      164.95
+    ],
+    [
+      333.0,
+      166.53
+    ],
+    [
+      353.0,
+      168.46
+    ],
+    [
+      373.0,
+      170.61
+    ],
+    [
+      393.0,
+      172.84
+    ],
+    [
+      413.0,
+      175.05
+    ],
+    [
+      433.0,
+      177.1
+    ],
+    [
+      453.0,
+      178.92
+    ],
+    [
+      473.0,
+      180.43
+    ],
+    [
+      493.0,
+      181.58
+    ],
+    [
+      513.0,
+      182.31
+    ],
+    [
+      533.0,
+      182.6
+    ],
+    [
+      553.0,
+      182.44
+    ],
+    [
+      573.0,
+      181.84
+    ],
+    [
+      593.0,
+      180.83
+    ],
+    [
+      613.0,
+      179.45
+    ],
+    [
+      633.0,
+      177.78
+    ],
+    [
+      653.0,
+      175.93
+    ],
+    [
+      673.0,
+      173.97
+    ],
+    [
+      693.0,
+      172.06
+    ],
+    [
+      713.0,
+      170.36
+    ],
+    [
+      733.0,
+      169.08
+    ],
+    [
+      753.0,
+      168.39
+    ],
+    [
+      773.0,
+      168.54
+    ],
+    [
+      793.0,
+      169.05
+    ],
+    [
+      813.0,
+      162.63
+    ],
+    [
+      833.0,
+      145.74
+    ],
+    [
+      850.0,
+      128.19
+    ]
+  ],
+  "emissivity": [
+    [
+      50.0,
+      0.4
+    ]
+  ],
+  "oxideActivationTemperature": 0.0,
+  "oxideEmissivity": [
+    [
+      50.0,
+      0.8
+    ]
+  ],
+  "oxideHeatOfFormation": 0.0,
+  "oxideReactionProbability": 0.0,
+  "liquid": {
+    "density": 2400.0,
+    "viscosity": 0.0013,
+    "surfaceTension": 0.8,
+    "_sources": "pure aluminium near the liquidus: rho_l 2375-2400 kg/m3 (Smithells Metals Reference Book, 8th ed., Table 14.1), mu_l 1.2-1.4 mPa s at 933-1000 K (Assael et al. 2006, J. Phys. Chem. Ref. Data 35, 285), sigma see below. Alloy corrections for AA7075 (5.6 % Zn, 2.5 % Mg, 1.6 % Cu) are within 10 %; used as assumptions (spec 2026-09-20 sections 2 and 16). sigma 0.80 N/m for fully liquid AA7075 (user decision 2026-09-28): Bainbridge & Taylor 2013, Metall. Mater. Trans. A 44A, 3901-3909, doi 10.1007/s11661-013-1696-9, Table II, commercial 7075 by sessile drop at the liquidus + 50 K: 0.809 +- 0.041 N/m as melted in vacuum (0.843 +- 0.018 after the oxide skin was broken, 0.777 +- 0.061 after exposure to dry air, 0.607 +- 0.083 after breaking it again in dry air); held constant with temperature."
+  }
+}

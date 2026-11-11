@@ -45,9 +45,15 @@ Reentry Model/prototype/**/*.gif
 Reentry Model/prototype/work-2026-10-07-scheil-default/debug/run00625/
 Reentry Model/prototype/work-2026-10-08-skin/bitid/d*/
 Reentry Model/prototype/work-2026-10-08-skin/probe_freeze/run_*/
+Reentry Model/prototype/work-2026-10-08-skin/probe_freeze/run_energy_dt05/
 # a git repository of its own (a session's working copy): git cannot track the files inside it
 Reentry Model/prototype/work-2026-10-08-skin/code/
 Reentry Model/prototype/work-2026-10-12-moving-mesh/code/
+Reentry Model/prototype/work-2026-10-12-skin-heat/code/
+Reentry Model/prototype/work-2026-10-12-skin-heat/measure/
+Reentry Model/prototype/work-2026-10-12-skin-heat/extract_fine_box.py
+Reentry Model/prototype/work-2026-10-18-column-flow/
+Reentry Model/prototype/work-2026-10-28-skin-spraying/
 
 # Spheral container outputs (build logs, regression and benchmark runs)
 spheral_output/

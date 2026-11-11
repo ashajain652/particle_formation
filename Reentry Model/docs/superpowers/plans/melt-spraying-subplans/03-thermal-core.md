@@ -10,6 +10,62 @@
 
 ---
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** the Step 2 thermal protocol only (`ThermalSolver`, `StepResult`, `MissingBackend`, `SIGMA_SB`); this task's extended protocol and both backends stay skyscrapers'.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/thermal/__init__.py`: the **Step 2** protocol (`ThermalSolver`, `StepResult`, `MissingBackend`,
+  `SIGMA_SB`) moves to **`reentry_model/shared/thermal.py`** (stage 0). This task's rewritten protocol — nodal enthalpy,
+  pinned nodes, deferred loads — is skyscrapers' own and stays in `reentry_model/thermal/__init__.py`, which imports the
+  shared names it reuses. The two backends and the `thermal_solver` factory stay skyscrapers'.
+- `reentry_model/cli.py`: the `--lumped-mass` → `--consistent-mass` edit is made in the skyscrapers run driver, which
+  stays in `cli.py`; the common flight arguments live in `reentry_model/shared/cli_common.py` (stage 0).
+- `heating` and `body`'s `Body` protocol are imported from `reentry_model.shared`.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §4, §5.3, §7.2, §9 and §10.3;
+> stage 1 is sub-plan 19 (`update_geometry` on both backends), stage 2 is sub-plan 20 (the nodal base law).
+
+The thermal core of this sub-plan is kept as the 3D model's solver: nodal enthalpy with the enthalpy-consistent Newton
+iteration, the lumped capacity, the AMG-then-direct fallback, the two backends behind one protocol and the cross-backend
+test. The redesign adds to it without replacing it. Sub-plan 19 gave each backend `update_geometry(elements=None)` for
+moved nodes (the scikit-fem backend also drops its AMG hierarchy in `setup`, which crashed when reused on a rebuilt
+mesh), and sub-plan 20 adds the base law of spec §7.2 as an implicit affine law at each corner's base node (heat a + b T
+over its dual area, linearised in the Newton iteration as the radiation is), the per-node counterpart of the per-facet
+`interface` argument the stage-1 skins added to `step`, with the 3D surface radiation off, since the base surface is no
+longer the free surface. What the skin path no longer uses is the element-fraction machinery (`set_fractions`, `phi`,
+the pinned nodes of dead material, `element_energies`) and the film-mass hooks (`set_film_mass`, `film_weight`,
+`film_mass` in `mass_matrix`): the domain now shrinks by node motion and rebuilds, with no element death and no film
+account (spec §5.3, §9), and `MovingMesh` assumes every element is active. They stay, tested and unchanged, for
+`--surface-model elements`; do not remove them and do not extend them for the skin path. The test counts and the
+"Expected" lines in this sub-plan are those of its own commit, not of the current base.
+
+---
+
 ### Task 3: Thermal core — nodal enthalpy, element fractions, pinned nodes, nodal loads
 
 **Files:**

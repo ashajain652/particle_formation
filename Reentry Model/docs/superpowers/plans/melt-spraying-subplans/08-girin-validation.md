@@ -10,6 +10,54 @@
 
 ---
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** `girin_case` (whole module).
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/girin_case.py` → **`reentry_model/shared/girin_case.py`**; `analysis/girin_reference.py` is unchanged.
+  Girin's published cases validate the shared spray physics once, for both architectures.
+- Built by stage S's sub-plan **S5**.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §8 and §9; no code in this sub-plan changes.
+
+This sub-plan stands as written. It validates the physics spec §9 marks "kept, per column, unchanged": Girin's delta_m
+(his Eq. 2), the thin-film and Rayleigh-Taylor modes and the droplet size laws, run on Girin's own published cases
+with prescribed film thicknesses. It depends only on `dispersion`, `surface_flow.ranger_psi` and the pure functions of
+`spray`, and on nothing the redesign retires (no body, mesh, film account or element). The redesign changes where
+those functions are called, not what they compute: spec §8 evaluates them per column from the skin's top cells with
+the film thickness b taken as the whole flowing depth (spec §6.7), and that wiring is built and tested in sub-plan 22
+(task 1), not here. Its thresholds (exact tier within 2 %, integrated tier within 30 %) therefore remain the check
+that the shared spray module has not drifted when sub-plan 22 refactors `spray.py` for per-column use; re-run
+`tests/test_reentry_model_girin.py` after that refactor. Nothing here needs to be followed differently for the new
+design.
+
+---
+
 ### Task 8: Girin's published cases — the Girin-as-published driver and its analysis script
 
 **Files:**

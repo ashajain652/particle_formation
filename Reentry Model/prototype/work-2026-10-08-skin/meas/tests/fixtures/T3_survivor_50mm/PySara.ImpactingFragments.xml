@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fragments>
+	<fragment>
+		<name>T3</name>
+		<objects>
+			<uniqueID>spike000-0000-4000-8000-000000000001</uniqueID>
+		</objects>
+		<epoch>2024-08-01T13:00:12.080</epoch>
+		<mass unit="kg">1.8411041946975187e-01</mass>
+		<velocity unit="m/s">5.8229426237796787e+01</velocity>
+		<latitude unit="deg">3.6041459697933099e+01</latitude>
+		<longitude unit="deg">-8.3913412639736748e+01</longitude>
+		<crossSectionArea unit="m2">1.9634954084936209e-03</crossSectionArea>
+		<quantity>1</quantity>
+		<isFloating>false</isFloating>
+	</fragment>
+</fragments>

@@ -1,0 +1,3 @@
+2026-10-08 15:35:59 guard started on Now drawing from 'Battery Power'
+2026-10-08 15:48:42 PAUSED BY CONTROLLER after the box test (power guard stopped; resume with pkill -CONT -f 'reentry_model run' and restart power_guard.sh)
+2026-10-09 15:55:09 campaign STOPPED by controller on Asha's instruction (skin redesign); a_dt05, e_seed1, a_dt025 terminated at ~73 min CPU, nothing else started

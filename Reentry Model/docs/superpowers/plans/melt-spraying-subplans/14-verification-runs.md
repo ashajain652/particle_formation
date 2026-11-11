@@ -3,6 +3,58 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7194–7488). Read `00-shared-context.md` first. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the verification and sensitivity runs, and the switched-step study** (the section after the seed's). **Amended 2026-10-07: the drivers on Scheil's curve with the rigid substrate, and the switched-step series repeated** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the drivers switch by default, and the harness retires** (the section after that).
 
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** nothing of its own; its drivers will import the moved modules through the aliases.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The verification drivers and the reference-tier tests import the moved modules from `reentry_model.shared` (or
+  through the re-exports); run names and results of skyscrapers runs are unchanged.
+- Stage 0 is accepted only if the unit and reference tiers give bit-identical histories, so the verification table
+  here is not re-run because of the move.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9, §11.1, §11.2.
+
+This sub-plan remains the verification record of `--surface-model elements`: its drivers, tables, sensitivity variants
+and the reference-tier test against the two melting SESAM references stay as built and are not edited. Two things in
+it are reused by the new design. The scatter between seeds measured in the amendment of 2026-10-05 is the yardstick of
+spec §11 level 3: the skin path's droplet count, thick share, medians by number and by mass, sprayed mass and mass at
+120 s must agree under halving of the macro step and under refinement of the surface to within that scatter. And the
+element model's 100 mm flight to 120 s and 50 mm flight, run with `--surface-model elements`, are the sanity
+comparison level 3 asks for ("not a reference"). The verification of the skin model itself is not this sub-plan but
+the ladder of spec §11.1, built in sub-plan 19 (level 1's moving-mesh checks), 20 (level 1's heat checks, level 2 with
+flow off, level 3's SESAM verification), 21 (level 1's flow checks, level 2 with flow on) and 22 (level 3's flights;
+level 4 is later). The 2026-09-27 block at the top of this file (re-measure with prism layers 0 and `PHI_DEATH` 0.50,
+the derived-surface shape A/B, the `PHI_DEATH` A/B, the remesh conservation record) belongs to deprecated sub-plans 16
+and 17 and must not be followed; the new design's counterpart is the rebuild residuals reported in the history (spec
+§10.2).
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

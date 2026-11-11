@@ -1,0 +1,69 @@
+#_______________________________________________________________________________
+#    ######   ####     ##             #####   #####     ##    #    #    ##
+#    #       #        #  #            #    #  #    #   #  #   ##  ##   #  #
+#    #####    ####   ######           #    #  #####   ######  # ## #  ######
+#    #            #  #    #           #    #  #    #  #    #  #    #  #    #
+#____######__#####___#____#___________#####___#____#__#____#__#____#__#____#____
+#
+#               ESA Debris Risk Assessment and Mitigation Analysis
+#
+#   ---- DRAMA ( SESAM 2.3.0 ( built Mar 17 2026 16:23:40) ) ----
+#                                      ESA 2022
+#
+#                        execution log file -sesam.log-
+#                   run date+time: Sun Sep 13 23:35:52 2026
+
+info: Starting Sesam
+info: SESAM module initialising
+info: Using voxelator cache dir: /private/var/folders/h2/sj91_4x568z5z3d6q0rh9wsh0000gn/T/tmpldfwvbyo/REENTRY
+warning: oxideReactionProbability for drama-AA7075 < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-A316 < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-A316_Semi-Empirical < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Bat-Li < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Bat-NiCd < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Beryllium < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Carbon-Carbon < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Copper < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-El-Mat < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-HC-AA7075 < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-HC-CFRP-4ply < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-HC-CFRP-8ply < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-HiperCo < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Inconel718 < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Inermet < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Invar < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Iron < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-SiC < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-SolarPanel-Mat < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-TiAl6v4 < 1.0E-5 or not found. Continuing without oxidation for this material.
+warning: oxideReactionProbability for drama-Tungsten < 1.0E-5 or not found. Continuing without oxidation for this material.
+info: Fragment satelliteOne initializing
+info: Creation of object list
+info: Creating Object with UniqueID: spike000-0000-4000-8000-000000000001
+info: Opening netCDF file /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/ATDB_SPHERE.nc for reading DONE.
+info: Using ATDB for SPHERE created with ATDB_converter r1933 on 20190411 from data created by Hyperschall Technologie Göttingen GmbH.
+info: Included new object 'E1' to fragment list
+info: Handling of inclusions
+info: Handling of connections
+info: Using spacecraft mass calculated from objects hierarchy: 0.000184
+info: Testing for altitude above149km with input State: system= 235102, epoch= 2024-08-01T12:53:07, elements= 77.500133, 29.546067, -82.134333, 7.500000, -0.959331, -257.168296
+info: Initial altitude below 149.000000km. Converting input for sesam.
+info: starting CstateConvertToHtgSesam with input State: system= 235102, epoch= 2024-08-01T12:53:07, elements= 77.500133, 29.546067, -82.134333, 7.500000, -0.959331, -257.168296
+info: Using static environment from CSV file /Applications/DRAMA-4.1.4/TOOLS/SARA/REENTRY/data/StaticEnvironmentData.csv.
+info: SESAM initialisation DONE.
+info: SESAM propagation started
+info: Starting propagation of Fragment with uniqueID spike000-0000-4000-8000-000000000001.
+info: EVENT area spike000-0000-4000-8000-000000000001 0.000020
+info: EVENT start spike000-0000-4000-8000-000000000001 0.000184 0.000020 2024-08-01T12:53:07
+info: Object spike000-0000-4000-8000-000000000001 reached end of life because of ballooning.
+info: EVENT object spike000-0000-4000-8000-000000000001 balloon
+info: Object spike000-0000-4000-8000-000000000001 reached end of life.
+info: ObjectTrajectory Written: PySara.E1.spike000-0000-4000-8000-000000000001_Trajectory.txt
+info: GnuPlotGeneration::GenerateSingleObjectScript Wrote PySara.E1.spike000-0000-4000-8000-000000000001.gnu
+info: AeroThermalHistory Written: PySara.E1.spike000-0000-4000-8000-000000000001_AeroThermalHistory.txt
+info: EVENT end spike000-0000-4000-8000-000000000001 0.000003
+info: Adding 0 new fragments to fragmentList.
+info: Writing spike000-0000-4000-8000-000000000001 to XML
+info: ImpactingFragmentXML::WriteXML Wrote PySara.ImpactingFragments.xml
+info: GnuPlotGeneration::GenerateAllObjectsScript Wrote PySara.gnu
+info: Propagation Successful

@@ -10,6 +10,59 @@
 
 ---
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** `surface_flow` and the additions to `gas`.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- The four edits to `reentry_model/gas.py` → **`reentry_model/shared/gas.py`**.
+- `reentry_model/surface_flow.py` → **`reentry_model/shared/surface_flow.py`**; its imports of `trajectory`, `aero`,
+  `atmosphere`, `constants` and `body` come from `reentry_model.shared`.
+- Built by stage S's sub-plan **S3**. If S3 has landed, this task's module steps are done.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §4 (step 1), §6.4, §8 and
+> §10.3; the new caller is sub-plan 20 (heating at the corners) and the new use of its output is sub-plan 21.
+
+This sub-plan stays and `surface_flow.py` is evaluated per corner in the skin path (spec §4, §10.3):
+`SurfaceFlow.evaluate` is given the angle of each corner's smoothed normal from `columns.py` where it was given each
+patch's angle, and the top cell's temperature as the wall temperature (spec §6.3: every quantity that reads a wall
+temperature reads the column's top cell). The three-branch regime gate, the modified Newtonian plus Prandtl–Meyer wall
+pressure, the Ranger boundary layer, τ and its slip and free-molecular forms, the Knudsen-based `closure` choice and
+`ranger_psi` are unchanged, and so are the gate's thresholds and the physics docstring. What changes is the use of `G`.
+The `G` that `evaluate` returns is the meridional derivative of p_w(θ) plus the inertial term, built for the patch film;
+the flow in the skin does not use it. Spec §6.4 builds the push in each column from `p_w`, from the deceleration split
+into the component along the surface a_t and into it a_n, and from the thickness and curvature terms, with the pressure
+gradient taken on the corner graph by the surface-gradient operators of `columns.py` (sub-plan 20, task 1; sub-plan 21,
+task 3). The `deceleration` field is the magnitude that split starts from, and `p_w`, `tau`, `closure`, `delta_a` and
+`kn_local` are the other inputs. `G` and the per-patch interface stay as written for `--surface-model elements`. Do not
+edit the gate's thresholds for the redesign.
+
+---
+
 ### Task 5: The flow-regime gate, the wall pressure and the surface flow per patch
 
 **Files:**

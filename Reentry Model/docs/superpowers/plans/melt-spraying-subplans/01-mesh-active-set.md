@@ -16,6 +16,29 @@ longer the mechanism that keeps the surface resolved. Do not spend time improvin
 
 ---
 
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §5.3, §9 and §10.3; the build
+> is sub-plan 19 (`19-moving-mesh.md`, built 2026-10-12). This sub-plan stays: it is the record of the mesh module.
+
+Still used by the new design, unchanged: `generate_sphere_mesh` with the dense band (`DEFAULT_BAND` 15 mm,
+`DEFAULT_BAND_RAMP`, `layers=0`, and the band and ramp in `mesh_file_name`), which sub-plan 19's rebuild repeats inside
+the fixed surface triangulation and whose 15 mm is the default depth D of the deforming zone (spec §5.3); `box_mesh`,
+which is the level-2 box and the stage-1 test mesh; and `VolumeMesh` / `SurfaceMesh` with `boundary_nodes`, whose
+boundary vertices are the corners that carry the columns (spec §5.1). Kept for `--surface-model elements`, which runs
+this sub-plan's mesh exactly as written: the active set, `deactivate`, the face table, `element_faces`, `element_layer`
+and the prism layers. The skin path retires them (spec §5.3 "No element death", §9): `MovingMesh` assumes every element
+is active and nothing in it calls `deactivate`. Superseded: the derived surface of the 2026-09-27 amendment.
+`derived_points` and `surface(derived=True)` existed so that a recession could be drawn without moving the solver's mesh
+("Design B"); the new design moves the mesh itself, so `MovingMesh.move` writes `points` and `derived_points` together
+and keeps them equal, and the amendment's acceptance criterion 3 and the "Not in this task" line (no backend change, the
+solver's mesh never moves) hold only for the element model. `smoothed_normals` (patch normals), `edge_lengths` and
+`element_depths` stay as diagnostics and for the element model; the skin path takes its column directions from the
+corners, in the new `reentry_model/columns.py` (sub-plan 20), and its tangential smoothing from `movemesh.py`. Do not
+extend the active set or the derived surface for the skin path.
+
+---
+
 ## Amendment of 2026-09-27 — the dense band replaces the prism stack
 
 Source: `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md` §6 and §8, approved 2026-09-27.

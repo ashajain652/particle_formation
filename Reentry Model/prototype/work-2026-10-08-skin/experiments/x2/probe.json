@@ -1,0 +1,74 @@
+{
+ "kuhn": {
+  "literal": {
+   "q_lat_proj_MWm2": 5.133056775191225,
+   "P_wall_share": 0.2139122520569169,
+   "ns_dev_front_max_deg": 24.36557542592785,
+   "ns_dev_lat_max_deg": 2.6415622031122092,
+   "q_front_min_MWm2": 4.261890083696843,
+   "q_front_max_MWm2": 5.135879365652999
+  },
+  "smoothed": {
+   "q_lat_proj_MWm2": 6.000000000000002,
+   "P_wall_share": 0.0,
+   "ns_dev_front_max_deg": 0.0,
+   "ns_dev_lat_max_deg": 0.0,
+   "q_front_min_MWm2": 6.000000000000001,
+   "q_front_max_MWm2": 6.000000000000001
+  }
+ },
+ "t0.5": {
+  "literal": {
+   "q_lat_proj_MWm2": 5.31006858900307,
+   "P_wall_share": 0.11951638804758512,
+   "ns_dev_front_max_deg": 6.540096260046456,
+   "ns_dev_lat_max_deg": 0.6860314691098051,
+   "q_front_min_MWm2": 5.241427959892442,
+   "q_front_max_MWm2": 5.310284924632184
+  },
+  "smoothed": {
+   "q_lat_proj_MWm2": 6.000000000000002,
+   "P_wall_share": 0.0,
+   "ns_dev_front_max_deg": 0.0,
+   "ns_dev_lat_max_deg": 0.0,
+   "q_front_min_MWm2": 6.000000000000001,
+   "q_front_max_MWm2": 6.000000000000001
+  }
+ },
+ "t1": {
+  "literal": {
+   "q_lat_proj_MWm2": 5.062876412289427,
+   "P_wall_share": 0.17501360338567737,
+   "ns_dev_front_max_deg": 12.418959259159466,
+   "ns_dev_lat_max_deg": 1.3237576920169485,
+   "q_front_min_MWm2": 4.829607670972233,
+   "q_front_max_MWm2": 5.063709656523965
+  },
+  "smoothed": {
+   "q_lat_proj_MWm2": 6.000000000000002,
+   "P_wall_share": 0.0,
+   "ns_dev_front_max_deg": 0.0,
+   "ns_dev_lat_max_deg": 0.0,
+   "q_front_min_MWm2": 6.000000000000001,
+   "q_front_max_MWm2": 6.000000000000001
+  }
+ },
+ "t2": {
+  "literal": {
+   "q_lat_proj_MWm2": 5.133056775191226,
+   "P_wall_share": 0.21391225205691689,
+   "ns_dev_front_max_deg": 24.365575425927883,
+   "ns_dev_lat_max_deg": 2.6415622031122092,
+   "q_front_min_MWm2": 4.2618900836968425,
+   "q_front_max_MWm2": 5.1358793656529995
+  },
+  "smoothed": {
+   "q_lat_proj_MWm2": 6.000000000000002,
+   "P_wall_share": 0.0,
+   "ns_dev_front_max_deg": 0.0,
+   "ns_dev_lat_max_deg": 0.0,
+   "q_front_min_MWm2": 6.000000000000001,
+   "q_front_max_MWm2": 6.000000000000001
+  }
+ }
+}

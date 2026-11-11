@@ -3,6 +3,57 @@
 > Extracted verbatim from `2026-09-20-melt-spraying.md` (current version, lines 7489–end of file). Read `00-shared-context.md` first. This extract includes everything after the Task 15 heading, since the rest of the source document (physics-model docs, the amendments log, the re-measured melting section, and the self-review notes) is itself the content this task is writing and checking. **Amended 2026-10-02: the deep runoff and the per-patch conjugate depth** (section below). **Amended 2026-10-03: the molten cascade** (the section after it). **Amended 2026-10-05: the seed of numpy's generator** (the section after that). **Amended 2026-10-05 (runoff flux): the film's flux and the step study in the README, assumptions and spec** (the section after the seed's). **Amended 2026-10-07: the rigid substrate, the Scheil default and the repeated step series** (the section after the runoff flux's). **Amended 2026-10-07 (continuum step): the continuum step in the README, the assumptions and the spec** (the section after that).
 
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** nothing of its own; the README's section on the two architectures is written by the combined refactor.
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `README.md` gains a section on the two architectures, the `--architecture` flag and the shared physics (written with
+  stage 0 and stage S). Step 3's documentation blocks name modules by their shared paths
+  (`reentry_model/shared/spray.py`, …); `prototype/plan3/audit_docs.py` is re-run after the change.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Spec §9, §10, §14; the new design's documentation is task 6 of sub-plan 22.
+
+The README and `docs/model_assumptions.md` blocks of this sub-plan, with their amendments, describe the element model
+and remain correct for `--surface-model elements`; they are kept, and once the default becomes `skin` they must say
+which model they describe, because the film and deep accounts, feed gate, element deaths and freeze-back rule (the
+retired rows of spec §9) are no longer how the default model works. Sub-plan 22 (task 6) writes the documentation of
+the new design: the README gains the settings of spec §10.1 and the outputs of §10.2, the verification tables of the
+ladder of §11 are added as each level is measured, and `docs/model_assumptions.md` gains the thesis assumptions of
+spec §14 with their verification status, under the repository rule that a table, its assumption entry and its test
+threshold change together. The conservation statement for the skin path is that mass and enthalpy are exact after an
+explicit correction at each rebuild, with the pre-correction residual reported (spec §10.2 and level 1). The
+2026-09-27 block (`PHI_DEATH` 0.50, the prism-layer default, the seven assumptions of the remeshing design) belongs to
+deprecated sub-plans 16 and 17 and must not be followed. `prototype/plan3/audit_docs.py` must be told which blocks
+describe `--surface-model elements` and which the skin path, and the clauses the redesign retires added to its
+`SUPERSEDED` list, before the skin path's flags and columns are audited.
+
+---
+
 > **Amended 2026-09-27** by `docs/superpowers/specs/2026-09-27-surface-recession-remeshing-design.md`
 > (measured facts 38–45 in `00-shared-context.md`). The block below takes precedence over the extracted body.
 

@@ -10,6 +10,53 @@
 
 ---
 
+## Amendment of 2026-10-12 — port first, move into `shared/` afterwards (Asha's decision; supersedes the paths of the 2026-10-11 amendment below)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4.2, §4.4 and §14 as revised on 2026-10-12. **When this sub-plan's code is ported from
+> the prototype into the package, use the module paths the prototype uses (`reentry_model/<module>.py`), exactly as the
+> body and the earlier amendments say, and ignore the `reentry_model/shared/...` paths of the 2026-10-11 amendment
+> below.** There is no `reentry_model/shared/` package on `main`. After the skyscrapers port has landed on `main`, one
+> combined refactor (the level-set design's stage 0 + S, with its own plan) moves the architecture-independent modules
+> into `reentry_model/shared/`, keeps every old path working as an alias of the same module object, and checks that
+> every flight's history is unchanged. The 2026-10-11 amendment stays as the record of **which** of this sub-plan's
+> modules will be shared; only **when** and **where they are created** is superseded. Helpful, not required: where it
+> costs nothing, keep the shared physics free of skyscrapers-only imports, so that the later move stays mechanical.
+
+**Shared later from this sub-plan:** `dispersion` (whole module).
+
+## Amendment of 2026-10-11 — the shared physics package (Asha's instruction)
+
+> Design of record: `docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md` §4 and §14 (stages 0 and S). The repository now has two model architectures,
+> **skyscrapers** (this plan's) and **level set**, chosen by `reentry_model run --architecture skyscrapers|levelset`
+> (default `skyscrapers`, whose runs, run names and results are unchanged). Code that both architectures use lives in
+> `reentry_model/shared/`; each moved module's old path stays importable as a one-line re-export, so nothing that
+> imports the old path breaks. **This amendment changes where files live, not what they do.** It takes precedence over
+> the file paths in the body below and in earlier amendments. Test files keep their names and places and import the
+> module from `reentry_model.shared`. The skins are never shared between the architectures. Read the matching amendment
+> at the end of `00-shared-context.md` first.
+
+**What changes in this sub-plan.**
+
+- `reentry_model/dispersion.py` → **`reentry_model/shared/dispersion.py`**. The generated table
+  `reentry_model/data/girin_dispersion.json` stays where it is.
+- Built by stage S's sub-plan **S2**. If S2 has landed, this task is done; its test stays as the check.
+
+## Amendment of 2026-10-12 — the layered-skin redesign
+
+> Design of record: `docs/superpowers/specs/2026-10-11-layered-skin-moving-mesh-design.md` §8 and §9; the caller changes
+> in sub-plan 22 (`22-skin-spraying-flight.md`). This sub-plan is unchanged and in full use.
+
+Nothing in `reentry_model/dispersion.py`, `data/girin_dispersion.json` or `tests/test_reentry_model_dispersion.py`
+changes. Spec §8 keeps Girin's model "as it stands" and spec §9 lists the spray modes and droplet size laws as kept,
+unchanged physics, so `DispersionTable` and `fastest_mode` are still what `spray.SprayModel` reads for the
+Rayleigh–Taylor and thick-film modes, for both `--surface-model skin` and `--surface-model elements`. The one difference
+is the caller: in the skin path the spray model is evaluated per column from the skin's top cells (sub-plan 22, task 1)
+instead of per patch from the film account, with the same table. The table depends only on the dimensionless numbers it
+is built on, so it is independent of the surface model, the cell size and the macro step, and it does not need to be
+regenerated. Do not change its grids for the redesign.
+
+---
+
 ### Task 4: Girin's dispersion relation and its cached table
 
 **Files:**
