@@ -17,8 +17,9 @@ surface as it melts and flows. The package also keeps the older element model (a
 ## What landed, and where
 
 The work is on the branch `skyscrapers-port`, which is to become `main` (it was not pushed, and nothing here merged
-it). Before the port, `main` stood at commit `8ed75cf`; the port is 186 commits after that, of which 96 are the
-build repository's history rewritten (below). The first-parent commits, in order:
+it). Before the port, `main` stood at commit `8ed75cf`; the port is 186 commits after that, counted up to
+`58d768a` (this note adds one more). The count covers both merged lines: the 96 rewritten build commits, the prototype
+line's own commits, and the port's own commits (below). The first-parent commits, in order:
 
 - `595928b`: the port's own tools, in `Reentry Model/analysis/skyscrapers_port/` (the path map, the checks, the
   three-way resolver; later `same_results.py`). Read its `README.md`.
@@ -65,13 +66,16 @@ where silent changes of results happen, so use the check below after each stage.
 The tool is `Reentry Model/analysis/skyscrapers_port/same_results.py` (documented in the README beside it). Its
 `run` command runs named cases with `python -B -m reentry_model ...` inside a code folder and writes the outputs to a
 folder; its `compare` command compares two such folders: every csv cell as text, every json field, every npz array
-element, and any other file byte for byte, ignoring only timers, paths and provenance (including `runtime_s`, the
-run's elapsed time). `compare` exits 0 only on an identical result, and exits 2 on a missing or empty folder. `run`
+element, and any other file byte for byte, skipping only the following: the files ending `.log`, `.pkl`, `.progress`, `.vtu`, `.vtp` and `.pvd`; the json keys
+`files` and `provenance`; every csv column or json key named `wall_*` or `runtime_s` (the run's elapsed time); and the
+mesh and material file paths in the settings, which are compared by file name and SHA-256 checksum instead. Because
+`.pkl` files are skipped, a change to a saved state is not caught by `compare`; this matters for defect 1 below, where
+state saving is what is broken, so check any fix to it separately. `compare` exits 0 only on an identical result, and exits 2 on a missing or empty folder. `run`
 refuses a case folder that already holds results, so give each run a new folder. The cases:
 
 - `element`: a 0.125 s flight of a 100 mm sphere, melting on, with `--surface-model elements`.
 - `skins`: the same flight with the layered skins (`--skin-preset dev --fine-size 2`).
-- `resume`: the 100 mm sphere's saved state at 22.0 s, continued for 22.6 s (about 9 417 skin columns) with the
+- `resume`: the 100 mm sphere's saved state at 22.0 s, run from there to an end time of 22.6 s, about 0.6 s of flight (about 9 417 skin columns) with the
   options of the 2026-11-10 flight runbook. It needs `--state <file>`. The state is
   `prototype/work-2026-10-28-skin-spraying-plan/code/reentry_model_output/task5_snapshots/d100__physics__skin.state.pkl`
   in the worktree `.claude/worktrees/subplan20` on Asha's laptop. It is 1 380 690 172 bytes and git-ignored, so it is
@@ -83,7 +87,17 @@ refuses a case folder that already holds results, so give each run a new folder.
 The reference outputs are on Asha's laptop and git-ignored: the port's are in `Reentry Model/output/port_check/port/`
 of the worktree `.claude/worktrees/skyscrapers-port`, and the prototype's in
 `prototype/work-2026-10-28-skin-spraying/measure/port/prototype/` of the worktree `.claude/worktrees/subplan20`.
-Procedure: run the three melting cases (`element`, `skins`, `resume`) on your refactored code into a new folder, then
+The commands, from `Reentry Model/` of your worktree, with the interpreter of the conda environment `drama_env`:
+
+```
+PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python
+"$PY" analysis/skyscrapers_port/same_results.py run --code "<your worktree>/Reentry Model" --out <a new folder> \
+    --cases element,skins,resume --state <the 22.0 s state file named above>
+"$PY" analysis/skyscrapers_port/same_results.py compare <that new folder> "<skyscrapers-port worktree>/Reentry Model/output/port_check/port"
+```
+
+`run` refuses (exit 2, nothing run, nothing deleted) a folder that already holds results, so use a new folder each time.
+In words: run the three melting cases (`element`, `skins`, `resume`) on your refactored code into a new folder, then
 `compare` it against the port's folder; the expected output is `identical: 22 files compared`, exit 0. If the port's
 folder is missing, rebuild it first by running the same three cases on the port's own head (before your first
 change), and check them against the prototype's if you can. Run it on mains power (`pmset -g batt | head -1` should
@@ -152,7 +166,8 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
 - **Branches made before the port.** These merge later, each on its own, and will meet the moved prototype paths
   (prototype folders now live under `Reentry Model/prototype/`) and the rewritten history: `levelset-two-interface`,
   `levelset-stage0`, `wake-residence`, `segmented-trail`, `janaf-vapour-pressure`, `we-critical-308` and
-  `skin-fixes-flights-macstudio`. Do not merge them as part of the refactor. `levelset-stage0` is superseded by the
+  `skin-fixes-flights-macstudio` (which exists only as the remote branch
+  `origin/skin-fixes-flights-macstudio`; its results were pushed on 2026-11-11 at `39e8ded`). Do not merge them as part of the refactor. `levelset-stage0` is superseded by the
   refactor itself (design section 14). Resolve conflicts one branch at a time with the path map in
   `analysis/skyscrapers_port/path_map.py`.
 - **Do not touch** `DRAMA Sphere Experiments/`, `Spheral/`, `reentry_model/droplet_reentry/` and
