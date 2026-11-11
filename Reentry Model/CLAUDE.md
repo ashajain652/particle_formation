@@ -85,7 +85,10 @@ have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/
 
 ```bash
 cd "Reentry Model"
-"$PY" -m pytest -m "not reference" -q                     # the normal loop, ~3 min (droplet tests ~1 min)
+PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
+                                                          # the package's unit tier: 702 passed, 1 skipped, ~24 min on four
+                                                          # processes (needs pytest-xdist)
+"$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
 "$PY" -m pytest tests/test_reentry_model_mesh.py -q -k prism   # one test
 "$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~35 min (Step 2)
@@ -131,7 +134,8 @@ The run is a lockstep coupling, not a monolith. `cli.py` builds three things and
 - a **body**, which is the extension point. `body.ConstantBody` is Step 1 (fixed mass, one
   temperature, `--thermal none`); `body.ThermalBody` wraps a mesh, a material and a conduction solver
   and advances a temperature field. The trajectory only ever sees mass, area and a temperature, so a
-  future melting body slots in at the same seam.
+  melting body slots in at the same seam: `body.MeltingBody` (the element model's) and `skinbody` (the layered
+  skins') are the melting bodies, in the package since the port of 2026-11-11.
 - `heating.*` — turns the freestream state plus every surface patch's angle θ and wall temperature
   into a per-patch convective flux.
 
@@ -148,19 +152,25 @@ in serial; `fenicsx_backend` exists for MPI scaling and is verified to agree to 
 a `Reference` in SI), `compare` (model sampled at the reference's time stamps → metrics + six plots),
 `viz` (PyVista animations read only the exported VTK series, never live objects).
 
-Step 3, melting and melt spraying, joined the package on 2026-11-11 (see Repository conventions). Its modules are
-named here by what each holds, from its own docstring. The layered-skin design (the "skyscrapers" architecture)
-is `skin` (a layered skin of cells on every corner column of the 3D mesh's surface: stage 2, heat only, then the
-flow), `skinbody` (the body that couples the moving 3D mesh to those skins each macro step), `columns` (the corner
-columns, each owning the dual cell of one corner of the surface triangulation), `movemesh` (the moving 3D mesh:
-surface corners move by the metal crossing the rigid front, nodes in a deforming zone beneath them follow, the
-temperature field is remapped with the energy books closed exactly), `spreading` (spreading the re-frozen deposit
-where the base would fold), and `restart` (saving a flight's whole state to disk and resuming from it). Physics
-shared with the other architecture is `film` (melt-film lubrication flow and upwind runoff on the patch graph),
-`spray` (Girin's gradient instability per patch and the droplet release bookkeeping), `dispersion` (the numerical
-solution of Girin's dispersion relation), `surface_flow` (the flow-regime gate, wall pressure, boundary-layer
-edge state, wall shear and the film's driving gradient), `rheology` (the viscosity of liquid and slurry AA7075),
-and `girin_case` (Girin's published spraying cases run with his own simplifications, as a validation).
+Step 3, melting and melt spraying, joined the package on 2026-11-11 (see Repository conventions). Its modules, each
+described from its own docstring. The layered-skin design (the "skyscrapers" architecture):
+
+- `skin` — a layered skin of cells on every corner column of the 3D mesh's surface (stage 2 heat only, then the flow).
+- `skinbody` — the body that couples the moving 3D mesh to those skins each macro step.
+- `columns` — the corner columns, each owning the dual cell of one corner of the surface triangulation.
+- `movemesh` — the moving 3D mesh: surface corners move by the metal crossing the rigid front, nodes in a deforming
+  zone beneath follow, and the temperature field is remapped with the energy books closed exactly.
+- `spreading` — spreading the re-frozen deposit where the base would fold.
+- `restart` — saving a flight's whole state to disk and resuming from it.
+
+Physics shared with the other (level-set) architecture:
+
+- `film` — melt-film lubrication flow and upwind runoff on the patch graph.
+- `spray` — Girin's gradient instability per patch and the droplet release bookkeeping.
+- `dispersion` — the numerical solution of Girin's dispersion relation.
+- `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
+- `rheology` — the viscosity of liquid and slurry AA7075.
+- `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
 
 ### The droplet stage (`reentry_model/droplet_reentry/`)
 
@@ -173,7 +183,7 @@ settling to the ground. Promoted on 2026-10-26 from `prototype/work-2026-10-21-d
   state) and `run_case(d0_um, h0_km)`, the entry point for one droplet. `run_case(d0_um, release=state)`
   starts from a given `InitialState` instead of the parent's state at `h0_km`; that is the seam for the
   fragment model, which will release each droplet with its velocity at separation (Asha, 2026-10-24).
-  The connection itself waits until melting (Step 3) joins the package.
+  Melting (Step 3) joined the package on 2026-11-11; the connection itself is still not built.
 - Copies of its dependencies, so the package stands alone: `particle_trajectory.py` and
   `droplet_heating_sweep.py` from `prototype/work-2026-10-14-particle-settling/`, and the parent-
   trajectory section of `DRAMA Sphere Experiments/sphere_sweep.py` as `parent_trajectory.py`. Only

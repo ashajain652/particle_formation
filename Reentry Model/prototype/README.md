@@ -2,7 +2,7 @@
 
 Moved here from the session scratchpad on 2026-09-26, which had pruned it twice (ten prototype files
 on 2026-09-25, and `make_plan.py` itself mid-regeneration on 2026-09-26). The prototype is a throwaway copy
-of the package by design, and the plan it produces is the committed artefact; its code, the generator and the
+of the package by design (superseded for the six skyscrapers folders by the section dated 2026-11-11 at the bottom), and the plan it produces is the committed artefact; its code, the generator and the
 work copy of each amendment (`work-<date>-<name>/`) are version-controlled since 2026-10-08, their run outputs
 are not (`.gitignore`).
 

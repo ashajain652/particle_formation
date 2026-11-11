@@ -460,7 +460,7 @@ its core without Spheral (plan `docs/plans/2026-10-07-spheral-m1.md`):
 Everything runs in drama_env with numpy; nothing here imports Spheral. Assumptions, each marked verified, analytic,
 measured or assumed, are in `docs/spheral_frag_assumptions.md`.
 
-`reentry_model` does not melt yet, so the frames come from the reconstructed Step 3 prototype,
+Melting has been in `reentry_model` since the port of 2026-11-11; the frames described here were made before it, from the reconstructed Step 3 prototype,
 `Reentry Model/prototype/work-2026-10-08-spheral-mvp/code` (an MVP input, plan decision 13). The flight below is its 100 mm
 `AA7075_scheil` physics run: 0.5 s step, seed 12345, 1,255 frames, 5.0 GB, git-ignored.
 
