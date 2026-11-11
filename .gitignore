@@ -54,3 +54,6 @@ spheral_output/
 
 # a prototype work copy's own outputs, whatever their folder name, re-made from its tracked code
 Reentry Model/**/reentry_model_output/
+
+# published papers saved for reading: copyrighted and large, kept only on this machine (the reports and notes beside them are tracked)
+Literature Review/**/*.pdf

@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1a7f37"/></marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c62828"/></marker>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f5fa8"/></marker>
+    <marker id="aY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888888"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1200" height="820" fill="#ffffff"/>
+
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#111111">Figure 1. Gas-phase routes from aluminum vapor to condensed alumina</text>
+  <text x="20" y="56" font-size="13" fill="#444444">Arrow tags R1 to R17 refer to the reaction key on the right. Energies come from the quantum-chemistry and kinetics sources in the notes.</text>
+
+  <!-- ===== Boxes ===== -->
+  <!-- Al -->
+  <rect x="20" y="318" width="120" height="50" rx="8" fill="#eeeeee" stroke="#555555" stroke-width="1.5"/>
+  <text x="80" y="339" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">Al (gas)</text>
+  <text x="80" y="357" font-size="12" text-anchor="middle" fill="#333333">ablated vapor</text>
+  <!-- AlO -->
+  <rect x="200" y="318" width="120" height="50" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+  <text x="260" y="339" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">AlO</text>
+  <text x="260" y="357" font-size="12" text-anchor="middle" fill="#333333">slow to oxidize</text>
+  <!-- OAlO2 -->
+  <rect x="390" y="70" width="160" height="50" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+  <text x="470" y="91" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">OAlO2 (AlO3)</text>
+  <text x="470" y="109" font-size="12" text-anchor="middle" fill="#333333">cold, dilute gas</text>
+  <!-- AlO2 -->
+  <rect x="390" y="150" width="160" height="50" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+  <text x="470" y="171" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">AlO2 (OAlO)</text>
+  <text x="470" y="189" font-size="12" text-anchor="middle" fill="#333333">needs an uphill step</text>
+  <!-- Al2O -->
+  <rect x="390" y="230" width="160" height="50" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+  <text x="470" y="251" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Al2O</text>
+  <text x="470" y="269" font-size="12" text-anchor="middle" fill="#333333">hot-gas suboxide</text>
+  <!-- Al2O2 -->
+  <rect x="390" y="318" width="160" height="50" rx="8" fill="#fff1d6" stroke="#b26a00" stroke-width="1.5"/>
+  <text x="470" y="339" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Al2O2</text>
+  <text x="470" y="357" font-size="12" text-anchor="middle" fill="#333333">precursor of Al2O3</text>
+  <!-- (AlO)x -->
+  <rect x="390" y="400" width="160" height="50" rx="8" fill="#e3edf9" stroke="#3b6fb6" stroke-width="1.5"/>
+  <text x="470" y="421" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">(AlO)x clusters</text>
+  <text x="470" y="439" font-size="12" text-anchor="middle" fill="#333333">x = 2 to 4, extra stable</text>
+  <!-- Monomer (dashed red) -->
+  <rect x="610" y="150" width="170" height="50" rx="8" fill="#fdecea" stroke="#c62828" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="695" y="171" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Al2O3 monomer</text>
+  <text x="695" y="189" font-size="12" text-anchor="middle" fill="#c62828">scarce in the gas</text>
+  <!-- Dimer -->
+  <rect x="610" y="318" width="170" height="50" rx="8" fill="#e3edf9" stroke="#3b6fb6" stroke-width="1.5"/>
+  <text x="695" y="339" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Al4O6 dimer</text>
+  <text x="695" y="357" font-size="12" text-anchor="middle" fill="#333333">first stable seed</text>
+  <!-- (Al2O3)n -->
+  <rect x="610" y="430" width="170" height="50" rx="8" fill="#e3edf9" stroke="#3b6fb6" stroke-width="1.5"/>
+  <text x="695" y="451" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">(Al2O3)n clusters</text>
+  <text x="695" y="469" font-size="12" text-anchor="middle" fill="#333333">Al8O12 and larger</text>
+  <!-- Condensed -->
+  <rect x="610" y="540" width="170" height="56" rx="8" fill="#e3f4e6" stroke="#1a7f37" stroke-width="2"/>
+  <text x="695" y="563" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Condensed alumina</text>
+  <text x="695" y="582" font-size="12" text-anchor="middle" fill="#333333">liquid, then solid</text>
+  <!-- AlOH -->
+  <rect x="200" y="540" width="120" height="56" rx="8" fill="#e6eefa" stroke="#1f5fa8" stroke-width="1.5"/>
+  <text x="260" y="563" font-size="15" font-weight="bold" text-anchor="middle" fill="#111111">AlOH</text>
+  <text x="260" y="582" font-size="12" text-anchor="middle" fill="#333333">stable reservoir</text>
+  <!-- Polymer -->
+  <rect x="390" y="540" width="160" height="56" rx="8" fill="#e6eefa" stroke="#1f5fa8" stroke-width="1.5"/>
+  <text x="470" y="563" font-size="14" font-weight="bold" text-anchor="middle" fill="#111111">Polymer smoke</text>
+  <text x="470" y="582" font-size="12" text-anchor="middle" fill="#333333">AlX + AlY → Al2XY</text>
+
+  <text x="20" y="622" font-size="12.5" font-style="italic" fill="#1f5fa8">Bottom row: hydroxide route, which needs water vapor, H2 or H atoms (humid air, upper atmosphere).</text>
+
+  <!-- ===== Arrows ===== -->
+  <!-- R1 -->
+  <line x1="140" y1="343" x2="197" y2="343" stroke="#1a7f37" stroke-width="2.5" marker-end="url(#aG)"/>
+  <!-- R2 dashed -->
+  <line x1="320" y1="326" x2="387" y2="97" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <!-- R3 red -->
+  <line x1="320" y1="332" x2="387" y2="177" stroke="#c62828" stroke-width="2.5" marker-end="url(#aR)"/>
+  <!-- R4 green -->
+  <line x1="320" y1="338" x2="387" y2="257" stroke="#1a7f37" stroke-width="2.5" marker-end="url(#aG)"/>
+  <!-- R5 dashed -->
+  <line x1="320" y1="343" x2="387" y2="343" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <!-- R6 dashed -->
+  <line x1="320" y1="352" x2="387" y2="423" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <!-- R7 dashed vertical -->
+  <line x1="470" y1="280" x2="470" y2="315" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <!-- R8 -->
+  <line x1="550" y1="175" x2="607" y2="175" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <!-- R9 dashed -->
+  <line x1="550" y1="333" x2="630" y2="203" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <!-- R10 -->
+  <line x1="695" y1="200" x2="695" y2="315" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <!-- R11 -->
+  <line x1="550" y1="418" x2="614" y2="368" stroke="#333333" stroke-width="2" marker-end="url(#aK)"/>
+  <!-- R12 green -->
+  <line x1="695" y1="368" x2="695" y2="427" stroke="#1a7f37" stroke-width="2.5" marker-end="url(#aG)"/>
+  <!-- R13 green -->
+  <line x1="695" y1="480" x2="695" y2="537" stroke="#1a7f37" stroke-width="2.5" marker-end="url(#aG)"/>
+  <!-- R14 blue -->
+  <line x1="80" y1="368" x2="216" y2="538" stroke="#1f5fa8" stroke-width="2.5" marker-end="url(#aB)"/>
+  <!-- R15 blue -->
+  <line x1="260" y1="368" x2="260" y2="537" stroke="#1f5fa8" stroke-width="2.5" marker-end="url(#aB)"/>
+  <!-- R16 blue -->
+  <line x1="320" y1="568" x2="387" y2="568" stroke="#1f5fa8" stroke-width="2.5" marker-end="url(#aB)"/>
+  <!-- R17 grey dotted -->
+  <line x1="550" y1="568" x2="607" y2="568" stroke="#888888" stroke-width="2.5" stroke-dasharray="2 4" marker-end="url(#aY)"/>
+
+  <!-- ===== Tags ===== -->
+  <g font-size="12" font-weight="bold" text-anchor="middle" fill="#111111">
+    <rect x="155" y="321" width="28" height="18" rx="4" fill="#ffffff" stroke="#1a7f37"/><text x="169" y="334">R1</text>
+    <rect x="344" y="187" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="358" y="200">R2</text>
+    <rect x="344" y="235" width="28" height="18" rx="4" fill="#ffffff" stroke="#c62828"/><text x="358" y="248" fill="#c62828">R3</text>
+    <rect x="344" y="283" width="28" height="18" rx="4" fill="#ffffff" stroke="#1a7f37"/><text x="358" y="296">R4</text>
+    <rect x="344" y="334" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="358" y="347">R5</text>
+    <rect x="344" y="383" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="358" y="396">R6</text>
+    <rect x="456" y="289" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="470" y="302">R7</text>
+    <rect x="565" y="166" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="579" y="179">R8</text>
+    <rect x="576" y="259" width="28" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="590" y="272">R9</text>
+    <rect x="679" y="249" width="32" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="695" y="262">R10</text>
+    <rect x="566" y="384" width="32" height="18" rx="4" fill="#ffffff" stroke="#555555"/><text x="582" y="397">R11</text>
+    <rect x="679" y="389" width="32" height="18" rx="4" fill="#ffffff" stroke="#1a7f37"/><text x="695" y="402">R12</text>
+    <rect x="679" y="500" width="32" height="18" rx="4" fill="#ffffff" stroke="#1a7f37"/><text x="695" y="513">R13</text>
+    <rect x="132" y="444" width="32" height="18" rx="4" fill="#ffffff" stroke="#1f5fa8"/><text x="148" y="457">R14</text>
+    <rect x="244" y="444" width="32" height="18" rx="4" fill="#ffffff" stroke="#1f5fa8"/><text x="260" y="457">R15</text>
+    <rect x="338" y="559" width="32" height="18" rx="4" fill="#ffffff" stroke="#1f5fa8"/><text x="354" y="572">R16</text>
+    <rect x="563" y="559" width="32" height="18" rx="4" fill="#ffffff" stroke="#888888"/><text x="579" y="572">R17</text>
+  </g>
+
+  <!-- ===== Reaction key ===== -->
+  <rect x="795" y="72" width="395" height="560" rx="8" fill="#fafafa" stroke="#cccccc"/>
+  <text x="808" y="94" font-size="14" font-weight="bold" fill="#111111">Reaction key</text>
+  <g font-size="12.5" fill="#222222">
+    <text x="808" y="118"><tspan font-weight="bold" fill="#1a7f37">R1</tspan>  Al + O2 → AlO + O. Fast: about 1.7 × 10⁻¹⁰ cm³/s,</text>
+    <text x="836" y="134">near the collision rate; releases little heat.</text>
+    <text x="836" y="150">(Al + O + M → AlO + M also makes AlO.)</text>
+
+    <text x="808" y="172"><tspan font-weight="bold">R2</tspan>  AlO + O2 + M → OAlO2. Three-body association,</text>
+    <text x="836" y="188">the main route in cold, dilute air.</text>
+
+    <text x="808" y="210"><tspan font-weight="bold" fill="#c62828">R3</tspan>  AlO + O2 → AlO2 + O. Uphill by 106 kJ/mol:</text>
+    <text x="836" y="226">the bottleneck. (AlO + O + M → AlO2 also possible.)</text>
+
+    <text x="808" y="248"><tspan font-weight="bold" fill="#1a7f37">R4</tspan>  AlO + AlO → Al2O + O. Capture-limited (fast);</text>
+    <text x="836" y="264">favoured only below about 1800 K.</text>
+
+    <text x="808" y="286"><tspan font-weight="bold">R5</tspan>  AlO + AlO + M → Al2O2 (releases 548 kJ/mol).</text>
+
+    <text x="808" y="308"><tspan font-weight="bold">R6</tspan>  AlxOx + AlO + M → one size larger. About 500</text>
+    <text x="836" y="324">kJ/mol per new Al–O bond; AlOH can add instead.</text>
+
+    <text x="808" y="346"><tspan font-weight="bold">R7</tspan>  Al2O + O + M → Al2O2.</text>
+
+    <text x="808" y="368"><tspan font-weight="bold">R8</tspan>  AlO2 + AlOH → Al2O3 + H (releases 72.5 kJ/mol).</text>
+
+    <text x="808" y="390"><tspan font-weight="bold">R9</tspan>  Al2O2 + O + M → Al2O3. With OH or H2O instead</text>
+    <text x="836" y="406">of O the step is uphill (by 28 or 85 kJ/mol).</text>
+
+    <text x="808" y="428"><tspan font-weight="bold">R10</tspan> Al2O3 + Al2O3 → Al4O6 (more than 800 kJ/mol).</text>
+
+    <text x="808" y="450"><tspan font-weight="bold">R11</tspan> Oxidation Al3O3 → Al3O4 and Al4O4 → Al4O5 is</text>
+    <text x="836" y="466">downhill; oxidizing Al3O4 is a further bottleneck.</text>
+
+    <text x="808" y="488"><tspan font-weight="bold" fill="#1a7f37">R12</tspan> Al4O6 + Al4O6 → Al8O12: more than 800 kJ/mol,</text>
+    <text x="836" y="504">effectively one-way; hand-off to particle models.</text>
+
+    <text x="808" y="526"><tspan font-weight="bold" fill="#1a7f37">R13</tspan> Collisional growth into particles (Figure 4).</text>
+
+    <text x="808" y="548"><tspan font-weight="bold" fill="#1f5fa8">R14</tspan> Al + H2O → AlOH + H (releases 60.4 kJ/mol).</text>
+
+    <text x="808" y="570"><tspan font-weight="bold" fill="#1f5fa8">R15</tspan> AlO + H2 → AlOH + H; aloft, OAlO2 + H also</text>
+    <text x="836" y="586">ends at AlOH, which only sunlight breaks apart.</text>
+
+    <text x="808" y="608"><tspan font-weight="bold" fill="#1f5fa8">R16</tspan> AlX + AlY → Al2XY (X, Y = O, OH): lumped smoke sink.</text>
+    <text x="808" y="626"><tspan font-weight="bold" fill="#888888">R17</tspan> Whether hydroxide smoke becomes alumina is unknown.</text>
+  </g>
+
+  <!-- ===== Legend ===== -->
+  <text x="20" y="660" font-size="14" font-weight="bold" fill="#111111">How to read the arrows</text>
+  <line x1="20" y1="684" x2="68" y2="684" stroke="#1a7f37" stroke-width="2.5" marker-end="url(#aG)"/>
+  <text x="80" y="688" font-size="12.5" fill="#222222">Fast, downhill two-body step</text>
+  <line x1="330" y1="684" x2="378" y2="684" stroke="#c62828" stroke-width="2.5" marker-end="url(#aR)"/>
+  <text x="390" y="688" font-size="12.5" fill="#222222">Slow, uphill two-body step (the bottleneck)</text>
+  <line x1="20" y1="712" x2="68" y2="712" stroke="#333333" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#aK)"/>
+  <text x="80" y="716" font-size="12.5" fill="#222222">Three-body step: needs a collision partner M (N2 in air); competes only above about 10¹⁴ molecules per cm³</text>
+  <line x1="20" y1="740" x2="68" y2="740" stroke="#1f5fa8" stroke-width="2.5" marker-end="url(#aB)"/>
+  <text x="80" y="744" font-size="12.5" fill="#222222">Hydrogen-bearing (hydroxide) route</text>
+  <line x1="330" y1="740" x2="378" y2="740" stroke="#888888" stroke-width="2.5" stroke-dasharray="2 4" marker-end="url(#aY)"/>
+  <text x="390" y="744" font-size="12.5" fill="#222222">Not established in the literature</text>
+  <rect x="20" y="756" width="48" height="20" rx="4" fill="#fdecea" stroke="#c62828" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="80" y="771" font-size="12.5" fill="#222222">Species that hardly exists in the gas, so alumina cannot be treated as a condensing Al2O3 vapor</text>
+  <text x="20" y="804" font-size="12" fill="#555555">Sources: Gobrecht et al. 2022 (Table B.1); Plane et al. 2021; Gómez Martín et al. 2017; Boulangier et al. 2019; Lam et al. 2015.</text>
+</svg>

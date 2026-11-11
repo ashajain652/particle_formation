@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1160" height="720" viewBox="0 0 1160 720" font-family="Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="1160" height="720" fill="#ffffff"/>
+  <text x="20" y="34" font-size="20" font-weight="bold" fill="#111111">Figure 3. What dominates as a parcel of aluminum-laden gas cools</text>
+  <text x="20" y="56" font-size="13" fill="#444444">Temperature bands from equilibrium calculations, flame studies and levitation experiments. The cooling curve is schematic, not a wake prediction.</text>
+
+  <!-- Bands: y(T) = 610 - 0.09 (T - 500) -->
+  <rect x="100" y="70" width="500" height="225" fill="#f3e5f5"/>
+  <rect x="100" y="295" width="500" height="90" fill="#fde8e0"/>
+  <rect x="100" y="385" width="500" height="90" fill="#fff6d6"/>
+  <rect x="100" y="475" width="500" height="135" fill="#e6f2e6"/>
+
+  <!-- Reference lines -->
+  <line x1="100" y1="445.6" x2="600" y2="445.6" stroke="#c62828" stroke-width="1.8"/>
+  <text x="595" y="440" font-size="12.5" text-anchor="end" fill="#c62828" style="paint-order:stroke; stroke:#ffffff; stroke-width:4px; stroke-linejoin:round">2327 K: alumina melting point</text>
+  <line x1="100" y1="487.6" x2="600" y2="487.6" stroke="#1f5fa8" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="595" y="501" font-size="12.5" text-anchor="end" fill="#1f5fa8" style="paint-order:stroke; stroke:#ffffff; stroke-width:4px; stroke-linejoin:round">1860 K: supercooled liquid crystallizes</text>
+  <line x1="100" y1="504" x2="600" y2="504" stroke="#888888" stroke-width="1.5" stroke-dasharray="2 4"/>
+  <text x="595" y="519" font-size="12.5" text-anchor="end" fill="#777777" style="paint-order:stroke; stroke:#ffffff; stroke-width:4px; stroke-linejoin:round">1677 K: stellar-gas value (not for a wake)</text>
+
+  <!-- Freeze-out bracket 1800-2327 K -->
+  <line x1="88" y1="445.6" x2="88" y2="493" stroke="#6a4c93" stroke-width="3"/>
+  <line x1="84" y1="445.6" x2="92" y2="445.6" stroke="#6a4c93" stroke-width="3"/>
+  <line x1="84" y1="493" x2="92" y2="493" stroke="#6a4c93" stroke-width="3"/>
+
+  <!-- Schematic cooling curve -->
+  <path d="M 105 92 C 140 420, 230 560, 595 596" fill="none" stroke="#111111" stroke-width="3"/>
+  <text x="200" y="150" font-size="12.5" fill="#111111">a parcel of wake gas (schematic)</text>
+  <line x1="196" y1="146" x2="120" y2="176" stroke="#111111" stroke-width="1"/>
+
+  <!-- Axes -->
+  <line x1="100" y1="70" x2="100" y2="610" stroke="#333333" stroke-width="1.5"/>
+  <line x1="100" y1="610" x2="600" y2="610" stroke="#333333" stroke-width="1.5"/>
+  <g font-size="12.5" fill="#222222" text-anchor="end">
+    <text x="94" y="119">6000</text>
+    <text x="94" y="209">5000</text>
+    <text x="94" y="299">4000</text>
+    <text x="94" y="389">3000</text>
+    <text x="80" y="479">2000</text>
+    <text x="94" y="569">1000</text>
+  </g>
+  <g stroke="#333333" stroke-width="1.5">
+    <line x1="96" y1="115" x2="100" y2="115"/>
+    <line x1="96" y1="205" x2="100" y2="205"/>
+    <line x1="96" y1="295" x2="100" y2="295"/>
+    <line x1="96" y1="385" x2="100" y2="385"/>
+    <line x1="96" y1="475" x2="100" y2="475"/>
+    <line x1="96" y1="565" x2="100" y2="565"/>
+  </g>
+  <text x="30" y="340" font-size="13" fill="#222222" text-anchor="middle" transform="rotate(-90 30 340)">Gas temperature (kelvin)</text>
+  <text x="350" y="634" font-size="13" fill="#222222" text-anchor="middle">Time after release (schematic; cooling by mixing and expansion)</text>
+  <text x="100" y="660" font-size="12.5" fill="#6a4c93"><tspan font-weight="bold">Purple bracket:</tspan> 1800 to 2327 K, the range to bracket the coalescence freeze-out temperature in sensitivity runs.</text>
+  <text x="100" y="680" font-size="12.5" fill="#555555">Band edges are approximate and depend on pressure and on the aluminum-to-oxygen ratio; the wake value must be computed.</text>
+  <text x="100" y="704" font-size="12" fill="#555555">Sources: Lam et al. 2015; Sundaram et al. 2017; Muller et al. 2017; Gobrecht et al. 2022; Lodders 2003; DLR levitation (elib 87127); Kautz et al. 2023.</text>
+
+  <!-- Right panel -->
+  <g font-size="12.5" fill="#222222">
+    <rect x="625" y="78" width="14" height="14" fill="#f3e5f5" stroke="#999999"/>
+    <text x="646" y="90" font-size="13.5" font-weight="bold" fill="#111111">Above about 4000 K: dissociated vapor</text>
+    <text x="646" y="110">Al, O, O2, AlO and Al2O dominate above about 5000 K</text>
+    <text x="646" y="127">(equilibrium at 4 bar). In laser plumes AlO appears as the</text>
+    <text x="646" y="144">gas cools from about 6000 K. Liquid alumina decomposes</text>
+    <text x="646" y="161">(volatilization at 1 atm put at about 4000 K or more; one</text>
+    <text x="646" y="178">levitation study quotes a 3240 K boiling point).</text>
+
+    <rect x="625" y="204" width="14" height="14" fill="#fde8e0" stroke="#999999"/>
+    <text x="646" y="216" font-size="13.5" font-weight="bold" fill="#111111">3000 to 4000 K: reversible condensation</text>
+    <text x="646" y="236">Droplet flames are pinned here (adiabatic 3546 K in air at</text>
+    <text x="646" y="253">1 atm; about 3700 K modeled in O2 and argon). Condensed</text>
+    <text x="646" y="270">alumina coexists with much suboxide vapor, so models</text>
+    <text x="646" y="287">must let condensation run backwards.</text>
+
+    <rect x="625" y="313" width="14" height="14" fill="#fff6d6" stroke="#999999"/>
+    <text x="646" y="325" font-size="13.5" font-weight="bold" fill="#111111">2000 to 3000 K: suboxide clustering</text>
+    <text x="646" y="345">AlO is the bottleneck. On cooling, Al2O2 and Al3O3 take</text>
+    <text x="646" y="362">over from Al2O, and 1:1 (AlO)x clusters are the most</text>
+    <text x="646" y="379">stable. Anything that condenses above 2327 K is liquid and</text>
+    <text x="646" y="396">fuses with what it hits in about a nanosecond (estimate).</text>
+
+    <rect x="625" y="422" width="14" height="14" fill="#e6f2e6" stroke="#999999"/>
+    <text x="646" y="434" font-size="13.5" font-weight="bold" fill="#111111">Below about 2000 K: alumina stoichiometry</text>
+    <text x="646" y="454">(Al2O3)n overtakes (AlO)n, but only with a slight oxygen</text>
+    <text x="646" y="471">excess. Levitated liquid supercools to about 1860 K, about</text>
+    <text x="646" y="488">470 K below melting. Once solid, colliding particles stick</text>
+    <text x="646" y="505">as aggregates instead of fusing.</text>
+
+    <rect x="625" y="531" width="14" height="14" fill="#ffffff" stroke="#999999"/>
+    <text x="646" y="543" font-size="13.5" font-weight="bold" fill="#111111">Solid phase is set mainly by size</text>
+    <text x="646" y="563">Amorphous below about 4 nm; cubic gamma alumina from 4 to</text>
+    <text x="646" y="580">11.6 nm; corundum (alpha) only above about 11.6 nm. Rapid-</text>
+    <text x="646" y="597">quench analogues give gamma or delta, not alpha; gamma</text>
+    <text x="646" y="614">turns to alpha only on reheating to about 1200 °C.</text>
+  </g>
+</svg>
