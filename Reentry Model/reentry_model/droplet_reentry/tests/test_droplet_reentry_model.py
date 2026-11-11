@@ -171,3 +171,45 @@ def test_default_parent_is_the_data_snapshot():
     assert parent_trajectory.DEFAULT_PARENT.endswith(os.path.join("data", "generic_satellite_reentry",
                                                                   "dmf_output.json"))
     assert os.path.isfile(parent_trajectory.DEFAULT_PARENT)
+
+
+# ---------------------------------------------------------------- oxidation (bounding model)
+
+@pytest.fixture(scope="module")
+def ox80(parent):
+    return dd.DropletSimulator(dd.parent_release(parent, 80.0), 10.0, sticking=1.0)
+
+
+def test_fast_oxygen_flux_is_genges_swept_column(ox80):
+    """Speed ratio >> 1 in free-molecule flow: J = gamma rho_O pi r^2 V (Genge 2016)."""
+    fs = ox80.atmosphere.state(0.0, 80e3, 0.0, 0.0)
+    d, V = 10e-6, 7600.0
+    assert ox80.oxygen_flux(fs, V, d, 1800.0, 0.5) / (0.5 * dd.Y_O_AIR * fs.rho * math.pi * d * d / 4 * V) \
+        == pytest.approx(1.0, abs=0.01)
+
+
+def test_still_oxygen_flux_is_the_thermal_impingement(ox80):
+    """At rest in rarefied air the flux is the kinetic-theory n c_bar / 4 over the whole sphere."""
+    fs = ox80.atmosphere.state(0.0, 80e3, 0.0, 0.0)
+    d = 10e-6
+    c_bar = math.sqrt(8.0 * dd.pt.R_AIR * fs.T / math.pi)
+    assert ox80.oxygen_flux(fs, 1e-9, d, 1800.0) / (dd.Y_O_AIR * fs.rho * c_bar / 4 * math.pi * d * d) \
+        == pytest.approx(1.0, abs=0.01)
+
+
+def test_no_oxidation_below_the_solidus_and_a_closed_skin_stops_evaporation(ox80):
+    fs = ox80.atmosphere.state(0.0, 80e3, 0.0, 0.0)
+    m_vol = initial_volatiles(ox80)
+    assert ox80.oxidation(fs, 7600.0, dd.T_SOLIDUS - 1.0, m_vol, np.zeros(2), 10e-6)[0] == 0.0
+    mdot = ox80.power_balance(fs, 7600.0, 1800.0, m_vol, 10e-6, cover=1.0)[3]
+    assert not mdot.any()
+
+
+@pytest.mark.parametrize("f_skin", [0.0, 1.0])
+def test_oxidised_mass_bookkeeping_closes(parent, f_skin):
+    """Final mass = initial - vapour + the oxygen held in the oxide."""
+    s, _ = dd.run_case(10.0, 78.0, parent, sticking=1.0, f_skin=f_skin)
+    ox = s["m_ox_skin_kg"] + s["m_ox_entrained_kg"]
+    o_held = ox / dd.AL2O3_PER_KG_O
+    assert (s["mass0_kg"] - s["vaporised_kg"] + o_held) / s["mass_final_kg"] == pytest.approx(1.0, abs=1e-6)
+    assert s["end_reason"] == "steady"

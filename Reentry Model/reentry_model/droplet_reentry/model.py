@@ -37,6 +37,18 @@ What is reused, and what is new
   diffusion limit is removed, and evaporation proceeds at the kinetic rate. In rarefied flow the kinetic limit
   governs anyway. Each element's latent heat is drawn from the droplet's energy.
 
+* Oxidation (optional, off by default; bounding model, 2026-10-27): after Genge (2016, Meteoritics & Planetary
+  Science 51, 1063), oxygen reaching the molten surface is captured with a sticking efficiency gamma,
+      J_O = 1 / (1/J_kin + 1/J_diff),  J_kin = gamma (1 - phi) Y_O rho pi r^2 c [exp(-s^2)/sqrt(pi) + (s + 1/(2s)) erf(s)]
+  (the free-molecule mass flux onto a sphere at speed ratio s, which is Genge's gamma rho_O pi r^2 V when s >> 1, and
+  the diffusion limit J_diff = Sh pi d D rho Y_O in denser air), Y_O = 0.2314 the oxygen mass fraction of air (O2 and
+  O alike), and turns aluminium into Al2O3, releasing the heat of formation (34.9 MJ per kg of O) into the droplet.
+  Oxidation needs the droplet molten: it is switched on by a smoothstep from the solidus to the liquidus. A share
+  f_skin of the new oxide stays on the surface as a skin; the rest is entrained into the melt by internal circulation
+  (Guillen & Williams 2005). The skin covers a fraction phi = 1 - exp(-delta / DELTA_PASSIVE) of the surface, delta
+  the skin thickness spread evenly, and blocks both evaporation and further oxidation there. Magnesium's selective
+  oxidation, gas-phase oxidation of the vapour and the oxide's own evaporation are not modelled.
+
 Final state: the first instant at which the speed is within STEADY_SPEED_TOL of the local terminal velocity and
 the temperature within STEADY_T_TOL of the local equilibrium temperature (the temperature at which convective,
 radiative and evaporative power balance at the current flight state). Runs also end on the ground, on complete
@@ -75,6 +87,18 @@ ALPHA_EVAP = 1.0         # evaporation coefficient of a clean liquid metal surfa
 SIGMA_LIQUIDUS = 0.86    # N/m at the liquidus (proto3 AA7075.json liquid.surfaceTension)
 DSIGMA_DT = -1.55e-4     # N/(m K), liquid Al; only used to follow We along the flight
 WE_CRIT = 12.0           # critical Weber number for low-Ohnesorge droplets (Pilch & Erdman 1987)
+
+# ---------------------------------------------------------------- oxidation (bounding model)
+
+T_SOLIDUS = 750.0        # K, AA7075 solidus (477 C, ASM Handbook Vol. 2); oxidation fades out below the liquidus
+Y_O_AIR = 0.2314         # oxygen mass fraction of air, molecular and atomic together (US76 below 90 km)
+M_O, M_AL2O3 = 0.015999, 0.101961                       # kg/mol
+H_OX_PER_KG_O = 1675.7e3 / (3.0 * M_O)                  # J/kg O: 2 Al + 3/2 O2 -> Al2O3, -1675.7 kJ/mol (NIST-JANAF)
+AL_PER_KG_O = 2.0 * 0.026982 / (3.0 * M_O)              # kg Al consumed per kg O captured
+AL2O3_PER_KG_O = M_AL2O3 / (3.0 * M_O)                  # kg Al2O3 formed per kg O captured
+RHO_AL2O3 = 3950.0       # kg/m3, solid alumina (melts at 2327 K, above every peak temperature here)
+CP_AL2O3 = 1250.0        # J/(kg K), alumina near 1500 K (NIST-JANAF)
+DELTA_PASSIVE = 4e-9     # m, skin thickness that closes the surface (amorphous-oxide limit, Trunov et al. 2005)
 
 
 @dataclass(frozen=True)
@@ -179,11 +203,15 @@ class DropletSimulator(Simulator):
     KN_FM = (1.0, 10.0)        # Knudsen window (lambda / D, PhysicsHeating's convention) over which it hands back
 
     def __init__(self, initial, d0_um, atmosphere=None, epsilon=EPSILON, alpha_heat=ALPHA_HEAT,
-                 alpha_evap=ALPHA_EVAP, physics_heating=None, heating_mode="regime", drag_law="singh"):
+                 alpha_evap=ALPHA_EVAP, physics_heating=None, heating_mode="regime", drag_law="singh",
+                 sticking=0.0, f_skin=0.0, ox_heat_fraction=1.0):
         d0 = d0_um * 1e-6
         m0 = RHO_LIQUID * math.pi * d0 ** 3 / 6.0
         self.d0, self.m0 = d0, m0                 # before the parent constructor, which builds the state vector
         self.m_inert = m0 * sum(e.mass_fraction for e in INERT)
+        # with sticking 0 the state has no oxide entries, so a default run is the unoxidised model exactly
+        self.sticking, self.f_skin, self.ox_heat_fraction = float(sticking), float(f_skin), float(ox_heat_fraction)
+        self.oxidise = self.sticking > 0.0
         super().__init__(initial, _MassBody(m0), atmosphere or US76TableAtmosphere(), None, None,
                          Settings(diameter=d0, gravity="j2", rotating_frame=True, t_max=self.T_MAX))
         self.eps, self.alpha_heat, self.alpha_evap = epsilon, alpha_heat, alpha_evap
@@ -195,17 +223,32 @@ class DropletSimulator(Simulator):
             raise ValueError("drag_law must be 'blend' or 'singh'")
         self.drag_law = drag_law
 
-    # -- state layout: 0-2 r, 3-5 v, 6 T, 7.. volatile masses
+    # -- state layout: 0-2 r, 3-5 v, 6 T, 7.. volatile masses, then (oxidising only) skin and entrained Al2O3 masses
     def initial_state_vector(self):
         y = super().initial_state_vector()
-        return np.concatenate([y, [T_RELEASE], [self.m0 * e.mass_fraction for e in VOLATILE]])
+        y = np.concatenate([y, [T_RELEASE], [self.m0 * e.mass_fraction for e in VOLATILE]])
+        return np.concatenate([y, [0.0, 0.0]]) if self.oxidise else y
 
     def unpack(self, y):
+        """(r, v, T, volatile masses, total mass, diameter); the total mass and diameter include any oxide."""
         r, v, T = y[:3], y[3:6], float(y[6])
         m_vol = np.maximum(np.asarray(y[7:7 + len(VOLATILE)], dtype=float), 0.0)
         m = float(m_vol.sum()) + self.m_inert
-        d = (6.0 * m / (math.pi * RHO_LIQUID)) ** (1.0 / 3.0)
-        return r, v, T, m_vol, m, d
+        if not self.oxidise:
+            return r, v, T, m_vol, m, (6.0 * m / (math.pi * RHO_LIQUID)) ** (1.0 / 3.0)
+        m_ox = float(self.oxide(y).sum())
+        d = (6.0 * (m / RHO_LIQUID + m_ox / RHO_AL2O3) / math.pi) ** (1.0 / 3.0)
+        return r, v, T, m_vol, m + m_ox, d
+
+    def oxide(self, y):
+        """(skin, entrained) Al2O3 masses [kg]; zeros when not oxidising."""
+        if not self.oxidise:
+            return np.zeros(2)
+        n = 7 + len(VOLATILE)
+        return np.maximum(np.asarray(y[n:n + 2], dtype=float), 0.0)
+
+    def heat_capacity(self, m, m_ox):
+        return (m - m_ox) * CP_LIQUID + m_ox * CP_AL2O3
 
     def mole_fractions(self, m_vol):
         n = [mi / e.M for mi, e in zip(m_vol, VOLATILE)] + \
@@ -282,10 +325,41 @@ class DropletSimulator(Simulator):
                 mdot[i] = hk * diff / (hk + diff)
         return mdot, y
 
-    def power_balance(self, fs, V, T, m_vol, d):
+    def skin_cover(self, m_skin, d):
+        """Fraction of the surface closed by the oxide skin."""
+        return 1.0 - math.exp(-m_skin / (RHO_AL2O3 * math.pi * d * d) / DELTA_PASSIVE)
+
+    def oxygen_flux(self, fs, V, d, T_wall, gamma=1.0):
+        """Oxygen mass captured per second [kg/s] at sticking gamma on an open surface: the free-molecule flux onto
+        a sphere in series with the continuum diffusion limit."""
+        c = math.sqrt(2.0 * pt.R_AIR * fs.T)
+        s = max(V, 1e-12) / c
+        kin = gamma * Y_O_AIR * fs.rho * math.pi * (0.5 * d) ** 2 * c * (
+            math.exp(-s * s) / math.sqrt(math.pi) + (s + 0.5 / s) * math.erf(s))
+        mu = pt.viscosity(fs.T)
+        T_f = 0.5 * (T_wall + fs.T)
+        D = 2.0e-5 * (T_f / 300.0) ** 1.75 * (101325.0 / fs.p)  # O2 in air, the evaporation's order-of-magnitude law
+        sh = 2.0 + 0.6 * math.sqrt(fs.rho * V * d / mu) * (mu / (fs.rho * D)) ** (1.0 / 3.0)
+        diff = sh * math.pi * d * D * fs.rho * Y_O_AIR
+        return kin * diff / (kin + diff)
+
+    def oxidation(self, fs, V, T, m_vol, m_ox, d):
+        """(oxygen captured [kg/s], heat released into the droplet [W], skin cover fraction)."""
+        if not self.oxidise:
+            return 0.0, 0.0, 0.0
+        cover = self.skin_cover(m_ox[0], d)
+        molten = smoothstep(T, T_SOLIDUS, T_RELEASE)
+        if m_vol[0] <= 0.0 or molten <= 0.0:
+            return 0.0, 0.0, cover
+        j = self.oxygen_flux(fs, V, d, T, self.sticking * (1.0 - cover)) * molten
+        return j, self.ox_heat_fraction * j * H_OX_PER_KG_O, cover
+
+    def power_balance(self, fs, V, T, m_vol, d, cover=0.0):
         q_conv, w = self.heat_in(fs, V, T, d)
         q_rad = self.eps * SIGMA_SB * math.pi * d * d * (T ** 4 - T_BG ** 4)
         mdot, y = self.evaporation(fs, V, T, m_vol, d)
+        if cover > 0.0:
+            mdot = mdot * (1.0 - cover)
         q_evap = float(sum(md * e.H_vap / e.M for md, e in zip(mdot, VOLATILE)))
         return q_conv, q_rad, q_evap, mdot, y, w
 
@@ -308,10 +382,19 @@ class DropletSimulator(Simulator):
         cd, dg, k = self.drag(fs, V, T, d, m)
         a = earth.gravity(r, self.settings.gravity) - 2.0 * np.cross(self.omega, v) \
             - np.cross(self.omega, np.cross(self.omega, r)) - k * v_rel
-        q_conv, q_rad, q_evap, mdot, _, _ = self.power_balance(fs, V, T, m_vol, d)
-        dT = (q_conv - q_rad - q_evap) / (m * CP_LIQUID)
+        if not self.oxidise:
+            q_conv, q_rad, q_evap, mdot, _, _ = self.power_balance(fs, V, T, m_vol, d)
+            dT = (q_conv - q_rad - q_evap) / (m * CP_LIQUID)
+            dm = np.where(m_vol > 0.0, -mdot, 0.0)
+            return np.concatenate([v, a, [dT], dm])
+        m_ox = self.oxide(y)
+        j, q_ox, cover = self.oxidation(fs, V, T, m_vol, m_ox, d)
+        q_conv, q_rad, q_evap, mdot, _, _ = self.power_balance(fs, V, T, m_vol, d, cover)
+        dT = (q_conv - q_rad - q_evap + q_ox) / self.heat_capacity(m, float(m_ox.sum()))
         dm = np.where(m_vol > 0.0, -mdot, 0.0)
-        return np.concatenate([v, a, [dT], dm])
+        dm[0] -= j * AL_PER_KG_O
+        new_ox = j * AL2O3_PER_KG_O
+        return np.concatenate([v, a, [dT], dm, [self.f_skin * new_ox, (1.0 - self.f_skin) * new_ox]])
 
     # -- steady-state diagnostics
     def g_eff(self, r):
@@ -328,10 +411,13 @@ class DropletSimulator(Simulator):
             return 0.5 * fs.rho * v * v * cd * area - w
         return math.exp(brentq(res, math.log(1e-12), math.log(1e4), xtol=1e-12, rtol=1e-12))
 
-    def equilibrium_temperature(self, fs, V, m_vol, d):
+    def equilibrium_temperature(self, fs, V, m_vol, d, m_ox=None):
+        m_ox = np.zeros(2) if m_ox is None else m_ox
+
         def net(T):
-            q_conv, q_rad, q_evap, _, _, _ = self.power_balance(fs, V, T, m_vol, d)
-            return q_conv - q_rad - q_evap
+            _, q_ox, cover = self.oxidation(fs, V, T, m_vol, m_ox, d)
+            q_conv, q_rad, q_evap, _, _, _ = self.power_balance(fs, V, T, m_vol, d, cover)
+            return q_conv - q_rad - q_evap + q_ox
         lo, hi = 100.0, 6000.0
         if net(lo) < 0.0:
             return lo
@@ -342,7 +428,9 @@ class DropletSimulator(Simulator):
         r, v, T, m_vol, m, d = self.unpack(y)
         h, lat, lon, fs, v_rel, V = self.flow(t, r, v)
         cd, dg, k = self.drag(fs, V, T, d, m)
-        q_conv, q_rad, q_evap, mdot, yv, w = self.power_balance(fs, V, T, m_vol, d)
+        m_ox = self.oxide(y)
+        j, q_ox, cover = self.oxidation(fs, V, T, m_vol, m_ox, d)
+        q_conv, q_rad, q_evap, mdot, yv, w = self.power_balance(fs, V, T, m_vol, d, cover)
         row = dict(t_s=t, h_km=h / 1e3, lat_deg=math.degrees(lat), lon_deg=math.degrees(lon), V_ms=V,
                    T_K=T, d_um=d * 1e6, mass_kg=m, mass_frac=m / self.m0,
                    q_conv_W=q_conv, q_rad_W=q_rad, q_evap_W=q_evap, w_physics_heating=w,
@@ -352,12 +440,21 @@ class DropletSimulator(Simulator):
         for e, mi, md in zip(VOLATILE, m_vol, mdot):
             row["m_{}_kg".format(e.name)] = float(mi)
             row["mdot_{}_kgs".format(e.name)] = float(md)
+        if self.oxidise:
+            # metal atoms leaving against oxygen atoms arriving at full sticking (Genge's criterion, after Zhang et
+            # al. 2003: a surface oxide can only hold where the oxygen arriving outnumbers the metal leaving)
+            o_in = self.oxygen_flux(fs, V, d, T) / M_O
+            row.update(m_ox_skin_kg=float(m_ox[0]), m_ox_entrained_kg=float(m_ox[1]), O_capture_kgs=j, q_ox_W=q_ox,
+                       skin_cover=cover,
+                       metal_out_over_O_in=float(sum(md / e.M for md, e in zip(mdot, VOLATILE))) / o_in
+                       if o_in > 0.0 else float("nan"))
         return row, (r, v, T, m_vol, m, d, fs, V)
 
     def run(self):
         """Advance in geometrically growing chunks; after each, test for the steady final state."""
         s = self.settings
-        atol = [s.atol_position] * 3 + [s.atol_velocity] * 3 + [1e-6] + [1e-9 * self.m0] * len(VOLATILE)
+        atol = [s.atol_position] * 3 + [s.atol_velocity] * 3 + [1e-6] + [1e-9 * self.m0] * len(VOLATILE) \
+            + [1e-9 * self.m0] * (2 if self.oxidise else 0)
         t, y = 0.0, self.initial_state_vector()
         dt = 1e-6 * max(self.d0 / 1e-6, 1e-4)   # every time scale shrinks with the diameter in free-molecule flow
         rows = [self.diagnostics(t, y)[0]]
@@ -368,7 +465,7 @@ class DropletSimulator(Simulator):
         ground.terminal, ground.direction = True, -1
 
         def gone(tt, yy):
-            return float(np.maximum(yy[7:], 0.0).sum()) + self.m_inert - self.VAPORISED * self.m0
+            return float(np.maximum(yy[7:7 + len(VOLATILE)], 0.0).sum()) + self.m_inert - self.VAPORISED * self.m0
         gone.terminal, gone.direction = True, -1
 
         while end is None:
@@ -388,7 +485,7 @@ class DropletSimulator(Simulator):
                 end = "t_max"
             else:
                 vt = self.terminal_velocity(fs, r, T, d, m)
-                T_eq = self.equilibrium_temperature(fs, V, m_vol, d)
+                T_eq = self.equilibrium_temperature(fs, V, m_vol, d, self.oxide(y))
                 row.update(v_terminal_ms=vt, T_eq_K=T_eq)
                 if abs(V / vt - 1.0) < self.STEADY_SPEED_TOL and abs(T - T_eq) < self.STEADY_T_TOL:
                     end = "steady"
@@ -424,7 +521,27 @@ def final_state(rows, sim, release, d0_um, h0_km, We0):
         m0e = sim.m0 * e.mass_fraction
         out["lost_{}_kg".format(e.name)] = m0e - last["m_{}_kg".format(e.name)]
         out["lost_{}_frac_of_element".format(e.name)] = 1.0 - last["m_{}_kg".format(e.name)] / m0e
+    if sim.oxidise:
+        # lost_Al counts the aluminium gone from the melt by either route; split it into vapour and oxide
+        ox = last["m_ox_skin_kg"] + last["m_ox_entrained_kg"]
+        al_ox = ox / AL2O3_PER_KG_O * AL_PER_KG_O
+        vap = out["lost_Al_kg"] - al_ox + sum(out["lost_{}_kg".format(e.name)] for e in VOLATILE[1:])
+        out.update(sticking=sim.sticking, f_skin=sim.f_skin, m_ox_skin_kg=last["m_ox_skin_kg"],
+                   m_ox_entrained_kg=last["m_ox_entrained_kg"], oxide_mass_frac=ox / last["mass_kg"],
+                   Al_oxidised_frac_of_element=al_ox / (sim.m0 * VOLATILE[0].mass_fraction),
+                   vapour_Al_kg=out["lost_Al_kg"] - al_ox, vaporised_kg=vap, vaporised_frac=vap / sim.m0,
+                   skin_cover_final=last["skin_cover"],
+                   E_ox_over_E_conv=_ratio(rows, "q_ox_W", "q_conv_W"),
+                   metal_out_over_O_in_at_peak=max(rows, key=lambda r: r["T_K"])["metal_out_over_O_in"])
     return out
+
+
+def _ratio(rows, a, b):
+    """Time integral of column a over that of column b (positive part), by the trapezoid rule."""
+    t = np.array([r["t_s"] for r in rows])
+    ea = np.trapezoid([r[a] for r in rows], t)
+    eb = np.trapezoid([max(r[b], 0.0) for r in rows], t)
+    return float(ea / eb) if eb > 0.0 else float("nan")
 
 
 # ---------------------------------------------------------------- vertical wind and the settling phase
