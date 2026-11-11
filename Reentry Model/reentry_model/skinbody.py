@@ -35,7 +35,8 @@ after the trajectory and the heating:
    1.56 s parts were split six times in vain, eight of the last fifteen were kept over the allowance and the 12.4 g
    held came down in 0.039 s. What the tolerance and the cap keep in the skins is recorded at every base move
    (`held_mass`; unbounded, Asha 2026-10-26), and the bottom cell, read after the reconciliation, is judged against the
-   metal that crossed, for a hand-down the handed cells and the cell it uncovered (`jump_faults`).
+   metal that crossed, for a hand-down the handed cells and the cell it uncovered (`jump_faults`); a crossed column also passes
+   where the skin's temperature at its base, extrapolated from its bottom two cells, is (Asha, 2026-11-10, Task 5k).
 
 A macro step is run as equal parts so that no base moves more than MOVE_MAX of the mean surface edge in one part
 (Asha, 2026-10-12): a part whose draws would move a base further is run again as shorter parts, and the next macro
@@ -565,7 +566,22 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     return rate, out
 
 
-def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None):
+def base_temperature(T, dz, count):
+    """The skin's temperature at its base [K], extrapolated linearly from the centres of its bottom two cells: with `T_b`
+    and `dz_b` the bottom cell's temperature and thickness and `T_p`, `dz_p` those of the cell above it,
+    `T_b + (T_b - T_p) * (dz_b / 2) / ((dz_p + dz_b) / 2)`; `T_b` itself for a one-cell column (or none). `T` and `dz` are
+    the skins' (n, cells) arrays, `count` the cells of each column. Asha, 2026-11-10, Task 5k: the fault test compared the
+    bottom cell's mean temperature, centred half a cell above the base, with the base node's (see `jump_faults`)."""
+    n = np.arange(len(count))
+    b = np.maximum(count - 1, 0)
+    p = np.maximum(b - 1, 0)
+    T_b, T_p, dz_b, dz_p = T[n, b], T[n, p], dz[n, b], dz[n, p]
+    one = b < 1
+    apart = np.where(one, 1.0, 0.5 * (dz_p + dz_b))                  # m between the two centres (1 where there is one cell)
+    return np.where(one, T_b, T_b + (T_b - T_p) * (0.5 * dz_b) / apart)
+
+
+def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None, T_base=None):
     """The columns whose skin's bottom cell lies more than `tol` (JUMP_TOLERANCE) outside the temperatures of the metal
     that crossed their base (spec 6.6): where metal was drawn or absorbed (`crossed`), between the base node's and the
     3D profile's at the depth swept, `T_deep` (equal to T_node where nothing was taken from the 3D model); with `handed`,
@@ -578,10 +594,22 @@ def jump_faults(T_bottom, T_node, T_deep, crossed, tol=None, handed=None):
     hand-down counted the warmer cell it uncovers where runoff deposits, 199 faults on a reduced pushed plate to 1.0 s,
     rather than the 270 bottom cells the reconciliation then superheated; and judged by the handed cells alone, after the
     build, it still counted that cell where the skin warms steeply above its base, 1 900 of the 1 942 faults on Task 8's
-    pushed plate to 1.5 s, none of them heated by the reconciliation)."""
+    pushed plate to 1.5 s, none of them heated by the reconciliation).
+    With `T_base`, the skin's temperature at its base (`base_temperature`; Asha, 2026-11-10, Task 5k, her option (a)), a
+    crossed column is a fault only if both its bottom cell and `T_base` lie outside the range, so the change can only
+    remove faults the profile explains and never add one. Measured on the 50 mm hand-down-off flight from its state at
+    178.5 s (one run, 185.3-185.96 s): faults began at 185.45 s (1 column) and reached 336 a step by 185.96 s, every
+    faulted bottom cell 5-12 K warmer than both the base node and the 3D profile (about 900-903 K against 895.1-895.3 K), in
+    columns 20-25 mm deep whose bottom cells were 1.5-2.7 mm thick (growth 1.10 below the 0.4 mm fine zone), and none with a
+    bottom cell under 1 mm; in 300 healthy columns a step the bottom cell's excess over the base grew with its thickness
+    (about 0.3 K under 0.5 mm, 1.25 K at 0.5-1 mm, 3.2 K at 1-2 mm, 4.5 K at 2-5 mm). The reconciliation did not cause it
+    (the bottom cell before and after `exchange_bottom` equal to 0.1 K): the test compared a cell mean, centred a millimetre
+    or more above the base, with the base's temperature against a fixed tolerance. Without `T_base` the rule is as before."""
     tol = skin_mod.JUMP_TOLERANCE if tol is None else tol
     lo, hi = np.minimum(T_node, T_deep), np.maximum(T_node, T_deep)
     inside = crossed & (T_bottom >= lo - tol) & (T_bottom <= hi + tol)
+    if T_base is not None:                           # the profile explains it: the base itself is in range
+        inside = inside | (crossed & (T_base >= lo - tol) & (T_base <= hi + tol))
     judged = crossed
     if handed is not None:
         mask, coldest, warmest = handed[:3]
@@ -706,7 +734,7 @@ class SkinBody(ThermalBody):
         self.removed_mass = self.removed_enthalpy = 0.0
         self.drawn_mass = self.absorbed_mass = self.handed_mass = 0.0
         self.held_mass = self.held_depth_max = 0.0           # kg, m: what the tolerance and the cap hold at the last move
-        self.jump_faults = self.interface_repeats = self.absorb_capped = 0
+        self.jump_faults = self.jump_faults_bottom_cell = self.interface_repeats = self.absorb_capped = 0
         self.last_mismatch = self.last_shortfall = 0.0
         self.last_trigger = {"columns_over": 0, "worst_ratio": 0.0, "total_ratio": 0.0}    # the first pass's mismatch
         self.last_passes, self.last_total = 1, 0.0           # the damped rule's passes and final total mismatch ratio
@@ -1222,8 +1250,10 @@ class SkinBody(ThermalBody):
         self.momentum_lost += sk.momentum_out.sum(axis=0)                         # what a reconciliation took away
         T_bottom = sk.T[np.arange(sk.n), np.maximum(sk.count - 1, 0)]          # read after the reconciliation
         T_deep = T_node - g0 * (book.drawn / (mat.rho * col.area) + depth)   # the profile at the depth swept
-        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, (book.drawn > 0.0) | (depth > 0.0),
-                                            handed=(handed > 0.0, coldest, warmest, uncovered)).sum())
+        crossed, judged_by = (book.drawn > 0.0) | (depth > 0.0), (handed > 0.0, coldest, warmest, uncovered)
+        T_base = base_temperature(sk.T, sk.dz(), sk.count)       # the skin's profile at its base (Task 5k)
+        self.jump_faults += int(jump_faults(T_bottom, T_node, T_deep, crossed, handed=judged_by, T_base=T_base).sum())
+        self.jump_faults_bottom_cell += int(jump_faults(T_bottom, T_node, T_deep, crossed, handed=judged_by).sum())
         sk.regrid()
         self.absorbed_mass += float((mat.rho * depth * col.area).sum())
         self.handed_mass += float(handed.sum())
@@ -1332,7 +1362,8 @@ class SkinBody(ThermalBody):
                 "rebuild_residual_J": mm.rebuild_residual_total,
                 "rebuild_residual_last_J": mm.last_rebuild.residual if mm.last_rebuild is not None else 0.0,
                 "drawn_mass_kg": self.drawn_mass, "absorbed_mass_kg": self.absorbed_mass, "handed_mass_kg": self.handed_mass,
-                "shortfall_kg": self.last_shortfall, "jump_faults": self.jump_faults, "absorb_capped": self.absorb_capped,
+                "shortfall_kg": self.last_shortfall, "jump_faults": self.jump_faults,
+                "jump_faults_bottom_cell": self.jump_faults_bottom_cell, "absorb_capped": self.absorb_capped,
                 "interface_mismatch_J": self.last_mismatch, "interface_repeats": self.interface_repeats,
                 "repeat_columns_over": self.last_trigger["columns_over"],
                 "mismatch_worst_ratio": self.last_trigger["worst_ratio"],

@@ -223,7 +223,8 @@ def spray_layer(flow, liquid, band=False, theta=None, radius=None):
     state from before the band), the result is `melt_layer`'s to the last bit."""
     delta_m = melt_layer(flow, liquid)[0]
     moment = getattr(flow, "shear_integral", None)
-    radius = getattr(flow, "nose_radius", None) if getattr(flow, "nose_radius", None) is not None else radius
+    recorded = getattr(flow, "nose_radius", None)                  # the radius the flow's shear integral was taken at
+    radius = recorded if recorded is not None else radius
     if not band or moment is None or theta is None or radius is None or not getattr(flow, "in_slip_band", False):
         return delta_m
     theta = np.asarray(theta, dtype=float)
