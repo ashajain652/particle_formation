@@ -252,24 +252,24 @@ step (0.01 against 0.0025 s) and lumped against consistent mass change it by und
 both the top and a side wall of a body (a sharp corner) its patch tilts, and on 1 mm cells the projected heat on a 4 mm
 wide slab was 3.3 per cent short; rounded bodies have no such corners.
 
-**The molten-rigid surface tracks a Stefan front.** The design (§20.11 item 2) asks that the molten-rigid surface ψ
-(the 895.1 K isotherm, built by stage 1's `molten_rigid_surface` from the computed temperature, negative in rigid
-metal) follow a melting front to within one fine cell, 0.7 mm. The test
+**The molten-rigid surface tracks a Stefan front.** The design (§20.11 item 2) asks that the molten-rigid surface ψ (the
+895.1 K isotherm, built by stage 1's `molten_rigid_surface` from the computed temperature, negative in rigid metal)
+follow a melting front to within one fine cell, 0.7 mm. The test
 `test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell`, added on 2026-11-11, heats a 4.2 mm square column,
 22 mm deep, on uniform 0.7 mm cells, its top 0.3 mm above a layer of nodes and its sides and bottom insulated. The metal
 has constant properties (density 2800 kg/m³, conductivity 150 W/m/K, specific heat 900 J/kg/K) and a latent heat of
-390 kJ/kg released linearly between 890 and 900 K; it starts at 890 K, solid at the melting point, so only the liquid
-conducts (the one-phase problem). The top is held near 995 K, 100 K above the middle of the melting range, by the
-implicit base law with a conductance of 10⁷ W/m²/K, for 2 s in 0.01 s steps, and no metal is removed. The depth of
+390 kJ/kg released linearly between 890 and 900 K; it starts solid at the bottom of the melting range (890 K), so only
+the liquid conducts (the one-phase problem). The top is held near 995 K, 100 K above the middle of the melting range, by
+the implicit base law with a conductance of 10⁷ W/m²/K, for 2 s in 0.01 s steps, and no metal is removed. The depth of
 ψ = 0 on the column's centre line is compared with the exact (Neumann) front depth 2λ√(αt), where α is the thermal
 diffusivity, about 6.0 × 10⁻⁵ m²/s, and λ = 0.328 is the root of λ exp(λ²) erf(λ) = St/√π with the Stefan number
 St = c_p (T_hot − T_m)/L = 0.231 (the ratio of sensible heat in the liquid to latent heat). The computed front was
-0.112 mm deeper than the exact 2.528 mm at 0.25 s, 0.049 mm deeper than 3.575 mm at 0.5 s, 0.006 mm deeper than
-5.056 mm at 1.0 s and 0.010 mm shallower than 7.150 mm at 2.0 s, that is at most 16 per cent of a cell, against the
-bound of one cell. The error shrinks as the front crosses more cells, so it most likely comes from the first steps,
-when the front is within a cell or two of the surface; that cause was not isolated. The test takes 25 to 35 s on the
-shared laptop and its errors were recorded from one run. It checks a planar front with a narrow (10 K) melting range only; the Scheil
-alloy's wide range is covered through the plates' non-rigid depth, below.
+0.112 mm deeper than the exact 2.528 mm at 0.25 s, 0.049 mm deeper than 3.575 mm at 0.5 s, 0.006 mm deeper than 5.056 mm
+at 1.0 s and 0.010 mm shallower than 7.150 mm at 2.0 s, that is at most 16 per cent of a cell, against the bound of one
+cell. The error is largest at the earliest time and within 0.01 mm from 1 s on, so it most likely comes from the first
+steps, when the front is within a cell or two of the surface; that cause was not isolated. The test takes 25 to 35 s on
+the shared laptop and its errors were recorded from one run. It checks a planar front with a narrow (10 K) melting range
+only; the Scheil alloy's wide range is covered through the plates' non-rigid depth, below.
 
 **The ghost penalty and its weight.** A cell holding a sliver of metal would make the system ill-conditioned. A ghost
 penalty (Burman 2010) on every interior face between two active cells of which at least one is cut penalises the jump
@@ -297,20 +297,25 @@ It returns the enthalpy the move removed with the metal.
 
 **The uniform offset on rebuilds.** `remesh` carries the temperature to a rebuilt mesh: it extends the field three rings
 outside the metal, projects it conservatively onto the new mesh, and then adds one uniform temperature offset to every
-node, found by bisection to 10⁻¹² K, so that the stored enthalpy equals the old one. The search for the offset starts
-at plus or minus 50 K and doubles until it brackets the old enthalpy; if, after that, the enthalpy does not close to
-10⁻¹⁰ relative, the method raises a RuntimeError. The residual before the offset is returned and is the measure of
-the transfer's quality: the offset spreads it over the whole body, so it must be small. On the prototype plates (below)
-it was within 3 × 10⁻⁶ (cold plate) and 3 × 10⁻⁹ (hot plate) with the fine margin into rigid metal, and up to
-4.6 × 10⁻⁴ and 2.4 × 10⁻³ without it, because without the margin coarse cells rebuilt just under the melting front
-carry the error.
+node, found by bisection to 10⁻¹² K, so that the stored enthalpy equals the old one. The search for the offset starts at
+plus or minus 50 K and doubles until it brackets the old enthalpy; if, after that, the enthalpy does not close to 10⁻¹⁰
+of the scale below, the method raises a RuntimeError naming the residual. The residual before the offset is returned,
+divided by a scale that is the larger of the old stored enthalpy and the energy of a 1 K change of the old body (its
+heat capacity, the sum of density times metal volume times effective specific heat over the cells, times 1 K). The
+stored enthalpy is measured above the material's reference temperature (293 K for the test materials), so for a body at
+or near that temperature it is close to zero and could not serve as the scale alone; for a body hundreds of kelvin above
+it, as in every plate, the scale is the stored enthalpy and the residual is relative to it, as before. A move or a
+rebuild that raises leaves the solver exactly as it was before the call. The residual is the measure of the transfer's
+quality: the offset spreads it over the whole body, so it must be small. On the prototype plates (below) it was within
+3 × 10⁻⁶ (cold plate) and 3 × 10⁻⁹ (hot plate) with the fine margin into rigid metal, and up to 4.6 × 10⁻⁴ and
+2.4 × 10⁻³ without it, because without the margin coarse cells rebuilt just under the melting front carry the error.
 
-**Plates.** The comparisons with the skyscrapers' plates were run on 2026-11-11 in the uncommitted prototype folder
-`prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional
-reference (build commit 3c16f4a), because both exist only in that build until the shared-package refactor (stage 0 +
-S) brings them (plan Decision B). Each case was measured once on the laptop on mains power, shared with running
-flights. The column is the level-2 plate's centre with insulated walls; liquid is removed after every step wherever
-T is at or above T_feed = 910 K (the feed temperature); the reference runs at 2 µm cells and 1 ms steps.
+**Plates.** The comparisons with the skyscrapers' plates were run on 2026-11-11 in the prototype folder
+`prototype/levelset/stage2/` (committed in 7ac46c5), against read-only copies of the skyscrapers build's Scheil material
+and one-dimensional reference (build commit 3c16f4a), because both exist only in that build until the shared-package
+refactor (stage 0 + S) brings them (plan Decision B). Each case was measured once on the laptop on mains power, shared
+with running flights. The column is the level-2 plate's centre with insulated walls; liquid is removed after every step
+wherever T is at or above T_feed = 910 K (the feed temperature); the reference runs at 2 µm cells and 1 ms steps.
 
 - On uniform 0.7 mm cells with 0.05 s steps, the cold plate (700 K, 6 MW/m²) recedes 0.800, 2.688 and 5.130 mm at 1.0,
   1.5 and 2.0 s against the reference's 0.788, 2.712 and 5.216 mm (1.5 per cent ahead, then 0.9 and 1.6 per cent

@@ -373,10 +373,10 @@ Stage 1's nine files are (stage 2 adds a tenth, `cutthermal.py`, below):
 - `thin.py` measures molten depth and curvature per patch and applies the thin test with hysteresis.
 - `transfer.py` interpolates and conservatively transfers fields between two meshes built from the same base grid.
 
-Run the tests (43 from stage 1; 57 since stage 2, below) from the repository root with
+Run the tests (43 from stage 1; 60 since stage 2, below) from the repository root with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 57 tests, 93 to 140 s (43 tests and about 40 s at stage 1)
+"$PY" -m pytest tests/levelset -q                            # 60 tests, 93 to 148 s (43 tests and about 40 s at stage 1)
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -406,27 +406,28 @@ mesh: the temperature is piecewise linear at the nodes, the heat capacity and co
 part of each cell only, and the boundary heat (a prescribed flux per surface patch, an implicit linear law for the
 skins' base, and radiation) is applied on the patches. A secant heat capacity makes the change of stored enthalpy equal
 the heat that came in to the Newton tolerance, latent heat included; a ghost penalty of weight 0.01 on the faces of cut
-cells keeps the system solvable when a cell holds only a sliver of metal. `move` moves the surface on the same mesh,
-and raises an error if any node that becomes active is left without a temperature; `remesh` carries the temperature to
-a rebuilt mesh, closes the stored enthalpy with one uniform temperature offset (widening its search until the offset is
-bracketed) and raises an error if the enthalpy does not close to 10⁻¹⁰ relative. `cutcell.py` gains `inside_subtets`
-and `subtet_volumes`, which split each cell's metal part into sub-tetrahedra. Stage 2 adds 14 tests, so the tier now
-has 57, which took 93 to 140 s in three runs on 2026-11-11 (on the laptop shared with running flights). One of them
-checks that the molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm
-cells: the front was within 0.112, 0.049, 0.006 and 0.010 mm of the exact depth at 0.25, 0.5, 1.0 and 2.0 s, against
-a bound of one 0.7 mm cell. There are still no skins, no flow and no coupling to the flight loop;
+cells keeps the system solvable when a cell holds only a sliver of metal. `move` moves the surface on the same mesh, and
+raises an error if any node that becomes active is left without a temperature; `remesh` carries the temperature to a
+rebuilt mesh, closes the stored enthalpy with one uniform temperature offset (widening its search until the offset is
+bracketed) and raises an error if the enthalpy does not close to 10⁻¹⁰ of the larger of the stored enthalpy and the
+energy of a 1 K change (the stored enthalpy is measured above 293 K, so it vanishes for a body at that temperature); a
+move or rebuild that raises leaves the solver as it was. `cutcell.py` gains `inside_subtets` and `subtet_volumes`, which
+split each cell's metal part into sub-tetrahedra. Stage 2 adds 17 tests, so the tier now has 60; with 57 it took 93 to
+140 s in three runs on 2026-11-11, and with 60 it took 148 s in one run (on the laptop shared with running flights). One
+of them checks that the molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm
+cells: the front was within 0.112, 0.049, 0.006 and 0.010 mm of the exact depth at 0.25, 0.5, 1.0 and 2.0 s, against a
+bound of one 0.7 mm cell. There are still no skins, no flow and no coupling to the flight loop;
 `docs/model_assumptions.md` §10 records the choices and the measured accuracy.
 
-The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the uncommitted prototype folder
-`prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional
-reference (build commit 3c16f4a), because neither exists in this branch until the shared-package refactor (stage 0 +
-S); the results are recorded in the design (§20.11 item 2) and in `docs/model_assumptions.md` §10. In short, at 0.05 s
-steps on uniform 0.7 mm cells the recession of both plates agrees with the reference to within 1.6 per cent at 1.0,
-1.5 and 2.0 s, and the adaptive mesh with its 4 mm fine margin passes the skyscrapers' acceptance (5 per cent on
-recession, 10 per cent on the non-rigid depth), except that the hot plate's recession at 1.0 s, 9.6 per cent behind,
-is not judged; at 0.5 s steps the solve lags by up to 25 per cent,
-because the liquid is removed only at the end of each step, and that judgement moves to stage 3, whose skins take the
-liquid continuously.
+The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the prototype folder
+`prototype/levelset/stage2/` (committed in 7ac46c5), against read-only copies of the skyscrapers build's Scheil material
+and one-dimensional reference (build commit 3c16f4a), because neither exists in this branch until the shared-package
+refactor (stage 0 + S); the results are recorded in the design (§20.11 item 2) and in `docs/model_assumptions.md` §10.
+In short, at 0.05 s steps on uniform 0.7 mm cells the recession of both plates agrees with the reference to within
+1.6 per cent at 1.0, 1.5 and 2.0 s, and the adaptive mesh with its 4 mm fine margin passes the skyscrapers' acceptance
+(5 per cent on recession, 10 per cent on the non-rigid depth), except that the hot plate's recession at 1.0 s, 9.6 per
+cent behind, is not judged; at 0.5 s steps the solve lags by up to 25 per cent, because the liquid is removed only at
+the end of each step, and that judgement moves to stage 3, whose skins take the liquid continuously.
 
 ```bash
 "$PY" analysis/levelset/measure_thermal.py 50                # sphere diameter in mm; optional number of 0.5 s steps (default 3)

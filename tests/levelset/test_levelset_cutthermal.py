@@ -200,6 +200,58 @@ def test_remesh_widens_the_offset_bracket_when_the_metal_volume_changes_a_lot():
     assert s.energy() == pytest.approx(E0, rel=1e-12)
 
 
+def _column_and_fine_mesh():
+    h = 1e-3
+    base = BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h)
+    m = build(base)
+    m2 = build(base, lambda c, sz: np.where(np.abs(c[:, 2] + 0.3e-3) < 1.5e-3, 0.25e-3, np.inf))
+    return m, m2
+
+
+def test_remesh_closes_for_a_body_at_the_reference_temperature():
+    # at T_ref = 293 K the stored enthalpy is zero, so the residual and the closure must be scaled by something else
+    m, m2 = _column_and_fine_mesh()
+    s = CutThermal(ConstMaterial()); s.setup(m, m.points[:, 2] + 0.3e-3); s.set_temperature(293.0)
+    r0 = s.remesh(m2, interpolate(m, s.phi, m2.points))
+    assert s.mesh is m2 and np.isfinite(r0) and abs(r0) < 1e-6
+    assert np.allclose(s.T[s.active], 293.0, rtol=0.0, atol=1e-9)
+
+
+def _snapshot(s):
+    return s.mesh, s.phi.copy(), s.T.copy(), s.active.copy(), s.Vin.copy(), s.cells.copy()
+
+
+def _assert_unchanged(s, snap):
+    mesh, phi, T, active, Vin, cells = snap
+    assert s.mesh is mesh
+    for a, b in ((s.phi, phi), (s.T, T), (s.active, active), (s.Vin, Vin), (s.cells, cells)):
+        assert a.shape == b.shape and np.array_equal(a, b)
+
+
+def test_a_failed_remesh_leaves_the_solver_as_it_was(monkeypatch):
+    import reentry_model.levelset.cutthermal as ct
+    m, m2 = _column_and_fine_mesh()
+    s = CutThermal(ConstMaterial()); s.setup(m, m.points[:, 2] + 0.3e-3); s.set_temperature(400.0)
+    snap = _snapshot(s)
+    monkeypatch.setattr(ct, "project", lambda a, b, T: np.full(len(b.points), np.nan))    # no offset can close NaN
+    with pytest.raises(RuntimeError):
+        s.remesh(m2, interpolate(m, s.phi, m2.points))
+    _assert_unchanged(s, snap)
+
+
+def test_a_failed_move_leaves_the_solver_as_it_was(monkeypatch):
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi); s.set_temperature(400.0)
+    snap = _snapshot(s)
+
+    def fail(*args, **kw):
+        raise RuntimeError("_extend: forced")
+    monkeypatch.setattr(s, "_extend", fail)
+    with pytest.raises(RuntimeError):
+        s.move(np.linalg.norm(m.points, axis=1) - 10.4e-3)
+    _assert_unchanged(s, snap)
+
+
 def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
     """Design section 20.11 item 2: a 4.2 mm square column, 22 mm deep, on a uniform 0.7 mm mesh (the fine cell),
     starts solid at the bottom of an 890-900 K melting range; its top, 0.3 mm above a node layer, is held near

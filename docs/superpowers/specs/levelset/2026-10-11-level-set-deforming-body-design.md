@@ -908,13 +908,14 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
 2. **Thermal.** §13 item 2, plus ψ tracking a Stefan front within one fine cell, and the plates (level-2 cold and hot)
    within the skyscrapers' acceptance, with the fine margin d and without it (to confirm why it exists).
 
-   *Stage 2's measured results (amended 2026-11-11).* Measured on the 2026-11-11 prototype on the laptop on mains
-   power, shared with running flights, each case once. The plate comparisons were run in the uncommitted prototype
-   folder `prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and
-   one-dimensional reference (build commit 3c16f4a), because both exist only in that build until stage 0 + S brings
-   them (stage 2 plan, Decision B); the package's own tests use test-only materials (constant properties, a linear
-   melting range). The plate is a column of the level-2 plate's centre with insulated walls; liquid is removed after
-   every step wherever the temperature is at or above T_feed = 910 K; the reference runs at 2 µm cells and 1 ms steps.
+   *Stage 2's measured results (amended 2026-11-11).* Measured on the 2026-11-11 prototype on the laptop on mains power,
+   shared with running flights, each case once. The plate comparisons were run in the prototype folder
+   `prototype/levelset/stage2/` (committed in 7ac46c5), against read-only copies of the skyscrapers build's Scheil
+   material and one-dimensional reference (build commit 3c16f4a), because both exist only in that build until stage
+   0 + S brings them (stage 2 plan, Decision B); the package's own tests use test-only materials (constant properties, a
+   linear melting range). The plate is a column of the level-2 plate's centre with insulated walls; liquid is removed
+   after every step wherever the temperature is at or above T_feed = 910 K; the reference runs at 2 µm cells and 1 ms
+   steps.
    - *Uniform 0.7 mm cells, 0.05 s steps:* the cold plate (700 K, 6 MW/m²) recedes 0.800, 2.688 and 5.130 mm at 1.0,
      1.5 and 2.0 s against the reference's 0.788, 2.712 and 5.216 mm (1.5 % ahead, then 0.9 and 1.6 % behind); the
      hot plate (880 K, 2 MW/m²) 0.798, 1.806 and 2.904 mm against 0.788, 1.816 and 2.916 mm (1.3 % ahead, 0.6 and 0.4 %
@@ -946,8 +947,8 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
    solid at the bottom of an 890–900 K melting range (latent heat 390 kJ/kg), its top held near 995 K by the implicit
    base law (conductance 10⁷ W/m²/K) with 0.01 s steps; the depth of ψ = 0 is 0.112, 0.049 and 0.006 mm deeper and
    0.010 mm shallower than the Neumann one-phase front at 0.25, 0.5, 1.0 and 2.0 s (2.528, 3.575, 5.056 and 7.150 mm),
-   at most 16 % of a fine cell. The Scheil alloy's wide melting range is covered through the plates' non-rigid depth. Detail in
-   `docs/model_assumptions.md` §10.
+   at most 16 % of a fine cell; the error is largest at the earliest time and within 0.01 mm from 1 s on. The Scheil
+   alloy's wide melting range is covered through the plates' non-rigid depth. Detail in `docs/model_assumptions.md` §10.
 3. **Skins on markers, both modes, flow solve off** (thick regions held, as before the switch): §13 item 3's tests;
    cross-section varying with curvature against the analytic volume of a spherical shell; mode changes exact in mass,
    enthalpy and momentum; runoff over a shoulder onto cold metal freezing as a deposit, against the skyscrapers' plate

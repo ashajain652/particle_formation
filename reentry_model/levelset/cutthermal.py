@@ -32,7 +32,10 @@ are the first donors), the geometry is rebuilt, and the enthalpy the move remove
 returned. `remesh(new_mesh, phi_new)` carries the temperature to a new mesh: it is first extended three rings outside
 the metal (so the projection sees a smooth field across the surface), projected with `transfer.project`, the geometry
 is rebuilt on the new mesh, and one uniform temperature offset, found by bisection to 1e-12 K, makes the stored
-enthalpy equal the old one; the relative enthalpy residual before the offset is returned."""
+enthalpy equal the old one; the enthalpy residual before the offset is returned, divided by the larger of the old
+stored enthalpy and the energy of a 1 K change of the old body (the stored enthalpy is measured above the material's
+reference temperature, so it vanishes for a body at that temperature). A move or a rebuild that raises leaves the
+solver exactly as it was before the call."""
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
@@ -265,39 +268,57 @@ class CutThermal:
 
     def move(self, phi_new):
         """Move the surface on the same mesh; returns the enthalpy the move removed from the metal [J] (negative
-        when metal is added)."""
+        when metal is added). If the move raises, the solver is left exactly as it was before the call."""
         E0 = self.energy()
         donors = self.active.copy()
-        self.setup(self.mesh, phi_new)
-        self.T = self._extend(donors, self.active)
+        saved = dict(self.__dict__)                  # setup only rebinds attributes, so a shallow copy restores them
+        try:
+            self.setup(self.mesh, phi_new)
+            self.T = self._extend(donors, self.active)
+        except Exception:
+            self.__dict__.clear(); self.__dict__.update(saved)
+            raise
         return E0 - self.energy()
 
     def remesh(self, new_mesh, phi_new):
         """Carry T to a new mesh conservatively and close the stored enthalpy with a uniform offset; phi_new is the
-        level set on the new mesh. Returns the relative enthalpy residual before the offset."""
+        level set on the new mesh. Returns the enthalpy residual before the offset divided by the scale
+        max(|E0|, C x 1 K), C = sum rho V_in cp_eff(T*) the old body's heat capacity [J/K]: relative to the stored
+        enthalpy E0 (measured above the material's reference) unless that is smaller than the energy of a 1 K
+        change, which it is for a body near the reference. The closure is checked to 1e-10 of the same scale. If
+        the rebuild raises, the solver is left exactly as it was before the call."""
         E0 = self.energy()
+        C = float((self.mat.rho * self.Vin * self.mat.cp_eff(self.cell_T())).sum())    # heat capacity [J/K]
+        scale = max(abs(E0), C * 1.0, 1e-300)                                # 1.0 K: the energy of a 1 K change
         old_mesh = self.mesh
         T_full = self._extend(self.active.copy(), ~self.active, rings=3, strict=False)     # a band outside, for the projection
         T_new = project(old_mesh, new_mesh, T_full)
-        self.setup(new_mesh, phi_new)
-        self.T = T_new
-        r0 = (self.energy() - E0) / max(abs(E0), 1e-300)
-        a, b = -50.0, 50.0                                                   # offset bracket, widened until it holds E0
-        for _ in range(40):
-            if self.energy(T_new + a) <= E0 <= self.energy(T_new + b):
-                break
-            a, b = 2.0 * a, 2.0 * b
-        else:
-            raise RuntimeError("remesh: no uniform offset up to {} K closes the enthalpy".format(b))
-        for _ in range(200):                                                 # bisection (enthalpy is monotone in T)
-            m = 0.5 * (a + b)
-            if self.energy(T_new + m) > E0:
-                b = m
+        saved = dict(self.__dict__)
+        try:
+            self.setup(new_mesh, phi_new)
+            self.T = T_new
+            r0 = (self.energy() - E0) / scale
+            a, b = -50.0, 50.0                                               # offset bracket, widened until it holds E0
+            for _ in range(40):
+                if self.energy(T_new + a) <= E0 <= self.energy(T_new + b):
+                    break
+                a, b = 2.0 * a, 2.0 * b
             else:
-                a = m
-            if b - a < 1e-12:
-                break
-        self.T = T_new + 0.5 * (a + b)
-        if abs(self.energy() - E0) > 1e-10 * abs(E0):
-            raise RuntimeError("remesh: the enthalpy did not close")
+                raise RuntimeError("remesh: no uniform offset up to {} K closes the enthalpy".format(b))
+            for _ in range(200):                                             # bisection (enthalpy is monotone in T)
+                m = 0.5 * (a + b)
+                if self.energy(T_new + m) > E0:
+                    b = m
+                else:
+                    a = m
+                if b - a < 1e-12:
+                    break
+            self.T = T_new + 0.5 * (a + b)
+            r1 = (self.energy() - E0) / scale
+            if abs(r1) > 1e-10:
+                raise RuntimeError("remesh: the enthalpy did not close (residual {:.3e} of the scale {:.3e} J after "
+                                   "the offset)".format(r1, scale))
+        except Exception:
+            self.__dict__.clear(); self.__dict__.update(saved)
+            raise
         return r0
