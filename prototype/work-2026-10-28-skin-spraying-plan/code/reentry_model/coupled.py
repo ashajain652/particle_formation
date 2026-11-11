@@ -174,6 +174,13 @@ class CoupledRun:
             if resume.get("format") != restart.FORMAT or resume.get("run") is not self:
                 raise ValueError("a run resumes only from a state of its own of format {}".format(restart.FORMAT))
             rows, states, step = [dict(resume["row"])], [sim.y.copy()], resume["step"]
+            if self.skins and "jump_faults_bottom_cell" not in vars(body):
+                # a state saved before sub-plan 22 Task 5k (fix round 1, controller's ruling 2026-11-11): the count of the old rule,
+                # the bottom cell alone, is the saved `jump_faults`, which was made by that rule up to the save, so the old count
+                # stays continuous; `jump_faults` itself continues under the new rule from the resume. Here, where `cmd_resume`
+                # and a direct resume both pass, and the saved row gets the column too
+                body.jump_faults_bottom_cell = body.jump_faults
+                rows[0].setdefault("jump_faults_bottom_cell", rows[0].get("jump_faults", body.jump_faults))
         while sim.end_reason is None:
             dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
             a, loads = self.loads_at(sim.t, sim.y)

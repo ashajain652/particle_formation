@@ -470,7 +470,8 @@ def graded_column(bottom_excess, dz=(0.5e-3, 1.0e-3, 1.5e-3, 2.0e-3), T_base=895
 def test_a_thick_bottom_cell_on_a_smooth_profile_is_not_a_jump_fault():
     """Task 5k, Asha's option (a), 2026-11-10: a bottom cell 2 mm thick, 8 K warmer at its centre than the base on a linear
     profile (so the base itself is at the node's temperature) is no fault under the new rule, as the 50 mm flight's 336
-    faults a step were not; the bottom cell's rule, kept as `jump_faults_bottom_cell`, counts it (8 K against 5 K)."""
+    faults a step were not; the bottom cell's rule, kept as `jump_faults_bottom_cell`, counts it (8 K against 5 K). Fails on the
+    old rule (its `[False]` assertion): the one of the four that does; the other three guard the "only removes faults" property."""
     T, dz, count = graded_column(0.0)
     T_base = skinbody.base_temperature(T, dz, count)
     assert T_base[0] == pytest.approx(895.0, abs=1e-9) and T[0, -1] - 895.0 == pytest.approx(8.0)
@@ -482,7 +483,8 @@ def test_a_thick_bottom_cell_on_a_smooth_profile_is_not_a_jump_fault():
 
 def test_a_genuine_jump_in_a_thick_bottom_cell_is_still_a_fault():
     """The same column with the bottom cell 8 K above the line through the cells above it (16 K above the base node): the
-    extrapolation to the base does not hide it (it lands 12.6 K above the node, above the 5 K tolerance)."""
+    extrapolation to the base does not hide it (it lands 12.6 K above the node, above the 5 K tolerance). A guard: passes on the old
+    rule too, and fails on today's code only because `base_temperature` is missing."""
     T, dz, count = graded_column(8.0)
     T_base = skinbody.base_temperature(T, dz, count)
     assert T_base[0] > 895.0 + skin.JUMP_TOLERANCE
@@ -493,7 +495,7 @@ def test_a_genuine_jump_in_a_thick_bottom_cell_is_still_a_fault():
 def test_fresh_metal_at_the_node_under_a_steep_step_is_still_not_a_fault():
     """A thin bottom cell (0.1 mm) at the node's temperature below a cell 205 K warmer: the extrapolation would put the base
     18.6 K below the node, outside the range, but the bottom cell is in it, so the column passes on its own temperature: the
-    change can only remove faults the profile explains, never add one."""
+    change can only remove faults the profile explains, never add one. A guard: passes on the old rule too."""
     T, dz = np.array([[1100.0, 895.0]]), np.array([[1.0e-3, 0.1e-3]])
     T_base = skinbody.base_temperature(T, dz, np.array([2]))
     node, crossed = np.array([895.0]), np.array([True])
@@ -504,7 +506,7 @@ def test_fresh_metal_at_the_node_under_a_steep_step_is_still_not_a_fault():
 
 def test_a_one_cell_column_is_judged_by_its_own_temperature():
     """With one cell there is no profile to extrapolate: the base temperature is the cell's, so the two rules agree, in both
-    directions (897 K passes, 903 K faults, against a node at 895 K and a tolerance of 5 K)."""
+    directions (897 K passes, 903 K faults, against a node at 895 K and a tolerance of 5 K). A guard: passes on the old rule too."""
     T, dz = np.array([[897.0, 0.0], [903.0, 0.0]]), np.array([[2.0e-3, 0.0], [2.0e-3, 0.0]])
     count = np.array([1, 1])
     T_base = skinbody.base_temperature(T, dz, count)
@@ -2520,21 +2522,19 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
             np.testing.assert_array_equal(getattr(b.last_flow, name), getattr(runs[0][0].last_flow, name))
         np.testing.assert_array_equal(b.spray_plan.result.delta_m, runs[0][0].spray_plan.result.delta_m)
         assert b.released_mass == runs[0][0].released_mass and b.mass() == runs[0][0].mass() and b.energy() == runs[0][0].energy()
-    # a third arm with teeth (final review, Minor 3; Task 5k): the two arms above are one code path, so they cannot fail on the
-    # angle plumbing. Under `centroid` a corner facing the flow from behind the plane (ruling 3 of Task 5j: 3 of 2254 on the
-    # 4 mm test sphere's equator, here put there) gets no shear and no pressure gradient; under `facing` the same corner does
-    flows = {}
+    # a third arm with teeth (final review, Minor 3; Task 5k, made cheap in its fix round 1): the two arms above are one code path, so
+    # they cannot fail on the angle plumbing. Under `centroid` a corner facing the flow from behind the plane gets no shear and no
+    # pressure gradient from the surface flow; under `facing` the same corner does. The corner is put there synthetically, 4 cm behind
+    # the plane (not the ruling's case of a hair behind it: 3 of 2254 on the 4 mm sphere), and the flow is evaluated directly
+    # (`flow_forcing`, the routine `advance` calls), with no macro step run and no spray model
+    forcing = {}
     for how in ("centroid", "facing"):
-        np.random.seed(12345)
-        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1,
-                 spray=spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True), leeward_test=how)
+        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
         k = put_behind(b)
-        state = aero_state_at(93.0)
-        state.kn = 0.04
-        b.advance(0.25, 0.25, front_loads(b, 3e6), state=state)
-        flows[how] = b.last_flow
-    assert flows["centroid"].tau[k] == 0.0 and flows["centroid"].dp_ds[k] == 0.0
-    assert flows["facing"].tau[k] != 0.0 or flows["facing"].dp_ds[k] != 0.0
+        forcing[how] = b.flow_forcing(aero_state_at(93.0))
+    assert forcing["centroid"].tau[k] == 0.0 and forcing["centroid"].dp_ds[k] == 0.0
+    assert forcing["facing"].tau[k] != 0.0 or forcing["facing"].dp_ds[k] != 0.0
+    assert (forcing["centroid"].tau != 0.0).any()                       # the flow is not zero everywhere for another reason
     assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
     with pytest.raises(ValueError, match="leeward_test"):
         make(coarse_sphere_mesh, leeward_test="behind")

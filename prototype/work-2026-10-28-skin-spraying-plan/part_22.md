@@ -2885,6 +2885,14 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
    makes the state by hand: a saved thermal-body state given a `source_rows` list and 40-bin accumulators of known counts, resumed, its
    saved state's accumulators 50 long with the first 40 bins exact; it fails with the padding switched off.
 
+4. *Fix round 1 (review, 2026-11-11):* a state saved before this task has no `jump_faults_bottom_cell` on its body or in its saved row, and the first base
+   move raised `AttributeError`. By the controller's ruling `CoupledRun.run(resume=...)` (which `cmd_resume` and a direct resume both reach) sets it to the
+   saved `jump_faults` (made by the old rule up to the save, so the old count stays continuous) and fills the saved row's column the same way; `jump_faults`
+   then continues under the new rule from the resume, so the two counts differ only by what the new rule removes after it. The restart test deletes the
+   attribute and the row key from a saved state, resumes, and checks the saved count carried; it fails on the first version with that `AttributeError`.
+   The facing test's third arm now calls `flow_forcing` directly (no macro step, no spray model): the whole test 317 s alone, from 13 minutes. The Part A
+   test docstrings say which test fails on the old rule (the first) and which guard.
+
 - [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
 
 {{DIFF_TEST_SKINBODY_T5K}}

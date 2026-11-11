@@ -15893,6 +15893,14 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
    makes the state by hand: a saved thermal-body state given a `source_rows` list and 40-bin accumulators of known counts, resumed, its
    saved state's accumulators 50 long with the first 40 bins exact; it fails with the padding switched off.
 
+4. *Fix round 1 (review, 2026-11-11):* a state saved before this task has no `jump_faults_bottom_cell` on its body or in its saved row, and the first base
+   move raised `AttributeError`. By the controller's ruling `CoupledRun.run(resume=...)` (which `cmd_resume` and a direct resume both reach) sets it to the
+   saved `jump_faults` (made by the old rule up to the save, so the old count stays continuous) and fills the saved row's column the same way; `jump_faults`
+   then continues under the new rule from the resume, so the two counts differ only by what the new rule removes after it. The restart test deletes the
+   attribute and the row key from a saved state, resumes, and checks the saved count carried; it fails on the first version with that `AttributeError`.
+   The facing test's third arm now calls `flow_forcing` directly (no macro step, no spray model): the whole test 317 s alone, from 13 minutes. The Part A
+   test docstrings say which test fails on the old rule (the first) and which guard.
+
 - [ ] **Step 1: Write the failing tests** in `tests/test_reentry_model_skinbody.py`:
 
 ```diff
@@ -15907,7 +15915,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
  from reentry_model.thermal import thermal_solver
  
  DEV = skin.SkinSettings(cell=20e-6)
-@@ -454,6 +454,77 @@
+@@ -454,6 +454,79 @@
      assert skinbody.jump_faults(T_bottom, T_node, T_deep, inward, handed=(handed, lo, hi)).tolist() == [
          False, False, True, True, False, False]                       # the handed cells alone
      assert skinbody.jump_faults(T_bottom, T_node, T_deep, inward).tolist() == [False, False, False, False, True, False]
@@ -15927,7 +15935,8 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
 +def test_a_thick_bottom_cell_on_a_smooth_profile_is_not_a_jump_fault():
 +    """Task 5k, Asha's option (a), 2026-11-10: a bottom cell 2 mm thick, 8 K warmer at its centre than the base on a linear
 +    profile (so the base itself is at the node's temperature) is no fault under the new rule, as the 50 mm flight's 336
-+    faults a step were not; the bottom cell's rule, kept as `jump_faults_bottom_cell`, counts it (8 K against 5 K)."""
++    faults a step were not; the bottom cell's rule, kept as `jump_faults_bottom_cell`, counts it (8 K against 5 K). Fails on the
++    old rule (its `[False]` assertion): the one of the four that does; the other three guard the "only removes faults" property."""
 +    T, dz, count = graded_column(0.0)
 +    T_base = skinbody.base_temperature(T, dz, count)
 +    assert T_base[0] == pytest.approx(895.0, abs=1e-9) and T[0, -1] - 895.0 == pytest.approx(8.0)
@@ -15939,7 +15948,8 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
 +
 +def test_a_genuine_jump_in_a_thick_bottom_cell_is_still_a_fault():
 +    """The same column with the bottom cell 8 K above the line through the cells above it (16 K above the base node): the
-+    extrapolation to the base does not hide it (it lands 12.6 K above the node, above the 5 K tolerance)."""
++    extrapolation to the base does not hide it (it lands 12.6 K above the node, above the 5 K tolerance). A guard: passes on the old
++    rule too, and fails on today's code only because `base_temperature` is missing."""
 +    T, dz, count = graded_column(8.0)
 +    T_base = skinbody.base_temperature(T, dz, count)
 +    assert T_base[0] > 895.0 + skin.JUMP_TOLERANCE
@@ -15950,7 +15960,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
 +def test_fresh_metal_at_the_node_under_a_steep_step_is_still_not_a_fault():
 +    """A thin bottom cell (0.1 mm) at the node's temperature below a cell 205 K warmer: the extrapolation would put the base
 +    18.6 K below the node, outside the range, but the bottom cell is in it, so the column passes on its own temperature: the
-+    change can only remove faults the profile explains, never add one."""
++    change can only remove faults the profile explains, never add one. A guard: passes on the old rule too."""
 +    T, dz = np.array([[1100.0, 895.0]]), np.array([[1.0e-3, 0.1e-3]])
 +    T_base = skinbody.base_temperature(T, dz, np.array([2]))
 +    node, crossed = np.array([895.0]), np.array([True])
@@ -15961,7 +15971,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
 +
 +def test_a_one_cell_column_is_judged_by_its_own_temperature():
 +    """With one cell there is no profile to extrapolate: the base temperature is the cell's, so the two rules agree, in both
-+    directions (897 K passes, 903 K faults, against a node at 895 K and a tolerance of 5 K)."""
++    directions (897 K passes, 903 K faults, against a node at 895 K and a tolerance of 5 K). A guard: passes on the old rule too."""
 +    T, dz = np.array([[897.0, 0.0], [903.0, 0.0]]), np.array([[2.0e-3, 0.0], [2.0e-3, 0.0]])
 +    count = np.array([1, 1])
 +    T_base = skinbody.base_temperature(T, dz, count)
@@ -15985,25 +15995,23 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
  
  
  def stepped_deposit(body, cols, cold=4, T_warm=760.0, depth=0.5e-3, T_dep=890.0):
-@@ -2449,6 +2520,21 @@
+@@ -2449,6 +2522,19 @@
              np.testing.assert_array_equal(getattr(b.last_flow, name), getattr(runs[0][0].last_flow, name))
          np.testing.assert_array_equal(b.spray_plan.result.delta_m, runs[0][0].spray_plan.result.delta_m)
          assert b.released_mass == runs[0][0].released_mass and b.mass() == runs[0][0].mass() and b.energy() == runs[0][0].energy()
-+    # a third arm with teeth (final review, Minor 3; Task 5k): the two arms above are one code path, so they cannot fail on the
-+    # angle plumbing. Under `centroid` a corner facing the flow from behind the plane (ruling 3 of Task 5j: 3 of 2254 on the
-+    # 4 mm test sphere's equator, here put there) gets no shear and no pressure gradient; under `facing` the same corner does
-+    flows = {}
++    # a third arm with teeth (final review, Minor 3; Task 5k, made cheap in its fix round 1): the two arms above are one code path, so
++    # they cannot fail on the angle plumbing. Under `centroid` a corner facing the flow from behind the plane gets no shear and no
++    # pressure gradient from the surface flow; under `facing` the same corner does. The corner is put there synthetically, 4 cm behind
++    # the plane (not the ruling's case of a hair behind it: 3 of 2254 on the 4 mm sphere), and the flow is evaluated directly
++    # (`flow_forcing`, the routine `advance` calls), with no macro step run and no spray model
++    forcing = {}
 +    for how in ("centroid", "facing"):
-+        np.random.seed(12345)
-+        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1,
-+                 spray=spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True), leeward_test=how)
++        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
 +        k = put_behind(b)
-+        state = aero_state_at(93.0)
-+        state.kn = 0.04
-+        b.advance(0.25, 0.25, front_loads(b, 3e6), state=state)
-+        flows[how] = b.last_flow
-+    assert flows["centroid"].tau[k] == 0.0 and flows["centroid"].dp_ds[k] == 0.0
-+    assert flows["facing"].tau[k] != 0.0 or flows["facing"].dp_ds[k] != 0.0
++        forcing[how] = b.flow_forcing(aero_state_at(93.0))
++    assert forcing["centroid"].tau[k] == 0.0 and forcing["centroid"].dp_ds[k] == 0.0
++    assert forcing["facing"].tau[k] != 0.0 or forcing["facing"].dp_ds[k] != 0.0
++    assert (forcing["centroid"].tau != 0.0).any()                       # the flow is not zero everywhere for another reason
      assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
      with pytest.raises(ValueError, match="leeward_test"):
          make(coarse_sphere_mesh, leeward_test="behind")
@@ -16052,7 +16060,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
      state = restart.load(state_path)
      body = state["run"].body
      del vars(body)["leeward_test"], vars(body)["_leeward_raw"]
-@@ -513,6 +520,36 @@
+@@ -513,6 +520,59 @@
      assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
  
  
@@ -16086,10 +16094,33 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
 +    assert after.hist_n[40:].sum() == 0.0 and after.hist_m[40:].sum() == 0.0
 +
 +
++def test_a_state_saved_before_the_bottom_cell_count_resumes_with_it_continuing_from_the_saved_fault_count(flown, tmp_path):
++    """Task 5k, fix round 1 (controller's ruling, 2026-11-11): a state saved before `jump_faults_bottom_cell` existed (the attribute
++    deleted from its body, the column from its saved row, as the old-state tests of this file do) resumes, takes base moves, and
++    reports the old-rule count as the saved `jump_faults` plus the old-rule faults of the new steps; `jump_faults` continues under the
++    new rule from the resume. Before the fix the first base move raised AttributeError."""
++    out, flight, records, state_path = flown
++    state = restart.load(state_path)
++    body = state["run"].body
++    del vars(body)["jump_faults_bottom_cell"]
++    del state["row"]["jump_faults_bottom_cell"]
++    body.jump_faults = state["row"]["jump_faults"] = 7                 # a saved count, made by the old rule
++    old = str(tmp_path / "old.state.pkl")
++    restart.save(old, state)
++    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
++    rows = rows_of(str(tmp_path / "o.csv"))
++    assert len(rows) == 3 and rows[0]["jump_faults_bottom_cell"] == "7" and rows[0]["jump_faults"] == "7"
++    last = rows[-1]
++    assert float(last["jump_faults_bottom_cell"]) >= 7 and float(last["jump_faults"]) >= 7
++    assert float(last["jump_faults_bottom_cell"]) - 7 >= float(last["jump_faults"]) - 7      # the new rule never counts more
++    doc = json.load(open(str(tmp_path / "o.json")))["results"]
++    assert doc["jump_faults_bottom_cell"] == int(float(last["jump_faults_bottom_cell"]))
++
++
  def test_a_melting_skin_flight_with_no_options_hands_down_nothing_and_counts_parts_by_the_melting(tmp_path):
      """Asha, 2026-11-10 (sub-plan 22 Task 5h): with `--hand-down` and `--part-count-from` not given, a melting skin flight
      runs with the hand-down off and the part count by the melting, records both in the skins' settings and in the
-@@ -545,7 +582,8 @@
+@@ -545,7 +605,8 @@
          flown, tmp_path, capsys):
      """`--spray-gates` on a resume (sub-plan 22 Task 5h). The test flight is `before` through its saved state only if the
      state carries no setting: a state saved before the option (the setting removed from its spray model, which then reads the
@@ -16099,7 +16130,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
      flight; `2026-11-10` asked of it is recorded in the JSON's settings and in what was changed, and kept by the state the
      resumed flight saves. A flight that does not spray refuses the option."""
      out, flight, records, state_path = flown
-@@ -559,7 +597,7 @@
+@@ -559,7 +620,7 @@
      restart.save(old, state)
      assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
      assert "spray gates before" in capsys.readouterr().out
@@ -16108,7 +16139,7 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
      assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "n", "--spray-gates", "2026-11-10",
                       "--save-state-at", "0.2"]) == 0
      doc = json.load(open(str(tmp_path / "n.json")))
-@@ -568,7 +606,7 @@
+@@ -568,7 +629,7 @@
      assert restart.load(str(tmp_path / "n.state.pkl"))["run"].body.spray.spray_gates == "2026-11-10"
      assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "b", "--spray-gates", "before"]) == 0
      doc = json.load(open(str(tmp_path / "b.json")))
@@ -16250,7 +16281,21 @@ is a fault by the old rule and none by the new; the same column with the cell 8 
                      "interface_repeats", "repeat_columns_over", "mismatch_worst_ratio", "mismatch_total_ratio",
                      "removed_mass_kg", "removed_enthalpy_J", "base_recession_max_mm",
                      "wall_skins_s", "wall_3d_s", "wall_move_s", "wall_rebuild_s", "step_parts",
-@@ -285,7 +285,7 @@
+@@ -174,6 +174,13 @@
+             if resume.get("format") != restart.FORMAT or resume.get("run") is not self:
+                 raise ValueError("a run resumes only from a state of its own of format {}".format(restart.FORMAT))
+             rows, states, step = [dict(resume["row"])], [sim.y.copy()], resume["step"]
++            if self.skins and "jump_faults_bottom_cell" not in vars(body):
++                # a state saved before sub-plan 22 Task 5k (fix round 1, controller's ruling 2026-11-11): the count of the old rule,
++                # the bottom cell alone, is the saved `jump_faults`, which was made by that rule up to the save, so the old count
++                # stays continuous; `jump_faults` itself continues under the new rule from the resume. Here, where `cmd_resume`
++                # and a direct resume both pass, and the saved row gets the column too
++                body.jump_faults_bottom_cell = body.jump_faults
++                rows[0].setdefault("jump_faults_bottom_cell", rows[0].get("jump_faults", body.jump_faults))
+         while sim.end_reason is None:
+             dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
+             a, loads = self.loads_at(sim.t, sim.y)
+@@ -285,7 +292,7 @@
          out.update({k: float(last[k][-1]) for k in ("removed_mass_kg", "removed_enthalpy_J", "drawn_mass_kg", "absorbed_mass_kg",
                                                    "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                    "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
