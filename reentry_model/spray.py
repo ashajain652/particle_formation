@@ -159,7 +159,9 @@ B_MIN = 1.0e-6                     # m, films thinner than this do not spray (nu
 # Size bins, ten to a decade: 1 um to 0.1 m (sub-plan 22 Task 5j, the controller's ruling of 2026-11-10). They stopped at 10 mm
 # (40 bins) until then, and the Rayleigh-Taylor droplets, whose wavelength is centimetres on the layered skins, fell above them
 # and were not counted; the 40 bins' edges and counts are unchanged, 10 bins were added above them (`size_distribution.csv`
-# has ten more rows per window, empty for a run in which no droplet is above 10 mm).
+# has ten more rows per window, empty for a run in which no droplet is above 10 mm). One radius moves: a droplet of exactly 10 mm,
+# which closed the last bin on the right and now falls in bin 40, not 39; every other radius bins as before. A body saved
+# with 40 bins is padded with zeros on resume (`cli.cmd_resume`).
 N_BINS, R_MIN, R_MAX = 50, 1.0e-6, 1.0e-1
 BIN_EDGES = np.logspace(np.log10(1.0e-6), np.log10(1.0e-2), 41)
 BIN_EDGES = np.concatenate([BIN_EDGES, np.logspace(-2.0, np.log10(R_MAX), 11)[1:]])
