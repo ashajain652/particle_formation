@@ -42,7 +42,7 @@ the first line of `pmset -g batt` at the start and the end, the exit code and th
 `compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,
 `*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` and `runtime_s` columns; `.json` equal except the
 keys `provenance`, `files`, `runtime_s` (the run's elapsed time) and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
-and SHA-256 of the file; `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical; exit 2 with a message when either folder does not exist or holds no compared file (so a mistyped folder or a run that wrote nothing cannot pass);
+and SHA-256 of the file, and `resumed_from.state` compared by file name only (the state is 1.4 GB: no checksum); `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical; exit 2 with a message when either folder does not exist or holds no compared file (so a mistyped folder or a run that wrote nothing cannot pass);
 with `--report` it lists each differing column or field with its largest absolute and relative difference and exits 0.
 It uses only the standard library and numpy and can be imported without running anything. Tests: the last tests of
 `test_port_tools.py`.

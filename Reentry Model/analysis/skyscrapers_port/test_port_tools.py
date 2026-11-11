@@ -284,3 +284,38 @@ def test_run_refuses_a_case_folder_that_already_holds_results(tmp_path, capsys):
     assert "already holds" in capsys.readouterr().out
     assert (held / "nomelt.csv").read_text() == "a\n1\n"       # nothing deleted
     assert not (tmp_path / "out" / "nomelt.log").exists()
+
+
+def test_compare_treats_the_resumed_state_path_by_file_name(tmp_path):
+    for side, folder in (("a", "x"), ("b", "y")):
+        _write_run(tmp_path / side / "run", mesh_dir="m1")
+        path = tmp_path / side / "run" / "summary.json"
+        doc = json.loads(path.read_text())
+        doc["resumed_from"] = {"state": f"/{folder}/saved/d100.state.pkl", "step": 3}
+        path.write_text(json.dumps(doc))
+    assert same_results.compare(tmp_path / "a", tmp_path / "b") == []        # a relocated state file is not a difference
+    path = tmp_path / "b" / "run" / "summary.json"
+    doc = json.loads(path.read_text())
+    doc["resumed_from"]["state"] = "/y/saved/other.state.pkl"                # another file name is
+    path.write_text(json.dumps(doc))
+    assert len(same_results.compare(tmp_path / "a", tmp_path / "b")) == 1
+
+
+def test_run_resolves_relative_out_against_the_callers_folder(tmp_path, monkeypatch):
+    code = tmp_path / "code"
+    code.mkdir()
+    calls = []
+
+    class Done:
+        returncode = 0
+
+    monkeypatch.setattr(same_results.subprocess, "run",
+                        lambda command, **kw: calls.append((command, kw.get("cwd"))) or Done())
+    monkeypatch.setattr(same_results, "power_line", lambda: "AC Power")
+    monkeypatch.chdir(tmp_path)
+    assert same_results.main(["run", "--code", str(code), "--out", "rel_out", "--cases", "nomelt"]) == 0
+    command, cwd = calls[0]
+    assert Path(cwd) == code
+    outdir = Path(command[command.index("--outdir") + 1])
+    assert outdir == tmp_path / "rel_out" / "nomelt"                          # not relative to --code
+    assert (tmp_path / "rel_out" / "nomelt.log").exists()

@@ -195,6 +195,11 @@ def _walk_json(a, b, where, found, in_settings=False):
                 continue
             if key not in a or key not in b:
                 found.append(Difference(f"{where}.{key}", "present in one folder only"))
+            elif key == "state" and where.endswith(".resumed_from") and isinstance(a[key], str) \
+                    and isinstance(b[key], str):
+                if Path(a[key]).name != Path(b[key]).name:          # by file name only: the state is 1.4 GB, no checksum
+                    found.append(Difference(f"{where}.{key}", f"file name differs ({Path(a[key]).name} against "
+                                                              f"{Path(b[key]).name})"))
             elif in_settings and key in FILE_KEYS:
                 fa, fb = _named_file(a[key]), _named_file(b[key])
                 if fa[1] is None or fb[1] is None:
@@ -301,7 +306,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        return run_cases(args.code, args.out, [c for c in args.cases.split(",") if c], args.state)
+        out = os.path.abspath(args.out)         # the child runs in --code: paths are the caller's, made absolute here
+        state = os.path.abspath(args.state) if args.state else None
+        return run_cases(args.code, out, [c for c in args.cases.split(",") if c], state)
     for folder in (args.dir_a, args.dir_b):
         if not Path(folder).is_dir():
             print(f"refused: {folder} does not exist (or is not a folder)")
