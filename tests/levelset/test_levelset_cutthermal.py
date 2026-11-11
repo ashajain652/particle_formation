@@ -9,7 +9,7 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import inside_volumes
 from reentry_model.levelset.cutthermal import SIGMA_SB, CutThermal
-from reentry_model.levelset.transfer import interpolate
+from reentry_model.levelset.transfer import interpolate, project
 
 
 class ConstMaterial:
@@ -180,3 +180,19 @@ def test_remesh_closes_the_enthalpy_and_reports_the_residual():
     assert 0.0 < abs(r0) < 1e-2
     assert s.energy() == pytest.approx(E0, rel=1e-12)
 
+
+
+def test_remesh_widens_the_offset_bracket_when_the_metal_volume_changes_a_lot():
+    h = 1e-3
+    base = BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h)
+    m = build(base)
+    z = m.points[:, 2]
+    s = CutThermal(LinearMeltMaterial()); s.setup(m, z + 0.3e-3)
+    s.set_temperature(894.0 + 2e4 * (z + 0.3e-3) + 3e7 * (z + 0.3e-3) ** 2)
+    E0 = s.energy()
+    m2 = build(base, lambda c, sz: np.where(np.abs(c[:, 2] + 0.3e-3) < 1.5e-3, 0.25e-3, np.inf))
+    # the new surface is 0.6 mm higher, so the projected field holds far more enthalpy and the offset is large
+    T_proj = project(m, m2, s._extend(s.active.copy(), ~s.active, rings=3, strict=False))
+    s.remesh(m2, m2.points[:, 2] + 0.9e-3)
+    assert abs((s.T - T_proj)[s.active].mean()) > 50.0                     # beyond the first bracket (about 71 K)
+    assert s.energy() == pytest.approx(E0, rel=1e-12)

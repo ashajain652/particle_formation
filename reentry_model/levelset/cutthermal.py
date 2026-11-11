@@ -237,9 +237,10 @@ class CutThermal:
         return x
 
     # --- moving surface -----------------------------------------------------------------------------------------
-    def _extend(self, donors, targets, rings=50):
+    def _extend(self, donors, targets, rings=50, strict=True):
         """Return a copy of T in which each target node without a value (not a donor) takes the mean of its valued
-        neighbours, ring by ring (nodes sharing a cell), the donors being valued from the start; at most `rings`."""
+        neighbours, ring by ring (nodes sharing a cell), the donors being valued from the start; at most `rings`. With
+        `strict`, targets still unvalued after the rings raise RuntimeError instead of keeping stale values."""
         T = self.T.copy()
         tets = self.mesh.tets
         nc = self.mesh.node_cells()
@@ -258,6 +259,8 @@ class CutThermal:
             T[todo[ok]] = s[ok] / c[ok]
             valid[todo[ok]] = True
             todo = todo[~ok]
+        if strict and len(todo):
+            raise RuntimeError("_extend: {} target nodes still have no value after {} rings".format(len(todo), rings))
         return T
 
     def move(self, phi_new):
@@ -274,13 +277,19 @@ class CutThermal:
         level set on the new mesh. Returns the relative enthalpy residual before the offset."""
         E0 = self.energy()
         old_mesh = self.mesh
-        T_full = self._extend(self.active.copy(), ~self.active, rings=3)     # a band outside, for the projection
+        T_full = self._extend(self.active.copy(), ~self.active, rings=3, strict=False)     # a band outside, for the projection
         T_new = project(old_mesh, new_mesh, T_full)
         self.setup(new_mesh, phi_new)
         self.T = T_new
         r0 = (self.energy() - E0) / max(abs(E0), 1e-300)
-        a, b = -50.0, 50.0                                                   # bisection on the offset (monotone)
-        for _ in range(200):
+        a, b = -50.0, 50.0                                                   # offset bracket, widened until it holds E0
+        for _ in range(40):
+            if self.energy(T_new + a) <= E0 <= self.energy(T_new + b):
+                break
+            a, b = 2.0 * a, 2.0 * b
+        else:
+            raise RuntimeError("remesh: no uniform offset up to {} K closes the enthalpy".format(b))
+        for _ in range(200):                                                 # bisection (enthalpy is monotone in T)
             m = 0.5 * (a + b)
             if self.energy(T_new + m) > E0:
                 b = m
@@ -289,4 +298,6 @@ class CutThermal:
             if b - a < 1e-12:
                 break
         self.T = T_new + 0.5 * (a + b)
+        if abs(self.energy() - E0) > 1e-10 * abs(E0):
+            raise RuntimeError("remesh: the enthalpy did not close")
         return r0
