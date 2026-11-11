@@ -376,7 +376,7 @@ Stage 1's nine files are (stage 2 adds a tenth, `cutthermal.py`, below):
 Run the tests (43 from stage 1; 57 since stage 2, below) from the repository root with
 
 ```bash
-"$PY" -m pytest tests/levelset -q                            # 57 tests, about 95 s (43 tests and about 40 s at stage 1)
+"$PY" -m pytest tests/levelset -q                            # 57 tests, 93 to 140 s (43 tests and about 40 s at stage 1)
 "$PY" analysis/levelset/measure_geometry.py 100              # sphere diameter in mm; optional base and fine sizes in mm
 ```
 
@@ -411,11 +411,11 @@ and raises an error if any node that becomes active is left without a temperatur
 a rebuilt mesh, closes the stored enthalpy with one uniform temperature offset (widening its search until the offset is
 bracketed) and raises an error if the enthalpy does not close to 10⁻¹⁰ relative. `cutcell.py` gains `inside_subtets`
 and `subtet_volumes`, which split each cell's metal part into sub-tetrahedra. Stage 2 adds 14 tests, so the tier now
-has 57, which took about 95 s on 2026-11-11 (one run, on the shared laptop). One of them checks that the
-molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm cells: the front was
-within 0.049, 0.006 and 0.010 mm of the exact depth at 0.5, 1.0 and 2.0 s, against a bound of one 0.7 mm cell.
-There are still no skins, no flow and no coupling to the flight loop; `docs/model_assumptions.md` §10 records the choices and the
-measured accuracy.
+has 57, which took 93 to 140 s in three runs on 2026-11-11 (on the laptop shared with running flights). One of them
+checks that the molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm
+cells: the front was within 0.112, 0.049, 0.006 and 0.010 mm of the exact depth at 0.25, 0.5, 1.0 and 2.0 s, against
+a bound of one 0.7 mm cell. There are still no skins, no flow and no coupling to the flight loop;
+`docs/model_assumptions.md` §10 records the choices and the measured accuracy.
 
 The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the uncommitted prototype folder
 `prototype/levelset/stage2/`, against read-only copies of the skyscrapers build's Scheil material and one-dimensional

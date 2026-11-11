@@ -944,9 +944,9 @@ Stage 0 + S (the combined refactor) is unchanged and comes first. Then:
    Item 2's ψ tracking a Stefan front within one fine cell is tested (2026-11-11, once, in
    `test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell`): a 4.2 mm column on uniform 0.7 mm cells, starting
    solid at the bottom of an 890–900 K melting range (latent heat 390 kJ/kg), its top held near 995 K by the implicit
-   base law (conductance 10⁷ W/m²/K) with 0.01 s steps; the depth of ψ = 0 is 0.049 mm deeper, 0.006 mm deeper and
-   0.010 mm shallower than the Neumann one-phase front at 0.5, 1.0 and 2.0 s (3.575, 5.056 and 7.150 mm), at most
-   7 % of a fine cell. The Scheil alloy's wide melting range is covered through the plates' non-rigid depth. Detail in
+   base law (conductance 10⁷ W/m²/K) with 0.01 s steps; the depth of ψ = 0 is 0.112, 0.049 and 0.006 mm deeper and
+   0.010 mm shallower than the Neumann one-phase front at 0.25, 0.5, 1.0 and 2.0 s (2.528, 3.575, 5.056 and 7.150 mm),
+   at most 16 % of a fine cell. The Scheil alloy's wide melting range is covered through the plates' non-rigid depth. Detail in
    `docs/model_assumptions.md` §10.
 3. **Skins on markers, both modes, flow solve off** (thick regions held, as before the switch): §13 item 3's tests;
    cross-section varying with curvature against the analytic volume of a spherical shell; mode changes exact in mass,

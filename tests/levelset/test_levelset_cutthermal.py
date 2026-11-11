@@ -222,12 +222,12 @@ def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
     errs = {}
     for n in range(1, 201):
         s.step(dt, H * T_hot, q1=-H)
-        if n in (50, 100, 200):
+        if n in (25, 50, 100, 200):
             t = n * dt
             psi, _ = molten_rigid_surface(m, phi, s.T)
             p = interpolate(m, psi, line)
             i = np.flatnonzero((p[:-1] > 0) & (p[1:] <= 0))[0]
             depth = (z_top - zs[i]) + (zs[i] - zs[i + 1]) * p[i] / (p[i] - p[i + 1])
             errs[t] = depth - 2 * lam * sqrt(alpha * t)
-    msg = ", ".join("t = {:.1f} s: {:+.3f} mm".format(t, e * 1e3) for t, e in errs.items())
+    msg = ", ".join("t = {:.2f} s: {:+.3f} mm".format(t, e * 1e3) for t, e in errs.items())
     assert all(abs(e) < h for e in errs.values()), msg

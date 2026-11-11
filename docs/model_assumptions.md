@@ -264,10 +264,11 @@ implicit base law with a conductance of 10⁷ W/m²/K, for 2 s in 0.01 s steps, 
 ψ = 0 on the column's centre line is compared with the exact (Neumann) front depth 2λ√(αt), where α is the thermal
 diffusivity, about 6.0 × 10⁻⁵ m²/s, and λ = 0.328 is the root of λ exp(λ²) erf(λ) = St/√π with the Stefan number
 St = c_p (T_hot − T_m)/L = 0.231 (the ratio of sensible heat in the liquid to latent heat). The computed front was
-0.049 mm deeper than the exact 3.575 mm at 0.5 s, 0.006 mm deeper than 5.056 mm at 1.0 s and 0.010 mm shallower than
-7.150 mm at 2.0 s, that is at most 7 per cent of a cell, against the bound of one cell; the error shrinks as the front
-crosses more cells (it was 0.112 mm at 0.25 s in a trial run), so it most likely comes from the first steps, when the front is within a cell or two of the surface. The
-test takes about 24 s and was run once. It checks a planar front with a narrow (10 K) melting range only; the Scheil
+0.112 mm deeper than the exact 2.528 mm at 0.25 s, 0.049 mm deeper than 3.575 mm at 0.5 s, 0.006 mm deeper than
+5.056 mm at 1.0 s and 0.010 mm shallower than 7.150 mm at 2.0 s, that is at most 16 per cent of a cell, against the
+bound of one cell. The error shrinks as the front crosses more cells, so it most likely comes from the first steps,
+when the front is within a cell or two of the surface; that cause was not isolated. The test takes 25 to 35 s on the
+shared laptop and its errors were recorded from one run. It checks a planar front with a narrow (10 K) melting range only; the Scheil
 alloy's wide range is covered through the plates' non-rigid depth, below.
 
 **The ghost penalty and its weight.** A cell holding a sliver of metal would make the system ill-conditioned. A ghost
