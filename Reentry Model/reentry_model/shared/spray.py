@@ -805,14 +805,17 @@ def source_table(rows):
     return np.array(rows, dtype=float)
 
 
-def source_columns(rows):
+def source_columns(rows, names=None):
     """A body's `source_rows` as {name: one-dimensional array} in `record_columns` order for their width, what the coupled
     writer writes: a list of rows or of blocks, the columns of `source_table`'s array; a `SourceSpool`, its files mapped
     from disk under its own names, so that no flight's records need be in memory at once. The values are the same to the
-    last bit either way."""
+    last bit either way. `names`, if given, are the columns of a list with no rows yet (the body's own record names, a
+    profile-path skin body's 36, spec 6.8), which would otherwise read as the 27 SOURCE_COLUMNS."""
     if isinstance(rows, SourceSpool):
         return rows.columns()
     table = source_table(rows)
+    if names is not None and not len(table):
+        table = np.zeros((0, len(names)))
     return {name: table[:, i] for i, name in enumerate(record_columns(table.shape[1]))}
 
 

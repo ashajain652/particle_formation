@@ -237,6 +237,198 @@ def test_threshold_run_takes_the_warm_cells_from_the_top_and_nan_means_the_liqui
     assert not mp.threshold_run(T, flowing, liquid, np.full(5, np.nan))[:4].any()   # no liquid run in the others
 
 
+# -- the mode inputs and the summary (spec 6.4-6.8; Task 7) -------------------------------------------------------------
+def strict():
+    """numpy's floating-point errors raised and every warning an error (Review Focus 1-3)."""
+    import contextlib
+    stack = contextlib.ExitStack()
+    stack.enter_context(np.errstate(all="raise"))
+    stack.enter_context(warnings.catch_warnings())
+    warnings.simplefilter("error")
+    return stack
+
+
+def bridge_over_slurry():
+    """One column of a bridge-like top over slurry: ten cells at 2380 kg/m3 and 10 mPa s, cooling from 907.9 K by
+    0.15 K a cell, over twenty of slurry at 2500 kg/m3 and 0.5 Pa s, from 905 K down by 0.4 K a cell, over rigid cells at
+    880 K, none of them liquid. The speed falls linearly from 0.3 m/s at the surface to 0.05 m/s at the tenth cell's
+    centre (95 um), and from there to rest at the front (300 um): a shear of 2632 1/s above that cell and 244 1/s below,
+    a drop to 0.093 of it, under KINK_DROP's 0.2."""
+    i = np.arange(K)
+    top = i < 10
+    cols = columns(np.where(Z <= Z[9], 0.3 - 0.25 * Z / Z[9], 0.05 * (FRONT - Z) / (FRONT - Z[9])),
+                   rho=np.where(top, 2380.0, np.where(i < N_FLOW, 2500.0, 2600.0)), mu=np.where(top, 0.01, 0.5))
+    cols.T[0] = np.where(top, 907.9 - 0.15 * i, np.where(i < N_FLOW, 905.0 - 0.4 * (i - 10), 880.0))
+    cols.liquid[:] = False
+    return cols
+
+
+def girin_column(V):
+    """Girin's linear profile, u = V (1 - z / 0.2 mm) above 0.2 mm and at rest below, over the 30 flowing cells of
+    `columns` (1.3 mPa s, 2400 kg/m3, the front at 0.3 mm), every flowing cell 0.5 K colder than the one above it from
+    950 K."""
+    cols = columns(V * np.clip(1.0 - Z / 0.2e-3, 0.0, None))
+    cols.T[0] = np.where(cols.flowing[0], 950.0 - 0.5 * np.arange(K), 880.0)
+    return cols
+
+
+def test_a_floor_like_column_gets_its_wall_at_the_kink_and_no_gradient_growth():
+    """Spec 6.3-6.6 and the spec's anti-goal, no gradient release from a straight film on a floor: on the bridge over
+    slurry, the tenth cell is a kink whose floor Reynolds number is 0.25 m/s times 95 um over 1.225 times the slurry's
+    2e-4 m2/s, 0.097, below FLOOR_RE, so the wall is there (floor-like); the layer above it is one straight segment, so
+    no wave is solved and the growth is 0, with no wavenumber, release depth or gradient threshold. The gas-driven mode's
+    threshold is the temperature of the cell above the kink, the ninth, and its run the nine cells from the top at
+    least that warm, 90 um. The layer above the wall has the bridge's viscosity, and the recorded Weber number is the top
+    segment's density times the square of its velocity jump to the wall times the wall's depth, over the surface tension.
+    The same column on the leeward face, and with its top at rest, is not resolved: NaN everywhere in its record, and in
+    its modes but the growth, 0. Review Focus 3: no floating-point error or warning is raised."""
+    cols = bridge_over_slurry().rows([0, 0, 0])
+    cols.u[2] = 0.0
+    with strict():
+        modes, rec = mp.profile_modes(cols, np.array([True, False, True]), 0.8)
+    assert modes.resolved.tolist() == [True, False, False]
+    assert rec.wall_floor[0] == 1.0 and rec.wall_depth[0] == Z[9] and modes.wall_depth[0] == Z[9]
+    assert rec.floor_re[0] == pytest.approx(0.25 * Z[9] / (dp.FASTEST_KD * 0.5 / 2500.0), rel=1e-12)
+    assert rec.floor_re[0] < dp.FLOOR_RE
+    assert rec.kink_depth[0] == Z[9] and rec.kink_T[0] == cols.T[0, 9]
+    assert modes.growth[0] == 0.0 and rec.growth[0] == 0.0 and np.isnan(modes.k[0])
+    assert np.isnan(rec.release_depth[0]) and np.isnan(rec.T_gradient[0])
+    assert rec.T_driven[0] == cols.T[0, 8]                               # the cell above the kink
+    assert modes.cap_driven[0] == pytest.approx(9 * DZ, rel=1e-12)
+    assert modes.nu_eff[0] == pytest.approx(0.01 / 2380.0, rel=1e-12)
+    assert modes.we_s[0] == pytest.approx(2380.0 * 0.25 ** 2 * Z[9] / 0.8, rel=1e-12)
+    for i in (1, 2):
+        assert modes.growth[i] == 0.0
+        for a in (modes.k, modes.wall_depth, modes.nu_eff, modes.we_s, modes.cap_gradient, modes.cap_driven):
+            assert np.isnan(a[i])
+        for f in dataclasses.fields(mp.ProfileRecord):
+            assert np.isnan(getattr(rec, f.name)[i]), f.name
+
+
+def test_a_fluid_like_curved_column_gets_its_release_depth_and_threshold(monkeypatch):
+    """Spec 6.2, 6.3 and 6.6: Girin's profile at 3 m/s over the 0.3 mm layer has its kink at 195 um with a floor Reynolds
+    number of 860 (the liquid beneath it is runny), so the wall is the rigid front (fluid-like). The layer above the wall
+    has a breakpoint, so the fastest wave is solved on it -- the solver's own on the fitted profile -- growing at about
+    1380 1/s with its release depth about 265 um down; the gradient mode's threshold is the temperature of the cell that
+    depth falls in, and its run the cells from the top down to that cell; the gas-driven mode's threshold is the
+    deepest cell above the front's, the thirtieth. At 1 m/s the same layer is stable (Weber number 0.6, below Girin's
+    3.08): growth 0 and NaN for the wavenumber, the release depth and the gradient threshold, with no floating-point
+    error. Where the release depth reaches the wall the gradient mode's threshold is the gas-driven mode's. The record's
+    rows are in PROFILE_COLUMNS order, Girin's delta_m and V_s last."""
+    from reentry_model.shared import spray
+    cols = girin_column(3.0).rows([0, 0])
+    cols.u[1] /= 3.0
+    with strict():
+        modes, rec = mp.profile_modes(cols, np.ones(2, dtype=bool), 0.8)
+    fit = mp.fit_profiles(cols)
+    waves = dp.fastest_waves(fit.profiles, 0.8)
+    assert modes.resolved.all() and (rec.wall_floor == 0.0).all() and (rec.wall_depth == FRONT).all()
+    assert rec.floor_re[0] == pytest.approx(860.0, rel=1e-3) and rec.floor_re[0] > dp.FLOOR_RE
+    assert (rec.kink_depth == Z[19]).all() and (rec.kink_T == cols.T[0, 19]).all()
+    assert modes.growth[0] == pytest.approx(waves.growth[0], rel=1e-12) and 1300.0 < modes.growth[0] < 1450.0
+    assert modes.k[0] == pytest.approx(waves.k[0], rel=1e-12) and rec.growth[0] == modes.growth[0]
+    assert rec.release_depth[0] == pytest.approx(waves.release_depth[0], rel=1e-12)
+    cell = int(rec.release_depth[0] // DZ)
+    assert cell == 26 and rec.T_gradient[0] == cols.T[0, cell]
+    assert modes.cap_gradient[0] == pytest.approx((cell + 1) * DZ, rel=1e-12)
+    assert (rec.T_driven == cols.T[0, N_FLOW - 1]).all() and modes.cap_driven == pytest.approx(N_FLOW * DZ, rel=1e-12)
+    # the stable column
+    assert modes.growth[1] == 0.0 and rec.growth[1] == 0.0 and waves.growth[1] == 0.0
+    assert np.isnan(modes.k[1]) and np.isnan(rec.release_depth[1]) and np.isnan(rec.T_gradient[1])
+    # the layer's Couette viscosity above the wall, and the recorded Weber number on the top segment
+    np.testing.assert_allclose(modes.nu_eff, 1.3e-3 / 2400.0, rtol=1e-12)
+    jump = fit.profiles.u_top - cols.u[:, 19]
+    np.testing.assert_allclose(modes.we_s, 2400.0 * jump ** 2 * Z[19] / 0.8, rtol=1e-12)
+    rows = mp.profile_rows(rec, np.array([1e-4, 2e-4]), np.array([3.0, 4.0]))
+    assert rows.shape == (2, len(spray.PROFILE_COLUMNS))
+    for name, values in (("wall_depth_m", rec.wall_depth), ("wall_floor", rec.wall_floor), ("floor_re", rec.floor_re),
+                         ("kink_depth_m", rec.kink_depth), ("kink_T_K", rec.kink_T),
+                         ("release_depth_m", rec.release_depth), ("growth_rate_per_s", rec.growth),
+                         ("girin_delta_m_m", [1e-4, 2e-4]), ("girin_v_s_ms", [3.0, 4.0])):
+        np.testing.assert_array_equal(rows[:, spray.PROFILE_COLUMNS.index(name)], values)
+    # a release depth that reaches the wall takes the gas-driven mode's threshold
+    reach = dp.Waves(k=waves.k[:1], growth=waves.growth[:1], c=waves.c[:1], release_depth=np.array([FRONT]))
+    monkeypatch.setattr(mp, "fastest_waves", lambda p, sigma: reach)
+    modes, rec = mp.profile_modes(cols.rows([0]), np.ones(1, dtype=bool), 0.8)
+    assert rec.T_gradient[0] == rec.T_driven[0] == cols.T[0, N_FLOW - 1]
+    assert modes.cap_gradient[0] == modes.cap_driven[0]
+
+
+def no_modes(resolved):
+    """ProfileModes with only `resolved` set (the rest NaN): what select_run and summary read beyond the record."""
+    from reentry_model.shared import spray
+    n = len(resolved)
+    nan = np.full(n, np.nan)
+    return spray.ProfileModes(resolved=np.asarray(resolved, dtype=bool), growth=np.zeros(n), k=nan, wall_depth=nan,
+                              nu_eff=nan, we_s=nan.copy(), cap_gradient=nan, cap_driven=nan)
+
+
+def record(n, **given):
+    out = {f.name: np.full(n, np.nan) for f in dataclasses.fields(mp.ProfileRecord)}
+    out.update({k: np.asarray(v, dtype=float) for k, v in given.items()})
+    return mp.ProfileRecord(**out)
+
+
+def test_select_run_and_run_properties():
+    """Spec 6.6: the gradient mode's threshold where a resolved column took branch 5, the gas-driven mode's where it took
+    the thin or rarefied branch, and NaN -- today's liquid run -- where it took none, the Rayleigh-Taylor mode or any of
+    today's branches, and on every column that is not resolved. The droplets' properties are the run's cells'
+    mass-weighted density and viscosity, NaN for an empty run, with no floating-point error."""
+    resolved = [True, True, True, True, True, False, False]
+    rec = record(7, T_gradient=907.0 + 0.1 * np.arange(7), T_driven=906.0 + 0.1 * np.arange(7))
+    branch = np.array([5, 1, 2, 3, -1, 1, 0])
+    with strict():
+        T_run = mp.select_run(branch, no_modes(resolved), rec)
+    np.testing.assert_array_equal(T_run, [907.0, 906.1, 906.2, np.nan, np.nan, np.nan, np.nan])
+    cols = two_layers().rows([0, 0, 0])
+    cols.m[:, 3] *= 3.0                                                     # a heavier cell weighs more
+    run = np.zeros((3, K), dtype=bool)
+    run[0, :12], run[2, :N_FLOW] = True, True
+    with strict():
+        rho, mu = mp.run_properties(cols, run)
+    for i in (0, 2):
+        m = np.where(run[i], cols.m[i], 0.0)
+        assert rho[i] == pytest.approx((m * cols.rho[i]).sum() / m.sum(), rel=1e-13)
+        assert mu[i] == pytest.approx((m * np.where(run[i], cols.mu[i], 0.0)).sum() / m.sum(), rel=1e-13)
+    assert 2300.0 < rho[0] < rho[2] < 2500.0 and 1.3e-3 < mu[0] < mu[2] < 0.5
+    assert np.isnan(rho[1]) and np.isnan(mu[1])
+
+
+def test_summary_of_an_empty_step_is_nan():
+    """Spec 6.8 and Review Focus 3: a macro step with no resolved column -- or none evaluated yet -- writes a share of
+    NaN, a count of 0, NaN medians and nothing sprayed by either mode, in DISPERSION_COLUMNS order, with no
+    floating-point error or warning."""
+    assert mp.DISPERSION_COLUMNS == ("floor_like_share", "fluid_like_columns", "wall_depth_median_mm", "floor_re_median",
+                                     "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")
+    with strict():
+        outs = [mp.summary(no_modes([False] * 3), record(3, wall_floor=[1.0, 0.0, np.nan]), np.array([5, 1, 3]),
+                           np.array([1.0, 2.0, 3.0])),
+                mp.summary(no_modes([]), record(0), np.zeros(0, dtype=int), np.zeros(0)),
+                mp.summary(None, None, None, None)]
+    for out in outs:
+        assert tuple(out) == mp.DISPERSION_COLUMNS
+        assert np.isnan(out["floor_like_share"]) and out["fluid_like_columns"] == 0
+        assert all(np.isnan(out[k]) for k in ("wall_depth_median_mm", "floor_re_median", "we_s_profile_median"))
+        assert out["sprayed_gradient_kg"] == 0.0 and out["sprayed_gas_driven_kg"] == 0.0
+
+
+def test_summary_counts_the_resolved_columns_and_each_mode_s_mass():
+    """Over the resolved columns only: the floor-like share and the fluid-like count, the medians of the wall's depth
+    [mm], of the floor Reynolds number (over the columns that have one) and of the recorded Weber number, and the mass
+    each mode sprayed -- the gradient mode's on branch 5, the gas-driven mode's on the resolved columns' thin and
+    rarefied branches; a Rayleigh-Taylor column and an unresolved one count in neither."""
+    modes = no_modes([True, True, True, True, False])
+    modes.we_s[:] = [10.0, 20.0, 40.0, 80.0, 1e9]
+    rec = record(5, wall_floor=[1.0, 0.0, 0.0, 1.0, np.nan], wall_depth=[1e-4, 3e-4, 2e-4, 4e-4, 9.0],
+                 floor_re=[0.5, np.nan, 5.0, 0.2, 1e9])
+    with strict():
+        out = mp.summary(modes, rec, np.array([5, 1, 3, 2, 1]), np.array([1.0, 2.0, 4.0, 8.0, 16.0]))
+    assert out["floor_like_share"] == 0.5 and out["fluid_like_columns"] == 2
+    assert out["wall_depth_median_mm"] == pytest.approx(0.25, rel=1e-14)
+    assert out["floor_re_median"] == 0.5 and out["we_s_profile_median"] == 30.0
+    assert out["sprayed_gradient_kg"] == 1.0 and out["sprayed_gas_driven_kg"] == 10.0
+
+
 # -- the d050 fixture (spec stage 3) -------------------------------------------------------------------------------------
 def load_fixture():
     """The fixture's LayerColumns and its other arrays (theta, tau, group), ruling R3: the npz keeps them beside the
