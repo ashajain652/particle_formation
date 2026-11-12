@@ -993,6 +993,55 @@ def interface_drag(sk, gamma):
     return series_drag(sk, cell_viscosity(sk, gamma))
 
 
+def cell_shear_rates(sk, tau):
+    """Every cell's shear rate [1/s], (n, K), from the cells' present velocities sk.U, by the rule each momentum sub-step
+    starts from (`_momentum_columns`, its `rates`; the kinked-profile dispersion's Task 3): a flowing cell's rate is the
+    mean over its two faces of the stress there, over its viscosity. The top face carries the gas shear |tau| [Pa, (n,)]
+    where the top cell moves; a face between two cells carries their `series_drag` times the size of the difference of
+    their velocities; a flowing bottom cell's bottom face carries the drag of the rigid 3D metal beneath the base over
+    its half-thickness, times its speed. The velocities are those of the moving cells -- the anchored rigid metal is at
+    rest -- and a floating crust's half-cells take CRUST_VISCOSITY, as in the sub-step. The viscosities are a fixed point
+    from rest: at most SHEAR_PASSES passes after the first, ending when no flowing cell's viscosity moves by more than
+    SHEAR_TOL, relatively; the rates returned are the last pass's. Zero in the cells that do not flow and beyond each
+    column's cells."""
+    n, K = sk.m.shape
+    rows = np.arange(n)
+    last = np.maximum(sk.count - 1, 0)
+    dz = sk.dz()
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    moving = sk.valid & ~anchored_cells(sk, flowing)
+    crust = moving & ~flowing
+    U = np.where(moving[..., None], sk.U, 0.0)
+    jump = np.linalg.norm(U[:, :-1] - U[:, 1:], axis=2)
+    top = np.where(moving[:, 0], np.abs(np.broadcast_to(np.asarray(tau, dtype=float), (n,))), 0.0)
+    bottom_flows = flowing[rows, last] & (sk.count > 0)
+    bottom_speed = np.linalg.norm(U[rows, last], axis=1)
+
+    def viscosities(gamma):
+        return np.where(crust, CRUST_VISCOSITY, cell_viscosity(sk, gamma))
+
+    def rates(eta):
+        Db = np.where(bottom_flows, eta[rows, last] / (0.5 * np.maximum(dz[rows, last], DZ_FLOOR)), 0.0)
+        stress = np.zeros((n, K + 1))                                     # at every face, the top face first
+        stress[:, 1:K] = series_drag(sk, eta) * jump
+        stress[:, 0] = top
+        stress[rows, last + 1] = np.where(np.isfinite(Db), Db, 0.0) * bottom_speed
+        face = 0.5 * (stress[:, :-1] + stress[:, 1:])
+        return np.where(flowing, np.divide(face, eta, out=np.zeros_like(face), where=np.isfinite(eta)), 0.0)
+
+    eta = viscosities(0.0)
+    gamma = rates(eta)
+    eta = viscosities(gamma)
+    for _ in range(SHEAR_PASSES):
+        gamma = rates(eta)
+        eta_new = viscosities(gamma)
+        change = np.abs(eta_new[flowing] - eta[flowing]) / eta[flowing]
+        if change.size == 0 or change.max() <= SHEAR_TOL:
+            break
+        eta = eta_new
+    return gamma
+
+
 # -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
 SHEAR_PASSES = 5                  # passes of the fixed point on the cells' shear rates at most (spec 6.4)
 SHEAR_TOL = 1.0e-3                # a pass that moves no flowing cell's viscosity by more than this, relatively, ends it

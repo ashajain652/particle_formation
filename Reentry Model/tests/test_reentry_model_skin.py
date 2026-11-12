@@ -2418,3 +2418,47 @@ def test_a_height_map_reuses_the_last_geometry_only_while_the_cells_and_the_base
     np.testing.assert_array_equal(again.heat(sk.T), skin.SidewaysByHeight(sk, col).heat(sk.T))
     np.testing.assert_array_equal(skin.SidewaysByHeight(sk, col, skin.Sideways(sk, col)).heat(sk.T), again.heat(sk.T))
     assert skin.SIDEWAYS_PAIRINGS == ("depth", "height")
+
+
+# -- the cells' shear rates from their present velocities (kinked-profile dispersion Task 3) -----------------------------
+def test_cell_shear_rates_on_a_couette_column():
+    """Twenty liquid cells holding the steady Couette profile under 50 Pa of gas shear, u = tau s / mu_l along one
+    direction in the surface, s a cell centre's height above the base: the stress is 50 Pa at every face -- the top's,
+    each interface's and the base's -- so every cell shears at tau / mu_l, and nothing beyond a column's cells shears."""
+    col, _ = strip_grid(2, 2)
+    sk = stacked(col, [[LIQUID] * 20] * col.n)
+    tau = 50.0
+    dz = sk.dz()
+    s = dz.sum(axis=1)[:, None] - (np.cumsum(dz, axis=1) - 0.5 * dz)
+    sk.U = np.where(sk.valid[..., None], (tau * s / MU_L)[..., None] * np.array([0.6, -0.8, 0.0]), 0.0)
+    gamma = skin.cell_shear_rates(sk, np.full(col.n, tau))
+    assert gamma.shape == sk.m.shape and np.all(gamma[~sk.valid] == 0.0)
+    np.testing.assert_allclose(gamma[sk.valid], tau / MU_L, rtol=1e-10)
+
+
+def test_a_column_of_liquid_over_slurry_settles_to_the_speed_its_viscosities_give():
+    """Six liquid cells over ten of slurry (30 % solid) over four rigid ones, 50 Pa of gas shear along x on a top 1.2
+    times the column's area and no push, stepped until no speed changes by more than 1e-10 of itself: the stress is
+    tau A_top / A at every face down to the rigid front, so the top cell moves at that stress times the half-cells'
+    resistances in series, dz_0 / 2 eta_0 plus dz_i / eta_i over the flowing cells below, each cell's viscosity at its
+    shear rate from `cell_shear_rates`; the rigid cells do not shear. The liquid carries all but 0.09 % of the top's
+    speed, so the slurry's own top cell is held to the same rule over the slurry alone. Measured 2026-11-12, 19 steps:
+    the top 4e-8 off, the slurry's top 2.2e-5 off -- and 12 % off with the slurry's viscosity at rest."""
+    col, _ = strip_grid(2, 2)
+    sk = stacked(col, [[LIQUID] * 6 + [SLURRY] * 10 + [RIGID] * 4] * col.n)
+    tau, A_top = 50.0, 1.2 * col.area
+    for _ in range(2000):
+        before = sk.U.copy()
+        skin.momentum_step(sk, 0.01, np.zeros(3), np.array([tau, 0.0, 0.0]), A_top)
+        if np.all(np.abs(sk.U - before) <= 1e-10 * np.abs(sk.U)):
+            break
+    else:
+        pytest.fail("the column did not settle")
+    gamma = skin.cell_shear_rates(sk, np.full(col.n, tau))
+    assert np.all(gamma[:, 16:] == 0.0) and np.all(gamma[:, :16] > 0.0)
+    eta = skin.cell_viscosity(sk, gamma)
+    dz = sk.dz()
+    resist = 0.5 * dz[:, 0] / eta[:, 0] + (dz[:, 1:16] / eta[:, 1:16]).sum(axis=1)
+    np.testing.assert_allclose(sk.U[:, 0, 0], tau * A_top / col.area * resist, rtol=1e-6)
+    slurry = 0.5 * dz[:, 6] / eta[:, 6] + (dz[:, 7:16] / eta[:, 7:16]).sum(axis=1)
+    np.testing.assert_allclose(sk.U[:, 6, 0], tau * A_top / col.area * slurry, rtol=1e-4)
