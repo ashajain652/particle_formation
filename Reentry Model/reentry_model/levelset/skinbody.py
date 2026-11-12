@@ -49,9 +49,15 @@ exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most
 At the macro step's end (`stepend.StepEnd`, this class's mixin): phi and psi rebuilt, the mesh rebuilt where it no longer
 meets its refinement targets, and the markers settled on phi; see that module.
 
-Every skin here is full-depth (one mode): Ruling 3 and the two modes are Task 10's; each marker's mode is an attribute
-(`mode`, "full" throughout) that Task 10 sets. No run driver (Ruling 6): tests and scripts drive `advance` at prescribed
-gas states.
+The two modes (Task 10, `modes`; design 20.6): each marker's skin is full-depth or top-zone (`Markers.top`, read in the
+step as each row's `top`), set at the step's end by the thin test (`stepend.StepEnd._modes`). In the parts a top-zone
+skin keeps a solid fine zone's mass against the volume (`modes.minimum_mass`), returns every cell below its fine zone
+at the base whatever its phase (`modes.hand_down`), draws the thick melt beneath at the melt's own temperature
+(`modes.draw_cap`), and the momentum its base and its returned cells give goes to the held volume (`momentum_to_volume`,
+Ruling 4); between a full-depth and a top-zone skin only the top zones exchange (`runoff`, Ruling 3); Girin's plan reads
+a top-zone skin's depths from phi to psi (`spraying.spray_plan`'s b_mode "phi_psi", decision D2). A step that finds no
+rigid core left stops with RuntimeError (`stepend.NO_CORE`), at its end or, if a part fails first, then. No run driver
+(Ruling 6): tests and scripts drive `advance` at prescribed gas states.
 
 A skin deeper than its radius of curvature: each column's curvatures are capped (`stepend.cap_curvature`) before
 every part, every heat sub-step and every flow sub-step (runoff can gather metal into one column) and at every sync;
@@ -83,12 +89,14 @@ from ..shared import nose
 from ..shared import spray as spray_mod
 from ..shared.droplets import SKIN_SUMMARY_COLUMNS
 from . import loads as loads_mod
+from . import modes
 from .boxmesh import build
 from .cutcell import cell_gradients, inside_volumes
 from .cutcell import patches as cut_patches
 from .cutthermal import CutThermal
 from .levelset import pieces, redistance
 from .markers import Markers
+from .modes import ModeSettings
 from .runoff import FlowBook, Forcing, flow_substeps
 from .skin import SkinSettings
 from .spraying import spray_plan
@@ -157,7 +165,12 @@ class StepBook:
     a top. `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
     volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
     total since the start), `momentum_to_wall` what the skins' flow gave the wall over the step and
-    `momentum_removed` what the feed removal took. The heat deferred to the volume over the step, by source, each
+    `momentum_removed` what the feed removal took. The modes (Task 10): `n_top` the top-zone markers after the step,
+    `modes_to_top` and `modes_to_full` the changes at its end, `mass_modes_handed` [kg] what top-zone skins gave the
+    volume at the step end (the cells below their fine zones: the changes to top-zone and what the re-partition gave
+    them) and `mass_modes_absorbed` [kg] what the skins turning full-depth took from it, `momentum_modes_normal` the
+    normal part of the momentum the step end handed the volume (in `momentum_to_volume` with the rest). The heat
+    deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
     against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
@@ -213,6 +226,12 @@ class StepBook:
     volume_correction_max: float
     n_pieces: int
     frontal_area_m2: float
+    n_top: int
+    modes_to_top: int
+    modes_to_full: int
+    mass_modes_handed: float
+    mass_modes_absorbed: float
+    momentum_modes_normal: np.ndarray
     summary: dict = field(default_factory=dict)
 
     def row(self):
@@ -243,6 +262,9 @@ class _Tally:
         self.group_min, self.group_max, self.group_trimmed = np.inf, 0.0, 0.0
         self.newton = self.move = self.remesh = 0.0
         self.elapsed, self.pending_flux = 0.0, 0.0
+        self.to_top = self.to_full = 0
+        self.mode_handed = self.mode_absorbed = 0.0
+        self.mode_normal = np.zeros(3)
 
 
 @dataclass
@@ -370,7 +392,8 @@ class LevelSetSkinBody(StepEnd):
     state), `leeward` the leeward test ("shadow" or "centroid"), `emissivity` of the tops, `fine_margin`, `fine_size`,
     `cell_floor` [m] the refinement (design 20.4-20.5), `remove` "spray" or "feed". Also: `spacing` [m] the markers'
     target spacing, `v_hat` the flight direction in the body's frame, `T_ambient` [K] for the tops' radiation,
-    `slurry_spray` (`--slurry-spray`), `linear_solver` the volume's ("amg" or "direct").
+    `slurry_spray` (`--slurry-spray`), `linear_solver` the volume's ("amg" or "direct"), `mode_settings` the thin test's
+    (`modes.ModeSettings`, design 20.5's defaults).
 
     The skins start full-depth with the stub (`settings.stub`) of metal at T0 standing on beta, so phi starts the stub
     outside beta0."""
@@ -378,7 +401,7 @@ class LevelSetSkinBody(StepEnd):
     def __init__(self, material, base, beta0, T0, settings=None, loads=None, spray_model=None, leeward="shadow",
                  emissivity=0.0, fine_margin=4e-3, fine_size=0.7e-3, cell_floor=0.25e-3, remove="spray",
                  spacing=MARKER_SPACING, v_hat=(1.0, 0.0, 0.0), T_ambient=0.0, slurry_spray=False,
-                 linear_solver="amg"):
+                 linear_solver="amg", mode_settings=None):
         if remove not in REMOVE_MODES:
             raise ValueError("remove must be one of {}, got {!r}".format(REMOVE_MODES, remove))
         if leeward not in loads_mod.LEEWARD_NAMES:
@@ -391,6 +414,7 @@ class LevelSetSkinBody(StepEnd):
         self.emissivity, self.T_ambient = float(emissivity), float(T_ambient)
         self.fine_margin, self.fine_size, self.cell_floor = float(fine_margin), float(fine_size), float(cell_floor)
         self.remove, self.spacing, self.slurry_spray = remove, float(spacing), bool(slurry_spray)
+        self.mode_settings = ModeSettings() if mode_settings is None else mode_settings
         self.v_hat = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
         self.rho = float(material.rho)
         self.band = BAND_FACTOR * (self.fine_margin + base.h0)
@@ -549,7 +573,7 @@ class LevelSetSkinBody(StepEnd):
                 removed_H += H
                 removed_p += sk.momentum_out
             A_b = sk.base_area()
-            dm, dH = sk.draw(T_b, g, m_min, s0)
+            dm, dH = sk.draw(T_b, g, m_min, s0, cap=ctx.get("cap"))   # None: T_rigid (full-depth)
             s0 = s0 + dm / (sk.rho_s * A_b)
             drawn += dm
             drawn_H += dH
@@ -595,7 +619,7 @@ class LevelSetSkinBody(StepEnd):
         tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest) / sk.base_area()).max()))
         saved = self._save(ctx)
         T_b0 = S @ solver.patch_T()
-        m_min = sk.minimum_mass() * (1.0 - DRAW_SLACK)
+        m_min = modes.minimum_mass(sk, ctx["top"]) * (1.0 - DRAW_SLACK)
         A_p = solver.P.area
         share = min(1.0, dt / max(dt_macro - tally.elapsed, PENDING_TIME_MIN))   # of the pending heat, this part's
         q_pend = share * self._pending_per_patch(S, base) / (A_p * dt)              # (at its rate over the step's rest)
@@ -625,17 +649,20 @@ class LevelSetSkinBody(StepEnd):
             self._restore(saved, ctx)
             T_lin, r_prev = T_lin + omega * r, r
         passes = attempt + 1
-        handed, handed_H, _ = sk.hand_down(self.settings.stub, m_keep=sk.minimum_mass())
+        handed, handed_H, handed_P = modes.hand_down(sk, ctx["top"], self.settings.stub)
         A_base = sk.base_area()
         move = np.abs(book.drawn - handed) / (self.rho * A_base)
         allowance = MOVE_SHARE * self.spacing
         ratio = float((move / allowance).max()) if len(move) else 0.0
-        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, A_base, mismatch, Q,
-                                           E_vol0, share, base, tally), lambda: self._restore(saved, ctx)
+        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, A_base,
+                                           mismatch, Q, E_vol0, share, base, ctx["top"], tally), \
+            lambda: self._restore(saved, ctx)
 
-    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, A_base, mismatch, Q, E_vol0, share, base,
-                tally):
-        """The accepted part's books (step 5) and beta moved by its draws and hand-downs (step 6)."""
+    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, A_base, mismatch, Q, E_vol0, share,
+                base, top, tally):
+        """The accepted part's books (step 5) and beta moved by its draws and hand-downs (step 6). What a top-zone skin
+        (`top`, per row) gives the volume beneath -- its returned cells' momentum, its base's drag -- goes to the held
+        volume (Ruling 4), a full-depth skin's base drag to the wall."""
         solver = self.solver
         tally.parts += 1
         tally.elapsed += dt
@@ -652,7 +679,9 @@ class LevelSetSkinBody(StepEnd):
         tally.sprayed += float(fb.released.sum())
         tally.sprayed_H += float(fb.released_H.sum())
         tally.sprayed_p += fb.released_p.sum(axis=0)
-        tally.wall -= fb.wall.sum(axis=0)
+        tally.wall -= fb.wall[~top].sum(axis=0)
+        tally.to_volume -= fb.wall[top].sum(axis=0)
+        tally.to_volume += handed_P.sum(axis=0)
         tally.mismatch = float(np.abs(mismatch).sum())
         # what the volume still owes: the mismatch per marker, and the solve's own residual shared by the base heat
         residual = Q - (solver.energy() - E_vol0)
@@ -689,7 +718,10 @@ class LevelSetSkinBody(StepEnd):
         M0 = start["mass_volume"] + start["mass_skins"]
         E0 = start["enthalpy_volume"] + start["enthalpy_skins"] + start["pending_J"]
         splits0, merges0 = mk.splits, mk.merges
-        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None}
+        top_rows = np.zeros(sk.n, bool)
+        top_rows[mk.skin_index] = mk.top                    # each row's mode, fixed over the step's parts
+        ctx = {"q": np.zeros(sk.n), "forcing": None, "plan": None, "top": top_rows,
+               "cap": modes.draw_cap(sk, top_rows)}
         T_top = self._top_T()[mk.skin_index]
         flow = None
         if state is not None:
@@ -708,9 +740,10 @@ class LevelSetSkinBody(StepEnd):
             if self.spray_model is not None:
                 windward = ang <= 0.5 * np.pi
                 w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
+                depth = np.where(mk.top, modes.melt_depth(self.mesh, self.psi, mk.x), np.nan)   # phi to psi (D2)
                 ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt,
-                                         self._radius(centroid), fit.used, slurry=self.slurry_spray, theta=ang,
-                                         centre=centroid, v_hat=self.v_hat)
+                                         self._radius(centroid), fit.used, slurry=self.slurry_spray, b_mode="phi_psi",
+                                         depth_phi_psi=depth, theta=ang, centre=centroid, v_hat=self.v_hat)
         elif decel_vec is not None:
             still = _StillGas(np.zeros(mk.n), np.zeros(mk.n))
             ctx["forcing"] = Forcing.from_surface_flow(still, np.asarray(decel_vec, float), self.v_hat,
@@ -736,15 +769,23 @@ class LevelSetSkinBody(StepEnd):
                 n = max(n, int(math.ceil(dt / PART_MAX - 1e-9)))
         self._top_start, self._dt_last = (mk.x.copy(), top), dt
         tally = _Tally(sk.n)
-        counts = [self._part(dt / n, dt, 0 if n == 1 else 1, ctx, tally)    # the skyscrapers' part loop starts a
-                  for _ in range(n)]                                         # multi-part step one level down; matched
+        try:
+            counts = [self._part(dt / n, dt, 0 if n == 1 else 1, ctx, tally)    # the skyscrapers' part loop starts a
+                      for _ in range(n)]                                         # multi-part step one level down; matched
+        except (RuntimeError, ValueError) as err:          # a part failed: say so plainly if the core has gone
+            try:
+                self._check_core(self._psi(self.phi))
+            except RuntimeError as gone:
+                raise gone from err
+            raise
         self._hint = next_hint(counts)
         tally.depth = max(c.depth for c in counts)
         tally.over = sum(c.over for c in counts)
         self.time += dt
 
         # the step's end: phi, psi, the mesh, the markers
-        self._rebuild(tally)
+        self._rebuild(tally, check_core=True)
+        self._modes(tally)
         self.momentum_to_volume += tally.to_volume
         reps = self.last_settle
         passed = math.fsum(float(r.transfer.sum() - r.transfer.diagonal().sum()) for r in reps)
@@ -781,7 +822,9 @@ class LevelSetSkinBody(StepEnd):
             n_markers=mk.n,
             marker_splits=mk.splits, marker_merges=mk.merges, markers_trapped=mk.trapped,
             interface_mismatch_J=tally.mismatch, volume_correction_max=tally.correction, n_pieces=int(n_pieces),
-            frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), summary=summary)
+            frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), n_top=int(mk.top.sum()),
+            modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
+            mass_modes_absorbed=tally.mode_absorbed, momentum_modes_normal=tally.mode_normal, summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

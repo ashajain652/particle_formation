@@ -806,24 +806,27 @@ class Skins:
         cross-section (the skyscrapers' minimum as flown, without Girin's delta_m term)."""
         return self.rho_s * self.base_area() * self.settings.stub
 
-    def draw(self, T_b, g_base, m_min, s0=0.0):
+    def draw(self, T_b, g_base, m_min, s0=0.0, cap=None):
         """A column below m_min [kg] takes the shortfall at its bottom from the volume: rigid metal whose specific
         enthalpy is the average, by PROFILE_POINTS-point Gauss-Legendre, of h along the volume's profile
         T(s) = T_b - g_base s [K, K/m] capped at the material's T_rigid, over the depths s0 to s0 + dd below the base,
-        dd = shortfall / (rho_s A(z_bottom)) (the layer it takes, as solid). Returns (mass [kg], enthalpy [J]) per
-        column; in a trial pass the drawn metal carries its enthalpy's derivative with respect to T_b."""
+        dd = shortfall / (rho_s A(z_bottom)) (the layer it takes, as solid). `cap` [K] (one or per column) another cap
+        (stage 3 Task 10: a top-zone skin draws the thick melt beneath it at the melt's temperature, np.inf). Returns
+        (mass [kg], enthalpy [J]) per column; in a trial pass the drawn metal carries its enthalpy's derivative with
+        respect to T_b."""
         n = self.n
         T_b = np.broadcast_to(np.asarray(T_b, dtype=float), (n,)).copy()
         g = np.broadcast_to(np.asarray(0.0 if g_base is None else g_base, dtype=float), (n,)).copy()
         m_min = np.broadcast_to(np.asarray(m_min, dtype=float), (n,))
         s0 = np.broadcast_to(np.asarray(s0, dtype=float), (n,)).copy()
+        cap = np.broadcast_to(np.asarray(self.material.T_rigid if cap is None else cap, dtype=float), (n,))
         short = np.maximum(m_min - self.m.sum(axis=1), 0.0)
         H = np.zeros(n)
         i = np.flatnonzero(short > 0.0)
         if not len(i):
             return short, H
         dd = short[i] / (self.rho_s * self.base_area()[i])
-        T, w, below = _profile_points(T_b[i], g[i], s0[i], s0[i] + dd, self.material.T_rigid)
+        T, w, below = _profile_points(T_b[i], g[i], s0[i], s0[i] + dd, cap[i][:, None])
         h = (self.props.enthalpy(T) * w).sum(axis=1)
         H[i] = short[i] * h
         self.add_bottom(i, short[i], H[i])
@@ -883,6 +886,52 @@ class Skins:
             self.count = self.count - k
             self._trim()
         return mass, H, vol
+
+    def take_bottom(self, depth, m_keep):
+        """The cells lying wholly below `depth` [m] (per column; np.inf for none) leave the skin whatever their phase, from
+        the bottom up while what stays holds at least `m_keep` [kg] (per column), each whole, with its own enthalpy and
+        momentum (stage 3 Task 10: a top-zone skin keeps its fine zone, and a full-depth skin turning top-zone hands its
+        cells below its fine zone to the volume). Returns (mass [kg], enthalpy [J], momentum [kg m/s] (n, 3)) per
+        column."""
+        self._no_trial("take cells from their bottoms")
+        n = self.n
+        depth = np.broadcast_to(np.asarray(depth, dtype=float), (n,))
+        m_keep = np.broadcast_to(np.asarray(m_keep, dtype=float), (n,))
+        T = self.T()
+        dz = self.dz(T)
+        z_top = np.cumsum(dz, axis=1) - dz
+        below = np.cumsum(self.m[:, ::-1], axis=1)[:, ::-1]                     # each cell's mass and all beneath it
+        spare = self.m.sum(axis=1) - m_keep
+        go = self.valid & (z_top >= depth[:, None] * (1.0 - 1e-12)) & (below <= spare[:, None])
+        go = np.cumprod(go[:, ::-1] | ~self.valid[:, ::-1], axis=1)[:, ::-1].astype(bool) & self.valid  # from the bottom
+        mass = np.where(go, self.m, 0.0).sum(axis=1)
+        H = np.where(go, self.H, 0.0).sum(axis=1)
+        P = (np.where(go, self.m, 0.0)[..., None] * self.U).sum(axis=1)
+        k = go.sum(axis=1)
+        if k.any():
+            keep = np.arange(self.m.shape[1])[None, :] < (self.count - k)[:, None]
+            self.m, self.H = np.where(keep, self.m, 0.0), np.where(keep, self.H, 0.0)
+            self.U = np.where(keep[..., None], self.U, 0.0)
+            self.count = self.count - k
+            self._trim()
+        return mass, H, P
+
+    def append_bottom(self, rows, m, H):
+        """New cells at rest below the bottoms of the columns `rows` (distinct): row k of m, H (len(rows), P) [kg, J] the
+        new cells top first, a zero mass ending them (stage 3 Task 10: the volume's melt a top-zone skin absorbs when it
+        turns full-depth). Mass and enthalpy add exactly; the caller regrids."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        m, H = np.atleast_2d(np.asarray(m, dtype=float)), np.atleast_2d(np.asarray(H, dtype=float))
+        if len(np.unique(rows)) != len(rows) or m.shape != H.shape or m.shape[0] != len(rows):
+            raise ValueError("append_bottom needs distinct columns and one row of cells (m, H) per column")
+        if np.any(~np.isfinite(m) | (m < 0.0)) or np.any(~np.isfinite(H)):
+            raise ValueError("cells added at a skin's bottom must hold finite, non-negative masses with finite enthalpy")
+        self._no_trial("take new cells at their bottoms")
+        new = np.cumprod(m > 0.0, axis=1).sum(axis=1)
+        self._width(int((self.count[rows] + new).max(initial=1)))
+        for r, c, k, mr, Hr in zip(rows, self.count[rows], new, m, H):
+            self.m[r, c:c + k], self.H[r, c:c + k], self.U[r, c:c + k] = mr[:k], Hr[:k], 0.0
+        self.count[rows] = self.count[rows] + new
 
     # -- the layered flow through the depth (Task 4) ----------------------------------------------------------------
     def flowing(self, T=None):

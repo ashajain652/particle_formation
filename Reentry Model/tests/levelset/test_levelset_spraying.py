@@ -167,6 +167,92 @@ def test_the_slurry_mode_matches_the_skyscrapers_on_the_same_columns():
         np.testing.assert_allclose(plan.slurry[key], modes[key], rtol=1e-9, atol=0.0, equal_nan=True, err_msg=key)
 
 
+def test_the_exposed_slurry_mode_matches_the_skyscrapers_on_one_column():
+    """The controller's ruling (c) of Task 10: one column -- two liquid cells over 3 mm of warm slurry (907.8 K) over rigid
+    metal, on one wide marker with no neighbours -- read by the level set (`spray_plan` with the slurry) and by the skyscrapers'
+    `skinbody.slurry_modes` on their skins holding the same cells: the same slurry rate, radius, viscosity, shear rate,
+    delta_m, layer depth, density, temperature and branch (to 1e-9, each skin finding its temperatures from its own
+    property table), on the thick branch. Both call the shared `spray.slurry_modes`: this pins the wiring of one column,
+    the region's extent of a lone marker included."""
+    from reentry_model import skin as sky, skinbody
+    mat = aa7075()
+    mk = row_markers(1, h=0.05)                                      # a wide marker: the slurry's wave fits on it alone
+    ours = stacked(mk, [[LIQUID] * 2 + [907.8] * 300 + [RIGID] * 5], mat)
+    theirs = sky.Skins(mat, ours.area.copy())
+    theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
+    flow, model = gas(1, tau=200.0, G=-3e4), model_of(mat)
+    theta = np.array([0.2])
+    windward, w_n = np.array([True]), flow.deceleration * np.cos(theta)
+    plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True, theta=theta)
+    F = theirs.depth_above(mat.T_rigid)
+    flowing = theirs.valid & np.isfinite(sky.cell_viscosity(theirs, 0.0))
+    liquid = flowing & (theirs.T >= mat.T_liquidus)
+    n_flow, n_liq = np.cumprod(flowing, axis=1).sum(axis=1), np.cumprod(liquid, axis=1).sum(axis=1)
+    rate, modes = skinbody.slurry_modes(theirs, flow, STATE, model, windward, w_n, theirs.area, np.zeros((0, 2), int),
+                                        0.05, 0.5, F, n_liq, n_flow, theta=theta, nose_radius=0.04)
+    assert rate[0] > 0.0 and modes["branch"][0] == spray.BRANCH_THICK
+    np.testing.assert_allclose(plan.rate_slurry, rate, rtol=1e-9, atol=0.0)
+    np.testing.assert_array_equal(plan.slurry["branch"], modes["branch"])
+    for key in ("r", "mu", "gamma", "delta_m", "depth", "rho", "T"):
+        np.testing.assert_allclose(plan.slurry[key], modes[key], rtol=1e-9, atol=0.0, err_msg=key)
+
+
+TOP_ZONE = [[LIQUID] * 40, [LIQUID] * 10 + [SLURRY] * 30]      # top-zone skins: the fine zone over thick melt
+
+
+def test_a_top_zone_skin_sprays_by_its_depth_from_phi_to_psi():
+    """Design 20.6 and decision D2 (the controller's ruling (b) of Task 10): on a top-zone skin -- the top 0.4 mm over
+    thick melt the volume holds -- the plan reads the depth from phi to psi (b_mode "phi_psi") for the melt depth b (the
+    regime test and the lubrication's layer with it), the cap depth, the Rayleigh-Taylor pool and the slurry's layer, its
+    cap and the extent its wave must fit in (b at least B_MIN); a full-depth skin beside it (nan) reads its own. The
+    liquid's mode is the shared model's called with those depths and the skin's own film mass; the release takes only
+    the skin's own top cells; and the skin's base draw then refills it from the melt beneath, at the melt's temperature,
+    to its fine zone's mass."""
+    from reentry_model.levelset import modes
+    mat = aa7075()
+    cols = MIXED[:2] + TOP_ZONE
+    n = len(cols)
+    top = np.array([False, False, True, True])
+    d = np.array([np.nan, np.nan, 3.0e-3, 2.0e-3])                        # phi to psi at the top-zone markers [m]
+    mk = row_markers(n, h=0.05)
+    sk = stacked(mk, cols, mat)
+    flow, model = gas(n, tau=TAU_RENEWAL), model_of(mat)
+    theta = np.full(n, 0.3)
+    windward, w_n = np.ones(n, bool), flow.deceleration * np.cos(theta)
+    plan = spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, slurry=True,
+                               b_mode="phi_psi", depth_phi_psi=d, theta=theta)
+    F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
+    b = np.where(top, d, F)
+    np.testing.assert_array_equal(plan.flowing, b)
+    np.testing.assert_array_equal(plan.cap_depth, b)                      # with the slurry: the flowing depth, or d
+    T = sk.T()
+    flowing, liquid = sk.flowing(T), sk.liquid(T)
+    run = np.cumprod(flowing, axis=1).astype(bool)
+    delta_m = spray.spray_layer(flow, model.liquid, model.slip_band, theta, 0.05)
+    v_s = lubrication(flow.tau, flow.G, b, delta_m, model.liquid.mu, b_layer=b)[0]
+    extent = spray.region_extent(np.column_stack([mk.faces.i, mk.faces.j]), L > 0.0, sk.area)
+    n_flow, n_liq = np.cumprod(flowing, axis=1).sum(axis=1), np.cumprod(liquid, axis=1).sum(axis=1)
+    want = model.evaluate(flow, STATE, b, delta_m, v_s, windward, 0.5, sk.area, (sk.m * run).sum(axis=1), 0.05,
+                          b_layer=b, extent=extent, deceleration_n=w_n, regime_layer=b, on_slurry=n_flow > n_liq,
+                          rt_layer=np.where(top, d, L), cap_depth=b)
+    np.testing.assert_array_equal(plan.result.mdot, want.mdot)
+    np.testing.assert_array_equal(plan.result.branch, want.branch)
+    assert plan.rate[2] > 0.0 and plan.result.branch[2] == spray.BRANCH_THICK      # 3 mm of melt: the thick branch
+    # the slurry exposed on the second top-zone skin: its layer runs from the slurry cell's top down to psi
+    dz = sk.dz(T)
+    assert plan.on_slurry[3]
+    assert plan.slurry["depth"][3] == pytest.approx(d[3] - dz[3, :10].sum(), rel=1e-12)
+    # the release takes the skin's own top cells only, and the base draw refills it from the melt beneath
+    M0 = sk.m.sum(axis=1)
+    released = sum(plan.release(sk, 0.0125).mass for _ in range(8))
+    assert released[2] > 0.0 and np.all(released <= M0 * (1 + 1e-14))
+    keep = modes.minimum_mass(sk, top)
+    assert sk.m[2].sum() < keep[2]
+    drawn, dH = sk.draw(LIQUID, 0.0, keep, cap=modes.draw_cap(sk, top))
+    assert drawn[2] > 0.0 and sk.m[2].sum() == pytest.approx(keep[2], rel=1e-14)
+    assert dH[2] / drawn[2] == pytest.approx(float(sk.props.enthalpy(np.array([LIQUID]))[0]), rel=1e-12)
+
+
 def test_the_cascade_takes_liquid_first_and_never_rigid_metal():
     """Asked for everything over a long time, the release takes the run of liquid cells from the top; with the slurry
     every flowing cell down to the first rigid one; never rigid metal, which is as it was in every column."""

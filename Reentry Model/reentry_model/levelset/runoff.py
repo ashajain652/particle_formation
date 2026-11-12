@@ -31,6 +31,16 @@ implicit in the heights at the end of the transport (`thickness_step`), the tran
 conduction of the markers metal landed on (`landing_conduct`). The count of flow sub-steps comes from the last heat
 sub-step's largest Courant number and Rayleigh-Taylor growth (`flow_cycles`).
 
+The two modes (stage 3 Task 10, Ruling 3: flow off at the thin-thick boundary). The sheet knows each row's mode
+(`Sheet.top`, from `Markers.top`). Across a face between a full-depth skin and a top-zone skin (a mixed face) only the
+top zones exchange, layer by layer: a donor's cells whose tops lie below the fine zone (`Sheet.zone`) send nothing
+across it, and what arrives joins the receiver's flowing layer within its fine zone, by the same fractions; the
+full-depth skin's deeper cells neither run into the held volume under the top-zone skin nor receive from it (design
+20.6's flux boundary into the volume flow comes with the flow solve, stage 4). The thickness term sees no step in the
+heights across a mixed face (`Sheet.gradient`'s `level`): a top-zone skin's thickness is its fine zone, its floor the
+held melt, not the surface, and the outer surface phi runs on across the boundary; the capillary term reads phi's
+curvature there as anywhere.
+
 Every number here is a numerical setting of the skyscrapers' rules (named with its source); the physics is the shared
 package's."""
 import math
@@ -85,7 +95,8 @@ def _tangent(v, normals):
 class Sheet:
     """The markers' geometry in the skins' row order: unit normals `normal` (n, 3), positions `x` (n, 3), the faces'
     ends `i`, `j` (E,) (rows, i < j as markers), their vectors `f` (E, 3) [m] from i toward j, their two-point weights
-    `w` (E,), the skins' top areas `area` (n,) [m2] and each row's marker `marker` (n,)."""
+    `w` (E,), the skins' top areas `area` (n,) [m2] and each row's marker `marker` (n,); `top` (n,) whether each row's
+    skin is top-zone (None: every skin full-depth) and `zone` [m] the skins' fine zone (stage 3 Task 10, Ruling 3)."""
     normal: np.ndarray
     x: np.ndarray
     i: np.ndarray
@@ -94,6 +105,8 @@ class Sheet:
     w: np.ndarray
     area: np.ndarray
     marker: np.ndarray
+    top: np.ndarray = None
+    zone: float = np.inf
 
     @classmethod
     def of(cls, markers, skins=None):
@@ -111,7 +124,9 @@ class Sheet:
         i, j = rows[fi], rows[fj]
         f = length[:, None] * unit
         d = np.linalg.norm(x[j] - x[i], axis=1)
-        return cls(normal, x, i, j, f, length / d, skins.area, marker)
+        top = getattr(markers, "top", None)
+        top = None if top is None else np.asarray(top, bool)[marker]
+        return cls(normal, x, i, j, f, length / d, skins.area, marker, top, skins.settings.fine_zone)
 
     @property
     def n(self):
@@ -126,10 +141,20 @@ class Sheet:
         the first E as (i, j), the rest as (j, i)."""
         return np.r_[self.i, self.j], np.r_[self.j, self.i], np.r_[self.f, -self.f]
 
-    def gradient(self, q):
-        """The surface gradient (n, 3) of q (n,) (module docstring)."""
+    def mixed(self):
+        """Whether each face joins a full-depth skin to a top-zone skin (E,) (Ruling 3)."""
+        if self.top is None:
+            return np.zeros(len(self.i), dtype=bool)
+        return self.top[self.i] != self.top[self.j]
+
+    def gradient(self, q, level=False):
+        """The surface gradient (n, 3) of q (n,) (module docstring); with `level`, q's difference across a mixed face
+        counted as none (the heights across a mode boundary, module docstring)."""
         q = np.asarray(q, dtype=float)
-        part = 0.5 * (q[self.j] - q[self.i])[:, None] * self.f
+        dq = q[self.j] - q[self.i]
+        if level:
+            dq = np.where(self.mixed(), 0.0, dq)
+        part = 0.5 * dq[:, None] * self.f
         g = np.stack([np.bincount(self.i, part[:, k], self.n) + np.bincount(self.j, part[:, k], self.n)
                       for k in range(3)], axis=1) / self.area[:, None]
         return _tangent(g, self.normal)
@@ -215,7 +240,7 @@ def _push(sheet, skins, dp_ds, g, v_hat, sigma, kappa, wet, H=None):
     g_n = np.einsum("ij,ij->i", g, sheet.normal)
     terms = {"pressure": -along_meridian(sheet.normal, v_hat, dp_ds),
              "deceleration": rho_l * (g - g_n[:, None] * sheet.normal),
-             "thickness": rho_l * g_n[:, None] * sheet.gradient(H),
+             "thickness": rho_l * g_n[:, None] * sheet.gradient(H, level=True),
              "capillary": _capillary(sheet, kappa, wet, sigma)}
     return sum(terms.values()), terms
 
@@ -276,16 +301,18 @@ def thickness_step(skins, sheet, dt, mbook, applied, g, sigma, kappa, J):
     g_n = np.einsum("ij,ij->i", g, sheet.normal)
     i, j, w = sheet.i, sheet.j, sheet.w
     g_e, both = 0.5 * (g_n[i] + g_n[j]), (wet[i] & wet[j]).astype(float)
-    phi0 = w * (sigma * both * (kappa[i] - kappa[j]) - rho_l * g_e * (H[i] - H[j]))
+    level = (~sheet.mixed()).astype(float)                     # no step in the heights across a mode boundary
+    phi0 = w * (sigma * both * (kappa[i] - kappa[j]) - rho_l * g_e * level * (H[i] - H[j]))
     Bt = sheet.incidence()
-    dphi = (sp.diags(w) @ (sp.diags(sigma * both) @ (Bt @ J) - sp.diags(rho_l * g_e) @ Bt)).tocsr()
+    dphi = (sp.diags(w) @ (sp.diags(sigma * both) @ (Bt @ J) - sp.diags(rho_l * g_e * level) @ Bt)).tocsr()
     a_all, b_all, f_all = sheet.directed()
     keep = np.flatnonzero(moving.any(axis=1)[a_all])
     a, b, f = a_all[keep], b_all[keep], f_all[keep]
     phi_d = np.r_[phi0, -phi0][keep]
     dphi_d = sp.vstack([dphi, -dphi]).tocsr()[keep]
     un = np.where(moving[a], np.einsum("dkx,dx->dk", (skins.U - r[..., None] * applied[:, None, :])[a], f), 0.0)
-    ra, da = r[a], np.where(moving[a], dz[a], 0.0)
+    sends = moving[a] & _zone_cells(sheet, dz, a, np.r_[sheet.mixed(), sheet.mixed()][keep])   # as `transport`
+    ra, da = r[a], np.where(sends, dz[a], 0.0)
 
     def flux(phi):
         return (np.maximum(un + ra * phi[:, None], 0.0) * da).sum(axis=1)                  # m3/s
@@ -310,7 +337,7 @@ def thickness_step(skins, sheet, dt, mbook, applied, g, sigma, kappa, J):
         phi, F = new, F_new
         if missed.max() <= THICKNESS_TOL * np.abs(dH).max():
             break
-    G = rho_l * g_n[:, None] * sheet.gradient(H + dH) + _capillary(sheet, kappa + J @ dH, wet, sigma)
+    G = rho_l * g_n[:, None] * sheet.gradient(H + dH, level=True) + _capillary(sheet, kappa + J @ dH, wet, sigma)
     dG = G - applied
     skins.U = np.where(moving[..., None], skins.U + r[..., None] * dG[:, None, :], skins.U)
     across = np.zeros(len(a_all))
@@ -341,6 +368,13 @@ class TransportBook:
     landed: np.ndarray
     corrections: int = 0      # the iterative solves' corrections, the larger of the masses' and the momenta's
     converged: bool = True    # False only where TRANSPORT_FALLBACK finished a solve by the direct LU
+
+
+def _zone_cells(sheet, dz, a, mixed):
+    """Which cells (D, K) of the donors `a` (D,) may send across their directed faces: all of them, but across a mixed
+    face (`mixed` (D,)) only those whose tops lie within the fine zone (Ruling 3, module docstring)."""
+    z_top = np.cumsum(dz, axis=1) - dz
+    return ~mixed[:, None] | (z_top[a] < sheet.zone * (1.0 - 1e-12))
 
 
 def _fractions(depth):
@@ -481,9 +515,11 @@ def transport(skins, sheet, dt, faces=None):
     metal wherever it goes; anchored metal neither leaves nor receives. Flowing metal landed on a rigid top flows on in
     the same solve at the velocity it arrived with (`_landed_velocity`), by fraction into a flowing receiver's whole
     flowing layer and on top of a rigid one. Arriving momentum is projected onto the receiver's tangent plane, two
-    components per cell in its marker's frame; the normal parts removed are booked to the wall. Every cell is installed
-    from the solve's fluxes (what it had, less what it sent, plus what arrived), so the books close exactly whatever the
-    solve's own error. Updates the cells; returns a TransportBook. No regrid (the flow sub-steps regrid)."""
+    components per cell in its marker's frame; the normal parts removed are booked to the wall. Across a face between a
+    full-depth and a top-zone skin only the cells within the fine zone send, and arrivals join the receiver's flowing
+    layer within its fine zone (Ruling 3, module docstring). Every cell is installed from the solve's fluxes (what it
+    had, less what it sent, plus what arrived), so the books close exactly whatever the solve's own error. Updates the
+    cells; returns a TransportBook. No regrid (the flow sub-steps regrid)."""
     n, K = skins.m.shape
     T = skins.T()
     valid = skins.valid
@@ -496,27 +532,34 @@ def transport(skins, sheet, dt, faces=None):
     if not moving.any():
         return book
     A_all, B_all, F_all = sheet.directed()
+    mixed_all = np.r_[sheet.mixed(), sheet.mixed()]
     keep = np.flatnonzero(moving.any(axis=1)[A_all])
-    a, b, f = A_all[keep], B_all[keep], F_all[keep]
+    a, b, f, mx = A_all[keep], B_all[keep], F_all[keep], mixed_all[keep]
+    dz = skins.dz(T)
     across = np.einsum("dkx,dx->dk", skins.U[a], f)
     if faces is not None:
         across = across + faces.response[a] * faces.across[keep][:, None]
-    c = np.where(moving[a], np.maximum(across, 0.0), 0.0) / sheet.area[a][:, None]
+    sends = moving[a] & _zone_cells(sheet, dz, a, mx)                   # Ruling 3: a mixed face takes the top zone
+    c = np.where(sends, np.maximum(across, 0.0), 0.0) / sheet.area[a][:, None]
     sel = (c > 0.0).any(axis=1)
-    a, b, c = a[sel], b[sel], c[sel]
+    a, b, c, mx = a[sel], b[sel], c[sel], mx[sel]
     if not len(a):
         return book
-    # where it joins: by fraction of the flowing depth, or on top
-    dz = skins.dz(T)
+    # where it joins: by fraction of the flowing depth (within the fine zone across a mixed face), or on top
+    inzone = np.cumsum(dz, axis=1) - dz < sheet.zone * (1.0 - 1e-12)
     run = np.cumprod(flowing, axis=1).sum(axis=1)
-    sig = _fractions(np.where(flowing, dz, 0.0))
+    run_z = np.cumprod(flowing & inzone, axis=1).sum(axis=1)
+    sig, sig_z = _fractions(np.where(flowing, dz, 0.0)), _fractions(np.where(flowing & inzone, dz, 0.0))
     tau = _fractions(np.where(np.arange(K)[None, :] < run[:, None], dz, 0.0))
+    tau_z = _fractions(np.where(np.arange(K)[None, :] < run_z[:, None], dz, 0.0))
+    sig_e = np.where(mx[:, None], sig_z[a], sig[a])
+    tau_e = np.where(mx[:, None], tau_z[b], tau[b])
     joins = flowing[a] & (run[b] > 0)[:, None] & (c > 0.0)
     rows = np.flatnonzero(joins.any(axis=1))
-    r, kd, kr, length = _pieces(sig[a[rows]], tau[b[rows]])
+    r, kd, kr, length = _pieces(sig_e[rows], tau_e[rows])
     ok = joins[rows[r], kd]
     edge, kd, kr, length = rows[r[ok]], kd[ok], kr[ok], length[ok]
-    width = sig[a[edge], kd + 1] - sig[a[edge], kd]
+    width = sig_e[edge, kd + 1] - sig_e[edge, kd]
     ok = length > SLIVER * width
     edge, kd, kr, length = edge[ok], kd[ok], kr[ok], length[ok]
     group = edge * K + kd
@@ -550,8 +593,11 @@ def transport(skins, sheet, dt, faces=None):
     on, c_on = on[reach[A_all[on]]], c_on[reach[A_all[on]]]
     if len(on):
         s_, r_ = A_all[on], B_all[on]
+        mo = mixed_all[on]                                   # across a mixed face, its flowing layer within the zone
+        run_on = np.where(mo, run_z[r_], run[r_])
+        tau_on = np.where(mo[:, None], tau_z[r_], tau[r_])
         into = np.flatnonzero(run[r_] > 0)                   # by fraction of the receiver's whole flowing layer
-        piece = np.diff(tau[r_[into]], axis=1) * (np.arange(K)[None, :] < run[r_[into]][:, None])
+        piece = np.diff(tau_on[into], axis=1) * (np.arange(K)[None, :] < run_on[into][:, None])
         q, kq = np.nonzero(piece > 0.0)
         onto = np.flatnonzero(run[r_] == 0)                  # on top of a rigid receiver, its new top cell
         e_src = np.r_[e_src, s_[into[q]], s_[onto]]

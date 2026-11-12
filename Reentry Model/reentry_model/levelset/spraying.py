@@ -22,6 +22,12 @@ The plan (`spray_plan`, once a macro step, at its start), per marker, in the mar
 - with `slurry`, the exposed slurry's own mode per marker (`_slurry_modes`), a second `SprayModel` with the slurry's
   properties at the shear rate of its own sheared layer, found by fixed point.
 
+On a top-zone skin (stage 3 Task 10, decision D2 and the controller's ruling (b) of 2026-11-12) the melt beneath is the
+volume's, held, and its depth is phi to psi: b, the cap depth, the Rayleigh-Taylor pool, and the slurry's layer (from
+its cell's top down to psi), its cap and the region its wave must fit in (b at least B_MIN) all read it. The film mass
+and the release stay the skin's own (`Skins.take_top_mass`): what leaves comes from the skin's top cells, and the skin's
+base draw then refills it from the melt beneath (`modes.draw_cap`).
+
 No renewal limit (ruling of 2026-11-11): design 9.5's cap on liquid deeper than delta_m, rho_l delta_m A per renewal time
 delta_m^2/nu_l, belongs to the two-zone skin of 2026-10-07 and is not built; the layered skins resolve the velocity
 through the depth, so the release is capped only as the skyscrapers cap it, by the cap depth and the cascade.
@@ -274,8 +280,10 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
         if depth_phi_psi is None:
             raise ValueError("b_mode 'phi_psi' needs the depth from phi to psi per marker")
         d = np.asarray(depth_phi_psi, dtype=float).reshape(n)
-        b = np.where(np.isfinite(d), d, F_skin)
+        top = np.isfinite(d)                                   # the top-zone skins (module docstring)
+        b = np.where(top, d, F_skin)
     else:
+        top = np.zeros(n, dtype=bool)
         b = F_skin
     n_flow = np.cumprod(flowing, axis=1).sum(axis=1)[rows]
     n_liq = np.cumprod(liquid, axis=1).sum(axis=1)[rows]
@@ -290,12 +298,13 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
     extent = spray_mod.region_extent(edges, L > 0.0, area)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     m_f = (skins.m * run).sum(axis=1)[rows]
-    cap = F_skin if slurry else L
+    cap = np.where(top, b, F_skin if slurry else L)
     res = model.evaluate(flow, state, b, delta_m, v_s, windward, dt, area, m_f, radius, b_layer=b, extent=extent,
-                         deceleration_n=w_n, regime_layer=b, on_slurry=on_slurry, rt_layer=L, cap_depth=cap)
+                         deceleration_n=w_n, regime_layer=b, on_slurry=on_slurry, rt_layer=np.where(top, b, L),
+                         cap_depth=cap)
     if slurry:
         rate_s, modes = _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges, radius, dt, b,
-                                      F_skin, n_liq, n_flow, theta, nose_radius)
+                                      np.where(top, b, F_skin), n_liq, n_flow, theta, nose_radius)
     else:
         rate_s, modes = np.zeros(n), spray_mod.no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, b, L, cap, on_slurry, rows, bool(slurry), theta=theta_arr,
@@ -310,7 +319,7 @@ def _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges
     stage 3 Task 8): this reads the skins for it -- where a flowing cell that is not fully liquid lies beneath the liquid
     run on the windward face, that cell's temperature, solid fraction and mixture density, its layer from the cell's top
     to T_rigid, the slurry run's mass, the flowing region (b at least B_MIN) the wave must fit in and the cap (the
-    flowing depth) -- with the skins' SHEAR_PASSES and SHEAR_TOL for the fixed point on the shear rate. Returns (rate
+    flowing depth; on a top-zone skin `F_skin` is phi to psi, module docstring) -- with the skins' SHEAR_PASSES and SHEAR_TOL for the fixed point on the shear rate. Returns (rate
     [kg/(m2 s)], the per-marker dict)."""
     sel = np.flatnonzero((n_flow > n_liq) & windward)
     if not sel.size:

@@ -210,7 +210,11 @@ class Markers:
     spacing `spacing` [m] and the counters `splits`, `merges`, `trapped`. After `tessellate`: `faces`, `capped` (n,)
     and `axis` (n, 3), the longest direction of each Voronoi cell. `x_tess` and `normal_tess` (n, 3) are each marker's
     position and normal at the last tessellation (at creation before any), the owners of the area it was given there
-    (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own."""
+    (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. `top` (n,) bool
+    each marker's mode (design 20.6: False a full-depth skin, True a top-zone skin) and `hold` (n,) the macro steps in a
+    row its thin test has given the other answer (`modes`, Task 10); a split's new half takes its parent's mode and
+    hold (the same surface: a new half alone could never make the group a change needs), a merge keeps the first's,
+    and a release drops them."""
 
     def __init__(self, x, normal, area, kappa, skin_index, patch, spacing, skins=None):
         self.x = np.array(x, dtype=float).reshape(-1, 3)
@@ -227,15 +231,21 @@ class Markers:
         self.capped = np.zeros(n, bool)
         self.axis = np.zeros((n, 3))
         self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
+        self.top, self.hold = np.zeros(n, bool), np.zeros(n, np.int64)
 
     def __setstate__(self, state):
         """Unpickling: a state from before Task 9b has no `x_tess`, `normal_tess`; saved between steps, the markers'
-        last tessellation was where they are, so they are filled from `x` and `normal`."""
+        last tessellation was where they are, so they are filled from `x` and `normal`. One from before Task 10 has no
+        `top`, `hold`: every skin was full-depth, with no hold counted."""
         self.__dict__.update(state)
         if "x_tess" not in state:
             self.x_tess = np.array(self.x, dtype=float)
         if "normal_tess" not in state:
             self.normal_tess = np.array(self.normal, dtype=float)
+        if "top" not in state:
+            self.top = np.zeros(len(self.x), bool)
+        if "hold" not in state:
+            self.hold = np.zeros(len(self.x), np.int64)
 
     @property
     def n(self):
@@ -419,13 +429,14 @@ class Markers:
     def _append(self, src, x):
         """New markers copying the markers `src` at positions x, their skins' rows given later."""
         self.x = np.concatenate([self.x, x])
-        for name in ("normal", "area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess"):
+        for name in ("normal", "area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess", "top", "hold"):
             setattr(self, name, np.concatenate([getattr(self, name), getattr(self, name)[src]]))
 
     def _drop(self, idx):
         keep = np.ones(self.n, bool)
         keep[idx] = False
-        for name in ("x", "normal", "area", "kappa", "patch", "capped", "axis", "skin_index", "x_tess", "normal_tess"):
+        for name in ("x", "normal", "area", "kappa", "patch", "capped", "axis", "skin_index", "x_tess", "normal_tess",
+                     "top", "hold"):
             setattr(self, name, getattr(self, name)[keep])
         self.faces = None
 

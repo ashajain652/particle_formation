@@ -863,3 +863,132 @@ def test_a_marker_the_second_tessellation_leaves_without_area_is_released(monkey
     assert mk.n == n0 - 1 and mk.trapped == released0 + 1
     assert np.all(mk.area > 0.0)
     assert abs(M1 / M0 - 1) <= 1e-12
+
+
+# -- the two modes (Task 10) ------------------------------------------------------------------------------------------
+def _books(body):
+    b = body.books()
+    return b["mass_volume"] + b["mass_skins"], b["enthalpy_volume"] + b["enthalpy_skins"] + b["pending_J"]
+
+
+def test_a_body_with_no_rigid_core_left_stops_with_a_clear_message():
+    """The controller's ruling (d) of Task 10: a body whose metal is all above T_rigid has no rigid core, nothing for its
+    molten metal to stand on; stage 3 holds the volume's melt (no flow solve), so a step that finds it so stops with a
+    RuntimeError that says so, not some later failure of the geometry. The test cube, set to 1000 K throughout (volume
+    and skins), one 0.01 s step with no heating."""
+    body = cube_body()
+    body.solver.set_temperature(1000.0)
+    sk = body.skins
+    sk.H = np.where(sk.valid, sk.m * sk.props.enthalpy(np.full(sk.m.shape, 1000.0)), 0.0)
+    with pytest.raises(RuntimeError, match="no rigid core left"):
+        body.advance(0.01)
+
+
+def _top_face(body, frac=0.9):
+    """The markers on the cube's +x face (normal within about 25 degrees of +x)."""
+    return np.flatnonzero(body.markers.normal[:, 0] > frac)
+
+
+def test_mode_changes_through_the_body_close_the_books(monkeypatch):
+    """Task 10 through the body's step end (`StepEnd._modes`): the thin test held to say thick on the cube's +x face (at
+    850 K the cube is all rigid, so it says thin everywhere) with a hold of one step and groups of one, the face's
+    markers turn top-zone: each skin's stub below its fine zone goes to the volume (beta steps out by its mass over the
+    volume's density), the skins keep a solid fine zone's mass; then, the test saying thin again, they turn back,
+    absorbing the volume's metal down to the stub below psi (psi is phi here: all rigid). Both ways the body's mass
+    closes to 1e-12 and its enthalpy, the heat owed to the volume included, to 1e-12; the markers lie on phi."""
+    from reentry_model.levelset import modes
+    body = cube_body(mode_settings=modes.ModeSettings(hold=1, min_markers=1))
+    face = _top_face(body)
+    mk, sk = body.markers, body.skins
+    assert len(face) >= 7 and not mk.top.any()
+    M0, E0 = _books(body)
+    V0 = body.books()["mass_volume"]
+    want = {"thin": None}
+
+    def candidates(m, settings):
+        out = np.ones(len(m.h), bool)
+        out[face] = want["thin"]
+        return out
+    monkeypatch.setattr(modes, "candidates", candidates)
+    want["thin"] = False
+    tally = skinbody._Tally(sk.n)
+    body._modes(tally)
+    M1, E1 = _books(body)
+    rows = mk.skin_index[face]
+    print("to top-zone: {} markers, volume gained {:.3e} kg (stubs below the fine zone {:.3e} kg); books {:.1e} {:.1e}"
+          .format(tally.to_top, body.books()["mass_volume"] - V0, tally.mode_handed, M1 / M0 - 1, E1 / E0 - 1))
+    assert mk.top[face].all() and mk.top.sum() == len(face) and tally.to_top == len(face)
+    assert abs(M1 / M0 - 1.0) <= 1e-12 and abs(E1 / E0 - 1.0) <= 1e-12
+    assert body.books()["mass_volume"] - V0 == pytest.approx(tally.mode_handed, rel=1e-9)
+    np.testing.assert_allclose(sk.m[rows].sum(axis=1), modes.fine_zone_mass(sk)[rows], rtol=0.05)
+    assert np.abs(interpolate(body.mesh, body.phi, mk.x)).max() <= 1e-9
+    want["thin"] = True
+    tally = skinbody._Tally(sk.n)
+    body._modes(tally)
+    M2, E2 = _books(body)
+    print("back to full-depth: {} markers, absorbed {:.3e} kg; books {:.1e} {:.1e}".format(
+        tally.to_full, tally.mode_absorbed, M2 / M0 - 1, E2 / E0 - 1))
+    assert not mk.top.any() and tally.to_full == len(face) and tally.mode_absorbed > 0.0
+    assert abs(M2 / M0 - 1.0) <= 1e-12 and abs(E2 / E0 - 1.0) <= 1e-12
+    np.testing.assert_allclose(sk.m[mk.skin_index[face]].sum(axis=1), sk.minimum_mass()[mk.skin_index[face]],
+                               rtol=0.1)
+
+
+def test_steps_with_top_zone_skins_close_their_books():
+    """Task 10: the cube's +x face top-zone (its skins' stubs below the fine zone given to the volume), melted by
+    6 MW/m2 for 0.25 s, then 0.05 s more with the metal pushed along the face (an acceleration of 300 m/s2 along -z):
+    the top-zone skins' melt runs off and they draw the thick melt beneath at their bases and return what runs onto them
+    below the fine zone, holding about the fine zone (a solid fine zone's mass, the melt swollen); the momentum their
+    bases and returned cells give goes to the held volume; what the step end's re-partition gives them below the fine
+    zone goes to the volume there; each step's mass closes to 1e-12 and its enthalpy to 1e-8."""
+    body = cube_body()
+    face = _top_face(body)
+    body.markers.top[face] = True
+    body._modes(skinbody._Tally(body.skins.n), update=False)
+    for dt, kw in ((0.25, {}), (0.05, dict(decel_vec=np.array([0.0, 0.0, -300.0])))):
+        book = body.advance(dt, q_prescribed=one_face(6e6), **kw)
+        sk, mk = body.skins, body.markers
+        H = sk.thickness()[mk.skin_index[mk.top]]
+        print("top-zone face, {} s: {} top-zone markers, {} parts, drawn {:.3e} handed {:.3e} kg, at the step end handed "
+              "{:.3e} kg; momentum to the volume {}; residuals mass {:.1e} enthalpy {:.1e}; top-zone skins {:.3f} to "
+              "{:.3f} mm".format(dt, book.n_top, book.parts, book.mass_drawn, book.mass_handed, book.mass_modes_handed,
+                                 book.momentum_to_volume, book.mass_residual, book.enthalpy_residual, 1e3 * H.min(),
+                                 1e3 * H.max()))
+        assert book.n_top == mk.top.sum() >= len(face) - 2
+        assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
+        assert H.min() > 0.8 * SETTINGS.fine_zone and H.max() < 1.3 * SETTINGS.fine_zone
+    assert book.mass_drawn > 0.0 and book.mass_handed > 0.0
+    assert np.abs(book.momentum_to_volume).max() > 0.0
+    # the controller's ruling (a): the step end's re-partition gave top-zone skins metal below their fine zones (from
+    # the full-depth columns beside them), and they handed it to the volume there (measured 1.9e-6 kg)
+    assert book.mass_modes_handed > 0.0
+
+
+def test_a_base_move_longer_than_the_fine_margin_goes_where_it_is_asked():
+    """Task 10: a mode change moves beta by a whole column at once, further than the fine margin (2 mm here) that a base
+    move's displacement reaches; `StepEnd._move_beta` makes such a move in rounds of at most half the margin. The cube's
+    +x face skins given 3.2 mm more of rigid metal at their bottoms, the volume giving it (beta moved in by its volume
+    at their bases): beta's face lands within 0.1 mm of 3.2 mm in from where it stood (in one round it went 2.1 mm), the
+    opposite face stays within 0.1 mm, and the volume holds the mass less what the skins took to round-off."""
+    from reentry_model.levelset.cutcell import inside_volumes
+    body = cube_body()
+    mk, sk = body.markers, body.skins
+    face = _top_face(body)
+    r = mk.skin_index[face]
+    extra, cells = 3.2e-3, 160
+    m = body.rho * sk.area[r] * extra / cells
+    sk.append_bottom(r, np.repeat(m[:, None], cells, axis=1),
+                     np.repeat((m * float(sk.props.enthalpy(np.array([850.0]))[0]))[:, None], cells, axis=1))
+    body._cap()
+    sk.regrid()
+    line = lambda sign: np.column_stack([sign * np.linspace(1e-3, 9e-3, 1601), np.zeros(1601), np.zeros(1601)])
+    where = lambda sign: abs(line(sign)[np.argmin(np.abs(interpolate(body.mesh, body.beta, line(sign)))), 0])
+    x0, back0, V0 = where(1.0), where(-1.0), inside_volumes(body.mesh, body.beta).sum()
+    dV = np.zeros(sk.n)
+    dV[r] = -m * cells / body.rho
+    body._move_beta(body._bases(), dV, dV / sk.base_area(), skinbody._Tally(sk.n))
+    x1, back1, V1 = where(1.0), where(-1.0), inside_volumes(body.mesh, body.beta).sum()
+    print("long move: the face's beta {:.3f} to {:.3f} mm (asked {:.3f}), the opposite face {:.3f} to {:.3f} mm".format(
+        1e3 * x0, 1e3 * x1, 1e3 * (x0 - extra), 1e3 * back0, 1e3 * back1))
+    assert abs(x1 - (x0 - extra)) <= 0.1e-3 and abs(back1 - back0) <= 0.1e-3
+    assert V1 == pytest.approx(V0 + dV.sum(), rel=1e-12)
