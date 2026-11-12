@@ -1,6 +1,6 @@
 # Girin's gradient instability solved on the skins' own melt profile — design
 
-**Date:** 2026-11-11. **Status:** draft for Asha's review; nothing built.
+**Date:** 2026-11-11. **Status:** approved; amended the same day with decisions 8 and 9; nothing built.
 **Lands after:** the combined refactor (stage 0 + S, `docs/superpowers/plans/levelset/00s-combined-refactor-shared-package.md`)
 is on `main`. Built on a short branch off `main` (Asha, 2026-11-11: no prototype folder).
 **Prerequisite, gating stage 3 only (decision 7):** the single-column check of the gas wall shear against the skins'
@@ -38,6 +38,16 @@ After the builder check (same day):
 6. The profile path **keeps today's regime limit**: its shear modes act only where delta_m is finite — Girin's continuum
    closure, or the slip band with `--slip-band on` (section 6.5). Lifting it is a later, separate decision.
 7. The formal **gas-shear check** stays, before stage 3; stages 1 and 2 start at once.
+
+Amended after the plan was drafted (same day):
+
+8. **All of the spraying's physics lives in the shared package** (`reentry_model/shared/`), written on plain arrays,
+   because the level-set architecture will use the same physics. This covers the solver, the floor test, the
+   straight-segment fit, the layer's properties above the wall, the mode inputs, the threshold rule of the release run,
+   the mode choice, the record layout and the history summary. The skin modules only read their cells into those
+   arrays, take cells off the top, compute their own shear rates and carry the setting.
+9. **The default is this design**: `--dispersion profile` on spraying skin runs. `--dispersion table` switches back to
+   Girin's theory as it stands today. This replaces section 6.1's call to keep `table` as the default until stage 5.
 
 Items marked **[my call]** were settled by me while writing and are listed again in section 11 for Asha to check.
 
@@ -176,8 +186,8 @@ floor. Stage 6 calibrates the threshold.
 
 **Anti-goals** (failures even if it runs)
 
-- Any change of result under the existing setting. With the new setting off, runs are bit-identical
-  (`analysis/skyscrapers_port/same_results.py` cases).
+- Any change of result under `--dispersion table`. With it, runs are bit-identical to today's
+  (`analysis/skyscrapers_port/same_results.py` cases), apart from the JSON's new `dispersion` key (decision 9).
 - The bridge's construction silently deciding where spray comes from: the kink's depth, temperature and the floor
   Reynolds number are recorded every macro step.
 - Girin's large-Weber growth rate applied without surface tension: the solver always includes it.
@@ -186,22 +196,24 @@ floor. Stage 6 calibrates the threshold.
 ## 5. Constraints
 
 - Shared modules (`reentry_model/shared/`) import no skyscrapers module (refactor rule, pinned by its independence
-  test). The solver and the floor test take plain arrays; turning skin cells into a profile lives in `skinbody.py`.
+  test). The physics takes plain arrays and lives in the shared package (decision 8). Only reading the skin cells into
+  those arrays, and taking cells off the top, live in `skin.py` and `skinbody.py`.
 - Evaluated once per macro step at its start, like the rest of the spray plan (spec 8), on windward wet columns only.
 - Cost: measured on the d050 state; the added time per macro step should stay under about 5 % of a macro step's wall
   time. **[my call]** Columns whose layer above the wall is one straight segment skip the eigen-solve (stable by Ghosh).
 - A run saved before the setting existed resumes with today's behaviour (the class-default pattern of `spray_gates`).
 - The run name encodes the setting when it is not the default (repository convention).
-- `--dispersion profile` requires `--skin-flow on`, and the CLI refuses it otherwise with exit code 2, as it does for
-  `--slurry-spray on`. **[my call]**
+- `--dispersion` applies only to spraying skin runs (`--skin-flow on`). The CLI refuses it on any other run with exit
+  code 2, as it does for `--slurry-spray on`. **[my call]**
 
 ## 6. Design
 
 ### 6.1 The setting
 
-A new run and resume option `--dispersion table|profile`, default `table` (today's behaviour, bit for bit). `profile`
-switches the skins' liquid mode to sections 6.2–6.7. The default stays `table` until Asha has seen the comparison
-flights of stage 5 and decides. **[my call]**
+A new run and resume option `--dispersion table|profile`. On spraying skin runs the default is `profile`, sections
+6.2–6.7 (decision 9). `table` switches back to today's behaviour, bit for bit. The setting belongs to the shared spray
+model, as `spray_gates` and `slip_band` do. Its class default is `table`, so a state saved before the option existed
+resumes on Girin's theory unless the option is given. The element model has no resolved profile and stays on `table`.
 
 ### 6.2 The solver (`reentry_model/shared/dispersion.py`)
 
@@ -237,7 +249,7 @@ Given the profile, each breakpoint's kinematic viscosity just below it, and a th
   wall moves at U(y_j). If none qualifies, the wall is the rigid front at the flowing depth (**fluid-like** column).
 - `FLOOR_RE` defaults to 1.0, the crossover of section 3, labelled assumed until stage 6. **[my call]**
 
-### 6.4 From the skins to a profile (`skinbody.py`)
+### 6.4 From the skins to a profile (the fit shared; reading the cells in `skinbody.py`)
 
 - Speeds: each flowing cell's velocity component along the top cell's direction, at its centre; the surface speed
   extrapolated linearly from the top two cell centres; zero at the rigid front (`depth_above(T_rigid)`). **[my call]**
@@ -320,8 +332,9 @@ Per wet windward column, after the wall is placed:
 - History, on the `profile` path only, per macro step: the share of wet windward columns that are floor-like, the count
   of fluid-like ones, medians of the depth to the wall, the floor Reynolds number and the recorded Weber number, and the
   mass sprayed by each mode.
-- `table` runs, and the element model, write exactly today's columns and settings keys, so `same_results.py` passes
-  unchanged (it compares headers and keys exactly) and `spray.SOURCE_COLUMNS` stays the element model's. The spool,
+- `table` runs, and the element model, write exactly today's columns and settings keys, except that a skin run's JSON
+  always records `dispersion` (the default changed, as for `part_count_from`). `same_results.py` therefore differs
+  from its baseline by that one key and nothing else, and `spray.SOURCE_COLUMNS` stays the element model's. The spool,
   the coupled writer and every reader handle both layouts, as the spreading history columns already exist only with a
   spread limit. A state saved before the setting existed has 27-column records, which are padded on resume when it is
   switched to `profile` (as when the size bins grew from 40 to 50). **[my call]**
@@ -338,19 +351,21 @@ Per wet windward column, after the wall is placed:
    kH = 100.
 2. **Floor test** (shared). Tests: section 3's crossover speeds reproduced; a kink below a five-fold shear drop is a
    candidate and a gentler one is not; the wall is the shallowest floor-like kink.
-3. **Profile from the skins** (`skinbody.py`). A committed fixture of a few dozen columns extracted from the d050 state
+3. **Profile from the skins** (the fit in the shared package, reading the cells in `skinbody.py`). A committed fixture of a few dozen columns extracted from the d050 state
    at 178.5 s (the state itself is git-ignored and on this laptop only). Tests: Girin's linear profile on synthetic
    cells gives one breakpoint at its depth; a skin moving as one piece gives none; on the fixture, report where the wall
    lands relative to the 906.4 K depth (a measurement, not a pass/fail).
 4. **Integration** under `--dispersion profile`: mode choice, release run, cascade change, records, history, CLI,
-   restart default. Acceptance: `table` bit-identical on the three `same_results.py` cases; the unit tier passes;
+   restart default. Acceptance: `--dispersion table` bit-identical on the three `same_results.py` cases apart from the
+   JSON's `dispersion` key; the unit tier passes;
    the per-step cost measured against the 5 % budget.
 5. **Comparison flights**, both settings, from the d050 hand-down-off state at 178.5 s over a short window, and an early
    100 mm flight. Both settings run with `--spray-gates 2026-11-10` and `--slip-band on`, so the comparison isolates
    the dispersion change. The d050 state was saved with `spray_gates` "before" and the slip band off, and at 178.5 s
    the whole body is in the slip band (body Knudsen number between 0.01 and 0.1, every column on the Couette closure),
    so with the slip band off neither setting can spray there (decision 6); both are switched on resume. **[my call]** anything over about two hours runs on the Mac Studio through a runbook (Asha, 2026-10-31). Reported:
-   floor-like share, where walls land, mass sprayed by mode, droplet sizes. Asha then decides the default.
+   floor-like share, where walls land, mass sprayed by mode, droplet sizes. The default is already `profile`
+   (decision 9); the comparison shows what the change does.
 6. **Viscous check** (analysis only, `analysis/kinked_dispersion/`). An Orr–Sommerfeld solver for the whole column:
    viscosity varying cell by cell, free surface with tension, no-slip wall at the rigid front, base speeds from the
    skins. Validated against Girin's inviscid growth at high Reynolds number, the Hooper and Boyd (1983) short-wave
@@ -398,8 +413,8 @@ Asha can decide whether it needs its own change.
    nu_eff, the layer's Couette viscosity, also replaces the liquid's viscosity in the gas-driven mode's viscous check.
 5. The release run and the wave-fit region are defined by the wall, not by the liquidus; droplet properties are the
    released cells' mass-weighted ones.
-6. `--dispersion table|profile`, default `table` until stage 5; refused without skin flow; old saved runs resume on
-   `table`.
+6. `--dispersion table|profile`, refused without skin flow; old saved runs resume on `table`. (The default of `table`
+   until stage 5 is superseded by decision 9: the default is `profile`.)
 7. Records: new branch code 5; appended source-table and history columns on the `profile` path only, so `table` runs
    and the element model write exactly today's files; cost budget 5 % of a macro step.
 8. The release depth is read from the wave's vertical displacement, not its stream function (about 1.4 times deeper
