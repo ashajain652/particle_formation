@@ -210,6 +210,33 @@ def test_layer_columns_take_their_fields_as_keywords_and_select_rows():
     assert sub.u.shape == (1, K) and sub.flowing.dtype == bool and np.array_equal(sub.mu, cols.mu[:1])
 
 
+# -- the release run (spec 6.6, decision 5; Task 6) ----------------------------------------------------------------------
+def test_threshold_run_takes_the_warm_cells_from_the_top_and_nan_means_the_liquid_run():
+    """Spec 6.6 and decision 5: where a column has a threshold temperature, its release run is the contiguous flowing
+    cells from the top at least that warm, liquid and slurry together (the liquidus is 908 K, so only the last column
+    holds liquid); the first cell that is colder or does not flow ends it, warm cells beneath stay, and a top that fails
+    gives an empty run (a plug's top colder than its threshold). Where the threshold is NaN, the run is the liquid run
+    from the top, today's, which stops above liquid lying beneath a slurry cell."""
+    T = np.array([[907.5, 907.3, 907.0, 906.5, 905.0, 902.0],    # warm to cold: three cells, the third at the threshold
+                  [907.5, 907.3, 907.0, 906.5, 905.0, 902.0],    # the same, its second cell rigid: one cell
+                  [906.8, 907.5, 907.4, 907.2, 905.0, 902.0],    # a plug's top colder than its threshold: none
+                  [907.5, 906.0, 907.5, 907.4, 905.0, np.nan],   # a colder second cell ends it; padding beyond the cells
+                  [950.0, 940.0, 905.0, 930.0, 905.0, 880.0]])   # NaN: the liquid run, two cells
+    flowing = np.ones(T.shape, dtype=bool)
+    flowing[1, 1] = False
+    flowing[3, 5] = flowing[4, 5] = False
+    liquid = flowing & (np.nan_to_num(T) >= 908.0)
+    T_run = np.array([907.0, 907.0, 907.2, 907.0, np.nan])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        run = mp.threshold_run(T, flowing, liquid, T_run)
+    assert run.dtype == bool and run.shape == T.shape
+    assert run.sum(axis=1).tolist() == [3, 1, 0, 1, 2]
+    np.testing.assert_array_equal(run, np.arange(6)[None, :] < np.array([3, 1, 0, 1, 2])[:, None])
+    assert liquid[4, 3] and not run[4, 3]                        # liquid beneath slurry is not in the liquid run
+    assert not mp.threshold_run(T, flowing, liquid, np.full(5, np.nan))[:4].any()   # no liquid run in the others
+
+
 # -- the d050 fixture (spec stage 3) -------------------------------------------------------------------------------------
 def load_fixture():
     """The fixture's LayerColumns and its other arrays (theta, tau, group), ruling R3: the npz keeps them beside the

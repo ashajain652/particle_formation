@@ -16,8 +16,10 @@ piecewise-linear speed profile, a `dispersion.KinkedProfiles` with breakpoints a
 - each segment's density is the mass-weighted density of the cells whose centres lie in its closed depth interval.
 
 The floor test (`dispersion.place_wall`) reads `nu_below`, the kinematic viscosity of the cell just below each
-breakpoint; `couette_viscosity` is the layer's effective viscosity above a depth. The physics is the spec's; the
-greedy fit is the builder's (spec section 8)."""
+breakpoint; `couette_viscosity` is the layer's effective viscosity above a depth. `threshold_run` is the release run's
+rule (spec 6.6, decision 5): the flowing cells from the top at least as warm as a threshold temperature, which the
+skins' cascade takes at the mode's rate (`skin.mode_run`). The physics is the spec's; the greedy fit is the builder's
+(spec section 8)."""
 from dataclasses import dataclass, fields
 
 import numpy as np
@@ -244,3 +246,18 @@ def couette_viscosity(cols, depth):
     mu = np.divide(thick, compliance, out=np.where(thick > 0.0, np.inf, np.nan), where=compliance > 0.0)
     nu = np.divide(mu, rho, out=np.full(n, np.nan), where=rho > 0.0)
     return nu, rho
+
+
+def threshold_run(T, flowing, liquid, T_run):
+    """Each column's release run (spec 6.6, decisions 3 and 5), (n, K) bool, top first: where its threshold temperature
+    T_run [K, (n,)] is a number, the contiguous flowing cells from the top at least that warm -- liquid and slurry
+    together, whatever their temperature against the liquidus -- so that the first cell colder than it or not flowing
+    ends the run and a top that fails gives an empty one (a plug's top colder than the cell at its release depth: nothing
+    leaves); where T_run is NaN, the run of `liquid` cells from the top, today's. T [K], flowing and liquid are (n, K);
+    T may be NaN beyond a column's cells, where flowing and liquid must be False. The release is heat-limited: a cell
+    joins the run by warming to the threshold, not by the number of steps (the slurry cascade's T_slurry rule)."""
+    T = np.asarray(T, dtype=float)
+    T_run = np.broadcast_to(np.asarray(T_run, dtype=float), T.shape[:1])
+    warm = np.asarray(flowing, dtype=bool) & (T >= T_run[:, None])
+    take = np.where(np.isnan(T_run)[:, None], np.asarray(liquid, dtype=bool), warm)
+    return np.cumprod(take, axis=1).astype(bool)
