@@ -18,6 +18,12 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
    Check: which leeward rule is in force (`--leeward-test facing|centroid`) and that it does what it says; whether the
    rear heating is conduction through the body, radiation, or flux wrongly applied to rear-facing columns; whether the
    sideways heat moves heat rearward. Start from the Mac Studio run's rows and check one step by hand.
+   Evidence: [figures/d050__fixes__slipband-on_cross-sections.png](figures/d050__fixes__slipband-on_cross-sections.png),
+   the Mac Studio flight d050__fixes__slipband-on (cross-section through the flight direction, 171-189 s, stopped at
+   189.075 s). By 179-183 s the 3D core's rear (leeward) half is at about 780-820 K, against about 700 K at 171 s; the
+   skins grow and fold on the rear and sides (183-185.5 s); from 187.5 s a liquid layer appears on the rear surface,
+   about x = -55 mm at 188.5 s, and the column tops enclose 133-434 cm3 against 63-65 cm3 of metal, so the geometry is
+   non-physical by then (see item 4).
 4. **A geometry stop for skin flights**: end the flight, with a message, once the core passes the body's centre. The
    running 50 mm Mac Studio flight has none; judge it only up to that point (earlier 50 mm flights went non-physical at
    about 185.5 s).
