@@ -49,8 +49,9 @@ COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading
 
 def cap_curvature(skins, kappa, depth=None):
     """Each column's principal curvatures (n, 2) [1/m] held within KAPPA_DEPTH_SHARE over the column's flat depth either
-    way (module docstring), `depth` [m] (n,) or the skins' flat depth sum m / (rho(T) A0); columns within it are
-    unchanged. Convex curvatures are capped so that the cross-section stays positive; concave ones too, since a column
+    way (module docstring), `depth` [m] (n,) or the skins' flat depth sum m / (rho(T) A0), at least the stub (fix round
+    3: a column runoff had all but emptied kept phi's sharp curvature and the draw then refilled it to the stub past
+    1/kappa); columns within it are unchanged. Convex curvatures are capped so that the cross-section stays positive; concave ones too, since a column
     widening with depth raises its own minimum mass, rho_s A(z_bottom) stub, faster than its mass where |k| stub > 1, so
     that its draws would run away (fix round 1 of Task 9)."""
     kappa = np.asarray(kappa, dtype=float)
@@ -59,7 +60,8 @@ def cap_curvature(skins, kappa, depth=None):
         vol = np.zeros(skins.m.shape)
         vol[valid] = skins.m[valid] / skins.density(T[valid])
         depth = vol.sum(axis=1) / skins.area
-    limit = KAPPA_DEPTH_SHARE / np.maximum(np.asarray(depth, dtype=float), 1e-300)
+    depth = np.maximum(np.asarray(depth, dtype=float), skins.settings.stub)   # the draw refills an emptied column
+    limit = KAPPA_DEPTH_SHARE / depth
     return np.clip(kappa, -limit[:, None], limit[:, None])
 
 

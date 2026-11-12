@@ -755,8 +755,9 @@ def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=
     `thickness_step`, `transport`, the `landing_conduct` of the markers metal landed on this heat sub-step and, with
     `release` (a callable `release(skins, h)` returning a book with per-row `mass`, `enthalpy` and `momentum`, such as
     `spraying.SprayPlan.release`), the release from the tops (stage 3 Task 9: every flow sub-step, after the landing
-    conduction, as the skyscrapers' flow sub-steps release), and `after(skins)`, if given, at the end of each (the body's
-    per-column checks, stage 3 Task 9). Where nothing flows nothing moves and no sub-step is taken:
+    conduction, as the skyscrapers' flow sub-steps release), and `after(skins)`, if given, right after each transport,
+    before the landing conduction reads the new depths (the body's per-column checks, stage 3 Task 9: a transport
+    deepened a column past its curvature's room within one sub-step). Where nothing flows nothing moves and no sub-step is taken:
     any velocity left is booked to the wall and cleared, and the skins forget the flow. The heat sub-step's own regrid
     follows (the caller's). Returns a FlowBook."""
     sheet = _sheet(markers)
@@ -789,6 +790,8 @@ def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=
         tb = thickness_step(skins, sheet, h, mb, terms["thickness"] + terms["capillary"], forcing.g, forcing.sigma,
                             kappa, L)
         tr = transport(skins, sheet, h, faces=tb.faces)
+        if after is not None:                       # the body's per-column checks before anything reads the new depths
+            after(skins)
         landed |= tr.landed
         if landed.any():
             landing_conduct(skins, landed, h)
@@ -798,8 +801,6 @@ def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=
             rb = release(skins, h)
             step.released, step.released_H = np.asarray(rb.mass, float), np.asarray(rb.enthalpy, float)
             step.released_p = np.asarray(rb.momentum, float)
-        if after is not None:
-            after(skins)
         book.add(step)
     book.cycles = cycles
     if adaptive:
