@@ -2897,7 +2897,7 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     from reentry_model import trajectory as tj
     mat = material.Material.from_drama_json("AA7075_scheil")
     model = spray.SprayModel(mat.liquid, dispersion="profile")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="needs the flow on"):
         make(coarse_sphere_mesh, spray=model)
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
     names = spray.record_columns(36)

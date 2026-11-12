@@ -354,6 +354,24 @@ def test_a_fluid_like_curved_column_gets_its_release_depth_and_threshold(monkeyp
     assert modes.cap_gradient[0] == modes.cap_driven[0]
 
 
+def test_a_wall_at_the_top_cell_s_centre_gives_the_top_cell_s_threshold(monkeypatch):
+    """Final review, Minor 1: where a floor-like wall falls at the top cell's centre no cell centre lies strictly above
+    it, and the gas-driven mode's threshold is the top cell's temperature, not NaN, which `select_run` would hand on as
+    today's liquid run had that mode taken the column. The fit has not been seen to place a wall there, so it is placed
+    there by hand, on the bridge over slurry; no floating-point error or warning is raised."""
+    from reentry_model.shared import spray
+    cols = bridge_over_slurry()
+    top = dp.Wall(floor=np.array([True]), index=np.array([0]), depth=cols.z[:, 0].copy(), speed=cols.u[:, 0].copy(),
+                  re_f=np.array([0.1]))
+    monkeypatch.setattr(mp, "place_wall", lambda p, nu: top)
+    with strict():
+        modes, rec = mp.profile_modes(cols, np.array([True]), 0.8)
+        T_run = mp.select_run(np.array([spray.BRANCH_THIN]), modes, rec)
+    assert modes.resolved[0] and rec.wall_depth[0] == Z[0] and np.isnan(rec.T_gradient[0])
+    assert rec.T_driven[0] == T_run[0] == cols.T[0, 0]
+    assert modes.cap_driven[0] == pytest.approx(DZ, rel=1e-12)                # the top cell alone is that warm
+
+
 def no_modes(resolved):
     """ProfileModes with only `resolved` set (the rest NaN): what select_run and summary read beyond the record."""
     from reentry_model.shared import spray

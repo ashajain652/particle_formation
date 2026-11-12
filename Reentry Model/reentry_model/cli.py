@@ -697,11 +697,11 @@ def build_thermal(args, settings, mass, spool=None):
 
 
 def spray_model_of(args, mat):
-    """The shared spray physics with the command line's constants, for either surface model: the skins' on their
-    `dispersion_of`, the element model's always on `table` (it has no resolved profile)."""
+    """The shared spray physics with the command line's constants, for either surface model, on its `dispersion_of`: the
+    skins' spraying's setting, and `table` for the element model (it has no resolved profile), whether or not the
+    arguments have been resolved yet."""
     return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on",
-                            spray_gates=args.spray_gates, slip_band=args.slip_band == "on",
-                            dispersion=dispersion_of(args) if args.surface_model == "skin" else "table")
+                            spray_gates=args.spray_gates, slip_band=args.slip_band == "on", dispersion=dispersion_of(args))
 
 
 def skin_settings(args):

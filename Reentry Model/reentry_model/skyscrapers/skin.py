@@ -2051,6 +2051,7 @@ def flow_substeps(sk, flow, dt, cycles=None):
                                                         T_run)
             else:
                 dm, step.released_slurry = rate * flow.A_top * h, np.zeros(n)
+            # without thresholds the three-argument call of before, which a test monkeypatches with a wrapper of three
             rb = release_top(sk, dm, flow.slurry) if T_run is None else release_top(sk, dm, flow.slurry, T_run)
             step.released, step.released_H = rb.mass, rb.enthalpy
             step.released_p, step.released_solid = rb.momentum, rb.solid
@@ -2078,8 +2079,9 @@ class ReleaseBook:
     enthalpy: np.ndarray     # J (n,), at the cells' own specific enthalpies
     momentum: np.ndarray     # kg m/s (n, 3), at the cells' own velocities: the droplets' momentum, fact 29's sink
     solid: np.ndarray        # kg (n,): the solid in it, by the cells' liquid fractions (the droplets' solid fraction)
-    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] fully liquid,
-                             # [1] the others (sub-plan 22 Task 2)
+    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] the cells at the
+                             # mode's rate (fully liquid without thresholds), [1] the others (sub-plan 22 Task 2;
+                             # kinked-profile dispersion Task 6)
 
 
 def release_top(sk, dm, slurry=False, T_run=None):

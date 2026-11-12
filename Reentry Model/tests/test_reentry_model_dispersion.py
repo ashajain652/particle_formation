@@ -257,6 +257,36 @@ def test_the_generalised_route_agrees_with_the_standard_one(monkeypatch):
             assert_same_roots(general[i, j, :n + 2], want, atol=1e-10 * np.max(np.abs(want)))
 
 
+def test_breakpoints_that_change_nothing_keep_every_root_and_add_one_at_their_speed():
+    """A value test with more than one breakpoint (final review, Task 1's parked minor): a three-segment profile with a
+    wall and two density steps, and the same profile with one, two and three breakpoints inserted that change nothing --
+    each on its segment's own line, with that segment's density on both sides -- up to five breakpoints in all, batched
+    together. Every original eigenvalue is kept, and each inserted breakpoint adds one real eigenvalue equal to the flow
+    speed there: with no change of slope or density across it, its pressure condition reads (U_j - c)[phi'] = 0, which
+    c = U_j satisfies with a jump in phi'. At three wavenumbers, with and without surface tension."""
+    depths, speeds, wall, rho = [0.3, 0.5], [1.0, 0.6, 0.1, 0.0], 1.5, np.array([1.0, 1.2, 1.5])
+    inserted = [0.15, 0.4, 1.0]                                          # one inside each segment
+
+    def speed_at(d):
+        return float(np.interp(d, [0.0, *depths, wall], speeds))
+
+    def with_breakpoints(extra):
+        d = sorted(depths + list(extra))
+        edges = np.array([0.0, *d, wall])
+        segment = np.searchsorted(depths, 0.5 * (edges[:-1] + edges[1:]))   # the original segment each one lies in
+        return dp.KinkedProfiles.one(d, [speed_at(x) for x in edges], wall=wall, rho=rho[segment])
+    profiles = stack(*(with_breakpoints(inserted[:m]) for m in range(4)))
+    assert profiles.count.tolist() == [2, 3, 4, 5]
+    k = np.array([0.5, 2.0, 8.0])
+    for sigma in (0.0, 0.05):
+        c = dp.broken_line_eigenvalues(profiles, k, sigma)
+        assert np.isfinite(c[0, :, :4]).all() and (c[0, :, 0].imag > 0.0).any()     # some wave grows: a real check
+        for m in range(1, 4):
+            for j in range(len(k)):
+                want = list(c[0, j, :4]) + [speed_at(x) for x in inserted[:m]]
+                assert_same_roots(c[m, j, :m + 4], want, atol=1e-11)
+
+
 # ---- the floor test and the wall (spec 6.3) ----
 
 NU_L = 1.3e-3 / 2400.0          # the liquid's kinematic viscosity, m2/s
@@ -299,7 +329,7 @@ def test_a_five_fold_drop_is_a_kink_and_a_four_fold_is_not():
 
 
 def test_the_wall_is_the_shallowest_floor_like_kink():
-    # Two kinks with the jump measured from the surface: |10 - 6| * 1 and |10 - 2| * 2 over 1.225 nu.
+    # Two kinks with the jump measured from the surface: |10 - 6| * 1 and |10 - 5.5| * 2 over 1.225 nu.
     # Kinks at both breakpoints, with slopes 4, 0.5, 0.05.
     p = dp.KinkedProfiles.one([1.0, 2.0], [10.0, 6.0, 5.5, 5.45], wall=3.0)
     assert dp.kinks(p).tolist() == [[True, True]]

@@ -703,8 +703,9 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     records after the resume have the 27 SOURCE_COLUMNS; the line before the flight names the setting, the JSON records it
     in the settings and in what was changed, and the state the resumed flight saves keeps it. Records held in memory
     (a body without a spool) are cut to their 27 columns. A state saved before the option existed (the setting removed
-    from its spray model, which then reads the class default, and the columns from its row) resumes on `table`, recorded
-    as such, and `profile` asked of it adds the columns to its rows and pads its records held in memory with nan. Resuming
+    from its spray model, which then reads the class default, the profile path's fields from its plan, whose `modes`
+    then read None, and the columns from its row) resumes on `table`, recorded as such, and `profile` asked of it adds the
+    columns to its rows -- an empty step's summary in the saved row -- and pads its records held in memory with nan. Resuming
     with nothing changed repeats the flight to the last bit (`test_the_resume_command_repeats_the_flight_...`)."""
     from reentry_model.shared import melt_profile
     columns = list(melt_profile.DISPERSION_COLUMNS)
@@ -755,6 +756,10 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     # a state saved before the option existed: table, with no columns for it
     state = restart.load(state_path)
     vars(state["run"].body.spray).pop("dispersion")                          # pickled before the setting existed
+    plan = state["run"].body.spray_plan
+    for name in ("T_run", "resolved", "profile", "modes", "record"):        # its plan too: made on no profile path
+        vars(plan).pop(name)
+    assert plan.modes is None and plan.record is None
     for key in columns:
         del state["row"][key]
     old = str(tmp_path / "old.state.pkl")
@@ -775,6 +780,10 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     doc = doc_of(str(tmp_path / "p.json"))
     assert doc["settings"]["dispersion"] == "profile" and doc["resumed_from"]["changed"] == {"--dispersion": "profile"}
     assert header(str(tmp_path / "p.csv"))[-len(columns):] == columns and len(rows_of(str(tmp_path / "p.csv"))) == 3
+    saved_row = rows_of(str(tmp_path / "p.csv"))[0]           # its plan has no modes: an empty step's summary
+    for key, value in melt_profile.summary(None, None, None, None).items():
+        assert (np.isnan(float(saved_row[key])) if np.isnan(value) else float(saved_row[key]) == value), key
+    assert np.isnan(float(saved_row["floor_like_share"])) and float(saved_row["fluid_like_columns"]) == 0.0
     got = records_of(str(tmp_path / "p" / "particles.npz"))
     assert list(got) == spray.record_columns(36)
     assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))

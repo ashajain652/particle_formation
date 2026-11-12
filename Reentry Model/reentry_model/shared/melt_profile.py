@@ -289,7 +289,7 @@ class ProfileRecord:
     wall is one straight segment); `growth` [1/s], its growth rate (0 there); and the threshold temperatures [K] of the
     two modes' release runs: `T_gradient`, that of the cell the release depth falls in, or the gas-driven mode's where
     it reaches the wall (NaN without a release depth), and `T_driven`, that of the deepest cell whose centre lies
-    strictly above the wall (NaN with none)."""
+    strictly above the wall, or the top cell's where the wall is at or above its centre."""
     wall_depth: np.ndarray
     wall_floor: np.ndarray
     floor_re: np.ndarray
@@ -363,7 +363,8 @@ def profile_modes(cols, windward, sigma):
         is_kink = kinks(p)
         has = is_kink.any(axis=1)
         first = np.argmax(is_kink, axis=1)
-        T_driven = _temperature_above(sub, wall.depth)
+        # the top cell's where the wall is at or above its centre: a NaN threshold would mean today's liquid run
+        T_driven = np.where(wall.depth <= sub.z[:, 0], sub.T[:, 0], _temperature_above(sub, wall.depth))
         T_gradient = np.where(release >= wall.depth, T_driven, _temperature_at(sub, release))
         growth[r], k[r], wall_depth[r] = g, kk, wall.depth
         nu_eff[r] = couette_viscosity(sub, wall.depth)[0]

@@ -1110,6 +1110,23 @@ def test_dispersion_is_profile_by_default_on_spraying_skin_runs_and_reaches_the_
     assert model.dispersion == "table" and "dispersion" not in vars(model)
 
 
+def test_spray_model_of_takes_the_dispersion_from_dispersion_of_alone():
+    """`spray_model_of` reads the setting from `dispersion_of` alone (final review, Task 8's Minor 6), so it does not depend
+    on `cmd_run` having written the run's resolved surface model into the arguments first: on the unresolved arguments of
+    a spraying skin run (no --surface-model given) it is `profile`, with --dispersion table `table`, and on the element
+    model and the heat-only skins `table`."""
+    from types import SimpleNamespace
+    from reentry_model.shared import material
+    mat = SimpleNamespace(liquid=material.LiquidProperties(2400.0, 1.3e-3, 0.8))
+    p = cli.build_parser()
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).surface_model is None
+    assert cli.spray_model_of(p.parse_args(melt), mat).dispersion == "profile"
+    assert cli.spray_model_of(p.parse_args(melt + ["--dispersion", "table"]), mat).dispersion == "table"
+    for argv in (melt + ["--surface-model", "elements"], melt + ["--skin-flow", "off"]):
+        assert cli.spray_model_of(p.parse_args(argv), mat).dispersion == "table"
+
+
 def test_dispersion_is_refused_off_the_skins_spraying(tmp_path, capsys):
     """--dispersion given to a run that is not a spraying skin run -- the element model, the heat-only skins (by their flow
     or by their removal), skins that do not melt, a run without a thermal model -- is refused with exit code 2 and a message
