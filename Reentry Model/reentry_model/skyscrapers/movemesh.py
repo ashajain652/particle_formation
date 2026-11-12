@@ -185,6 +185,15 @@ def corner_frame(points, faces, corners):
     return normal / np.linalg.norm(normal, axis=1)[:, None], area[corners]
 
 
+def zone_ratio_min(mesh, depth=DEFORM_DEPTH):
+    """The smallest radius ratio among the elements with a node within `depth` of a surface node: the elements a move of
+    the corners deforms (ZoneMap). Below RATIO_MIN every move that touches them is refused (`MovingMesh.move`)."""
+    from scipy.spatial import cKDTree
+    corners = np.unique(mesh.surface().faces)
+    near = cKDTree(mesh.points[corners]).query(mesh.points)[0] < depth
+    return float(radius_ratio(mesh.points, mesh.tets[near[mesh.tets].any(axis=1)]).min())
+
+
 def surface_edges(faces):
     """The unique edges of a triangulation, (ne, 2), each with its smaller node id first."""
     return np.unique(np.sort(np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1), axis=0)

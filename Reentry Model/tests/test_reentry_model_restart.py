@@ -252,7 +252,7 @@ def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
     it; `off` asks nothing of the flight, so that goes through."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
-    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]   # without --melt on and --skin-flow-cycles 2
     assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     state = str(tmp_path / "dry.state.pkl")
     with pytest.raises(SystemExit) as exc:
@@ -332,7 +332,7 @@ def test_the_melting_rule_is_refused_on_a_resume_of_a_flight_that_does_not_melt(
     as `run` refuses it; `moves` asks nothing of the flight, so that goes through (sub-plan 22 Task 5d)."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
-    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]              # without --melt on and --skin-flow-cycles 2
+    argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]   # without --melt on and --skin-flow-cycles 2
     assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     state = str(tmp_path / "dry.state.pkl")
     with pytest.raises(SystemExit) as exc:
@@ -662,7 +662,7 @@ def test_resuming_with_spray_gates_before_sets_them_on_the_spray_model_and_a_sta
     doc = json.load(open(str(tmp_path / "b.json")))
     assert doc["settings"]["spray_gates"] == "before" and doc["resumed_from"]["changed"] == {"--spray-gates": "before"}
     k = FLIGHT.index("--melt")
-    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]
     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
@@ -700,7 +700,7 @@ def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_with
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--slip-band", "off"]) == 0
     assert json.load(open(str(tmp_path / "off.json")))["resumed_from"]["changed"] == {"--slip-band": "off"}
     k = FLIGHT.index("--melt")
-    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+    dry = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "skin", "--quiet"]
     assert cli.main(dry + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "dry", "--save-state-at", "0.05"]) == 0
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc:
