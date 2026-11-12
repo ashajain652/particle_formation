@@ -452,10 +452,11 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
 - **Same results and cost.** With `--dispersion table` a spraying skin run is what it was before the option existed, to the
   last bit, apart from the JSON's new key: the three cases of `Reentry Model/analysis/skyscrapers_port/same_results.py`
   (a 0.125 s skin flight run with `--dispersion table`, the same flight on the element model, and a 22.6 s resume of a
-  100 mm flight state saved before the option existed) differed from their baseline only in that key (2026-11-12). On
-  the saved 50 mm flight state at 178.5 s the profile path adds about 0.79 s to a macro step's spray plan (a median
-  0.815 s against 0.025 s on `table`, five calls each), about 0.023 % of that flight's median macro step of 3480 s of wall
-  time, against the design's budget of 5 % (`Reentry Model/analysis/kinked_dispersion/plan_cost.py`; measured once).
+  100 mm flight state saved before the option existed) differed from their baseline only in that key (2026-11-12, and
+  again after the final review's fix round the same day). On the saved 50 mm flight state at 178.5 s the profile path
+  adds about 0.79 s to a macro step's spray plan (a median 0.815 s against 0.025 s on `table`, five calls each), about
+  0.023 % of that flight's median macro step of 3480 s of wall time, against the design's budget of 5 %
+  (`Reentry Model/analysis/kinked_dispersion/plan_cost.py`; measured once).
 
 ## Droplet stage — `reentry_model.droplet_reentry`
 

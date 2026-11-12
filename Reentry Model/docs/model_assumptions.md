@@ -851,7 +851,9 @@ Of the 22 files compared on each side, the only differences were the new `disper
 skin flight's JSON (`settings.skin.dispersion`) and in the resume's (`settings.dispersion`). Every history column, every
 droplet record and the whole of the element model's output were identical to the last bit (the comparison leaves out
 only the wall-clock columns `wall_*` and `runtime_s`). `--dispersion table` is therefore Girin's theory exactly as it
-was.
+was. The comparison was repeated the same day after the final review's fix round (the record columns renamed, the two
+history columns that place the walls against the 906.4 K isotherm added, and the gas-driven threshold's guard at the top
+cell), with the same result: the same 22 files, differing only in those two keys.
 
 **Cost (measured once, 2026-11-12).** The spray plan is evaluated once per macro step, at its start.
 `analysis/kinked_dispersion/plan_cost.py` repeated it five times on each setting on the saved 50 mm flight state

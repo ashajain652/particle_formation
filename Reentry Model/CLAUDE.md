@@ -78,15 +78,16 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
 
 Each project is tested from inside its own folder; the three `tests/` folders each have a `helpers.py`,
 so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
-default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the skyscrapers
-port the unit tier, `pytest tests -m "not drama and not reference" -n 4`, gave 702 passed and 1 skipped in about
-24 minutes across four processes (the skip is the FEniCSx module, which needs `dolfinx`). The port's own tools
+default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. On the kinked-dispersion branch
+(2026-11-12, after the final review's fix round) the unit tier, `pytest tests -m "not drama and not reference" -n 4`,
+gave 933 passed and 1 skipped; it takes about 35 minutes across four processes on a quiet machine (61 minutes were
+measured that day under heavy load). The skip is the FEniCSx module, which needs `dolfinx`. The port's own tools
 have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 702 passed, 1 skipped, ~24 min on four
+                                                          # the package's unit tier: 933 passed, 1 skipped, ~35 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
