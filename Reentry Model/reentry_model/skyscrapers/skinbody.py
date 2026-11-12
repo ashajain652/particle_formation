@@ -121,7 +121,7 @@ import types
 import numpy as np
 
 from . import columns as columns_mod
-from .. import film as film_mod
+from ..shared import lubrication
 from ..shared import material as material_mod
 from . import movemesh
 from ..shared import rheology
@@ -471,7 +471,7 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     windward = theta <= 0.5 * np.pi
     w_n = flow.deceleration * np.maximum(np.cos(theta), 0.0)
     delta_m = spray_mod.spray_layer(flow, liq, model.slip_band, theta, radius if nose_radius is None else nose_radius)
-    v_s = film_mod.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
+    v_s = lubrication.lubrication(flow.tau, flow.G, F, delta_m, liq.mu, b_layer=F)[0]
     extent = region_extent(edges, L > 0.0, A_top)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     cap = F if slurry else L
@@ -534,7 +534,7 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
 
     def layer(mu):
         d = spray_mod.spray_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA), model.slip_band, theta_rows, nose)
-        v, _, shear, _ = film_mod.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
+        v, _, shear, _ = lubrication.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
         return d, v, np.minimum(shear, rheology.GAMMA_MAX)
 
     gamma = np.zeros(rows.size)

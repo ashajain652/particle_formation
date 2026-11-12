@@ -41,7 +41,7 @@ def test_data_paths_resolve():
 
 
 SHARED_DIR = os.path.join(PROJECT_ROOT, "reentry_model", "shared")
-SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common"])   # the 21 modules besides __init__.py
+SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication"])   # the 22 modules besides __init__.py
 
 
 def _outside_shared(node, own_name, shared_names):
@@ -73,7 +73,7 @@ def test_shared_modules_import_nothing_outside_shared_statically():
     level 1 (`from . import x`, `from .x import y`) must name shared modules, absolute ones must name reentry_model.shared."""
     paths = sorted(glob.glob(os.path.join(SHARED_DIR, "*.py")))
     names = [os.path.basename(p)[:-3] for p in paths]
-    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 22
+    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 23
     shared_names = set(names)
     violations, scanned_imports = [], 0
     for path, name in zip(paths, names):
@@ -118,7 +118,8 @@ def test_shared_package_imports_neither_architecture():
         banned={"reentry_model." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading", "film",
                                                "restart", "coupled", "cli", "body", "skyscrapers")}
         | {"reentry_model.skyscrapers." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading",
-                                                      "restart", "coupled", "body")})
+                                                      "restart", "coupled", "body")}
+        | {"reentry_model.skyscrapers.elements", "reentry_model.skyscrapers.elements.film"})
     out = subprocess.run([PY, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True).stdout.strip()
     assert out == "[]", out
 

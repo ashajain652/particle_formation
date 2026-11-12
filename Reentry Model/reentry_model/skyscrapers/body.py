@@ -200,7 +200,7 @@ class MeltingBody(ThermalBody):
         if not material.melts or material.liquid is None:
             raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075, AA7075_range or AA7075_scheil)")
         super().__init__(mesh, material, solver, mass_kg, T0, emissivity, T_ambient, v_hat)
-        from .. import film as film_mod
+        from .elements import film as film_mod
         from ..shared import spray as spray_mod, surface_flow
         self.settings = settings or MeltSettings()
         self.flow = flow or surface_flow.SurfaceFlow()

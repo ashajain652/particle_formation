@@ -82,3 +82,29 @@ def test_the_scan_resolves_relative_imports(tmp_path):
     got = _resolved_imports(str(f), "reentry_model.shared")
     assert "reentry_model.skyscrapers" in got and "reentry_model.skyscrapers.body" in got
     assert "reentry_model.shared.y" in got
+
+
+def test_film_is_split_into_lubrication_and_runoff():
+    """Task 3: the old film path is the element model's film module; the lubrication formulas live in shared."""
+    old = importlib.import_module("reentry_model.film")
+    new = importlib.import_module("reentry_model.skyscrapers.elements.film")
+    lub = importlib.import_module("reentry_model.shared.lubrication")
+    assert old is new
+    assert old.lubrication is lub.lubrication
+    assert old.deep_flux is lub.deep_flux
+    assert old.Runoff.__module__ == "reentry_model.skyscrapers.elements.film"
+    assert lub.lubrication.__module__ == "reentry_model.shared.lubrication"
+
+
+def test_shared_lubrication_imports_only_numpy():
+    path = os.path.join(PROJECT_ROOT, "reentry_model", "shared", "lubrication.py")
+    assert os.path.exists(path)
+    with open(path) as fh:
+        tree = ast.parse(fh.read())
+    mods = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mods += [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            mods.append(("." * node.level) + (node.module or ""))
+    assert mods == ["numpy"]
