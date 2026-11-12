@@ -332,12 +332,18 @@ to the last bit.
 
 `reentry_model/skyscrapers/skin.py`:
 
-- `SkinSettings` gains `rheology` = "composite" and `structure_exponent` = 2.0, validated against `LAWS` and
-  `STRUCTURE_EXPONENTS`.
+- `SkinSettings` gains `rheology` and `structure_exponent` = 2.0, validated against `LAWS` and
+  `STRUCTURE_EXPONENTS`. The dataclass's own default for `rheology` is "bridge", and the run command's default is
+  "composite" (`DEFAULT_LAW`). This was amended while planning, on 2026-11-12, from "composite" for the dataclass. The
+  reasons:
+  - Every existing test that builds `SkinSettings()` keeps today's numbers.
+  - A settings object unpickled from a state saved before this change has no `rheology` in its `__dict__`, so it reads
+    the class default "bridge", as this section requires.
+  - A class default of "composite" would silently put such a state on the new law.
 - `cell_viscosity(sk, gamma)` dispatches on `sk.settings.rheology`.
 - `Skins` gains `shear_rate` (section 5.1).
-- A `Skins` or `SkinSettings` loaded from a state saved before this change reads as `bridge` for the law and zeros for
-  the rates. How it does this is the builder's choice; one option is a default through `getattr` or a `__setstate__`.
+- A `Skins` or `SkinSettings` loaded from a state saved before this change reads as `bridge` for the law (through the
+  dataclass default) and zeros for the rates (through a `Skins.__setstate__`).
 
 Command line (`cli.py`):
 
@@ -539,5 +545,7 @@ Calls made in this design that Asha did not decide (she should check these):
 - `resume` defaults to `bridge` for states saved before the option existed (section 6).
 - Inside a sub-step, the passes continue from the previous pass's rate, so a breakdown found in one pass stands
   (section 5.3).
+- The library default (`SkinSettings()`) is the bridge law; the run command's default is the composite law (section
+  6, amended while planning).
 - Under `composite`, code needing a cell's working viscosity reads its stored rate; with `kinked-dispersion`,
   whichever branch merges second adapts (section 6).
