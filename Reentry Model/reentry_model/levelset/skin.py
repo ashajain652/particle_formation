@@ -31,6 +31,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from reentry_model.shared.thermal import SIGMA_SB
+
 SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (design 20.6; skyscrapers 6.2)
 MERGE_BELOW = 0.5          # a cell thinner than this times its target joins a neighbour (skyscrapers' rule)
 SPLIT_ABOVE = 1.5          # a cell thicker than this times its target is split in two (skyscrapers' rule)
@@ -38,6 +40,12 @@ REGRID_PASSES = 64         # merge-or-split rounds of one regrid at most (skyscr
 DEPTH_NEWTON_MAX = 100     # iterations of the cross-section's depth solve at most (it takes about five)
 DEPTH_NEWTON_RTOL = 4.0 * np.finfo(float).eps   # the depth solve stops when a step is below this times the depth
                                                 # or the volume's residual below this times the volume (round-off)
+NEWTON_TOL = 1.0e-6        # K: a heat sub-step has converged when no cell moves by more than this (skyscrapers' value)
+NEWTON_MAX = 40            # Newton iterations of a heat sub-step at most (skyscrapers' value)
+LINE_SEARCH_MAX = 12       # halvings of a Newton step before it is taken anyway (skyscrapers' value)
+DZ_FLOOR = 1.0e-12         # m: the conduction length of a vanishing cell
+DK_STEP = 1.0e-3           # K: half-width of the central difference giving dk/dT for the Newton Jacobian
+PROFILE_POINTS = 8         # Gauss-Legendre points of the enthalpy a draw averages along the volume's profile
 
 
 @dataclass
@@ -95,6 +103,45 @@ def _depth_of_volume(v, k1, k2):
     raise RuntimeError("the skin's cross-section depth solve did not converge in {} iterations".format(DEPTH_NEWTON_MAX))
 
 
+@dataclass
+class HeatBook:
+    """What one heat sub-step (`Skins.conduct`) did, per column [J]: the convective heat taken in at the top, the heat
+    radiated from it, the heat conducted into the volume through the base (the residual of the books, so they close
+    exactly whatever the iteration error), the heat gained sideways (zero: no sideways conduction in the level set's
+    skins yet) and, in a trial pass, the base heat's derivative with respect to the base temperature [J/K]."""
+    E_top: np.ndarray
+    E_rad: np.ndarray
+    E_base: np.ndarray
+    E_side: np.ndarray
+    dE_base_dTb: np.ndarray = None
+
+
+def _tridiagonal(lower, diag, upper, rhs):
+    """Rows of tridiagonal systems (n, K) solved by the Thomas algorithm: row j reads
+    lower[:, j] x[:, j-1] + diag[:, j] x[:, j] + upper[:, j] x[:, j+1] = rhs[:, j] (lower[:, 0], upper[:, -1] unused)."""
+    n, K = diag.shape
+    c, g, x = np.zeros((n, K)), np.zeros((n, K)), np.zeros((n, K))
+    den = diag[:, 0]
+    c[:, 0], g[:, 0] = upper[:, 0] / den, rhs[:, 0] / den
+    for j in range(1, K):
+        den = diag[:, j] - lower[:, j] * c[:, j - 1]
+        c[:, j] = upper[:, j] / den
+        g[:, j] = (rhs[:, j] - lower[:, j] * g[:, j - 1]) / den
+    x[:, K - 1] = g[:, K - 1]
+    for j in range(K - 2, -1, -1):
+        x[:, j] = g[:, j] - c[:, j] * x[:, j + 1]
+    return x
+
+
+def _profile_points(T_b, g, s0, s1, cap):
+    """The Gauss-Legendre points' temperatures [K] (n, PROFILE_POINTS) along T(s) = T_b - g s over the depths s0 to s1
+    [m] below a base, each capped at `cap`, with the weights (summing to 1) and whether each point lies below the cap."""
+    x, w = np.polynomial.legendre.leggauss(PROFILE_POINTS)
+    s = 0.5 * (s0 + s1)[:, None] + 0.5 * (s1 - s0)[:, None] * x[None, :]
+    T = T_b[:, None] - g[:, None] * s
+    return np.minimum(T, cap), 0.5 * w, T < cap
+
+
 class Skins:
     """n columns of cells (module docstring). `material` gives every property; `area` (n,) the top areas [m2];
     `kappa` (n, 2) phi's principal curvatures [1/m], positive convex. The columns start empty (`fill` or `install`)."""
@@ -107,6 +154,8 @@ class Skins:
         self.rho_s = float(material.rho)
         liquid = getattr(material, "liquid", None)
         self.rho_l = float(liquid.rho) if liquid is not None else self.rho_s   # a material without a liquid never swells
+        self.dH = None             # (n, K) J/K, each cell's dH/dT_b while a trial pass is open (`conduct`), else None
+        self.momentum_out = np.zeros((self.n, 3))   # kg m/s, what the last `remove_feed` took with the metal
         self.install(np.zeros((self.n, 1)), np.zeros((self.n, 1)), np.zeros(self.n, dtype=np.int64))
 
     # -- storage ----------------------------------------------------------------------------------------------------
@@ -131,6 +180,7 @@ class Skins:
         U = np.zeros(m.shape + (3,)) if U is None else np.array(U, dtype=float).reshape(m.shape + (3,))
         self.m, self.H = np.where(valid, m, 0.0), np.where(valid, H, 0.0)
         self.U, self.count = np.where(valid[..., None], U, 0.0), count
+        self._end_trial()
         self._trim()
 
     def fill(self, mass, T):
@@ -152,12 +202,16 @@ class Skins:
             self.m = np.pad(self.m, ((0, 0), (0, extra)))
             self.H = np.pad(self.H, ((0, 0), (0, extra)))
             self.U = np.pad(self.U, ((0, 0), (0, extra), (0, 0)))
+            if self.dH is not None:
+                self.dH = np.pad(self.dH, ((0, 0), (0, extra)))
 
     def _trim(self):
         """Drop padding beyond the longest column (keeping at least one cell of width)."""
         K = max(int(self.count.max()) if self.n else 0, 1)
         if K < self.m.shape[1]:
             self.m, self.H, self.U = self.m[:, :K], self.H[:, :K], self.U[:, :K]
+            if self.dH is not None:
+                self.dH = self.dH[:, :K]
 
     def totals(self):
         """The books per column: (mass [kg] (n,), enthalpy above T_REF [J] (n,), momentum [kg m/s] (n, 3)), summed
@@ -277,6 +331,10 @@ class Skins:
         np.add.at(m, flat, m0[valid])
         np.add.at(H, flat, self.H[rows][valid])
         np.add.at(P, flat, (m0[..., None] * self.U[rows])[valid])
+        if self.dH is not None:
+            dH = np.zeros(nr * K)
+            np.add.at(dH, flat, self.dH[rows][valid])
+            self.dH[rows] = dH.reshape(nr, K)
         U = np.divide(P, m[:, None], out=np.zeros_like(P), where=m[:, None] > 0.0)
         self.m[rows], self.H[rows] = m.reshape(nr, K), H.reshape(nr, K)
         self.U[rows], self.count[rows] = U.reshape(nr, K, 3), start.sum(axis=1)
@@ -295,11 +353,18 @@ class Skins:
         share = 1.0 / np.maximum(reps, 1)
         m, H, U = np.zeros((nr, K2)), np.zeros((nr, K2)), np.zeros((nr, K2, 3))
         m0, H0, U0 = self.m[rows, :K] * share, self.H[rows, :K] * share, self.U[rows, :K]
+        trial = self.dH is not None
+        if trial:
+            dH, dH0 = np.zeros((nr, K2)), self.dH[rows, :K] * share
         for half in (0, 1):
             sel = valid & (half < reps)
             m[rr[sel], dest[sel] + half] = m0[sel]
             H[rr[sel], dest[sel] + half] = H0[sel]
             U[rr[sel], dest[sel] + half] = U0[sel]
+            if trial:
+                dH[rr[sel], dest[sel] + half] = dH0[sel]
+        if trial:
+            self.dH[rows] = dH
         self.m[rows], self.H[rows], self.U[rows], self.count[rows] = m, H, U, count
 
     # -- the bottom and the top -------------------------------------------------------------------------------------
@@ -345,6 +410,256 @@ class Skins:
         self.m[i] = np.where(keep, np.take_along_axis(m0, src, axis=1), 0.0)
         self.H[i] = np.where(keep, np.take_along_axis(self.H[i], src, axis=1), 0.0)
         self.U[i] = np.where(keep[..., None], np.take_along_axis(self.U[i], src[..., None], axis=1), 0.0)
+        if self.dH is not None:
+            self.dH[i] = np.where(keep, np.take_along_axis(self.dH[i], src, axis=1), 0.0)
         self.count[i] = count
         self._trim()
         return mass, H, P
+
+    # -- trial passes -----------------------------------------------------------------------------------------------
+    def state(self):
+        """A copy of the cells, for a trial pass to be undone with `set_state`."""
+        return self.m.copy(), self.H.copy(), self.U.copy(), self.count.copy()
+
+    def set_state(self, state):
+        """The cells as `state` saved them; an open trial pass is closed."""
+        m, H, U, count = state
+        self.m, self.H, self.U, self.count = m.copy(), H.copy(), U.copy(), count.copy()
+        self._end_trial()
+
+    def _end_trial(self):
+        self.dH = None
+        self._trial_E = self._trial_dE = self._trial_Tb = None
+
+    @property
+    def S(self):
+        """The trial pass's sensitivity dT/dT_b of every cell (n, K), 0 beyond each count; None outside a trial. Carried
+        as each cell's dH/dT_b (`dH`, extensive, so that merges, splits, takes and draws keep it exactly) and read here
+        as dH / (m cp_eff(T))."""
+        if self.dH is None:
+            return None
+        valid, T = self.valid, self.T()
+        S = np.zeros(self.m.shape)
+        S[valid] = self.dH[valid] / (self.m[valid] * self.material.cp_eff(T[valid]))
+        return S
+
+    def base_law(self, dt):
+        """The linear base law of the trial pass now open, (a [W], b [W/K]) per column: the heat into the volume over
+        the pass, E_base / dt = a + b T_b, from the pass's summed base heat and its derivative with respect to the base
+        temperature (the skyscrapers' trial pass), the slope clipped at zero so that the volume's matrix keeps its
+        diagonal dominance (what the clip misses is the interface mismatch's to book). `dt` [s] is the pass's length;
+        T_b the base temperature its sub-steps held. Closes the trial (the caller restores the cells with `set_state`)."""
+        if self._trial_E is None:
+            raise ValueError("base_law needs a trial pass: conduct(..., trial=True) first")
+        b = np.minimum(self._trial_dE / dt, 0.0)
+        a = self._trial_E / dt - b * self._trial_Tb
+        self._end_trial()
+        return a, b
+
+    # -- heat through the depth -------------------------------------------------------------------------------------
+    def conduct(self, dt, q_top, T_amb, emissivity, T_b, trial=False):
+        """One implicit (backward-Euler) heat sub-step dt [s] of every column through its depth: the convective flux
+        q_top [W/m2] over the top area A(0) in at the top cell, radiation emissivity * SIGMA_SB (T0^4 - T_amb^4) over
+        the same area out of it (the shared Stefan-Boltzmann constant), conduction between cells through harmonic
+        conductances A(z_i) / (dz_i / 2k_i + dz_j / 2k_j) with the cross-section at the interface's depth z_i, and the
+        base held at T_b [K] through the bottom half-cell, A(z_bottom) k / (dz / 2) (T_b None: an adiabatic base).
+        The cells' thicknesses (and so the interface depths) are those at the sub-step's start. Newton in the
+        temperature with a backtracking line search per column on the residual's norm, the Jacobian with the
+        conductivity's slope (dk/dT by a central difference of the material's k). An empty column passes its heat
+        straight to the base.
+
+        With trial=True the sub-step belongs to a trial pass (opened by the first such call, closed by `base_law` or
+        `set_state`): each cell's dH/dT_b is carried from the last sub-step and updated by the converged step's own
+        linearisation, J S = dH_old / dt + G_b e_bottom, so the book's dE_base_dTb is the exact derivative of E_base
+        for the linearised step (and of the pass, through the carried dH). Returns a HeatBook."""
+        n = self.n
+        valid, rows = self.valid, np.arange(n)
+        has = self.count > 0
+        last = np.maximum(self.count - 1, 0)
+        mat = self.material
+        q = np.broadcast_to(np.asarray(q_top, dtype=float), (n,)) * self.area
+        es = np.broadcast_to(np.asarray(emissivity, dtype=float), (n,)) * SIGMA_SB * self.area
+        T_amb = np.broadcast_to(np.asarray(T_amb, dtype=float), (n,))
+        base = T_b is not None
+        T_b = np.broadcast_to(np.asarray(T_b if base else 0.0, dtype=float), (n,))
+        if trial and self.dH is None:
+            self.dH = np.zeros(self.m.shape)
+            self._trial_E, self._trial_dE = np.zeros(n), np.zeros(n)
+        elif not trial and self.dH is not None:
+            raise ValueError("a trial pass is open: close it with base_law or set_state before a real sub-step")
+
+        T_old = self.T()                                  # once per sub-step: the material's inversion is the cost
+        fill = np.where(has, T_old[rows, last], 1.0)
+        T_old = np.where(valid, T_old, fill[:, None])     # padded cells sit at their column's bottom temperature
+        dz = np.where(valid, np.maximum(self.dz(T_old), DZ_FLOOR), 1.0)
+        z_bot = np.cumsum(np.where(valid, dz, 0.0), axis=1)
+        link = valid[:, 1:]
+        A_i = np.where(link, self.cross_section(z_bot[:, :-1]), 1.0)          # at each interface's depth
+        A_b = self.cross_section(z_bot[rows, last][:, None])[:, 0] if base else np.zeros(n)
+        bottom = has & base
+        m, E_old = self.m, self.H
+
+        def system(T):
+            """The residual R, the Jacobian's (lower, diag, upper) and the base conductance at T."""
+            h, cp, k = mat.enthalpy(T), mat.cp_eff(T), mat.k(T)
+            kp = (mat.k(T + DK_STEP) - mat.k(T - DK_STEP)) / (2.0 * DK_STEP)
+            r = 0.5 * dz / k
+            G = np.where(link, A_i / (r[:, :-1] + r[:, 1:]), 0.0)
+            dT = T[:, :-1] - T[:, 1:]
+            F = G * dT                                                          # down through each interface
+            dG = G * G / A_i * 0.5                                              # dG/dk_j = dG * dz_j / k_j^2
+            dFl = G + dT * dG * dz[:, :-1] * kp[:, :-1] / k[:, :-1] ** 2
+            dFr = -G + dT * dG * dz[:, 1:] * kp[:, 1:] / k[:, 1:] ** 2
+            Tl, kl, kpl, dzl = T[rows, last], k[rows, last], kp[rows, last], dz[rows, last]
+            Gb = np.where(bottom, A_b * kl / (0.5 * dzl), 0.0)
+            Fb = Gb * (Tl - T_b)
+            dFb = Gb + np.where(bottom, (Tl - T_b) * A_b * kpl / (0.5 * dzl), 0.0)
+            R = (m * h - E_old) / dt
+            R[:, :-1] += F
+            R[:, 1:] -= F
+            R[:, 0] -= q - es * (T[:, 0] ** 4 - T_amb ** 4)
+            R[rows, last] += Fb
+            D = m * cp / dt
+            D[:, :-1] += dFl
+            D[:, 1:] -= dFr
+            D[:, 0] += 4.0 * es * T[:, 0] ** 3
+            D[rows, last] += dFb
+            lower, upper = np.zeros_like(D), np.zeros_like(D)
+            upper[:, :-1] = dFr
+            lower[:, 1:] = -dFl
+            return (np.where(valid, R, 0.0), np.where(valid, lower, 0.0), np.where(valid, D, 1.0),
+                    np.where(valid, upper, 0.0), Gb, cp)
+
+        T = T_old
+        R, lo, D, up, Gb, cp = system(T)
+        moved = np.zeros(n)
+        for _ in range(NEWTON_MAX):
+            dT = _tridiagonal(lo, D, up, -R)
+            r0 = np.sqrt((R * R).sum(axis=1))
+            lam = np.ones(n)
+            for _ in range(LINE_SEARCH_MAX):
+                T_try = T + lam[:, None] * dT
+                R_try, lo_t, D_t, up_t, Gb_t, cp_t = system(T_try)
+                moved = np.abs(T_try - T).max(axis=1)
+                worse = (np.sqrt((R_try * R_try).sum(axis=1)) > (1.0 - 1e-4 * lam) * r0) & (moved > NEWTON_TOL)
+                if not worse.any():
+                    break
+                lam = np.where(worse, 0.5 * lam, lam)
+            T, R, lo, D, up, Gb, cp = T_try, R_try, lo_t, D_t, up_t, Gb_t, cp_t
+            if moved.max() <= NEWTON_TOL:
+                break
+        else:
+            raise RuntimeError("a skin heat sub-step did not converge in {} iterations (last change {:.2e} K)".format(
+                NEWTON_MAX, moved.max()))
+        E_new = np.where(valid, m * mat.enthalpy(T), 0.0)
+        E_top = q * dt
+        E_rad = np.where(has, es * (T[:, 0] ** 4 - T_amb ** 4) * dt, 0.0)
+        E_side = np.zeros(n)
+        E_base = E_top - E_rad + E_side - (E_new.sum(axis=1) - E_old.sum(axis=1))
+        book = HeatBook(E_top, E_rad, E_base, E_side)
+        if trial:
+            rhs = self.dH / dt
+            rhs[rows, last] += Gb                                  # -dR/dT_b: the base's pull on the bottom cell
+            S = _tridiagonal(lo, D, up, np.where(valid, rhs, 0.0))   # the converged step's own Jacobian
+            dH_new = np.where(valid, m * cp * S, 0.0)
+            dE = np.where(has, -4.0 * es * T[:, 0] ** 3 * S[:, 0] * dt, 0.0) - (dH_new - self.dH).sum(axis=1)
+            book.dE_base_dTb = dE
+            self.dH = dH_new
+            self._trial_E += E_base
+            self._trial_dE += dE
+            self._trial_Tb = np.array(T_b, dtype=float)
+        self.H = E_new
+        return book
+
+    # -- removal, draw and hand-down --------------------------------------------------------------------------------
+    def remove_feed(self):
+        """The flow-off removal (the plates' case): the contiguous top cells at or above the material's T_feed leave,
+        with their momentum (kept in `momentum_out`). Returns (mass [kg], enthalpy [J]) per column."""
+        hot = self.valid & (self.T() >= self.material.T_feed)
+        k = np.cumprod(hot, axis=1).sum(axis=1)
+        mass, H = np.zeros(self.n), np.zeros(self.n)
+        self.momentum_out = np.zeros((self.n, 3))
+        i = np.flatnonzero(k > 0)
+        if len(i):
+            mass[i], H[i], self.momentum_out[i] = self.take_top(i, k[i])
+        return mass, H
+
+    def base_area(self):
+        """The cross-section [m2] (n,) at each column's bottom, A(z_bottom); A0 for an empty column."""
+        return self.cross_section(self.thickness()[:, None])[:, 0]
+
+    def minimum_mass(self):
+        """Each column's minimum mass [kg] (n,): rho_s A(z_bottom) stub, a stub of solid metal over the base's
+        cross-section (the skyscrapers' minimum as flown, without Girin's delta_m term)."""
+        return self.rho_s * self.base_area() * self.settings.stub
+
+    def draw(self, T_b, g_base, m_min, s0=0.0):
+        """A column below m_min [kg] takes the shortfall at its bottom from the volume: rigid metal whose specific
+        enthalpy is the average, by PROFILE_POINTS-point Gauss-Legendre, of h along the volume's profile
+        T(s) = T_b - g_base s [K, K/m] capped at the material's T_rigid, over the depths s0 to s0 + dd below the base,
+        dd = shortfall / (rho_s A(z_bottom)) (the layer it takes, as solid). Returns (mass [kg], enthalpy [J]) per
+        column; in a trial pass the drawn metal carries its enthalpy's derivative with respect to T_b."""
+        n = self.n
+        T_b = np.broadcast_to(np.asarray(T_b, dtype=float), (n,)).copy()
+        g = np.broadcast_to(np.asarray(0.0 if g_base is None else g_base, dtype=float), (n,)).copy()
+        m_min = np.broadcast_to(np.asarray(m_min, dtype=float), (n,))
+        s0 = np.broadcast_to(np.asarray(s0, dtype=float), (n,)).copy()
+        short = np.maximum(m_min - self.m.sum(axis=1), 0.0)
+        H = np.zeros(n)
+        i = np.flatnonzero(short > 0.0)
+        if not len(i):
+            return short, H
+        dd = short[i] / (self.rho_s * self.base_area()[i])
+        T, w, below = _profile_points(T_b[i], g[i], s0[i], s0[i] + dd, self.material.T_rigid)
+        h = (self.material.enthalpy(T) * w).sum(axis=1)
+        H[i] = short[i] * h
+        self.add_bottom(i, short[i], H[i])
+        if self.dH is not None:
+            self._width(1)
+            dh = (self.material.cp_eff(T) * below * w).sum(axis=1)
+            self.dH[i, self.count[i] - 1] += short[i] * dh
+        return short, H
+
+    def anchored(self):
+        """The rigid cells joined to the floor (n, K): each column's unbroken run of cells at or below the material's
+        T_rigid counted from its bottom cell up. A column whose bottom cell is not rigid has none."""
+        return self._anchored(self.T())
+
+    def _anchored(self, T):
+        valid, K = self.valid, self.m.shape[1]
+        j = np.arange(K)[None, :]
+        up = np.clip(self.count[:, None] - 1 - j, 0, K - 1)                       # the j-th cell from the bottom
+        rigid_up = np.take_along_axis(valid & (T <= self.material.T_rigid), up, axis=1) & (j < self.count[:, None])
+        run = np.cumprod(rigid_up, axis=1).sum(axis=1)
+        return valid & (j >= (self.count - run)[:, None])
+
+    def crust(self):
+        """Rigid cells (at or below T_rigid) not joined to the floor: non-rigid metal lies between them and it."""
+        T = self.T()
+        return self.valid & (T <= self.material.T_rigid) & ~self._anchored(T)
+
+    def hand_down(self, stub):
+        """The anchored cells lying wholly below the shallowest `stub` [m] of their anchored run leave the skin for the
+        volume, whole and at their own enthalpy (design 20.6, tightened 2026-11-10); a crust never goes, and a cell
+        reaching above that depth stays. Returns (mass [kg], enthalpy [J], volume [m3]) per column, the volume each
+        cell's m / rho(T), the span it filled under the column's cross-section."""
+        T = self.T()
+        valid = self.valid
+        anch = self._anchored(T)
+        dz = self.dz(T)
+        z_top = np.cumsum(dz, axis=1) - dz
+        run_top = np.where(anch, z_top, np.inf).min(axis=1)
+        go = anch & (z_top >= (run_top + stub)[:, None] * (1.0 - 1e-12))
+        mass = np.where(go, self.m, 0.0).sum(axis=1)
+        H = np.where(go, self.H, 0.0).sum(axis=1)
+        vol = np.where(go, self.m / np.where(valid, self.density(T), 1.0), 0.0).sum(axis=1)
+        k = go.sum(axis=1)
+        if k.any():                                            # the leaving cells are the bottom k of each column
+            keep = np.arange(self.m.shape[1])[None, :] < (self.count - k)[:, None]
+            self.m, self.H = np.where(keep, self.m, 0.0), np.where(keep, self.H, 0.0)
+            self.U = np.where(keep[..., None], self.U, 0.0)
+            if self.dH is not None:
+                self.dH = np.where(keep, self.dH, 0.0)
+            self.count = self.count - k
+            self._trim()
+        return mass, H, vol
