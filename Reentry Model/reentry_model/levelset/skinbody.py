@@ -144,6 +144,7 @@ class StepBook:
     deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
+    `pieces_used_up` the pieces of beta the step's base moves used up (`stepend.StepEnd._move_beta`).
     `group_area_ratio_min`, `group_area_ratio_max` the least and largest
     area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
@@ -169,6 +170,7 @@ class StepBook:
     parts_over: int
     snap_fallback: int
     snap_slide_max: float
+    pieces_used_up: int
     group_area_ratio_min: float
     group_area_ratio_max: float
     group_area_ratio_trimmed_max: float
@@ -230,6 +232,7 @@ class _Tally:
         self.parts, self.passes, self.mismatch, self.correction = 0, 0, 0.0, 0.0
         self.depth = self.over = 0
         self.snap_fallback, self.snap_slide = 0, 0.0
+        self.pieces_used = 0
         self.ratio_all = 0.0
         self.group_min, self.group_max, self.group_trimmed = np.inf, 0.0, 0.0
         self.newton = self.move = self.remesh = 0.0
@@ -751,6 +754,7 @@ class LevelSetSkinBody(StepEnd):
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
             parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), split_depth_max=tally.depth,
             parts_over=tally.over, snap_fallback=tally.snap_fallback, snap_slide_max=tally.snap_slide,
+            pieces_used_up=tally.pieces_used,
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
             group_area_ratio_trimmed_max=tally.group_trimmed,
             pending_flux_max=tally.pending_flux, surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,

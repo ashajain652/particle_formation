@@ -9,7 +9,12 @@ fine_margin, fine_size, cell_floor, rho). The physics is the geometry modules' (
 Moving beta (`_move_beta`): volume changes dV at points, each a displacement along the normal, extended to the nodes
 within fine_margin of beta from the nearest point; beta - delta reset to a distance and corrected per piece to the
 exact volume target (`levelset.correct_volumes`, the targets summed piece by piece with pairwise sums); then
-`CutThermal.move`, whose enthalpy against what the skins took and gave the caller books as pending heat.
+`CutThermal.move`, whose enthalpy against what the skins took and gave the caller books as pending heat. A piece other
+than the largest whose target is not positive -- the draws of the markers standing on it ask more than it holds -- is
+used up: its nodes are lifted just outside the metal (PIECE_GONE), so that its old metal and the draws at its points
+fall to the largest piece's target, and the pieces are found again (fix round 5 of Task 9: on the full-size cube's third
+step three markers over a 1.9e-10 m3 sliver of beta drew 2.0e-9 m3). The total stays exact; where the metal is drawn
+from is then the largest piece, not the sliver beneath the markers.
 
 At the macro step's end (`_rebuild`): phi = `outer_surface(beta, H)` with every node taking the thickness of the marker
 whose base point is nearest; psi = `molten_rigid_surface(phi, T)` with T the volume's field inside beta, each skin's
@@ -40,6 +45,8 @@ from .transfer import interpolate, locate
 KAPPA_DEPTH_SHARE = 0.1           # a column's principal curvature at most this over its flat depth (module docstring)
 SNAP_TOL = 1.0e-10                # m: the markers are snapped onto phi until none is farther from its zero contour
 SNAP_ROUNDS = 20                  # rounds of `Markers.snap` at most
+PIECE_ROUNDS = 8                  # rounds at most in which a move's draws use up pieces of beta (`_move_beta`)
+PIECE_GONE = 1.0e-9               # m: the level set a used-up piece's nodes are lifted to, just outside the metal
 LEAD = 0.6e-3                     # m: the fine region's lead beyond the margin (criteria.make_target's default)
 REGION_SLACK = 0.5                # fine cells: a rebuild is needed once a leaf is too coarse for a lead this much shorter
 CURVATURE_SLACK = 2.0             # or once a leaf is more than this times its curvature's target size
@@ -151,8 +158,20 @@ class StepEnd:
             _, near = cKDTree(points).query(mesh.points[sel])
             new[sel] = beta[sel] - disp[near]
             new = redistance(mesh, new, band=self.band)
-        label, n = pieces(mesh, new)
-        targets = self._piece_targets(beta, new, label, n, points, dV)
+        for _ in range(PIECE_ROUNDS):
+            label, n = pieces(mesh, new)
+            if n == 0:
+                raise RuntimeError("the skin base has no metal left after a move")
+            targets = self._piece_targets(beta, new, label, n, points, dV)
+            used = np.flatnonzero(targets[1:] <= 0.0) + 1
+            if not len(used):
+                break
+            # a piece the draws use up leaves, and what they ask beyond it the largest piece gives (fix round 5)
+            gone = np.unique(mesh.tets[np.isin(label, used)])
+            new[gone] = np.maximum(new[gone], PIECE_GONE)
+            tally.pieces_used += len(used)
+        else:
+            raise RuntimeError("pieces kept being used up by a move after {} rounds".format(PIECE_ROUNDS))
         new, worst = correct_volumes(mesh, new, label, targets)
         tally.correction = max(tally.correction, worst)
         removed = self.solver.move(new)

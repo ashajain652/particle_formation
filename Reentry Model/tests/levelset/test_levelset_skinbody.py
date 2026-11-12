@@ -444,3 +444,39 @@ def test_small_moves_let_the_part_count_fall():
     hints = _hints(lambda t0, t1: 0.2 * (t1 - t0) / 0.5, 20)
     print("small moves: hints", hints)
     assert hints[1:] == [1] * 5
+
+
+def test_a_piece_the_draws_use_up_leaves_and_the_largest_piece_gives_the_rest():
+    """Two pieces of beta, a 1.2 mm sphere beside a 0.3 mm one, and draws at a point in the small one asking twice its
+    volume (as on the full-size cube's third step, where three markers over a 1.9e-10 m3 sliver drew 2.0e-9 m3): the
+    small piece leaves, the largest gives the rest, the total volume changes by exactly the draws and the stored
+    enthalpy by what the move returns (fix round 5)."""
+    from materials import ConstMaterial
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutcell import inside_volumes
+    from reentry_model.levelset.cutthermal import CutThermal
+    from reentry_model.levelset.levelset import pieces, redistance
+    from reentry_model.levelset.stepend import StepEnd
+
+    class Host(StepEnd):
+        pass
+    mesh = build(BoxBase.around((0.0, 0.0, 0.0), (4e-3, 3e-3, 3e-3), 0.125e-3))
+    x = mesh.points
+    big, small = np.array([1.4e-3, 1.5e-3, 1.5e-3]), np.array([3.1e-3, 1.5e-3, 1.5e-3])
+    beta = redistance(mesh, np.minimum(np.linalg.norm(x - big, axis=1) - 1.2e-3, np.linalg.norm(x - small, axis=1) - 0.3e-3))
+    label, n = pieces(mesh, beta)
+    v = inside_volumes(mesh, beta)
+    assert n == 2
+    host = Host()
+    host.mesh, host.beta, host.band, host.fine_margin = mesh, beta, 1e-3, 1e-3
+    host.solver = CutThermal(ConstMaterial())
+    host.solver.setup(mesh, beta)
+    host.solver.set_temperature(500.0)
+    tally = skinbody._Tally(0)
+    E0, V0 = host.solver.energy(), v.sum()
+    dV = np.array([-2.0 * v[label == 1].sum()])
+    removed = host._move_beta(small[None, :], dV, np.zeros(1), tally)
+    after = inside_volumes(mesh, host.beta)
+    assert pieces(mesh, host.beta)[1] == 1 and tally.pieces_used == 1
+    assert after.sum() == pytest.approx(V0 + dV.sum(), rel=1e-12, abs=0.0)
+    assert removed == pytest.approx(E0 - host.solver.energy(), rel=1e-12)
