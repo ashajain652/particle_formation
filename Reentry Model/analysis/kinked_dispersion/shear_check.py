@@ -19,7 +19,15 @@ step's end forcing (`body._forcing[1]`; `body.last_flow.G` along the meridian if
 It prints the 10th, 50th and 90th percentiles of the actual over the predicted top speed, with the gas shear alone and
 with the push, a decomposition by bands of the ratio with the push, and a self-check: the same prediction against
 `momentum_step` stepped to its steady state on these columns under the same forcing (no transport, no thickness step),
-which tests the probe's arithmetic rather than the skins. The probe reports; it does not decide."""
+which tests the probe's arithmetic rather than the skins.
+
+Beside the face balance's ratios it prints an independent measure: the actual top speed over that steady state's top
+speed, both along the actual top cell's direction. The two differ because the face balance reads its viscosities off
+the actual velocities: where a cell shears thin (its viscosity falls as its shear rate rises), a faster actual profile
+gives it a lower viscosity and so a faster prediction, and a slower one a slower prediction, which pulls the ratio
+toward 1. The steady state finds its viscosities from its own velocities, so it carries no such pull. On d050 the
+medians agree (0.993 against 0.991, measured 2026-11-12), but the face balance's 10th percentile reads 0.924 against
+the independent 0.847: the tails are the independent measure's. The probe reports; it does not decide."""
 import argparse
 
 import numpy as np
@@ -89,10 +97,14 @@ def predict(sk, shear, G, A_top, eta, direction=None):
 
 
 def steady_check(sk, idx, shear, G, A_top):
-    """The prediction against `momentum_step` stepped to its steady state on the columns idx (copies) under the same
-    gas shear and push: (n_idx,) the steady top speed over the predicted, both along the steady top cell's direction,
-    at the steady state's own `cell_shear_rates`; the steps taken; and the columns in which some speed still changed by
-    more than 1e-10 of itself at the last step."""
+    """`momentum_step` stepped to its steady state on the columns idx (copies, from their actual velocities) under the
+    same gas shear and push: (n_idx,) the actual top speed over the steady one, both along the actual top cell's
+    direction -- the independent measure (module docstring); (n_idx,) the self-check, the steady top speed over this
+    probe's prediction of it, both along the steady top cell's direction, at the steady state's own `cell_shear_rates`;
+    the steps taken; and the columns in which some speed still changed by more than 1e-10 of itself at the last step."""
+    U0 = sk.U[idx, 0]
+    speed = np.linalg.norm(U0, axis=1)
+    direction = np.divide(U0, speed[:, None], out=np.zeros_like(U0), where=speed[:, None] > 0.0)
     sub = sk.rows(idx)
     for step in range(1, STEADY_STEPS + 1):
         before = sub.U.copy()
@@ -101,8 +113,9 @@ def steady_check(sk, idx, shear, G, A_top):
         if unsettled == 0:
             break
     eta = skin.cell_viscosity(sub, skin.cell_shear_rates(sub, np.linalg.norm(shear[idx], axis=1)))
-    actual, _, predicted, _ = predict(sub, shear[idx], G[idx], A_top[idx], eta)
-    return actual / predicted, step, unsettled
+    steady, _, predicted, _ = predict(sub, shear[idx], G[idx], A_top[idx], eta)
+    independent = np.einsum("ij,ij->i", U0, direction) / np.einsum("ij,ij->i", sub.U[:, 0], direction)
+    return independent, steady / predicted, step, unsettled
 
 
 def _band_rows(r_push, edges):
@@ -131,12 +144,19 @@ def report(path):
     with np.errstate(divide="ignore", invalid="ignore"):          # the columns not selected may not move
         ratio_shear, ratio_push, shear_share = actual / u_shear, actual / u_push, u_shear / u_push
     r_shear, r_push = ratio_shear[idx], ratio_push[idx]
+    independent, check, steps, unsettled = steady_check(sk, idx, shear, G, A_top)
+    ratio_steady = np.full(sk.n, np.nan)
+    ratio_steady[idx] = independent
     pct = lambda x: "  ".join("p{} {:.4g}".format(p, v) for p, v in zip(PERCENTILES, np.percentile(x, PERCENTILES)))
     print()
     print("actual / predicted top speed")
-    print("  gas shear alone:     " + pct(r_shear))
-    print("  gas shear and push:  " + pct(r_push))
-    print("  (the spec's gate: median with the push within [0.8, 1.25])")
+    print("  face balance, gas shear alone:     " + pct(r_shear))
+    print("  face balance, gas shear and push:  " + pct(r_push))
+    print("  independent measure, actual over the momentum step's own steady state (gas shear and push):")
+    print("                                     " + pct(independent))
+    print("  (the spec's gate: median with the push within [0.8, 1.25]; the face balance reads its viscosities off the")
+    print("  actual velocities, which pulls shear-thinning columns toward 1, so its tails are narrower than the")
+    print("  independent measure's)")
 
     # what the prediction is made of, per column
     flowing_depth = sk.depth_above(mat.T_rigid)
@@ -162,12 +182,12 @@ def report(path):
     print("  gas shear and push:  " + pct(actual[idx] / u_push_rest[idx]))
 
     print()
-    print("decomposition by bands of the ratio with the push (medians unless a range is given)")
+    print("decomposition by bands of the face balance's ratio with the push (medians unless a range is given)")
     edges = (0, 10, 50, 90, 100)
     for lo, hi, rows in _band_rows(r_push, edges):
         print("  p{}-p{}: {} columns".format(lo, hi, int(rows.sum())))
-        print("    ratio, gas shear alone {:.3g}; with the push {:.3g}".format(med(ratio_shear, rows),
-                                                                             med(ratio_push, rows)))
+        print("    ratio, gas shear alone {:.3g}; with the push {:.3g}; independent {:.3g}".format(
+            med(ratio_shear, rows), med(ratio_push, rows), med(ratio_steady, rows)))
         print("    top speed actual {:.3g} m/s; predicted from the gas shear {:.3g}, with the push {:.3g}".format(
             med(actual, rows), med(u_shear, rows), med(u_push, rows)))
         print("    gas shear's share of the predicted speed {:.3g} (range {})".format(
@@ -184,7 +204,6 @@ def report(path):
                            rng(gamma[:, 0], rows)))
 
     print()
-    check, steps, unsettled = steady_check(sk, idx, shear, G, A_top)
     off = np.abs(check - 1.0)
     print("self-check: momentum_step stepped to steady on these columns under the same forcing ({} steps, {} columns "
           "still changing by more than 1e-10), its top speed over this probe's prediction, less 1, in size: "
