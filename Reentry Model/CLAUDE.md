@@ -143,8 +143,8 @@ Code that both architectures use lives in `reentry_model/shared/`: the Step 1 an
 Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
 droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
-the old name the same module object as the shared one. `body.py`, `thermal/__init__.py`, `cli.py` and `coupled.py`
-keep their skyscrapers-only code and only re-export the moved names, so patching a moved name there (for example
+the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
+keep their skyscrapers-only code and only re-export the moved shared names, so patching a shared name there (for example
 `cli.git_commit`) does not reach the shared code; patch it in `reentry_model.shared` instead. Existing imports and
 old pickles keep working, but states saved after this change pickle their classes as `reentry_model.shared.*` and
 cannot be loaded by a checkout from before it (such as `subplan20`, or a Mac Studio checkout that is behind). New code imports from

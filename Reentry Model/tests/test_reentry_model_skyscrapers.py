@@ -22,12 +22,17 @@ def test_old_path_is_the_moved_module(name):
     assert getattr(importlib.import_module("reentry_model"), name) is new
 
 
-@pytest.mark.parametrize("name", MOVED)
-def test_import_order_does_not_matter(name):
-    code = ("import reentry_model.skyscrapers.{n} as new\n"
-            "import reentry_model.{n} as old\n"
-            "from reentry_model import {n} as attr\n"
-            "print(old is new and attr is new)\n").format(n=name)
+ALIASES = [(n, "skyscrapers." + n) for n in MOVED] + [("film", "skyscrapers.elements.film")]
+
+
+@pytest.mark.parametrize("new_first", [True, False])
+@pytest.mark.parametrize("old_name,new_name", ALIASES)
+def test_import_order_does_not_matter(old_name, new_name, new_first):
+    lines = ["import reentry_model.{0} as new\n".format(new_name), "import reentry_model.{0} as old\n".format(old_name)]
+    if not new_first:
+        lines.reverse()
+    code = "".join(lines) + ("from reentry_model import {0} as attr\n"
+                             "print(old is new and attr is new)\n").format(old_name)
     out = subprocess.run([PY, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True).stdout.strip()
     assert out == "True"
 
@@ -70,7 +75,9 @@ def test_shared_and_levelset_do_not_import_skyscrapers():
         for path in sorted(glob.glob(os.path.join(PROJECT_ROOT, "reentry_model", sub, "*.py"))):
             for dotted in _resolved_imports(path, "reentry_model." + sub):
                 scanned += 1
-                if dotted == "reentry_model.skyscrapers" or dotted.startswith("reentry_model.skyscrapers."):
+                aliased = any(dotted == "reentry_model." + o or dotted.startswith("reentry_model." + o + ".")
+                              for o, _ in ALIASES)
+                if aliased or dotted == "reentry_model.skyscrapers" or dotted.startswith("reentry_model.skyscrapers."):
                     bad.append((os.path.relpath(path, PROJECT_ROOT), dotted))
     assert scanned > 0
     assert bad == []
@@ -82,6 +89,15 @@ def test_the_scan_resolves_relative_imports(tmp_path):
     got = _resolved_imports(str(f), "reentry_model.shared")
     assert "reentry_model.skyscrapers" in got and "reentry_model.skyscrapers.body" in got
     assert "reentry_model.shared.y" in got
+
+
+def test_the_scan_also_bans_the_old_alias_paths(tmp_path):
+    """An import through an alias (from .. import skin) reaches skyscrapers code just the same."""
+    f = tmp_path / "x.py"
+    f.write_text("from .. import skin\nfrom reentry_model.film import Runoff\n")
+    got = _resolved_imports(str(f), "reentry_model.levelset")
+    assert "reentry_model.skin" in got and "reentry_model.film" in got
+    assert any(g == "reentry_model." + o for g in got for o, _ in ALIASES)
 
 
 def test_film_is_split_into_lubrication_and_runoff():

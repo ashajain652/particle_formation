@@ -107,9 +107,9 @@ clashing.
 
 The skyscrapers-specific code now lives in `reentry_model/skyscrapers/` (`mesh`, `coupled`, the thermal part of `body`, and
 the other skin modules), with `thermal/skfem_backend.py`, `thermal/fenicsx_backend.py` and the run driver in `cli.py`
-at the top (moved 2026-11-11, Asha; `cli.py` and `thermal/` stay at the top), and imports from `shared`.
-**The old module paths stay importable as one-line re-exports** (for example `reentry_model/atmosphere.py` containing
-`from .shared.atmosphere import *`), so the tests, the analysis scripts and the skyscrapers prototype work copies keep
+at the top (moved 2026-11-11, Asha), and imports from `shared`.
+**The old module paths stay importable as alias files that replace themselves in `sys.modules`** with the moved
+module (for example `reentry_model/atmosphere.py` is `reentry_model.shared.atmosphere` itself), so the tests, the analysis scripts and the skyscrapers prototype work copies keep
 working unchanged; the package's own modules import from `shared` directly.
 
 Step 3's physics — the gas-side surface flow, Girin's dispersion table and spray model, Scheil's material, the slurry
