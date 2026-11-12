@@ -2500,7 +2500,7 @@ def test_the_profile_run_takes_cells_down_to_its_threshold():
         mass, from_slurry = skin.cascade_mass(sk, rate(r_mode), rate(r_slurry), sk.area, dt, slurry, T_slurry, T_run)
         assert mass[0] == pytest.approx((n_mode + n_slurry) * m, rel=1e-14)
         assert from_slurry[0] == pytest.approx(n_slurry * m, rel=1e-14, abs=0.0)
-        book = skin.release_top(sk, mass, slurry, skin.mode_run(sk, T_run))
+        book = skin.release_top(sk, mass, slurry, T_run)
         assert book.mass[0] == pytest.approx(mass[0], rel=1e-15)
         assert book.by_phase.mass[0, 0] == pytest.approx(n_mode * m, rel=1e-14)        # the mode's cells, 0-2
         assert book.by_phase.mass[1, 0] == pytest.approx(n_slurry * m, rel=1e-14, abs=0.0)
@@ -2512,39 +2512,39 @@ def test_the_profile_run_takes_cells_down_to_its_threshold():
 
 
 def test_a_nan_threshold_is_todays_liquid_run(coarse_sphere_mesh):
-    """Where a column's threshold is NaN it keeps today's liquid run (spec 6.6; Task 7 writes NaN where the profile path
-    does not resolve a column): a `Cascade` whose `T_run` is NaN everywhere releases what one without a threshold
-    releases, to the last bit -- the cells and the flow's whole book on the test sphere's mixed skins (liquid, slurry,
-    crusts and anchored rigid metal in every arrangement) through three flow sub-steps without the slurry; and with the
-    slurry, by the cascade and the release by hand, the cascade's mass and slurry part, the release's book by phase and
-    the cells, on columns of liquid over slurry over rigid metal, liquid alone, exposed slurry, rigid metal, liquid over a
-    warm slurry cell, the bridge column and liquid to the bottom. The one difference is liquid lying beneath a flowing
-    cell that is not liquid, with the slurry on: it lies beneath the liquid run, so by the cascade's rule beneath the
-    mode's run it goes at the slurry's rate and books to phase 1, where today it goes at the liquid's (two slurry cells
-    over two liquid ones, at 3 cells a sub-step for the liquid and 5 for the slurry: 4 cells all at the slurry's rate,
-    against today's 3.8 of which 2 at the slurry's). A Cascade pickled before the threshold existed reads None."""
+    """Where a column's threshold is NaN it keeps today's cascade and booking (spec 6.6; Task 7 writes NaN where the
+    profile path does not resolve a column): a `Cascade` whose `T_run` is NaN everywhere releases what one without a
+    threshold releases, to the last bit -- the cells and the flow's whole book on the test sphere's mixed skins (liquid,
+    slurry, crusts and anchored rigid metal in every arrangement) through three flow sub-steps, without and with the
+    slurry; and by the cascade and the release by hand, the cascade's mass and slurry part, the release's book by phase
+    and the cells, on columns of liquid over slurry over rigid metal, liquid alone, exposed slurry, rigid metal, liquid
+    over a warm slurry cell, the bridge column, liquid to the bottom and slurry over liquid. Liquid lying beneath a slurry
+    cell goes at the liquid's rate and books to phase 0, as today, although it lies beneath the liquid run (`mode_run`):
+    two slurry cells over two liquid ones, at 3 cells a sub-step for the liquid and 5 for the slurry, give 3.8 cells, 2
+    of them at the slurry's rate. A Cascade pickled before the threshold existed reads None."""
     from test_reentry_model_columns import sphere_columns
     col, _ = sphere_columns(coarse_sphere_mesh)
     rng = np.random.default_rng(11)
     rates = np.vstack([rng.uniform(0.0, 8.0, col.n), rng.uniform(0.0, 4.0, col.n)])
-    out = []
-    for T_run in (None, np.full(col.n, np.nan)):
-        sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
-        flow = sphere_flow(col, 3, A_top=col.area * 1.01)
-        flow.release = lambda s, T_run=T_run: skin.Cascade(rates[0], rates[1], T_run=T_run)
-        out.append((sk, skin.flow_substeps(sk, flow, 0.01)))
-    (a, A), (b, B) = out
-    assert all(np.array_equal(x, y) for x, y in zip(a.state(), b.state()))
-    for field in dataclasses.fields(skin.FlowBook):
-        x, y = getattr(A, field.name), getattr(B, field.name)
-        assert (x is None and y is None) or np.array_equal(x, y), field.name
-    assert A.released.sum() > 0.0
+    for slurry in (False, True):
+        out = []
+        for T_run in (None, np.full(col.n, np.nan)):
+            sk, _, _ = mixed_sphere_skins(coarse_sphere_mesh)
+            flow = sphere_flow(col, 3, A_top=col.area * 1.01)
+            flow.release, flow.slurry = (lambda s, T_run=T_run: skin.Cascade(rates[0], rates[1], T_run=T_run)), slurry
+            out.append((sk, skin.flow_substeps(sk, flow, 0.01)))
+        (a, A), (b, B) = out
+        assert all(np.array_equal(x, y) for x, y in zip(a.state(), b.state()))
+        for field in dataclasses.fields(skin.FlowBook):
+            x, y = getattr(A, field.name), getattr(B, field.name)
+            assert (x is None and y is None) or np.array_equal(x, y), field.name
+        assert A.released.sum() > 0.0 and (A.phase_mass[1].sum() > 0.0) == slurry
 
     strip, _ = strip_grid(4, 2)
     temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [LIQUID] * 3 + [RIGID] * 3, [SLURRY] * 3 + [RIGID] * 3,
              [RIGID] * 4, [LIQUID] * 2 + [907.0] + [SLURRY] * 2 + [RIGID] * 2, BRIDGE_COLUMN, [LIQUID] * 7,
              [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3]
-    same, dt = slice(0, 7), 0.01
+    dt = 0.01
     for slurry, floor in ((False, None), (True, None), (True, 905.0)):
         got = []
         for T_run in (None, np.full(strip.n, np.nan)):
@@ -2554,27 +2554,89 @@ def test_a_nan_threshold_is_todays_liquid_run(coarse_sphere_mesh):
             rate = lambda cells: cells * m / (strip.area * dt)
             T_slurry = None if floor is None else np.full(strip.n, floor)
             dm, ds = skin.cascade_mass(sk, rate(3.0), rate(5.0), strip.area, dt, slurry, T_slurry, T_run)
-            run = None if T_run is None else skin.mode_run(sk, T_run)
-            got.append((sk, dm, ds, skin.release_top(sk, dm, slurry, run), m))
+            book = skin.release_top(sk, dm, slurry) if T_run is None else skin.release_top(sk, dm, slurry, T_run)
+            got.append((sk, dm, ds, book, m))
         (sa, dma, dsa, ra, m), (sb, dmb, dsb, rb, _) = got
-        assert np.array_equal(dma[same], dmb[same]) and np.array_equal(dsa[same], dsb[same])
+        assert np.array_equal(dma, dmb) and np.array_equal(dsa, dsb)
         for book_a, book_b in ((ra, rb), (ra.by_phase, rb.by_phase)):
-            for key in ("mass", "enthalpy", "solid"):
-                assert np.array_equal(getattr(book_a, key)[..., same], getattr(book_b, key)[..., same])
-            assert np.array_equal(book_a.momentum[..., same, :], book_b.momentum[..., same, :])
-        for x, y in zip(sa.state()[:6], sb.state()[:6]):                # the cells, column by column
-            assert np.array_equal(x[same], y[same])
-        cells = lambda x: x[7] / m[7]
-        if slurry and floor is None:                                    # liquid beneath slurry: the one difference
-            assert (cells(dma), cells(dsa)) == (pytest.approx(3.8), pytest.approx(2.0))
-            assert (cells(dmb), cells(dsb)) == (pytest.approx(4.0), pytest.approx(4.0))
-            assert rb.by_phase.mass[1, 7] == pytest.approx(4.0 * m[7]) and rb.by_phase.mass[0, 7] == 0.0
-        else:
-            assert dma[7] == dmb[7] and dsa[7] == dsb[7]
+            for key in ("mass", "enthalpy", "solid", "momentum"):
+                assert np.array_equal(getattr(book_a, key), getattr(book_b, key))
+        assert all(np.array_equal(x, y) for x, y in zip(sa.state(), sb.state()))
+        if slurry and floor is None:                                    # liquid beneath slurry, at the liquid's rate
+            assert (dmb[7] / m[7], dsb[7] / m[7]) == (pytest.approx(3.8), pytest.approx(2.0))
+            assert rb.by_phase.mass[0, 7] == pytest.approx(1.8 * m[7]) and rb.by_phase.mass[1, 7] == pytest.approx(
+                2.0 * m[7])
     old = skin.Cascade(np.ones(2), np.ones(2))
     del old.__dict__["T_run"]                                            # as pickled before the field existed
     old = pickle.loads(pickle.dumps(old))
     assert "T_run" not in vars(old) and old.T_run is None
+
+
+BURIED = [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3          # liquid beneath slurry: beneath the liquid run, yet liquid
+
+
+def of_columns(x, key, idx):
+    """A book entry's columns idx: the column axis is the last but for momentum, whose last axis is the vector's."""
+    return x[..., idx, :] if key in ("momentum", "released_p", "phase_p") else x[..., idx]
+
+
+def test_a_nan_column_keeps_todays_cascade_beside_a_thresholded_one():
+    """A column whose threshold is NaN is released and booked as today, to the last bit, beside columns whose threshold
+    is set: two slurry cells over two liquid ones over rigid metal, every cell moving, its buried liquid reached within
+    the sub-step. At the liquid's rate of 3 cells a sub-step and the slurry's 5, the NaN column takes its slurry at the
+    slurry's rate and its buried liquid at the liquid's -- 2 cells booked to phase 1, then 1.8 to phase 0, as today --
+    while beside it the same column with a threshold of 900 K takes all four flowing cells as the mode's run, 3 cells at
+    the mode's rate, all phase 0. By hand, the cascade and the release on the two columns together give the NaN column's
+    masses, slurry part, book by phase and cells exactly as the same calls without a threshold on that column alone, with
+    the slurry on and off. Through a flow sub-step on a strip of such columns, alternately thresholded and NaN, with a
+    gas shear moving the metal, the NaN columns' FlowBook entries -- the release, its parts by phase and the slurry's --
+    and cells are those of the same strip released without a threshold (the flow couples neighbours, so a column cannot
+    be flowed alone; the release follows the transport within the sub-step, so the cells it reads are the same)."""
+    dt = 0.01
+    pair = stacked(strip_grid(2, 2)[0], [BURIED] * 4).rows([0, 0])     # one column twice: thresholded, then NaN
+    pair.U = np.where(pair.valid[..., None], np.random.default_rng(13).normal(0.0, 0.2, pair.U.shape), 0.0)
+    alone = pair.rows([1])
+    cell = pair.m[0, 0]
+    rate = lambda cells, n: np.full(n, cells * cell / (pair.area[0] * dt))
+    T_run = np.array([900.0, np.nan])
+    for slurry in (False, True):
+        both, one = pair.rows([0, 1]), alone.rows([0])
+        dm, ds = skin.cascade_mass(both, rate(3.0, 2), rate(5.0, 2), both.area, dt, slurry, None, T_run)
+        dm1, ds1 = skin.cascade_mass(one, rate(3.0, 1), rate(5.0, 1), one.area, dt, slurry, None)
+        assert dm[1] == dm1[0] and ds[1] == ds1[0]
+        book, book1 = skin.release_top(both, dm, slurry, T_run), skin.release_top(one, dm1, slurry)
+        for b, b1 in ((book, book1), (book.by_phase, book1.by_phase)):
+            for key in ("mass", "enthalpy", "solid", "momentum"):
+                assert np.array_equal(of_columns(getattr(b, key), key, [1]), getattr(b1, key)), key
+        for x, y in zip(both.state()[:6], one.state()[:6]):
+            assert np.array_equal(x[1:2], y)
+        if slurry:                                                      # today's: the slurry first, then the liquid
+            assert (dm[1] / cell, ds[1] / cell) == (pytest.approx(3.8), pytest.approx(2.0))
+            assert book.by_phase.mass[:, 1] == pytest.approx([1.8 * cell, 2.0 * cell])
+            assert dm[0] / cell == pytest.approx(3.0) and ds[0] == 0.0 and book.by_phase.mass[1, 0] == 0.0
+        else:                                                           # today's: a slurry top releases nothing
+            assert dm[1] == 0.0 and dm[0] / cell == pytest.approx(3.0)
+
+    col, _ = strip_grid(4, 2)
+    nan = np.arange(col.n) % 2 == 1
+    thresholds = np.where(nan, np.nan, 900.0)
+    out = []
+    for T_run in (thresholds, None):
+        sk = stacked(col, [BURIED] * col.n)
+        sk.U = np.where(sk.valid[..., None], [0.05, 0.0, 0.0], 0.0)
+        m0 = sk.m[:, 0].copy()
+        flow = strip_flow(col, dp_ds=0.0, tau=20.0)
+        r = lambda cells: cells * m0 / (col.area * 1e-3)
+        flow.release, flow.slurry = (lambda s, T_run=T_run: skin.Cascade(r(3.0), r(5.0), T_run=T_run)), True
+        out.append((sk, skin.flow_substeps(sk, flow, 1e-3, cycles=1)))
+    (a, A), (b, B) = out
+    for key in ("released", "released_H", "released_p", "released_solid", "released_slurry", "phase_mass", "phase_H",
+                "phase_p", "phase_solid"):
+        assert np.array_equal(of_columns(getattr(A, key), key, nan), of_columns(getattr(B, key), key, nan)), key
+    for x, y in zip(a.state()[:6], b.state()[:6]):
+        assert np.array_equal(x[nan], y[nan])
+    assert np.all(A.phase_mass[0, nan] > 0.0) and np.all(A.phase_mass[1, nan] > 0.0)  # the buried liquid reached
+    assert not A.phase_mass[1, ~nan].any() and not np.array_equal(A.phase_mass[:, ~nan], B.phase_mass[:, ~nan])
 
 
 def test_a_plug_top_colder_than_its_threshold_releases_nothing():
@@ -2599,7 +2661,7 @@ def test_a_plug_top_colder_than_its_threshold_releases_nothing():
             mass, from_slurry = skin.cascade_mass(sk, big, big, sk.area, 0.01, slurry, np.array([np.inf]), T_run)
             assert mass[0] == 0.0 and from_slurry[0] == 0.0
             before = sk.state()
-            book = skin.release_top(sk, mass, slurry, run)
+            book = skin.release_top(sk, mass, slurry, T_run)
             assert all(np.array_equal(x, y) for x, y in zip(before, sk.state()))
             assert not (book.mass.any() or book.enthalpy.any() or book.momentum.any() or book.by_phase.mass.any())
 
@@ -2626,8 +2688,8 @@ def test_a_plug_top_colder_than_its_threshold_releases_nothing():
 
 def test_the_profile_release_keeps_the_books(coarse_sphere_mesh):
     """A `Cascade` with thresholds (spec 6.6) in the flow sub-steps: every flow sub-step finds the mode's run in the cells
-    of that moment (`mode_run`) and hands it to the cascade and the release, which, called by hand piece by piece, give
-    the same cells to the last bit. On the test sphere's mixed skins at three cycles, without and with the slurry, every
+    of that moment (`mode_run`'s cells), the cascade and the release both given the thresholds, which, called by hand
+    piece by piece, give the same cells to the last bit. On the test sphere's mixed skins at three cycles, without and with the slurry, every
     other column's threshold the starting temperature of its second cell and the rest NaN: the FlowBook's released mass
     and enthalpy are what the skins lost, to round-off; its released momentum closes each column's books with the push,
     the shear, the wall and what the transport carried; its parts by phase add up to it, phase 1 being what the cascade
@@ -2652,9 +2714,8 @@ def test_the_profile_release_keeps_the_books(coarse_sphere_mesh):
             if k:
                 second.regrid()
             by_hand(second, flow, 0.01 / cycles, landed)
-            run = skin.mode_run(second, T_run)
             dm, _ = skin.cascade_mass(second, rates[0], rates[1], flow.A_top, 0.01 / cycles, slurry, None, T_run)
-            taken += skin.release_top(second, dm, slurry, run).mass
+            taken += skin.release_top(second, dm, slurry, T_run).mass
         assert all(np.array_equal(x, y) for x, y in zip(first.state(), second.state()))
         np.testing.assert_allclose(book.released, taken, rtol=1e-14, atol=0.0)
         assert first.mass() == pytest.approx(M0 - book.released.sum(), rel=3e-16)

@@ -1993,9 +1993,9 @@ def flow_substeps(sk, flow, dt, cycles=None):
     2026-10-24).
 
     A `Cascade` with thresholds (`T_run`; kinked-profile dispersion spec 6.6, decision 5) has its mode's run found in
-    every flow sub-step from the cells of that moment (`mode_run`), which the cascade (given `T_run`, on the same cells)
-    and the release (given the run) both take: the release stays heat-limited while the transport and the flow change the
-    cells within the macro step."""
+    every flow sub-step from the cells of that moment (`mode_run`'s cells, which the cascade and the release, both given
+    `T_run`, read from the same cells): the release stays heat-limited while the transport and the flow change the cells
+    within the macro step, and a column whose threshold is NaN is released and booked as today."""
     n = sk.n
     book = FlowBook.zero(n)
     adaptive = flow.cycles is None
@@ -2045,15 +2045,13 @@ def flow_substeps(sk, flow, dt, cycles=None):
                 rate = np.broadcast_to(np.asarray(given, dtype=float), (n,))
             if not np.all(np.isfinite(rate) & (rate >= 0.0)):
                 raise ValueError("a release rate must be finite and non-negative")
-            run = None
+            T_run = given.T_run if isinstance(given, Cascade) else None     # the mode's thresholds (kinked-profile Task 6)
             if isinstance(given, Cascade):
-                if given.T_run is not None:              # the mode's run in the present cells (kinked-profile Task 6)
-                    run = mode_run(sk, given.T_run)
                 dm, step.released_slurry = cascade_mass(sk, rate[0], rate[1], flow.A_top, h, flow.slurry, given.T_slurry,
-                                                        given.T_run)
+                                                        T_run)
             else:
                 dm, step.released_slurry = rate * flow.A_top * h, np.zeros(n)
-            rb = release_top(sk, dm, flow.slurry) if run is None else release_top(sk, dm, flow.slurry, run)
+            rb = release_top(sk, dm, flow.slurry) if T_run is None else release_top(sk, dm, flow.slurry, T_run)
             step.released, step.released_H = rb.mass, rb.enthalpy
             step.released_p, step.released_solid = rb.momentum, rb.solid
             ph = rb.by_phase                             # by the cells it came from, and binned by size (Task 2)
@@ -2084,7 +2082,7 @@ class ReleaseBook:
                              # [1] the others (sub-plan 22 Task 2)
 
 
-def release_top(sk, dm, slurry=False, run=None):
+def release_top(sk, dm, slurry=False, T_run=None):
     """Release dm [kg, (n,)] per column from its top cells (spec 8; sub-plan 21 Task 7, the placeholder for stage 4's
     spraying, whose rate sub-plan 22 supplies): liquid first -- the run of fully liquid cells from the top, at or above
     the liquidus -- and, with `slurry` (spec 8's `--slurry-spray on`), the exposed slurry too, every flowing cell down
@@ -2097,17 +2095,18 @@ def release_top(sk, dm, slurry=False, run=None):
     what the book says left. Updates the cells; returns a ReleaseBook, with what came from the fully liquid cells and
     what from the others in `by_phase` (sub-plan 22 Task 2: the liquid's mode's droplets and the slurry's).
 
-    With `run` ((n, K) bool, the mode's run, `mode_run`; kinked-profile dispersion spec 6.6) the release takes the run's
-    cells, liquid or not, and with `slurry` every flowing cell, and `by_phase` splits it by the run: [0] the mode's cells,
-    [1] the others. Without the slurry it takes nothing beneath the run, so the cascade's mass (`cascade_mass` with the
-    run's T_run) leaves from exactly the cells the cascade took, with no round-off reaching the colder cell beneath."""
+    With T_run [K, (n,)] (`Cascade.T_run`; kinked-profile dispersion spec 6.6) the release takes the mode's run
+    (`mode_run`), liquid or not, and with `slurry` every flowing cell, and `by_phase` splits it by the cells at the mode's
+    rate (`cascade_mass`): [0] the mode's run, [1] the others. Without the slurry it takes nothing beneath the run, so the
+    cascade's mass leaves from exactly the cells the cascade took, with no round-off reaching the colder cell beneath. A
+    column whose T_run is NaN is released and split as without T_run, to the last bit, whatever the other columns'."""
     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
     liquid = flowing & (sk.T >= sk.material.T_liquidus)
-    if run is None:
+    if T_run is None:
         admit, phase = (flowing if slurry else liquid), liquid
     else:
-        phase = np.asarray(run, dtype=bool)
-        admit = flowing if slurry else phase
+        run, phase = _mode_cells(sk, flowing, liquid, T_run)
+        admit = flowing if slurry else run
     mass, H, solid = sk.take_top_mass(dm, admit, phase=phase)
     pm, pH, ps, pp = sk.phase_out
     return ReleaseBook(mass, H, sk.momentum_out.copy(), solid, ReleaseBook(pm, pH, pp, ps))
@@ -2122,9 +2121,9 @@ class Cascade:
     a callable of the release by phase [kg, (2, n): the liquid's mode's, the slurry's] giving (droplets, mass [kg]) per
     size bin (sub-plan 22 Task 2: `skinbody.SprayPlan.histogram`, at the macro step's radii). `T_run` [K, (n,)], if
     given, is each column's threshold for its mode's run (kinked-profile dispersion spec 6.6, decision 5; `mode_run`):
-    `rate` is then the mode's, taking the flowing cells from the top at least T_run warm, liquid or not -- or the liquid
-    run where T_run is NaN -- and `rate_slurry` everything beneath them (`cascade_mass`). It is the last field, so a
-    Cascade pickled before it existed reads None, the default: no threshold, today's release."""
+    `rate` is then the mode's, taking the flowing cells from the top at least T_run warm, liquid or not, and
+    `rate_slurry` everything beneath them; a column whose T_run is NaN keeps today's cascade (`cascade_mass`). It is the
+    last field, so a Cascade pickled before it existed reads None, the default: no threshold, today's release."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     T_slurry: np.ndarray = None
@@ -2142,6 +2141,16 @@ def mode_run(sk, T_run):
     return melt_profile.threshold_run(sk.T, flowing, liquid, T_run)
 
 
+def _mode_cells(sk, flowing, liquid, T_run):
+    """(run, fast), (n, K) bool, for `cascade_mass` and `release_top` given thresholds T_run [K, (n,)], from the flowing
+    and liquid cells they read: the mode's run (`mode_run`) and the cells at the mode's rate, booked as phase 0 -- the run
+    where T_run is a number, and where it is NaN today's, every liquid cell, liquid beneath a slurry cell too, so that
+    such a column is released and booked as without thresholds, to the last bit."""
+    T_run = np.broadcast_to(np.asarray(T_run, dtype=float), (sk.n,))
+    run = melt_profile.threshold_run(sk.T, flowing, liquid, T_run)
+    return run, np.where(np.isnan(T_run)[:, None], liquid, run)
+
+
 def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None, T_run=None):
     """The mass [kg, (n,)] the release takes from each column's top cells in dt [s] when each cell goes at its own phase's
     rate, and the part of it taken from slurry cells (spec 8's cascade, the 2026-10-07 design's 8.1; sub-plan 22 Task 1c):
@@ -2154,18 +2163,19 @@ def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None, 
 
     With T_run [K, (n,)] (`Cascade.T_run`; kinked-profile dispersion spec 6.6, decision 5) the release is heat-limited:
     the cells at `rate` are the mode's run (`mode_run`), the flowing cells from the top at least T_run warm, liquid or
-    not -- the liquid run where T_run is NaN. Beneath them, with `slurry`, the flowing cells go at `rate_slurry`, those at
-    least T_slurry warm where it is given, the first colder one ending the column; without it the cascade ends at the
-    mode's last cell. The part returned second is then what went at `rate_slurry`, and `release_top(sk, mass, slurry,
-    mode_run(sk, T_run))` takes exactly these cells."""
+    not. Beneath them, with `slurry`, the flowing cells go at `rate_slurry`, those at least T_slurry warm where it is
+    given, the first colder one ending the column; without it the cascade ends at the mode's last cell. The part
+    returned second is then what went at `rate_slurry`, and `release_top(sk, mass, slurry, T_run)` takes exactly these
+    cells. A column whose T_run is NaN keeps today's cascade, to the last bit, whatever the other columns' thresholds:
+    its liquid cells at `rate`, liquid beneath a slurry cell too, and the rest at `rate_slurry`."""
     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
     liquid = flowing & (sk.T >= sk.material.T_liquidus)
     if T_run is None:
         fast = liquid
         run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     else:
-        fast = melt_profile.threshold_run(sk.T, flowing, liquid, T_run)        # mode_run's cells, from those read above
-        run = np.cumprod(flowing, axis=1).astype(bool) if slurry else fast
+        mode, fast = _mode_cells(sk, flowing, liquid, T_run)
+        run = np.cumprod(flowing, axis=1).astype(bool) if slurry else mode
     rate_s = np.asarray(rate_slurry, dtype=float)[:, None]
     if T_slurry is not None:
         rate_s = np.where(sk.T >= np.asarray(T_slurry, dtype=float)[:, None], rate_s, 0.0)
