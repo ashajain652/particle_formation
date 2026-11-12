@@ -836,15 +836,8 @@ class SkinBody(ThermalBody):
             wind, capped = wind & ahead, capped & ahead
         bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
         cap = pts[capped]
-        n, fitted, concave = len(cap), float("nan"), False
-        if n >= 4:
-            sv = np.linalg.svd(cap - cap.mean(axis=0), compute_uv=False)
-            centre, r = fit_sphere(cap)
-            if sv[0] > 0.0 and sv[-1] < 1e-9 * sv[0]:
-                concave = True                           # coplanar to rounding: a flat face, which no sphere describes
-            elif np.isfinite(r) and r > 0.0:
-                fitted = r
-                concave = bool((centre - cap.mean(axis=0)) @ v > 0.0)
+        fitted, concave = nose_mod.fit_cap(cap, v)
+        n = len(cap)
         return fitted, bound, n, concave
 
     @property

@@ -7,6 +7,7 @@ import importlib
 import os
 import subprocess
 
+import numpy as np
 import pytest
 
 from helpers import PROJECT_ROOT, PY
@@ -298,3 +299,30 @@ def test_shared_slurry_properties_are_the_skins_old_arithmetic():
     old_mu = rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)                   # old line 530
     props = spray.slurry_properties(mat, T, f_s, gamma, rho)
     assert np.array_equal(props.mu, old_mu) and np.array_equal(props.rho, rho) and props.sigma == spray.SLURRY_SIGMA
+
+
+def test_size_feedback_names_is_the_shared_tuple():
+    from reentry_model import body
+    from reentry_model.shared import nose
+    assert body.SIZE_FEEDBACK_NAMES is nose.SIZE_FEEDBACK_NAMES and nose.SIZE_FEEDBACK_NAMES == ("current", "initial")
+
+
+def _cap(R, sign, n=12):
+    a, b = np.linspace(0, 0.5, n), np.linspace(0, 2 * np.pi, n, endpoint=False)
+    A, B = (m.ravel() for m in np.meshgrid(a, b))
+    return np.column_stack([R * np.cos(A) * sign, R * np.sin(A) * np.cos(B), R * np.sin(A) * np.sin(B)])
+
+
+def test_fit_cap_reproduces_the_old_inline_decision():
+    """Old values recorded from SkinBody._fit_nose's inline code at commit 799375d, flight direction +x."""
+    from reentry_model.shared import nose
+    g = np.linspace(-0.01, 0.01, 5)
+    Y, Z = np.meshgrid(g, g)
+    cases = {"convex": (_cap(0.03, 1) - [0.03, 0, 0], (0.02999999999999999, False)),
+             "concave": (_cap(0.03, -1) + [0.03, 0, 0], (0.02999999999999999, True)),
+             "flat": (np.column_stack([np.zeros(25), Y.ravel(), Z.ravel()]), (float("nan"), True)),
+             "three": (_cap(0.03, 1)[:3], (float("nan"), False))}
+    for name, (pts, (r, concave)) in cases.items():
+        fitted, c = nose.fit_cap(pts, np.array([1.0, 0.0, 0.0]))
+        assert c is concave or c == concave, name
+        assert (np.isnan(fitted) and np.isnan(r)) or fitted == r, name

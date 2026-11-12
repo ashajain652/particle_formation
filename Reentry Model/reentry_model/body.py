@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .shared.body import Body, ConstantBody, sphere_mass  # noqa: F401  (moved to shared; re-exported here)
-from .shared.nose import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, fit_sphere  # noqa: F401  (moved to shared; re-exported here)
+from .shared.nose import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, SIZE_FEEDBACK_NAMES, fit_sphere  # noqa: F401  (moved to shared; re-exported here)
 from .spray import RELEASE_ANGLE_COLUMNS
 
 
@@ -85,7 +85,6 @@ class ThermalBody:
                 "T_stagnation_K": float(Tf[self.i_stag]), "T_back_K": float(Tf[self.i_back]), "T_centre_K": float(T[self.i_centre])}
 
 
-SIZE_FEEDBACK_NAMES = ("current", "initial")
 FEED_DEPTH_NAMES = ("conjugate", "all")     # how deep melt may leave an element for the film (Step 3, 2026-09-22)
 CP_MAX_NEWTONIAN = 1.84          # only the ratio to the meshed sphere's own value is used, so this cancels
 PHI_MIN = 1.0e-3                 # element fraction kept by elements that do not own a patch (they cannot die: no cavities)
