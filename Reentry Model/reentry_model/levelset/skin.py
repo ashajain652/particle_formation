@@ -26,12 +26,24 @@ below it; a small bottom cell joins the cell above), so a run of thin cells coar
 into one cell to be split again.
 
 Every physical property comes from the material passed in (the shared `reentry_model.shared.material.Material` or a
-test material with its interface); this module's numbers are numerical settings only."""
+test material with its interface), read through a `PropertyTable` of it built once per Skins (Task 4: h, cp_eff, k and
+the liquid fraction on a 0.01 K grid; the cells' enthalpies and temperatures are the table's, so the books close on its
+own h), and the viscosity from the shared rheology; this module's numbers are numerical settings only.
+
+The layered flow (Task 4, the skyscrapers' momentum through the depth, matched by amendment). Phase labels follow from
+T every time: a cell flows above the shared T_rigid (solid fraction below the rheology's RIGID_SOLID_FRACTION, a half),
+is liquid at or above the liquidus, anchored in the unbroken run of rigid cells from the bottom up, and a crust where it
+is rigid with flowing metal between it and the floor. `momentum_step` advances every column's velocities implicitly,
+each component apart, with the drag between neighbouring cells through the cross-section at their interface's depth,
+each flowing cell's viscosity at its own shear rate, the anchored cells at rest and a crust one unknown."""
 from dataclasses import dataclass
 
 import numpy as np
 
+from reentry_model.shared import rheology
 from reentry_model.shared.thermal import SIGMA_SB
+
+from .properties import PropertyTable
 
 SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (design 20.6; skyscrapers 6.2)
 MERGE_BELOW = 0.5          # a cell thinner than this times its target joins a neighbour (skyscrapers' rule)
@@ -43,9 +55,14 @@ DEPTH_NEWTON_RTOL = 4.0 * np.finfo(float).eps   # the depth solve stops when a s
 NEWTON_TOL = 1.0e-6        # K: a heat sub-step has converged when no cell moves by more than this (skyscrapers' value)
 NEWTON_MAX = 40            # Newton iterations of a heat sub-step at most (skyscrapers' value)
 LINE_SEARCH_MAX = 12       # halvings of a Newton step before it is taken anyway (skyscrapers' value)
-DZ_FLOOR = 1.0e-12         # m: the conduction length of a vanishing cell
-DK_STEP = 1.0e-3           # K: half-width of the central difference giving dk/dT for the Newton Jacobian
+DZ_FLOOR = 1.0e-12         # m: the conduction (and drag) length of a vanishing cell
 PROFILE_POINTS = 8         # Gauss-Legendre points of the enthalpy a draw averages along the volume's profile
+SHEAR_PASSES = 5           # passes of the fixed point on the cells' shear rates at most (skyscrapers', spec 6.4)
+SHEAR_TOL = 1.0e-3         # a pass moving no flowing viscosity by more than this, relatively, ends it (skyscrapers')
+CRUST_VISCOSITY = 1.0e9    # Pa s: a floating crust's half-cell at its faces with flowing metal, a numerical setting
+                           # of the skin rule (skyscrapers' CRUST_VISCOSITY, sub-plan 21 Task 6b); the crust is one unknown
+FLOWING_SOLID_MAX = np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0)   # a flowing cell's solid fraction at most: guards
+                           # the table's round-off at T_rigid, where the rheology turns infinite
 
 
 @dataclass
@@ -116,6 +133,18 @@ class HeatBook:
     dE_base_dTb: np.ndarray = None
 
 
+@dataclass
+class MomentumBook:
+    """What one `Skins.momentum_step` did, per column [kg m/s] (n, 3): the impulses of the push and of the gas shear on
+    the moving cells, and the momentum given to the wall -- the anchored metal and the volume beneath the base: the
+    momentum the anchored cells held and the drag the moving cells lost to them -- so that the momentum change is
+    push + shear - wall; and the shear-rate fixed point's passes."""
+    push: np.ndarray
+    shear: np.ndarray
+    wall: np.ndarray
+    passes: int
+
+
 def _tridiagonal(lower, diag, upper, rhs):
     """Rows of tridiagonal systems (n, K) solved by the Thomas algorithm: row j reads
     lower[:, j] x[:, j-1] + diag[:, j] x[:, j] + upper[:, j] x[:, j+1] = rhs[:, j] (lower[:, 0], upper[:, -1] unused)."""
@@ -154,6 +183,7 @@ class Skins:
         self.rho_s = float(material.rho)
         liquid = getattr(material, "liquid", None)
         self.rho_l = float(liquid.rho) if liquid is not None else self.rho_s   # a material without a liquid never swells
+        self.props = PropertyTable(material)      # every h, cp_eff, k and f_l the skins read (module docstring)
         self.dH = None             # (n, K) J/K, each cell's dH/dT_b while a trial pass is open (`conduct`), else None
         self.momentum_out = np.zeros((self.n, 3))   # kg m/s, what the last `remove_feed` took with the metal
         self.install(np.zeros((self.n, 1)), np.zeros((self.n, 1)), np.zeros(self.n, dtype=np.int64))
@@ -193,7 +223,7 @@ class Skins:
         K = int(cells.max()) if self.n else 1
         valid = np.arange(K)[None, :] < cells[:, None]
         m = np.where(valid, (mass / cells)[:, None], 0.0)
-        self.install(m, m * self.material.enthalpy(T)[:, None], cells)
+        self.install(m, m * self.props.enthalpy(T)[:, None], cells)
 
     def _width(self, K):
         """Pad the arrays to at least K cells."""
@@ -220,11 +250,12 @@ class Skins:
 
     # -- what follows from the enthalpy -----------------------------------------------------------------------------
     def T(self):
-        """Cell temperatures [K] (n, K) from the specific enthalpies through the material; nan beyond each count."""
+        """Cell temperatures [K] (n, K) from the specific enthalpies through the property table; nan beyond each
+        count."""
         valid = self.valid
         T = np.full(self.m.shape, np.nan)
         if valid.any():
-            T[valid] = self.material.temperature_from_enthalpy(self.H[valid] / self.m[valid])
+            T[valid] = self.props.temperature_from_enthalpy(self.H[valid] / self.m[valid])
         return T
 
     def density(self, T):
@@ -233,7 +264,7 @@ class Skins:
         T = np.asarray(T, dtype=float)
         if not self.settings.swell:
             return np.full(T.shape, self.rho_s)
-        f = self.material.liquid_fraction(T)
+        f = self.props.liquid_fraction(T)
         return 1.0 / ((1.0 - f) / self.rho_s + f / self.rho_l)
 
     def cross_section(self, z):
@@ -435,12 +466,12 @@ class Skins:
     def S(self):
         """The trial pass's sensitivity dT/dT_b of every cell (n, K), 0 beyond each count; None outside a trial. Carried
         as each cell's dH/dT_b (`dH`, extensive, so that merges, splits, takes and draws keep it exactly) and read here
-        as dH / (m cp_eff(T))."""
+        as dH / (m dh/dT), the slope of the table's h."""
         if self.dH is None:
             return None
         valid, T = self.valid, self.T()
         S = np.zeros(self.m.shape)
-        S[valid] = self.dH[valid] / (self.m[valid] * self.material.cp_eff(T[valid]))
+        S[valid] = self.dH[valid] / (self.m[valid] * self.props.dh_dT(T[valid]))
         return S
 
     def base_law(self, dt):
@@ -464,9 +495,9 @@ class Skins:
         conductances A(z_i) / (dz_i / 2k_i + dz_j / 2k_j) with the cross-section at the interface's depth z_i, and the
         base held at T_b [K] through the bottom half-cell, A(z_bottom) k / (dz / 2) (T_b None: an adiabatic base).
         The cells' thicknesses (and so the interface depths) are those at the sub-step's start. Newton in the
-        temperature with a backtracking line search per column on the residual's norm, the Jacobian with the
-        conductivity's slope (dk/dT by a central difference of the material's k). An empty column passes its heat
-        straight to the base.
+        temperature with a backtracking line search per column on the residual's norm, every property from the table
+        (`PropertyTable.conduction`), the Jacobian with the slopes of its h and k across each cell's grid interval, so
+        it is the exact tangent of the residual solved. An empty column passes its heat straight to the base.
 
         With trial=True the sub-step belongs to a trial pass (opened by the first such call, closed by `base_law` or
         `set_state`): each cell's dH/dT_b is carried from the last sub-step and updated by the converged step's own
@@ -476,7 +507,7 @@ class Skins:
         valid, rows = self.valid, np.arange(n)
         has = self.count > 0
         last = np.maximum(self.count - 1, 0)
-        mat = self.material
+        props = self.props
         q = np.broadcast_to(np.asarray(q_top, dtype=float), (n,)) * self.area
         es = np.broadcast_to(np.asarray(emissivity, dtype=float), (n,)) * SIGMA_SB * self.area
         T_amb = np.broadcast_to(np.asarray(T_amb, dtype=float), (n,))
@@ -501,8 +532,7 @@ class Skins:
 
         def system(T):
             """The residual R, the Jacobian's (lower, diag, upper) and the base conductance at T."""
-            h, cp, k = mat.enthalpy(T), mat.cp_eff(T), mat.k(T)
-            kp = (mat.k(T + DK_STEP) - mat.k(T - DK_STEP)) / (2.0 * DK_STEP)
+            h, cp, k, kp = props.conduction(T)
             r = 0.5 * dz / k
             G = np.where(link, A_i / (r[:, :-1] + r[:, 1:]), 0.0)
             dT = T[:, :-1] - T[:, 1:]
@@ -551,7 +581,7 @@ class Skins:
         else:
             raise RuntimeError("a skin heat sub-step did not converge in {} iterations (last change {:.2e} K)".format(
                 NEWTON_MAX, moved.max()))
-        E_new = np.where(valid, m * mat.enthalpy(T), 0.0)
+        E_new = np.where(valid, m * props.enthalpy(T), 0.0)
         E_top = q * dt
         E_rad = np.where(has, es * (T[:, 0] ** 4 - T_amb ** 4) * dt, 0.0)
         E_side = np.zeros(n)
@@ -611,12 +641,12 @@ class Skins:
             return short, H
         dd = short[i] / (self.rho_s * self.base_area()[i])
         T, w, below = _profile_points(T_b[i], g[i], s0[i], s0[i] + dd, self.material.T_rigid)
-        h = (self.material.enthalpy(T) * w).sum(axis=1)
+        h = (self.props.enthalpy(T) * w).sum(axis=1)
         H[i] = short[i] * h
         self.add_bottom(i, short[i], H[i])
         if self.dH is not None:
             self._width(1)
-            dh = (self.material.cp_eff(T) * below * w).sum(axis=1)
+            dh = (self.props.dh_dT(T) * below * w).sum(axis=1)
             self.dH[i, self.count[i] - 1] += short[i] * dh
         return short, H
 
@@ -663,3 +693,182 @@ class Skins:
             self.count = self.count - k
             self._trim()
         return mass, H, vol
+
+    # -- the layered flow through the depth (Task 4) ----------------------------------------------------------------
+    def flowing(self, T=None):
+        """The cells that flow (n, K): above the material's T_rigid, where the solid fraction is below the shared
+        rheology's RIGID_SOLID_FRACTION (a half). `T` (n, K) the cells' temperatures if already known."""
+        T = self.T() if T is None else T
+        return self.valid & (T > self.material.T_rigid)
+
+    def liquid(self, T=None):
+        """The liquid cells (n, K): at or above the material's liquidus."""
+        T = self.T() if T is None else T
+        return self.valid & (T >= self.material.T_liquidus)
+
+    def viscosity(self, gamma, T=None):
+        """Every cell's viscosity [Pa s] (n, K) sheared at gamma [1/s] (per cell, or one for all): the shared
+        `rheology.viscosity` at the cell's temperature and solid fraction (1 - the table's f_l) with the material's
+        liquid viscosity and its solid fraction at the rheology's BRIDGE_LOW; infinite in a cell that does not flow
+        (rigid, padded, or of a material without a liquid)."""
+        T = self.T() if T is None else T
+        return self._viscosity(T, self.flowing(T), gamma)
+
+    def _viscosity(self, T, flowing, gamma):
+        """`viscosity` for cells at temperatures T whose flowing cells are `flowing` (arrays of one shape)."""
+        eta = np.full(T.shape, np.inf)
+        liquid = getattr(self.material, "liquid", None)
+        if liquid is None or not flowing.any():
+            return eta
+        gamma = np.broadcast_to(np.asarray(gamma, dtype=float), T.shape)
+        f_s = np.minimum(1.0 - self.props.liquid_fraction(T[flowing]), FLOWING_SOLID_MAX)
+        f_s_bridge = 1.0 - float(self.props.liquid_fraction(rheology.BRIDGE_LOW))
+        eta[flowing] = rheology.viscosity(T[flowing], f_s, gamma[flowing], liquid.mu, f_s_bridge)
+        return eta
+
+    def momentum_step(self, dt, tau, push, g_n=None):
+        """One implicit (backward-Euler) step dt [s] of every column's velocities through its depth, each component
+        apart (the skyscrapers' momentum step, matched by amendment):
+
+            m_i (u_i' - u_i) / dt = A(z_i) D_i (u'_(i+1) - u'_i) + A(z_(i-1)) D_(i-1) (u'_(i-1) - u'_i)
+                                    + push V_i + tau A_top [i the top cell],
+
+        A(z) the column's cross-section at each interface's depth (Task 2's curved law, the thicknesses at the step's
+        start), D = 1 / (dz_i / 2 eta_i + dz_j / 2 eta_j) the drag per unit area between two cells' centres (the two
+        half-cells in series), V_i = m_i / rho_i the cell's volume, `push` [N/m3, (n, 3) or (3,)] the force per unit
+        volume, the same on every layer of a column (built by Task 6), and `tau` [Pa, (n, 3) or (3,)] the gas shear on
+        the top cell over the top area A_top = A(0). The anchored cells (`anchored`) are held at rest: a moving cell
+        drags on them, and a flowing bottom cell on the rigid volume beneath the base, over its own half-thickness
+        alone, A(z_bottom) eta / (dz / 2) (no slip at the rigid front). A crust (`crust`) floats: its contiguous cells are
+        one unknown with their summed mass, momentum and forces, dragged at its faces through a half-cell of
+        CRUST_VISCOSITY. Each flowing cell's viscosity (`viscosity`) is at its own shear rate, the mean over its two
+        faces of the stress there over its viscosity, found by fixed point from the step's starting velocities: at
+        most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by more than SHEAR_TOL relatively.
+
+        `g_n` [m/s2], the deceleration's part along the normal, is accepted for the plan's interface and not used: the
+        momentum through the depth does not depend on it (it enters the thickness push that Task 6 builds into `push`).
+
+        Updates U and returns a MomentumBook: the impulses of the push and the shear on the moving cells and the
+        momentum given to the wall (the anchored metal and the volume beneath), so that the columns' momentum change is
+        push + shear - wall to round-off. Only the columns where a cell moves are solved; in the others every cell is
+        anchored, ends at rest, and gives the wall the momentum it held."""
+        n = self.n
+        tau = np.broadcast_to(np.asarray(tau, dtype=float), (n, 3))
+        push = np.broadcast_to(np.asarray(push, dtype=float), (n, 3))
+        T = self.T()
+        valid = self.valid
+        anchored = self._anchored(T)
+        moving = valid & ~anchored
+        wall = ((self.m * anchored)[..., None] * self.U).sum(axis=1)       # what the anchored cells held, now at rest
+        book = MomentumBook(np.zeros((n, 3)), np.zeros((n, 3)), wall, 0)
+        U = np.zeros_like(self.U)
+        live = np.flatnonzero(moving.any(axis=1))
+        if len(live):
+            U[live], push_i, shear_i, wall_i, book.passes = self._momentum_columns(live, T, anchored, dt, tau[live],
+                                                                                      push[live])
+            book.push[live], book.shear[live] = push_i, shear_i
+            book.wall[live] += wall_i
+        self.U = U
+        return book
+
+    def _momentum_columns(self, r, T_all, anchored, dt, tau, push):
+        """`momentum_step` on the columns r (each with a moving cell): (U (len r, K, 3), push impulse, shear impulse,
+        the wall's share of the moving cells' momentum (both (len r, 3)), the fixed point's passes)."""
+        nr, K = len(r), self.m.shape[1]
+        rows = np.arange(nr)
+        valid, T = self.valid[r], T_all[r]
+        m, count, U0 = self.m[r], self.count[r], self.U[r]
+        last = count - 1
+        flowing = valid & (T > self.material.T_rigid)                   # as `flowing`
+        anchored = anchored[r]
+        moving = valid & ~anchored                                       # the flowing cells and the floating crusts
+        crust = moving & ~flowing
+        dz = np.where(valid, np.maximum(self.dz(T_all)[r], DZ_FLOOR), 0.0)       # the thicknesses at the start
+        z_bot = np.cumsum(dz, axis=1)
+        k1, k2, A_top = self.kappa[r, 0, None], self.kappa[r, 1, None], self.area[r]
+        A_z = A_top[:, None] * (1.0 - k1 * z_bot) * (1.0 - k2 * z_bot)   # the cross-section at each cell's bottom
+        A_i, A_b = A_z[:, :-1], A_z[rows, last]                          # at each interface's depth, at the base
+        V = np.where(valid, m / np.where(valid, self.density(T), 1.0), 0.0)
+        force = np.where(moving[..., None], push[:, None, :] * V[..., None], 0.0)
+        top_moves = moving[:, 0]
+        force[:, 0] += np.where(top_moves[:, None], tau * A_top[:, None], 0.0)
+        bottom_flows = flowing[rows, last]
+
+        # the unknowns: every cell, but each crust's contiguous cells one unknown together
+        same = np.zeros((nr, K), dtype=bool)
+        same[:, 1:] = crust[:, 1:] & crust[:, :-1]
+        unit = np.cumsum(~same, axis=1) - 1
+        Ku = int(unit.max()) + 1
+        flat = (rows[:, None] * Ku + unit).ravel()
+
+        def lump(x):
+            return np.bincount(flat, x.ravel(), nr * Ku).reshape(nr, Ku)
+
+        moving_u = lump(moving.astype(float)) > 0.0
+        last_u = unit[rows, last]
+        between = ~same[:, 1:]                                            # interfaces joining two different unknowns
+        ir, ik = np.nonzero(between)
+        mass_u = lump(np.where(moving, m, 0.0))
+        rhs_u = np.stack([lump(np.where(moving, m * U0[..., c] / dt + force[..., c], 0.0)) for c in range(3)])
+
+        def viscosities(gamma):
+            return np.where(crust, CRUST_VISCOSITY, self._viscosity(T, flowing, gamma))
+
+        def drags(eta):
+            """The drag per unit area at each interface (nr, K-1) and at the base (nr,) [Pa s/m]."""
+            resist = 0.5 * dz[:, :-1] / eta[:, :-1] + 0.5 * dz[:, 1:] / eta[:, 1:]
+            link = valid[:, 1:] & (np.isfinite(eta[:, :-1]) | np.isfinite(eta[:, 1:]))
+            D = np.where(link, 1.0 / np.where(link, resist, 1.0), 0.0)
+            eta_b = eta[rows, last]
+            Db = np.where(bottom_flows, np.where(np.isfinite(eta_b), eta_b, 0.0) / (0.5 * dz[rows, last]), 0.0)
+            return D, Db
+
+        def solve(D, Db):
+            C = A_i * D                                                   # N s/m: the drag through each interface
+            Cu = np.zeros((nr, max(Ku - 1, 0)))
+            Cu[ir, unit[ir, ik]] = C[ir, ik]                              # unit a's face with unit a + 1
+            diag = mass_u / dt
+            diag[:, :-1] += Cu
+            diag[:, 1:] += Cu
+            diag[rows, last_u] += A_b * Db
+            lower, upper = np.zeros((nr, Ku)), np.zeros((nr, Ku))
+            lower[:, 1:] = np.where(moving_u[:, :-1], -Cu, 0.0)
+            upper[:, :-1] = np.where(moving_u[:, 1:], -Cu, 0.0)
+            held = ~moving_u
+            diag, lower, upper = np.where(held, 1.0, diag), np.where(held, 0.0, lower), np.where(held, 0.0, upper)
+            def three(x):                                                 # the three components solved as rows
+                return np.concatenate([x, x, x])
+            rhs = np.where(three(held), 0.0, rhs_u.reshape(3 * nr, Ku))
+            u = _tridiagonal(three(lower), three(diag), three(upper), rhs)
+            u = np.moveaxis(u.reshape(3, nr, Ku), 0, -1)
+            return np.where(moving[..., None], u[rows[:, None], unit], 0.0)
+
+        def rates(U, D, Db, eta):
+            """Every flowing cell's shear rate [1/s]: the mean over its two faces of the stress there over its
+            viscosity."""
+            stress = np.zeros((nr, K + 1))                                # at every face, the top face first
+            stress[:, 1:K] = D * np.linalg.norm(U[:, :-1] - U[:, 1:], axis=2)
+            stress[:, 0] = np.where(top_moves, np.linalg.norm(tau, axis=1), 0.0)
+            stress[rows, last + 1] = Db * np.linalg.norm(U[rows, last], axis=1)
+            face = 0.5 * (stress[:, :-1] + stress[:, 1:])
+            return np.where(flowing, face / np.where(flowing, eta, 1.0), 0.0)
+
+        eta = viscosities(0.0)
+        eta = viscosities(rates(U0 * moving[..., None], *drags(eta), eta))   # at the step's starting rates
+        for passes in range(1, SHEAR_PASSES + 1):
+            D, Db = drags(eta)
+            U = solve(D, Db)
+            eta_new = viscosities(rates(U, D, Db, eta))
+            change = np.abs(eta_new[flowing] - eta[flowing]) / eta[flowing]
+            if change.size == 0 or change.max() <= SHEAR_TOL:
+                break
+            eta = eta_new
+        on_anchored = np.zeros((nr, K), dtype=bool)                       # a moving cell on the anchored metal beneath
+        on_anchored[:, :-1] = moving[:, :-1] & anchored[:, 1:]
+        drag = np.zeros((nr, K))
+        drag[:, :-1] = np.where(on_anchored[:, :-1], A_i * D, 0.0)
+        drag[rows, last] += np.where(bottom_flows, A_b * Db, 0.0)
+        to_wall = dt * (drag[..., None] * U).sum(axis=1)
+        push_impulse = dt * np.where(moving[..., None], push[:, None, :] * V[..., None], 0.0).sum(axis=1)
+        shear_impulse = dt * np.where(top_moves[:, None], tau * A_top[:, None], 0.0)
+        return U, push_impulse, shear_impulse, to_wall, passes

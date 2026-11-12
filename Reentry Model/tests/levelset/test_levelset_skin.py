@@ -6,7 +6,7 @@ import pytest
 from reentry_model.levelset.skin import SKIN_PRESETS, Skins, SkinSettings
 from reentry_model.shared.material import Material
 
-from materials import ConstMaterial, LinearMeltMaterial
+from materials import ConstMaterial, LinearMeltMaterial, VariableKMaterial
 
 AREA = 4e-6                              # m2, a 2 mm square column
 
@@ -229,10 +229,12 @@ def test_conduction_books_close():
     assert a + b * T_b == pytest.approx(E_base / (3 * dt), rel=1e-12)
 
 
-def test_the_trial_sensitivity_is_the_derivative_of_the_base_heat():
-    # constant k and rho_l = rho: the sub-step's geometry and conductances do not move with T_b, so the linearised
-    # step's derivative is exact; mushy cells exercise the latent heat's cp_eff, a draw with a gradient the profile
-    mat = LinearMeltMaterial(rho_l=2800.0)
+@pytest.mark.parametrize("mat", [LinearMeltMaterial(rho_l=2800.0), VariableKMaterial(rho_l=2800.0)],
+                         ids=["constant_k", "variable_k"])
+def test_the_trial_sensitivity_is_the_derivative_of_the_base_heat(mat):
+    # rho_l = rho: the sub-step's geometry does not move with T_b, so the linearised step's derivative is exact; mushy
+    # cells exercise the latent heat's cp_eff, a draw with a gradient the profile; with k rising with T (Task 4) the
+    # conductances move with the temperatures and the Jacobian's dk/dT terms carry it
     def start():
         sk = layered(mat, [(0.2e-3, 900.0), (0.3e-3, 885.0), (0.4e-3, 800.0)], settings=SkinSettings(swell=False))
         sk.H[0, -1] *= 0.5                                         # the bottom cell half a cell: the draw has room
@@ -364,3 +366,180 @@ def test_a_skin_reduced_to_one_cell_keeps_its_books():
     sk.take_top(np.array([0]), np.array([sk.count[0]]))
     book = sk.conduct(dt, q, 300.0, 0.8, T_b)
     assert book.E_base[0] == book.E_top[0] and book.E_rad[0] == 0.0
+
+
+# -- the layered column flow (Task 4) ----------------------------------------------------------------------------------
+from reentry_model.shared import rheology
+
+STEADY = 1.0e10                   # s: one backward-Euler step this long is the steady state (inertia about 1e-11 of it)
+MU = 1.3e-3                       # Pa s, the test materials' liquid viscosity (the shared AA7075 liquid's)
+X = np.array([1.0, 0.0, 0.0])
+
+
+def liquid_mat():
+    """Constant viscosity: every flowing cell of these tests is above the shared bridge's top (908 K), so it takes the
+    liquid's viscosity whatever its shear rate."""
+    return LinearMeltMaterial(T_s=880.0, T_l=908.0, rho_l=2400.0)
+
+
+def heights(sk, n, row=0):
+    """The heights [m] of the first n cells' centres above the bottom of the n-th (the rigid front)."""
+    dz = sk.dz()[row, :n]
+    return dz.sum() - (np.cumsum(dz) - 0.5 * dz)
+
+
+def momentum_closes(sk, P0, book, rel=1e-12):
+    """The momentum change equals the impulses in (push and shear) less the momentum given to the wall, to `rel` of
+    the impulses."""
+    P1 = sk.totals()[2]
+    scale = np.abs(book.push).max() + np.abs(book.shear).max() + np.abs(P0).max()
+    return np.abs(P1 - P0 - book.push - book.shear + book.wall).max() <= rel * scale
+
+
+def test_flowing_and_liquid_follow_the_shared_temperatures():
+    mat = Material.from_drama_json("AA7075_scheil")
+    sk = layered(mat, [(30e-6, 950.0), (30e-6, 908.5), (30e-6, 900.0), (30e-6, mat.T_rigid - 0.05), (30e-6, 880.0)])
+    flowing, liquid = sk.flowing()[0], sk.liquid()[0]
+    assert np.array_equal(flowing, np.arange(15) < 9)                  # above T_rigid (half liquid): flows
+    assert np.array_equal(liquid, np.arange(15) < 6)                   # at or above the liquidus: liquid
+    eta = sk.viscosity(0.0)[0]
+    assert np.all(eta[:6] == mat.liquid.mu) and np.all(np.isinf(eta[9:]))
+    f_s = 1.0 - mat.liquid_fraction(np.array([900.0]))
+    f_b = 1.0 - mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))
+    assert eta[6] == pytest.approx(float(rheology.viscosity(900.0, f_s, 0.0, mat.liquid.mu, f_b)[0]), rel=1e-12)
+
+
+def test_linear_couette():
+    """Gas shear tau on 0.3 mm of liquid over rigid metal, steady: u = tau s / mu at every cell centre (s the height
+    above the rigid front), the bottom cell dragging on the rigid metal over its own half-thickness; the surface speed,
+    extrapolated from the top cell, tau b / mu within 1e-6."""
+    mat = liquid_mat()
+    sk = layered(mat, [(0.3e-3, 950.0), (0.2e-3, 850.0)], settings=SkinSettings())
+    P0 = sk.totals()[2]
+    book = sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
+    s = heights(sk, 30)
+    b = sk.dz()[0, :30].sum()
+    np.testing.assert_allclose(sk.U[0, :30, 0], s / MU, rtol=1e-9)
+    top = sk.U[0, 0, 0] + 0.5 * sk.dz()[0, 0] * (sk.U[0, 0, 0] - sk.U[0, 1, 0]) / (s[0] - s[1])
+    assert top == pytest.approx(1.0 * b / MU, rel=1e-6)
+    assert np.all(sk.U[0, 30:] == 0.0) and np.all(sk.U[0, :, 1:] == 0.0) and book.passes == 1
+    assert book.shear[0] == pytest.approx(1.0 * AREA * STEADY * X, rel=1e-15)
+    assert momentum_closes(sk, P0, book)
+
+
+def test_a_curved_column_carries_the_shear_force_through_every_interface():
+    """On a convex column the cross-section narrows with depth, so at steady state the force tau A0 passes through each
+    interface, A(z_i) D_i (u_i - u_(i+1)), and the stress rises as A0 / A(z_i)."""
+    mat = liquid_mat()
+    sk = layered(mat, [(0.5e-3, 950.0), (0.1e-3, 850.0)], kappa=(1 / 2e-3, 1 / 4e-3), settings=SkinSettings())
+    sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
+    dz = sk.dz()[0, :50]
+    z = np.cumsum(dz)[:-1]
+    A = sk.cross_section(z[None, :])[0]
+    force = A * MU / (0.5 * dz[:-1] + 0.5 * dz[1:]) * (sk.U[0, :49, 0] - sk.U[0, 1:50, 0])
+    np.testing.assert_allclose(force, 1.0 * AREA, rtol=1e-9)
+    A_b = sk.cross_section(np.array([[dz.sum()]]))[0, 0]
+    assert A_b * MU / (0.5 * dz[-1]) * sk.U[0, 49, 0] == pytest.approx(1.0 * AREA, rel=1e-9)
+
+
+def test_half_parabola_second_order():
+    """A body force G alone on a free liquid layer over rigid metal, steady: u = (G / mu)(h s - s^2 / 2); the error
+    falls by four when the cells halve."""
+    G = 1e4
+    mat = liquid_mat()
+
+    def error(N):
+        sk = layered(mat, [(0.3e-3, 950.0), (0.1e-3, 850.0)], cell=0.3e-3 / N, settings=SkinSettings())
+        P0 = sk.totals()[2]
+        book = sk.momentum_step(STEADY, np.zeros(3), G * X)
+        assert momentum_closes(sk, P0, book)
+        s, h = heights(sk, N), sk.dz()[0, :N].sum()
+        exact = G / MU * (h * s - 0.5 * s * s)
+        return np.abs(sk.U[0, :N, 0] - exact).max() / exact.max()
+    e15, e30, e60 = error(15), error(30), error(60)
+    assert e30 < 1e-3
+    assert e15 / e30 == pytest.approx(4.0, rel=0.1) and e30 / e60 == pytest.approx(4.0, rel=0.1)
+
+
+def steady_slurry_rate(mat, T, tau):
+    """The steady shear rate [1/s] of slurry at T [K] under the stress tau [Pa]: tau over its own viscosity at that
+    rate, by fixed point on the shared rheology."""
+    f_s = 1.0 - float(mat.liquid_fraction(np.array([T]))[0])
+    f_b = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
+    gamma = 0.0
+    for _ in range(60):
+        gamma = tau / float(rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_b))
+    return gamma
+
+
+def test_liquid_over_slurry_kinks():
+    """The shared AA7075 rheology: 1 Pa of gas shear on 15 liquid cells (950 K) over 15 of slurry (900 K, 37 % solid)
+    over rigid metal. The stress is 1 Pa all through, so each layer is linear and the profile's slope jumps at the
+    interface by the viscosity ratio, the slurry's at its own shear rate (found by the fixed point) over the liquid's."""
+    mat = Material.from_drama_json("AA7075_scheil")
+    sk = layered(mat, [(0.15e-3, 950.0), (0.15e-3, 900.0), (0.1e-3, 880.0)], settings=SkinSettings())
+    P0 = sk.totals()[2]
+    book = sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
+    s, u = heights(sk, 30), sk.U[0, :30, 0]
+    slope_l = (u[0] - u[14]) / (s[0] - s[14])
+    slope_s = (u[15] - u[29]) / (s[15] - s[29])
+    gamma = steady_slurry_rate(mat, 900.0, 1.0)
+    eta_s = 1.0 / gamma
+    assert slope_l / slope_s == pytest.approx(eta_s / mat.liquid.mu, rel=1e-3)
+    assert slope_l == pytest.approx(1.0 / mat.liquid.mu, rel=1e-9)
+    assert 1 < book.passes <= 5
+    assert momentum_closes(sk, P0, book)
+
+
+def test_stokes_first_problem():
+    """Tau suddenly applied to the top of a deep liquid layer at rest: u(z, t) = (2 tau / mu)[sqrt(nu t / pi)
+    exp(-z^2 / 4 nu t) - (z / 2) erfc(z / 2 sqrt(nu t))], the surface (2 tau / mu) sqrt(nu t / pi) (read from the top
+    cell's centre and the surface gradient tau / mu the shear sets); the surface and the cells within 2 % of the surface
+    speed at three times (diffusion lengths sqrt(nu t) of 40, 80 and 120 um in 1.2 mm), and the
+    momentum the shear's impulse exactly."""
+    from scipy.special import erfc
+    mat = liquid_mat()
+    nu = MU / mat.liquid.rho
+    sk = layered(mat, [(1.2e-3, 950.0), (0.05e-3, 850.0)], settings=SkinSettings())
+    N = 120
+    dz = sk.dz()[0, :N]
+    z = np.cumsum(dz) - 0.5 * dz
+    dt, t = 2e-5, 0.0
+    for L in (40e-6, 80e-6, 120e-6):
+        t_end = L * L / nu
+        steps = int(round((t_end - t) / dt))
+        for _ in range(steps):
+            sk.momentum_step(dt, 1.0 * X, np.zeros(3))
+            t += dt
+        L = np.sqrt(nu * t)
+        exact = 2.0 / MU * (L / np.sqrt(np.pi) * np.exp(-z * z / (4 * L * L)) - 0.5 * z * erfc(z / (2 * L)))
+        surface = sk.U[0, 0, 0] + 1.0 * 0.5 * dz[0] / MU          # the top cell's centre plus the shear's gradient
+        assert surface == pytest.approx(2.0 / MU * L / np.sqrt(np.pi), rel=0.02)
+        assert np.abs(sk.U[0, :N, 0] - exact).max() <= 0.02 * exact[0]
+        assert sk.totals()[2][0, 0] == pytest.approx(1.0 * AREA * t, rel=1e-12)
+
+
+def test_a_floating_crust_moves_as_one_piece():
+    """A crust (three rigid cells) on liquid over the rigid metal joined to the floor, every cell moving at the start,
+    sheared and pushed: the crust's cells end at one speed, the anchored cells at rest (their momentum to the wall), and
+    the momentum change is the impulses less the wall's to 1e-12. Steady under shear alone, the crust rides the
+    liquid's Couette profile at its top. A wholly rigid column stops and gives the wall all its momentum."""
+    mat = liquid_mat()
+    sk = layered(mat, [(30e-6, 850.0), (0.15e-3, 950.0), (50e-6, 850.0)], settings=SkinSettings())
+    two = Skins(mat, np.full(2, AREA), np.zeros((2, 2)), SkinSettings())
+    rigid = layered(mat, [(0.23e-3, 850.0)])
+    two.install(np.vstack([sk.m, rigid.m]), np.vstack([sk.H, rigid.H]), np.array([23, 23]))
+    assert two.crust()[0, :3].all() and not two.crust()[0, 3:].any() and two.anchored()[0, 18:].all()
+    two.U = np.random.default_rng(3).normal(0.0, 0.05, two.U.shape) * two.valid[..., None]
+    P0 = two.totals()[2]
+    book = two.momentum_step(1e-3, np.array([[3.0, -1.0, 0.0], [2.0, 0.0, 0.0]]), np.array([2e4, -1e4, 0.0]))
+    assert np.ptp(two.U[0, :3], axis=0).max() == 0.0 and np.all(two.U[0, 0] != 0.0)       # one piece
+    assert np.all(two.U[0, 18:] == 0.0) and np.all(two.U[1] == 0.0)
+    assert book.wall[1] == pytest.approx(P0[1], rel=1e-15) and np.all(book.shear[1] == 0.0)
+    assert momentum_closes(two, P0, book)
+    # steady under shear alone: the stress is tau all through, the crust at the liquid's speed at its top
+    book = sk.momentum_step(STEADY, 1.0 * X, np.zeros(3))
+    s = heights(sk, 18)[3:]
+    h_l = sk.dz()[0, 3:18].sum()
+    np.testing.assert_allclose(sk.U[0, 3:18, 0], s / MU, rtol=1e-6)
+    np.testing.assert_allclose(sk.U[0, :3, 0], h_l / MU, rtol=1e-6)

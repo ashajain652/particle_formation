@@ -73,3 +73,15 @@ class LinearMeltMaterial(ConstMaterial):
         mush = self.T_s + (h - h_s) / (self._cp + self.L / (self.T_l - self.T_s))
         return np.where(h <= h_s, self.T_ref + h / self._cp,
                         np.where(h >= h_l, self.T_ref + (h - self.L) / self._cp, mush))
+
+
+class VariableKMaterial(LinearMeltMaterial):
+    """`LinearMeltMaterial` with a conductivity rising linearly with temperature, k = k0 (1 + slope (T - T_ref)), so
+    that a heat sub-step's conductances move with its temperatures (stage 3 Task 4: the dk/dT terms of the Jacobian)."""
+
+    def __init__(self, slope=1.0e-3, **kw):
+        super().__init__(**kw)
+        self.k_slope = slope
+
+    def k(self, T):
+        return self._k * (1.0 + self.k_slope * (np.asarray(T, float) - self.T_ref))
