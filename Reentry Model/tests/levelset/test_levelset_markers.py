@@ -265,3 +265,48 @@ def test_assign_finds_the_patch_whose_cut_cell_holds_each_marker():
     mk.x = mk.x[perm]
     mk.assign(mesh, P)
     assert np.array_equal(mk.patch, perm)
+
+
+def test_snap_converges_at_a_kink_of_the_p1_contour():
+    """A P1 phi with a kink at a layer of nodes (slope 3 in the layer holding the zero contour, 1 in the layer above,
+    the root 0.2 mm below the kink): the recovered-normal snap alone overshoots across the kink and back and cycles
+    for ever 1.2 mm off phi; the cell-gradient Newton steps that follow it land on the contour (Task 9, fix round 4)."""
+    from reentry_model.levelset.markers import SNAP_PASSES, _field
+    from reentry_model.levelset.transfer import interpolate
+    h = 1e-3
+    mesh = build(BoxBase.around((-3e-3, -3e-3, -2e-3), (3e-3, 3e-3, 4e-3), h))
+    z = mesh.points[:, 2]
+    r = 0.8e-3                                                       # the zero contour, z = r, in the layer [0, h]
+    phi = np.where(z <= h + 1e-12, 3.0 * (z - r), 3.0 * (h - r) + (z - h))
+    x0 = np.array([[0.3e-3, -0.2e-3, 0.4e-3], [1.1e-3, 0.6e-3, 0.4e-3]])
+    x = x0.copy()                                                    # the old snap: recovered-normal steps only
+    for _ in range(20 * SNAP_PASSES):
+        val, n = _field(mesh, phi, x)
+        x = x - val[:, None] * n
+    assert np.allclose(np.abs(interpolate(mesh, phi, x)), 1.2e-3, rtol=1e-9)   # still cycling, 1.2 mm off
+    mk = Markers(x0, np.tile([0.0, 0.0, 1.0], (2, 1)), np.ones(2), np.zeros((2, 2)), [0, 1], [-1, -1], h)
+    mk.snap(mesh, phi)
+    assert np.abs(interpolate(mesh, phi, mk.x)).max() <= 1e-15
+    assert np.allclose(mk.x[:, 2], r, atol=1e-15) and np.allclose(mk.x[:, :2], x0[:, :2], atol=1e-15)
+    assert np.allclose(mk.normal, [0.0, 0.0, 1.0])
+
+
+def test_snap_converges_where_phi_is_far_from_a_distance():
+    """A P1 phi rising only 0.2 m per metre along its normal (as in two cells of the full-size cube's second step, where
+    |grad phi| was 0.20 and 0.88 and the recovered normal 30 and 73 degrees off the cell's gradient): each
+    recovered-normal step removes only a fifth of the distance, so 40 of them from 1.6 mm leave the marker some 2e-7 m
+    off, far above the body's 1e-10 m; one snap with the cell-gradient Newton steps lands on the contour (fix round 4)."""
+    from reentry_model.levelset.markers import SNAP_PASSES, _field
+    from reentry_model.levelset.transfer import interpolate
+    h = 1e-3
+    mesh = build(BoxBase.around((-3e-3, -3e-3, -3e-3), (3e-3, 3e-3, 3e-3), h))
+    phi = 0.2 * (mesh.points[:, 2] - 0.3e-3)
+    x0 = np.array([[0.3e-3, -0.2e-3, 1.9e-3]])
+    x = x0.copy()
+    for _ in range(20 * SNAP_PASSES):
+        val, n = _field(mesh, phi, x)
+        x = x - val[:, None] * n
+    assert abs(x[0, 2] - 0.3e-3) == pytest.approx(1.6e-3 * 0.8 ** 40, rel=1e-6)    # about 2.1e-7 m off
+    mk = Markers(x0, [[0.0, 0.0, 1.0]], [1.0], [[0.0, 0.0]], [0], [-1], h)
+    mk.snap(mesh, phi)
+    assert abs(mk.x[0, 2] - 0.3e-3) <= 1e-15 and np.allclose(mk.x[0, :2], x0[0, :2], atol=1e-15)

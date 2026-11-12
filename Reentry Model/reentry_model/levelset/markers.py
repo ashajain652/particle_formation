@@ -3,9 +3,13 @@ gas surface, each carrying one skin (a row of a `Skins`) and an area (Ruling 1: 
 skin's base at x - H n, H the skin's thickness).
 
 Motion. `carry` moves the markers by a velocity field; `snap` returns them to phi's zero contour along the normal,
-x <- x - phi(x) n(x), n the unit recovered gradient, applied once and iterated once more (section 9.1). phi is read as
-its P1 interpolant; the gradient is the nodal (volume-weighted) average of the cells' gradients, interpolated, so the
-normal varies continuously along the surface.
+x <- x - phi(x) n(x), n the unit recovered gradient, applied once and iterated once more (section 9.1), then finished
+by Newton steps along the gradient of the cell each marker lies in, x <- x - phi g / |g|^2, the exact root of the P1
+field within the cell (Task 9, fix round 4: the recovered step assumes phi rises one metre per metre along n; where
+phi's cells are far from a distance -- |grad phi| 0.2 and 0.9, 30 and 73 degrees off n, on the full-size cube's second
+step -- it removes only a fifth to a quarter of the distance a pass, and 40 passes left two markers 4e-8 m off). phi
+is read as its P1 interpolant; the recovered gradient is the nodal (volume-weighted) average of the cells' gradients,
+interpolated, so the normal varies continuously along the surface.
 
 Tessellation (Ruling 2). Each marker's neighbours are the markers within NEIGHBOUR_REACH target spacings whose patches
 lie within NEIGHBOUR_HOPS hops of its own in phi's patch graph (cells sharing a node), so markers across a thin gap of
@@ -48,6 +52,9 @@ NEIGHBOUR_REACH = 3.0      # target spacings: markers farther apart are never ne
 NEIGHBOUR_HOPS = 2         # patch-graph hops between neighbours' patches at most
 CAP_SIDES = 16             # sides of the polygon a Voronoi cell is clipped from
 SNAP_PASSES = 2            # the snap applied once and iterated once (section 9.1)
+NEWTON_ROUNDS = 8          # cell-gradient Newton steps after them at most (`_cell_newton`; Task 9, fix round 4)
+NEWTON_TOL = 1.0e-13       # m: points this close to phi's zero contour take no Newton step (a thousandth of the body's
+                           # snap tolerance, stepend.SNAP_TOL)
 SPLIT_FACTOR = 2.0         # a marker splits above this times the target area (section 9.2)
 MERGE_FRACTION = 1.0 / 3.0  # markers closer than this times the target spacing merge (section 9.2)
 SPLIT_GAP = 0.5            # target spacings between the two halves of a split (plan, Task 5)
@@ -66,6 +73,28 @@ def _field(mesh, phi, x):
     val = np.einsum("ni,ni->n", b, phi[T])
     g = np.einsum("ni,nik->nk", b, G[T])
     return val, g / np.maximum(np.linalg.norm(g, axis=1), 1e-300)[:, None]
+
+
+def _cell_newton(mesh, phi, x):
+    """The points x (n, 3) moved onto phi's P1 zero contour by Newton steps along the gradient of the cell each lies
+    in, x <- x - phi(x) g / |g|^2 with g that cell's (constant) gradient: the exact root of the P1 field within the cell,
+    reached in one step when the step stays in the cell; a step that leaves it is repeated from the new cell, at most
+    NEWTON_ROUNDS rounds, the points within NEWTON_TOL of the contour (or in a cell where phi is flat) left alone. (Task 9,
+    fix round 4: the recovered normal is not the cell's gradient and assumes a unit slope, so where the slope along it
+    is far from one its steps converge slowly or, across a kink of the P1 contour, cycle; module docstring.)"""
+    x = np.array(x, dtype=float)
+    todo = np.arange(len(x))
+    for _ in range(NEWTON_ROUNDS):
+        if not len(todo):
+            break
+        cell, b = locate(mesh, x[todo])
+        val = np.einsum("ni,ni->n", b, phi[mesh.tets[cell]])
+        g = cell_gradients(mesh, phi, cell)
+        gg = np.einsum("nk,nk->n", g, g)
+        go = (np.abs(val) > NEWTON_TOL) & (gg > 0.0)
+        todo, val, g, gg = todo[go], val[go], g[go], gg[go]
+        x[todo] -= (val / gg)[:, None] * g
+    return x
 
 
 def _tangent_basis(n):
@@ -151,10 +180,12 @@ class Markers:
         self.x = self.x + np.asarray(velocity(self.x), dtype=float) * dt
 
     def snap(self, mesh, phi):
-        """Back onto phi's zero contour along the recovered normal (module docstring); the normals are updated."""
+        """Back onto phi's zero contour (module docstring): SNAP_PASSES steps along the recovered normal, then Newton
+        steps along each marker's own cell gradient (`_cell_newton`); the normals are updated."""
         for _ in range(SNAP_PASSES):
             val, n = _field(mesh, phi, self.x)
             self.x = self.x - val[:, None] * n
+        self.x = _cell_newton(mesh, phi, self.x)
         _, self.normal = _field(mesh, phi, self.x)
 
     def base(self):
