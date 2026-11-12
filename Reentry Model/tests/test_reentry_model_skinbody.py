@@ -2709,8 +2709,8 @@ def test_on_profile_a_floor_like_column_sprays_by_the_gas_driven_mode_at_its_kin
     cols = skinbody.layer_columns(sk, np.abs(flow.tau))
     wall = cols.z[:, 9]
     assert plan.resolved.all() and plan.profile.shape == (6, len(spray.PROFILE_COLUMNS))
-    np.testing.assert_array_equal(plan.profile[:, profile_column("wall_floor")], 1.0)
-    np.testing.assert_array_equal(plan.profile[:, profile_column("wall_depth_m")], wall)
+    np.testing.assert_array_equal(plan.profile[:, profile_column("floor_like_wall")], 1.0)
+    np.testing.assert_array_equal(plan.profile[:, profile_column("depth_to_wall_m")], wall)
     np.testing.assert_array_equal(plan.profile[:, profile_column("kink_T_K")], sk.T[:, 9])
     assert (plan.profile[:, profile_column("floor_re")] < 0.1).all()
     np.testing.assert_array_equal(plan.profile[:, profile_column("growth_rate_per_s")], 0.0)
@@ -2821,7 +2821,7 @@ def test_profile_records_have_36_columns_and_slurry_rows_carry_no_release_depth(
             no = [profile_column("release_depth_m"), profile_column("growth_rate_per_s")]
             slurry_rows[:, no] = np.nan
             np.testing.assert_array_equal(extra[n_liq:], slurry_rows)
-            assert np.isfinite(extra[n_liq:, profile_column("wall_depth_m")]).all()
+            assert np.isfinite(extra[n_liq:, profile_column("depth_to_wall_m")]).all()
             assert names[len(spray.SOURCE_COLUMNS):] == list(spray.PROFILE_COLUMNS)
     assert widths == {"table": 27, "profile": 36}
 
@@ -2924,7 +2924,8 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     on = p.resolved
     branch = p.result.branch
     s = stats[-1]
-    assert on.any() and s["floor_like_share"] == pytest.approx(np.mean(p.profile[on, profile_column("wall_floor")]))
+    assert on.any()
+    assert s["floor_like_share"] == pytest.approx(np.mean(p.profile[on, profile_column("floor_like_wall")]))
     assert s["sprayed_gradient_kg"] == pytest.approx(p.mass[on & (branch == spray.BRANCH_PROFILE)].sum(), rel=1e-14)
     driven = on & np.isin(branch, (spray.BRANCH_THIN, spray.BRANCH_RAREFIED))
     assert s["sprayed_gas_driven_kg"] == pytest.approx(p.mass[driven].sum(), rel=1e-14)

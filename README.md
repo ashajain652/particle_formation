@@ -439,8 +439,8 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
   is not a spraying skin run is refused with exit code 2.
 - **Records.** Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's
   `settings.dispersion`). On `profile`, `particles.npz` has 36 columns, the 27 of `table` followed by nine
-  (`spray.PROFILE_COLUMNS`: `wall_depth_m`, `wall_floor`, `floor_re`, `kink_depth_m`, `kink_T_K`, `release_depth_m`,
-  `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has seven more columns
+  (`spray.PROFILE_COLUMNS`: `depth_to_wall_m`, `floor_like_wall`, `floor_re`, `kink_depth_m`, `kink_T_K`,
+  `release_depth_m`, `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has seven more columns
   (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `depth_to_wall_median_mm`, `floor_re_median`,
   `we_s_profile_median`, `sprayed_gradient_kg`, `sprayed_gas_driven_kg`); on `table` there are neither. A resume that
   changes the setting drops or adds the history columns from the saved row, cuts records held in memory to 27 columns or

@@ -241,7 +241,8 @@ The fit (spec 6.4):
   - `viscous_film(lam, tau, h, liquid, nu=None)`: with `nu` given, it replaces `liquid.mu / liquid.rho`; without it the result is bit-identical.
   - `SprayResult.cap_depth = None` is a new field: the crest cap's depth per column, set on the profile path.
   - `SprayModel.evaluate(..., profile=None, rt_extent=None)`. With `profile=None`, nothing changes.
-  - `PROFILE_COLUMNS = ("wall_depth_m", "wall_floor", "floor_re", "kink_depth_m", "kink_T_K", "release_depth_m", "growth_rate_per_s", "girin_delta_m_m", "girin_v_s_ms")`
+  - `PROFILE_COLUMNS = ("depth_to_wall_m", "floor_like_wall", "floor_re", "kink_depth_m", "kink_T_K", "release_depth_m", "growth_rate_per_s", "girin_delta_m_m", "girin_v_s_ms")`
+    (The first two were renamed from their `wall_`-prefixed names in the final review's fix round, 2026-11-12, because `wall_` marks the wall-clock timers that the comparisons of runs skip; `ProfileRecord`'s field followed.)
   - `record_columns(width) -> list` gives `SOURCE_COLUMNS` for 27 and `SOURCE_COLUMNS + PROFILE_COLUMNS` for 36; any other width raises ValueError.
   - `source_block(..., extra=None)` appends `extra` (n, 9) to each released row.
   - `SourceSpool(directory, names=None)` stores `self.names`, defaulting to `SOURCE_COLUMNS`. A class attribute `names = tuple(SOURCE_COLUMNS)` serves spools pickled before this change. `append` checks the width against `names`, and `columns()` keys by `names`. `source_table` and `source_columns` take the width from the rows or the spool.
@@ -298,7 +299,7 @@ The profile block inside `evaluate` applies only to `profile.resolved` columns. 
 **Interfaces:**
 - Consumes: Tasks 1, 2 and 4–6.
 - Produces, shared, in `melt_profile`:
-  - `@dataclass class ProfileRecord` holds (n,) arrays: `wall_depth`, `wall_floor` (1, 0, or NaN where unresolved), `floor_re`, `kink_depth`, `kink_T` (the first kink's, NaN with none), `release_depth`, `growth`, `T_gradient` and `T_driven`.
+  - `@dataclass class ProfileRecord` holds (n,) arrays: `wall_depth`, `floor_like_wall` (1, 0, or NaN where unresolved), `floor_re`, `kink_depth`, `kink_T` (the first kink's, NaN with none), `release_depth`, `growth`, `T_gradient` and `T_driven`.
   - `profile_modes(cols, windward, sigma) -> (spray.ProfileModes, ProfileRecord)`.
     - It resolves the windward `reducible` columns.
     - It calls `fit_profiles`, `place_wall` with `nu_below`, and `above_wall`.

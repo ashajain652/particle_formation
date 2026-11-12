@@ -360,7 +360,7 @@ What comes back, per flight, and why:
 - `<label>.log`: the end of the flight, its wall time and peak memory.
 - `<label>/particles_summary.csv` and `size_distribution.csv`: droplets per macro step and per size bin.
 - `<label>/particles.npz`, **the droplet records, one row per released patch** (27 columns on `table`; 36 on `profile`,
-  the 27 followed by `wall_depth_m`, `wall_floor`, `floor_re`, `kink_depth_m`, `kink_T_K`, `release_depth_m`,
+  the 27 followed by `depth_to_wall_m`, `floor_like_wall`, `floor_re`, `kink_depth_m`, `kink_T_K`, `release_depth_m`,
   `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`). The mass by mode and the droplet sizes come from it: `branch`
   (0 Girin thick, 1 thin, 2 rarefied, 3 Rayleigh-Taylor, 4 regime 2, 5 the gradient mode on the profile), `dm_kg` (mass
   released), `r_m` (droplet radius) and `solid_fraction` (above zero for slurry). **It is not committed**: it can be tens of

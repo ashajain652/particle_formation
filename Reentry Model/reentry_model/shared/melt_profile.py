@@ -282,8 +282,8 @@ DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "depth_to_wall_m
 @dataclass
 class ProfileRecord:
     """What the profile path reports per column (spec 6.6 and 6.8), all (n,) arrays, NaN on the columns it does not
-    resolve: `wall_depth` [m], the depth to the wall; `wall_floor`, 1 where the wall is a floor-like kink and 0 where it
-    is the rigid front; `floor_re`, the floor Reynolds number at the wall, or at the first kink of a fluid-like column
+    resolve: `wall_depth` [m], the depth to the wall; `floor_like_wall`, 1 where the wall is a floor-like kink and 0
+    where it is the rigid front; `floor_re`, the floor Reynolds number at the wall, or at the first kink of a fluid-like column
     (`dispersion.Wall.re_f`; NaN with no kink); `kink_depth` [m] and `kink_T` [K], the first kink's depth and its cell's
     temperature (NaN with none); `release_depth` [m], the gradient mode's (NaN where it is stable or the layer above the
     wall is one straight segment); `growth` [1/s], its growth rate (0 there); and the threshold temperatures [K] of the
@@ -291,7 +291,7 @@ class ProfileRecord:
     it reaches the wall (NaN without a release depth), and `T_driven`, that of the deepest cell whose centre lies
     strictly above the wall, or the top cell's where the wall is at or above its centre."""
     wall_depth: np.ndarray
-    wall_floor: np.ndarray
+    floor_like_wall: np.ndarray
     floor_re: np.ndarray
     kink_depth: np.ndarray
     kink_T: np.ndarray
@@ -370,7 +370,7 @@ def profile_modes(cols, windward, sigma):
         nu_eff[r] = couette_viscosity(sub, wall.depth)[0]
         we_s[r] = cut.rho[:, 0] * (cut.u_top - u_low) ** 2 * d_top / sigma[r]
         cap_gradient[r], cap_driven[r] = _run_depth(sub, T_gradient), _run_depth(sub, T_driven)
-        for name, value in (("wall_depth", wall.depth), ("wall_floor", np.where(wall.floor, 1.0, 0.0)),
+        for name, value in (("wall_depth", wall.depth), ("floor_like_wall", np.where(wall.floor, 1.0, 0.0)),
                             ("floor_re", wall.re_f), ("kink_depth", np.where(has, p.depth[rows, first], np.nan)),
                             ("kink_T", np.where(has, sub.T[rows, np.maximum(fit.cell[rows, first], 0)], np.nan)),
                             ("release_depth", release), ("growth", g), ("T_gradient", T_gradient),
@@ -412,8 +412,9 @@ def profile_rows(record, delta_m, v_s):
     [m], wall kind, floor Reynolds number, first kink's depth [m] and temperature [K], release depth [m] and growth rate
     [1/s], and Girin's theoretical delta_m [m] and V_s [m/s] (`delta_m`, `v_s`, (n,))."""
     n = np.shape(record.wall_depth)[0]
-    return np.column_stack([record.wall_depth, record.wall_floor, record.floor_re, record.kink_depth, record.kink_T,
-                            record.release_depth, record.growth, np.broadcast_to(np.asarray(delta_m, dtype=float), (n,)),
+    return np.column_stack([record.wall_depth, record.floor_like_wall, record.floor_re, record.kink_depth,
+                            record.kink_T, record.release_depth, record.growth,
+                            np.broadcast_to(np.asarray(delta_m, dtype=float), (n,)),
                             np.broadcast_to(np.asarray(v_s, dtype=float), (n,))]).astype(float)
 
 
@@ -434,7 +435,8 @@ def summary(modes, record, branch, mass):
         gradient = driven = 0.0
     else:
         on = np.asarray(modes.resolved, dtype=bool)
-        floor, wall, re = (np.asarray(x, dtype=float)[on] for x in (record.wall_floor, record.wall_depth, record.floor_re))
+        floor, wall, re = (np.asarray(x, dtype=float)[on]
+                           for x in (record.floor_like_wall, record.wall_depth, record.floor_re))
         we = np.asarray(modes.we_s, dtype=float)[on]
         branch, mass = np.asarray(branch), np.asarray(mass, dtype=float)
         gradient = float(mass[on & (branch == spray.BRANCH_PROFILE)].sum())

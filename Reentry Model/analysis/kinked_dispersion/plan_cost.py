@@ -88,7 +88,7 @@ def report(state_path, rows_path, start=WINDOW_S[0], end=WINDOW_S[1], repeats=RE
             setting, ", ".join("{:.3f}".format(t) for t in times[setting]), med[setting]))
     resolved = plans["profile"].resolved
     print("profile path: {} columns resolved, {} of them floor-like".format(
-        int(resolved.sum()), int(np.nansum(plans["profile"].record.wall_floor[resolved]))))
+        int(resolved.sum()), int(np.nansum(plans["profile"].record.floor_like_wall[resolved]))))
     print("added time of the plan on profile over table (median less median): {:.3f} s".format(added))
 
     steps = step_wall_times(rows_path, start, end)

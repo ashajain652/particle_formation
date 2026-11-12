@@ -195,8 +195,10 @@ BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous me
 BRANCH_PROFILE = 5                 # Girin's gradient mode solved on the column's own resolved profile (the profile path)
 # The profile path's record columns, appended after SOURCE_COLUMNS (spec 6.8): the depth to the wall [m], the wall's kind
 # (1 floor, 0 the rigid front), the floor Reynolds number at the wall, the first kink's depth [m] and temperature [K], the
-# gradient mode's release depth [m], its solved growth rate [1/s], and Girin's theoretical delta_m [m] and V_s [m/s]
-PROFILE_COLUMNS = ("wall_depth_m", "wall_floor", "floor_re", "kink_depth_m", "kink_T_K", "release_depth_m",
+# gradient mode's release depth [m], its solved growth rate [1/s], and Girin's theoretical delta_m [m] and V_s [m/s]. No
+# name begins with `wall_`, the prefix of the wall-clock timers, which the comparisons of runs skip (the first two were
+# renamed on 2026-11-12, in the final review's fix round, before any flight wrote them).
+PROFILE_COLUMNS = ("depth_to_wall_m", "floor_like_wall", "floor_re", "kink_depth_m", "kink_T_K", "release_depth_m",
                    "growth_rate_per_s", "girin_delta_m_m", "girin_v_s_ms")
 
 

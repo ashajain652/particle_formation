@@ -287,7 +287,7 @@ def test_a_floor_like_column_gets_its_wall_at_the_kink_and_no_gradient_growth():
     with strict():
         modes, rec = mp.profile_modes(cols, np.array([True, False, True]), 0.8)
     assert modes.resolved.tolist() == [True, False, False]
-    assert rec.wall_floor[0] == 1.0 and rec.wall_depth[0] == Z[9] and modes.wall_depth[0] == Z[9]
+    assert rec.floor_like_wall[0] == 1.0 and rec.wall_depth[0] == Z[9] and modes.wall_depth[0] == Z[9]
     assert rec.floor_re[0] == pytest.approx(0.25 * Z[9] / (dp.FASTEST_KD * 0.5 / 2500.0), rel=1e-12)
     assert rec.floor_re[0] < dp.FLOOR_RE
     assert rec.kink_depth[0] == Z[9] and rec.kink_T[0] == cols.T[0, 9]
@@ -322,7 +322,7 @@ def test_a_fluid_like_curved_column_gets_its_release_depth_and_threshold(monkeyp
         modes, rec = mp.profile_modes(cols, np.ones(2, dtype=bool), 0.8)
     fit = mp.fit_profiles(cols)
     waves = dp.fastest_waves(fit.profiles, 0.8)
-    assert modes.resolved.all() and (rec.wall_floor == 0.0).all() and (rec.wall_depth == FRONT).all()
+    assert modes.resolved.all() and (rec.floor_like_wall == 0.0).all() and (rec.wall_depth == FRONT).all()
     assert rec.floor_re[0] == pytest.approx(860.0, rel=1e-3) and rec.floor_re[0] > dp.FLOOR_RE
     assert (rec.kink_depth == Z[19]).all() and (rec.kink_T == cols.T[0, 19]).all()
     assert modes.growth[0] == pytest.approx(waves.growth[0], rel=1e-12) and 1300.0 < modes.growth[0] < 1450.0
@@ -341,8 +341,8 @@ def test_a_fluid_like_curved_column_gets_its_release_depth_and_threshold(monkeyp
     np.testing.assert_allclose(modes.we_s, 2400.0 * jump ** 2 * Z[19] / 0.8, rtol=1e-12)
     rows = mp.profile_rows(rec, np.array([1e-4, 2e-4]), np.array([3.0, 4.0]))
     assert rows.shape == (2, len(spray.PROFILE_COLUMNS))
-    for name, values in (("wall_depth_m", rec.wall_depth), ("wall_floor", rec.wall_floor), ("floor_re", rec.floor_re),
-                         ("kink_depth_m", rec.kink_depth), ("kink_T_K", rec.kink_T),
+    for name, values in (("depth_to_wall_m", rec.wall_depth), ("floor_like_wall", rec.floor_like_wall),
+                         ("floor_re", rec.floor_re), ("kink_depth_m", rec.kink_depth), ("kink_T_K", rec.kink_T),
                          ("release_depth_m", rec.release_depth), ("growth_rate_per_s", rec.growth),
                          ("girin_delta_m_m", [1e-4, 2e-4]), ("girin_v_s_ms", [3.0, 4.0])):
         np.testing.assert_array_equal(rows[:, spray.PROFILE_COLUMNS.index(name)], values)
@@ -422,7 +422,7 @@ def test_summary_of_an_empty_step_is_nan():
     # column whose name starts with "wall_" (review of Task 8, 2026-11-12)
     assert not any(k.startswith("wall_") for k in mp.DISPERSION_COLUMNS)
     with strict():
-        outs = [mp.summary(no_modes([False] * 3), record(3, wall_floor=[1.0, 0.0, np.nan]), np.array([5, 1, 3]),
+        outs = [mp.summary(no_modes([False] * 3), record(3, floor_like_wall=[1.0, 0.0, np.nan]), np.array([5, 1, 3]),
                            np.array([1.0, 2.0, 3.0])),
                 mp.summary(no_modes([]), record(0), np.zeros(0, dtype=int), np.zeros(0)),
                 mp.summary(None, None, None, None)]
@@ -440,7 +440,7 @@ def test_summary_counts_the_resolved_columns_and_each_mode_s_mass():
     rarefied branches; a Rayleigh-Taylor column and an unresolved one count in neither."""
     modes = no_modes([True, True, True, True, False])
     modes.we_s[:] = [10.0, 20.0, 40.0, 80.0, 1e9]
-    rec = record(5, wall_floor=[1.0, 0.0, 0.0, 1.0, np.nan], wall_depth=[1e-4, 3e-4, 2e-4, 4e-4, 9.0],
+    rec = record(5, floor_like_wall=[1.0, 0.0, 0.0, 1.0, np.nan], wall_depth=[1e-4, 3e-4, 2e-4, 4e-4, 9.0],
                  floor_re=[0.5, np.nan, 5.0, 0.2, 1e9])
     with strict():
         out = mp.summary(modes, rec, np.array([5, 1, 3, 2, 1]), np.array([1.0, 2.0, 4.0, 8.0, 16.0]))

@@ -1194,6 +1194,10 @@ def test_records_append_the_profile_columns_and_spools_keep_their_names(tmp_path
     pads in-memory blocks with nan or cuts them, for a resume that changes the setting, the kept columns bit for bit."""
     assert spray.record_columns(27) == spray.SOURCE_COLUMNS and len(spray.PROFILE_COLUMNS) == 9
     assert spray.record_columns(36) == spray.SOURCE_COLUMNS + list(spray.PROFILE_COLUMNS)
+    assert spray.PROFILE_COLUMNS[:2] == ("depth_to_wall_m", "floor_like_wall")
+    # no record column may look like a wall-clock timer: same_results.py's comparison and the tests' row helpers skip
+    # every name that starts with "wall_" (final review of the kinked-profile dispersion, 2026-11-12)
+    assert not any(k.startswith("wall_") for k in spray.SOURCE_COLUMNS + list(spray.PROFILE_COLUMNS))
     for width in (0, 26, 30, 37):
         with pytest.raises(ValueError):
             spray.record_columns(width)
