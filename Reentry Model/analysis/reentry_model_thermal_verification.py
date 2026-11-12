@@ -54,7 +54,7 @@ def argv_of(key, mode, outdir, surface="elements", t_max=None, animate=False):
     ref = os.path.join(sesam_io.REFERENCE_DIR, name + ".csv")
     argv = ["run"] + args + ["--velocity", "7.5", "--flight-path-angle", "-0.959331", "--atmosphere", "us76", "--thermal", "fem",
                              "--heating", mode, "--reference", ref, "--outdir", outdir, "--name", label_of(key, mode, surface, t_max),
-                             "--quiet", "--surface-model", surface]       # named: the skins are the model's default
+                             "--quiet", "--surface-model", surface]       # named either way (the default: elements without melting)
     if t_max:
         argv += ["--t-max", "{:g}".format(t_max)]
     if animate:

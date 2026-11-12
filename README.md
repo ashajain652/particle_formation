@@ -310,7 +310,7 @@ REF="../DRAMA Sphere Experiments/data/reference_runs"            # run from Reen
 "$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> output/verification_thermal/summary.md
 ```
 
-Since the port of 2026-11-11 the default surface model of a `--thermal fem` run is the layered skins, so the non-melting Step 2 commands above name `--surface-model elements` (the skins stopped after about 50 s on the 100 mm, 77.5 km case with a moving-mesh "corner move" error). The measured Step 2 numbers below predate the port and were measured on the old solver.
+A `--thermal fem` run that does not melt runs the element model by default (Asha's decision of 2026-11-12), so `--surface-model elements` in the non-melting Step 2 commands above is no longer needed and gives the same run under the same name (`..._surface-elements`); `--surface-model skin` gives the non-melting layered skins (level 3 of their verification), and the skins stay the default with `--melt on`. Between the port of 2026-11-11 and that decision the skins were the default here too, and on the 100 mm, 77.5 km case with `--h-surface 4` they stopped after about 50 s with a moving-mesh "corner move" error: the default 0.7 mm fine band leaves flat elements under a 4 mm surface. Such a skin run now exits with code 2 at once, before the skins are built, and says what to give (`--fine-size 2`, `--fine-band 0` or `--surface-model elements`). The measured Step 2 numbers below predate the port and were measured on the old solver.
 
 Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
 matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1); `--material` (packaged

@@ -81,7 +81,8 @@ refuses a case folder that already holds results, so give each run a new folder.
   in the worktree `.claude/worktrees/subplan20` on Asha's laptop. It is 1 380 690 172 bytes and git-ignored, so it is
   not in the repository; read it only, never overwrite it.
 - `nomelt`: a 20 s non-melting flight (100 mm, 7.5 km/s, 77.5 km). See defect 3 below: it fails by design of the
-  default, so it is not used for "same results".
+  default, so it is not used for "same results". (Since 2026-11-12 it runs the element model by default, the same
+  flight as `nomelt_elements`.)
 - `nomelt_elements`: the same with `--surface-model elements`; this one runs.
 
 The Step 3 reference-marked tests (`tests/test_reentry_model_reference_melt.py` and two in `tests/test_reentry_model_skinbody.py`) have been collected but not run on the port.
@@ -134,7 +135,8 @@ of the `subplan20` worktree, which is git-ignored). They are the baseline agains
 ## Known defects, left unfixed
 
 None of these is the port's doing, and none was fixed, so that the port changes no behaviour. Decide with Asha before
-fixing any of them, because a fix changes behaviour and so changes what "same results" means.
+fixing any of them, because a fix changes behaviour and so changes what "same results" means. (Defects 1 to 3 were
+fixed on 2026-11-12 with Asha's approval, on branch `skyscrapers-fixes`; each is marked below.)
 
 1. **State saving and resuming with the element model.** A melting element-model flight cannot save its state: it
    fails with "cannot pickle module". A non-melting element-model resume raises `AttributeError` on `source_rows`.
@@ -158,6 +160,14 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
    77.5 km altitude) then stops after about 50 s of wall time (51.6 s on the port, 48.6 s on the prototype) with
    "a corner move of up to 0.0008 m degrades the mesh even after a rebuild" (`movemesh.py`, line 473). Non-melting
    runs need `--surface-model elements`. Asha has not yet decided whether the default should change; it waits for her.
+   **Decided and fixed on 2026-11-12** (Asha's decision; branch `skyscrapers-fixes`; fact 195 of the shared context).
+   The cause was not melting being off but the mesh: under the 4 mm surface the default 0.7 mm fine band leaves flat
+   elements at the surface, so the skins' first move (their 0.8 mm minimum taken at time zero) is refused, melting or
+   not (`output/open_items/skins_nomelt-report.md`, git-ignored, of this worktree). Two changes: a thermal run that does
+   not melt now runs the element model unless `--surface-model skin` is given (the skins stay the default with
+   `--melt on`), so this case runs (40 macro steps, about 1 s of test time) and `nomelt` is the same run as
+   `nomelt_elements`; and a skin run whose fine band leaves elements below the moving mesh's radius-ratio floor exits 2
+   at once with the remedy (7.4 s here instead of exit 1 after about 50 s). No melting flight's numbers or name change.
 4. **A Spheral fixture test.** `tests/test_spheral_frag_fixtures.py::test_regenerated_sphere_run_equals_committed_bitwise`
    fails because a regenerated csv ends its lines with LF where the committed fixture has CRLF (first difference at
    byte 211). It fails the same way on the old main.

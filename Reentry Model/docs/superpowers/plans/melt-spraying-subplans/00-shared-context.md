@@ -3297,3 +3297,42 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
    `surface_flow`, the physics in `spray`, `girin_case`, the droplet outputs) free of imports from the skyscrapers-only
    modules (`skin`, `columns`, `film`, `movemesh`, `mesh`, `coupled`), so that the move stays mechanical.
 
+---
+
+## Amendment of 2026-11-12 — the default surface model without melting, and the fine band too fine for its surface (fact 195)
+
+> Asha's decision of 2026-11-12, on the investigation of the 2026-11-11 handoff's defect 3 ("the default surface model
+> without melting"; report `output/open_items/skins_nomelt-report.md` of the worktree `skyscrapers-fixes`, git-ignored):
+> both of its options A and D. Fact 178 stands for melting runs; for a thermal run that does not melt this fact supersedes
+> its default. Facts 1–194 stand.
+
+195. **The element model the default of a thermal run that does not melt, and a fine band too fine for its surface
+     refused (2026-11-12, branch `skyscrapers-fixes`, f678b2c).** *Option A:* `--surface-model` not given
+     (`cli.surface_model_of`) is the skins for a melting thermal run, as in fact 178, and the element model for a thermal
+     run that does not melt; `--surface-model skin` gives the non-melting skins, level 3 of their verification (spec
+     §11.1). A melting run's derived defaults (flow, removal, hand-down, part count, continuum step) and every melting run's
+     name are unchanged; the name rule is unchanged too, so a non-melting run with no flags is named `..._surface-elements`,
+     as `--surface-model elements` names it. Reasons: without melting nothing crosses the rigid front, so the skins add no
+     physics, at about 300 times the element model's cost on the command-line tests' coarse mesh (366 s against 1.2 s for
+     the 20 s flight with `--fine-size 2`, 2026-11-11), and Step 2's SESAM verification is the element model's. *Option D:*
+     the stop the handoff recorded (exit 1 after about 50 s, "a corner move of up to 0.0008 m degrades the mesh even after
+     a rebuild") was the mesh, not melting being off: under `--h-surface 4` the default fine band (0.7 mm asked to 4 mm
+     depth, spec §5.3) leaves 42 elements below the moving mesh's radius-ratio floor (`movemesh.RATIO_MIN`, 0.05; the
+     lowest 1.6e-5), caps on the surface triangles, so the skins' time-zero fill (0.8 mm inward at every corner, §6.1) is
+     refused, melting or not, and the rebuild, made to the same sizes, makes them again (measured 2026-11-11, as recorded
+     in fact 178 on 2026-10-29). `cli.build_thermal` now measures, as soon as the band is built, the smallest radius ratio
+     of the elements with a node within the deforming zone's depth of a surface node (`movemesh.zone_ratio_min`) and,
+     below `RATIO_MIN`, exits 2 naming the remedy (a coarser `--fine-size`, `--fine-band 0` or `--surface-model
+     elements`). The check only reads the mesh. *Measured on this branch, once each:* the handoff's 20 s case (100 mm,
+     7.5 km/s, 77.5 km, `--h-surface 4`) with no flags runs the element model, 40 macro steps, in about 1.1 s of test time;
+     with `--surface-model skin` it exits 2 after 7.4 s of wall time, the message giving 1.6e-05; the production mesh
+     (2 mm surface, 8 mm core, the default band and fine band: 1 211 188 elements) passes with 0.176305, the check taking
+     0.72 s (0.73 s repeated) after the band's 10.6 s build. *Limit:* a guard, not a guarantee; it catches flat elements
+     already there, not ones a move would create (a 1.4 mm band under the 4 mm surface passes with 0.071 and its first
+     fill is refused, the rebuilt mesh accepting it; 2026-11-11). *Tests:* the CLI tests
+     `test_a_thermal_run_that_does_not_melt_runs_the_element_model_unless_the_skins_are_named` and
+     `test_a_fine_band_too_fine_for_its_surface_exits_2_before_the_skins_are_built`; the CLI tests and four restart flights
+     that mean the non-melting skins now name them (`SKINS`, `--surface-model skin`). *Same results* (`analysis/skyscrapers_port/same_results.py`, on mains power, once,
+     with the five fixes of 2026-11-12 in place): the `element`, `skins` and `resume` cases identical to the port's, 22
+     files (12, 5 and 5); the `nomelt` case, now the element model by default, identical to the port's `nomelt_elements`
+     but for its name (the history byte for byte, the JSON's `run_name` the one difference).

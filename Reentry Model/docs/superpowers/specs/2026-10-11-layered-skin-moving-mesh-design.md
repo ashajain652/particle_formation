@@ -674,7 +674,7 @@ last bit.)
 
 | Setting | Default | Run-name suffix when not default |
 |---|---|---|
-| `--surface-model skin\|elements` | `skin` | `_surface-elements` |
+| `--surface-model skin\|elements` | `skin` with `--melt on`; `elements` for a thermal run that does not melt (Asha, 2026-11-12; `skin` for every thermal run before) | `_surface-elements` (every element-model run, the non-melting default included) |
 | `--skin-min-thickness` (mm of solid) | 0.8 | `_skinmin<value>mm` |
 | `--skin-fine-zone` (mm below the top in fine cells) | 0.4 | `_skinfine<value>mm` |
 | `--skin-cell` (µm, fine zone) | 10 | `_cell<value>um` |
@@ -698,7 +698,8 @@ interface tolerance (10⁻³). Defaults marked provisional are fixed by stage me
 malformed value exits with code 2.
 
 (Built in sub-plan 22 Task 3, 2026-10-29, facts 178–179.) With `--thermal fem` the surface model is the skins unless
-`--surface-model elements` is given; an element-model thermal run's name ends in `_surface-elements`, after the element
+`--surface-model elements` is given (for a melting run; a run that does not melt runs the element model since 2026-11-12,
+see the note after the next ones); an element-model thermal run's name ends in `_surface-elements`, after the element
 model's own suffixes and before the seed's, and a skin run's name carries only its non-default settings, `_slurryspray-on`
 after the flow's. `--removal` not given is Girin's, except for the heat-only skins, whose liquid leaves as it forms
 (instant removal): with the skins Girin's removal is required with the flow and is the removal of a flow run (and, by
@@ -738,6 +739,18 @@ carried by a resumed state: give `--spread-limit off`); `--part-count-from melti
 option only when it is not its default. The stall guard of §7.1 is the one change that applies to every run. **Stated limitations**, each measured once: the height map's
 sub-step on the 100 mm sphere about 14 % slower (§6.3, not traced), its build holding up to 0.37 GB at 75 cells a column and growing in proportion to the deepest column,
 and the part-count tests that raised the unit tier from about 12 to about 15 minutes (15 min 16 s for the final 639 tests, 17 min 15 s at Task 2, 22.8 minutes at Task 1) across four processes.
+
+(Built 2026-11-12, Asha's decision that day, fact 195.) `--surface-model` not given is the skins for a melting thermal run,
+as before, and the element model for a thermal run that does not melt: there nothing crosses the rigid front, so the
+skins add no physics, at about 300 times the element model's cost on the command-line tests' coarse mesh, and Step 2's
+SESAM verification is the element model's. `--surface-model skin` gives the non-melting skins (level 3, §11.1). The name
+rule is unchanged, so a non-melting run with no flags is named `_surface-elements`; no melting run's numbers or name
+change. A skin run whose fine band (§5.3) leaves an element of the deforming zone below the rebuild threshold's radius
+ratio, 0.05, exits with code 2 as soon as the band is built, before the skins are, and names the remedy (a coarser
+`--fine-size`, `--fine-band 0` or the element model): the 0.7 mm band under a 4 mm surface left elements with radius ratios as low as
+1.6e-5, so the time-zero fill (§6.1) was refused even after a rebuild and the run stopped with exit 1 after about 50 s.
+The check only reads the mesh; the production mesh (2 mm surface, the default band, 1 211 188 elements) passes with
+0.176, and the check costs about 0.7 s there.
 
 ### 10.2 Outputs
 
