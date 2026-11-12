@@ -1068,3 +1068,46 @@ def test_the_spray_rules_mark_a_spraying_run_s_name_only_where_they_differ_from_
         assert name(argv + ["--spray-gates", "before"]) == name(argv)
     assert cli.spray_name_suffix("before", True) == "_gates-before_slipband-on"
     assert cli.spray_name_suffix("2026-11-10", False) == "" and cli.spray_name_suffix("before", True, spraying=False) == ""
+
+
+# --- the --architecture flag (Task 6 of the combined refactor) ---
+
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--leeward-test', '--particles', '--no-particles']
+
+
+def _run_parser():
+    return cli.build_parser()._subparsers._group_actions[0].choices["run"]
+
+
+def test_run_help_lists_the_same_flags():
+    got = [s for a in _run_parser()._actions for s in a.option_strings]
+    assert sorted(got) == sorted(BASE_RUN_OPTION_STRINGS + ["--architecture"])
+    assert [s for s in got if s != "--architecture"] == BASE_RUN_OPTION_STRINGS
+
+
+@pytest.mark.parametrize("form", [["--architecture", "levelset"], ["--architecture=levelset"]])
+def test_architecture_levelset_exits_2_until_built(form, tmp_path, capsys):
+    rc = cli.main(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5", "--outdir", str(tmp_path), *form])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not built yet" in err and "2026-10-11-level-set-deforming-body-design.md" in err
+    assert not any(tmp_path.iterdir())
+
+
+def test_architecture_skyscrapers_is_the_default():
+    args = cli.build_parser().parse_args(["run", "--diameter", "100", "--velocity", "7.5", "--altitude", "77.5"])
+    assert args.architecture == "skyscrapers"
+
+
+@pytest.mark.parametrize("command", ["resume", "compare"])
+def test_architecture_only_on_run(command):
+    with pytest.raises(SystemExit) as exc:
+        cli.main([command, "x", "--architecture", "skyscrapers"])
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("tail", [["--architecture"], ["--architecture", "towers"]])
+def test_architecture_missing_or_unknown_exits_2(tail):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(BASE + tail)
+    assert exc.value.code == 2

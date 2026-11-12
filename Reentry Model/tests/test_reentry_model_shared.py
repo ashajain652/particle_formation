@@ -115,3 +115,23 @@ def test_body_and_thermal_reexport_the_shared_names():
     for mod in (sbody, sthermal):
         assert not [ln for ln in inspect.getsource(mod).splitlines()
                     if ln.lstrip().startswith(("import reentry_model", "from reentry_model", "from .."))]
+
+
+def test_cli_common_reexports_and_paths():
+    import reentry_model
+    from reentry_model import cli
+    from reentry_model.shared import cli_common
+    for name in ("DEFAULT_HEADING_DEG", "DEFAULT_LAT_DEG", "DEFAULT_LON_DEG", "DEFAULT_EPOCH", "DEFAULT_MATERIAL_DENSITY",
+                 "ATMOSPHERES", "WINDS", "parse_epoch", "make_atmosphere", "git_commit", "provenance", "DEFAULT_OUTDIR"):
+        assert getattr(cli, name) is getattr(cli_common, name), name
+    assert cli_common.DEFAULT_OUTDIR == reentry_model.OUTPUT_DIR
+
+
+def test_spheral_entry_points_resolve():
+    """Spheral/spheral_frag/fe.py loads reentry_model.cli.make_atmosphere and reentry_model.material by name."""
+    from reentry_model import cli, material
+    assert callable(cli.make_atmosphere)
+    assert hasattr(material.Material, "from_drama_json")
+    mat = material.Material.from_drama_json(os.path.join(PROJECT_ROOT, "data", "materials", "AA7075_scheil.json"))
+    for attr in ("_T_h", "_h_nodes", "_latent_slope"):
+        assert hasattr(mat, attr), attr

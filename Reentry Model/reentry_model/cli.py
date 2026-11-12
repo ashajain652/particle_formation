@@ -3,6 +3,7 @@
     python -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
         [--atmosphere nrlmsise|us76|replay:<sesam.csv>] [--reference <sesam.csv>] [--outdir ...]
         [--thermal fem --heating sesam|physics ... --animate]          (Step 2: coupled 3D conduction)
+        [--architecture skyscrapers|levelset]                          (default skyscrapers; levelset exits 2 until built)
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
@@ -34,17 +35,14 @@ from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend
 
-from . import OUTPUT_DIR, REPO_ROOT
+from . import OUTPUT_DIR, REPO_ROOT  # noqa: F401  (REPO_ROOT, OUTPUT_DIR: still imported from here)
+from .shared.cli_common import (ARCHITECTURES, ATMOSPHERES, DEFAULT_ARCHITECTURE, DEFAULT_EPOCH, DEFAULT_HEADING_DEG,  # noqa: F401
+                                DEFAULT_LAT_DEG, DEFAULT_LON_DEG, DEFAULT_MATERIAL_DENSITY, DEFAULT_OUTDIR, WINDS,
+                                add_flight_arguments, architecture_of, git_commit, make_atmosphere, parse_epoch, provenance)
 
-DEFAULT_OUTDIR = OUTPUT_DIR
-# the reference cases' break-off state (parent satellite, see README "Reference runs")
-DEFAULT_HEADING_DEG = 347.168296
-DEFAULT_LAT_DEG = 29.546067
-DEFAULT_LON_DEG = -82.134333
-DEFAULT_EPOCH = "2024-08-01T12:53:07"
-DEFAULT_MATERIAL_DENSITY = 2813.0          # drama-AA7075
-ATMOSPHERES = ("nrlmsise", "us76")         # plus replay:<path>
-WINDS = ("none", "static")
+LEVELSET_NOT_BUILT = ("the level-set architecture is not built yet (design: "
+                      "docs/superpowers/specs/levelset/2026-10-11-level-set-deforming-body-design.md, stage 1 onwards)")
+
 THERMAL_MODES = ("none", "fem")
 MELT_MODES = ("off", "on")
 # numpy's global generator is seeded with this at the start of every run (amendment of 2026-10-05): pyamg draws from it
@@ -78,13 +76,6 @@ STATE_SUFFIX = ".state.pkl"
 # elements throughout on both plates' onset, 1 mm asked gets about half way (measured 2026-10-15); on the 100 mm sphere
 # it takes the 3D model from 177 000 to 1.21 million elements and a 3D step from 0.16 to 1.17 s.
 FINE_BAND_MM, FINE_SIZE_MM = 4.0, 0.7
-
-
-def parse_epoch(text):
-    try:
-        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")
-    except ValueError:
-        raise argparse.ArgumentTypeError("epoch must be YYYY-MM-DDTHH:MM:SS, got {!r}".format(text))
 
 
 def parse_seed(text):
@@ -313,47 +304,6 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     return out
 
 
-def make_atmosphere(spec, epoch, wind_name):
-    """(atmosphere object, short name, provenance dict) for an --atmosphere value."""
-    wind = atmosphere.NoWind() if wind_name == "none" else atmosphere.StaticProfileWind()
-    if spec == "us76":
-        return atmosphere.US76TableAtmosphere(wind=wind), "us76", {}
-    if spec == "nrlmsise":
-        solar = fap.solar_indices(fap.load_fap_day(fap.DEFAULT_FAP_DAY), epoch.date())
-        return atmosphere.NRLMSISE00Atmosphere(epoch, solar, wind), "nrlmsise", \
-            {"f107": solar.f107, "f107a": solar.f107a, "ap": solar.ap, "fap_day": fap.DEFAULT_FAP_DAY}
-    if spec.startswith("replay:"):
-        ref = sesam_io.load_reference(spec[len("replay:"):])
-        return atmosphere.ReplayAtmosphere(ref, wind), "replay", {"replay_reference": ref.name, "replay_sha256": ref.sha256}
-    raise ValueError("--atmosphere must be one of {} or replay:<sesam.csv>, got {!r}".format(ATMOSPHERES, spec))
-
-
-def git_commit():
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, stderr=subprocess.DEVNULL).decode().strip()
-    except Exception:
-        return "unknown"
-
-
-def provenance():
-    import scipy
-    try:
-        import pymsis
-        pymsis_version = pymsis.__version__
-    except ImportError:
-        pymsis_version = None
-    package_names = {"skfem": "scikit-fem", "gmsh": "gmsh", "pyamg": "pyamg", "pyvista": "pyvista",
-                      "cantera": "cantera", "dolfinx": "fenics-dolfinx"}
-    versions = {}
-    for key, pkg in package_names.items():
-        try:
-            versions[key] = importlib.metadata.version(pkg)
-        except importlib.metadata.PackageNotFoundError:
-            versions[key] = None
-    return {"package_version": __version__, "git_commit": git_commit(), "numpy": np.__version__,
-            "scipy": scipy.__version__, "pymsis": pymsis_version, "python": sys.version.split()[0], **versions}
-
-
 def resume_arguments(rs):
     """The resume command's options, in one place: the new run's files and what it may change from the saved flight. A
     flight resumed with none of the changes repeats the saved flight from its saved step to the last bit."""
@@ -408,29 +358,9 @@ def build_parser():
     sub = p.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("run", help="integrate one sphere trajectory")
-    r.add_argument("--diameter", type=float, required=True, help="sphere diameter [mm]")
-    r.add_argument("--velocity", type=float, required=True, help="initial velocity [km/s], relative to the rotating atmosphere")
-    r.add_argument("--altitude", type=float, required=True, help="initial geodetic altitude [km]")
-    r.add_argument("--flight-path-angle", type=float, default=0.0, help="[deg], negative = descending")
-    r.add_argument("--heading", type=float, default=DEFAULT_HEADING_DEG, help="[deg] clockwise from north (default %(default)s)")
-    r.add_argument("--lat", type=float, default=DEFAULT_LAT_DEG, help="geodetic latitude [deg] (default %(default)s)")
-    r.add_argument("--lon", type=float, default=DEFAULT_LON_DEG, help="longitude [deg] (default %(default)s)")
-    r.add_argument("--epoch", type=parse_epoch, default=parse_epoch(DEFAULT_EPOCH), help="UTC YYYY-MM-DDTHH:MM:SS (default {})".format(DEFAULT_EPOCH))
-    r.add_argument("--material-density", type=float, default=DEFAULT_MATERIAL_DENSITY, help="[kg/m3] (default %(default)s)")
-    r.add_argument("--temperature", type=float, default=300.0,
-                   help="initial temperature [K]: recorded only with --thermal none, the field's initial condition with --thermal fem (default %(default)s)")
-    r.add_argument("--atmosphere", default="nrlmsise", help="nrlmsise (default) | us76 | replay:<sesam.csv>")
-    r.add_argument("--wind", choices=WINDS, default="none")
-    r.add_argument("--bridging", choices=aero.BRIDGING_NAMES, default="sesam-table")
-    r.add_argument("--gravity", choices=GRAVITY_MODELS, default="j2")
-    r.add_argument("--rtol", type=float, default=1e-9)
-    r.add_argument("--cadence", type=float, default=1.0, help="history sample spacing [s] (default %(default)s)")
-    r.add_argument("--t-max", type=float, default=3600.0, help="[s] (default %(default)s)")
-    r.add_argument("--reference", default=None,
-                   help="SESAM run CSV to compare against (with --thermal none the model is also sampled at its times; "
-                        "with --thermal fem the macro-step history is interpolated)")
-    r.add_argument("--outdir", default=DEFAULT_OUTDIR)
-    r.add_argument("--name", default=None, help="run name (default: model_d..mm_v..kms_h..km_<atmosphere>_<bridging>_<wind>[_fem-<heating>])")
+    add_flight_arguments(r)
+    r.add_argument("--architecture", choices=ARCHITECTURES, default=DEFAULT_ARCHITECTURE,
+                   help="model architecture (default %(default)s); levelset is not built yet")
     r.add_argument("--seed", type=parse_seed, default=DEFAULT_SEED,
                    help="seed of numpy's global random generator, set at the start of the run (default %(default)s): pyamg draws "
                         "the starting vectors of its spectral-radius estimates from it, so a fixed seed makes a run reproducible "
@@ -1268,8 +1198,15 @@ def cmd_compare(args, parser):
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["run"] and architecture_of(argv[1:]) == "levelset":
+        print("ERROR: " + LEVELSET_NOT_BUILT, file=sys.stderr)
+        return 2
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "run" and args.architecture == "levelset":       # an abbreviated --arch form the pre-parse missed
+        print("ERROR: " + LEVELSET_NOT_BUILT, file=sys.stderr)
+        return 2
     try:
         if args.command == "run":
             return cmd_run(args, parser)
