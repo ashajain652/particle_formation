@@ -428,8 +428,11 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
   releases the column's cells from the top down while they are at least as warm as the mode's threshold temperature,
   liquid and slurry together. No critical Weber number is applied to the gradient mode on the profile, which sprays where
   its growth beats its own wave's viscous damping and its wave fits (the solver's own threshold is a surface Weber number
-  of 3.00 on Girin's profile). A column whose top does not move, or that has no conjugate layer depth or no layer above
-  its wall, keeps Girin's theory, `--we-critical` included.
+  of 3.00 on Girin's profile). Only the columns the profile path does not resolve keep Girin's theory, `--we-critical`
+  included: the wet windward columns whose top cell does not flow, does not move, or has the rigid front at or above its
+  centre. A resolved column never falls back to it. One without a finite conjugate layer depth (delta_m), or whose layer
+  above its wall is shallower than `spray.B_MIN` (1 µm), takes no shear mode at all (decision 6): neither of the two
+  modes above, nor any of Girin's branches. Only the Rayleigh–Taylor mode, which no Weber number gates, can still take it.
 - **`--dispersion table`**, the switch back: Girin's theory as it stood before, with his theoretical layer depth and surface
   speed and the critical Weber number `--we-critical` (3.08). The run's name ends in `_dispersion-table`; `profile` is
   unmarked. The element model (`--surface-model elements`) is always on `table`, and `--dispersion` given to any run that

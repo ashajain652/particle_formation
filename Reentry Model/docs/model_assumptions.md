@@ -767,8 +767,9 @@ On it, each windward column whose top cell flows and moves has its cells' speeds
 segments (the speed profile), a wall is placed by the floor test below, Girin's gradient mode is solved on the profile
 above that wall, and the faster of that mode and Girin & Kopyt's gas-driven mode (with the film depth taken as the depth
 to the wall) releases the column's cells from the top down while they are at least as warm as the mode's threshold
-temperature, liquid and slurry together (the heat-limited release, decision 5). A column whose top cell does not move
-falls back to Girin's theory. `--dispersion table` switches back to Girin's theory as it stood before, with his
+temperature, liquid and slurry together (the heat-limited release, decision 5). A wet windward column whose profile is
+not resolved (its top cell does not flow, does not move, or has the rigid front at or above its centre) falls back to
+Girin's theory. `--dispersion table` switches back to Girin's theory as it stood before, with his
 theoretical layer depth and surface speed. The element model has no resolved profile and is always on `table`. Both
 shear modes act only where Girin's continuum closure (or the slip band's balance, with `--slip-band on`) gives a layer
 depth, as before (decision 6). `--dispersion` given to any other kind of run is refused with exit code 2, and a state
@@ -791,9 +792,15 @@ is applied to the gradient mode solved on a column's profile (branch 5): whether
 it sprays only where its growth rate exceeds the viscous damping of its own wave (twice the layer's Couette viscosity
 times the wavenumber squared) and one whole wavelength fits in the column's region (the contiguous windward columns
 whose layer above the wall is at least `spray.B_MIN` deep), so the threshold there is the solver's 3.00 on Girin's
-profile. `--we-critical` (default 3.08) applies on `table`, and on a `profile` run only to the columns that fall back to
-Girin's theory: those whose profile is not resolved, those without a finite layer depth (delta_m, Girin's conjugate
-layer depth), and those whose wall is shallower than `spray.B_MIN`. Their thick branch is gated by it as before.
+profile. `--we-critical` (default 3.08) applies on `table`, and on a `profile` run only to the columns whose profile is
+not resolved (the wet windward columns whose top cell does not flow, does not move, or has the rigid front at or above
+its centre): they keep Girin's theory, their thick branch gated by it as before. A resolved column never falls back to
+Girin's theory. One without a finite layer depth (delta_m, Girin's conjugate layer depth), or whose layer above the wall
+is shallower than `spray.B_MIN` (1 µm), takes no shear mode at all, neither the gradient mode, the gas-driven mode nor
+any of Girin's branches (decision 6; `spray.py` removes every resolved column from those branches and gives the two
+modes only to the resolved columns with a finite delta_m and a wall at least `B_MIN` deep, which
+`test_no_delta_m_no_shear_mode_on_resolved_columns` pins). Only the Rayleigh–Taylor mode, which has no Weber-number
+gate, can still take such a column.
 
 **Assumed.**
 
