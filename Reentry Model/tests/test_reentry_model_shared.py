@@ -43,7 +43,7 @@ def test_data_paths_resolve():
 
 SHARED_DIR = os.path.join(PROJECT_ROOT, "reentry_model", "shared")
 SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication", "nose"])   # the 23 modules
-                                                       # besides __init__.py (lubrication and nose: level-set stage 3 Task 1)
+                                                       # besides __init__.py (nose: level-set stage 3 Task 1)
 
 
 def _outside_shared(node, own_name, shared_names):
@@ -118,7 +118,10 @@ def test_shared_package_imports_neither_architecture():
             "print(bad)\n").format(
         mods=SHARED_MODULES,
         banned={"reentry_model." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading", "film",
-                                               "restart", "coupled", "cli", "body")})
+                                               "restart", "coupled", "cli", "body", "skyscrapers")}
+        | {"reentry_model.skyscrapers." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading",
+                                                      "restart", "coupled", "body")}
+        | {"reentry_model.skyscrapers.elements", "reentry_model.skyscrapers.elements.film"})
     out = subprocess.run([PY, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True).stdout.strip()
     assert out == "[]", out
 

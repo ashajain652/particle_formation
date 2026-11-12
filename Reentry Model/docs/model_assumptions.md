@@ -156,7 +156,9 @@ On 2026-11-11 the modules that both model architectures use moved into `reentry_
 the old paths (see `CLAUDE.md`). No physics, default, option or output changed. This was shown by running a Step 1
 flight, a Step 2 flight, an element-model melting flight, a layered-skin flight and a resumed skin flight before and
 after the move with `analysis/skyscrapers_port/same_results.py` and comparing each case's files, which were identical,
-and by the unit and reference test tiers passing with the same results as before.
+and by the unit and reference test tiers passing with the same results as before. The same was done on 2026-11-11 for
+the move of the skyscrapers-only modules into `reentry_model/skyscrapers/` and of the film's lubrication formulas into
+`reentry_model/shared/lubrication.py`: the five cases were identical.
 
 ## 8. The ATDB shape factor
 

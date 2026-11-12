@@ -199,20 +199,22 @@ the flag.
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
 Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`, and since
-level-set stage 3 `lubrication`, the film's lubrication solution from `film.py`, and `nose`, the nose-sphere fit and
-the leeward rules from `body.py` and `skinbody.py`, which those modules re-export), the
-droplet writer (`droplets`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
+level-set stage 3 `nose`, the nose-sphere fit and the leeward rules from `skyscrapers/body.py` and `skyscrapers/skinbody.py`,
+which those modules re-export), the droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the
+body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
-the old name the same module object as the shared one. `body.py`, `thermal/__init__.py`, `cli.py` and `coupled.py`
-keep their skyscrapers-only code and only re-export the moved names, so patching a moved name there (for example
+the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
+keep their skyscrapers-only code and only re-export the moved shared names, so patching a shared name there (for example
 `cli.git_commit`) does not reach the shared code; patch it in `reentry_model.shared` instead. Existing imports and
 old pickles keep working, but states saved after this change pickle their classes as `reentry_model.shared.*` and
 cannot be loaded by a checkout from before it (such as `subplan20`, or a Mac Studio checkout that is behind). New code imports from
 `reentry_model.shared` directly. The shared package imports nothing from the rest of `reentry_model` except the
 package-root constants (`PROJECT_ROOT`, `DATA_DIR`, and so on), which `tests/test_reentry_model_shared.py` checks both
-by reading the source and by importing every shared module in a fresh interpreter. The skins (`skin.py`,
-`skinbody.py`, `columns.py`, `movemesh.py`, `mesh.py`, `spreading.py`, `film.py`, `restart.py`, `coupled.py` and the
-backends) are never shared between the architectures. The refactor changed no model behaviour (see
+by reading the source and by importing every shared module in a fresh interpreter. The skyscrapers-only modules live in `reentry_model/skyscrapers/` (`body`, `coupled`, `columns`, `mesh`, `movemesh`,
+`restart`, `skin`, `skinbody` and `spreading`, plus `elements/film.py`, the element model's runoff, `--surface-model
+elements`); their old paths (such as `reentry_model.skin`) are alias files too, so existing imports keep working, but states
+saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. `cli.py`,
+`__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `Reentry Model/docs/model_assumptions.md`).
 
 ## Physics model — `reentry_model` (Step 1: trajectory)

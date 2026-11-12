@@ -27,7 +27,8 @@ import sys
 
 import numpy as np
 
-from . import __version__, aero, atmosphere, body, compare, coupled, dispersion, fap, heating, material, mesh, movemesh, restart, sesam_io, skin, skinbody, spray, surface_flow, thermal, viz
+from . import __version__, aero, atmosphere, compare, dispersion, fap, heating, material, sesam_io, spray, surface_flow, thermal, viz
+from .skyscrapers import body, coupled, mesh, movemesh, restart, skin, skinbody
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
 from .thermal import MissingBackend

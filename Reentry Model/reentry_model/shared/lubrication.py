@@ -1,13 +1,31 @@
-"""The lubrication solution of a sheared melt film (moved from `reentry_model/film.py` for level-set stage 3, Task 1:
-the physics both architectures read; the skins' `film.lubrication` is this function). Per patch, with the gas shear
-tau [Pa], the driving gradient G [Pa/m], the film depth b [m], the melt boundary-layer depth delta_m [m] (Girin's
-Eq. 2, `spray.melt_layer`; nan off Girin's closure) and the liquid viscosity mu_l [Pa s]:
-    thin (layer <= delta_m):  V_s = tau b / mu_l + G b^2 / (2 mu_l),   q = tau b^2 / (2 mu_l) + G b^3 / (3 mu_l)
-    thick (layer > delta_m):  V_s = tau delta_m / mu_l,
-                              q = V_s b (1 - b / (2 delta_m)) + G b^3 / (3 mu_l) for b < delta_m, V_s delta_m / 2 + ... beyond
-(q per unit width [m^2/s], signed along the surface direction away from the stagnation point). The branch is decided
-on the liquid layer beneath the wall (`b_layer`), the fluxes stay on the film; the amendments of 2026-10-02 and
-2026-10-05 are told in `reentry_model/film.py`'s docstring, which keeps the runoff that uses this solution."""
+"""The melt film's lubrication velocity and flux (spec Step 3 section 8), shared by both surface models; the
+runoff transport on the patch graph is `reentry_model.skyscrapers.elements.film.Runoff`.
+
+State: m_f per patch [kg], thickness b = m_f / (rho_l A). Lubrication solution with the patch's shear tau, driving
+gradient G, thickness b, melt boundary-layer thickness delta_m (from Girin's Eq. 2, spray.melt_layer) and the
+liquid viscosity mu_l:
+    thin (b <= delta_m):  V_s = tau b / mu_l + G b^2 / (2 mu_l),   q = tau b^2 / (2 mu_l) + G b^3 / (3 mu_l)
+    thick (b > delta_m):  V_s = tau delta_m / mu_l,               q = V_s delta_m / 2 + G b^3 / (3 mu_l)
+(q per unit width [m^2/s], signed along the surface direction t away from the stagnation point; the velocity
+gradient for the instability is V_s / b or V_s / delta_m). Where delta_m is undefined (free-molecular patches) the
+film is thin-branch (Couette) by definition.
+
+A thick patch whose film is thinner than delta_m (amendment of 2026-10-05): the branch is decided on the liquid layer
+beneath the wall (plan fact 28), so a patch is thick wherever film, molten material and deep liquid together are
+deeper than delta_m, however little of it is film. The shear-driven velocity is linear within the conjugate layer,
+V_s at the surface and zero at depth delta_m, and the film is the top b of that layer, so the film carries
+    q = V_s b (1 - b / (2 delta_m)) + G b^3 / (3 mu_l)     for b < delta_m,
+which is V_s delta_m / 2 at b = delta_m (continuous) and V_s b as b -> 0, so the runoff's emptying rate q / (A b) stays
+below V_s l / A. Handing the whole layer's V_s delta_m / 2 to a vanishing film made that rate grow like 1/b, emptied
+the film by a factor c dt in one implicit sub-step, squared its depth from sub-step to sub-step and broke the direct
+solve (NaN film on every patch at a 0.0125 s macro step); it also moved such a film as fast as a whole conjugate layer.
+
+The liquid below the film (amendment of 2026-10-02): where contiguous liquid lies beneath the film, the column's
+runoff flux needs two depth limits in one expression -- the shear-driven part over min(delta_m, h), the pressure-
+gradient and deceleration-driven part over the whole liquid depth h (plan fact 29):
+    q_column = tau d^2 / (2 mu_l) + G h^3 / (3 mu_l),    d = min(delta_m, h).
+The film keeps its own share above; `deep_flux` is the rest, G (h^3 - b^3) / (3 mu_l), carried by the liquid
+beneath it, which the shear does not reach."""
 import numpy as np
 
 
@@ -44,3 +62,20 @@ def lubrication(tau, G, b, delta_m, mu_l, b_layer=None):
     with np.errstate(divide="ignore", invalid="ignore"):
         rate = np.where(thick, V / np.where(thick, d, 1.0), np.where(b > 0.0, V / np.where(b > 0.0, b, 1.0), 0.0))
     return V, q, rate, thick
+
+
+def deep_flux(G, b, h, mu_l):
+    """Flux per unit width [m^2/s] of the liquid beneath the film: the pressure-gradient and deceleration-driven part
+    of a column of contiguous liquid of depth h whose top b is the film,
+        q_deep = G (h^3 - b^3) / (3 mu_l)            (zero where h <= b; signed like G, negative toward the nose).
+    G h^3 / (3 mu_l) is the Poiseuille flux of a half-channel of depth h -- no slip at the solid, no stress from this
+    part at the free surface -- and `lubrication` already gives the film G b^3 / (3 mu_l) of it, so with the film's
+    shear-driven share over the conjugate depth the column carries exactly plan fact 29's
+    tau d^2 / (2 mu_l) + G h^3 / (3 mu_l). There is no shear term here: the gas shear reaches only Girin's conjugate
+    depth, and that layer is the film's (amendment of 2026-10-02). Since the amendment of 2026-10-05 the film carries
+    only its own part of the conjugate layer's shear flux, so the column total is fact 29's where the film fills the
+    conjugate layer (b >= delta_m) and short by tau (delta_m - b)^2 / (2 mu_l) where it does not: that is the shear
+    flux of the part of the conjugate layer held in the elements, which no account moves. The emptying rate this flux
+    gives the deep liquid, q_deep / (A h_D) <= G (b + h_D)^2 / (mu_l A) per unit edge length, stays bounded as h_D -> 0."""
+    G, b, h = (np.asarray(x, dtype=float) for x in (G, b, h))
+    return G * (np.maximum(h, b) ** 3 - b ** 3) / (3.0 * mu_l)
