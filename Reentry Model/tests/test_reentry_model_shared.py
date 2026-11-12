@@ -81,3 +81,16 @@ def test_pickles_naming_old_paths_load():
     assert type(back) is spray.SprayModel
     # DispersionTable has no __eq__, so equal state means the same bytes when pickled again
     assert pickle.dumps(back, protocol=0) == blob
+
+
+def test_coupled_reexports_the_droplet_writer():
+    import inspect
+    from reentry_model import coupled
+    from reentry_model.shared import droplets
+    assert coupled.write_particles is droplets.write_particles
+    assert coupled.SUMMARY_COLUMNS is droplets.SUMMARY_COLUMNS
+    assert coupled.SKIN_SUMMARY_COLUMNS is droplets.SKIN_SUMMARY_COLUMNS
+    src = inspect.getsource(droplets)
+    for bad in ("skin", "column"):
+        assert not [ln for ln in src.splitlines()
+                    if ln.lstrip().startswith(("import ", "from ")) and bad in ln.split("#")[0]]
