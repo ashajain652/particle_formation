@@ -95,6 +95,10 @@ MOVE_SHARE = 0.25                 # of the markers' target spacing: the most a b
                                   # "local spacing" read as the target spacing, fix round 1 of Task 9)
 SPLIT_DEPTH_MAX = 6               # a part is rerun shorter at most this many times over (Ruling 7)
 MOVE_HINT_MARGIN = 1.25           # the next macro step's parts: this times the parts this one's largest move called for
+GROUP_AREA_RANGE = (0.5, 2.0)     # a marker's group of patches of beta has an area within these times its skin's base area
+                                  # (the ruling of fix round 2: a whole law on a group 20 times smaller than the base was a
+                                  # Robin condition with a Biot number of about 800, and the volume's Newton iteration stalled)
+GROUP_CANDIDATES = 64             # patches nearest a base searched first when its group is formed again (then four times more)
 PARTS_MAX = 1000                  # a macro step never starts with more parts: the next step's hint is capped here
 # the interface's damped repetition (the skyscrapers' "damped" rule, their skinbody.py and skin.py)
 INTERFACE_TOLERANCE = 1e-3        # of sum |E_top| + |E_base|: the total relative mismatch that ends the repetition
@@ -127,7 +131,8 @@ class StepBook:
     the next part). The residuals: (mass now - mass then + out) / mass then, and (stored + pending now - stored +
     pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the next step's
     hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move ratio,
-    unlimited). `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
+    unlimited). `group_area_ratio_min`, `group_area_ratio_max` the least and largest
+    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`). `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
     volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
     total since the start), `momentum_to_wall` what the skins' flow gave the wall over the step and
     `momentum_removed` what the feed removal took. The heat deferred to the volume over the step, by source, each
@@ -142,6 +147,8 @@ class StepBook:
     parts: int
     parts_next: int
     parts_skyscrapers: int
+    group_area_ratio_min: float
+    group_area_ratio_max: float
     passes: int
     enthalpy_in: float
     mass_sprayed: float
@@ -197,6 +204,7 @@ class _Tally:
         self.sprayed_p, self.wall, self.removed_p, self.to_volume = np.zeros(3), np.zeros(3), np.zeros(3), np.zeros(3)
         self.parts, self.passes, self.ratio, self.mismatch, self.correction = 0, 0, 0.0, 0.0, 0.0
         self.ratio_all = 0.0
+        self.group_min, self.group_max = np.inf, 0.0
         self.newton = self.move = self.remesh = 0.0
 
 
@@ -220,6 +228,48 @@ class _StillGas:
     [Pa/m] and no shear [Pa] per marker."""
     dp_ds: np.ndarray
     tau: np.ndarray
+
+
+def patch_groups(centroid, area, base, A_base):
+    """Each marker's group of patches of beta and how its base law is spread over them (fix round 2 of Task 9): (S, A_group).
+    S (n, P), sparse and row-stochastic, holds marker m's share A_p / A(G_m) of each patch p of its group G_m; A_group (n,)
+    [m2] the groups' areas. Every patch first goes to the marker whose base point (`base`, (n, 3)) is nearest its
+    `centroid` (P, 3); a group whose area is outside GROUP_AREA_RANGE times its marker's skin base area `A_base` (n,) [m2]
+    is replaced by the patches nearest that marker's base, taken in order of distance until their area first reaches
+    A_base (shared with other groups where they overlap). A patch a shrunk group gave up and no other group holds takes no
+    law. The law stays exact whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over the patches is
+    sum a and sum b, and a marker's base temperature S T_p is the area mean over its group. A zero A_base leaves the
+    nearest-base groups (and a marker with none the patch nearest its base)."""
+    n, npatch = len(base), len(area)
+    A_base = np.broadcast_to(np.asarray(A_base, dtype=float), (n,))
+    _, owner = cKDTree(base).query(centroid)
+    A_near = np.bincount(owner, area, minlength=n)
+    lo, hi = GROUP_AREA_RANGE
+    ratio = np.divide(A_near, A_base, out=np.full(n, np.inf), where=A_base > 0.0)
+    redo = np.flatnonzero(((ratio < lo) | (ratio > hi)) & (A_base > 0.0) | (A_near == 0.0))
+    keep = ~np.isin(owner, redo)
+    rows, cols = [owner[keep]], [np.flatnonzero(keep)]
+    if len(redo):
+        tree = cKDTree(centroid)
+        k = min(GROUP_CANDIDATES, npatch)
+        while True:
+            _, idx = tree.query(base[redo], k=k)
+            idx = idx.reshape(len(redo), k)
+            cum = np.cumsum(area[idx], axis=1)
+            want = np.where(A_base[redo] > 0.0, A_base[redo], area[idx[:, 0]])
+            enough = cum[:, -1] >= want * (1.0 - 1e-12)
+            if enough.all() or k == npatch:
+                break
+            k = min(4 * k, npatch)
+        take = np.argmax(cum >= want[:, None] * (1.0 - 1e-12), axis=1)
+        take = np.where(enough, take, k - 1)
+        sel = np.arange(k)[None, :] <= take[:, None]
+        rows.append(np.broadcast_to(redo[:, None], idx.shape)[sel])
+        cols.append(idx[sel])
+    rows, cols = np.concatenate(rows), np.concatenate(cols)
+    A_group = np.bincount(rows, area[cols], minlength=n)
+    S = sp.csr_matrix((area[cols] / A_group[rows], (rows, cols)), shape=(n, npatch))
+    return S, A_group
 
 
 _PLAN_BOOKS = ("mass", "mass_slurry", "number", "number_slurry", "enthalpy", "enthalpy_slurry", "solid",
@@ -368,15 +418,7 @@ class LevelSetSkinBody(StepEnd):
         the base points (n, 3); the base gradient dT/dn [K/m] per row) on the solve's present patches."""
         P = self.solver.P
         base = self._bases()
-        n, npatch = self.skins.n, len(P.area)
-        _, owner = cKDTree(base).query(P.centroid)
-        lone = np.flatnonzero(np.bincount(owner, minlength=n) == 0)
-        rows, cols = owner, np.arange(npatch)
-        if len(lone):
-            _, pp = cKDTree(P.centroid).query(base[lone])
-            rows, cols = np.r_[rows, lone], np.r_[cols, pp]
-        A_group = np.bincount(rows, P.area[cols], minlength=n)
-        S = sp.csr_matrix((P.area[cols] / A_group[rows], (rows, cols)), shape=(n, npatch))
+        S, A_group = patch_groups(P.centroid, P.area, base, self.skins.base_area())
         g_patch = np.einsum("pk,pk->p", cell_gradients(self.mesh, self.solver.T, P.cell), P.normal)
         return S, A_group, base, S @ g_patch
 
@@ -452,6 +494,9 @@ class LevelSetSkinBody(StepEnd):
         sk, solver = self.skins, self.solver
         self._cap()
         S, A_group, base, g0 = self._interface()
+        group_ratio = A_group / sk.base_area()
+        tally.group_min = min(tally.group_min, float(group_ratio.min()))
+        tally.group_max = max(tally.group_max, float(group_ratio.max()))
         saved = self._save(ctx)
         T_b0 = S @ solver.patch_T()
         m_min = sk.minimum_mass() * (1.0 - DRAW_SLACK)
@@ -610,7 +655,8 @@ class LevelSetSkinBody(StepEnd):
         mk = self.markers
         self.last_step = StepBook(
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
-            parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), passes=tally.passes, enthalpy_in=tally.E_top,
+            parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)),
+            group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max, passes=tally.passes, enthalpy_in=tally.E_top,
             mass_sprayed=tally.sprayed, enthalpy_sprayed=tally.sprayed_H, mass_removed=tally.removed,
             enthalpy_removed=tally.removed_H, enthalpy_radiated=tally.E_rad, mass_volume=end["mass_volume"],
             mass_skins=end["mass_skins"], enthalpy_volume=end["enthalpy_volume"], enthalpy_skins=end["enthalpy_skins"],

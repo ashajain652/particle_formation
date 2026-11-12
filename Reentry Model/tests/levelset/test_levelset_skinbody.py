@@ -34,8 +34,12 @@ def owed(body, book):
     """(the heat still owed to the volume, summed in absolute value [J], the last part's sum |mismatch| [J]) as shares of
     the step's heat in, printed with the step's deferred residuals by source."""
     pend, mism = np.abs(body.pending_J).sum() / book.enthalpy_in, book.interface_mismatch_J / book.enthalpy_in
+    lo, hi = skinbody.GROUP_AREA_RANGE
+    assert lo <= book.group_area_ratio_min and book.group_area_ratio_max <= hi
     print("  owed |pending| {:.2e} and mismatch {:.2e} of the heat in; deferred Newton {:.2e} J, moves {:.2e} J, "
-          "remesh {:.2e} J".format(pend, mism, book.residual_newton_J, book.residual_move_J, book.residual_remesh_J))
+          "remesh {:.2e} J; groups {:.2f} to {:.2f} of the base areas".format(
+              pend, mism, book.residual_newton_J, book.residual_move_J, book.residual_remesh_J,
+              book.group_area_ratio_min, book.group_area_ratio_max))
     return pend, mism
 
 
@@ -256,8 +260,8 @@ def gas_body():
     return cube_body(loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
 
 
-PART_BOUND = 100      # parts a flow-on step of the test cube may take at most: a tenth of PARTS_MAX (measured 6 and 24
-                      # parts; the skyscrapers' rule asked 31 and then 31 521)
+PART_BOUND = 100      # parts a flow-on step of the test cube may take at most: a tenth of PARTS_MAX (measured 3 and 18
+                      # parts; the skyscrapers' rule asked 5 and then 6 448)
 CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with a body Knudsen number of 1e-3: the shock
                                       # layer's branch, where Girin's closure gives a conjugate depth (at the merged
                                       # branch's Knudsen number of 0.03 the gates hold every marker: measured)
@@ -295,12 +299,13 @@ def test_liquid_formed_on_the_face_sprays_and_the_books_close(sprayed):
 
 def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     """Fix round 1 of Task 9 (ruling a), the smallest case found that reproduces the skyscrapers' runaway: the spraying
-    step above took 6 parts and their rule (every accepted part's move ratio, scaled to the macro step) asks the next
-    for 31; the next 0.05 s step took 24 and their rule then asks 31 521, far past PARTS_MAX (measured once, 2026-11-12),
-    because a part that meets its allowance only after splits, or never, carries the splits' shortness into the
-    estimate. Here a step's hint is at most 1.25 times the parts it took: both steps stay within PART_BOUND parts, the
-    second takes fewer than the skyscrapers' hint for it, both hints are 1.25 times their step's parts at most, and the
-    books close."""
+    step above and a second 0.05 s step at the same state. Measured once each: with the nearest-base patch groups 6 and
+    24 parts, where the skyscrapers' rule (every accepted part's move ratio, scaled to the macro step) asked 31 and then
+    31 521, far past PARTS_MAX; with the groups of fix round 2, 3 and 18 parts, their rule asking 5 and then 6 448. A
+    part that meets its allowance only after splits, or never, carries the splits' shortness into their estimate. Here
+    a step's hint is at most 1.25 times the parts it took: both steps stay within PART_BOUND parts, the second step's
+    hint is below the skyscrapers' for it, both hints are 1.25 times their step's parts at most, and the books
+    close."""
     from test_levelset_loads import _state
     body, _, first, _ = sprayed
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
@@ -308,8 +313,72 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
         second.parts_skyscrapers))
-    assert first.parts <= PART_BOUND and second.parts <= PART_BOUND and second.parts < first.parts_skyscrapers
+    assert first.parts <= PART_BOUND and second.parts <= PART_BOUND and second.parts_next < second.parts_skyscrapers
     assert second.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * second.parts)))
     assert abs(second.mass_residual) <= 1e-12 and abs(second.enthalpy_residual) <= 1e-8
     assert max(owed(body, second)) <= OWED_SHARE
 
+
+
+def test_a_marker_whose_nearest_patches_are_few_gets_a_grown_group_and_the_law_stays_exact():
+    """Fix round 2 of Task 9 (the ruling on concern 1): a marker's base law is spread over a group of patches of beta
+    whose area is within GROUP_AREA_RANGE of its skin's base area. Flat patches of 0.1 x 0.1 mm on a plane carry five
+    base points of base area 1 mm2 each, one at the origin ringed by four 0.02 mm away, so that by nearest base it owns
+    almost nothing (the full-size failure of fix round 1: a whole law on a 0.1 mm2 group, a Biot number of about 800). Every group ends within range, the crowded marker's grown from its nearest patches, and the law each patch
+    receives sums back, over the patches, to every marker's a and b exactly (to round-off)."""
+    h = 0.1e-3
+    ix, iy = np.meshgrid(np.arange(-15, 26), np.arange(-15, 16), indexing="ij")
+    centroid = np.column_stack([(ix.ravel() + 0.5) * h, (iy.ravel() + 0.5) * h, np.zeros(ix.size)])
+    area = np.full(len(centroid), h * h)
+    d = 2e-5
+    base = np.array([[0.0, 0.0, 0.0], [d, 0.0, 0.0], [-d, 0.0, 0.0], [0.0, d, 0.0], [0.0, -d, 0.0]])
+    A_base = np.full(len(base), 1e-6)
+    near = skinbody.patch_groups(centroid, area, base, np.zeros(len(base)))[1]      # nearest base alone, no target
+    S, A_group = skinbody.patch_groups(centroid, area, base, A_base)
+    ratio = A_group / A_base
+    print("patch groups: nearest-base areas {} mm2, grown {} mm2".format(np.round(near * 1e6, 3),
+                                                                          np.round(A_group * 1e6, 3)))
+    assert near[0] < 0.1 * A_base[0]
+    lo, hi = skinbody.GROUP_AREA_RANGE
+    assert np.all(ratio >= lo) and np.all(ratio <= hi)
+    np.testing.assert_allclose(np.asarray(S.sum(axis=1)).ravel(), 1.0, rtol=1e-14)
+    a, b = np.array([3.0, -2.0, 5.0, 1.0, 0.5]), np.array([-16.0, -0.4, -0.1, -2.0, -1.0])
+    q0, q1 = (S.T @ a) / area, (S.T @ b) / area
+    assert (q0 * area).sum() == pytest.approx(a.sum(), rel=1e-14)
+    assert (q1 * area).sum() == pytest.approx(b.sum(), rel=1e-14)
+
+
+def test_the_concave_cap_keeps_a_concave_column_from_drawing_without_end():
+    """Fix round 2 of Task 9 (the ruling on concern 3): a column concave enough that |kappa| stub > 1 (kappa = -2000 1/m
+    under a 0.8 mm stub, |kappa| stub = 1.6) widens with depth so fast that its minimum mass, rho_s A(z_bottom) stub, grows
+    faster than its mass: each draw deepens it and raises its minimum again. Without the cap, twenty draws more than
+    double its mass; with its curvatures held by `cap_curvature` (re-capped before every draw, as the body does), its
+    minimum mass stays below its mass after the first fill and the twenty draws add under a percent."""
+    mat = aa7075()
+    stub = SETTINGS.stub
+
+    def column():
+        sk = Skins(mat, np.full(1, 1e-6), np.array([[-2000.0, 0.0]]), SETTINGS)
+        sk.fill(mat.rho * 1e-6 * stub, 850.0)
+        return sk
+
+    free = column()
+    m0 = free.m.sum()
+    for _ in range(20):
+        free.draw(850.0, 0.0, free.minimum_mass())
+        free.regrid()
+    held = column()
+    held.kappa = skinbody.cap_curvature(held, held.kappa)
+    held.draw(850.0, 0.0, held.minimum_mass())
+    held.regrid()
+    m1, added = held.m.sum(), 0.0
+    for _ in range(20):
+        held.kappa = skinbody.cap_curvature(held, held.kappa)
+        dm, _ = held.draw(850.0, 0.0, held.minimum_mass())
+        added += float(dm.sum())
+        held.regrid()
+    print("concave column: without the cap {:.2f} times its mass after twenty draws; with it {:.2e} of it added, "
+          "minimum mass {:.4f} of the mass".format(free.m.sum() / m0, added / m1, held.minimum_mass()[0] / held.m.sum()))
+    assert abs(-2000.0) * stub > 1.0
+    assert free.m.sum() > 2.0 * m0
+    assert added < 0.01 * m1 and held.minimum_mass()[0] <= held.m.sum() * (1 + 1e-12)
