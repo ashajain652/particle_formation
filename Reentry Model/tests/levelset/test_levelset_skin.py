@@ -336,6 +336,26 @@ def test_a_crust_is_never_handed_down():
     assert mass[0] == 0.0 and H[0] == 0.0 and vol[0] == 0.0 and sk.totals()[0] == M0
 
 
+def test_a_hand_down_keeps_the_minimum_mass():
+    """Stage 3 Task 9: with `m_keep` a hand-down never takes a skin below that mass -- the bottom cells leave only while
+    what stays holds at least m_keep -- so that the hand-down (by depth, at each cell's own density) and the draw (by the
+    minimum mass, at the solid's density) cannot hand down and draw back the same metal step after step where the
+    rigid metal is less dense than the solid (a Scheil alloy's mushy metal below T_rigid)."""
+    mat = LinearMeltMaterial()
+    stub = 0.8e-3
+    sk = layered(mat, [(2.0e-3, 800.0)])
+    sk2 = layered(mat, [(2.0e-3, 800.0)])
+    free, _, _ = sk.hand_down(stub)
+    keep = mat.rho * AREA * 1.5e-3
+    mass, H, vol = sk2.hand_down(stub, m_keep=np.array([keep]))
+    assert free[0] == pytest.approx(mat.rho * AREA * 1.2e-3, rel=1e-12)
+    assert 0.0 < mass[0] <= mat.rho * AREA * 0.5e-3 * (1 + 1e-12)
+    assert sk2.totals()[0][0] >= keep * (1 - 1e-12)
+    assert sk2.totals()[0][0] < keep + sk2.m[0, :sk2.count[0]].max()     # whole cells: at most one cell over
+    nothing, _, _ = layered(mat, [(2.0e-3, 800.0)]).hand_down(stub, m_keep=np.array([1.0]))
+    assert nothing[0] == 0.0
+
+
 def test_a_skin_reduced_to_one_cell_keeps_its_books():
     mat = LinearMeltMaterial()
     sk = Skins(mat, np.array([AREA, AREA]), np.zeros((2, 2)), SkinSettings())

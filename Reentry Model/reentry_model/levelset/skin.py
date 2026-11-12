@@ -814,11 +814,14 @@ class Skins:
         T = self.T()
         return self.valid & (T <= self.material.T_rigid) & ~self._anchored(T)
 
-    def hand_down(self, stub):
+    def hand_down(self, stub, m_keep=None):
         """The anchored cells lying wholly below the shallowest `stub` [m] of their anchored run leave the skin for the
         volume, whole and at their own enthalpy (design 20.6, tightened 2026-11-10); a crust never goes, and a cell
-        reaching above that depth stays. Returns (mass [kg], enthalpy [J], volume [m3]) per column, the volume each
-        cell's m / rho(T), the span it filled under the column's cross-section."""
+        reaching above that depth stays. With `m_keep` [kg] (n,), the bottom cells leave only while what stays holds at
+        least m_keep (stage 3 Task 9: the body passes the minimum mass, so that a hand-down by depth at the cells' own
+        density never takes back what the draw, by the solid's density, must then draw again). Returns (mass [kg],
+        enthalpy [J], volume [m3]) per column, the volume each cell's m / rho(T), the span it filled under the column's
+        cross-section."""
         T = self.T()
         valid = self.valid
         anch = self._anchored(T)
@@ -826,6 +829,10 @@ class Skins:
         z_top = np.cumsum(dz, axis=1) - dz
         run_top = np.where(anch, z_top, np.inf).min(axis=1)
         go = anch & (z_top >= (run_top + stub)[:, None] * (1.0 - 1e-12))
+        if m_keep is not None:                             # the bottom cells, from the bottom up, while enough stays
+            below = np.cumsum(self.m[:, ::-1], axis=1)[:, ::-1]                 # each cell's mass and all beneath it
+            spare = self.m.sum(axis=1) - np.broadcast_to(np.asarray(m_keep, dtype=float), (self.n,))
+            go &= below <= spare[:, None]
         mass = np.where(go, self.m, 0.0).sum(axis=1)
         H = np.where(go, self.H, 0.0).sum(axis=1)
         vol = np.where(go, self.m / np.where(valid, self.density(T), 1.0), 0.0).sum(axis=1)

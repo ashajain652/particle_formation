@@ -34,6 +34,7 @@ sub-step's largest Courant number and Rayleigh-Taylor growth (`flow_cycles`).
 Every number here is a numerical setting of the skyscrapers' rules (named with its source); the physics is the shared
 package's."""
 import math
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -60,8 +61,11 @@ LANDING_DEPTH = 0.4e-3    # m below a landed skin's top that the landing conduct
 LANDING_CELLS = 2         # cells the landing conduction takes at least (skyscrapers', plan)
 TRANSPORT_TOL = 1.0e-13   # the transport's iterative solve stops once no row's residual exceeds this share of the
                           # largest |b| + |A| |x| of its right-hand side's column (skyscrapers' TRANSPORT_TOL)
-TRANSPORT_CORRECTIONS = 200   # corrections of the iterative solve at most before a direct LU finishes it (a numerical
-                          # setting of this module; the skyscrapers' 40, raised: here every cycle is iterated)
+TRANSPORT_CORRECTIONS = 200   # corrections of the iterative solve at most (a numerical setting of this module; the
+                          # skyscrapers' 40, raised: here every cycle is iterated)
+TRANSPORT_FALLBACK = False    # a solve that has not converged after TRANSPORT_CORRECTIONS raises; with this set it is
+                          # finished by a direct LU instead, with a warning, and booked as not converged (stage 3 Task 9:
+                          # the LU hung on 133 000 cells, so it is never taken silently)
 
 
 # -- the sheet ---------------------------------------------------------------------------------------------------------
@@ -328,13 +332,15 @@ class TransportBook:
     of mass [kg] and enthalpy [J] (each summing to zero to round-off), and of momentum [kg m/s] (n, 3) as it left the
     donors; `wall` [N s] (n, 3) the normal parts the projections removed (an impulse from the wall), so that each skin's
     momentum changes by momentum + wall; `courant` the largest outflow rate of any cell times the sub-step; `landed`
-    (n,) where metal landed on top as a new top cell."""
+    (n,) where metal landed on top as a new top cell; `corrections` and `converged` the iterative solves' (`_solve`)."""
     mass: np.ndarray
     enthalpy: np.ndarray
     momentum: np.ndarray
     wall: np.ndarray
     courant: float
     landed: np.ndarray
+    corrections: int = 0      # the iterative solves' corrections, the larger of the masses' and the momenta's
+    converged: bool = True    # False only where TRANSPORT_FALLBACK finished a solve by the direct LU
 
 
 def _fractions(depth):
@@ -392,8 +398,10 @@ def _solve(A, b, order):
     of its unknowns. In that order A is lower triangular but for the back-couplings U within cycles where flows meet;
     M = A - U is factored with no fill (natural order, no pivoting) and x_(k+1) = M^-1 (b - U x_k) from x_0 = M^-1 b
     until no row's residual exceeds TRANSPORT_TOL of the largest |b| + |A| |x| in its column, at most
-    TRANSPORT_CORRECTIONS corrections, then a direct LU (the skyscrapers' scheme, every cycle iterated). For the masses
-    the splitting is regular, so the iterates rise to the solution from below and the installed masses stay positive."""
+    TRANSPORT_CORRECTIONS corrections (the skyscrapers' scheme, every cycle iterated). For the masses the splitting is
+    regular, so the iterates rise to the solution from below and the installed masses stay positive. Returns (x, the
+    corrections made, converged). A solve still short of the tolerance raises RuntimeError, or with TRANSPORT_FALLBACK
+    is finished by a direct LU with a RuntimeWarning and returned as not converged."""
     Ap = A.tocsr()[order][:, order].tocoo()
     up = Ap.col > Ap.row
     M = sp.csc_matrix((Ap.data[~up], (Ap.row[~up], Ap.col[~up])), shape=A.shape)
@@ -401,20 +409,30 @@ def _solve(A, b, order):
     bp = b[order]
     lu = spla.splu(M, permc_spec="NATURAL", diag_pivot_thresh=0.0, options=dict(SymmetricMode=True))
     x = lu.solve(bp)
+    count, converged = 0, True
     if U.nnz:
         absA = abs(Ap.tocsr())
-        for _ in range(TRANSPORT_CORRECTIONS):
+        while True:
             Ux = U @ x
             r = bp - M @ x - Ux
             limit = TRANSPORT_TOL * (np.abs(bp) + absA @ np.abs(x)).max(axis=0)
             if np.all(np.abs(r).max(axis=0) <= limit):
                 break
+            if count >= TRANSPORT_CORRECTIONS:
+                worst = float((np.abs(r).max(axis=0) / np.maximum(limit, 1e-300)).max())
+                message = ("the transport's iterative solve did not converge in {} corrections (residual {:.3e} times "
+                           "its tolerance)".format(count, worst * TRANSPORT_TOL))
+                if not TRANSPORT_FALLBACK:
+                    raise RuntimeError(message)
+                warnings.warn(message + "; finished by a direct LU", RuntimeWarning)
+                x = spla.splu(Ap.tocsc()).solve(bp)
+                converged = False
+                break
             x = lu.solve(bp - Ux)
-        else:
-            x = spla.splu(Ap.tocsc()).solve(bp)
+            count += 1
     out = np.empty_like(x)
     out[order] = x
-    return out
+    return out, count, converged
 
 
 def _landed_velocity(sheet, run, dt, base_m, base_p, stay):
@@ -557,7 +575,7 @@ def transport(skins, sheet, dt, faces=None):
 
     trial = skins.dH is not None
     b0 = np.column_stack([cell(skins.m), cell(skins.H)] + ([cell(skins.dH)] if trial else []))
-    x = _solve(mat, b0, order)
+    x, count_m, ok_m = _solve(mat, b0, order)
     moved = e_val[:, None] * x[lc]
     x = b0 + np.stack([np.bincount(lr, moved[:, k], N) - np.bincount(lc, moved[:, k], N) for k in range(x.shape[1])],
                       axis=1)
@@ -573,7 +591,8 @@ def transport(skins, sheet, dt, faces=None):
     cols2 = np.concatenate([2 * np.arange(N), 2 * np.arange(N) + 1] + [2 * lc + ss for ss in (0, 1, 0, 1)])
     vals2 = np.concatenate([diag, diag] + [-e_val * Re[:, qq, ss] for qq, ss in ((0, 0), (0, 1), (1, 0), (1, 1))])
     order2 = np.column_stack([2 * order, 2 * order + 1]).ravel()
-    y = _solve(sp.csc_matrix((vals2, (rows2, cols2)), shape=(2 * N, 2 * N)), p0.reshape(-1), order2)
+    y, count_p, ok_p = _solve(sp.csc_matrix((vals2, (rows2, cols2)), shape=(2 * N, 2 * N)), p0.reshape(-1), order2)
+    book.corrections, book.converged = max(count_m, count_p), bool(ok_m and ok_p)
     sent_p = e_val[:, None] * y.reshape(N, 2)[lc]
     got = np.einsum("eqs,es->eq", Re, sent_p)
     p = p0 + np.stack([np.bincount(lr, got[:, k], N) - np.bincount(lc, sent_p[:, k], N) for k in range(2)], axis=1)
@@ -687,8 +706,8 @@ class FlowBook:
     """What the flow sub-steps did, per row: impulses [N s] and momentum [kg m/s] (n, 3) adding up to the skins'
     momentum change -- the push's (its implicit thickness change included), the gas shear's, the wall's (an impulse
     from the wall: the anchored metal's drag, the momentum cells held on joining it, the normal parts the transport's
-    projections removed) and what the transport carried in less what it sent (zero over the sheet) -- with the
-    sub-steps' worst numbers."""
+    projections removed) and what the transport carried in less what it sent (zero over the sheet), less the momentum
+    the release took (`released_p`) -- with what the release took and the sub-steps' worst numbers."""
     push: np.ndarray
     shear: np.ndarray
     wall: np.ndarray
@@ -698,28 +717,48 @@ class FlowBook:
     passes: int = 0
     sub_steps: int = 0
     cycles: int = 0
+    released: np.ndarray = None      # kg (n,): what the release took from the skins' tops (zeros without a release)
+    released_H: np.ndarray = None    # J (n,): its enthalpy
+    released_p: np.ndarray = None    # kg m/s (n, 3): its momentum, which leaves with the droplets
+    corrections: int = 0             # the transport's most corrections in one solve
+    unconverged: int = 0             # transport solves finished by TRANSPORT_FALLBACK's direct LU
+
+    def __post_init__(self):
+        n = len(self.push)
+        if self.released is None:
+            self.released = np.zeros(n)
+        if self.released_H is None:
+            self.released_H = np.zeros(n)
+        if self.released_p is None:
+            self.released_p = np.zeros((n, 3))
 
     @classmethod
     def zero(cls, n):
         return cls(*(np.zeros((n, 3)) for _ in range(4)))
 
     def add(self, other):
-        """Add another book's impulses and keep the worst numbers of both."""
-        for key in ("push", "shear", "wall", "carried"):
+        """Add another book's impulses and releases and keep the worst numbers of both."""
+        for key in ("push", "shear", "wall", "carried", "released", "released_H", "released_p"):
             setattr(self, key, getattr(self, key) + getattr(other, key))
         self.courant, self.growth = max(self.courant, other.courant), max(self.growth, other.growth)
         self.passes, self.sub_steps = max(self.passes, other.passes), self.sub_steps + other.sub_steps
         self.cycles = max(self.cycles, other.cycles)
+        self.corrections = max(self.corrections, other.corrections)
+        self.unconverged += other.unconverged
 
 
-def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None):
+def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None, release=None, after=None):
     """The flow sub-steps of one heat sub-step dt [s] (module docstring): `cycles` of them (default forcing.cycles, or
     where that is None the count `flow_cycles` chooses from the skins' `flow_memory`, which they then update), each the
     regrid (from the second on), `pushes` with phi's curvature carried with the heights (kappa_phi + L (H - H_ref), H_ref
     the heights phi was made with, default those at the start), `Skins.momentum_step` with its response,
-    `thickness_step`, `transport` and the `landing_conduct` of the markers metal landed on this heat sub-step. Where
-    nothing flows nothing moves and no sub-step is taken: any velocity left is booked to the wall and cleared, and the
-    skins forget the flow. The heat sub-step's own regrid follows (the caller's). Returns a FlowBook."""
+    `thickness_step`, `transport`, the `landing_conduct` of the markers metal landed on this heat sub-step and, with
+    `release` (a callable `release(skins, h)` returning a book with per-row `mass`, `enthalpy` and `momentum`, such as
+    `spraying.SprayPlan.release`), the release from the tops (stage 3 Task 9: every flow sub-step, after the landing
+    conduction, as the skyscrapers' flow sub-steps release), and `after(skins)`, if given, at the end of each (the body's
+    per-column checks, stage 3 Task 9). Where nothing flows nothing moves and no sub-step is taken:
+    any velocity left is booked to the wall and cleared, and the skins forget the flow. The heat sub-step's own regrid
+    follows (the caller's). Returns a FlowBook."""
     sheet = _sheet(markers)
     n = skins.n
     book = FlowBook.zero(n)
@@ -753,8 +792,15 @@ def flow_substeps(skins, markers, forcing, dt, cycles=None, H_ref=None):
         landed |= tr.landed
         if landed.any():
             landing_conduct(skins, landed, h)
-        book.add(FlowBook(mb.push + tb.push, mb.shear, -mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant,
-                          tb.growth, tb.passes, 1))
+        step = FlowBook(mb.push + tb.push, mb.shear, -mb.wall + tb.wall + tr.wall, tr.momentum, tr.courant,
+                        tb.growth, tb.passes, 1, corrections=tr.corrections, unconverged=int(not tr.converged))
+        if release is not None:
+            rb = release(skins, h)
+            step.released, step.released_H = np.asarray(rb.mass, float), np.asarray(rb.enthalpy, float)
+            step.released_p = np.asarray(rb.momentum, float)
+        if after is not None:
+            after(skins)
+        book.add(step)
     book.cycles = cycles
     if adaptive:
         skins.flow_memory = np.array([book.courant, book.growth, h])

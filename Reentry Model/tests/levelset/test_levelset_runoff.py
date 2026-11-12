@@ -311,3 +311,76 @@ def test_the_adaptive_count_meets_its_targets_within_its_floor_and_cap():
     assert runoff.flow_cycles([0.0, 4.0 * g, 1e-3], dt) == 20
     assert runoff.flow_cycles([0.0, 0.0, 1e-2], dt) == runoff.FLOW_CYCLES_MIN == 1
     assert runoff.flow_cycles([1e4 * C, 0.0, 1e-3], dt) == runoff.FLOW_CYCLES_MAX == 40
+
+
+# -- carried from Task 6 to Task 9: the release in every flow sub-step, the transport's iteration count ------------------
+def test_the_flow_sub_steps_release_after_the_landing_and_book_it():
+    """A release callable given to `flow_substeps` is called once in every flow sub-step, after the landing conduction
+    (carried item (b) of Task 9), with the sub-step's length; what it takes leaves the skins and is booked in the
+    FlowBook (mass, enthalpy, momentum), so that the skins' mass falls by exactly the released mass and their momentum
+    changes by the impulses less the released momentum."""
+    mk, ix, _ = grid_markers(12, 1)
+    sk = stacked(mk, [[LIQUID] * 20 + [RIGID] * 5] * mk.n)
+    f = flight_forcing(mk, STRIP_V_HAT, dp_ds=-2e4, tau=20.0)
+    f.cycles = 4
+    calls, order = [], []
+    real_landing = runoff.landing_conduct
+
+    def spy_landing(*a, **k):
+        order.append("landing")
+        return real_landing(*a, **k)
+
+    def release(skins, h):
+        calls.append(h)
+        order.append("release")
+        take = np.where(skins.valid[:, 0], 0.1 * skins.m[:, 0], 0.0)
+        mass, H, solid, P, _ = skins.take_top_mass(take, skins.valid)
+        return SimpleNamespace(mass=mass, enthalpy=H, momentum=P, solid=solid)
+
+    M0, E0, P0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0)
+    runoff.landing_conduct = spy_landing
+    try:
+        book = runoff.flow_substeps(sk, mk, f, 0.01, release=release)
+    finally:
+        runoff.landing_conduct = real_landing
+    assert calls == [pytest.approx(0.0025)] * 4
+    assert order[-1] == "release" and all(order[k + 1] == "release" for k, o in enumerate(order) if o == "landing")
+    assert book.released.sum() > 0.0
+    assert sk.m.sum() == pytest.approx(M0 - book.released.sum(), rel=1e-13)
+    assert sk.H.sum() == pytest.approx(E0 - book.released_H.sum(), rel=1e-12)
+    P1 = sk.totals()[2].sum(axis=0)
+    impulse = (book.push + book.shear + book.wall + book.carried - book.released_p).sum(axis=0)
+    size = sum(np.linalg.norm(v, axis=1).sum() for v in (book.push, book.shear, book.wall, book.released_p))
+    assert np.linalg.norm(P1 - P0 - impulse) <= 1e-12 * size
+
+
+def test_the_transport_books_its_corrections_and_does_not_fall_back_silently(monkeypatch):
+    """Carried item (c) of Task 9: the transport's iterative solve books how many corrections it made and whether it
+    converged; where it does not converge within TRANSPORT_CORRECTIONS it raises (no silent direct LU, which hung on
+    133 000 cells), unless TRANSPORT_FALLBACK is set, when it finishes with the LU, warns and books converged False."""
+    def strip():
+        mk, ix, _ = grid_markers(20, 1)
+        sk = stacked(mk, [[LIQUID] * 10 + [RIGID] * 5 if x < 5 else [RIGID] * 15 for x in ix])
+        sk.U = np.where((sk.valid & (sk.T() > 900.0))[..., None], np.array([0.5, 0.0, 0.0]), 0.0)
+        return mk, sk
+
+    mk, sk = strip()
+    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    assert book.converged and book.corrections >= 0
+    # a flow with a cycle (metal running both ways across one face) needs corrections; with none allowed it raises
+    mk, sk = strip()
+    sk.U[1::2] *= -1.0
+    monkeypatch.setattr(runoff, "TRANSPORT_CORRECTIONS", 0)
+    try:
+        runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+        cyclic = False
+    except RuntimeError as err:
+        cyclic = True
+        assert "did not converge" in str(err)
+    assert cyclic
+    monkeypatch.setattr(runoff, "TRANSPORT_FALLBACK", True)
+    mk, sk = strip()
+    sk.U[1::2] *= -1.0
+    with pytest.warns(RuntimeWarning, match="did not converge"):
+        book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    assert not book.converged
