@@ -150,6 +150,14 @@ splitting at 0.5 s; P1 elements with 2 mm surface resolution (Step 3's melt laye
 SESAM's own transitional heating law is unknown and reproduced only as a measured table; the FEniCSx backend is serial
 (MPI not exercised).
 
+## 7a. The shared-package refactor changed no model behaviour
+
+On 2026-11-11 the modules that both model architectures use moved into `reentry_model/shared/`, with alias files at
+the old paths (see `CLAUDE.md`). No physics, default, option or output changed. This was shown by running a Step 1
+flight, a Step 2 flight, an element-model melting flight, a layered-skin flight and a resumed skin flight before and
+after the move with `analysis/skyscrapers_port/same_results.py` and comparing each case's files, which were identical,
+and by the unit and reference test tiers passing with the same results as before.
+
 ## 8. The ATDB shape factor
 
 DRAMA's aerothermal database `ATDB_SPHERE.nc` (HTG, 2019) tabulates, for the sphere, two heat factors next to the drag

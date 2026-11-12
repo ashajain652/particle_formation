@@ -188,6 +188,27 @@ reconstructs any material's summary from the per-run JSONs (same file name the s
 for summaries produced by older versions of the sweep or otherwise lost. `analysis/plot_style.py`
 holds the shared chart palette (dataviz skill's validated sequential blue ramp).
 
+## Two model architectures and the shared package
+
+The model is built in two architectures that share one command and one package. The **skyscrapers** architecture, the
+default, is the mesh model described in this file; the **level set** architecture is designed in
+`Reentry Model/docs/superpowers/specs/levelset/` and is not yet built. `reentry_model run --architecture skyscrapers|levelset`
+chooses between them, and `levelset` exits with code 2 until its run driver exists; `resume` and `compare` do not take
+the flag.
+
+Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
+`earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
+droplet writer (`droplets`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
+arguments (`cli_common`). The old paths such as `reentry_model.aero` are alias files that make the old name the same
+module object as the shared one, so existing imports and old pickles keep working. New code imports from
+`reentry_model.shared` directly. The shared package imports nothing from the rest of `reentry_model` except the
+package-root constants (`PROJECT_ROOT`, `DATA_DIR`, and so on), which `tests/test_reentry_model_shared.py` checks both
+by reading the source and by importing every shared module in a fresh interpreter. The skins (`skin.py`,
+`skinbody.py`, `columns.py`, `movemesh.py`, `mesh.py`, `spreading.py`, `film.py`, `restart.py`, `coupled.py` and the
+backends) are never shared between the architectures. The refactor changed no model behaviour (see
+`Reentry Model/docs/model_assumptions.md`).
+
 ## Physics model — `reentry_model` (Step 1: trajectory)
 
 Run from `Reentry Model/`. The SESAM references live in the DRAMA project, so the commands below set

@@ -527,6 +527,7 @@ where their scopes overlap. The numbers follow the build stages of §14.
    code (§4.4). Its plan is written once the port has landed, in `docs/superpowers/plans/levelset/`, reusing the tested
    pieces of `00-stage0-isolation-and-shared-package.md`; that plan, the six separate stage S sub-plans indexed in
    `docs/superpowers/plans/shared/README.md`, and branch `levelset-stage0` are superseded.
+   Built 2026-11-11 from the plan `docs/superpowers/plans/levelset/00s-combined-refactor-shared-package.md` on branch `shared-refactor`.
 1. **Level set geometry** (§6) with a prescribed surface motion; the box mesh's cost and memory measured.
 2. **Thermal solve** (§7) on the moving body, with prescribed motion and prescribed flow.
 3. **Marker skins with Girin's spraying** (§9) on a rigid, receding body (flow solve off).
