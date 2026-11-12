@@ -131,35 +131,48 @@ def test_markers_follow_the_recession():
     assert np.abs(body.pending_J).sum() < 0.5 * book.residual_move_J
 
 
-COLD_COLUMN_RTOL = 1e-5   # a skin's mass and enthalpy over a cold step: the step end's re-partition of the snap's
-                          # round-off (Task 9b; measured once: markers moved 13 nm, areas changed by at most 3.6e-6,
-                          # columns' mass by at most 1.8e-6)
+COLD_FACTOR = 2.0         # a skin's mass and enthalpy over a cold step change by at most this times its own area change
+                          # plus its stretch's departure from one (fix round 1 of Task 9b; measured: 1.08 times at most)
+COLD_STRETCH = 1e-5       # the stretch of a cold step within this of one (measured 2.4e-6: phi itself moves by 1.9e-8 m
+                          # on a cold step, the step end not settling, Task 11)
 
 
 def test_a_cold_body_is_unchanged_by_the_skins():
     """With no heat, no flow and no radiation, a macro step leaves the volume's temperatures and the skin base beta as
     they were, and the skins at their temperatures with their books. Since Task 9b each column's metal follows the area
-    the step end's tessellation re-partitions, and on a cold step that is the snap's round-off: each column's mass and
-    enthalpy stay within COLD_COLUMN_RTOL of what they were and its cells at their temperature, the skins' totals to
-    1e-14. (Before Task 9b the skins' cells stayed bit for bit: the areas changed by up to 3.6e-6 with no metal moved.)"""
+    the step end's tessellation re-partitions, and on a cold step that is round-off of the snap: phi moves by up to
+    1.9e-8 m, the markers by 13 nm, their areas by up to 3.0e-6 (measured). Each column's mass and enthalpy change by at
+    most COLD_FACTOR times its own area change plus its stretch's departure from one; the stretch, as the step's book
+    records it, is one within COLD_STRETCH; the book's share of area passed between markers is the transfer's; the skins'
+    totals hold to 1e-14. (Fix round 1: a column's change bounded by its own area change alone failed where its
+    neighbours' areas moved and its own hardly did, by up to 40 times.)"""
     body = cube_body()
     T0, beta0 = body.solver.T.copy(), body.beta.copy()
     sk, mk = body.skins, body.markers
     M0, E0 = (t[mk.skin_index] for t in sk.totals()[:2])
-    n0, T_skin0 = mk.n, np.nanmax(np.abs(sk.T() - 850.0))
+    A0, n0, T_skin0 = sk.area[mk.skin_index].copy(), mk.n, np.nanmax(np.abs(sk.T() - 850.0))
     book = body.advance(0.5)
     active = body.solver.active
     assert np.abs(body.solver.T[active] - T0[active]).max() <= 1e-9
     assert np.array_equal(body.beta, beta0)
-    assert mk.n == n0
+    assert mk.n == n0 and len(body.last_settle) == 1
+    rep = body.last_settle[0]
     M1, E1 = (t[mk.skin_index] for t in sk.totals()[:2])
-    print("cold step: columns' mass changed by at most {:.1e}, enthalpy {:.1e}; totals {:.1e}, {:.1e}".format(
-        np.abs(M1 / M0 - 1).max(), np.abs(E1 / E0 - 1).max(), M1.sum() / M0.sum() - 1, E1.sum() / E0.sum() - 1))
-    np.testing.assert_allclose(M1, M0, rtol=COLD_COLUMN_RTOL, atol=0.0)
-    np.testing.assert_allclose(E1, E0, rtol=COLD_COLUMN_RTOL, atol=0.0)
+    bound = COLD_FACTOR * (np.abs(mk.area / A0 - 1.0) + np.abs(rep.stretch - 1.0))
+    T = rep.transfer
+    print("cold step: columns' mass changed by at most {:.1e} ({:.2f} of the bound), areas by {:.1e}; stretch {:.7f} to "
+          "{:.7f}; {:.1e} of the area passed between markers".format(
+              np.abs(M1 / M0 - 1).max(), (np.abs(M1 / M0 - 1) / bound).max(), np.abs(mk.area / A0 - 1).max(),
+              book.stretch_min, book.stretch_max, book.area_repartitioned_share))
+    assert np.all(np.abs(M1 / M0 - 1) <= bound) and np.all(np.abs(E1 / E0 - 1) <= bound)
     assert abs(M1.sum() / M0.sum() - 1) <= BOOKS_RTOL and abs(E1.sum() / E0.sum() - 1) <= BOOKS_RTOL
+    assert book.stretch_min == rep.stretch.min() and book.stretch_max == rep.stretch.max()
+    assert 1.0 - COLD_STRETCH <= book.stretch_min <= book.stretch_max <= 1.0 + COLD_STRETCH
+    assert book.area_repartitioned_share == pytest.approx((T.sum() - T.diagonal().sum()) / mk.area.sum(), rel=1e-12)
     assert np.nanmax(np.abs(sk.T() - 850.0)) <= max(T_skin0, 1e-9)
     assert book.enthalpy_in == 0.0 and abs(book.pending_J) <= 1e-9 * abs(book.enthalpy_volume)
+    for key in ("area_repartitioned_share", "stretch_min", "stretch_max"):
+        assert key in book.row()
 
 
 def test_pending_load_reaches_the_volume():

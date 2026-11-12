@@ -228,6 +228,15 @@ class Markers:
         self.axis = np.zeros((n, 3))
         self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
 
+    def __setstate__(self, state):
+        """Unpickling: a state from before Task 9b has no `x_tess`, `normal_tess`; saved between steps, the markers'
+        last tessellation was where they are, so they are filled from `x` and `normal`."""
+        self.__dict__.update(state)
+        if "x_tess" not in state:
+            self.x_tess = np.array(self.x, dtype=float)
+        if "normal_tess" not in state:
+            self.normal_tess = np.array(self.normal, dtype=float)
+
     @property
     def n(self):
         return len(self.x)

@@ -31,15 +31,17 @@ The re-partition (Task 9b, the controller's ruling of 2026-11-12). A tessellatio
 a marker's area change at a step end is area passing between markers, not the surface stretching (measured on the test
 cube and the full-size cube, Task 9b's report), and a skin that kept its metal on its new area thickened or thinned and
 moved metal through its base for no reason (a backlog handed down 10 mm at once on the full-size cube). Each
-tessellation is followed by `_repartition`: from each marker's old owners (its position and normal at the tessellation
-before, `Markers.x_tess`), its skin's area and the surface then (the step's old phi for the first, phi as it is for the
-one after split and merge), and the new tessellation, `markers.transfer_matrix` gives every old column's stretch and
-the transfer T[j, i], the area of old column j that new column i receives (`repartition`). Each old column is scaled by its stretch
-(its top area becomes its old area times its stretch, its metal unchanged: section 9.2's draw or return at its base
-follows in the next part, by the draw to the minimum mass and the hand-down, as for any stretched or gathered skin),
-then cut into the fractions T[j, i] / (its row's sum) of its profile (`Skins.cut`) and each new column is the hand-over
-mix (`Skins.combine`) of what it receives. Mass, enthalpy and momentum add to round-off; the volume is untouched. Each
-re-partition is kept in `last_settle` (the transfer, the stretch, the old and new areas) for the step's books.
+tessellation (`_tessellate`, which releases the markers it leaves no area and tessellates again) is followed by
+`_repartition`: from each marker's old owners (its position and normal at the tessellation before, `Markers.x_tess`),
+its skin's area and the surface then (the step's old phi for the first, phi as it is for the one after split and
+merge), and the new tessellation, `repartition.transfer_matrix` gives every old column's stretch and the transfer
+T[j, i], the area of old column j that new column i receives; `repartition.apply_transfer` scales each old column by its
+stretch (its top area becomes its old area times its stretch, its metal unchanged: section 9.2's draw or return at its
+base follows in the next part, by the draw to the minimum mass and the hand-down, as for any stretched or gathered
+skin), cuts it into the fractions T[j, i] / (its row's sum) of its profile (`Skins.cut`) and makes each new column the
+hand-over mix (`Skins.combine`) of what it receives. Mass, enthalpy and momentum add to round-off; the volume is
+untouched. Each re-partition is kept in `last_settle` (the transfer, the stretch, the old and new areas); the step's book
+records the share of area passed between markers and the stretch's range (`skinbody.StepBook`).
 
 A skin deeper than its radius of curvature (`Skins.dz` raises for all columns if one is): each column's principal
 curvatures are held, either way, at KAPPA_DEPTH_SHARE over its flat depth (`cap_curvature`), so the cross-section
@@ -72,7 +74,8 @@ COARSEN_SHARE = 0.1               # of the metal's volume: leaves that could be 
 MODES = ("full", "top")           # a marker's skin: full-depth (Task 9, everywhere) or top-zone (Task 10)
 COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading keeps one-size steps finer than asked)
 
-BARE_ROUNDS = 4                   # tessellations at most, each releasing the markers the last left no area (`_tessellate`)
+BARE_ROUNDS = 4                   # tessellations at most, each releasing the markers the last left no area
+                                  # (`_tessellate`)
 
 Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
 

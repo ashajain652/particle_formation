@@ -145,6 +145,9 @@ class StepBook:
     (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
     `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
     `pieces_used_up` the pieces of beta the step's base moves used up (`stepend.StepEnd._move_beta`).
+    `area_repartitioned_share` the area passed between markers at the step end, summed over its re-partitions, over the
+    area the markers cover after it, and `stretch_min`, `stretch_max` the least and largest stretch of an old column in
+    them (`repartition`, Task 9b; `LevelSetSkinBody.last_settle` keeps each re-partition).
     `group_area_ratio_min`, `group_area_ratio_max` the least and largest
     area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
@@ -171,6 +174,9 @@ class StepBook:
     snap_fallback: int
     snap_slide_max: float
     pieces_used_up: int
+    area_repartitioned_share: float
+    stretch_min: float
+    stretch_max: float
     group_area_ratio_min: float
     group_area_ratio_max: float
     group_area_ratio_trimmed_max: float
@@ -740,6 +746,9 @@ class LevelSetSkinBody(StepEnd):
         # the step's end: phi, psi, the mesh, the markers
         self._rebuild(tally)
         self.momentum_to_volume += tally.to_volume
+        reps = self.last_settle
+        passed = math.fsum(float(r.transfer.sum() - r.transfer.diagonal().sum()) for r in reps)
+        covered = float(reps[-1].area.sum()) if reps else 0.0
         summary = self._summary(state, ctx["plan"])
 
         end = self.books()
@@ -755,6 +764,9 @@ class LevelSetSkinBody(StepEnd):
             parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), split_depth_max=tally.depth,
             parts_over=tally.over, snap_fallback=tally.snap_fallback, snap_slide_max=tally.snap_slide,
             pieces_used_up=tally.pieces_used,
+            area_repartitioned_share=passed / covered if covered > 0.0 else 0.0,
+            stretch_min=min((float(r.stretch.min()) for r in reps), default=1.0),
+            stretch_max=max((float(r.stretch.max()) for r in reps), default=1.0),
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
             group_area_ratio_trimmed_max=tally.group_trimmed,
             pending_flux_max=tally.pending_flux, surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,

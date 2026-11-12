@@ -34,7 +34,8 @@ from scipy.spatial import cKDTree
 from .cutcell import patches as cut_patches
 
 SAMPLE_SHARE = 1.0 / 16.0   # of the markers' target spacing: the surface samples' size for a re-partition
-SAMPLE_LEVEL_MAX = 5        # midpoint subdivisions of a patch triangle at most for the surface samples (`surface_samples`)
+SAMPLE_LEVEL_MAX = 5        # midpoint subdivisions of a patch triangle at most for the surface samples
+                            # (`surface_samples`)
 FIT_PASSES = 4              # flows at most that bring the re-partition's columns to the new areas (`_fit_columns`)
 FIT_RTOL = 1e-14            # of a piece's mean area: the fit stops when no column is farther from its area than this
 FIT_FAIL = 1e-12            # of a piece's mean area: a fit still farther after FIT_PASSES raises (fix round 1: of the

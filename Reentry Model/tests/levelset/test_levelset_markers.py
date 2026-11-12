@@ -453,3 +453,21 @@ def test_patch_paths_match_an_unrestricted_dijkstra(monkeypatch):
     assert 100 < within.sum() < len(a)
     assert np.array_equal(np.isfinite(got), within)
     np.testing.assert_allclose(got[within], want[within], rtol=1e-12, atol=0.0)
+
+
+def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_tessellation():
+    """Task 9b (fix round 1): markers pickled before `x_tess` and `normal_tess` existed (a state saved between steps,
+    when they equal the positions and normals) load with them filled from `x` and `normal`; markers that have them keep
+    their own."""
+    import pickle
+    mesh = _mesh()
+    phi = _sphere(mesh)
+    mk = Markers.create(mesh, phi, None)
+    mk.tessellate(mesh, phi)
+    del mk.x_tess, mk.normal_tess                         # as a pickle from before Task 9b holds them
+    old = pickle.loads(pickle.dumps(mk))
+    assert np.array_equal(old.x_tess, old.x) and np.array_equal(old.normal_tess, old.normal)
+    assert old.x_tess is not old.x
+    mk.x_tess, mk.normal_tess = mk.x + 1e-6, -mk.normal
+    new = pickle.loads(pickle.dumps(mk))
+    assert np.array_equal(new.x_tess, mk.x + 1e-6) and np.array_equal(new.normal_tess, -mk.normal)
