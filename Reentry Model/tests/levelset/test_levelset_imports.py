@@ -64,7 +64,10 @@ def test_levelset_imports_only_shared_physics():
     for skin in SKINS:
         for src in ("from reentry_model.{0} import x", "import reentry_model.{0}", "from reentry_model import {0}",
                     "from .. import {0}", "from ..{0} import x", "from .{0} import x"):
+            if src.startswith("from .{") and skin in names:
+                continue                  # `.skin` inside levelset/ is the level set's own skin.py (stage 3 Task 2)
             assert _escapes(ast.parse(src.format(skin)).body[0], names), src.format(skin)
+    assert not _escapes(ast.parse("from .skin import Skins").body[0], names)
     for src in ("from reentry_model.shared.thermal import SIGMA_SB", "from reentry_model.shared import spray",
                 "from ..shared.material import Material", "from .. import DATA_DIR", "from .cutcell import patches",
                 "from reentry_model.levelset.transfer import locate", "import numpy"):
