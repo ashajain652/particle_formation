@@ -366,18 +366,18 @@ def test_the_transport_books_its_corrections_and_does_not_fall_back_silently(mon
 
     mk, sk = strip()
     book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
-    assert book.converged and book.corrections >= 0
-    # a flow with a cycle (metal running both ways across one face) needs corrections; with none allowed it raises
+    assert book.converged and book.corrections == 0          # one-way flow: the upwind order solves it at once
+    # a flow with a cycle (metal running both ways across one face) needs corrections, which the book counts
+    mk, sk = strip()
+    sk.U[1::2] *= -1.0
+    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    assert book.converged and book.corrections > 0
+    # with none allowed it raises
     mk, sk = strip()
     sk.U[1::2] *= -1.0
     monkeypatch.setattr(runoff, "TRANSPORT_CORRECTIONS", 0)
-    try:
+    with pytest.raises(RuntimeError, match="did not converge"):
         runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
-        cyclic = False
-    except RuntimeError as err:
-        cyclic = True
-        assert "did not converge" in str(err)
-    assert cyclic
     monkeypatch.setattr(runoff, "TRANSPORT_FALLBACK", True)
     mk, sk = strip()
     sk.U[1::2] *= -1.0

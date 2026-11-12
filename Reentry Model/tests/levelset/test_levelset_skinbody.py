@@ -21,6 +21,22 @@ HALF = 5e-3            # m: the cube's half side (a 10 mm cube)
 OFF = 0.13e-3          # m: the cube's centre off the grid, so that its faces cut the cells
 SETTINGS = SkinSettings(cell=SKIN_PRESETS["dev"])
 MESH = dict(fine_margin=2e-3, fine_size=1.4e-3, cell_floor=0.7e-3)
+OWED_SHARE = 0.05      # the heat still owed to the volume at a step's end, summed in absolute value per point, and the last
+                       # part's interface mismatch, each at most this share of the step's heat in (fix round 1, Important 2).
+                       # Measured once each: 4e-4 on the heated face; 1.2e-2 on the receding face; 2.9e-2 on the spraying
+                       # face's 0.05 s step. What is owed is almost all the base moves' deferral -- the draw values the
+                       # metal it takes on the profile capped at T_rigid, the volume removes it at its own, hotter,
+                       # temperatures -- about 4 % of the heat in over the receding step, most of it delivered within it
+                       # (the mismatch itself is 1e-4 of the heat in or less)
+
+
+def owed(body, book):
+    """(the heat still owed to the volume, summed in absolute value [J], the last part's sum |mismatch| [J]) as shares of
+    the step's heat in, printed with the step's deferred residuals by source."""
+    pend, mism = np.abs(body.pending_J).sum() / book.enthalpy_in, book.interface_mismatch_J / book.enthalpy_in
+    print("  owed |pending| {:.2e} and mismatch {:.2e} of the heat in; deferred Newton {:.2e} J, moves {:.2e} J, "
+          "remesh {:.2e} J".format(pend, mism, book.residual_newton_J, book.residual_move_J, book.residual_remesh_J))
+    return pend, mism
 
 
 def aa7075():
@@ -68,7 +84,7 @@ def test_a_macro_step_closes_mass_and_enthalpy(heated):
     area = (body.markers.area * np.clip((body.markers.normal[:, 0] - 0.5) / 0.5, 0.0, 1.0)).sum()
     assert book.enthalpy_in == pytest.approx(2e6 * area * 0.5, rel=0.05)
     assert book.enthalpy_volume > before["enthalpy_volume"] and book.enthalpy_skins > before["enthalpy_skins"]
-    assert abs(book.pending_J) < 0.01 * book.enthalpy_in
+    assert max(owed(body, book)) <= OWED_SHARE
     for key in ("n_markers", "marker_splits", "marker_merges", "markers_trapped", "interface_mismatch_J",
                 "volume_correction_max", "n_pieces", "frontal_area_m2"):
         assert key in book.row()
@@ -95,6 +111,10 @@ def test_markers_follow_the_recession():
     assert mk.x[face, 0].mean() < x0
     assert off.max() <= 1e-9
     assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
+    assert max(owed(body, book)) <= OWED_SHARE
+    # the moves' deferral (booked as pending at the bases) is mostly delivered to the volume within the step: what is
+    # still owed at its end is under half of what the moves deferred over it, and the books close with it
+    assert np.abs(body.pending_J).sum() < 0.5 * book.residual_move_J
 
 
 def test_a_cold_body_is_unchanged_by_the_skins():
@@ -139,17 +159,19 @@ def test_pending_load_reaches_the_volume():
 def test_a_skin_deeper_than_its_radius_of_curvature_is_held_back_alone():
     """Skins.dz raises for every column if one column is deeper than its radius of curvature (a skin of 0.8 mm on the
     cube's rounded edge, about 0.8 mm in radius). The body caps each column's principal curvatures at
-    KAPPA_DEPTH_SHARE over its flat depth (a sub-grid edge, design 20.6's known limitation 1): only the too-deep column is
-    changed, and its thickness is then defined."""
+    KAPPA_DEPTH_SHARE over its flat depth either way (a sub-grid edge, design 20.6's known limitation 1): only the
+    columns over it change (the too-deep one, and a sharply concave one), and the thickness is then defined."""
     mat = aa7075()
-    kappa = np.array([[40.0, 40.0], [1250.0, 0.0], [-300.0, 20.0]])
-    sk = Skins(mat, np.full(3, 1e-6), kappa, SETTINGS)
+    kappa = np.array([[40.0, 40.0], [1250.0, 0.0], [-100.0, 20.0], [-1500.0, 0.0]])
+    sk = Skins(mat, np.full(4, 1e-6), kappa, SETTINGS)
     sk.fill(mat.rho * 1e-6 * 0.8e-3, 850.0)
     with pytest.raises(ValueError, match="deeper than its radius of curvature"):
         sk.dz()
     capped = skinbody.cap_curvature(sk, kappa)
     assert np.array_equal(capped[[0, 2]], kappa[[0, 2]])
     assert capped[1, 0] == pytest.approx(skinbody.KAPPA_DEPTH_SHARE / 0.8e-3, rel=0.05) and capped[1, 1] == 0.0
+    # a concave column is held too (its widening base would raise its minimum mass faster than its mass)
+    assert capped[3, 0] == pytest.approx(-skinbody.KAPPA_DEPTH_SHARE / 0.8e-3, rel=0.05) and capped[3, 1] == 0.0
     sk.kappa = capped
     assert np.all(np.isfinite(sk.thickness()))
 
@@ -177,6 +199,7 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
               book.mass_sprayed, book.mass_residual, book.enthalpy_residual, book.momentum_to_wall))
     assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
     assert book.enthalpy_in > 0.0 and book.enthalpy_radiated > 0.0
+    assert max(owed(body, book)) <= OWED_SHARE
     plan = body.plan
     assert plan is not None
     assert plan.mass.sum() + plan.mass_slurry.sum() == pytest.approx(book.mass_sprayed, rel=1e-12, abs=1e-30)
@@ -193,3 +216,100 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
     body._restore(saved, ctx)
     assert np.array_equal(plan.mass, mass) and np.array_equal(body.skins.flow_memory, memory)
     assert np.array_equal(body.skins.m, m)
+
+
+def test_a_trial_pass_leaves_the_curvatures_as_they_were():
+    """Fix round 1 of Task 9 (review, Important 1): the curvature cap runs in every heat and flow sub-step, so a trial
+    pass may lower a column's curvature as its skin swells; the trial is undone with the curvatures too. The heated face's
+    columns start exactly at their cap; a trial part of 0.0625 s at 6 MW/m2 melts and swells them, lowering their cap;
+    after the restore every curvature is bit for bit the one before."""
+    body = cube_body()
+    sk, mk = body.skins, body.markers
+    face = np.zeros(sk.n, bool)
+    face[mk.skin_index[mk.normal[:, 0] > 0.9]] = True
+    T, valid = sk.T(), sk.valid
+    vol = np.zeros(sk.m.shape)
+    vol[valid] = sk.m[valid] / sk.density(T[valid])
+    depth = vol.sum(axis=1) / sk.area
+    sk.kappa[face, 0] = skinbody.KAPPA_DEPTH_SHARE / depth[face]          # at the cap
+    ctx = {"q": np.where(face, 6e6, 0.0), "forcing": None, "plan": None}
+    S, _, _, g = body._interface()
+    T_b = S @ body.solver.patch_T()
+    kappa0 = sk.kappa.copy()
+    saved = body._save(ctx)
+    body._pass(0.0625, T_b, g, sk.minimum_mass(), ctx, trial=True)
+    lowered = sk.kappa[face, 0] < kappa0[face, 0]
+    body._restore(saved, ctx, solver=False)
+    print("trial pass: {} of {} face columns had their curvature lowered".format(int(lowered.sum()), int(face.sum())))
+    assert lowered.any()
+    assert np.array_equal(sk.kappa, kappa0)
+
+
+def gas_body():
+    """The cube with the shared heating and surface flow (`loads.GasLoads`) and Girin's spray model, radiating."""
+    from reentry_model.levelset import loads
+    from reentry_model.shared import heating, spray, surface_flow
+    from reentry_model.shared.material import LiquidProperties
+    mat = aa7075()
+    gl = loads.GasLoads(heating.PhysicsHeating(), surface_flow.SurfaceFlow(), mat.liquid.rho)
+    model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10")
+    return cube_body(loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
+
+
+PART_BOUND = 100      # parts a flow-on step of the test cube may take at most: a tenth of PARTS_MAX (measured 6 and 24
+                      # parts; the skyscrapers' rule asked 31 and then 31 521)
+CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with a body Knudsen number of 1e-3: the shock
+                                      # layer's branch, where Girin's closure gives a conjugate depth (at the merged
+                                      # branch's Knudsen number of 0.03 the gates hold every marker: measured)
+
+
+@pytest.fixture(scope="module")
+def sprayed():
+    """The cube with liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro
+    step at the continuum gas state with the runoff and Girin's plan on."""
+    from test_levelset_loads import _state
+    body = gas_body()
+    melt = body.advance(0.25, q_prescribed=one_face(6e6))
+    started = time.perf_counter()
+    book = body.advance(0.05, state=_state(**CONTINUUM))
+    return body, melt, book, time.perf_counter() - started
+
+
+def test_liquid_formed_on_the_face_sprays_and_the_books_close(sprayed):
+    """Fix round 1 of Task 9 (ruling b): liquid formed on the +x face sprays in the next 0.05 s macro step at the
+    continuum gas state: the released mass is positive and equals the plan's books and the history's, the mass and
+    enthalpy close, and the heat still owed and the interface mismatch stay within OWED_SHARE of the heat in."""
+    body, melt, book, seconds = sprayed
+    plan = body.plan
+    liquid = melt.summary["liquid_depth_mean_mm"]
+    print("spraying face: liquid {:.3f} mm mean before; {:.1f} s, {} parts; sprayed {:.3e} kg from {} markers; heat in "
+          "{:.3f} J; residuals mass {:.2e}, enthalpy {:.2e}; droplets {:.0f}, median radius {:.1f} um".format(
+              liquid, seconds, book.parts, book.mass_sprayed, int((plan.rate > 0).sum()), book.enthalpy_in,
+              book.mass_residual, book.enthalpy_residual, book.summary["n_released"], book.summary["r_median_um"]))
+    assert liquid > 0.0 and book.mass_sprayed > 0.0
+    assert plan.mass.sum() + plan.mass_slurry.sum() == pytest.approx(book.mass_sprayed, rel=1e-12)
+    assert book.summary["released_step_mass_kg"] == pytest.approx(book.mass_sprayed, rel=1e-12)
+    assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
+    assert max(owed(body, book)) <= OWED_SHARE
+
+
+def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
+    """Fix round 1 of Task 9 (ruling a), the smallest case found that reproduces the skyscrapers' runaway: the spraying
+    step above took 6 parts and their rule (every accepted part's move ratio, scaled to the macro step) asks the next
+    for 31; the next 0.05 s step took 24 and their rule then asks 31 521, far past PARTS_MAX (measured once, 2026-11-12),
+    because a part that meets its allowance only after splits, or never, carries the splits' shortness into the
+    estimate. Here a step's hint is at most 1.25 times the parts it took: both steps stay within PART_BOUND parts, the
+    second takes fewer than the skyscrapers' hint for it, both hints are 1.25 times their step's parts at most, and the
+    books close."""
+    from test_levelset_loads import _state
+    body, _, first, _ = sprayed
+    assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
+    second = body.advance(0.05, state=_state(**CONTINUUM))
+    print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
+        first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
+        second.parts_skyscrapers))
+    assert first.parts <= PART_BOUND and second.parts <= PART_BOUND and second.parts < first.parts_skyscrapers
+    assert second.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * second.parts)))
+    assert abs(second.mass_residual) <= 1e-12 and abs(second.enthalpy_residual) <= 1e-8
+    assert max(owed(body, second)) <= OWED_SHARE
+
