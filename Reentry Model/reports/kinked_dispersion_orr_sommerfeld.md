@@ -334,6 +334,11 @@ and that the smooth factor is the best of all, but only with the first kink chos
 | The same, first kink at KINK_DROP 0.1 | 14 of 18 | 0.28 | none needed |
 | The same, first kink at KINK_DROP 0.5 | 13 of 18 | 0.23 | none needed |
 
+Fifteen of these 18 columns were re-solved at doubled resolution, and their growth moved by at most about one part in a
+hundred million. The other three (fixture columns 4 and 24 and parts-melting column 44) were not, because the iterative
+solve did not reach far enough and the dense solve takes tens of minutes, so their entries in this table rest on a
+single resolution.
+
 Why does a higher threshold do worse here? At 3.5 ten scaled d050 columns become floor-like. In eight of them the wall
 moves from the rigid front, 750 to 7,400 micrometres down, to the bridge's base, 15 to 185 micrometres down; in the other
 two it moves to 400 and 835 micrometres. The bridge above that wall is itself curved, so
