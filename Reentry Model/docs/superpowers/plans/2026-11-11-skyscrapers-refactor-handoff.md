@@ -171,7 +171,9 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
   `Reentry Model/prototype/work-2026-10-28-skin-spraying-plan/flights/`, still run the retired planning copy of the
   code (`.../work-2026-10-28-skin-spraying-plan/code/`), not the package. That folder is kept as a record and must not
   be edited. A launcher that runs the package is later work. Flights longer than about two hours run on the Mac Studio
-  by a runbook (`docs/superpowers/plans/2026-11-10-skin-fixes-test-flights-macstudio.md`).
+  by a runbook (`docs/superpowers/plans/2026-11-10-skin-fixes-test-flights-macstudio.md`). **Done on 2026-11-12**
+  (branch `skyscrapers-fixes`): `Reentry Model/analysis/flights/` holds the same `fly.py` and `launch.sh`, running the
+  package (see its README).
 - **Branches made before the port.** These merge later, each on its own, and will meet the moved prototype paths
   (prototype folders now live under `Reentry Model/prototype/`) and the rewritten history: `levelset-two-interface`,
   `levelset-stage0`, `wake-residence`, `segmented-trail`, `janaf-vapour-pressure`, `we-critical-308` and

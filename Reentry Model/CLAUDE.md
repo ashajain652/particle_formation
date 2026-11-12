@@ -44,7 +44,7 @@ Those two files are the contract with the thesis; keep them true when you change
 - `reentry_model/wake_column/` — the wake column, a sub-package with its own `analysis/` and `tests/`: the
   chemistry and condensation of the aluminium the droplets vaporise (see "The wake column" below). Its committed
   inputs are in `data/wake_column/`.
-- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); and `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README.
+- `analysis/` — the Step 1 and Step 2 verification tables and the mesh plot; the Step 3 scripts (`melt_verification.py`, `melt_sensitivity.py`, `girin_reference.py`, `flow_wavelengths.py`, `skin_plate.py`, `skin_timing.py`, `ablation_1d.py`, `movemesh_recession.py`); `analysis/skyscrapers_port/`, the port's own tools (path map, checks, three-way resolver, `same_results.py`) with its README; and `analysis/flights/`, the launcher of long flights (`fly.py`, `launch.sh`, which keep a flight's history rows as they are made) with its README.
 - `tests/` — the package's tests (`conftest.py` puts this folder on `sys.path` and holds the session
   mesh fixtures). `pytest.ini` also collects `reentry_model/droplet_reentry/tests/` and
   `reentry_model/wake_column/tests/`.
