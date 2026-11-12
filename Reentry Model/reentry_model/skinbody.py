@@ -128,7 +128,10 @@ from . import rheology
 from . import skin as skin_mod
 from . import spray as spray_mod
 from . import spreading
-from .body import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, SIZE_FEEDBACK_NAMES, ThermalBody, fit_sphere
+from .body import SIZE_FEEDBACK_NAMES, ThermalBody
+from .shared import nose as nose_mod
+from .shared.nose import LEEWARD_TESTS, NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, fit_sphere  # noqa: F401  (moved to shared; re-exported here)
+from .shared.spray import SLURRY_SIGMA, region_extent  # noqa: F401  (moved to shared; re-exported here)
 from .thermal import SIGMA_SB
 
 FLOW_DEFAULT = False              # the class's default, the heat-only skins its tests build on: the flow was off until
@@ -184,9 +187,6 @@ SKIN_CG_TOL = 1e-13               # the 3D solver's linear tolerance in a skin r
                                   # (measured 2026-10-14). The element model's runs keep their solver's own tolerance.
 
 
-SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
-                                  # large-fragment design's labelled assumption for slurry)
-
 # the history's spreading columns (sub-plan 22 Task 5c), with a limit only (`SkinBody.spread_stats`): kg moved between columns
 # since time zero, kg still wanting to move and edges over the limit at the last move, and the largest landing [K] of metal over
 # its node's temperature since the last row
@@ -202,8 +202,9 @@ NOSE_COLUMNS = ("nose_radius_mm", "fitted_nose_radius_mm", "nose_bound_mm", "nos
 # through the body's mass centroid at right angles to the direction of motion. Measured on the 50 mm sphere's comparison
 # flights at 186.5-187.3 s: releases came from corners up to 82 mm behind the original centre whose normals faced forward
 # (12-20 degrees off the flow, median), which the first test counted as windward though they sit behind the body; the
-# centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back.
-LEEWARD_TESTS = ("facing", "centroid")
+# centroid itself was 30 mm behind the original centre by 187.0 s, the metal having run to the back. The choices
+# (`LEEWARD_TESTS`), the plane test (`ahead_of`) and the angles (`load_angles`) are in reentry_model.shared.nose since
+# level-set stage 3 Task 1.
 # the history's two leeward columns (`SkinBody.nose_stats`), with either setting: the centroid's position along the flight
 # direction relative to the 3D mesh's mean point [mm, positive forward], and the corners that face the flow but lie behind the
 # plane through it
@@ -381,27 +382,6 @@ class SprayPlan:
         return np.concatenate(blocks, axis=0)
 
 
-def region_extent(edges, selected, areas):
-    """Lateral extent [m] of each column's own contiguous selected region on the columns' graph (`edges`, (E, 2)), as the
-    region's equivalent diameter 2 sqrt(A / pi) with A the selected columns' `areas` summed; zero where not selected: the
-    element model's `MeltingBody.region_extent` on the corners, the domain a surface wave must fit inside (2026-09-24)."""
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import connected_components
-    sel = np.asarray(selected, dtype=bool)
-    n = len(sel)
-    out = np.zeros(n)
-    if not sel.any():
-        return out
-    i, j = edges[:, 0], edges[:, 1]
-    keep = sel[i] & sel[j]
-    i, j = i[keep], j[keep]
-    g = coo_matrix((np.ones(2 * i.size), (np.concatenate([i, j]), np.concatenate([j, i]))), shape=(n, n))
-    count, label = connected_components(g, directed=False)
-    area = np.bincount(label[sel], np.asarray(areas, dtype=float)[sel], count)
-    out[sel] = 2.0 * np.sqrt(area[label[sel]] / np.pi)
-    return out
-
-
 def sheared_depth(sk):
     """Per column, the resolved sheared depth [m] (spec 6.7; sub-plan 22 Task 4b, Asha 2026-10-31): the depth of the
     straight-line profile that falls from the top cell's speed to rest and carries the column's computed flow, twice the
@@ -525,9 +505,8 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     depth = F[rows] - (np.cumsum(dz, axis=1) - dz)[rows, k]
     f_s = 1.0 - sk.props.liquid_fraction(T)
     rho = sk.density(T)
-    f_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
     sub = _rows(flow, rows)
-    viscosity = lambda gamma: rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)
+    viscosity = lambda gamma: spray_mod.slurry_properties(mat, T, f_s, gamma, rho).mu
 
     nose = radius if nose_radius is None else nose_radius
     theta_rows = None if theta is None else np.asarray(theta, dtype=float)[rows]
@@ -812,7 +791,7 @@ class SkinBody(ThermalBody):
         the top surface at the last refresh, made at the first read after it (`_leeward_raw`)."""
         if self._leeward_raw is None:
             c = self.mass_centroid()
-            self._leeward_raw = (c, (self.surface.points - c) @ self.v_hat > 0.0)
+            self._leeward_raw = (c, nose_mod.ahead_of(self.surface.points, c, self.v_hat))
         return self._leeward_raw
 
     def windward_corners(self):
@@ -830,7 +809,7 @@ class SkinBody(ThermalBody):
         itself, the frames and the release angle do not change."""
         if self.leeward_test != "centroid":
             return self.theta
-        return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+        return nose_mod.load_angles(self.theta, self.windward_corners())
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -876,15 +855,9 @@ class SkinBody(ThermalBody):
             self._nose_raw = self._fit_nose()
         fitted, bound, n, concave = self._nose_raw
         r0 = float(self.mesh.params.get("radius_m", 0.05))
-        used = r0
-        if self.size_feedback == "current":
-            if concave and np.isfinite(bound) and bound > 0.0:
-                used = bound                             # the flat-face equivalent where no sphere describes the cap
-            elif np.isfinite(fitted) and not concave:
-                # Asha, 2026-11-10, option B: the flat-face value whenever the fit is flatter than it, a flat face heating
-                # like a sphere of 1.67 times its radius (Boison and Curtiss 1959), so the heating no longer falls toward
-                # zero as a cap flattens and the convex and concave readings of a nearly flat cap agree. No lower bound.
-                used = min(fitted, bound) if np.isfinite(bound) and bound > 0.0 else fitted
+        # the flat-face equivalent where no sphere describes the cap; the smaller of the fit and it where the cap is convex
+        # (Asha, 2026-11-10, option B); the initial radius without a fit (shared.nose.nose_radius)
+        used = nose_mod.nose_radius(fitted, bound, concave, n, r0, self.size_feedback)
         return NoseFit(fitted, bound, n, concave, float(used))
 
     @property

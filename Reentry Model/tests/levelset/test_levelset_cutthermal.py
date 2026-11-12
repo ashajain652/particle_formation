@@ -9,7 +9,8 @@ import pytest
 
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import inside_volumes
-from reentry_model.levelset.cutthermal import SIGMA_SB, CutThermal
+from reentry_model.levelset.cutthermal import CutThermal
+from reentry_model.shared.thermal import SIGMA_SB
 from reentry_model.levelset.surfaces import molten_rigid_surface
 from reentry_model.levelset.transfer import interpolate, project
 
@@ -256,7 +257,7 @@ def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
     """Design section 20.11 item 2: a 4.2 mm square column, 22 mm deep, on a uniform 0.7 mm mesh (the fine cell),
     starts solid at the bottom of an 890-900 K melting range; its top, 0.3 mm above a node layer, is held near
     T_hot = T_m + 100 K by the implicit base law with H = 1e7 W/m2/K; its sides and bottom are the insulated mesh
-    boundary. The depth of psi = 0 (the 895.1 K isotherm) on the centre line must stay within one cell of the
+    boundary. The depth of psi = 0 (the T_m = 895 K isotherm, the material's half-liquid point) on the centre line must stay within one cell of the
     Neumann front s(t) = 2 lambda sqrt(alpha t)."""
     from scipy.optimize import brentq
     h, dt, z_top, H = 0.7e-3, 0.01, 0.3e-3, 1e7
@@ -276,7 +277,7 @@ def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
         s.step(dt, H * T_hot, q1=-H)
         if n in (25, 50, 100, 200):
             t = n * dt
-            psi, _ = molten_rigid_surface(m, phi, s.T)
+            psi, _ = molten_rigid_surface(m, phi, s.T, T_m)
             p = interpolate(m, psi, line)
             i = np.flatnonzero((p[:-1] > 0) & (p[1:] <= 0))[0]
             depth = (z_top - zs[i]) + (zs[i] - zs[i + 1]) * p[i] / (p[i] - p[i + 1])

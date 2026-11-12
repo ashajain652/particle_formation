@@ -20,6 +20,7 @@ from reentry_model.levelset.cutcell import inside_volumes, patches
 from reentry_model.levelset.levelset import advect, correct_volumes, pieces, redistance
 from reentry_model.levelset.shadow import shadowed
 from reentry_model.levelset.surfaces import molten_rigid_surface, outer_surface
+from reentry_model.shared.material import Material
 from reentry_model.levelset.thin import patch_measures
 
 D = float(sys.argv[1]) * 1e-3
@@ -54,7 +55,8 @@ hit = tick("shadow_s", lambda: shadowed(m, phi, P, (1.0, 0.0, 0.0)))
 beta = sdf(m.points) + 0.3e-3                 # a skin base 0.3 mm inside the surface; thickness 0.3 mm gives phi
 phi_o = tick("outer_surface_s", lambda: outer_surface(m, beta, 0.3e-3, band=BAND))
 T = 900.0 + 2.0e4 * (sdf(m.points) + 0.3e-3)    # rigid (below 895.1 K) deeper than 0.3 mm
-psi, crust = tick("molten_rigid_surface_s", lambda: molten_rigid_surface(m, phi_o, T, band=BAND))
+T_RIGID = Material.from_drama_json("AA7075_scheil").T_rigid
+psi, crust = tick("molten_rigid_surface_s", lambda: molten_rigid_surface(m, phi_o, T, T_RIGID, band=BAND))
 h = tick("thin_measures_s", lambda: patch_measures(m, phi, psi, P))
 phi_a = tick("advect_s", lambda: advect(m, phi, lambda x: np.tile([1.0e-4, 0.0, 0.0], (len(x), 1)), 1.0, band=BAND))
 out.update(times=t, cells=int(len(m.tets)), nodes=int(len(m.points)), cells_rebuilt=int(len(m2.tets)),

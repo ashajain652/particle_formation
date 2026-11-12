@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .shared.body import Body, ConstantBody, sphere_mass  # noqa: F401  (moved to shared; re-exported here)
+from .shared.nose import NOSE_CAP_ANGLE, NOSE_CAP_FACTOR, fit_sphere  # noqa: F401  (moved to shared; re-exported here)
 from .spray import RELEASE_ANGLE_COLUMNS
 
 
@@ -87,9 +88,6 @@ class ThermalBody:
 SIZE_FEEDBACK_NAMES = ("current", "initial")
 FEED_DEPTH_NAMES = ("conjugate", "all")     # how deep melt may leave an element for the film (Step 3, 2026-09-22)
 CP_MAX_NEWTONIAN = 1.84          # only the ratio to the meshed sphere's own value is used, so this cancels
-NOSE_CAP_ANGLE = 30.0            # deg: the windward cap fitted for the nose radius (depth (1 - cos 30 deg) R_t behind the front)
-NOSE_CAP_FACTOR = 1.67           # a flat face of radius R_t heats like a sphere of 1.67 R_t (its stagnation velocity gradient is
-                                 # ~0.6 x a sphere's of the same radius, Boison & Curtiss 1959): the cap on the fitted radius
 PHI_MIN = 1.0e-3                 # element fraction kept by elements that do not own a patch (they cannot die: no cavities)
 NEAREST_PATCHES = 4              # patches that receive an interior element's liquid (area-weighted)
 LOAD_DT_MAX = 1000.0             # K, the most a deferred melt load may move one node in one macro step
@@ -137,15 +135,6 @@ class MeltSettings:
             raise ValueError("feed_depth must be one of {}, got {!r}".format(FEED_DEPTH_NAMES, self.feed_depth))
         if not 0.0 < self.demise_fraction < 1.0:
             raise ValueError("demise_fraction must be within (0, 1)")
-
-
-def fit_sphere(points):
-    """Algebraic least-squares sphere through `points` (n, 3): (centre, radius)."""
-    x = np.asarray(points, dtype=float)
-    A = np.column_stack([2.0 * x, np.ones(len(x))])
-    p = np.linalg.lstsq(A, (x * x).sum(axis=1), rcond=None)[0]
-    c = p[:3]
-    return c, float(math.sqrt(max(p[3] + c @ c, 0.0)))
 
 
 class MeltingBody(ThermalBody):

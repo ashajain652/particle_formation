@@ -198,7 +198,9 @@ the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
-Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`, and since
+level-set stage 3 `lubrication`, the film's lubrication solution from `film.py`, and `nose`, the nose-sphere fit and
+the leeward rules from `body.py` and `skinbody.py`, which those modules re-export), the
 droplet writer (`droplets`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `body.py`, `thermal/__init__.py`, `cli.py` and `coupled.py`
@@ -631,9 +633,11 @@ energy of a 1 K change (the stored enthalpy is measured above 293 K, so it vanis
 move or rebuild that raises leaves the solver as it was. `cutcell.py` gains `inside_subtets` and `subtet_volumes`, which
 split each cell's metal part into sub-tetrahedra. Stage 2 adds 17 tests, so the tier now has 60; with 57 it took 93 to
 140 s in three runs on 2026-11-11, and with 60 it took 148 s in one run (on the laptop shared with running flights). One
-of them checks that the molten-rigid surface ψ (the 895.1 K isotherm) follows a one-phase Stefan melting front on 0.7 mm
-cells: the front was within 0.112, 0.049, 0.006 and 0.010 mm of the exact depth at 0.25, 0.5, 1.0 and 2.0 s, against a
-bound of one 0.7 mm cell. There are still no skins, no flow and no coupling to the flight loop;
+of them checks that the molten-rigid surface ψ (the isotherm at the test material's half-liquid point, 895 K) follows a
+one-phase Stefan melting front on 0.7 mm cells: the front was within 0.119, 0.055, 0.013 and 0.001 mm of the exact depth
+at 0.25, 0.5, 1.0 and 2.0 s, against a bound of one 0.7 mm cell (re-measured on 2026-11-11 when the rigid temperature
+became a required argument that callers take from their material, level-set stage 3 Task 1; at 895.1 K, the value the
+level-set code used to define itself, the errors were 0.112, 0.049, 0.006 and 0.010 mm). There are still no skins, no flow and no coupling to the flight loop;
 `docs/model_assumptions.md` §11 records the choices and the measured accuracy.
 
 The comparisons with the skyscrapers' level-2 plates were run on 2026-11-11 in the prototype folder

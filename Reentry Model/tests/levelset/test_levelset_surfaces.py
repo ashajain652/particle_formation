@@ -4,10 +4,12 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
 from reentry_model.levelset.levelset import redistance
-from reentry_model.levelset.surfaces import T_RIGID, molten_rigid_surface, outer_surface
+from reentry_model.levelset.surfaces import molten_rigid_surface, outer_surface
+from reentry_model.shared.material import Material
 
 
 C = np.array([1.5e-3, 1.5e-3, 1.5e-3])
+T_RIGID = Material.from_drama_json("AA7075_scheil").T_rigid     # K, 895.10 (the material these fields mean)
 
 
 def _mesh(h=0.0625e-3):
@@ -27,7 +29,7 @@ def test_a_radial_temperature_gives_the_rigid_sphere_of_the_analytic_radius():
     r = np.linalg.norm(m.points - C, axis=1)
     phi = redistance(m, r - 1.2e-3)
     T = 850.0 + (r / 1e-3) * 60.0                     # T_rigid at r = 0.7517 mm
-    psi, crust = molten_rigid_surface(m, phi, T)
+    psi, crust = molten_rigid_surface(m, phi, T, T_RIGID)
     radius = np.linalg.norm(patches(m, psi).centroid - C, axis=1)
     assert np.abs(radius - (T_RIGID - 850.0) / 60.0 * 1e-3).max() < 0.02e-3
     assert not crust.any()
@@ -40,7 +42,7 @@ def test_a_cold_crust_floating_on_melt_is_not_part_of_the_rigid_region():
     phi = redistance(m, r - 1.2e-3)
     T = np.where(r < 0.6e-3, 850.0, 920.0)            # rigid core, molten shell
     T = np.where(r > 1.0e-3, 850.0, T)                # a frozen skin on top of the melt
-    psi, crust = molten_rigid_surface(m, phi, T)
+    psi, crust = molten_rigid_surface(m, phi, T, T_RIGID)
     radius = np.linalg.norm(patches(m, psi).centroid - C, axis=1)
     assert crust.any()
     assert np.abs(radius - 0.6e-3).max() < 0.1e-3     # psi follows the core only
@@ -51,5 +53,5 @@ def test_fully_molten_metal_has_no_rigid_region():
     m = _mesh(0.25e-3)
     r = np.linalg.norm(m.points - C, axis=1)
     phi = redistance(m, r - 1.2e-3)
-    psi, crust = molten_rigid_surface(m, phi, np.full(len(r), 950.0))
+    psi, crust = molten_rigid_surface(m, phi, np.full(len(r), 950.0), T_RIGID)
     assert np.isinf(psi).all() and (psi > 0).all() and not crust.any()

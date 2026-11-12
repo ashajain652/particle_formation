@@ -140,7 +140,9 @@ the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
-Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`, and since
+level-set stage 3 `lubrication`, the film's lubrication solution from `film.py`, and `nose`, the nose-sphere fit and
+the leeward rules from `body.py` and `skinbody.py`, which those modules re-export), the
 droplet writer (`droplets`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `body.py`, `thermal/__init__.py`, `cli.py` and `coupled.py`

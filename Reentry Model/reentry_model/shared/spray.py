@@ -151,7 +151,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import dispersion
+from . import dispersion, rheology
+from .material import LiquidProperties
 from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN, KN_LOCAL_SLIP
 
 K_R, K_T = 0.17, 1.1
@@ -782,3 +783,40 @@ def histogram(r, dn, dm):
     n_hist, _ = np.histogram(r[ok], BIN_EDGES, weights=np.asarray(dn)[ok])
     m_hist, _ = np.histogram(r[ok], BIN_EDGES, weights=np.asarray(dm)[ok])
     return n_hist, m_hist
+
+
+# The slurry's spray properties and the wave's domain (moved from `reentry_model/skinbody.py` for level-set stage 3, Task 1,
+# so that both architectures read one copy; the arithmetic is the skins' own, unchanged).
+SLURRY_SIGMA = 0.80               # N/m: the exposed slurry's surface tension in the cascade (the 2026-10-07 design 8.2, the
+                                  # large-fragment design's labelled assumption for slurry)
+
+
+def slurry_properties(material, T, f_s, gamma, rho):
+    """The exposed slurry's LiquidProperties for Girin's formulas (the 2026-10-07 design 8.4; the skins' `slurry_modes`):
+    density `rho` [kg/m3] (the caller's mixture density), Li et al.'s viscosity with the bridge to the liquid
+    (`rheology.viscosity`) at temperature `T` [K], solid fraction `f_s` and shear rate `gamma` [1/s], and SLURRY_SIGMA. The
+    bridge's solid fraction is the material's at rheology.BRIDGE_LOW. The caller finds the shear rate (the skins by
+    fixed-point iteration on the slurry's sheared layer) and keeps it at most rheology.GAMMA_MAX."""
+    f_bridge = 1.0 - float(material.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
+    return LiquidProperties(rho, rheology.viscosity(T, f_s, gamma, material.liquid.mu, f_bridge), SLURRY_SIGMA)
+
+
+def region_extent(edges, selected, areas):
+    """Lateral extent [m] of each column's own contiguous selected region on the columns' graph (`edges`, (E, 2)), as the
+    region's equivalent diameter 2 sqrt(A / pi) with A the selected columns' `areas` summed; zero where not selected: the
+    element model's `MeltingBody.region_extent` on the corners, the domain a surface wave must fit inside (2026-09-24)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    sel = np.asarray(selected, dtype=bool)
+    n = len(sel)
+    out = np.zeros(n)
+    if not sel.any():
+        return out
+    i, j = edges[:, 0], edges[:, 1]
+    keep = sel[i] & sel[j]
+    i, j = i[keep], j[keep]
+    g = coo_matrix((np.ones(2 * i.size), (np.concatenate([i, j]), np.concatenate([j, i]))), shape=(n, n))
+    count, label = connected_components(g, directed=False)
+    area = np.bincount(label[sel], np.asarray(areas, dtype=float)[sel], count)
+    out[sel] = 2.0 * np.sqrt(area[label[sel]] / np.pi)
+    return out

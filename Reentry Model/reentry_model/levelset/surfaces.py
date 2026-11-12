@@ -4,16 +4,15 @@ import numpy as np
 
 from .levelset import pieces, redistance
 
-T_RIGID = 895.1   # K, half liquid on AA7075_scheil (design §8.3)
-
 
 def outer_surface(mesh, beta, thickness, band=None):
     """phi = the zero contour of beta moved outward by the nodal skin thickness (m), reset to a distance."""
     return redistance(mesh, beta - thickness, band=band)
 
 
-def molten_rigid_surface(mesh, phi, T, T_rigid=T_RIGID, core_point=None, band=None):
-    """psi: signed distance to the rigid region, negative inside it.
+def molten_rigid_surface(mesh, phi, T, T_rigid, core_point=None, band=None):
+    """psi: signed distance to the rigid region, negative inside it; `T_rigid` [K] the material's rigid temperature
+    (the shared `Material.T_rigid`, half liquid: 895.1 K on AA7075_scheil, design §8.3).
 
     The rigid region is the metal (phi < 0) below T_rigid that is connected through rigid metal to the core: the
     piece containing core_point (default: the deepest node of phi), or the largest rigid piece if the core point is

@@ -43,8 +43,7 @@ import scipy.sparse.linalg as spla
 from reentry_model.levelset.cutcell import inside_subtets, subtet_volumes
 from reentry_model.levelset.cutcell import patches as cut_patches
 from reentry_model.levelset.transfer import _geom, barycentric, project
-
-SIGMA_SB = 5.670374419e-8          # Stefan-Boltzmann constant, W/m2/K4
+from reentry_model.shared.thermal import SIGMA_SB
 
 # Four-point rule on a tetrahedron, exact for quadratics (barycentric coordinates of the points, weights 1/4 each).
 _A, _B = 0.5854101966249685, 0.1381966011250105

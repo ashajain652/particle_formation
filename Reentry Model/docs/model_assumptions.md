@@ -597,6 +597,8 @@ and the depth's slope along the surface is at most c_slope. The thresholds are s
 verification: c_kappa 0.1, c_slope 0.2, hysteresis hold of 3 consecutive opposite answers, and a connected group of at least 7 patches
 before a mode changes. The molten depth is the nearest distance from the patch to the zero contour of the molten-rigid surface, which is never more than the depth along the normal that the design names; the two agree where the surfaces are nearly parallel, and the approximation is revisited in stage 3. Where the metal is fully molten (no rigid metal, so the molten-rigid surface is plus infinity), the depth is infinite, the patch is thick, and the curvature comes from the outer surface alone.
 
+**Shared physics only.** The molten-rigid surface is the isotherm at the rigid temperature the caller passes, the shared material's `T_rigid` (895.1 K on AA7075_scheil, half liquid); until level-set stage 3 Task 1 (2026-11-11) the level-set package defined that number itself as `T_RIGID`, and its own copy of the Stefan-Boltzmann constant. Since then `reentry_model/levelset/` takes every physical law, property and constant from `reentry_model.shared`, which `tests/levelset/test_levelset_imports.py` checks by reading its imports and its module-level constants.
+
 **Accuracy and cost.** Cut-cell volume and area of a sphere converge at second order: errors of 2.6 per cent (volume)
 and 1.3 per cent (area) when the radius spans 4.4 cells, and 0.65 and 0.33 per cent at 8.8 cells; the P1 volume is
 always low. Costs are in the README; they were measured once, serially, on the laptop on 2026-11-11: about 63 s of geometry per macro step (every timed operation except the one-off first build, now including the outer-surface rebuild, the molten-rigid-surface rebuild and one motion of the skin base) for the 50 mm sphere and about 330 s, or 5.5 minutes, for the 100 mm sphere, at peaks of 1.56 and 3.30 gigabytes. The cost of cells at the 0.175 mm floor is not yet measured, because the sphere has none.
@@ -651,7 +653,9 @@ both the top and a side wall of a body (a sharp corner) its patch tilts, and on 
 wide slab was 3.3 per cent short; rounded bodies have no such corners.
 
 **The molten-rigid surface tracks a Stefan front.** The design (§20.11 item 2) asks that the molten-rigid surface ψ (the
-895.1 K isotherm, built by stage 1's `molten_rigid_surface` from the computed temperature, negative in rigid metal)
+isotherm at the material's rigid temperature, built by stage 1's `molten_rigid_surface` from the computed temperature,
+negative in rigid metal; the caller passes the shared `Material.T_rigid`, 895.1 K on AA7075_scheil, and this test the
+middle of its test material's melting range, 895 K)
 follow a melting front to within one fine cell, 0.7 mm. The test
 `test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell`, added on 2026-11-11, heats a 4.2 mm square column,
 22 mm deep, on uniform 0.7 mm cells, its top 0.3 mm above a layer of nodes and its sides and bottom insulated. The metal
@@ -662,9 +666,11 @@ the implicit base law with a conductance of 10⁷ W/m²/K, for 2 s in 0.01 s ste
 ψ = 0 on the column's centre line is compared with the exact (Neumann) front depth 2λ√(αt), where α is the thermal
 diffusivity, about 6.0 × 10⁻⁵ m²/s, and λ = 0.328 is the root of λ exp(λ²) erf(λ) = St/√π with the Stefan number
 St = c_p (T_hot − T_m)/L = 0.231 (the ratio of sensible heat in the liquid to latent heat). The computed front was
-0.112 mm deeper than the exact 2.528 mm at 0.25 s, 0.049 mm deeper than 3.575 mm at 0.5 s, 0.006 mm deeper than 5.056 mm
-at 1.0 s and 0.010 mm shallower than 7.150 mm at 2.0 s, that is at most 16 per cent of a cell, against the bound of one
-cell. The error is largest at the earliest time and within 0.01 mm from 1 s on, so it most likely comes from the first
+0.119 mm deeper than the exact 2.528 mm at 0.25 s, 0.055 mm deeper than 3.575 mm at 0.5 s, 0.013 mm deeper than 5.056 mm
+at 1.0 s and 0.001 mm deeper than 7.150 mm at 2.0 s, that is at most 17 per cent of a cell, against the bound of one
+cell (re-measured on 2026-11-11, level-set stage 3 Task 1, when ψ was first taken at T_m = 895 K; at 895.1 K, the
+rigid temperature the level-set code defined itself until then, the errors were 0.112, 0.049, 0.006 mm deeper and
+0.010 mm shallower). The error is largest at the earliest time and within about 0.01 mm from 1 s on, so it most likely comes from the first
 steps, when the front is within a cell or two of the surface; that cause was not isolated. The test takes 25 to 35 s on
 the shared laptop and its errors were recorded from one run. It checks a planar front with a narrow (10 K) melting range
 only; the Scheil alloy's wide range is covered through the plates' non-rigid depth, below.

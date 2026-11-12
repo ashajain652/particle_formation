@@ -41,7 +41,8 @@ def test_data_paths_resolve():
 
 
 SHARED_DIR = os.path.join(PROJECT_ROOT, "reentry_model", "shared")
-SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common"])   # the 21 modules besides __init__.py
+SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication", "nose"])   # the 23 modules
+                                                       # besides __init__.py (lubrication and nose: level-set stage 3 Task 1)
 
 
 def _outside_shared(node, own_name, shared_names):
@@ -73,7 +74,7 @@ def test_shared_modules_import_nothing_outside_shared_statically():
     level 1 (`from . import x`, `from .x import y`) must name shared modules, absolute ones must name reentry_model.shared."""
     paths = sorted(glob.glob(os.path.join(SHARED_DIR, "*.py")))
     names = [os.path.basename(p)[:-3] for p in paths]
-    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 22
+    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 24
     shared_names = set(names)
     violations, scanned_imports = [], 0
     for path, name in zip(paths, names):
@@ -237,3 +238,63 @@ def test_spheral_entry_points_resolve():
     mat = material.Material.from_drama_json(os.path.join(PROJECT_ROOT, "data", "materials", "AA7075_scheil.json"))
     for attr in ("_T_h", "_h_nodes", "_latent_slope"):
         assert hasattr(mat, attr), attr
+
+
+def test_moved_film_and_nose_names_are_the_shared_objects():
+    """Level-set stage 3 Task 1: the physics the level set needs from the skyscrapers modules lives in shared, and the old
+    modules re-export the shared objects themselves."""
+    from reentry_model import body, film, skinbody
+    from reentry_model.shared import lubrication, nose, spray
+    assert film.lubrication is lubrication.lubrication
+    for name in ("fit_sphere", "NOSE_CAP_ANGLE", "NOSE_CAP_FACTOR"):
+        assert getattr(body, name) is getattr(nose, name), name
+    assert skinbody.SLURRY_SIGMA is spray.SLURRY_SIGMA
+    assert skinbody.region_extent is spray.region_extent
+    assert skinbody.LEEWARD_TESTS is nose.LEEWARD_TESTS
+    assert (nose.NOSE_CAP_ANGLE, nose.NOSE_CAP_FACTOR, spray.SLURRY_SIGMA) == (30.0, 1.67, 0.80)
+    assert nose.LEEWARD_TESTS == ("facing", "centroid")
+
+
+# The values below were recorded on the unmodified tree (commit 2291ded) by calling the old code itself:
+# SkinBody.nose_fit's property (skinbody.py 872-889) on a stand-in with `_nose_raw` = (fitted, bound, points, concave),
+# `size_feedback` and a mesh radius of 0.05 m; SkinBody.load_angles (824-833) on a stand-in with the given theta and
+# windward corners; and SkinBody._leeward's plane test (810-816) on the given points, centroid and flight direction.
+NOSE_CASES = [  # (fitted, bound, points, concave) -> used under "current"; "initial" gave 0.05 for every one
+    ((0.04, 0.06, 7, False), 0.04), ((0.09, 0.06, 7, False), 0.06), ((0.03, 0.06, 7, True), 0.06),
+    ((float("nan"), 0.06, 9, True), 0.06), ((float("nan"), 0.06, 3, False), 0.05), ((0.04, float("nan"), 6, False), 0.04),
+    ((0.03, float("nan"), 6, True), 0.05), ((0.04, 0.0, 6, False), 0.04)]
+LOAD_THETA = [0.0, 0.3, 1.2, 1.5707963267948966, 1.9, 2.8, 1.0]
+LOAD_WINDWARD = [True, False, True, False, False, True, False]
+LOAD_CENTROID = [0.0, 1.5707973267948965, 1.2, 1.5707973267948965, 1.9, 2.8, 1.5707973267948965]
+AHEAD_POINTS = [[0.01, 0.0, 0.0], [-0.02, 0.01, 0.0], [0.0, 0.5, 0.3], [0.003, -0.01, 0.02], [-1e-9, 0.0, 0.0]]
+AHEAD_CENTRE = [0.0, 0.1, -0.2]
+AHEAD = {(1.0, 0.0, 0.0): [True, False, False, True, False], (0.6, 0.8, 0.0): [False, False, True, False, False]}
+
+
+def test_shared_nose_rules_match_the_old_inline_rules():
+    import numpy as np
+    from reentry_model.shared import nose
+    for (fitted, bound, n, concave), used in NOSE_CASES:
+        assert nose.nose_radius(fitted, bound, concave, n, 0.05, "current") == used, (fitted, bound, n, concave)
+        assert nose.nose_radius(fitted, bound, concave, n, 0.05, "initial") == 0.05
+    got = nose.load_angles(np.array(LOAD_THETA), np.array(LOAD_WINDWARD))
+    assert got.tolist() == LOAD_CENTROID                                   # bit for bit
+    for v, expected in AHEAD.items():
+        assert nose.ahead_of(np.array(AHEAD_POINTS), np.array(AHEAD_CENTRE), np.array(v)).tolist() == expected
+
+
+def test_shared_slurry_properties_are_the_skins_old_arithmetic():
+    """The slurry's properties as skinbody.slurry_modes built them at 2291ded (lines 528-532 and 554): Li's viscosity with
+    the bridge at the cell's solid fraction and shear rate, the given mixture density, SLURRY_SIGMA."""
+    import numpy as np
+    from reentry_model.shared import rheology, spray
+    from reentry_model.shared.material import Material
+    mat = Material.from_drama_json(os.path.join(PROJECT_ROOT, "data", "materials", "AA7075_scheil.json"))
+    T = np.array([880.0, 895.5, 900.0, 905.0, 912.0])
+    f_s = 1.0 - mat.liquid_fraction(T)
+    gamma = np.array([0.0, 10.0, 1e3, 1e5, 1e7])
+    rho = np.array([2700.0, 2650.0, 2600.0, 2550.0, 2500.0])
+    f_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])     # old line 528
+    old_mu = rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)                   # old line 530
+    props = spray.slurry_properties(mat, T, f_s, gamma, rho)
+    assert np.array_equal(props.mu, old_mu) and np.array_equal(props.rho, rho) and props.sigma == spray.SLURRY_SIGMA
