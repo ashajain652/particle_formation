@@ -60,3 +60,16 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
 20. `CLAUDE.md` still quotes the port's 702-test count (now 856).
 21. Left alone: the Spheral CRLF fixture test (outside this architecture) and the duplicate facts 101-107 (kept
     unnumbered so references to either set work).
+
+## Added later on 2026-11-12
+
+22. **Improve how the skyscrapers represent the metal's volume** (Asha, 2026-11-12). Each column keeps its base's dual
+    area at every height (a cell's thickness is its mass over its density and that area) and stands along its base
+    normal, so tall columns on a curved base fan apart and their tops enclose space that holds no metal. On the Mac
+    Studio flight `d050__fixes__slipband-on` the volume inside the tops was 1.03 times the metal's at 179 s, 1.17 at
+    183 s, 1.42 at 185.5 s and about 2 at 187.5 s (figure `figures/d050__fixes__slipband-on_cross-sections.png`); on the
+    2026-11-10 comparison flights the deepest rear column, 66.5 mm on a base 19.3 mm from the centre, would be about 24 mm
+    deep as a spherical shell of the same metal. The geometry stop (item 4, `--geometry-stop`, limit 1.25) only ends
+    flights before this; it does not fix it. Directions to weigh: columns whose cross-section grows with height away from
+    a convex base, metal moved sideways where neighbouring columns diverge, and the level-set architecture's two tracked
+    interfaces (`docs/superpowers/specs/levelset/`), which have no columns.
