@@ -116,7 +116,9 @@ def test_shared_package_imports_neither_architecture():
             "print(bad)\n").format(
         mods=SHARED_MODULES,
         banned={"reentry_model." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading", "film",
-                                               "restart", "coupled", "cli", "body")})
+                                               "restart", "coupled", "cli", "body", "skyscrapers")}
+        | {"reentry_model.skyscrapers." + n for n in ("skin", "skinbody", "columns", "movemesh", "mesh", "spreading",
+                                                      "restart", "coupled", "body")})
     out = subprocess.run([PY, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, check=True).stdout.strip()
     assert out == "[]", out
 
