@@ -1099,11 +1099,16 @@ def test_architecture_skyscrapers_is_the_default():
     assert args.architecture == "skyscrapers"
 
 
-@pytest.mark.parametrize("command", ["resume", "compare"])
-def test_architecture_only_on_run(command):
+@pytest.mark.parametrize("argv", [["resume", "x.state.pkl", "--outdir", "o", "--name", "n"],
+                                  ["compare", "--model", "m.csv", "--reference", "r.csv"]])
+def test_architecture_only_on_run(argv, capsys):
+    """resume and compare, given every argument they require, still reject --architecture as unrecognized."""
+    subparsers = cli.build_parser()._subparsers._group_actions[0].choices
+    assert "--architecture" not in [s for a in subparsers[argv[0]]._actions for s in a.option_strings]
     with pytest.raises(SystemExit) as exc:
-        cli.main([command, "x", "--architecture", "skyscrapers"])
+        cli.main(argv + ["--architecture", "skyscrapers"])
     assert exc.value.code == 2
+    assert "unrecognized arguments: --architecture" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("tail", [["--architecture"], ["--architecture", "towers"]])
