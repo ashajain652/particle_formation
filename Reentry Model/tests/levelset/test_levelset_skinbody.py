@@ -129,20 +129,34 @@ def test_markers_follow_the_recession():
     assert np.abs(body.pending_J).sum() < 0.5 * book.residual_move_J
 
 
+COLD_COLUMN_RTOL = 1e-5   # a skin's mass and enthalpy over a cold step: the step end's re-partition of the snap's
+                          # round-off (Task 9b; measured once: markers moved 13 nm, areas changed by at most 3.6e-6,
+                          # columns' mass by at most 1.8e-6)
+
+
 def test_a_cold_body_is_unchanged_by_the_skins():
-    """With no heat, no flow and no radiation, a macro step leaves the volume's temperatures, the skin base beta and the
-    skins as they were."""
+    """With no heat, no flow and no radiation, a macro step leaves the volume's temperatures and the skin base beta as
+    they were, and the skins at their temperatures with their books. Since Task 9b each column's metal follows the area
+    the step end's tessellation re-partitions, and on a cold step that is the snap's round-off: each column's mass and
+    enthalpy stay within COLD_COLUMN_RTOL of what they were and its cells at their temperature, the skins' totals to
+    1e-14. (Before Task 9b the skins' cells stayed bit for bit: the areas changed by up to 3.6e-6 with no metal moved.)"""
     body = cube_body()
     T0, beta0 = body.solver.T.copy(), body.beta.copy()
-    sk = body.skins
-    m0, H0, c0 = sk.m.copy(), sk.H.copy(), sk.count.copy()
+    sk, mk = body.skins, body.markers
+    M0, E0 = (t[mk.skin_index] for t in sk.totals()[:2])
+    n0, T_skin0 = mk.n, np.nanmax(np.abs(sk.T() - 850.0))
     book = body.advance(0.5)
     active = body.solver.active
     assert np.abs(body.solver.T[active] - T0[active]).max() <= 1e-9
     assert np.array_equal(body.beta, beta0)
-    assert np.array_equal(sk.count, c0)
-    np.testing.assert_allclose(sk.m, m0, rtol=1e-12, atol=0.0)
-    np.testing.assert_allclose(sk.H, H0, rtol=1e-12, atol=0.0)
+    assert mk.n == n0
+    M1, E1 = (t[mk.skin_index] for t in sk.totals()[:2])
+    print("cold step: columns' mass changed by at most {:.1e}, enthalpy {:.1e}; totals {:.1e}, {:.1e}".format(
+        np.abs(M1 / M0 - 1).max(), np.abs(E1 / E0 - 1).max(), M1.sum() / M0.sum() - 1, E1.sum() / E0.sum() - 1))
+    np.testing.assert_allclose(M1, M0, rtol=COLD_COLUMN_RTOL, atol=0.0)
+    np.testing.assert_allclose(E1, E0, rtol=COLD_COLUMN_RTOL, atol=0.0)
+    assert abs(M1.sum() / M0.sum() - 1) <= BOOKS_RTOL and abs(E1.sum() / E0.sum() - 1) <= BOOKS_RTOL
+    assert np.nanmax(np.abs(sk.T() - 850.0)) <= max(T_skin0, 1e-9)
     assert book.enthalpy_in == 0.0 and abs(book.pending_J) <= 1e-9 * abs(book.enthalpy_volume)
 
 
@@ -571,3 +585,239 @@ def test_the_test_cube_s_markers_keep_their_neighbours():
         mk.n, int(mk.capped.sum()), r.min(), r.max()))
     assert mk.capped.mean() < CAPPED_SHARE
     assert r.min() >= 1.0 / OWNERSHIP_FACTOR and r.max() <= OWNERSHIP_FACTOR
+
+
+
+# -- the step end's re-partition (Task 9b) -----------------------------------------------------------------------------
+BOOKS_RTOL = 1e-14    # the skins' mass and enthalpy over a step end, relative (Task 9b)
+SLAB_HALF = (6e-3, 6e-3, 2e-3)    # m: the flat box's half sides; its top face is the flat surface the markers move on
+
+
+def _slab_host(mat, T=850.0):
+    """A host of the step end (`stepend.StepEnd`) on a closed flat box (a slab 12 x 12 x 4 mm, its centre OFF off the
+    grid; 1 mm cells): on its top face 36 markers on a regular grid 2 mm apart (x, y = OFF -5, -3, ..., 5 mm), on its
+    other faces markers seeded one per 2 mm voxel as the body seeds them. Each skin starts a stub of solid metal at T
+    [K]; the host is settled until a step end splits and merges none (at most five times). beta lies the stub below
+    phi. Returns (host, the top grid's markers (6, 6) by x then y)."""
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutcell import patches
+    from reentry_model.levelset.markers import Markers
+    from reentry_model.levelset.stepend import StepEnd, cap_curvature
+
+    class Host(StepEnd):
+        pass
+    h = 2e-3
+    mesh = build(BoxBase.around((-8e-3, -8e-3, -4e-3), (8e-3, 8e-3, 4e-3), 1e-3))
+    phi = np.max(np.abs(mesh.points - OFF) - np.array(SLAB_HALF), axis=1)
+    P = patches(mesh, phi)
+    side = np.flatnonzero(P.normal[:, 2] < 0.5)
+    key = np.floor((P.centroid[side] + 8e-3) / h).astype(np.int64)
+    order = np.lexsort((-P.area[side], key[:, 2], key[:, 1], key[:, 0]))
+    k = key[order]
+    seeds = side[np.sort(order[np.r_[True, np.any(k[1:] != k[:-1], axis=1)]])]
+    g = OFF + (np.arange(6) - 2.5) * h
+    X, Y = np.meshgrid(g, g, indexing="ij")
+    grid = np.column_stack([X.ravel(), Y.ravel(), np.full(X.size, OFF + SLAB_HALF[2])])
+    x = np.concatenate([grid, P.centroid[seeds]])
+    n = len(x)
+    normal = np.concatenate([np.tile([0.0, 0.0, 1.0], (len(grid), 1)), P.normal[seeds]])
+    sk = Skins(mat, np.ones(n), np.zeros((n, 2)), SETTINGS)
+    mk = Markers(x, normal, np.ones(n), np.zeros((n, 2)), np.arange(n), np.full(n, -1), h, skins=sk)
+    mk.tessellate(mesh, phi)
+    sk.area[mk.skin_index] = mk.area
+    sk.kappa[mk.skin_index] = cap_curvature(sk, mk.kappa, np.full(n, SETTINGS.stub))
+    sk.fill(sk.minimum_mass(), T)
+    host = Host()
+    host.mesh, host.phi, host.beta, host.markers, host.skins, host.spacing = mesh, phi, phi + SETTINGS.stub, mk, sk, h
+    host.band, host.fine_margin, host.material, host.rho = 4e-3, 2e-3, mat, mat.rho
+    for _ in range(5):
+        changes = mk.splits + mk.merges
+        host._settle(skinbody._Tally(0))
+        if mk.splits + mk.merges == changes:
+            break
+    else:
+        raise RuntimeError("the slab's markers did not settle")
+    top = np.array([[np.flatnonzero(np.all(np.isclose(mk.x, p, rtol=0.0, atol=1e-12), axis=1))[0] for p in row]
+                    for row in grid.reshape(6, 6, 3)])
+    return host, top
+
+
+def _flat_depth(sk):
+    """Each skin row's flat depth [m]: its volume, the cells' m / rho(T), over its top area (what mixing columns at one
+    density averages by area; the thickness under a curved cross-section is not)."""
+    T, valid = sk.T(), sk.valid
+    vol = np.zeros(sk.m.shape)
+    vol[valid] = sk.m[valid] / sk.density(T[valid])
+    return vol.sum(axis=1) / sk.area
+
+
+def _through_base(host):
+    """The volume [m3] the next part's draws and hand-downs would move through the skins' base (`skinbody`'s
+    `_part_once`: draws to the minimum mass less DRAW_SLACK, hand-downs keeping the minimum mass), on a copy."""
+    import copy
+    sk = copy.deepcopy(host.skins)
+    drawn, _ = sk.draw(850.0, 0.0, sk.minimum_mass() * (1.0 - skinbody.DRAW_SLACK))
+    handed, _, _ = sk.hand_down(SETTINGS.stub, m_keep=sk.minimum_mass())
+    return float(np.abs(handed - drawn).sum()) / host.rho, handed, drawn
+
+
+def test_a_repartition_moves_no_metal_through_the_base():
+    """Task 9b: liquid skins of one to three stubs' mass on a closed flat box, the 16 markers in the middle of its top
+    face shifted along it by up to 0.4 mm each, the surface unchanged: the step end's tessellation re-partitions the area
+    (the shifted cells' areas change by 0.6 to 1.13 times) and each column's metal follows its area by the hand-over
+    rule. A third of the shifted markers' skins (flat columns) start exactly at their minimum mass, the others above it. The skins' mass
+    and enthalpy close to 1e-14 and their momentum to round-off; no column ends below its minimum mass, so the next
+    part's draws and hand-downs move no metal through the base (at most 1e-14 of beta's volume); every new column's
+    depth (its flat depth: its volume over its top area) lies within its donors'; the stretch is one, since the surface
+    did not change. (Before Task 9b each skin
+    kept its metal on its new area: the columns that grew fell below their minimum and drew.)"""
+    from materials import LinearMeltMaterial
+    from reentry_model.levelset.cutcell import inside_volumes
+    mat = LinearMeltMaterial()
+    host, top = _slab_host(mat)
+    mk, sk = host.markers, host.skins
+    middle = top[1:5, 1:5].ravel()
+    rng = np.random.default_rng(7)
+    factor = rng.uniform(1.5, 3.0, mk.n)
+    factor[middle] = np.where(rng.random(len(middle)) < 1.0 / 3.0, 1.0, rng.uniform(1.0, 3.0, len(middle)))
+    row = np.argsort(mk.skin_index)                                    # each skin row's marker
+    sk.fill(factor[row] * sk.minimum_mass(), 950.0)                    # liquid: above the liquidus, 908 K
+    sk.U = np.where(sk.valid[..., None], np.concatenate([rng.normal(0.0, 1.0, (sk.n, 1, 2)),
+                                                         np.zeros((sk.n, 1, 1))], axis=2), 0.0)
+    M0, E0, P0 = (np.sum(t, axis=0) for t in sk.totals())
+    P_size = np.abs(sk.m[..., None] * sk.U).sum()
+    thick0, A0, n0 = _flat_depth(sk)[mk.skin_index], mk.area.copy(), mk.n
+    mk.x[middle, :2] += rng.uniform(-0.4e-3, 0.4e-3, (len(middle), 2))
+    host._settle(skinbody._Tally(0))
+    assert mk.n == n0
+    M1, E1, P1 = (np.sum(t, axis=0) for t in sk.totals())
+    moved, handed, drawn = _through_base(host)
+    V = inside_volumes(host.mesh, host.beta).sum()
+    ratio = mk.area[middle] / A0[middle]
+    print("re-partition: shifted areas {:.3f} to {:.3f} of their old; books mass {:.1e} enthalpy {:.1e} momentum {:.1e}; "
+          "through the base {:.1e} of beta's volume; least mass over minimum {:.15f}".format(
+              ratio.min(), ratio.max(), M1 / M0 - 1, E1 / E0 - 1, np.abs(P1 - P0).max() / P_size, moved / V,
+              (sk.m.sum(axis=1) / sk.minimum_mass()).min()))
+    assert ratio.min() < 0.8 and ratio.max() > 1.1
+    assert np.all(sk.m.sum(axis=1) >= sk.minimum_mass() * (1.0 - 1e-13))
+    assert moved <= 1e-14 * V
+    assert abs(M1 / M0 - 1) <= BOOKS_RTOL and abs(E1 / E0 - 1) <= BOOKS_RTOL
+    assert np.abs(P1 - P0).max() <= BOOKS_RTOL * P_size
+    T, stretch = host.last_settle[0].transfer, host.last_settle[0].stretch
+    assert np.abs(stretch - 1.0).max() <= 1e-14
+    thick1 = _flat_depth(sk)[mk.skin_index]
+    for i in range(mk.n):
+        donors = T[:, i].nonzero()[0]
+        assert thick0[donors].min() * (1 - 1e-12) <= thick1[i] <= thick0[donors].max() * (1 + 1e-12)
+
+
+def test_a_uniform_stretch_still_draws(monkeypatch):
+    """Task 9b: the markers of a 10 mm sphere on the design's 0.7 mm cells, one per 2 mm voxel, their skins solid columns
+    exactly at their minimum mass, carried radially onto a 10.4 mm sphere: the step end finds the surface stretched by
+    (10.4/10)^2 (the stretch, sampled from the old regions and smoothed over each marker's neighbours, within 1 % of it
+    for every marker) and re-partitions under 2 % of the area; every column's flat depth falls by its stretch, every
+    column falls short of its new minimum, and the next part draws, in all, the new minimum masses less the metal there
+    is (section 9.2: a stretched skin thins and draws). The skins' books close to 1e-14. (Split and merge are switched off:
+    the stretch takes some cells past twice the target area, and the markers are compared one by one.)"""
+    from materials import ConstMaterial
+    from reentry_model.levelset import markers
+    monkeypatch.setattr(markers, "SPLIT_FACTOR", np.inf)
+    monkeypatch.setattr(markers, "MERGE_FRACTION", 0.0)
+    from test_levelset_markers import DESIGN_FINE, DESIGN_SPACING, seeded
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.markers import surface_samples
+    from reentry_model.levelset.stepend import StepEnd, cap_curvature
+
+    class Host(StepEnd):
+        pass
+    R0, R1 = 10e-3, 10.4e-3
+    mat = ConstMaterial()
+    base = BoxBase.around((-R1 - 5.6e-3,) * 3, (R1 + 5.6e-3,) * 3, 2.8e-3)
+    r = lambda x: np.linalg.norm(x, axis=1)
+    mesh = build(base, lambda x, s: np.where((r(x) > R0 - 1.4e-3 - 0.87 * s) & (r(x) < R1 + 1.4e-3 + 0.87 * s),
+                                             DESIGN_FINE, np.inf))
+    phi0, phi1 = r(mesh.points) - R0, r(mesh.points) - R1
+    mk = seeded(mesh, phi0, DESIGN_SPACING, base.lo, material=mat)
+    mk.tessellate(mesh, phi0)
+    sk = mk.skins
+    sk.area[mk.skin_index] = mk.area
+    sk.kappa[mk.skin_index] = cap_curvature(sk, mk.kappa, np.full(mk.n, SETTINGS.stub))
+    sk.fill(mat.rho * sk.area * SETTINGS.stub, 600.0)
+    for _ in range(60):                     # each column at its minimum mass: the fixed point of M = rho A(z_bottom(M)) stub
+        sk.fill(sk.minimum_mass(), 600.0)
+    assert np.allclose(sk.m.sum(axis=1), sk.minimum_mass(), rtol=1e-14, atol=0.0)
+    old = surface_samples(mesh, phi0, DESIGN_SPACING / 16.0)
+    M0, E0 = sk.m.sum(), sk.H.sum()
+    A0, min0, thick0 = mk.area.copy(), sk.minimum_mass().sum(), _flat_depth(sk)[mk.skin_index]
+    mk.x = mk.x * (R1 / R0)
+    host = Host()
+    host.mesh, host.phi, host.beta, host.markers, host.skins, host.spacing = mesh, phi1, phi1 + SETTINGS.stub, mk, sk, \
+        DESIGN_SPACING
+    host.band, host.fine_margin, host.material, host.rho = 4e-3, 2e-3, mat, mat.rho
+    host._settle(skinbody._Tally(0), old)
+    s2 = (R1 / R0) ** 2
+    log = host.last_settle[0]
+    T, stretch = log.transfer, log.stretch
+    moved = (T.sum() - T.diagonal().sum()) / T.sum()
+    m, m_min, E1, thick1 = sk.m.sum(axis=1), sk.minimum_mass(), sk.H.sum(), _flat_depth(sk)[mk.skin_index]
+    drawn, _ = sk.draw(600.0, 0.0, m_min)
+    print("uniform stretch: {} markers, stretch {:.4f} to {:.4f} against {:.4f}; re-partitioned {:.2%} of the area; "
+          "drew {:.4e} kg against the minimum masses' rise {:.4e} kg; books {:.1e}".format(
+              mk.n, stretch.min(), stretch.max(), s2, moved, drawn.sum(), m_min.sum() - min0, M0 / m.sum() - 1))
+    assert np.abs(stretch / s2 - 1.0).max() < 0.01 and moved < 0.02
+    assert abs(m.sum() / M0 - 1) <= BOOKS_RTOL and abs(E1 / E0 - 1) <= BOOKS_RTOL
+    assert np.all(m < m_min)
+    assert drawn.sum() == pytest.approx(m_min.sum() - M0, rel=1e-12)
+    assert np.median(thick1 / thick0) == pytest.approx(1.0 / s2, rel=0.01)
+
+
+def test_a_thick_skin_losing_area_gives_its_metal_to_its_neighbour():
+    """Task 9b: on the closed flat box every skin is a solid stub at 850 K but one in the middle of the top face, 2 mm
+    deep, its stub under 1.2 mm of liquid at 950 K. Its two neighbours along x close in on it, each by half a spacing,
+    so its area halves and a quarter of its old area passes to each. Its metal follows: its own column keeps its depth
+    (it does not thicken, so it hands nothing down), and the heat its liquid holds above the stubs' (its enthalpy less
+    that of the same mass at 850 K, which adds when columns mix) goes, column by column, exactly where the transfer
+    sends its area: most of it to the two neighbours, none to beta. (Before Task 9b the column kept its metal on half
+    the area and stood twice as deep, its rigid metal below the stub handed down to beta at the next part.)"""
+    from materials import LinearMeltMaterial
+    mat = LinearMeltMaterial()
+    host, top = _slab_host(mat)
+    mk, sk = host.markers, host.skins
+    h, stub = host.spacing, SETTINGS.stub
+    thick, left, right = top[2, 3], top[1, 3], top[3, 3]
+    row = mk.skin_index[thick]
+    n_l = 60
+    K = int(sk.count.max())
+    m, H = np.zeros((sk.n, K + n_l)), np.zeros((sk.n, K + n_l))
+    m[:, :K], H[:, :K] = sk.m, sk.H
+    count = sk.count.copy()
+    c = count[row]
+    m[row, n_l:n_l + c], H[row, n_l:n_l + c] = sk.m[row, :c], sk.H[row, :c]
+    m[row, :n_l] = mat.liquid.rho * sk.area[row] * 1.2e-3 / n_l
+    H[row, :n_l] = m[row, :n_l] * mat.enthalpy(950.0)
+    count[row] = c + n_l
+    sk.install(m, H, count)
+
+    def excess():
+        """Each marker's enthalpy above the same mass at 850 K [J] (additive when columns mix)."""
+        return (sk.H.sum(axis=1) - sk.m.sum(axis=1) * mat.enthalpy(850.0))[mk.skin_index]
+    E_ex, M0, depth0, A0, n0 = excess(), sk.m.sum(), sk.thickness()[row], mk.area[thick], mk.n
+    mk.x[left, 0] += 0.5 * h
+    mk.x[right, 0] -= 0.5 * h
+    host._settle(skinbody._Tally(0))
+    assert mk.n == n0
+    depth1, after = sk.thickness()[row], excess()
+    _, handed, _ = _through_base(host)
+    print("thick skin: area {:.3f} of its old, depth {:.4f} of its old, handed down {:.2e} kg; its liquid's heat now "
+          "{:.3f} in itself, {:.3f} and {:.3f} in its neighbours".format(
+              mk.area[thick] / A0, depth1 / depth0, handed[row], after[thick] / E_ex[thick],
+              after[left] / E_ex[thick], after[right] / E_ex[thick]))
+    assert mk.area[thick] / A0 == pytest.approx(0.5, abs=0.02)
+    assert depth1 <= depth0 * (1.0 + 1e-12) and depth1 >= 0.95 * depth0
+    assert handed[row] == 0.0
+    assert after[left] > 0.2 * E_ex[thick] and after[right] > 0.2 * E_ex[thick]
+    assert abs(sk.m.sum() / M0 - 1.0) <= BOOKS_RTOL
+    tr = host.last_settle[0].transfer
+    share = np.asarray(tr[thick].todense()).ravel() / tr[thick].sum()
+    np.testing.assert_allclose(after, E_ex[thick] * share, rtol=0.0, atol=1e-12 * E_ex[thick])
+    assert share[left] + share[right] >= 0.9 * (1.0 - share[thick])

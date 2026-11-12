@@ -324,15 +324,15 @@ CAPPED_SHARE = 0.01        # of the cells: at most this many bounded by the cap 
 OWNERSHIP_FACTOR = 1.5     # a static tessellation's area within this factor of the area nearest the marker (the same)
 
 
-def seeded(mesh, phi, spacing, lo):
+def seeded(mesh, phi, spacing, lo, material=None):
     """Markers seeded as the body seeds them (skinbody.LevelSetSkinBody): one per voxel of the target spacing, on the
-    voxel's largest patch."""
+    voxel's largest patch; with a `material`, each with an empty skin."""
     P = patches(mesh, phi)
     key = np.floor((P.centroid - np.asarray(lo)) / spacing).astype(np.int64)
     order = np.lexsort((-P.area, key[:, 2], key[:, 1], key[:, 0]))
     k = key[order]
     first = np.r_[True, np.any(k[1:] != k[:-1], axis=1)]
-    return Markers.create(mesh, phi, np.sort(order[first]), spacing=spacing)
+    return Markers.create(mesh, phi, np.sort(order[first]), material=material, settings=SETTINGS, spacing=spacing)
 
 
 def nearest_ratio(mk, mesh, phi):

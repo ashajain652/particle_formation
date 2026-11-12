@@ -28,8 +28,8 @@ a tangent plane stands in poorly for the surface); on a 10 mm sphere on the desi
 2 mm, 0.98 to 1.02 and none capped. The bound is two reaches, not less, because the centroids' path zigzags across
 sliver patches: with one marker per patch on a 25 mm sphere at 2 mm cells it is 1.04 times the straight distance at the
 median and 1.7 at the 95th percentile, and at 1.5 reaches a rotation of those markers lost 306 far pairs and changed
-areas by 8 %; at two it loses none. A slot 1.5 mm wide keeps its two walls apart from 1 mm above its floor, where the path round
-the floor passes the bound. The plan named 1.5 spacings for the reach; with one marker per patch at creation (the
+areas by 8 %; at two it loses none. A slot 1.5 mm wide keeps its two walls apart from 1 mm above its floor, where the
+path round the floor passes the bound. The plan named 1.5 spacings for the reach; with one marker per patch at creation (the
 patches' areas spread over three decades) the true Voronoi cells reach past 0.75 spacings on most markers, so at 1.5
 the cap bound 78 % of the cells on a 25 mm sphere at 2 mm cells, a capped cell could not grow with the surface (a
 uniform stretch to 26 mm gave 6 % less than (26/25)^2) and a rotation changed areas by 73 % (7 % with the two hops). At
@@ -51,12 +51,29 @@ markers with no zero contour of phi within half a cell, and `release` removes ma
 the skins held, for the caller to book as a deferred load in the cell holding each. Every change of the markers changes
 the skins' rows with them and is counted (`splits`, `merges`, `trapped`).
 
+Re-partition (Task 9b, the controller's ruling of 2026-11-12). `transfer_matrix` follows the area a tessellation hands
+out afresh, for the body's step end (`stepend.StepEnd._repartition`, which moves the skins' metal with it). The surface
+before and after is sampled (`surface_samples`). Each sample of the old surface belongs to the marker nearest it at its
+old position (`x_tess`); each sample of the new surface to its old owner, the nearest marker at its old position carried
+along its old normal by the normal part of its move (so that a receding face keeps its owners), and to its new owner,
+the nearest at its new position. A marker's stretch is the new surface's area its old owners hold over the old
+surface's, each summed over the marker and its neighbours (the new faces) before the ratio, then scaled, on each piece
+of the faces' graph, so that the old areas times the stretch sum to the new areas exactly (a marker whose neighbourhood
+holds no sample takes the piece's ratio of new to old area). The transfer starts from the new-surface samples whose old
+and new owners are one marker or neighbours, each row scaled to its old area times its stretch (a row with none keeps
+that area itself); its columns are then brought to the new areas by a potential flow across the faces (`_fit_columns`),
+which moves area only within rows and turns no entry negative. Rows and columns hold to round-off, and when nothing moves
+the transfer is the old areas on its diagonal. Measured once each (Task 9b): a cold step end of the test cube, markers
+moved 13 nm, passed 3.8e-7 of the area between markers; a 10 mm sphere's markers carried onto 10.4 mm found stretches
+of 1.0749 to 1.0879 against (10.4/10)^2 = 1.0816, with 0.35 % of the area passed between markers.
+
 Numbers here are numerical settings of the construction; no physics."""
 from collections import namedtuple
 
 import numpy as np
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import dijkstra
+from scipy.sparse import coo_matrix, diags, identity
+from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.sparse.linalg import spsolve
 from scipy.spatial import cKDTree
 
 from .criteria import nodal_average, principal_curvatures
@@ -82,6 +99,9 @@ SPLIT_GAP = 0.5            # target spacings between the two halves of a split (
 TRAP_FRACTION = 0.5        # cells: a marker with no zero contour this close is trapped (section 9.6)
 TRAP_CANDIDATES = 8        # nearest patch triangles (by centroid) searched first for the trapped test
 SAMPLE_LEVEL_MAX = 5       # midpoint subdivisions of a patch triangle at most for the surface samples (`surface_samples`)
+FIT_PASSES = 4             # flows at most that bring the re-partition's columns to the new areas (`_fit_columns`)
+FIT_RTOL = 1e-14           # of a column's area: the fit stops when no column is farther from it than this
+FIT_FAIL = 1e-12           # of a column's area: a fit still farther from it after FIT_PASSES raises
 
 Faces = namedtuple("Faces", "i j length normal")
 
@@ -177,6 +197,112 @@ def patch_paths(mesh, P, a, b, limit):
     return out
 
 
+def transfer_matrix(old_x, old_normal, old_area, old_samples, x, area, faces, samples):
+    """The step end's re-partition (Task 9b; module docstring, Re-partition): n markers, the same before and after, each
+    owning before the area `old_area` [m2] (its skin's) about `old_x` (n, 3) with the normal `old_normal` on the
+    surface sampled by `old_samples`, and after the tessellated `area` about `x` on the surface sampled by `samples`
+    (each a (points, areas) pair from `surface_samples`), with the tessellation's `faces`. Returns (T, stretch): T
+    (n, n) csr [m2], T[j, i] the area of marker j's old column that marker i's new column receives, its rows summing to
+    old_area * stretch and its columns to `area`, each to round-off; `stretch` (n,) each old column's stretch."""
+    old_x, old_normal, x = (np.asarray(v, dtype=float).reshape(-1, 3) for v in (old_x, old_normal, x))
+    old_area, area = np.asarray(old_area, dtype=float), np.asarray(area, dtype=float)
+    n = len(x)
+    (y0, w0), (y1, w1) = old_samples, samples
+    carried = old_x + np.einsum("ij,ij->i", x - old_x, old_normal)[:, None] * old_normal
+    _, own0 = cKDTree(old_x).query(y0)                      # the old surface's samples by their old owners
+    _, own1 = cKDTree(carried).query(y1)                    # the new surface's by theirs, carried along the old normal
+    _, new1 = cKDTree(x).query(y1)                          # and by their new owners
+    fi, fj = (np.zeros(0, np.int64),) * 2 if faces is None else (faces.i, faces.j)
+    F = coo_matrix((np.ones(len(fi)), (fi, fj)), shape=(n, n))
+    W = ((F + F.T + identity(n)) > 0).astype(float).tocsr()
+    ncomp, comp = connected_components(W, directed=False)
+    with np.errstate(divide="ignore", invalid="ignore"):   # each marker's stretch, smoothed over its neighbours
+        s = (W @ np.bincount(own1, w1, minlength=n)) / (W @ np.bincount(own0, w0, minlength=n))
+    R = np.zeros(n)
+    for c in range(ncomp):                                  # normalised to the covered area's change, piece by piece
+        m = comp == c
+        A_new, A_old = area[m].sum(), old_area[m].sum()
+        sc = np.where(np.isfinite(s[m]) & (s[m] > 0.0), s[m], A_new / A_old if A_old > 0.0 else 1.0)
+        R[m] = old_area[m] * sc
+        R[m] *= A_new / R[m].sum() if R[m].sum() > 0.0 else 0.0
+    stretch = np.divide(R, old_area, out=np.ones(n), where=old_area > 0.0)
+    K = coo_matrix((w1, (own1, new1)), shape=(n, n)).tocsr().multiply(W).tocsr()   # between neighbours or itself
+    rs = np.asarray(K.sum(axis=1)).ravel()
+    T = (diags(np.divide(R, rs, out=np.zeros(n), where=rs > 0.0)) @ K
+         + diags(np.where(rs > 0.0, 0.0, R))).tocsr()          # rows to their stretched old areas
+    length = np.zeros(0) if faces is None else faces.length
+    return _fit_columns(T, area, fi, fj, length, x, comp), stretch
+
+
+def _fit_columns(T, area, fi, fj, length, x, comp):
+    """T (csr) with each column's sum brought to `area`, its rows' sums kept: the columns' shortfalls, r = area less the
+    column sums, are met by a flow of area between the columns of neighbours across their faces, the potential flow of
+    the faces' graph (conductance the face length over the markers' distance; one potential held per piece `comp`)
+    with L p = -r, so that column i passes g = c (p_i - p_k) to column k; the columns are visited from the highest
+    potential down, and what one passes on it takes from its own column's metal first (row i's entry T[i, i], moved to
+    T[i, k]) and the rest from what it received, in proportion (row j's T[j, i] moved to T[j, k]): every move stays
+    within its row and nothing turns negative, since a column passes on less than it holds (it keeps its area).
+    Repeated on the round-off left, FIT_PASSES times at most; a fit still FIT_FAIL of an area short raises."""
+    n = len(area)
+    cols = [dict() for _ in range(n)]
+    coo = T.tocoo()
+    for j, i, v in zip(coo.row.tolist(), coo.col.tolist(), coo.data.tolist()):
+        if v > 0.0:
+            cols[i][j] = cols[i].get(j, 0.0) + v
+
+    def shortfall():
+        return area - np.array([sum(c.values()) for c in cols])
+    if len(fi):
+        g = length / np.linalg.norm(x[fi] - x[fj], axis=1)
+        C = coo_matrix((g, (fi, fj)), shape=(n, n))
+        C = (C + C.T).tocsr()
+        L = (diags(np.asarray(C.sum(axis=1)).ravel()) - C).tocsr()
+        free = np.ones(n, bool)
+        free[np.unique(comp, return_index=True)[1]] = False
+        Lf = L[free][:, free].tocsc()
+    for _ in range(FIT_PASSES):
+        r = shortfall()
+        if np.all(np.abs(r) <= FIT_RTOL * area) or not len(fi):
+            break
+        p = np.zeros(n)
+        if free.any():
+            p[free] = spsolve(Lf, -r[free])
+        out = [[] for _ in range(n)]
+        for a, b, q in zip(fi.tolist(), fj.tolist(), (g * (p[fi] - p[fj])).tolist()):
+            if q > 0.0:
+                out[a].append((b, q))
+            elif q < 0.0:
+                out[b].append((a, -q))
+        for i in np.argsort(-p, kind="stable").tolist():
+            if not out[i]:
+                continue
+            col = cols[i]
+            O = sum(q for _, q in out[i])
+            own = col.get(i, 0.0)
+            take = min(own, O)
+            for k, q in out[i]:
+                cols[k][i] = cols[k].get(i, 0.0) + q * (take / O)
+            col[i] = own - take if take < own else 0.0
+            others = [(h, v) for h, v in col.items() if h != i and v > 0.0]
+            if O > take and others:
+                frac = min((O - take) / sum(v for _, v in others), 1.0)
+                for h, v in others:
+                    moved = v * frac
+                    col[h] = v - moved
+                    for k, q in out[i]:
+                        cols[k][h] = cols[k].get(h, 0.0) + moved * (q / O)
+    r = shortfall()
+    if np.any(np.abs(r) > FIT_FAIL * area):
+        raise RuntimeError("the re-partition's columns did not meet the new areas: {:.1e} of an area left".format(
+            float(np.max(np.abs(r) / area))))
+    rows = [j for c in cols for j in c]
+    at = [i for i, c in enumerate(cols) for _ in c]
+    vals = [v for c in cols for v in c.values()]
+    fitted = coo_matrix((vals, (rows, at)), shape=(n, n)).tocsr()
+    fitted.eliminate_zeros()
+    return fitted
+
+
 def _tangent_basis(n):
     """Two unit vectors (e1, e2) spanning the plane normal to each n (n, 3)."""
     a = np.eye(3)[np.argmin(np.abs(n), axis=1)]
@@ -216,7 +342,9 @@ class Markers:
     phi's principal curvatures `kappa` (n, 2) [1/m], the row of each one's skin `skin_index` (n,) in `skins` (a
     `Skins`, or None for markers without skins), the patch of phi holding each `patch` (n,) (-1 for none), the target
     spacing `spacing` [m] and the counters `splits`, `merges`, `trapped`. After `tessellate`: `faces`, `capped` (n,)
-    and `axis` (n, 3), the longest direction of each Voronoi cell."""
+    and `axis` (n, 3), the longest direction of each Voronoi cell. `x_tess` and `normal_tess` (n, 3) are each marker's
+    position and normal at the last tessellation (at creation before any), the owners of the area it was given there
+    (Task 9b, `transfer_matrix`); a split or a merge sets them to the new markers' own."""
 
     def __init__(self, x, normal, area, kappa, skin_index, patch, spacing, skins=None):
         self.x = np.array(x, dtype=float).reshape(-1, 3)
@@ -232,6 +360,7 @@ class Markers:
         self.faces = None
         self.capped = np.zeros(n, bool)
         self.axis = np.zeros((n, 3))
+        self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
 
     @property
     def n(self):
@@ -403,19 +532,20 @@ class Markers:
         f = covered.sum() / total if total > 0.0 else 0.0
         self.area = cell_area * f
         self.faces = Faces(fi, fj, fl * np.sqrt(f), u)
+        self.x_tess, self.normal_tess = self.x.copy(), self.normal.copy()
         return self.faces
 
     # -- topology ---------------------------------------------------------------------------------------------------
     def _append(self, src, x):
         """New markers copying the markers `src` at positions x, their skins' rows given later."""
         self.x = np.concatenate([self.x, x])
-        for name in ("normal", "area", "kappa", "patch", "capped", "axis"):
+        for name in ("normal", "area", "kappa", "patch", "capped", "axis", "x_tess", "normal_tess"):
             setattr(self, name, np.concatenate([getattr(self, name), getattr(self, name)[src]]))
 
     def _drop(self, idx):
         keep = np.ones(self.n, bool)
         keep[idx] = False
-        for name in ("x", "normal", "area", "kappa", "patch", "capped", "axis", "skin_index"):
+        for name in ("x", "normal", "area", "kappa", "patch", "capped", "axis", "skin_index", "x_tess", "normal_tess"):
             setattr(self, name, getattr(self, name)[keep])
         self.faces = None
 
@@ -432,6 +562,7 @@ class Markers:
         self.area[big] *= 0.5
         self._append(big, x - off)
         self.x[big] = x + off
+        self.x_tess[big], self.x_tess[-len(big):] = self.x[big], self.x[-len(big):]   # each half owns its own side
         if self.skins is not None:
             new_rows = self.skins.divide(self.skin_index[big])
         else:
@@ -467,6 +598,7 @@ class Markers:
         nrm = fa[:, None] * self.normal[keep] + fb[:, None] * self.normal[gone]
         self.normal[keep] = nrm / np.maximum(np.linalg.norm(nrm, axis=1), 1e-300)[:, None]
         self.kappa[keep] = fa[:, None] * self.kappa[keep] + fb[:, None] * self.kappa[gone]
+        self.x_tess[keep], self.normal_tess[keep] = self.x[keep], self.normal[keep]
         self.area[keep] = A
         if self.skins is not None:
             self.skins.combine(self.skin_index[keep], self.skin_index[gone])

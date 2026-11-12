@@ -24,14 +24,30 @@ cell at the node's depth between beta and phi, and the top cell outside phi; the
 step does not settle), with `CutThermal.remesh` (beta carried, reset and corrected to the exact volume; the remesh's
 enthalpy residual booked as pending heat); phi and psi again; the markers settled (`_settle`): snapped onto phi to
 SNAP_TOL, the trapped and the patchless released (their metal to the volume by a beta move, their momentum to the
-volume), tessellated, split and merged, snapped and tessellated again, the skins regridded and given their markers'
-areas and capped curvatures.
+volume), tessellated, their skins re-partitioned (below), split and merged, snapped, tessellated and re-partitioned
+again, the skins regridded and given their markers' areas and capped curvatures.
+
+The re-partition (Task 9b, the controller's ruling of 2026-11-12). A tessellation hands the surface out afresh: most of
+a marker's area change at a step end is area passing between markers, not the surface stretching (measured on the test
+cube and the full-size cube, Task 9b's report), and a skin that kept its metal on its new area thickened or thinned and
+moved metal through its base for no reason (a backlog handed down 10 mm at once on the full-size cube). Each
+tessellation is followed by `_repartition`: from each marker's old owners (its position and normal at the tessellation
+before, `Markers.x_tess`), its skin's area and the surface then (the step's old phi for the first, phi as it is for the
+one after split and merge), and the new tessellation, `markers.transfer_matrix` gives every old column's stretch and
+the transfer T[j, i], the area of old column j that new column i receives. Each old column is scaled by its stretch
+(its top area becomes its old area times its stretch, its metal unchanged: section 9.2's draw or return at its base
+follows in the next part, by the draw to the minimum mass and the hand-down, as for any stretched or gathered skin),
+then cut into the fractions T[j, i] / (its row's sum) of its profile (`Skins.cut`) and each new column is the hand-over
+mix (`Skins.combine`) of what it receives. Mass, enthalpy and momentum add to round-off; the volume is untouched. Each
+re-partition is kept in `last_settle` (the transfer, the stretch, the old and new areas) for the step's books.
 
 A skin deeper than its radius of curvature (`Skins.dz` raises for all columns if one is): each column's principal
 curvatures are held, either way, at KAPPA_DEPTH_SHARE over its flat depth (`cap_curvature`), so the cross-section
 A0 (1 - k1 z)(1 - k2 z) stays positive to about three times the column's depth; only the columns over the cap change.
 A surface bending more tightly than its skin's depth is sub-grid (design 20.6, known limitation 1); the markers keep
 phi's curvature for the capillary push."""
+from collections import namedtuple
+
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -39,7 +55,7 @@ from .boxmesh import build
 from .criteria import finite_values, kappa_max_nodal, make_target
 from .cutcell import inside_volumes
 from .levelset import correct_volumes, pieces, redistance
-from .markers import NEWTON_REACH
+from .markers import NEWTON_REACH, surface_samples, transfer_matrix
 from .surfaces import molten_rigid_surface, outer_surface
 from .transfer import interpolate, locate
 
@@ -54,6 +70,9 @@ CURVATURE_SLACK = 2.0             # or once a leaf is more than this times its c
 COARSEN_SHARE = 0.1               # of the metal's volume: leaves that could be COARSEN_SIZES times coarser before the mesh
 MODES = ("full", "top")           # a marker's skin: full-depth (Task 9, everywhere) or top-zone (Task 10)
 COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading keeps one-size steps finer than asked)
+SAMPLE_SHARE = 1.0 / 16.0         # of the target spacing: the surface samples' size for the re-partition (Task 9b)
+
+Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
 
 
 def cap_curvature(skins, kappa, depth=None):
@@ -197,6 +216,7 @@ class StepEnd:
         """phi and psi, the mesh rebuilt from the refinement targets with the solve carried to it, then phi and psi on
         it and the markers settled (module docstring). Returns whether the mesh stayed as it was."""
         mesh = self.mesh
+        surface = self._samples()                          # the surface the markers' areas were given on
         phi = outer_surface(mesh, self.beta, self._thickness_nodal(), band=self.band)
         psi = self._psi(phi)
         target = self._target(mesh, phi, psi)
@@ -225,7 +245,7 @@ class StepEnd:
             phi = outer_surface(new, self.beta, self._thickness_nodal(), band=self.band)
         self.phi = phi
         self.psi = self._psi(phi)
-        self._settle(tally)
+        self._settle(tally, surface)
         return same
 
     def _needs_rebuild(self, target, region):
@@ -279,28 +299,75 @@ class StepEnd:
         self.phi = outer_surface(self.mesh, self.beta, self._thickness_nodal(), band=self.band)
         self.psi = self._psi(self.phi)
 
-    def _settle(self, tally):
-        """The markers onto phi, the trapped (and the patchless) released, tessellated, split, merged, and the skins
-        regridded with their markers' areas and curvatures."""
+    def _samples(self):
+        """phi's surface samples for the re-partition, SAMPLE_SHARE of the target spacing across (`surface_samples`)."""
+        return surface_samples(self.mesh, self.phi, SAMPLE_SHARE * self.spacing)
+
+    def _owners(self, surface):
+        """The markers' old owners for a re-partition: [their positions and normals at the last tessellation, their
+        skins' areas, the samples `surface` of the surface those areas were given on]."""
         mk = self.markers
+        return [mk.x_tess.copy(), mk.normal_tess.copy(), self.skins.area[mk.skin_index].copy(), surface]
+
+    def _repartition(self, old, surface):
+        """The skins follow the area the last tessellation re-partitioned (module docstring): every old column scaled by
+        its stretch, cut by the transfer and mixed into its receivers by the hand-over rule; the re-partition kept in
+        `last_settle`. `old` from `_owners`, `surface` the samples of phi now."""
+        mk, sk = self.markers, self.skins
+        old_x, old_normal, old_area, old_surface = old
+        T, stretch = transfer_matrix(old_x, old_normal, old_area, old_surface, mk.x, mk.area, mk.faces, surface)
+        rows = mk.skin_index
+        sk.area[rows] = old_area * stretch
+        R = np.asarray(T.sum(axis=1)).ravel()
+        coo = T.tocoo()
+        give = (coo.row != coo.col) & (coo.data > 0.0)
+        donor, receiver = coo.row[give], coo.col[give]
+        if len(donor):
+            pieces = sk.cut(rows[donor], coo.data[give] / R[donor])
+            order = np.argsort(receiver, kind="stable")
+            donor, receiver, pieces = donor[order], receiver[order], pieces[order]
+            first = np.r_[0, np.flatnonzero(np.diff(receiver)) + 1]
+            rank = np.arange(len(receiver)) - np.repeat(first, np.diff(np.r_[first, len(receiver)]))
+            for k in range(int(rank.max()) + 1):           # one piece per receiver at a time: distinct pairs
+                at = rank == k
+                sk.combine(rows[receiver[at]], pieces[at])
+            sk.remove(pieces)                              # emptied by combine; appended after every marker's row
+        self.last_settle.append(Repartition(T, stretch, old_area, mk.area.copy()))
+
+    def _settle(self, tally, surface=None):
+        """The markers onto phi, the trapped (and the patchless) released, tessellated and their skins re-partitioned,
+        split, merged, tessellated and re-partitioned again, and the skins regridded with their markers' areas and
+        curvatures. `surface`: the samples of the surface the markers' areas were last given on (`_rebuild` passes the
+        step's old phi), phi as it is if None."""
+        mk = self.markers
+        self.last_settle = []
+        old = self._owners(self._samples() if surface is None else surface)
         self._snap(tally)
         cell, _ = locate(self.mesh, mk.x)
         trapped = mk.trapped_markers(self.mesh, self.phi, self.mesh.size[cell])
         if len(trapped):
+            stay = np.setdiff1d(np.arange(mk.n), trapped)
+            old = [a[stay] for a in old[:3]] + [old[3]]
             self._release(trapped, tally)
             self._snap(tally)
         mk.tessellate(self.mesh, self.phi)
         bare = np.flatnonzero(mk.area <= 0.0)
         if len(bare):
+            stay = np.setdiff1d(np.arange(mk.n), bare)
+            old = [a[stay] for a in old[:3]] + [old[3]]
             self._release(bare, tally)
             self._snap(tally)
             mk.tessellate(self.mesh, self.phi)
+        now = self._samples()
+        self._repartition(old, now)
         self._sync()
         big = mk.split(self.spacing ** 2)
         merged = mk.merge(self.spacing)
         if len(big) or merged:
+            old = self._owners(now)
             self._snap(tally)
             mk.tessellate(self.mesh, self.phi)
+            self._repartition(old, now)
         self._sync()                                       # a merged column holds both columns' metal: cap it first
         self.skins.regrid()
         self._sync()

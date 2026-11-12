@@ -61,6 +61,7 @@ SHEAR_PASSES = 5           # passes of the fixed point on the cells' shear rates
 SHEAR_TOL = 1.0e-3         # a pass moving no flowing viscosity by more than this, relatively, ends it (skyscrapers')
 CRUST_VISCOSITY = 1.0e9    # Pa s: a floating crust's half-cell at its faces with flowing metal, a numerical setting
                            # of the skin rule (skyscrapers' CRUST_VISCOSITY, sub-plan 21 Task 6b); the crust is one unknown
+CUT_SLACK = 4.0 * np.finfo(float).eps   # fractions cut from a column summing to one within this empty it (`cut`)
 FLOWING_SOLID_MAX = np.nextafter(rheology.RIGID_SOLID_FRACTION, 0.0)   # a flowing cell's solid fraction at most: guards
                            # the table's round-off at T_rigid, where the rheology turns infinite
 
@@ -518,6 +519,42 @@ class Skins:
         self.count = np.concatenate([self.count, self.count[rows]])
         self.area = np.concatenate([self.area, self.area[rows]])
         self.kappa = np.concatenate([self.kappa, self.kappa[rows]])
+        self.momentum_out = np.concatenate([self.momentum_out, np.zeros((len(rows), 3))])
+        return new
+
+    def cut(self, rows, fractions):
+        """Fractions of columns (stage 3 Task 9b, the step end's re-partition): for each k a new column holding
+        fractions[k] > 0 of column rows[k] with its profile -- every cell's mass and enthalpy times the fraction, its
+        velocity kept -- and that fraction of its top area, its curvatures kept. A row may be cut several times; each
+        source keeps the rest, one less the sum of its fractions, of every cell and of its area. A source whose
+        fractions sum to one (to within CUT_SLACK) is emptied and its fractions are scaled to sum to one. Mass, enthalpy
+        and momentum add to round-off. The new columns are appended; returns their indices, in the order of `rows`."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        f = np.asarray(fractions, dtype=float).reshape(-1)
+        if len(f) != len(rows) or not np.all(np.isfinite(f) & (f > 0.0)):
+            raise ValueError("cut needs one positive, finite fraction per row")
+        self._no_trial("cut")
+        total = np.bincount(rows, f, minlength=self.n)
+        if np.any(total > 1.0 + CUT_SLACK):
+            raise ValueError("the fractions cut from a column must sum to at most one")
+        whole = (total > 0.0) & (total >= 1.0 - CUT_SLACK)
+        f = f / np.where(whole, total, 1.0)[rows]
+        rest = np.where(whole, 0.0, 1.0 - total)
+        new = self.n + np.arange(len(rows))
+        m, H, U = self.m[rows] * f[:, None], self.H[rows] * f[:, None], self.U[rows]
+        count, area, kappa = self.count[rows], self.area[rows] * f, self.kappa[rows]
+        src = np.flatnonzero(total > 0.0)
+        self.m[src] *= rest[src, None]
+        self.H[src] *= rest[src, None]
+        self.area[src] *= rest[src]
+        empty = src[whole[src]]
+        self.U[empty], self.count[empty] = 0.0, 0
+        self.m = np.concatenate([self.m, m])
+        self.H = np.concatenate([self.H, H])
+        self.U = np.concatenate([self.U, U])
+        self.count = np.concatenate([self.count, count])
+        self.area = np.concatenate([self.area, area])
+        self.kappa = np.concatenate([self.kappa, kappa])
         self.momentum_out = np.concatenate([self.momentum_out, np.zeros((len(rows), 3))])
         return new
 
