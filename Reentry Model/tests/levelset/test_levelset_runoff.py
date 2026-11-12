@@ -384,3 +384,21 @@ def test_the_transport_books_its_corrections_and_does_not_fall_back_silently(mon
     with pytest.warns(RuntimeWarning, match="did not converge"):
         book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
     assert not book.converged
+
+
+def test_the_transport_reports_its_residual_against_its_tolerance(monkeypatch):
+    """Task 9b (minor): a solve that does not converge reports its residual relative to its scale and the tolerance
+    separately. The 2 x 2 system [[2, -1], [-1, 2]] x = (1, 0) in the natural order has one back-coupling; with no
+    corrections allowed the solve stops at x = M^-1 b = (0.5, 0.25), whose residual (0.25, 0) is 0.25 / 2.25 = 0.1111 of
+    the largest |b| + |A| |x| (2.25): 1.111e+12 times the tolerance of 1e-13. (Task 9's step 3 printed "6.5e-10 times its
+    tolerance" for a residual of 6.5e-10 against 1e-13.)"""
+    import scipy.sparse as sp
+    monkeypatch.setattr(runoff, "TRANSPORT_CORRECTIONS", 0)
+    A = sp.csr_matrix(np.array([[2.0, -1.0], [-1.0, 2.0]]))
+    with pytest.raises(RuntimeError) as err:
+        runoff._solve(A, np.array([1.0, 0.0]), np.arange(2))
+    message = str(err.value)
+    print(message)
+    assert runoff.TRANSPORT_TOL == 1e-13
+    assert "residual 1.111e-01 of its scale" in message
+    assert "tolerance of 1e-13" in message and "1.111e+12 times" in message

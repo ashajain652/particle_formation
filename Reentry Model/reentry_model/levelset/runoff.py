@@ -419,9 +419,10 @@ def _solve(A, b, order):
             if np.all(np.abs(r).max(axis=0) <= limit):
                 break
             if count >= TRANSPORT_CORRECTIONS:
-                worst = float((np.abs(r).max(axis=0) / np.maximum(limit, 1e-300)).max())
-                message = ("the transport's iterative solve did not converge in {} corrections (residual {:.3e} times "
-                           "its tolerance)".format(count, worst * TRANSPORT_TOL))
+                worst = float((np.abs(r).max(axis=0) / np.maximum(limit, 1e-300)).max())   # in tolerances
+                message = ("the transport's iterative solve did not converge in {} corrections (residual {:.3e} of its "
+                           "scale against a tolerance of {:.0e}, {:.3e} times it)".format(
+                               count, worst * TRANSPORT_TOL, TRANSPORT_TOL, worst))
                 if not TRANSPORT_FALLBACK:
                     raise RuntimeError(message)
                 warnings.warn(message + "; finished by a direct LU", RuntimeWarning)
