@@ -80,14 +80,16 @@ Each project is tested from inside its own folder; the three `tests/` folders ea
 so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
 default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. On the kinked-dispersion branch
 (2026-11-12, after the final review's fix round) the unit tier, `pytest tests -m "not drama and not reference" -n 4`,
-gave 933 passed and 1 skipped; it takes about 35 minutes across four processes on a quiet machine (61 minutes were
-measured that day under heavy load). The skip is the FEniCSx module, which needs `dolfinx`. The port's own tools
-have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/skyscrapers_port/README.md`).
+has 937 tests and 1 skipped module (920 passed at 24d0761, on model code unchanged since, and Task 10's 17 viscous-check
+tests in `tests/test_kinked_dispersion_orr_sommerfeld.py` pass on their own in about 20 seconds); it takes about 35
+minutes across four processes on a quiet machine (61 minutes were measured that day under heavy load). The skip is the
+FEniCSx module, which needs `dolfinx`. The port's own tools have their tests in `analysis/skyscrapers_port/`, run
+explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 933 passed, 1 skipped, ~35 min on four
+                                                          # the package's unit tier: 937 tests, 1 skipped, ~35 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module

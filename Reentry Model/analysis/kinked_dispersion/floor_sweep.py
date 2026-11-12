@@ -3,7 +3,9 @@ flight columns and on synthetic two-layer columns across a floor Reynolds number
 solver and the floor test of the profile path (`reentry_model.shared.dispersion`). Analysis only; no model code changes.
 
     "$PY" -m analysis.kinked_dispersion.floor_sweep extract     # once: sample columns from the saved states
-    "$PY" -m analysis.kinked_dispersion.floor_sweep run [--workers 4]
+    "$PY" -m analysis.kinked_dispersion.floor_sweep run [--workers 4] [--only synthetic|flight]
+    "$PY" -m analysis.kinked_dispersion.floor_sweep resolution    # the flight cases' doubled-resolution re-solves
+    "$PY" -m analysis.kinked_dispersion.floor_sweep checks        # the report's further checks (checks.json)
     "$PY" -m analysis.kinked_dispersion.floor_sweep plot          # from Reentry Model/
 
 `extract` takes the d050 fixture's 36 columns (`data/reference_values/d050_layer_columns.npz`, d050 hand-down off at
@@ -45,25 +47,28 @@ to about 0.08 (or M from 1 where Re_1 is small); b = 15 and We = 1e3, with b = 3
 Re_1 = 1e3. A slurry at high Reynolds number (M near 1 with Re_1 large) is left out: it is deep in the fluid-like regime,
 where the Girin check already shows the viscous growth equal to the inviscid one, and it costs a minute a wavenumber.
 
-Results go to OUT_DIR (`flight.csv`, `synthetic.csv`, `resolution.csv`, `timing.json`); `plot` draws the figures there."""
+Results go to OUT_DIR. `run --only synthetic` writes `synthetic.csv`, `resolution_synthetic.csv` and
+`timing_synthetic.json`; `run --only flight` writes `flight.csv` (and, run whole, `resolution.csv` and `timing.json`);
+`resolution` writes `resolution_flight.csv` and `timing_resolution_flight.json`; `checks` writes `checks.json`, the
+report's further checks, each recorded with its inputs (`checks`); `plot` writes `summary.json` and the two figures. The
+committed `timing_flight.json` was written by hand for the run of 2026-11-12 (its `provenance` key says so).
+
+The worker processes are limited to two BLAS threads each (VECLIB_MAXIMUM_THREADS, OMP_NUM_THREADS), set by `main`
+before any pool starts, so that importing this module changes nothing in the importing process."""
+import argparse
+import csv
+import gc
+import json
 import os
+import time
+from dataclasses import fields
+from multiprocessing import Pool
 
-os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")      # several workers share the machine
-os.environ.setdefault("OMP_NUM_THREADS", "2")
+import numpy as np
 
-import argparse  # noqa: E402
-import csv  # noqa: E402
-import gc  # noqa: E402
-import json  # noqa: E402
-import time  # noqa: E402
-from dataclasses import fields  # noqa: E402
-from multiprocessing import Pool  # noqa: E402
-
-import numpy as np  # noqa: E402
-
-from analysis.kinked_dispersion import orr_sommerfeld as osm  # noqa: E402
-from reentry_model import PROJECT_ROOT  # noqa: E402
-from reentry_model.shared import dispersion, melt_profile  # noqa: E402
+from analysis.kinked_dispersion import orr_sommerfeld as osm
+from reentry_model import PROJECT_ROOT
+from reentry_model.shared import dispersion, melt_profile
 
 OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "kinked_dispersion_orr_sommerfeld")
 FIXTURE = os.path.join(PROJECT_ROOT, "data", "reference_values", "d050_layer_columns.npz")
@@ -183,10 +188,10 @@ def load_flight():
 
 # ---- one flight column ------------------------------------------------------------------------------------------------
 
-def _first_kink(p, nu):
-    """(index, Re_f, slope ratio) at each profile's first kink (NaN / -1 without one)."""
-    kk = dispersion.kinks(p)
-    re = dispersion.floor_reynolds(p, nu)
+def _first_kink(p, nu, kink_drop=dispersion.KINK_DROP):
+    """(index, Re_f, slope ratio) at each profile's first kink under kink_drop (NaN / -1 without one)."""
+    kk = dispersion.kinks(p, kink_drop)
+    re = dispersion.floor_reynolds(p, nu, kink_drop)
     s = np.abs(p.slopes())
     rr = np.arange(p.count.size)
     j = np.where(kk.any(axis=1), np.argmax(kk, axis=1), -1)
@@ -207,7 +212,7 @@ def inviscid(cols, sigma=SIGMA, floor_re=dispersion.FLOOR_RE, kink_drop=dispersi
     fit = melt_profile.fit_profiles(cols)
     p = fit.profiles
     nu = melt_profile.nu_below(cols, fit.cell)
-    j, re_f, ratio = _first_kink(p, nu)
+    j, re_f, ratio = _first_kink(p, nu, kink_drop)
     wall = dispersion.place_wall(p, nu, floor_re=floor_re, kink_drop=kink_drop)
     cut = dispersion.above_wall(p, wall)
     n = p.count.size
@@ -387,7 +392,7 @@ def _write(rows, name):
     path = os.path.join(OUT_DIR, name)
     keys = list(rows[0])
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=keys)
+        w = csv.DictWriter(fh, fieldnames=keys, lineterminator="\n")
         w.writeheader()
         for r in rows:
             w.writerow({k: _cell(v) for k, v in r.items()})
@@ -416,7 +421,10 @@ def resolution_only(workers=4):
     with Pool(workers) as pool:
         res = pool.map(resolution_case, resolution_picks(_read("flight.csv")), chunksize=1)
     _write(res, "resolution_flight.csv")
-    print("flight resolution checks: {:.0f} s".format(time.time() - t0))
+    timing = dict(flight_resolution_s=time.time() - t0, cases=len(res), workers=workers)
+    with open(os.path.join(OUT_DIR, "timing_resolution_flight.json"), "w") as fh:
+        json.dump(timing, fh, indent=1)
+    print("flight resolution checks: {:.0f} s".format(timing["flight_resolution_s"]))
 
 
 def run(workers=4, only=None):
@@ -462,6 +470,243 @@ def run(workers=4, only=None):
     print(timing)
 
 
+# ---- the report's further checks (checks.json) ------------------------------------------------------------------------
+
+SMOOTH_C = 3.548                    # the fitted constant of Re_f / (Re_f + c) (summary.json's smooth_fit, 2026-11-12)
+RHO_CASES = ((10, "own"), (54, "own"), (40, "own"), (40, "fast"), (20, "fast"))
+CELL_BROKEN_LINE = ((54, "own"), (40, "own"), (0, "own"), (13, "own"), (27, "own"))
+STEP_SUBS = (1, 2, 4)
+
+
+def _flight_row(fl, column, mode):
+    j = int(np.flatnonzero((fl["column"] == column) & (fl["mode"] == mode))[0])
+    return {k: fl[k][j] for k in fl}
+
+
+def _flight_cells(row):
+    cols, _, _, _ = load_flight()
+    c = _scaled(cols.rows([int(row["column"])]), float(row["scale"]))
+    return osm.column_cells(c, 0)
+
+
+def _top_own(fl, n):
+    own = np.flatnonzero(fl["mode"] == "own")
+    order = own[np.argsort(-fl["g_visc"][own])]
+    return [{k: fl[k][j] for k in fl} for j in order[:n]]
+
+
+def _scaled_resolution(args):
+    """A scaled flight case at its fastest wavenumber at resolutions 1 and 2, ARPACK only (a case ARPACK cannot do at
+    resolution 2 is reported, not solved densely: that solve ran for over 25 minutes on 2026-11-12)."""
+    column, scale, state, k = args
+    row = dict(case="{} col {} x{:.3g}".format(state, column, scale), k=k)
+    y, U, mu, rho = _flight_cells(dict(column=column, scale=scale))
+    t0 = time.perf_counter()
+    try:
+        s1 = osm.spectrum(k, y, U, mu, rho, SIGMA, method="arpack-only")
+        s2 = osm.spectrum(k, y, U, mu, rho, SIGMA, resolution=2, method="arpack-only")
+    except RuntimeError as err:
+        row.update(status="not checked: " + str(err), seconds=time.perf_counter() - t0)
+        return row
+    c1, c2 = s1.c[0], s2.c[0]
+    row.update(status="checked", size1=s1.size, size2=s2.size, growth1=float(k * c1.imag), growth2=float(k * c2.imag),
+               rel_growth_change=float(abs(c2.imag / c1.imag - 1.0)), diff_over_speed=float(abs(c2 - c1) / abs(U[0])),
+               seconds=time.perf_counter() - t0)
+    return row
+
+
+def _steps(args):
+    """A flight case's growth at its fastest wavenumber with every cell split into `sub` equal sub-cells, the viscosity
+    interpolated log-linearly between the original cell centres (steps `sub` times smaller) and the density linearly,
+    the base speed kept exactly: the same piecewise-linear profile through the original faces and centres, so the kinks
+    in U at the original cell centres stay where they were (now at sub-cell faces) and only the viscosity steps shrink."""
+    row = args
+    y, U, mu, rho = _flight_cells(row)
+    k = float(row["k_visc"])
+    prof = osm.base_profile(y, U, mu, rho)
+    zc = 0.5 * (y[:-1] + y[1:])
+    ny = np.concatenate([y, zc])
+    nu_ = np.concatenate([prof.u_faces, U])
+    o = np.argsort(ny)
+    ny, nu_ = ny[o], nu_[o]
+    out = {}
+    for sub in STEP_SUBS:
+        f = np.concatenate([np.linspace(y[a], y[a + 1], sub + 1)[:-1] for a in range(len(U))] + [y[-1:]])
+        cc = 0.5 * (f[:-1] + f[1:])
+        mu_s = np.exp(np.interp(cc, zc, np.log(mu)))
+        c = osm.growth_rate(k, f, np.interp(cc, ny, nu_), mu_s, np.interp(cc, zc, rho), SIGMA,
+                            u_faces=np.interp(f, ny, nu_))
+        out["sub{}".format(sub)] = float(k * c.imag)
+    return dict(case="{} col {}".format(row["state"], int(row["column"])), k=k, **out)
+
+
+def _cell_broken_line(row):
+    """The inviscid broken line on a flight column's own cell-scale profile (breakpoints at every face and every kinked
+    cell centre, each half-cell its cell's density, the wall at the bottom face at rest): its fastest wave, and its
+    growth at the viscous fastest wavenumber."""
+    y, U, mu, rho = _flight_cells(row)
+    prof = osm.base_profile(y, U, mu, rho)
+    depths, speeds, dens = [], [prof.u_faces[0]], []
+    for i in range(U.size):
+        dens.append(rho[i])
+        if prof.kinked[i]:
+            depths.append(0.5 * (y[i] + y[i + 1]))
+            speeds.append(U[i])
+            dens.append(rho[i])
+        if i < U.size - 1:
+            depths.append(y[i + 1])
+            speeds.append(prof.u_faces[i + 1])
+    speeds.append(prof.u_faces[-1])
+    kp = dispersion.KinkedProfiles.one(depths, speeds, wall=y[-1], rho=dens)
+    w = dispersion.fastest_waves(kp, SIGMA)
+    k = float(row["k_visc"])
+    c = dispersion.broken_line_c(kp, np.array([k]), SIGMA)[0, 0]
+    return dict(case="{} col {}".format(row["state"], int(row["column"])), breakpoints=len(depths),
+                inviscid_fastest_growth=float(w.growth[0]), inviscid_fastest_k=float(w.k[0]),
+                inviscid_growth_at_viscous_k=float(k * c.imag) if np.isfinite(c) else float("nan"),
+                viscous_growth=float(row["g_visc"]), viscous_k=k)
+
+
+def _edge_extension(row):
+    """A scaled case whose fastest of FAST_K lay at an end: the viscous growth further out (x2 and x2.83 the inviscid
+    fastest wavenumber past the top end, x0.35 and x0.25 past the bottom one)."""
+    y, U, mu, rho = _flight_cells(row)
+    kf = float(row["k_full"])
+    top = row["k_visc"] > kf
+    factors = (2.0, 2.83) if top else (0.35, 0.25)
+    g = {"x{:g}".format(f): float(f * kf * osm.growth_rate(f * kf, y, U, mu, rho, SIGMA).imag) for f in factors}
+    return dict(case="{} col {}".format(row["state"], int(row["column"])), end="top" if top else "bottom",
+                g_at_end=float(row["g_visc"]), g_full=float(row["g_full"]), **g)
+
+
+def checks(workers=4):
+    """checks.json: the report's checks beyond the sweeps, each with its inputs and result (module docstring)."""
+    t_all = time.time()
+    fl = _read("flight.csv")
+    syn = _read("synthetic.csv")
+    cols, _, _, _ = load_flight()
+    out, timing = {}, {}
+    fast = [{k: fl[k][j] for k in fl} for j in np.flatnonzero(fl["mode"] == "fast")]
+
+    with Pool(workers) as pool:
+        t0 = time.time()
+        out["scaled_resolution"] = pool.map(
+            _scaled_resolution, [(int(r["column"]), float(r["scale"]), str(r["state"]), float(r["k_visc"]))
+                                 for r in fast], chunksize=1)
+        timing["scaled_resolution_s"] = time.time() - t0
+        t0 = time.time()
+        out["viscosity_steps"] = pool.map(_steps, _top_own(fl, 4), chunksize=1)
+        timing["viscosity_steps_s"] = time.time() - t0
+        t0 = time.time()
+        out["cell_scale_broken_line"] = pool.map(_cell_broken_line, [_flight_row(fl, c, m) for c, m in CELL_BROKEN_LINE],
+                                                 chunksize=1)
+        edges = [r for r in fast if r["edge"] == 1.0]
+        out["edge_extension"] = pool.map(_edge_extension, edges, chunksize=1)
+        timing["broken_line_and_edges_s"] = time.time() - t0
+
+    t0 = time.time()
+    rho_rows = []
+    for column, mode in RHO_CASES:
+        row = _flight_row(fl, column, mode)
+        y, U, mu, rho = _flight_cells(row)
+        k = float(row["k_visc"])
+        jumps = np.abs(np.diff(rho)) / np.maximum(rho[:-1], rho[1:])
+        g = {}
+        for tol in (osm.RHO_TOL, 0.0):
+            keep, osm.RHO_TOL = osm.RHO_TOL, tol
+            try:
+                g[tol] = float(k * osm.growth_rate(k, y, U, mu, rho, SIGMA).imag)
+            finally:
+                osm.RHO_TOL = keep
+        rho_rows.append(dict(case="{} col {} {}".format(row["state"], column, mode), k=k,
+                             largest_face_jump=float(jumps.max()), faces_over_tol=int((jumps > osm.RHO_TOL).sum()),
+                             column_density_range=float((rho.max() - rho.min()) / rho.min()),
+                             growth_rho_tol=g[osm.RHO_TOL], growth_all_jumps=g[0.0],
+                             rel_change=float(abs(g[0.0] / g[osm.RHO_TOL] - 1.0))))
+    cols_all = cols.rows(np.flatnonzero(melt_profile.reducible(cols)))
+    jumps_all = np.abs(np.diff(cols_all.rho, axis=1)) / np.maximum(cols_all.rho[:, :-1], cols_all.rho[:, 1:])
+    both = cols_all.flowing[:, :-1] & cols_all.flowing[:, 1:]
+    out["density_jumps"] = dict(cases=rho_rows, faces_over_tol_all_columns=int(np.sum((jumps_all > osm.RHO_TOL) & both)),
+                                largest_face_jump_all_columns=float(np.nanmax(np.where(both, jumps_all, np.nan))))
+    timing["density_jumps_s"] = time.time() - t0
+
+    t0 = time.time()
+    clos = []
+    for row in _top_own(fl, 3) + [_top_own(fl, 69)[34]]:
+        y, U, mu, rho = _flight_cells(row)
+        k = float(row["k_visc"])
+        g = {}
+        for mode in ("stress", "traction"):
+            keep, osm.SURFACE_SHEAR = osm.SURFACE_SHEAR, mode
+            try:
+                g[mode] = float(k * osm.growth_rate(k, y, U, mu, rho, SIGMA).imag)
+            finally:
+                osm.SURFACE_SHEAR = keep
+        g2 = float(k * osm.growth_rate(k, y, U, mu, rho, 2.0 * SIGMA).imag)
+        clos.append(dict(case="{} col {} own".format(row["state"], int(row["column"])), k=k, growth_stress=g["stress"],
+                         growth_traction=g["traction"], growth_twice_sigma=g2))
+    syn_rows = []
+    for re1, M_pick, b, we in ((1e3, "max", 15.0, 1e3), (1e4, "max", 15.0, 1e3), (1e3, 102.041, 15.0, 1e3),
+                               (10.0, 1.0, 15.0, 1e3), (1e3, "max", 3.0, 1e3)):
+        m = (syn["re1"] == re1) & (syn["b"] == b) & (syn["we"] == we)
+        j = np.flatnonzero(m)[np.argmax(syn["M"][m])] if M_pick == "max" else \
+            np.flatnonzero(m)[np.argmin(np.abs(syn["M"][m] - M_pick))]
+        M, k = float(syn["M"][j]), float(syn["k_visc"][j])
+        y, U, mu, rho, uf = synthetic_column(re1, M, b)
+        g = {}
+        for mode in ("stress", "traction"):
+            keep, osm.SURFACE_SHEAR = osm.SURFACE_SHEAR, mode
+            try:
+                g[mode] = float(k * osm.growth_rate(k, y, U, mu, rho, 1.0 / we, u_faces=uf, method="dense").imag)
+            finally:
+                osm.SURFACE_SHEAR = keep
+        syn_rows.append(dict(case="Re1 {:g} M {:g} b {:g} We {:g}".format(re1, M, b, we), k=k,
+                             growth_stress=g["stress"], growth_traction=g["traction"]))
+    out["surface_closure_and_tension"] = dict(flight=clos, synthetic=syn_rows)
+    timing["closure_and_tension_s"] = time.time() - t0
+
+    t0 = time.time()
+    f = np.flatnonzero((fl["mode"] == "fast") & (fl["g_full"] > 0.0))
+    idx = fl["column"][f].astype(int)
+    c = cols.rows(idx)
+    c.u = cols.u[idx] * fl["scale"][f][:, None]
+    g_full, g_visc = fl["g_full"][f], fl["g_visc"][f]
+    truth = g_visc >= SURVIVES * g_full
+    inv = inviscid(c)
+    d_k = np.where(np.isfinite(inv["kink_depth"]), inv["kink_depth"], inv["d_top"])
+    gate_top = 2.0 * melt_profile.couette_viscosity(c, d_k)[0] * inv["k_cut"] ** 2
+    m_top = np.where(gate_top < inv["g_cut"], inv["g_cut"], 0.0)
+    out["gate_over_first_kink"] = dict(cases=int(f.size), agree=int(((m_top >= SURVIVES * g_full) == truth).sum()),
+                                       mean_abs_error=float(np.mean(np.abs(m_top - g_visc) / g_full)))
+    smooth = []
+    fit = melt_profile.fit_profiles(c)
+    nu = melt_profile.nu_below(c, fit.cell)
+    own = cols.rows(np.flatnonzero(melt_profile.reducible(cols)))
+    fit_own = melt_profile.fit_profiles(own)
+    nu_own = melt_profile.nu_below(own, fit_own.cell)
+    j_def, re_def, _ = _first_kink(fit_own.profiles, nu_own)
+    j_scaled_def, _, _ = _first_kink(fit.profiles, nu)
+    for kd in CANDIDATE_KINK_DROP:
+        j_scaled, re_f, _ = _first_kink(fit.profiles, nu, kd)
+        factor = np.where(np.isfinite(re_f), re_f / (re_f + SMOOTH_C), 1.0)       # no kink: nothing slows the slurry
+        g = factor * g_full
+        j_own, re_own, _ = _first_kink(fit_own.profiles, nu_own, kd)
+        moved = (j_own != j_def)
+        smooth.append(dict(kink_drop=kd, cases=int(f.size), agree=int(((g >= SURVIVES * g_full) == truth).sum()),
+                           mean_abs_error=float(np.mean(np.abs(g - g_visc) / g_full)),
+                           scaled_first_kink_differs=int(np.sum(j_scaled != j_scaled_def)),
+                           own_speed_first_kink_differs=int(moved.sum()), own_speed_columns=int(moved.size),
+                           own_speed_re_f_median=float(np.nanmedian(re_own))))
+    out["smooth_factor_kink_drop"] = smooth
+    timing["inviscid_checks_s"] = time.time() - t0
+    timing["total_s"] = time.time() - t_all
+    timing["workers"] = workers
+    out["timing"] = timing
+    with open(os.path.join(OUT_DIR, "checks.json"), "w") as fh:
+        json.dump(out, fh, indent=1, default=float)
+    print(json.dumps(out, indent=1, default=float))
+
+
 # ---- analysis and figures ---------------------------------------------------------------------------------------------
 
 INK, INK2, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#8a8984", "#e4e3df", "#fcfcfb"
@@ -481,10 +726,8 @@ def _read(name):
     out = {}
     for k in rows[0]:
         vals = [r[k] for r in rows]
-        vals = [v[len("np.float64("):-1] if v.startswith("np.float64(") else v for v in vals]
         try:
-            out[k] = np.array([float({"True": 1, "False": 0}.get(v, v)) if v not in ("", "None") else np.nan
-                               for v in vals])
+            out[k] = np.array([float(v) if v not in ("", "None") else np.nan for v in vals])
         except ValueError:
             out[k] = np.array(vals)
     return out
@@ -727,16 +970,20 @@ def plot():
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("action", choices=("extract", "run", "resolution", "plot"))
+    p.add_argument("action", choices=("extract", "run", "resolution", "checks", "plot"))
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--only", choices=("synthetic", "flight"), default=None)
     a = p.parse_args(argv)
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "2")      # the pool's workers share the machine; they inherit these
+    os.environ.setdefault("OMP_NUM_THREADS", "2")
     if a.action == "extract":
         extract()
     elif a.action == "run":
         run(a.workers, a.only)
     elif a.action == "resolution":
         resolution_only(a.workers)
+    elif a.action == "checks":
+        checks(a.workers)
     else:
         plot()
 

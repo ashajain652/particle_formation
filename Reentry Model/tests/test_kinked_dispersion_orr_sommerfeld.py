@@ -77,20 +77,31 @@ def test_quiescent_and_couette_columns_are_stable():
         assert osm.growth_rate(3.0, y, U, mu, r, 1.0, u_faces=uf, resolution=res).imag < 0.0
 
 
-def test_shift_invert_and_arpack_agree_with_qz():
-    """The eigenvalue taken is the same by the dense shift and invert, by ARPACK and by scipy's QZ on the whole pencil:
-    on a Charru & Hinch column (the smallest growth of the set, 1e-6 of the speed scale) and on Girin's profile."""
+def fixture_columns():
+    from reentry_model.shared import melt_profile
+    data = np.load(FIXTURE)
+    return melt_profile.LayerColumns(**{f: data[f] for f in ("z", "dz", "u", "T", "m", "rho", "mu", "flowing",
+                                                               "liquid", "front")}), data
+
+
+def test_shift_invert_agrees_with_qz_and_arpack_with_the_dense_solve():
+    """The eigenvalue taken is the same by the dense shift and invert and by scipy's QZ on the whole pencil, on a Charru &
+    Hinch column (the smallest growth of the set, 1e-6 of the speed scale); and the same by ARPACK and by the dense
+    solve on a d050 fixture column large enough that ARPACK really runs (50 flowing cells, about 770 rows linear in c,
+    against the 360 below which an "arpack" request runs the dense solve), as it does on every flight column."""
     (y, U, mu, r, uf), _ = couette(0.8, 0.2, 0.5)
     k = 0.05 / 0.8
-    cq = osm.growth_rate(k, y, U, mu, r, 0.0, top="wall", u_faces=uf, method="qz")
-    for method in ("dense", "arpack"):
-        c = osm.growth_rate(k, y, U, mu, r, 0.0, top="wall", u_faces=uf, method=method)
-        assert abs(c - cq) < 1e-9 * abs(U).max()
-    (y, U, mu, r, uf), sigma = girin_column(1e3, depth=6.0)
-    k = 1.2
-    cd = osm.growth_rate(k, y, U, mu, r, sigma, u_faces=uf, method="dense")
-    ca = osm.growth_rate(k, y, U, mu, r, sigma, u_faces=uf, method="arpack")
-    assert abs(ca - cd) < 1e-9 and cd.imag > 0.0
+    sq = osm.spectrum(k, y, U, mu, r, 0.0, top="wall", u_faces=uf, method="qz")
+    sd = osm.spectrum(k, y, U, mu, r, 0.0, top="wall", u_faces=uf, method="dense")
+    assert (sq.path, sd.path) == ("qz", "dense")
+    assert abs(sd.c[0] - sq.c[0]) < 1e-9 * abs(U).max()
+    cols, _ = fixture_columns()
+    y, U, mu, r = osm.column_cells(cols, 10)
+    k = 1.225 / (8.0 * (y[1] - y[0]))
+    sa = osm.spectrum(k, y, U, mu, r, 0.80, method="arpack")
+    sd = osm.spectrum(k, y, U, mu, r, 0.80, method="dense")
+    assert (sa.path, sd.path) == ("arpack", "dense")
+    assert abs(sa.c[0] - sd.c[0]) < 1e-9 * abs(U[0])
 
 
 # ---- the default base profile (no face speeds given) ----------------------------------------------------------------
@@ -204,6 +215,24 @@ def test_girin_profile_at_re_1e4_at_the_broken_line_wavenumber():
     assert g2 == pytest.approx(g1, rel=1e-4)
 
 
+@pytest.mark.parametrize("rho2", [0.7, 1.5])
+def test_density_jump_at_girins_kink_tends_to_the_broken_line(rho2):
+    """The interface rows with a density jump (the normal-stress row's B part, used where densities differ by more than
+    RHO_TOL): Girin's profile with the liquid at rest below the kink rho2 times as dense as the layer above (the same
+    kinematic viscosity), at Re = 1e5, against the broken-line solver with its per-segment densities, at the latter's
+    fastest wavenumber. The density changes the inviscid growth by -12 % (1.5) and +9 % (0.7), so ignoring the jump
+    would fail; the viscous growth agrees to 5e-4 and 2e-4 (measured 2026-11-12; at Re 1e4, 2.9e-3 and 1.3e-3)."""
+    prof = dispersion.KinkedProfiles.one([1.0], [1.0, 0.0, 0.0], wall=12.0, rho=[1.0, rho2])
+    w = dispersion.fastest_waves(prof, 1e-4)
+    k, g = float(w.k[0]), float(w.growth[0])
+    _, g_same = broken_line_fastest()
+    assert abs(g / g_same - 1.0) > 0.05                     # the density matters to the inviscid growth
+    re = 1e5
+    y, U, mu, r, uf = layered((1.0, 1.0, 0.0, 1.0 / re, 1.0, 8, 1.0), (11.0, 0.0, 0.0, rho2 / re, rho2, 6, 1.0 / 1.6))
+    c = osm.growth_rate(k, y, U, mu, r, 1e-4, u_faces=uf, method="dense")
+    assert k * c.imag == pytest.approx(g, rel=2e-3)
+
+
 # ---- the sweep's synthetic columns -----------------------------------------------------------------------------------
 
 def test_synthetic_column_is_stress_continuous_and_its_floor_reynolds_number_is_the_models():
@@ -226,12 +255,9 @@ def test_synthetic_column_is_stress_continuous_and_its_floor_reynolds_number_is_
 # ---- a flight column ------------------------------------------------------------------------------------------------
 
 def test_flight_column_is_resolved_by_doubling():
-    """A thick column of the d050 fixture, at the wavenumber 1.225 over its first kink's depth (or its top cell's when it
-    has none): doubling every domain's degree moves the eigenvalue by less than 1e-3 of the column's top speed."""
-    from reentry_model.shared import melt_profile
-    data = np.load(FIXTURE)
-    cols = melt_profile.LayerColumns(**{f: data[f] for f in ("z", "dz", "u", "T", "m", "rho", "mu", "flowing",
-                                                               "liquid", "front")})
+    """A thick column of the d050 fixture, at the wavenumber 1.225 over eight times its top cell's thickness: doubling
+    every region's degree moves the eigenvalue by less than 1e-3 of the column's top speed."""
+    cols, data = fixture_columns()
     i = int(np.flatnonzero(data["group"] == 0)[0])
     y, U, mu, r = osm.column_cells(cols, i)
     k = 1.225 / (8.0 * (y[1] - y[0]))

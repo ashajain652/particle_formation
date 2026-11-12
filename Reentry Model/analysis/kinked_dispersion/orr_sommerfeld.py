@@ -342,22 +342,29 @@ def _assemble(regions, k, sigma, top):
 
 class Spectrum(NamedTuple):
     """The finite eigenvalues c (m/s) of a column at one wavenumber, sorted by falling Im c, spurious ones removed;
-    `tail`, the resolution measure of each of the first CANDIDATES (NaN beyond); `size`, the number of unknowns."""
+    `tail`, the resolution measure of each of the first CANDIDATES (NaN beyond); `size`, the number of unknowns;
+    `path`, the solve that produced them ("dense", "arpack" or "qz": an "arpack" request falls back to "dense" where
+    `_solve` says it must)."""
     c: np.ndarray
     tail: np.ndarray
     size: int
+    path: str = ""
 
 
 def _solve(A, B, shift, V, method="auto"):
-    """(c, vectors): the finite eigenvalues of A x = c B x and a function giving the eigenvector of the j-th.
+    """(c, vectors, path): the finite eigenvalues of A x = c B x, a function giving the eigenvector of the j-th, and the
+    solve that ran ("dense", "arpack" or "qz").
 
     "dense": shift and invert with a dense eigenproblem of the size of R (module docstring), every eigenvalue.
     "arpack": the same operator (A - s B)^-1 B by ARPACK (sparse LU, Arnoldi), the nev eigenvalues of largest |mu|,
     i.e. nearest the shift, nev = ARPACK_NEV, kept only if the farthest found lies at least ARPACK_REACH speed scales V
     from the shift, so that every eigenvalue within that distance -- every one with Im c above about -0.1 V and Re c
     within 1.5 V of the middle of the speed range -- is among them; otherwise (many weakly damped modes, as in a deep
-    sheared layer at high Reynolds number) the dense solve takes over. "auto": dense up to DENSE_MAX unknowns, arpack above. "qz": scipy's QZ on the whole pencil
-    (slow; the tests' cross-check)."""
+    sheared layer at high Reynolds number) the dense solve takes over. ARPACK is tried only where the rows linear in c
+    number at least 3 ARPACK_NEV (360); below that the dense solve is as cheap and is used, so an "arpack" request on a
+    small column runs "dense" (the returned path says which ran). "arpack-only": ARPACK or a RuntimeError, never the
+    dense fallback (whose cost grows as the cube of the rows linear in c: minutes beyond about 3,000). "auto": dense up
+    to DENSE_MAX unknowns, arpack above. "qz": scipy's QZ on the whole pencil (slow; the tests' cross-check)."""
     n = A.shape[0]
     if method == "auto":
         method = "dense" if n <= DENSE_MAX else "arpack"
@@ -365,17 +372,20 @@ def _solve(A, B, shift, V, method="auto"):
         (alpha, beta), vr = scipy.linalg.eig(A, B, right=True, homogeneous_eigvals=True)
         finite = np.abs(beta) > 1e3 * np.finfo(float).eps * np.abs(alpha)
         c = np.where(finite, alpha / np.where(finite, beta, 1.0), np.nan)
-        return c, lambda j: vr[:, j]
+        return c, (lambda j: vr[:, j]), "qz"
     lu = scipy.sparse.linalg.splu(scipy.sparse.csc_matrix(A - shift * B))
     R = np.flatnonzero(np.abs(B).max(axis=1) > 0.0)
-    if method == "arpack":
+    if method in ("arpack", "arpack-only"):
         Bs = scipy.sparse.csr_matrix(B)
         op = scipy.sparse.linalg.LinearOperator((n, n), matvec=lambda x: lu.solve(Bs @ x), dtype=complex)
         if 3 * ARPACK_NEV <= R.size:
             mu, vecs = scipy.sparse.linalg.eigs(op, k=ARPACK_NEV, which="LM", v0=np.ones(n, dtype=complex))
             c = shift + 1.0 / mu
             if np.abs(c - shift).max() >= ARPACK_REACH * V:
-                return c, lambda j: vecs[:, j]
+                return c, (lambda j: vecs[:, j]), "arpack"
+        if method == "arpack-only":
+            raise RuntimeError("ARPACK did not reach {} speed scales from the shift with {} eigenvalues ({} rows linear "
+                               "in c)".format(ARPACK_REACH, ARPACK_NEV, R.size))
     E = np.zeros((n, R.size), dtype=complex)
     E[R, np.arange(R.size)] = 1.0
     Wm = lu.solve(E)
@@ -392,7 +402,7 @@ def _solve(A, B, shift, V, method="auto"):
             v = scipy.linalg.lu_solve(lk, v, check_finite=False)
             v /= np.linalg.norm(v)
         return Wm @ v
-    return c, vector
+    return c, vector, "dense"
 
 
 def _tail(x, regions, offsets):
@@ -419,7 +429,7 @@ def spectrum(k, y, U, mu, rho, sigma, top="free", u_faces=None, resolution=1, me
     """The column's eigenvalues at the wavenumber k (1/m): `Spectrum`. Arguments as for `growth_rate`."""
     prof, V, regions, shift = _setup(k, y, U, mu, rho, sigma, top, u_faces, resolution)
     A, B, offsets = _assemble(regions, k, sigma, top)
-    c, vector = _solve(A, B, shift, V, method)
+    c, vector, path = _solve(A, B, shift, V, method)
     keep = np.flatnonzero(np.isfinite(c) & (np.where(np.isfinite(c), c.imag, np.inf) <= GROWTH_BOUND * V))
     keep = keep[np.argsort(-c[keep].imag, kind="stable")]
     tail = np.full(keep.size, np.nan)
@@ -427,7 +437,7 @@ def spectrum(k, y, U, mu, rho, sigma, top="free", u_faces=None, resolution=1, me
         tail[j] = _tail(vector(keep[j]), regions, offsets)
         if tail[j] <= TAIL_TOL:
             break
-    return Spectrum(c=c[keep], tail=tail, size=A.shape[0])
+    return Spectrum(c=c[keep], tail=tail, size=A.shape[0], path=path)
 
 
 def growth_rate(k, y, U, mu, rho, sigma, top="free", u_faces=None, resolution=1, method="auto"):
