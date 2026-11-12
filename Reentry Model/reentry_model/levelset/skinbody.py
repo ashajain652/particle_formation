@@ -57,14 +57,19 @@ A skin deeper than its radius of curvature: each column's curvatures are capped 
 every part, every heat sub-step and every flow sub-step (runoff can gather metal into one column) and at every sync;
 the trial pass's caps are undone with its cells.
 
-The part count (Ruling 7, fix round 1 of Task 9): the next step's parts are 1.25 times the largest move ratio of the
-accepted parts that met their allowance, scaled to the macro step (the skyscrapers' estimate), but at most 1.25 times
-the parts this step took and at most PARTS_MAX; a part accepted at the deepest split while still over its allowance
-does not set it. (The skyscrapers' rule let such parts multiply the count step after step, their stall of 2026-11-08;
-and a part that met its allowance only after deep splits, a burst of draws in a short window, gave an estimate of
-1 000 for a step that had taken 33 parts, measured once on the test cube.) The look-ahead to T_rigid follows each marker
-from the nearest marker of the last step's start, so it
-survives splits and merges.
+The part count (Ruling 7; fix rounds 1 and 5 of Task 9; `split_part`, `next_hint`): the next step's parts are 1.25 times
+the largest move ratio, scaled to the macro step, of the parts that count (the skyscrapers' estimate), but at most 1.25
+times the parts that count, at least 1 and at most PARTS_MAX. A part accepted within its allowance counts, whether it
+ran as one of the step's parts or was split from one. A part accepted at the deepest split while still over its
+allowance does not, and neither does anything the same splitting produced: the part of the step it was split from counts
+as the one part it started as, with no move ratio. So the next step may take more than 1.25 times this step's parts only
+when parts that met their allowance after splitting ask for it, and a move that splitting does not shrink (a hand-down of
+a backlog, fix round 5) lets the count fall back instead of raising it by 1.25 every step to PARTS_MAX, as the
+skyscrapers' rule did in their stall of 2026-11-08 (and as this rule did before fix round 5, when every accepted part
+counted). A part that met its allowance only after deep splits within a short burst of draws gave an estimate of 1 000
+for a step that had taken 33 parts (measured once on the test cube); the limit by the parts that count holds that.
+The look-ahead to T_rigid follows each marker from the nearest marker of the last step's start, so it survives splits
+and merges.
 
 Every number here is a numerical setting (named with its source); the physics is the shared package's."""
 import math
@@ -135,8 +140,15 @@ class StepBook:
     the next part). The residuals: (mass now - mass then + out) / mass then, and (stored + pending now - stored +
     pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the next step's
     hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move ratio,
-    unlimited). `group_area_ratio_min`, `group_area_ratio_max` the least and largest
-    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`). `pending_flux_max` the largest
+    unlimited), `split_depth_max` the deepest split level a part reached, `parts_over` the parts accepted at the
+    deepest split while still over their move allowance. `snap_fallback` the markers the snap's last round
+    (`stepend.StepEnd._snap`) brought onto phi by Newton steps from farther than `markers.NEWTON_REACH`, and
+    `snap_slide_max` [m] the largest sideways slide (along the surface) of that round's Newton steps.
+    `group_area_ratio_min`, `group_area_ratio_max` the least and largest
+    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`), and
+    `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
+    the first patch that takes it past the base area, so only that one patch may carry it past the range; fix round
+    5). `pending_flux_max` the largest
     flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max` the largest convective flux on
     a top. `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
     volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
@@ -153,8 +165,13 @@ class StepBook:
     parts: int
     parts_next: int
     parts_skyscrapers: int
+    split_depth_max: int
+    parts_over: int
+    snap_fallback: int
+    snap_slide_max: float
     group_area_ratio_min: float
     group_area_ratio_max: float
+    group_area_ratio_trimmed_max: float
     pending_flux_max: float
     surface_flux_max: float
     passes: int
@@ -210,9 +227,11 @@ class _Tally:
         self.E_top = self.E_rad = 0.0
         self.sprayed = self.sprayed_H = self.removed = self.removed_H = self.drawn = self.handed = 0.0
         self.sprayed_p, self.wall, self.removed_p, self.to_volume = np.zeros(3), np.zeros(3), np.zeros(3), np.zeros(3)
-        self.parts, self.passes, self.ratio, self.mismatch, self.correction = 0, 0, 0.0, 0.0, 0.0
+        self.parts, self.passes, self.mismatch, self.correction = 0, 0, 0.0, 0.0
+        self.depth = self.over = 0
+        self.snap_fallback, self.snap_slide = 0, 0.0
         self.ratio_all = 0.0
-        self.group_min, self.group_max = np.inf, 0.0
+        self.group_min, self.group_max, self.group_trimmed = np.inf, 0.0, 0.0
         self.newton = self.move = self.remesh = 0.0
         self.elapsed, self.pending_flux = 0.0, 0.0
 
@@ -237,6 +256,55 @@ class _StillGas:
     [Pa/m] and no shear [Pa] per marker."""
     dp_ds: np.ndarray
     tau: np.ndarray
+
+
+@dataclass(frozen=True)
+class PartCount:
+    """What one part, with the shorter parts it was split into, tells the next step's part count (`next_hint`):
+    `counted` the accepted parts that count, `rate` [-] the largest move ratio among them scaled to the macro step
+    (ratio x dt_macro / dt, the parts the macro step would need for that move), `failed` whether some part was accepted
+    at the deepest split while still over its allowance (then nothing below this part counts), `depth` the deepest
+    split level reached and `over` the parts accepted over their allowance."""
+    counted: int
+    rate: float
+    failed: bool
+    depth: int
+    over: int
+
+
+def split_part(run, dt, dt_macro, depth):
+    """Ruling 7's splitting: `run(dt)` runs a part of length dt [s] and returns (its move ratio, accept, undo), the
+    largest base move over MOVE_SHARE of the target spacing; a ratio over one below SPLIT_DEPTH_MAX levels undoes the part
+    and runs it again as ceil(ratio) parts one level down, otherwise the part is accepted. Returns the `PartCount`. A
+    part split into shorter parts of which one was accepted at the deepest level still over its allowance counts as
+    failed, with nothing below it counted (fix round 5 of Task 9: a move that does not shrink with the part's length,
+    here a hand-down, is not helped by splitting, and the parts and move ratios the splitting produced around it --
+    sibling parts of a few nanoseconds -- must not set the next step's count)."""
+    ratio, accept, undo = run(dt)
+    if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:
+        undo()
+        k = int(math.ceil(ratio))
+        kids = [split_part(run, dt / k, dt_macro, depth + 1) for _ in range(k)]
+        deepest, over = max(c.depth for c in kids), sum(c.over for c in kids)
+        if any(c.failed for c in kids):
+            return PartCount(0, 0.0, True, deepest, over)
+        return PartCount(sum(c.counted for c in kids), max(c.rate for c in kids), False, deepest, over)
+    accept()
+    if ratio <= 1.0:
+        return PartCount(1, ratio * dt_macro / dt, False, depth, 0)
+    return PartCount(0, 0.0, True, depth, 1)
+
+
+def next_hint(counts):
+    """The next macro step's part count from its parts' `PartCount`s, one per part the step started with (module
+    docstring): MOVE_HINT_MARGIN times the largest scaled move ratio of the counted parts (the skyscrapers' estimate),
+    but at most MOVE_HINT_MARGIN times the counted parts, at least 1 and at most PARTS_MAX. A part whose splitting failed
+    counts as the one part it started as, with no move ratio."""
+    counted = sum(1 if c.failed else c.counted for c in counts)
+    rate = max((c.rate for c in counts if not c.failed), default=0.0)
+    estimate = int(math.ceil(MOVE_HINT_MARGIN * rate))
+    used = int(math.ceil(MOVE_HINT_MARGIN * counted))
+    return min(max(1, min(estimate, used)), PARTS_MAX)
 
 
 def patch_groups(centroid, area, base, A_base):
@@ -501,14 +569,21 @@ class LevelSetSkinBody(StepEnd):
 
     # -- one part --------------------------------------------------------------------------------------------------------
     def _part(self, dt, dt_macro, depth, ctx, tally):
-        """One part of a macro step (module docstring, steps 1-6); a part whose base moves exceed MOVE_SHARE of the local
-        marker spacing is run again as shorter parts (Ruling 7)."""
+        """One part of a macro step (module docstring, steps 1-6), a part whose base moves exceed MOVE_SHARE of the
+        markers' target spacing run again as shorter parts (Ruling 7, `split_part`). Returns its `PartCount`."""
+        return split_part(lambda h: self._part_once(h, dt_macro, ctx, tally), dt, dt_macro, depth)
+
+    def _part_once(self, dt, dt_macro, ctx, tally):
+        """Run one part of length dt [s] (steps 1-5) and return (its move ratio, accept, undo): `accept()` books it and
+        moves beta (steps 5-6), `undo()` restores the state it started from."""
         sk, solver = self.skins, self.solver
         self._cap()
         S, A_group, base, g0 = self._interface()
         group_ratio = A_group / sk.base_area()
         tally.group_min = min(tally.group_min, float(group_ratio.min()))
         tally.group_max = max(tally.group_max, float(group_ratio.max()))
+        largest = S.max(axis=1).toarray().ravel() * A_group            # each group's largest patch [m2]
+        tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest) / sk.base_area()).max()))
         saved = self._save(ctx)
         T_b0 = S @ solver.patch_T()
         m_min = sk.minimum_mass() * (1.0 - DRAW_SLACK)
@@ -546,19 +621,17 @@ class LevelSetSkinBody(StepEnd):
         move = np.abs(book.drawn - handed) / (self.rho * A_base)
         allowance = MOVE_SHARE * self.spacing
         ratio = float((move / allowance).max()) if len(move) else 0.0
-        if ratio > 1.0 and depth < SPLIT_DEPTH_MAX:         # too far for one part: run it again as shorter parts
-            self._restore(saved, ctx)
-            k = int(math.ceil(ratio))
-            for _ in range(k):
-                self._part(dt / k, dt_macro, depth + 1, ctx, tally)
-            return
-        # the accepted part's books
+        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, A_base, mismatch, Q,
+                                           E_vol0, share, base, tally), lambda: self._restore(saved, ctx)
+
+    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, A_base, mismatch, Q, E_vol0, share, base,
+                tally):
+        """The accepted part's books (step 5) and beta moved by its draws and hand-downs (step 6)."""
+        solver = self.solver
         tally.parts += 1
         tally.elapsed += dt
         tally.passes = max(tally.passes, passes)
         tally.ratio_all = max(tally.ratio_all, ratio * dt_macro / dt)       # the skyscrapers' rule, for the record
-        if ratio <= 1.0:                                    # a part still over its allowance at the deepest split is
-            tally.ratio = max(tally.ratio, ratio * dt_macro / dt)   # accepted but does not set the next step's parts
         tally.E_top += float(book.E_top.sum())
         tally.E_rad += float(book.E_rad.sum())
         tally.removed += float(book.removed.sum())
@@ -654,11 +727,11 @@ class LevelSetSkinBody(StepEnd):
                 n = max(n, int(math.ceil(dt / PART_MAX - 1e-9)))
         self._top_start, self._dt_last = (mk.x.copy(), top), dt
         tally = _Tally(sk.n)
-        for _ in range(n):                                  # the skyscrapers' part loop starts a multi-part step one
-            self._part(dt / n, dt, 0 if n == 1 else 1, ctx, tally)   # split level down; matched
-        estimate = int(math.ceil(MOVE_HINT_MARGIN * tally.ratio))         # the skyscrapers' estimate, limited by the
-        used = int(math.ceil(MOVE_HINT_MARGIN * tally.parts))               # parts this step actually took
-        self._hint = min(max(1, min(estimate, used)), PARTS_MAX)
+        counts = [self._part(dt / n, dt, 0 if n == 1 else 1, ctx, tally)    # the skyscrapers' part loop starts a
+                  for _ in range(n)]                                         # multi-part step one level down; matched
+        self._hint = next_hint(counts)
+        tally.depth = max(c.depth for c in counts)
+        tally.over = sum(c.over for c in counts)
         self.time += dt
 
         # the step's end: phi, psi, the mesh, the markers
@@ -676,8 +749,10 @@ class LevelSetSkinBody(StepEnd):
         mk = self.markers
         self.last_step = StepBook(
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
-            parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)),
+            parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)), split_depth_max=tally.depth,
+            parts_over=tally.over, snap_fallback=tally.snap_fallback, snap_slide_max=tally.snap_slide,
             group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
+            group_area_ratio_trimmed_max=tally.group_trimmed,
             pending_flux_max=tally.pending_flux, surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,
             mass_sprayed=tally.sprayed, enthalpy_sprayed=tally.sprayed_H, mass_removed=tally.removed,
             enthalpy_removed=tally.removed_H, enthalpy_radiated=tally.E_rad, mass_volume=end["mass_volume"],

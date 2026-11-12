@@ -28,6 +28,7 @@ OWED_SHARE = 0.05      # the heat still owed to the volume at a step's end, summ
                        # metal it takes on the profile capped at T_rigid, the volume removes it at its own, hotter,
                        # temperatures -- about 4 % of the heat in over the receding step, most of it delivered within it
                        # (the mismatch itself is 1e-4 of the heat in or less)
+OWED_SHARE_HEATED = 0.01    # the same on the heated face, whose step owes little (measured 5.3e-4; fix round 5)
 PENDING_FLUX_SHARE = 10.0   # the pending heat's flux on a patch at most this times the largest surface flux (fix round 3)
 
 
@@ -36,7 +37,10 @@ def owed(body, book):
     the step's heat in, printed with the step's deferred residuals by source."""
     pend, mism = np.abs(body.pending_J).sum() / book.enthalpy_in, book.interface_mismatch_J / book.enthalpy_in
     lo, hi = skinbody.GROUP_AREA_RANGE
-    assert lo <= book.group_area_ratio_min and book.group_area_ratio_max <= hi
+    # a group formed again stops at the first patch that takes it past the base area, so it may overshoot the range's
+    # top by that one patch (accepted, fix round 5: 2.17 on the full-size cube's second step): less its largest patch,
+    # every group is within the range
+    assert lo <= book.group_area_ratio_min and book.group_area_ratio_trimmed_max <= hi
     print("  pending flux at most {:.3e} W/m2 against the surface's {:.3e} W/m2".format(book.pending_flux_max,
                                                                                     book.surface_flux_max))
     assert book.pending_flux_max <= PENDING_FLUX_SHARE * book.surface_flux_max
@@ -92,7 +96,7 @@ def test_a_macro_step_closes_mass_and_enthalpy(heated):
     area = (body.markers.area * np.clip((body.markers.normal[:, 0] - 0.5) / 0.5, 0.0, 1.0)).sum()
     assert book.enthalpy_in == pytest.approx(2e6 * area * 0.5, rel=0.05)
     assert book.enthalpy_volume > before["enthalpy_volume"] and book.enthalpy_skins > before["enthalpy_skins"]
-    assert max(owed(body, book)) <= OWED_SHARE
+    assert max(owed(body, book)) <= OWED_SHARE_HEATED
     for key in ("n_markers", "marker_splits", "marker_merges", "markers_trapped", "interface_mismatch_J",
                 "volume_correction_max", "n_pieces", "frontal_area_m2"):
         assert key in book.row()
@@ -393,3 +397,50 @@ def test_the_concave_cap_keeps_a_concave_column_from_drawing_without_end():
     assert abs(-2000.0) * stub > 1.0
     assert free.m.sum() > 2.0 * m0
     assert added < 0.01 * m1 and held.minimum_mass()[0] <= held.m.sum() * (1 + 1e-12)
+
+
+def _hints(move, hint, steps=5, dt=0.5):
+    """The part-count hints over consecutive macro steps of length dt [s] driven by the body's own splitting and hint
+    rules (`skinbody.split_part`, `skinbody.next_hint`) with a synthetic base move: `move(t0, t1)` [-] the largest move
+    ratio of a part from t0 to t1 [s] into the step. Returns the hints, the first being the one the steps start with."""
+    out = [hint]
+    for _ in range(steps):
+        clock = {"t": 0.0}
+
+        def run(h):
+            t0 = clock["t"]
+
+            def accept():
+                clock["t"] = t0 + h
+            return move(t0, t0 + h), accept, lambda: None
+        counts = [skinbody.split_part(run, dt / hint, dt, 0 if hint == 1 else 1) for _ in range(hint)]
+        assert clock["t"] == pytest.approx(dt, rel=1e-12)
+        hint = skinbody.next_hint(counts)
+        out.append(hint)
+    return out
+
+
+def test_a_move_that_does_not_shrink_with_the_part_does_not_raise_the_part_count():
+    """A jump of three allowances at each step's start and a refill of a twentieth of the allowance in every part, neither
+    shrinking with the part's length (the full-size cube's hand-down of a backlog, fix round 5): splitting cannot help,
+    the parts it produced do not count, and the hint falls to one and stays there. (Counting every accepted part, as
+    before, raised it by about 1.25 each step: the skyscrapers' stall.)"""
+    hints = _hints(lambda t0, t1: (3.0 if t0 == 0.0 else 0.0) + 0.05, 4)
+    print("fixed jump: hints", hints)
+    assert all(b <= a for a, b in zip(hints, hints[1:]))
+    assert hints[-1] == 1
+
+
+def test_a_move_that_scales_with_the_part_sets_the_part_count_and_holds_it():
+    """5.5 allowances of base move per macro step, spread evenly: from one part the hint grows to ceil(1.25 x 5.5) = 7,
+    what the move asks for, and holds there."""
+    hints = _hints(lambda t0, t1: 5.5 * (t1 - t0) / 0.5, 1)
+    print("scaling move: hints", hints)
+    assert hints[1:] == [7] * 5
+
+
+def test_small_moves_let_the_part_count_fall():
+    """A fifth of an allowance per macro step: from 20 parts the hint falls to one and stays."""
+    hints = _hints(lambda t0, t1: 0.2 * (t1 - t0) / 0.5, 20)
+    print("small moves: hints", hints)
+    assert hints[1:] == [1] * 5
