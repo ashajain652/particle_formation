@@ -12,7 +12,7 @@ import pytest
 from helpers import PROJECT_ROOT, PY
 
 MOVED = ["trajectory", "earth", "atmosphere", "fap", "aero", "gas", "constants", "heating", "material", "sesam_io",
-         "compare", "viz"]
+         "compare", "viz", "rheology", "dispersion", "surface_flow", "spray", "girin_case"]
 ROOT_CONSTANTS = ("__version__", "PROJECT_ROOT", "REPO_ROOT", "DATA_DIR", "OUTPUT_DIR", "DRAMA_DIR", "DRAMA_DATA_DIR")
 
 
@@ -64,3 +64,20 @@ def test_shared_modules_import_nothing_outside_shared():
             if bad:
                 violations.append((os.path.relpath(path, PROJECT_ROOT), node.lineno))
     assert violations == []
+
+
+def test_pickles_naming_old_paths_load():
+    """A state pickled before the refactor names reentry_model.spray; it must load as the shared class."""
+    import pickle
+    from reentry_model.shared import material, spray
+    mat = material.Material.from_drama_json("AA7075_scheil")
+    model = spray.SprayModel(mat.liquid, k_r=1.0, k_t=1.0, we_critical=3.08, rt_spray=True, spray_gates="2026-11-10",
+                             slip_band=True)
+    blob = pickle.dumps(model, protocol=0)
+    assert b"reentry_model.shared.spray" in blob
+    old = blob.replace(b"reentry_model.shared.spray", b"reentry_model.spray")
+    assert b"reentry_model.shared.spray" not in old
+    back = pickle.loads(old)
+    assert type(back) is spray.SprayModel
+    # DispersionTable has no __eq__, so equal state means the same bytes when pickled again
+    assert pickle.dumps(back, protocol=0) == blob
