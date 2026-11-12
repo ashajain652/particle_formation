@@ -447,6 +447,104 @@ class Skins:
         self._trim()
         return mass, H, P
 
+    # -- columns appear, combine and leave with their markers (Task 5) -----------------------------------------------
+    def _no_trial(self, what):
+        if self.dH is not None:
+            raise RuntimeError("columns cannot {} while a trial pass is open".format(what))
+
+    def divide(self, rows):
+        """Each column in `rows` (distinct) becomes two with the same profile: every cell's mass and enthalpy halved
+        (exactly, a power of two), the velocities kept, the top area halved, the curvatures kept. The new columns are
+        appended; returns their indices, in the order of `rows`."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        if len(np.unique(rows)) != len(rows):
+            raise ValueError("divide needs distinct columns")
+        self._no_trial("divide")
+        self.m[rows] *= 0.5
+        self.H[rows] *= 0.5
+        self.area[rows] *= 0.5
+        new = self.n + np.arange(len(rows))
+        self.m = np.concatenate([self.m, self.m[rows]])
+        self.H = np.concatenate([self.H, self.H[rows]])
+        self.U = np.concatenate([self.U, self.U[rows]])
+        self.count = np.concatenate([self.count, self.count[rows]])
+        self.area = np.concatenate([self.area, self.area[rows]])
+        self.kappa = np.concatenate([self.kappa, self.kappa[rows]])
+        self.momentum_out = np.concatenate([self.momentum_out, np.zeros((len(rows), 3))])
+        return new
+
+    def combine(self, keep, gone):
+        """The hand-over rule (design 9.2): column gone[k] is mixed into column keep[k] layer by layer at the same
+        relative depth, the depth measured by the mass above as a fraction of the column's mass. The merged column's
+        cell boundaries are the union of both columns' boundaries in that fraction; each merged cell takes from each
+        column the share of the cell spanning it, mass, enthalpy and momentum in proportion (that cell's specific
+        enthalpy and velocity), so the books add to round-off. Cells left below 1e-9 of the column's largest by nearly
+        coinciding boundaries join a neighbour (`_merge`), exactly. The top areas add, the curvatures are averaged by
+        area, and column gone[k] is left empty with no area (remove it with `remove`). Pairs must be distinct and
+        disjoint; the caller regrids."""
+        keep = np.asarray(keep, dtype=np.int64).reshape(-1)
+        gone = np.asarray(gone, dtype=np.int64).reshape(-1)
+        both = np.concatenate([keep, gone])
+        if len(keep) != len(gone) or len(np.unique(both)) != len(both):
+            raise ValueError("combine needs distinct, disjoint pairs of columns")
+        self._no_trial("combine")
+        merged = []
+        for a, b in zip(keep, gone):
+            cols = [(self.m[c, :self.count[c]], self.H[c, :self.count[c]], self.U[c, :self.count[c]])
+                    for c in (a, b) if self.count[c] > 0]
+            F = [np.concatenate([[0.0], np.cumsum(m) / m.sum()]) for m, _, _ in cols]
+            for f in F:
+                f[-1] = 1.0
+            s = np.unique(np.concatenate(F)) if F else np.zeros(1)
+            lo, hi = s[:-1], s[1:]
+            mid = 0.5 * (lo + hi)
+            k = len(lo)
+            m, H, P = np.zeros(k), np.zeros(k), np.zeros((k, 3))
+            for (mc, Hc, Uc), f in zip(cols, F):
+                c = np.clip(np.searchsorted(f, mid, side="right") - 1, 0, len(mc) - 1)
+                w = (hi - lo) / (f[c + 1] - f[c])
+                m += mc[c] * w
+                H += Hc[c] * w
+                P += (mc[c] * w)[:, None] * Uc[c]
+            merged.append((m, H, P))
+        self._width(max([len(t[0]) for t in merged] + [1]))
+        for a, b, (m, H, P) in zip(keep, gone, merged):
+            k = len(m)
+            self.m[a], self.H[a], self.U[a] = 0.0, 0.0, 0.0
+            self.m[a, :k], self.H[a, :k] = m, H
+            self.U[a, :k] = np.divide(P, m[:, None], out=np.zeros_like(P), where=m[:, None] > 0.0)
+            self.count[a] = k
+            self.m[b], self.H[b], self.U[b], self.count[b] = 0.0, 0.0, 0.0, 0
+            A = self.area[a] + self.area[b]
+            if A > 0.0:
+                self.kappa[a] = (self.area[a] * self.kappa[a] + self.area[b] * self.kappa[b]) / A
+            self.area[a], self.area[b] = A, 0.0
+            self.momentum_out[a] += self.momentum_out[b]
+            self.momentum_out[b] = 0.0
+        tiny = np.zeros(self.m.shape, bool)
+        sub = self.m[keep]
+        tiny[keep] = (self.valid[keep] & (sub < 1e-9 * sub.max(axis=1, keepdims=True))
+                      & (self.count[keep] >= 2)[:, None])
+        if tiny.any():
+            self._merge(np.flatnonzero(tiny.any(axis=1)), tiny)
+        self._trim()
+
+    def remove(self, rows):
+        """The columns `rows` (distinct) leave; the others keep their order. Returns per removed column, in the order
+        of `rows`, its (mass [kg], enthalpy [J], momentum [kg m/s] (., 3)) from `totals`."""
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        if len(np.unique(rows)) != len(rows):
+            raise ValueError("remove needs distinct columns")
+        self._no_trial("remove")
+        M, E, P = self.totals()
+        out = M[rows], E[rows], P[rows]
+        keep = np.ones(self.n, bool)
+        keep[rows] = False
+        self.m, self.H, self.U, self.count = self.m[keep], self.H[keep], self.U[keep], self.count[keep]
+        self.area, self.kappa, self.momentum_out = self.area[keep], self.kappa[keep], self.momentum_out[keep]
+        self._trim()
+        return out
+
     # -- trial passes -----------------------------------------------------------------------------------------------
     def state(self):
         """A copy of the cells, for a trial pass to be undone with `set_state`."""
