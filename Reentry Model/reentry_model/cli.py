@@ -21,12 +21,9 @@ Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a mi
 (cantera for --heating physics, dolfinx for --thermal-solver fenicsx: create the fenicsx_env environment).
 """
 import argparse
-import importlib.metadata
 import math
 import os
-import subprocess
 import sys
-from datetime import datetime
 
 import numpy as np
 
@@ -1204,9 +1201,6 @@ def main(argv=None):
         return 2
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "run" and args.architecture == "levelset":       # an abbreviated --arch form the pre-parse missed
-        print("ERROR: " + LEVELSET_NOT_BUILT, file=sys.stderr)
-        return 2
     try:
         if args.command == "run":
             return cmd_run(args, parser)

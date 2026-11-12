@@ -3,7 +3,6 @@
 temperature field with each macro step's per-patch convective loads, keeping the heat bookkeeping SESAM reports."""
 import math
 from dataclasses import dataclass
-from typing import Protocol
 
 import numpy as np
 
