@@ -1456,6 +1456,49 @@ def test_the_resolved_sheared_depth_is_the_straight_line_depth_carrying_the_comp
     assert np.isnan(got[3:]).all()
 
 
+def test_layer_columns_reads_the_cells_as_the_skins_see_them():
+    """`skinbody.layer_columns` (kinked-profile dispersion Task 4, spec 6.4) hands the shared fit the skins' cells as plain
+    arrays: each cell's velocity projected on the top cell's direction -- here every cell also moves across it, and the
+    direction is off the x axis -- the viscosities `cell_viscosity` at `cell_shear_rates`, the densities `density(T)`,
+    the front `depth_above(T_rigid)`, and the contiguous flowing and fully liquid runs from the top. Four columns: liquid
+    over slurry over rigid metal; liquid, slurry, liquid, slurry over rigid (the liquid run stops at the first slurry
+    cell, the flowing run at the rigid one); a rigid top over slurry, at rest (no run); and liquid all through (the front
+    is the whole skin). Beyond each column's cells: z, u, T and rho NaN, dz and m 0, mu inf, no run."""
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    from reentry_model.shared import melt_profile
+    from reentry_model.skyscrapers import skin as sky, skinbody as body_mod
+    col, _ = strip_grid(2, 2)
+    temps = [[LIQUID] * 3 + [SLURRY] * 4 + [RIGID] * 3, [LIQUID, SLURRY, LIQUID, SLURRY, RIGID],
+             [RIGID, SLURRY, RIGID], [LIQUID] * 6]
+    sk = stacked(col, temps)
+    K = sk.m.shape[1]
+    along = np.array([0.6, 0.8, 0.0])
+    across = np.array([-0.8, 0.6, 0.0])
+    speed = np.linspace(2.0, 0.2, K)[None, :] * np.array([1.0, 0.5, 0.0, 1.5])[:, None]
+    side = np.linspace(0.0, 0.3, K)[None, :] * np.array([1.0, 1.0, 0.0, 1.0])[:, None]
+    speed = np.where(sk.valid, speed, 0.0)
+    sk.U = np.where(sk.valid[..., None], speed[..., None] * along + side[..., None] * across, 0.0)
+    tau = np.array([50.0, 20.0, 0.0, 10.0])
+    cols = body_mod.layer_columns(sk, tau)
+    assert isinstance(cols, melt_profile.LayerColumns)
+    v = sk.valid
+    np.testing.assert_allclose(cols.u[v], speed[v], rtol=1e-14, atol=1e-15)
+    assert np.array_equal(cols.mu, sky.cell_viscosity(sk, sky.cell_shear_rates(sk, tau)))
+    assert np.array_equal(cols.front, sk.depth_above(sk.material.T_rigid))
+    assert cols.front[3] == sk.thickness()[3]
+    dz = sk.dz()
+    assert np.array_equal(cols.dz, dz) and np.array_equal(cols.m, sk.m * v)
+    assert np.array_equal(cols.z[v], (np.cumsum(dz, axis=1) - 0.5 * dz)[v])
+    assert np.array_equal(cols.T[v], sk.T[v]) and np.array_equal(cols.rho[v], sk.density(sk.T)[v])
+    for a in (cols.z, cols.u, cols.T, cols.rho):
+        assert np.isnan(a[~v]).all()
+    assert np.isinf(cols.mu[~v]).all() and (cols.m[~v] == 0.0).all()
+    runs = lambda a: a.sum(axis=1).tolist()
+    assert runs(cols.flowing) == [7, 4, 0, 6] and runs(cols.liquid) == [3, 1, 0, 6]
+    assert (cols.flowing[:, :1] | ~cols.flowing).all() and not (cols.liquid & ~cols.flowing).any()
+    assert melt_profile.reducible(cols).tolist() == [True, True, False, True]
+
+
 # -- spreading the deposit (sub-plan 22 Task 5c; Asha 2026-11-06) ----------------------------------------------------------
 def melting_body(mesh, **kw):
     """The melting test body of the spraying tests above, 890 K under the 100 mm flight's gas state at 93 s, one flow

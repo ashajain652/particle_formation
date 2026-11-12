@@ -123,6 +123,7 @@ import numpy as np
 from . import columns as columns_mod
 from ..shared import lubrication
 from ..shared import material as material_mod
+from ..shared import melt_profile
 from . import movemesh
 from ..shared import rheology
 from . import skin as skin_mod
@@ -414,6 +415,29 @@ def sheared_depth(sk):
     top = speed[:, 0]
     flow = (speed * sk.dz()).sum(axis=1)
     return np.where(top > 0.0, 2.0 * flow / np.where(top > 0.0, top, 1.0), np.nan)
+
+
+def layer_columns(sk, tau):
+    """Every column's cells as plain arrays for the shared straight-segment fit (`melt_profile.LayerColumns`; the
+    kinked-profile dispersion design's section 6.4): the cells' centre depths and thicknesses, each cell's velocity
+    projected on the top cell's direction (zero where the top cell is at rest), temperatures, masses and densities
+    (`density(T)`), the viscosities `skin.cell_viscosity` at `skin.cell_shear_rates` under the gas shear |tau| [Pa, (n,)]
+    -- the shear rates the momentum step starts from -- the contiguous runs from the top of flowing cells and of fully
+    liquid ones (flowing and at or above the liquidus, as `skin.cascade_mass` reads the liquid), and the rigid front
+    `depth_above(T_rigid)`. Beyond each column's cells z, u, T and rho are NaN, dz and m 0 and mu inf."""
+    valid = sk.valid
+    mu = skin_mod.cell_viscosity(sk, skin_mod.cell_shear_rates(sk, tau))
+    dz = sk.dz()
+    top = sk.U[:, 0]
+    speed = np.linalg.norm(top, axis=1)
+    direction = np.divide(top, speed[:, None], out=np.zeros_like(top), where=speed[:, None] > 0.0)
+    u = np.einsum("ikj,ij->ik", sk.U, direction)
+    flowing = np.cumprod(valid & np.isfinite(mu), axis=1).astype(bool)
+    liquid = np.cumprod(flowing & (sk.T >= sk.material.T_liquidus), axis=1).astype(bool)
+    cells = lambda a: np.where(valid, a, np.nan)
+    return melt_profile.LayerColumns(z=cells(np.cumsum(dz, axis=1) - 0.5 * dz), dz=dz, u=cells(u), T=cells(sk.T),
+                                     m=np.where(valid, sk.m, 0.0), rho=cells(sk.density(sk.T)), mu=mu, flowing=flowing,
+                                     liquid=liquid, front=sk.depth_above(sk.material.T_rigid))
 
 
 def _no_step_spray():

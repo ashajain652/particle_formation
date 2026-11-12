@@ -140,8 +140,8 @@ the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
-Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
-droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `melt_profile`, `surface_flow`, `spray`,
+`girin_case`), the droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
 keep their skyscrapers-only code and only re-export the moved shared names, so patching a shared name there (for example
@@ -206,6 +206,9 @@ Physics shared with the other (level-set) architecture:
 - `lubrication` — melt-film lubrication flow (`lubrication()` and `deep_flux()`).
 - `spray` — Girin's gradient instability per patch and the droplet release bookkeeping.
 - `dispersion` — the numerical solution of Girin's dispersion relation.
+- `melt_profile` — the melt layer's speed profile fitted as straight segments on plain arrays (`LayerColumns`, which the
+  skins fill in `skinbody.layer_columns`), with the kinematic viscosity below each breakpoint and the layer's Couette
+  viscosity, for the broken-line solver and the floor test in `dispersion`.
 - `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
 - `rheology` — the viscosity of liquid and slurry AA7075.
 - `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
