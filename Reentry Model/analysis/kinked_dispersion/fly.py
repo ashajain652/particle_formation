@@ -13,7 +13,8 @@ results are those of the command line to the last bit. The model writes its hist
 ends, and a long flight has no checkpoint unless it saves a state: one that stops early -- on a fold of the surface, a
 failed solve or an interrupt -- keeps here its history to its last completed macro step, and its droplet records in
 <outdir>/<name>/source_rows (sub-plan 22 Task 4's spool, removed only once the particle files are written). Exit code:
-the command line's, or 1 after the traceback on any other exception.
+the command line's (2 for a bad argument, which argparse ends with SystemExit), or 1 after the traceback on any other
+exception.
 """
 import csv
 import os
@@ -73,6 +74,9 @@ def main(argv):
     try:
         argv = args if args[:1] == ["resume"] else ["run"] + args
         return cli.main(argv + ["--outdir", outdir, "--name", name])
+    except SystemExit as exc:           # argparse's own exit (2 for a bad argument) or a normal exit: its code, not 1
+        code = exc.code
+        return 0 if code is None else code if isinstance(code, int) else 1
     except BaseException:
         traceback.print_exc()
         return 1

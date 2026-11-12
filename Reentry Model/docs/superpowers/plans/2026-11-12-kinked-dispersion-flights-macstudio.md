@@ -36,7 +36,7 @@ each mode sprayed (gradient, gas-driven, Rayleigh-Taylor and slurry) and the dro
 `--spray-gates 2026-11-10` and `--slip-band on` throughout, so that the only thing that differs inside a pair is
 `--dispersion`.
 
-| Label | Starts from | Dispersion | Ends | Expected wall time |
+| Label | Starts from | Dispersion | Ends | Wall time (an estimate, see below) |
 |---|---|---|---|---|
 | `d050__kd__table` (a) | the 50 mm sphere's state at 178.5 s | `table` | 179.0 s | about 1.3 h |
 | `d050__kd__profile` (b) | the same state | `profile` | 179.0 s | about 1.3 h |
@@ -49,7 +49,7 @@ of the two theories on the same saved body, not a spraying history. The d050 bod
 gates (the laptop's rows), so (a) and (b) may spray nothing; they compare the first spray plan on the same body, and (c) and
 (d) carry the spraying comparison.
 
-**Where the times come from.** The laptop's flight `d050__handdown-off` (older code, four flights sharing four cores)
+**Where the times come from (all of them estimates; none was measured on this branch's code).** The laptop's flight `d050__handdown-off` (older code, four flights sharing four cores)
 spent 3 120 s of wall time in the macro step ending at 178.5 s, 4 643 s in the one ending at 179.0 s and 3 840 s in the one
 ending at 179.5 s (the increase of `wall_skins_s + wall_3d_s + wall_move_s + wall_rebuild_s` in its `.rows.csv`); the
 profile path adds about 0.8 s per macro step on top (measured by `analysis/kinked_dispersion/plan_cost.py`, Step 4).
@@ -72,7 +72,7 @@ first and launch (d) once (c) has built it (Step 6).
 - Do not change system settings (sleep, updates, energy). Asha keeps the machine from restarting while the flights run.
 - Do not touch DRAMA, pyDRAMA, `sphere_reentry.py` or `sphere_sweep.py`; nothing here needs them.
 - Run nothing else heavy on the machine while the flights run.
-- Git: never use bare `git stash`. Push only the results branch named in Step 9, never `main`. Do not merge anything. Never
+- Git: never use bare `git stash`. Push only the results branch named in Step 8, never `main`. Do not merge anything. Never
   commit `*.state.pkl`, `particles.npz`, `source_rows/` or `vtk/` (too large).
 - Quote every path: the repository's path on Asha's machines contains spaces (for example `University Documents /MIT`).
 - When in doubt, stop and ask Asha. Report in Asha's style: full sentences, every number with what was measured, its units
@@ -84,7 +84,11 @@ first and launch (d) once (c) has built it (Step 6).
 The branch `kinked-dispersion` must be **pushed first**, by the laptop's agent after Asha agrees; it was not pushed when
 this runbook was written. If `git fetch` below does not show `origin/kinked-dispersion`, stop and tell Asha.
 
-- [ ] **Step 1.** In the Mac Studio's clone of the repository (`git@github.com:ashajain652/particle_formation.git`):
+- [ ] **Step 1.** **Assume every fenced block below runs in a fresh shell:** no variable, array or function survives from
+one block to the next. This step therefore writes an environment file, `$HOME/kinked-dispersion-flights/env.sh`
+(outside the repository), holding every variable and the `launch` function, and **every later block begins by sourcing
+it**. The blocks run in zsh (macOS's shell) and are also valid in bash. In the Mac Studio's clone of the repository
+(`git@github.com:ashajain652/particle_formation.git`):
 
 ```bash
 cd "<the clone's root>"
@@ -92,17 +96,52 @@ git status --short          # must show no modified tracked files; if it does, s
 git fetch origin
 git switch kinked-dispersion
 git pull --ff-only
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/kinked-dispersion)" && echo "at the tip of the pushed branch"
 REPO="$(git rev-parse --show-toplevel)"
 CODE="$REPO/Reentry Model"
-ls "$CODE/reentry_model/cli.py" "$CODE/analysis/kinked_dispersion/plan_cost.py"      # both must exist
-git merge-base --is-ancestor f8e3fc0 HEAD && echo "code is at or after the reviewed commit"
-git log --oneline -1                                # note this commit for the report
+ls "$CODE/reentry_model/cli.py" "$CODE/analysis/kinked_dispersion/plan_cost.py" "$CODE/analysis/kinked_dispersion/fly.py"   # all three must exist
+git rev-parse HEAD                                  # note this commit for the report
+
+KD="$HOME/kinked-dispersion-flights"
+mkdir -p "$KD/states" "$KD/flights" "$KD/logs"
+ENVF="$KD/env.sh"
+printf 'export REPO=%q\n' "$REPO" > "$ENVF"
+cat >> "$ENVF" <<'EOF'
+export CODE="$REPO/Reentry Model"
+export KD="$HOME/kinked-dispersion-flights"
+export STATES="$KD/states" OUT="$KD/flights" LOGS="$KD/logs"
+export S050="$STATES/d050__handdown-off.state.pkl"
+export PY="${PY:-/Users/ashajain/miniforge3/envs/drama_env/bin/python}"      # Step 3 says where to change it
+FRESH=(--diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76
+       --thermal fem --heating physics --melt on --surface-model skin
+       --hand-down off --part-count-from melting --size-feedback current --leeward-test centroid --sideways-heat height
+       --spray-gates 2026-11-10 --slip-band on --t-max 30 --frames-every 0 --save-state-at 25.0)
+RESUME=(--spray-gates 2026-11-10 --slip-band on --t-max 179.0 --frames-every 0)
+launch() {   # launch <label> <run arguments...>   or   launch <label> resume <state> <options...>
+    nohup zsh "$KD/fly.sh" "$@" > /dev/null 2>&1 < /dev/null &
+    echo "$1 pid $! started $(date '+%F %T')" | tee -a "$LOGS/launches.txt"
+}
+EOF
+cat > "$KD/fly.sh" <<'EOF'
+#!/bin/zsh
+# fly.sh <label> <run arguments... | resume <state> options...>: one flight through fly.py, from $CODE, no bytecode written.
+# It needs the exported variables of env.sh (the launch function exports them to it).
+label="$1"; shift
+log="$LOGS/$label.log"
+echo "start $(date '+%F %T')" > "$log"
+cd "$CODE" && PYTHONDONTWRITEBYTECODE=1 caffeinate -i /usr/bin/time -l "$PY" -B -m analysis.kinked_dispersion.fly "$OUT" "$label" "$@" >> "$log" 2>&1
+echo "exit $?" >> "$log"
+echo "end $(date '+%F %T')" >> "$log"
+EOF
+cat "$ENVF" | head -3                                # the first line names the clone's root
 ```
 
-The `merge-base` line must print its message: `f8e3fc0` is the last code commit before this runbook. `$CODE` is the
-`Reentry Model/` folder, the package's root; every command below runs from it. (Unlike the sub-plan 22 flights, these use
-the package itself, not a planning copy's `flights/launch.sh`: the flight launcher is `analysis/kinked_dispersion/fly.py`,
-the sub-plan 22 `fly.py` ported to the package.)
+The tip check must print its message: the expected commit is the tip of the pushed `kinked-dispersion`, not a fixed
+number; the commit it prints is the one to put in the report. `$CODE` is the `Reentry Model/` folder, the package's root.
+(Unlike the sub-plan 22 flights, these use the package itself, not a planning copy's `flights/launch.sh`: the flight
+launcher is `analysis/kinked_dispersion/fly.py`, the sub-plan 22 `fly.py` ported to the package, wrapped by `fly.sh`,
+which logs the start, the end and the exit code, `/usr/bin/time -l`'s wall time and peak memory, and runs under
+`caffeinate -i` so that the machine does not sleep.)
 
 ## 4. The saved state flights (a) and (b) start from
 
@@ -113,7 +152,7 @@ the `subplan20` worktree,
 
 to this folder on the Mac Studio (create it):
 
-`<the clone's root>/Reentry Model/output/kinked_dispersion_flights/states/d050__handdown-off.state.pkl`
+`$HOME/kinked-dispersion-flights/states/d050__handdown-off.state.pkl`
 
 **Asha also copies `d050__handdown-off.rows.csv`** (0.8 MB, from the same laptop folder) **to the same folder**; Step 4's
 timing check reads it. The other files of that stem are **not** needed: a resume loads the whole run from the state
@@ -122,8 +161,7 @@ holds the old flight's droplet records, which a resume replaces). If the files a
 wait. Then check the state:
 
 ```bash
-STATES="$CODE/output/kinked_dispersion_flights/states"
-S050="$STATES/d050__handdown-off.state.pkl"
+source "$HOME/kinked-dispersion-flights/env.sh"
 ls -l "$S050"               # 270157216 bytes
 shasum -a 256 "$S050"       # 89aa20b54c1d20daa41984c68b59257abc994070c2e4a49fbdfb44724f180842
 ```
@@ -141,9 +179,10 @@ Fresh flights (c) and (d) need no file.
 - [ ] **Step 3.** Find the Mac Studio's `drama_env`:
 
 ```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
 conda env list
-PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python      # adjust if the Mac Studio's path differs
-export PY
+echo "$PY"                  # env.sh's default is the laptop's path; if the Mac Studio's drama_env is elsewhere, edit the
+                            # PY line of "$HOME/kinked-dispersion-flights/env.sh" and source it again
 "$PY" -c "import sys, numpy, scipy, skfem, gmsh, pyamg, cantera, matplotlib, meshio; print(sys.version.split()[0], numpy.__version__, scipy.__version__, skfem.__version__, gmsh.__version__, pyamg.__version__, cantera.__version__, matplotlib.__version__)"
 ```
 
@@ -156,6 +195,7 @@ pyamg, cantera, matplotlib). If an import fails, repair the environment as the l
 saved 50 mm body, against a macro step's wall time.
 
 ```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
 cd "$CODE"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m analysis.kinked_dispersion.plan_cost --state "$S050"
 ```
@@ -171,66 +211,71 @@ command is in `CLAUDE.md`, "Tests".)
 
 ## 6. Run the four flights
 
-- [ ] **Step 5: room.** `sysctl -n hw.perflevel0.physicalcpu hw.memsize` and `df -h "$CODE"`. The four flights need four
-free cores, about 20 GB of memory between them and at least 25 GB of free disk (no frames are written; the droplet records
-of a 30 s flight are small, and the first liquid comes at 24.5 s; each fresh flight saves its state at 25 s, about 1.4 GB
-for the 100 mm sphere on the laptop's earlier flights). If the machine has less, stop and tell Asha.
+- [ ] **Step 5: room.** `sysctl -n hw.perflevel0.physicalcpu hw.memsize` and `df -h "$HOME"` (the flights write under
+`$HOME/kinked-dispersion-flights`). The four flights need four free cores, about 20 GB of memory between them (the laptop
+measured 4.8 GB peak for the 100 mm flight, so this is a floor) and **at least 60 GB of free disk**. That figure is an
+estimate, built from these parts: no frames are written; each fresh flight saves a state at 25 s, about 1.4 GB (an
+estimate from the laptop's earlier 100 mm flights; `cli.py` says about 1.3 GB); and the droplet records go to a spool,
+`<label>/source_rows`, as they are made. `cli.py` (lines 66 to 67) gives the 100 mm flight 35 to 70 million records at the
+continuum step, 7.6 to 15.2 GB in memory, without naming the flight's length; **I assumed it means a flight to about 45 s,
+liquid from 24.5 s**, and scaled by the liquid window: 5.5 s (24.5 to 30 s) against about 20.5 s (24.5 to 45 s) is about
+0.27, which gives about 9 to 19 million records and about 2 to 4 GB of spool for each of (c) and (d). Nothing was measured
+on this branch, so the 60 GB uses the unscaled 15.2 GB for each of the two spools (30 GB), the two states (3 GB), the
+histories, particle files and logs (a few GB) and the two 50 mm resumes (small), with margin. If the machine has less, stop
+and tell Asha.
 
 - [ ] **Step 6: launch.** All four flights go through `analysis/kinked_dispersion/fly.py`, which runs the command line
 in its own process and keeps each history row in `<label>.rows.csv` and a progress line every 20 rows in
-`<label>.progress` as the flight runs. A small wrapper logs the way the sub-plan 22 launcher did (start, end and exit code
-in `<label>.log`, `/usr/bin/time -l` for wall time and peak memory, `caffeinate -i` so the machine does not sleep):
+`<label>.progress` as the flight runs. The common options of the fresh flights are the sub-plan 22 flights' (the 100 mm
+sphere, 7.5 km/s from 77.500133 km, flight path angle -0.959331 degrees, US76 atmosphere, physics-mode heating) with the
+fixes of 2026-11-10; the spray options are the same inside a pair. The fresh flights save their whole state at the end of
+the first macro step at or after 25 s (`--save-state-at 25.0`, just after the first liquid at 24.5 s) as
+`$OUT/<label>.state.pkl`, so that a failure after that can resume from there instead of flying again.
+
+The flights must outlive the shell command that started them: if your harness ends background jobs when a command
+returns, run each block below with its own background-run facility (in Claude Code, `run_in_background`) instead. Each
+block is self-contained. Launch (c) first, alone, so that no two processes build one mesh file at once:
 
 ```bash
-OUT="$CODE/output/kinked_dispersion_flights/flights"
-LOGS="$CODE/output/kinked_dispersion_flights/logs"
-mkdir -p "$OUT" "$LOGS"
-export CODE OUT LOGS PY
-cat > "$LOGS/fly.sh" <<'EOF'
-#!/bin/zsh
-# fly.sh <label> <run arguments... | resume <state> options...>: one flight through fly.py, from $CODE, no bytecode written.
-label="$1"; shift
-log="$LOGS/$label.log"
-echo "start $(date '+%F %T')" > "$log"
-cd "$CODE" && PYTHONDONTWRITEBYTECODE=1 caffeinate -i /usr/bin/time -l "$PY" -B -m analysis.kinked_dispersion.fly "$OUT" "$label" "$@" >> "$log" 2>&1
-echo "exit $?" >> "$log"
-echo "end $(date '+%F %T')" >> "$log"
-EOF
-launch() {   # label, then `run` and its arguments or `resume`, the state and its options
-    # (fly.py takes `run` as implied: the arguments follow the label directly, and `resume` first for a resume)
-    nohup zsh "$LOGS/fly.sh" "$@" > /dev/null 2>&1 < /dev/null &
-    echo "$1 pid $! started $(date '+%F %T')" | tee -a "$LOGS/launches.txt"
-}
+source "$HOME/kinked-dispersion-flights/env.sh"
+launch d100__kd__table "${FRESH[@]}" --dispersion table
 ```
 
-The common options of the fresh flights are the sub-plan 22 flights' (the 100 mm sphere, 7.5 km/s from 77.500133 km, flight
-path angle -0.959331 degrees, US76 atmosphere, physics-mode heating) with the fixes of 2026-11-10; the spray options are
-the same inside a pair. Launch (c) first, and (d) once (c) has built the mesh (its log or `ls "$CODE/output/meshes"` shows
-it; a few minutes), so that no two processes build one mesh file at once. The fresh flights save their whole state at the
-end of the first macro step at or after 25 s (`--save-state-at 25.0`, just after the first liquid at 24.5 s) as
-`$OUT/<label>.state.pkl`, so that a failure after that can resume from there instead of flying again:
+Then wait until (c) has built the mesh and made its first history row (its `.progress` file then has a line), for at most
+30 minutes, and stop if the flight has already ended:
 
 ```bash
-FRESH=(--diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
-       --thermal fem --heating physics --melt on --surface-model skin \
-       --hand-down off --part-count-from melting --size-feedback current --leeward-test centroid --sideways-heat height \
-       --spray-gates 2026-11-10 --slip-band on --t-max 30 --frames-every 0 --save-state-at 25.0)
-launch d100__kd__table   "${FRESH[@]}" --dispersion table
-# wait for the mesh, then:
+source "$HOME/kinked-dispersion-flights/env.sh"
+i=0
+while [ ! -s "$OUT/d100__kd__table.progress" ] && ! grep -q '^exit ' "$LOGS/d100__kd__table.log" && [ "$i" -lt 180 ]; do
+    sleep 10; i=$((i + 1))
+done
+if [ -s "$OUT/d100__kd__table.progress" ]; then echo "mesh built, (c) is making rows"
+else echo "STOP: (c) made no row (ended or 30 minutes passed); read its log"; tail -n 30 "$LOGS/d100__kd__table.log"; fi
+```
+
+If it says STOP, do not launch the others: read the log and tell Asha. Otherwise launch (d):
+
+```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
 launch d100__kd__profile "${FRESH[@]}" --dispersion profile
-RESUME=(--spray-gates 2026-11-10 --slip-band on --t-max 179.0 --frames-every 0)
+```
+
+The two 50 mm resumes load their mesh from the state and need no wait:
+
+```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
 launch d050__kd__table   resume "$S050" "${RESUME[@]}" --dispersion table
 launch d050__kd__profile resume "$S050" "${RESUME[@]}" --dispersion profile
 ```
 
-The flights must outlive the shell command that started them: if your harness ends background jobs when a command
-returns, start each `launch` line with its own background-run facility (in Claude Code, `run_in_background`) instead.
-A minute later confirm with `ps -Ao pid,etime,pcpu,rss,command | grep "reentry_model" | grep -v grep` that four
-flights are running near 100 % of a core each. The first line of each resume log after `start` begins `resuming` and
-lists the options read back: check that it says `spray gates 2026-11-10`, `slip band on`, `frames every 0`, the
-flight's own `dispersion` setting and `to 179 s`, and report the line for (a) and (b). For (c) and (d) the log's
-first lines are the `run` summary only at the end, so check the JSON's `settings` and `thermal` entries then (Step 7);
-meanwhile `tail -n 2 "$OUT"/*.progress` shows that each flight is making rows.
+A minute later confirm with `ps -Ao pid,etime,pcpu,rss,command | grep "analysis.kinked_dispersion.fly" | grep -v grep`
+that four flights are running near 100 % of a core each (the `caffeinate` and `time` wrappers also show; count the
+`python` lines). The first line of each resume log after `start` begins `resuming` and lists the options read back: check
+that it says `spray gates 2026-11-10`, `slip band on`, `frames every 0`, the flight's own `dispersion` setting and `to 179
+s`, and report the line for (a) and (b). For (c) and (d) the log's first lines are the `run` summary only at the end, so
+check the JSON's `settings` and `thermal` entries then (Step 7); meanwhile `tail -n 2 "$OUT"/*.progress` shows that each
+flight is making rows.
 
 ## 7. Watch them
 
@@ -240,10 +285,11 @@ released so far, mean flowing depth, and on `profile` flights the floor-like sha
 hours:
 
 ```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
 for f in "$OUT"/*.progress; do echo "$(basename "$f"): $(tail -n 1 "$f")"; done
 ps -Ao pid,etime,pcpu,rss,command | grep "analysis.kinked_dispersion.fly" | grep -v grep
 du -sh "$OUT"/*/source_rows 2>/dev/null          # the droplet spool, which grows once liquid sprays (from 24.5 s)
-df -h "$CODE" | tail -n 1
+df -h "$HOME" | tail -n 1
 ```
 
 Estimate each flight's finish from the flight time still to go (to 30 s, or to 179.0 s for (a) and (b)) and the wall
@@ -265,15 +311,18 @@ When a flight's process has gone, read the end of its log (`tail -n 60 "$LOGS/<l
   completed macro step stays in `<label>.rows.csv`, and the droplet records made so far stay in `<label>/source_rows/`
   (the droplet spool survives an early stop; it is removed only once the particle files are written). Report the error
   text, the time of the last row in `<label>.rows.csv`, and the size of `<label>/source_rows/`.
-- **exit 2 with no files**: a bad argument or a missing library; fix the environment only (Step 3), then launch that flight
-  again.
+- **exit 2 with no files**: a bad argument (fly.py passes argparse's own exit code through) or a missing library; fix the
+  environment only (Step 3), then launch that flight again.
 - **no `exit` line, and the process has gone** (a reboot, or the machine slept): for (a) and (b), which save no state,
   launch the flight again from Step 6. For (c) and (d), if `$OUT/<label>.state.pkl` exists (the flight passed 25 s), it
   resumes from there, with the options it saved, through fly.py's resume form (a new label, so that nothing is
   overwritten):
-  `launch <label>__from25 resume "$OUT/<label>.state.pkl" --t-max 30 --frames-every 0`; otherwise launch the flight again
-  from Step 6. Either way report that it was restarted, why, and from where. A flight that stopped on a model failure is
-  not restarted (above).
+  `source "$HOME/kinked-dispersion-flights/env.sh"; launch <label>__from25 resume "$OUT/<label>.state.pkl" --t-max 30 --frames-every 0`;
+  otherwise launch the flight again from Step 6. Either way report that it was restarted, why, and from where. A flight
+  that stopped on a model failure is not restarted (above). **A `__from25` resume starts a new droplet spool**, so the
+  droplet records from 24.5 s to 25 s stay in the first run's `<label>/source_rows/` and the resumed run's
+  `particles.npz` holds only the records after 25 s: bring back both (the first run's spool is kept only if that run did
+  not finish; tell Asha, who will combine them), and say so in the report.
 
 ## 8. Bring the results back
 
@@ -281,6 +330,8 @@ When a flight's process has gone, read the end of its log (`tail -n 60 "$LOGS/<l
 them then and again at the end). The small files go in git; the large ones stay on the Mac Studio:
 
 ```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
+setopt nullglob 2>/dev/null || shopt -s nullglob      # zsh: setopt; bash: shopt. A glob that matches nothing then expands to nothing
 cd "$REPO"
 R="$CODE/reports/kinked_dispersion_flights_macstudio"
 mkdir -p "$R"
@@ -318,6 +369,9 @@ What comes back, per flight, and why:
   and how big they are, and Asha fetches them (Asha's report needs them).
 
 ```bash
+source "$HOME/kinked-dispersion-flights/env.sh"
+cd "$REPO"
+R="$CODE/reports/kinked_dispersion_flights_macstudio"
 git switch -c kinked-dispersion-flights-macstudio 2>/dev/null || git switch kinked-dispersion-flights-macstudio
 git add "$R"
 git commit -m "Kinked-profile dispersion Task 9 comparison flights on the Mac Studio: <which flights have ended, and how each ended>"
@@ -325,14 +379,15 @@ git push -u origin kinked-dispersion-flights-macstudio
 ```
 
 Push only this branch. Particle files over the size above, droplet spools and the saved states at 25 s of (c) and (d)
-(about 1.4 GB each, never committed) stay on the Mac Studio; `large_files.txt` lists them with their checksums.
+(about 1.4 GB each, an estimate; never committed) stay on the Mac Studio; `large_files.txt` lists them with their checksums.
 
 ## 9. Report to Asha
 
 - [ ] **Step 9.** After each commit, write the report in Asha's style (full sentences; every number with what it
 measures, its units and why it matters; terms spelled out; no symbols in prose). In this order:
 
-1. Which flights ended and how (at their end time or a failure), and whether the results are pushed (branch and commit).
+1. Which flights ended and how (at their end time or a failure), whether any was resumed from its 25 s state (and then
+   that its first 0.5 s of droplet records are in a separate spool), and whether the results are pushed (branch and commit).
 2. For each flight, from its JSON's `results` and its history: the mass released (`released_mass_kg`), the number of
    droplets (`n_released`), their median and largest radius (`r_median_um`, `r_max_um`, in micrometres) and, for (c) and
    (d), when the first droplet left (the first row with `n_released` above zero).

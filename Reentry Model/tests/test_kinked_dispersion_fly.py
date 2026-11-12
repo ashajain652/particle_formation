@@ -80,3 +80,20 @@ def test_values_round_trip_bit_for_bit(stand_in, tmp_path):
         rows = list(csv.DictReader(fh))
     for written, made in zip(rows, stand_in):
         assert {k: float(v) for k, v in written.items()} == made
+
+
+def test_exit_codes(tmp_path, monkeypatch):
+    """A bad argument comes back as argparse's own 2 (the real parser here), a normal return as its code, an ordinary
+    exception as 1 after its traceback; the hook is undone each time."""
+    before = coupled.CoupledRun.row
+    bad = ["--melt", "off", "--dispersion", "table", "--diameter", "1", "--velocity", "1", "--altitude", "1"]
+    assert fly.main([str(tmp_path), "bad"] + bad) == 2          # --dispersion is refused on a run that does not spray
+    assert coupled.CoupledRun.row is before
+    monkeypatch.setattr(fly.cli, "main", lambda argv: 7)
+    assert fly.main([str(tmp_path), "ok"]) == 7
+
+    def boom(argv):
+        raise RuntimeError("model failure")
+    monkeypatch.setattr(fly.cli, "main", boom)
+    assert fly.main([str(tmp_path), "boom"]) == 1
+    assert coupled.CoupledRun.row is before
