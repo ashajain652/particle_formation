@@ -3,10 +3,12 @@ on the markers, and its droplet records. The physics is the shared package's -- 
 thin branches, the Rayleigh-Taylor droplet, the gates), `spray.spray_layer` (Girin's Eq. (2) or the slip band's
 momentum balance), `lubrication.lubrication` (the film's surface speed), `spray.slurry_properties` and
 `spray.SLURRY_SIGMA` (the exposed slurry), `spray.region_extent` (the wave's domain), `spray.source_block` and
-`spray.histogram` (the records); what this module holds is which depth of which skin goes into which argument, and the
-cascade that takes the release from the skins' cells. It matches the skyscrapers' `girin_plan`, `slurry_modes`,
-`SprayPlan`, `cascade_mass` and `release_top` by amendment (decision D4: the cascade lives per architecture, pinned by a
-test comparing the two on the same column); nothing here imports them.
+`spray.histogram` (the records), and the plan's architecture-neutral pieces both architectures call (`spray.slurry_modes`,
+`plan_source_block`, `step_columns`, `droplet_mass`, `droplet_count`, `droplet_histogram`, `spraying`,
+`plan_release_angle`, `no_slurry`, `no_step_spray`; moved there from the skyscrapers' skinbody.py in Task 8's fix round).
+What this module holds is which depth of which skin goes into which argument, and the cascade that takes the release from
+the skins' cells: it matches the skyscrapers' `girin_plan`, `cascade_mass` and `release_top` by amendment (decision D4:
+the cascade lives per architecture, pinned by a test comparing the two on the same column); nothing here imports them.
 
 The plan (`spray_plan`, once a macro step, at its start), per marker, in the markers' order:
 - b, and the regime test's depth, the viscous film's floor and the lubrication's layer: the skin's flowing depth
@@ -31,13 +33,12 @@ then exactly those cells' metal leaves at its own enthalpy and velocity (`releas
 plan books what left by the cells it came from (the liquid's mode's and the slurry's), and at the step's end gives the
 records' rows (`records`) and the history's droplet columns (`step_summary`, every key the shared writer's
 SKIN_SUMMARY_COLUMNS reads)."""
-import copy
 import types
 from dataclasses import dataclass
 
 import numpy as np
 
-from ..shared import rheology, spray as spray_mod
+from ..shared import spray as spray_mod
 from ..shared.lubrication import lubrication
 from ..shared.material import LiquidProperties
 from .skin import SHEAR_PASSES, SHEAR_TOL
@@ -100,29 +101,6 @@ def release_top(skins, dm, slurry=False):
 
 
 # -- the plan ----------------------------------------------------------------------------------------------------------
-def _subset(flow, idx):
-    """The surface flow's evaluation on the markers idx alone: every per-marker array taken at idx, the rest kept."""
-    n = len(np.asarray(flow.closure))
-    out = copy.copy(flow)
-    for key, value in vars(flow).items():
-        if isinstance(value, np.ndarray) and value.ndim >= 1 and value.shape[0] == n:
-            setattr(out, key, value[idx])
-    return out
-
-
-def _no_slurry(n):
-    out = {key: np.full(n, np.nan) for key in ("r", "wavelength", "mu", "gamma", "rho", "delta_m", "depth", "gamma_tau",
-                                               "T", "we_s", "h_floor")}
-    out["branch"] = np.full(n, -1)
-    return out
-
-
-def _no_step_spray():
-    out = {"r_median_um": float("nan"), "r_max_um": float("nan"), "theta_cr_deg": float("nan"), "spraying_area_m2": 0.0}
-    out.update({k: float("nan") for k in spray_mod.RELEASE_ANGLE_COLUMNS})
-    return out
-
-
 @dataclass
 class SprayPlan:
     """Girin's spraying from the markers' skins over one macro step, evaluated at its start (`spray_plan`), per marker in
@@ -196,40 +174,34 @@ class SprayPlan:
         self.hist_m += hm
         return book
 
+    def _radii(self):
+        return np.vstack([self.result.r, self.slurry["r"]])
+
     def droplet_mass(self):
-        """One droplet's mass [kg] (2, n) at each mode's radius, the liquid's at its density, the slurry's at its cell's;
-        nan where the mode has no droplet."""
-        r = np.vstack([self.result.r, self.slurry["r"]])
-        rho = np.vstack([np.full(r.shape[1], float(self.props.rho)), self.slurry["rho"]])
-        ok = np.isfinite(r) & (r > 0.0)
-        return np.where(ok, 4.0 / 3.0 * np.pi * rho * np.where(ok, r, 1.0) ** 3, np.nan)
+        """One droplet's mass [kg] (2, n) at each mode's radius, the liquid's at its density, the slurry's at its cell's
+        (`spray.droplet_mass`)."""
+        r = self._radii()
+        return spray_mod.droplet_mass(r, np.vstack([np.full(r.shape[1], float(self.props.rho)), self.slurry["rho"]]))
 
     def count(self):
-        """The droplets of the record: each mode's mass over one droplet's at its radius."""
+        """The droplets of the record: each mode's mass over one droplet's at its radius (`spray.droplet_count`)."""
         one = self.droplet_mass()
-        for j, (mass, key) in enumerate(((self.mass, "number"), (self.mass_slurry, "number_slurry"))):
-            ok = (mass > 0.0) & np.isfinite(one[j])
-            setattr(self, key, np.where(ok, mass / np.where(ok, one[j], 1.0), 0.0))
+        self.number = spray_mod.droplet_count(self.mass, one[0])
+        self.number_slurry = spray_mod.droplet_count(self.mass_slurry, one[1])
 
     def histogram(self, mass):
-        """(droplets, mass [kg]) per size bin (`spray.histogram`) of a release by mode [kg] (2, n) at the plan's radii."""
-        mass = np.asarray(mass, dtype=float)
-        one = self.droplet_mass()
-        ok = (mass > 0.0) & np.isfinite(one)
-        number = np.where(ok, mass / np.where(ok, one, 1.0), 0.0)
-        r = np.vstack([self.result.r, self.slurry["r"]])
-        return spray_mod.histogram(np.where(ok, r, np.nan).ravel(), number.ravel(), mass.ravel())
+        """(droplets, mass [kg]) per size bin of a release by mode [kg] (2, n) at the plan's radii
+        (`spray.droplet_histogram`)."""
+        return spray_mod.droplet_histogram(np.asarray(mass, dtype=float), self.droplet_mass(), self._radii())
 
     def spraying(self):
         """The markers whose plan sprays, bool (n,): a mode with a release rate."""
-        return (self.rate > 0.0) | (self.rate_slurry > 0.0)
+        return spray_mod.spraying(self.rate, self.rate_slurry)
 
     def release_angle(self):
-        """Register et al.'s release angle [deg] (n,) of each marker from `centre` (`spray.register_angle`); nan
-        without a centre."""
-        if self.centre is None or self.v_hat is None:
-            return np.full(len(self.rate), np.nan)
-        return spray_mod.register_angle(self.points, self.centre, self.v_hat)
+        """Register et al.'s release angle [deg] (n,) of each marker from `centre`; nan without one."""
+        centre = None if self.v_hat is None else self.centre
+        return spray_mod.plan_release_angle(self.points, centre, self.v_hat, len(self.rate))
 
     def records(self, t, state=None):
         """The macro step's records as source-table rows (`spray.source_block`, SOURCE_COLUMNS), one per marker and mode
@@ -242,24 +214,12 @@ class SprayPlan:
         self.count()
         st = self.state if state is None else state
         s = self.slurry
-        flow = types.SimpleNamespace(closure=self.closure)
-        angle = self.release_angle()
-        theta = self.theta
-        blocks = []
-        for mass, H, solid, p, number, res, b, props in (
-                (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
-                (self.mass_slurry, self.enthalpy_slurry, self.solid_slurry, self.momentum_slurry, self.number_slurry,
-                 types.SimpleNamespace(**{k: s[k] for k in ("branch", "r", "delta_m", "we_s", "h_floor", "gamma_tau")}),
-                 s["depth"], LiquidProperties(s["rho"], s["mu"], spray_mod.SLURRY_SIGMA))):
-            speed = np.linalg.norm(p, axis=1)
-            on = mass > 0.0
-            per = lambda x: np.divide(x, mass, out=np.zeros_like(x), where=on)
-            direction = np.divide(p, speed[:, None], out=np.zeros_like(p), where=speed[:, None] > 0.0)
-            rows = types.SimpleNamespace(branch=res.branch, r=res.r, delta_m=res.delta_m, we_s=res.we_s,
-                                         h_floor=res.h_floor, gamma_tau=res.gamma_tau, dm=mass, dn=number, v_s=per(speed))
-            blocks.append(spray_mod.source_block(t, st.h, st.V, theta, self.points, direction, flow, rows, b, props, st,
-                                                 solid_fraction=per(solid), h_kg=per(H), release_angle=angle))
-        self.time, self.block, self._state_out = t, np.concatenate(blocks, axis=0), st
+        modes = ((self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
+                 (self.mass_slurry, self.enthalpy_slurry, self.solid_slurry, self.momentum_slurry, self.number_slurry,
+                  types.SimpleNamespace(**{k: s[k] for k in ("branch", "r", "delta_m", "we_s", "h_floor", "gamma_tau")}),
+                  s["depth"], LiquidProperties(s["rho"], s["mu"], spray_mod.SLURRY_SIGMA)))
+        block = spray_mod.plan_source_block(t, st, self.theta, self.points, self.closure, modes, self.release_angle())
+        self.time, self.block, self._state_out = t, block, st
         return self.block
 
     def step_summary(self, skins=None, n_before=0.0):
@@ -272,18 +232,8 @@ class SprayPlan:
         plan's depths at its start without them)."""
         if self.block is None:
             raise ValueError("step_summary reads the step's records: call records(t) first")
-        st, block = self._state_out, self.block
-        C = spray_mod.SOURCE_COLUMNS
-        out = _no_step_spray()
-        on = self.spraying()
-        if on.any():
-            out["theta_cr_deg"] = float(np.degrees(np.asarray(self.theta)[on].min()))
-            out["spraying_area_m2"] = float(self.area[on].sum())
-        if len(block):
-            r = block[:, C.index("r_m")]
-            out["r_median_um"], out["r_max_um"] = float(np.median(r) * 1e6), float(r.max() * 1e6)
-            out.update(zip(spray_mod.RELEASE_ANGLE_COLUMNS, spray_mod.release_angle_stats(
-                block[:, C.index("dm_kg")], block[:, C.index("release_angle_register_deg")])))
+        st = self._state_out
+        out = spray_mod.step_columns(np.asarray(self.theta), self.area, self.spraying(), self.block)
         if skins is not None:
             mat = skins.material
             flowing, liquid = skins.depth_above(mat.T_rigid), skins.depth_above(mat.T_liquidus)
@@ -312,6 +262,8 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
         raise ValueError("b_mode must be one of {}, got {!r}".format(B_MODES, b_mode))
     if markers.faces is None:
         raise ValueError("the markers have no faces: tessellate them first")
+    if model.slip_band and theta is None:
+        raise ValueError("the slip band's depth reads the markers' angles: give theta with the model's slip band on")
     mat, liq = skins.material, model.liquid
     rows = np.asarray(markers.skin_index, dtype=np.int64)
     n = len(rows)
@@ -345,7 +297,7 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
         rate_s, modes = _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges, radius, dt, b,
                                       F_skin, n_liq, n_flow, theta, nose_radius)
     else:
-        rate_s, modes = np.zeros(n), _no_slurry(n)
+        rate_s, modes = np.zeros(n), spray_mod.no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, b, L, cap, on_slurry, rows, bool(slurry), theta=theta_arr,
                      closure=np.asarray(flow.closure), points=np.asarray(markers.x, dtype=float).copy(), state=state,
                      props=liq, area=np.asarray(area, dtype=float), centre=None if centre is None else np.asarray(centre, float),
@@ -354,20 +306,15 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
 
 def _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges, radius, dt, b, F_skin, n_liq, n_flow,
                   theta, nose_radius):
-    """The exposed slurry's own mode per marker (the skyscrapers' `slurry_modes`, matched by amendment): where a flowing
-    cell that is not fully liquid lies beneath the liquid run on the windward face, that cell gives the properties --
-    `spray.slurry_properties` at its solid fraction and the shear rate of the slurry's own sheared layer, found by fixed
-    point from rest (at most SHEAR_PASSES passes, until no viscosity moves by SHEAR_TOL, the rate held at the shared
-    rheology's GAMMA_MAX), its mixture density, SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the
-    regime test, the viscous film's floor and b are it. A second shared SprayModel with these properties (no
-    Rayleigh-Taylor mode), the wave inside the flowing region, the cap the flowing depth. Returns (rate [kg/(m2 s)],
-    the per-marker dict)."""
-    n = len(rows)
-    out = _no_slurry(n)
-    rate = np.zeros(n)
+    """The exposed slurry's own mode per marker, the shared `spray.slurry_modes` (moved there from the skyscrapers for
+    stage 3 Task 8): this reads the skins for it -- where a flowing cell that is not fully liquid lies beneath the liquid
+    run on the windward face, that cell's temperature, solid fraction and mixture density, its layer from the cell's top
+    to T_rigid, the slurry run's mass, the flowing region (b at least B_MIN) the wave must fit in and the cap (the
+    flowing depth) -- with the skins' SHEAR_PASSES and SHEAR_TOL for the fixed point on the shear rate. Returns (rate
+    [kg/(m2 s)], the per-marker dict)."""
     sel = np.flatnonzero((n_flow > n_liq) & windward)
     if not sel.size:
-        return rate, out
+        return np.zeros(len(rows)), spray_mod.no_slurry(len(rows))
     rr = rows[sel]
     k = n_liq[sel]
     T_cell = T[rr, k]
@@ -375,44 +322,11 @@ def _slurry_modes(skins, rows, T, flow, state, model, windward, w_n, area, edges
     depth = F_skin[sel] - (np.cumsum(dz, axis=1) - dz)[rr, k]
     f_s = 1.0 - skins.props.liquid_fraction(T_cell)
     rho = skins.density(T_cell)
-    sub = _subset(flow, sel)
-    mat = skins.material
-    viscosity = lambda gamma: spray_mod.slurry_properties(mat, T_cell, f_s, gamma, rho).mu
-    theta_sel = None if theta is None else np.asarray(theta, dtype=float)[sel]
-
-    def layer(mu):
-        d = spray_mod.spray_layer(sub, LiquidProperties(rho, mu, spray_mod.SLURRY_SIGMA), model.slip_band, theta_sel,
-                                  nose_radius)
-        v, _, shear, _ = lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
-        return d, v, np.minimum(shear, rheology.GAMMA_MAX)
-
-    gamma = np.zeros(sel.size)
-    mu = viscosity(gamma)
-    for _ in range(SHEAR_PASSES):
-        gamma = layer(mu)[2]
-        mu_new = viscosity(gamma)
-        done = np.all(np.abs(mu_new - mu) <= SHEAR_TOL * mu)
-        mu = mu_new
-        if done:
-            break
-    d_m, v_s, _ = layer(mu)
     extent = spray_mod.region_extent(edges, b >= spray_mod.B_MIN, area)
     cells = np.arange(skins.m.shape[1])[None, :]
     n_liq_r, n_flow_r = np.zeros(skins.n, dtype=np.int64), np.zeros(skins.n, dtype=np.int64)
     n_liq_r[rows], n_flow_r[rows] = n_liq, n_flow
     m_s = (skins.m * ((cells >= n_liq_r[:, None]) & (cells < n_flow_r[:, None]))).sum(axis=1)[rows]   # the slurry run
-    for j, i in enumerate(sel):
-        props = LiquidProperties(float(rho[j]), float(mu[j]), spray_mod.SLURRY_SIGMA)
-        m = spray_mod.SprayModel(props, model.k_r, model.k_t, model.we_critical, model.table, rt_spray=False,
-                                 spray_gates=model.spray_gates, slip_band=model.slip_band)
-        one, cell = slice(j, j + 1), slice(i, i + 1)
-        r = m.evaluate(_subset(sub, one), state, depth[one], d_m[one], v_s[one], windward[cell], dt, area[cell],
-                       m_s[cell], radius, b_layer=depth[one], extent=extent[cell], deceleration_n=w_n[cell],
-                       regime_layer=depth[one], cap_depth=F_skin[cell])
-        rate[i] = r.mdot[0]
-        out["branch"][i], out["r"][i], out["wavelength"][i] = r.branch[0], r.r[0], r.wavelength[0]
-        out["gamma_tau"][i], out["we_s"][i], out["h_floor"][i] = r.gamma_tau[0], r.we_s[0], r.h_floor[0]
-    out["mu"][sel], out["gamma"][sel], out["rho"][sel], out["T"][sel] = mu, gamma, rho, T_cell
-    out["delta_m"][sel], out["depth"][sel] = d_m, depth
-    return rate, out
-
+    return spray_mod.slurry_modes(sel, T_cell, f_s, rho, depth, flow, state, model, skins.material, windward, w_n, area,
+                                  m_s, extent, F_skin, radius, dt, SHEAR_PASSES, SHEAR_TOL, theta=theta,
+                                  nose_radius=nose_radius)

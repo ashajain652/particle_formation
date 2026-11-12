@@ -25,6 +25,9 @@ LIQUID, SLURRY, RIGID = 950.0, 902.0, 880.0    # K: all liquid; 30 % solid, flow
 CELL = 1.0e-5                                  # m: each stacked cell holds 10 um of solid metal's mass
 SETTINGS = SkinSettings(cell=10e-6, fine_zone=0.4e-3, stub=0.4e-3)
 H = 1.0e-3                                     # m: the markers' spacing on the flat grid
+SOLID_TOL = 1.0e-9                             # the D4 test's tolerance on the solid released (its docstring)
+TAU_RENEWAL = 20.0                             # Pa: the gas shear of the renewal test (supercritical: We_s above 3.08
+                                               # on the thick branch)
 
 
 def aa7075():
@@ -115,6 +118,55 @@ def test_marker_release_equals_the_shared_model():
     assert (want.mdot > 0.0).sum() >= 2 and len(set(want.branch.tolist())) >= 2    # the case is not trivial
 
 
+def test_the_slip_band_needs_the_markers_angles():
+    """With the model's slip band on, the band's depth reads the markers' angles: a plan without them is refused rather
+    than silently given Girin's delta_m."""
+    mat = aa7075()
+    n = len(MIXED)
+    mk = row_markers(n)
+    sk = stacked(mk, MIXED, mat)
+    model = model_of(mat, slip_band=True)
+    with pytest.raises(ValueError, match="theta"):
+        spraying.spray_plan(sk, mk, gas(n), STATE, model, np.ones(n, bool), np.full(n, 30.0), 0.5, 0.05, 0.05)
+
+
+SLURRY_COLUMNS = MIXED[:5] + [[LIQUID] * 2 + [907.8] * 300 + [RIGID] * 5, [907.5] * 200 + [RIGID] * 5,
+                              [LIQUID] * 3 + [SLURRY] * 40 + [RIGID] * 5]
+
+
+def test_the_slurry_mode_matches_the_skyscrapers_on_the_same_columns():
+    """The exposed slurry's own mode, read from the level set's skins (`spraying.spray_plan` with the slurry) and from the
+    skyscrapers' skins holding the same cells (`skinbody.slurry_modes`, as their `girin_plan` calls it), at one gas state
+    on Girin's closure: the same rate, droplet radius, viscosity, shear rate, delta_m, layer depth and branch. Both call
+    the shared `spray.slurry_modes`; what differs is each architecture's reading of its cells (each skin's own property
+    table for the temperatures and depths), so the numbers agree to 1e-9; the column of deep warm slurry under liquid
+    sprays on the thick branch, and the others reach a branch the viscous film or the critical Weber number holds."""
+    from reentry_model import skin as sky, skinbody
+    mat = aa7075()
+    n = len(SLURRY_COLUMNS)
+    mk = row_markers(n)
+    ours = stacked(mk, SLURRY_COLUMNS, mat, rng=np.random.default_rng(2))
+    theirs = sky.Skins(mat, ours.area.copy())
+    theirs._install(ours.m.copy(), ours.H.copy(), ours.count.copy(), U=ours.U.copy())
+    flow, model = gas(n, tau=200.0, G=-3e4), model_of(mat)
+    theta = np.linspace(0.05, 0.9, n)
+    windward, w_n = theta <= 0.5 * np.pi, flow.deceleration * np.cos(theta)
+    plan = spraying.spray_plan(ours, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.04, slurry=True,
+                               theta=theta)
+    F = theirs.depth_above(mat.T_rigid)
+    flowing = theirs.valid & np.isfinite(sky.cell_viscosity(theirs, 0.0))
+    liquid = flowing & (theirs.T >= mat.T_liquidus)
+    n_flow, n_liq = np.cumprod(flowing, axis=1).sum(axis=1), np.cumprod(liquid, axis=1).sum(axis=1)
+    edges = np.column_stack([mk.faces.i, mk.faces.j])
+    rate, modes = skinbody.slurry_modes(theirs, flow, STATE, model, windward, w_n, theirs.area, edges, 0.05, 0.5, F, n_liq,
+                                        n_flow, theta=theta, nose_radius=0.04)
+    assert (rate > 0.0).sum() >= 1 and (modes["branch"] >= 0).sum() >= 3 and np.all(modes["branch"][rate > 0.0] == spray.BRANCH_THICK)
+    np.testing.assert_allclose(plan.rate_slurry, rate, rtol=1e-9, atol=0.0)
+    np.testing.assert_array_equal(plan.slurry["branch"], modes["branch"])
+    for key in ("r", "mu", "gamma", "delta_m", "depth", "rho", "T"):
+        np.testing.assert_allclose(plan.slurry[key], modes[key], rtol=1e-9, atol=0.0, equal_nan=True, err_msg=key)
+
+
 def test_the_cascade_takes_liquid_first_and_never_rigid_metal():
     """Asked for everything over a long time, the release takes the run of liquid cells from the top; with the slurry
     every flowing cell down to the first rigid one; never rigid metal, which is as it was in every column."""
@@ -146,7 +198,11 @@ def test_the_cascade_takes_liquid_first_and_never_rigid_metal():
 def test_the_cascade_matches_the_skyscrapers_release_on_one_column():
     """Decision D4: the same columns of cells -- liquid over slurry over rigid metal, slurry over liquid, a crust, a warm
     slurry cell -- released by both architectures' cascades over one macro step of eight flow sub-steps, at a liquid
-    rate and the slurry's own with a slurry floor: the same masses, enthalpies and momenta within 1e-12."""
+    rate and the slurry's own with a slurry floor: the same masses, enthalpies, momenta and solid, in total and by the cells
+    they came from (liquid and the others), and the same mass taken at the slurry's rate, within 1e-12. The solid is
+    within SOLID_TOL: it is the cells' liquid fractions at their temperatures, and each architecture's skins find a
+    temperature from the enthalpy their own way (the level set on its 0.01 K property table, the skyscrapers through the
+    material), which moves the solid of a partly solid cell by 6e-10 of itself (measured 2026-11-12)."""
     from reentry_model import skin as sky
     mat = aa7075()
     temps = [[LIQUID] * 2 + [SLURRY] * 3 + [RIGID] * 3, [SLURRY] * 2 + [LIQUID] * 2 + [RIGID] * 3,
@@ -162,20 +218,22 @@ def test_the_cascade_matches_the_skyscrapers_release_on_one_column():
         h = dt / steps
         rate, rate_s = 0.7 * m / (ours.area * h), 0.4 * m / (ours.area * h)
         floor = np.full(ours.n, 905.0)
-        got = [np.zeros(ours.n), np.zeros(ours.n), np.zeros((ours.n, 3)), np.zeros(ours.n)]
-        ref = [np.zeros(ours.n), np.zeros(ours.n), np.zeros((ours.n, 3)), np.zeros(ours.n)]
+        fields = ("mass", "enthalpy", "momentum", "solid")
+        pieces = lambda bk, ds: [getattr(bk, f) for f in fields] + [getattr(bk.by_phase, f) for f in fields] + [ds]
+        got = ref = None
         for _ in range(steps):
             dm, ds = spraying.cascade_mass(ours, rate, rate_s, ours.area, h, slurry, floor)
-            b = spraying.release_top(ours, dm, slurry)
+            b = pieces(spraying.release_top(ours, dm, slurry), ds)
             dm2, ds2 = sky.cascade_mass(theirs, rate, rate_s, theirs.area, h, slurry, floor)
-            b2 = sky.release_top(theirs, dm2, slurry)
-            for acc, x in zip(got, (b.mass, b.enthalpy, b.momentum, ds)):
-                acc += x
-            for acc, x in zip(ref, (b2.mass, b2.enthalpy, b2.momentum, ds2)):
-                acc += x
-        assert got[0].sum() > 0.0 and (got[3].sum() > 0.0) == slurry
-        for a, b in zip(got, ref):
-            np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12 * np.abs(b).max())
+            b2 = pieces(sky.release_top(theirs, dm2, slurry), ds2)
+            got = b if got is None else [a + x for a, x in zip(got, b)]
+            ref = b2 if ref is None else [a + x for a, x in zip(ref, b2)]
+        assert got[0].sum() > 0.0 and (got[-1].sum() > 0.0) == slurry
+        assert (got[3].sum() > 0.0) == slurry and (got[4][1].sum() > 0.0) == slurry   # the solid, the slurry's share
+        for name, a, b in zip(fields + tuple("phase " + f for f in fields) + ("released_slurry",), got, ref):
+            scale = np.abs(b).max()
+            tol = SOLID_TOL if name.endswith("solid") else 1e-12
+            np.testing.assert_allclose(a, b, rtol=tol, atol=tol * scale if scale > 0.0 else 0.0, err_msg=name)
         np.testing.assert_allclose(ours.m.sum(axis=1), theirs.m.sum(axis=1), rtol=1e-12)
 
 
@@ -205,9 +263,6 @@ def test_release_is_not_capped_by_a_renewal_time():
     total = sum(plan.release(sk, h).mass.sum() for _ in range(steps))
     assert total == pytest.approx(asked, rel=1e-12)
     assert plan.mass[0] == pytest.approx(asked, rel=1e-12) and M0 - sk.totals()[0][0] == pytest.approx(asked, rel=1e-12)
-
-
-TAU_RENEWAL = 20.0       # Pa: the gas shear of the renewal test (supercritical: We_s above 3.08 on the thick branch)
 
 
 def test_release_books_close():
@@ -298,7 +353,8 @@ def test_girin_cases_through_the_level_set_path():
     marker at the stagnation point holding a pool of their liquid one wavelength deep (so tanh(k h) is 1 to 1e-5), off
     Girin's closure (no shear mode): the plan's wavelength is their lambda* (Eq. 14) within 2 % and its growth time
     their tau* within 1 %, at each of the three decelerations."""
-    t = json.load(open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin1994_tables.json")))["table2"]
+    with open(os.path.join(PROJECT_ROOT, "data", "reference_values", "girin1994_tables.json")) as fh:
+        t = json.load(fh)["table2"]
     mat = LinearMeltMaterial(rho=Iron.rho, rho_l=Iron.rho, mu=Iron.mu, sigma=Iron.sigma)
     model = spray.SprayModel(LiquidProperties(Iron.rho, Iron.mu, Iron.sigma), spray_gates="2026-11-10")
     for W, lam_ref, tau_ref in zip(t["W_ms2"], t["lambda_star_m_eq14"], t["tau_star_s"]):

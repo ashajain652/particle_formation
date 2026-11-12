@@ -326,3 +326,92 @@ def test_fit_cap_reproduces_the_old_inline_decision():
         fitted, c = nose.fit_cap(pts, np.array([1.0, 0.0, 0.0]))
         assert c is concave or c == concave, name
         assert (np.isnan(fitted) and np.isnan(r)) or fitted == r, name
+
+
+def test_moved_spray_plan_pieces_are_the_shared_objects():
+    """Level-set stage 3 Task 8 (fix round 1): the spray plan's architecture-neutral pieces live in shared/spray.py and
+    skinbody keeps its old names as the shared objects themselves."""
+    from reentry_model import skinbody
+    from reentry_model.shared import spray
+    assert skinbody._rows is spray.rows_of
+    assert skinbody._no_slurry is spray.no_slurry
+    assert skinbody._no_step_spray is spray.no_step_spray
+    assert set(spray.no_slurry(2)) == set(spray.NO_SLURRY_KEYS) | {"branch"}
+    assert spray.no_slurry(2)["branch"].tolist() == [-1, -1]
+
+
+def _spray_plan_case():
+    """The skyscrapers' Girin plan with the slurry, on fixed skins and a fixed gas state (the scratch case the old values
+    below were recorded on): ten columns of 10 um cells -- liquid on rigid metal, thin liquid, liquid on slurry, slurry
+    over liquid, a crust, rigid alone, a warm slurry cell, liquid over slurry, liquid over deep warm slurry, deep warm
+    slurry -- every cell moving; shock-layer gas with Girin's closure, tau 200 Pa, G -3e4 Pa/m, deceleration 30 m/s2."""
+    from types import SimpleNamespace
+    from reentry_model import skin as sky, skinbody
+    from reentry_model.shared import spray, surface_flow as sf
+    from reentry_model.shared.material import LiquidProperties, Material
+    mat = Material.from_drama_json("AA7075_scheil")
+    L, S, R = 950.0, 902.0, 880.0
+    temps = [[L] * 30 + [R] * 10, [L] * 4 + [R] * 10, [L] * 6 + [S] * 20 + [R] * 10, [S] * 3 + [L] * 5 + [R] * 10,
+             [R] * 3 + [L] * 5 + [R] * 10, [R] * 12, [L] * 2 + [907.0] + [S] * 25 + [R] * 5, [L] * 3 + [S] * 40 + [R] * 5,
+             [L] * 2 + [907.8] * 300 + [R] * 5, [907.5] * 200 + [R] * 5]
+    n = len(temps)
+    f = lambda v: np.full(n, v, float)
+    flow = SimpleNamespace(closure=np.full(n, sf.CLOSURE_GIRIN), branch=sf.BRANCH_SHOCK_LAYER, u_eff=f(2000.0),
+                           u_e=f(2000.0), rho_e=f(7e-4), mu_e=f(1.6e-4), delta_a=f(7e-3), mach_e=f(1.0), tau=f(200.0),
+                           G=f(-3e4), kn_local=f(1e-3), deceleration=30.0)
+    state = SimpleNamespace(freestream=SimpleNamespace(rho=8e-5), V=7200.0, ma=24.0, h=71e3)
+    area = np.full(n, 1e-6) * np.linspace(1, 2, n)
+    sk = sky.Skins(mat, area.copy())
+    count = np.array([len(t) for t in temps])
+    K = count.max()
+    T = np.array([t + [300.0] * (K - len(t)) for t in temps])
+    valid = np.arange(K)[None, :] < count[:, None]
+    m = np.where(valid, mat.rho * area[:, None] * 1e-5, 0.0)
+    U = np.where(valid[..., None], np.random.default_rng(4).normal(0, 0.3, (n, K, 3)), 0.0)
+    sk._install(m, m * mat.enthalpy(T), count, U=U)
+    theta = np.linspace(0.05, 0.9, n)
+    points = np.column_stack([np.arange(n) * 1e-3, np.sin(theta) * 1e-2, np.cos(theta) * 1e-2])
+    model = spray.SprayModel(LiquidProperties(2400.0, 1.3e-3, 0.8), spray_gates="2026-11-10")
+    plan = skinbody.girin_plan(sk, flow, state, model, theta, area, np.column_stack([np.arange(n - 1), np.arange(1, n)]),
+                               0.05, 0.5, slurry=True, points=points, centre=np.array([0.0, 0.0, -0.02]),
+                               v_hat=np.array([0.0, 0.0, -1.0]), nose_radius=0.04)
+    rng = np.random.default_rng(1)
+    plan.mass[:] = np.where(plan.rate > 0, rng.uniform(1e-9, 1e-8, n), 0.0)
+    plan.mass_slurry[:] = np.where(plan.rate_slurry > 0, rng.uniform(1e-9, 1e-8, n), 0.0)
+    for k in ("enthalpy", "enthalpy_slurry", "solid", "solid_slurry"):
+        getattr(plan, k)[:] = rng.uniform(0, 1e-3, n) * (plan.mass + plan.mass_slurry > 0)
+    plan.momentum[:] = rng.normal(0, 1e-8, (n, 3))
+    plan.momentum_slurry[:] = rng.normal(0, 1e-8, (n, 3))
+    return plan
+
+
+def test_moved_spray_plan_pieces_reproduce_the_old_values():
+    """Old values recorded at commit e7a6539 by calling skinbody's own code (girin_plan with slurry_modes inline,
+    SprayPlan.count, histogram, release_angle, source_block and SkinBody._step_columns) on `_spray_plan_case`; the moved
+    code gives every value recorded there to the last bit (checked on the whole record in a scratch script, 2026-11-12)."""
+    from reentry_model import skinbody
+    plan = _spray_plan_case()
+    assert plan.rate_slurry[8:].tolist() == [5798.850104260878, 4199.991695125593]
+    rows = [2, 8, 9]
+    old = {"mu": [1.8045651910830642, 0.0024874216047943098, 0.006583524814691101], "gamma": [108.62127427485834, 367.0, 367.0],
+           "delta_m": [0.022997419083111988, 0.0002889863669755167, 0.0005524317337923679],
+           "depth": [0.0002218463108255324, 0.0035089344045234287, 0.0023324387010949447]}
+    for key, values in old.items():
+        assert plan.slurry[key][rows].tolist() == values, key
+    assert np.isnan(plan.slurry["r"][2]) and plan.slurry["r"][[8, 9]].tolist() == [0.00025144144518461127,
+                                                                                0.00048066016042328256]
+    plan.count(2400.0)
+    assert (plan.number.sum(), plan.number_slurry.sum()) == (1.3896693658723713, 0.020678677301138745)
+    hn, hm = plan.histogram(np.vstack([plan.mass, plan.mass_slurry]))
+    assert (hn.sum(), hm.sum()) == (1.41034804317351, 4.2728380394538384e-08) and np.flatnonzero(hn).tolist() == [20, 22, 24, 26]
+    assert plan.release_angle()[[0, 9]].tolist() == [0.9548412207142292, 24.471238492884595]
+    block = plan.source_block(1.5)
+    sums = block.sum(axis=0)
+    assert block.shape == (8, 27)
+    assert sums[[3, 9, 11, 12, 15, 19, 24, 25, 26]].tolist() == [244.78030247533502, 0.010864095740776177, 3291.286395003719,
+                                                                 0.0016554610177059712, 21.79251679995043, 17.16381983157551,
+                                                                 1157896.875534645, 705378.7740446577, 113.96312274432282]
+    assert skinbody.SkinBody._step_columns(plan, block) == {
+        "r_median_um": 163.24331099104404, "r_max_um": 480.66016042328255, "theta_cr_deg": 2.8647889756541165,
+        "spraying_area_m2": 1.0666666666666666e-05, "release_angle_register_mean_deg": 12.956645121391393,
+        "release_angle_register_min_deg": 0.9548412207142292, "release_angle_register_max_deg": 24.471238492884595}
