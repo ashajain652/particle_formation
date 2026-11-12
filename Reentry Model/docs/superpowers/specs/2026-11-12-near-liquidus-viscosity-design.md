@@ -288,6 +288,13 @@ Under `bridge`, everything is today's code path, unchanged.
 
   `internal_fraction=None` means `INTERNAL_SOLID_FRACTION`, read at call time, so the probe can set the brackets in its
   own process. A value at or below 0.1 / 0.55 raises ValueError.
+- The choice between the laws also lives here, so the level-set architecture can use the same law through the same
+  call (Asha, 2026-11-12):
+  - `law_viscosity(law, T, f_s, gamma, mu_liquid, f_s_bridge)`: for `"bridge"`, exactly today's `viscosity(T, f_s,
+    gamma, mu_liquid, f_s_bridge)`; for `"composite"`, `composite_viscosity(f_s, mu_liquid)` broadcast to `T`'s shape,
+    ignoring `gamma`; any other name raises ValueError.
+  - `bridge_solid_fraction(material)`: the material's solid fraction at `BRIDGE_LOW`, as both skyscrapers call sites
+    compute it today. It reads only `material.liquid_fraction`, so the module still imports nothing.
 - The module docstring gives each region with its sources and statuses (section 4) and section 3.7 in full.
 - The module imports nothing from the rest of `reentry_model`.
 
@@ -296,9 +303,9 @@ Under `bridge`, everything is today's code path, unchanged.
 - `SkinSettings` gains `rheology`. Its dataclass default is "bridge", so that existing tests and states saved before
   this change keep the present law: an unpickled old settings object has no `rheology` and reads the class default. The
   run command's default is "composite" (`DEFAULT_LAW`).
-- One helper, which dispatches on `sk.settings.rheology`, gives a cell's viscosity from (T, f_s, gamma). Both
-  `cell_viscosity` and `slurry_modes` use it, so the slurry mode follows the law too. `slurry_modes` today calls
-  `rheology.viscosity` directly.
+- A thin skins wrapper passes `sk.settings.rheology`, the cell state and the material's values to
+  `rheology.law_viscosity`, and holds no physics of its own. Both `cell_viscosity` and `slurry_modes` use it, so the
+  slurry mode follows the law too. `slurry_modes` today calls `rheology.viscosity` directly.
 
 Command line (`cli.py`):
 

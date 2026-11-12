@@ -27,6 +27,10 @@ the first design (commits 3d0037d and d8ca92e).
 - The present law gives today's numbers to the last bit, under `--rheology bridge` and under the library default.
   `SkinSettings().rheology` is `"bridge"`, and the run command defaults to `"composite"` (spec 6). Existing tests keep
   passing unchanged, except the command-line tests that Task 3 pins to `--rheology bridge`.
+- All the viscosity physics, including the choice between the laws by name, lives in
+  `reentry_model/shared/rheology.py`. The level-set architecture will use the same law (Asha, 2026-11-12). The
+  skyscrapers code only passes its settings' law name and the cell state, and holds no viscosity formula or law branch
+  of its own.
 - `shared/rheology.py` imports nothing from the rest of `reentry_model`; `tests/test_reentry_model_shared.py` checks
   this. The present names keep their meaning and numbers: `li_viscosity`, `viscosity`, `LI_A`, `LI_B`, `LI_N`,
   `LI_C`, `GAMMA_MAX`, `BRIDGE_LOW`, `BRIDGE_HIGH` and `RIGID_SOLID_FRACTION`.
@@ -76,6 +80,16 @@ the first design (commits 3d0037d and d8ca92e).
 
   Both broadcast `f_s` and return float arrays. `internal_fraction=None` reads `INTERNAL_SOLID_FRACTION` at call time.
   An internal fraction at or below 0.1 / 0.55, or above 1, raises ValueError.
+  - `law_viscosity(law, T, f_s, gamma, mu_liquid, f_s_bridge) -> ndarray`, in Pa s:
+    - for `"bridge"`, the result of `viscosity(T, f_s, gamma, mu_liquid, f_s_bridge)`, unchanged;
+    - for `"composite"`, `composite_viscosity(f_s, mu_liquid)` broadcast to `np.shape(T)`, with `gamma` ignored;
+    - any other `law` raises ValueError.
+  - `rate_cap(law) -> float`: the shear rate a law's caller holds a recorded rate at. It is `GAMMA_MAX` for
+    `"bridge"` and `inf` for `"composite"`, and any other `law` raises ValueError. With it, `slurry_modes` needs no law
+    branch.
+  - `bridge_solid_fraction(material) -> float`: `1.0 - float(material.liquid_fraction(np.array([BRIDGE_LOW]))[0])`,
+    the expression both skyscrapers call sites use today. It uses only the passed object's `liquid_fraction`, so the
+    module imports nothing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -111,6 +125,15 @@ Also write these tests:
 - `test_internal_fraction_read_at_call_time`: after `monkeypatch.setattr(R, "INTERNAL_SOLID_FRACTION", 0.25)`,
   `composite_viscosity(0.057, MU) / MU` is 2.168 to 1e-3.
 - `test_suspension_viscosity_diverges_at_packing`: `suspension_viscosity(0.275, MU, 0.5)` is `inf` (phi = 0.55).
+- `test_law_viscosity_dispatch`. On (3, 4) arrays of T between 895 and 910 K, with f_s from the AA7075 Scheil material
+  and a gamma array:
+  - `law_viscosity("bridge", ...)` is `np.array_equal` to `viscosity(...)`;
+  - `law_viscosity("composite", ...)` equals `composite_viscosity(f_s, MU)` with shape (3, 4), and is unchanged when
+    gamma is replaced by 1e4;
+  - `law_viscosity("li", ...)` raises ValueError;
+  - `rate_cap("bridge") == GAMMA_MAX`, `rate_cap("composite") == inf`, and `rate_cap("li")` raises ValueError.
+- `test_bridge_solid_fraction`: for the AA7075 Scheil material it equals
+  `1 - float(mat.liquid_fraction(np.array([906.4]))[0])` exactly (0.09754 to 1e-4).
 
 - [ ] **Step 2: Run them to make sure they fail**
 
@@ -162,15 +185,13 @@ git commit -m "reentry_model: the composite near-liquidus viscosity law beside t
 - Test: `tests/test_reentry_model_skin.py`, `tests/test_reentry_model_skinbody.py`
 
 **Interfaces:**
-- Consumes: `rheology.composite_viscosity`, `rheology.LAWS` (Task 1).
+- Consumes: `rheology.law_viscosity`, `rheology.rate_cap`, `rheology.bridge_solid_fraction`, `rheology.LAWS`
+  (Task 1).
 - Produces:
   - `SkinSettings.rheology: str = "bridge"`, validated against `rheology.LAWS` in `__post_init__` (ValueError);
-  - `skin.law_viscosity(sk, T, f_s, gamma) -> ndarray`, in Pa s, broadcast to `T`'s shape:
-    - under `"bridge"`, exactly today's `rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_s_bridge)`, with
-      `f_s_bridge = 1 - mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0]` as both call sites compute it
-      today;
-    - under `"composite"`, `rheology.composite_viscosity(f_s, mat.liquid.mu)`, ignoring `T` except for its shape, and
-      ignoring `gamma`.
+  - `skin.viscosity_of(sk, T, f_s, gamma) -> ndarray`, in Pa s: a thin wrapper that returns
+    `rheology.law_viscosity(sk.settings.rheology, T, f_s, gamma, mat.liquid.mu, rheology.bridge_solid_fraction(mat))`,
+    with `mat = sk.material`. It holds no formula and no law branch of its own (Global Constraints).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -202,10 +223,12 @@ Expected: FAIL (`SkinSettings` has no `rheology`).
 - [ ] **Step 3: Implement**
 
 - Add the field and its validation.
-- Add `law_viscosity`. Make `cell_viscosity` call it in place of its direct `rheology.viscosity` call, keeping its
+- Add `viscosity_of`. Make `cell_viscosity` call it in place of its direct `rheology.viscosity` call, keeping its
   non-melting and validity masks.
-- In `slurry_modes`, replace the `viscosity` lambda's direct call with `skin_mod.law_viscosity(sk, T, f_s, gamma)`.
-  Apply the `GAMMA_MAX` clip in `layer()` only under `"bridge"`.
+- In `slurry_modes`, replace the `viscosity` lambda's direct call and its own `f_bridge` line with
+  `skin_mod.viscosity_of(sk, T, f_s, gamma)`. In `layer()`, replace `np.minimum(shear, rheology.GAMMA_MAX)` with
+  `np.minimum(shear, rheology.rate_cap(sk.settings.rheology))`. That is the same operation with the same constant under
+  `"bridge"`, and no clip under `"composite"`, with no law branch in `skinbody.py`.
 - Update both docstrings.
 
 - [ ] **Step 4: Run the skin and skinbody tests**
