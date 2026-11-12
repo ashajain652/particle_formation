@@ -383,29 +383,73 @@ def slot_body():
     return mesh, phi, seeded(mesh, phi, 1e-3, base.lo)
 
 
+SLOT_FLOOR = -1.5e-3       # m: the slot's floor (y); its walls rise from it to the block's +y face at 3.5 mm
+
+
 def test_two_sheets_across_a_thin_gap_are_not_neighbours():
-    """Task 9b: the slot's two walls face each other 1.5 mm apart, half the 3 mm reach, and meet only round the slot's
-    floor at y = -1.5 mm. Between two wall points at heights y_a, y_b the path along the surface is about
-    (y_a + 1.5 mm) + (y_b + 1.5 mm) + 1.5 mm; with half a millimetre allowed for the patch graph cutting the floor's
-    corners, every pair above the height where it reaches the bound (NEIGHBOUR_PATH reaches, 6 mm: 1 mm) is past it. No
-    marker on one wall there is a neighbour of one on the other, though dozens of such pairs lie within the reach; every
-    wall marker keeps a neighbour on its own wall."""
-    from reentry_model.levelset.markers import NEIGHBOUR_PATH, NEIGHBOUR_REACH
+    """Task 9b (fix round 1): the slot's two walls face each other 1.5 mm apart, half the 3 mm reach, and meet only round
+    its floor, so that low on the walls the path along the surface between them is within the path bound. Over the walls'
+    whole height no marker on one wall is a neighbour of one on the other (their normals oppose and each lies in front
+    of the other), though dozens of such pairs lie within the reach; every wall marker keeps a neighbour on its own wall;
+    and the wall markers more than 1 mm above the floor have areas within a factor of 1.5 of the area nearest them. The
+    lower ones, by the concave corner at the floor, are reported and not bounded. (With the path bound alone, 23 pairs
+    crossed the gap, with wall markers 0.42 to 2.67 mm above the floor, and cut the lowest ones' areas to 0.137 of the
+    nearest-marker area.)"""
+    from reentry_model.levelset.markers import NEIGHBOUR_REACH
     mesh, phi, mk = slot_body()
     faces = mk.tessellate(mesh, phi)
     x, n = mk.x, mk.normal
-    bound = NEIGHBOUR_PATH * NEIGHBOUR_REACH * mk.spacing
-    high = x[:, 1] > (bound - 1.5e-3 + 0.5e-3) / 2.0 - 1.5e-3
-    wa = (np.abs(x[:, 0] + 0.75e-3) < 0.1e-3) & (n[:, 0] > 0.9) & high
-    wb = (np.abs(x[:, 0] - 0.75e-3) < 0.1e-3) & (n[:, 0] < -0.9) & high
+    wa = (np.abs(x[:, 0] + 0.75e-3) < 0.1e-3) & (n[:, 0] > 0.9)
+    wb = (np.abs(x[:, 0] - 0.75e-3) < 0.1e-3) & (n[:, 0] < -0.9)
     across = (wa[faces.i] & wb[faces.j]) | (wb[faces.i] & wa[faces.j])
     within = (np.linalg.norm(x[wa][:, None] - x[wb][None], axis=2) < NEIGHBOUR_REACH * mk.spacing).sum()
     own = np.zeros(mk.n, bool)
     for side in (wa, wb):
         same = side[faces.i] & side[faces.j]
         own[faces.i[same]] = own[faces.j[same]] = True
-    print("slot: walls of {} and {} markers, {} pairs across within the reach, {} of them neighbours".format(
-        int(wa.sum()), int(wb.sum()), int(within), int(across.sum())))
-    assert wa.sum() >= 4 and wb.sum() >= 4 and within >= 10
+    r = nearest_ratio(mk, mesh, phi)
+    height = x[:, 1] - SLOT_FLOOR
+    wall = wa | wb
+    high, low = wall & (height > 1e-3), wall & (height <= 1e-3)
+    print("slot: walls of {} and {} markers {:.2f} to {:.2f} mm above the floor, {} pairs across within the reach, {} of "
+          "them neighbours; areas over nearest-marker areas {:.3f} to {:.3f} more than 1 mm above the floor, {:.3f} to "
+          "{:.3f} by the floor's corner ({} markers)".format(
+              int(wa.sum()), int(wb.sum()), height[wall].min() * 1e3, height[wall].max() * 1e3, int(within),
+              int(across.sum()), r[high].min(), r[high].max(), r[low].min(), r[low].max(), int(low.sum())))
+    assert wa.sum() >= 10 and wb.sum() >= 10 and within >= 30 and height[wall].min() < 0.5e-3
     assert not across.any()
-    assert own[wa | wb].all()
+    assert own[wall].all()
+    assert r[high].min() >= 1.0 / OWNERSHIP_FACTOR and r[high].max() <= OWNERSHIP_FACTOR
+
+
+def test_a_concave_right_angle_corner_keeps_its_neighbours():
+    """Task 9b (fix round 1): a step, a floor (normal +z) meeting a wall (normal +x) at a concave right angle, markers
+    1 mm apart. Pairs across the corner lie each in front of the other, as the slot's walls do, but their normals are at
+    about a right angle (measured 0.34 to 0.47 for the dot product: the recovered normals blend within a cell of the
+    corner), far above OPPOSED_NORMALS (-0.5): the neighbour test keeps them, faces join the floor's and the wall's
+    markers by the corner, and none of their cells is capped."""
+    from reentry_model.levelset.markers import OPPOSED_NORMALS
+    base = BoxBase.around((-4e-3, -3e-3, -3e-3), (4e-3, 3e-3, 4e-3), 1e-3)
+
+    def level(x):
+        floor = np.maximum(x[:, 2], -x[:, 2] - 2.5e-3)                   # the slab 0 > z > -2.5 mm
+        step = np.maximum(np.maximum(x[:, 0], x[:, 2] - 3e-3), -x[:, 2] - 2.5e-3)   # and the block x < 0, z < 3 mm
+        box = np.maximum(np.abs(x[:, 0]) - 3.5e-3, np.abs(x[:, 1]) - 2.5e-3)
+        return np.maximum(np.minimum(floor, step), box)
+    mesh = _refined(base, lambda x: level(x + 0.13e-3), 0.25e-3)
+    phi = redistance(mesh, level(mesh.points + 0.13e-3))
+    mk = seeded(mesh, phi, 1e-3, base.lo)
+    faces = mk.tessellate(mesh, phi)
+    x, n = mk.x + 0.13e-3, mk.normal
+    fl = (np.abs(x[:, 2]) < 0.1e-3) & (n[:, 2] > 0.9) & (x[:, 0] > 0.0) & (x[:, 0] < 1.2e-3)
+    wl = (np.abs(x[:, 0]) < 0.1e-3) & (n[:, 0] > 0.9) & (x[:, 2] > 0.0) & (x[:, 2] < 1.2e-3)
+    across = np.flatnonzero((fl[faces.i] & wl[faces.j]) | (wl[faces.i] & fl[faces.j]))
+    i, j = faces.i[across], faces.j[across]
+    d = mk.x[j] - mk.x[i]
+    dot = np.einsum("ij,ij->i", n[i], n[j])
+    front = (np.einsum("ij,ij->i", n[i], d) > 0.0) & (np.einsum("ij,ij->i", n[j], d) < 0.0)
+    print("concave corner: {} floor and {} wall markers by it, {} faces across it (normals' dot products {}), {} "
+          "capped".format(int(fl.sum()), int(wl.sum()), len(across), np.round(dot, 2), int(mk.capped[fl | wl].sum())))
+    assert fl.sum() >= 3 and wl.sum() >= 3 and len(across) >= 3
+    assert front.all() and dot.min() > OPPOSED_NORMALS + 0.5
+    assert not mk.capped[fl | wl].any()

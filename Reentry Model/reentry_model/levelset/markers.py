@@ -17,24 +17,40 @@ interpolated, so the normal varies continuously along the surface.
 
 Tessellation (Ruling 2). Each marker's neighbours are the markers within NEIGHBOUR_REACH target spacings whose patches
 are joined by a path along phi's patch graph (cells sharing a node, each step the distance between the two patches'
-centroids; `patch_paths`) no longer than NEIGHBOUR_PATH reaches, so markers across a thin gap of metal or gas, which
-the surface joins only far round, are never neighbours. Task 9b: the rule before allowed at most two hops of the graph,
-but the patches are pieces of cut cells, on the body's meshes about a sixth of the 2 mm spacing across, so two hops
-reached about one spacing. On the 10 mm test cube 123 of its 219 cells were capped and the areas were 0.38 to 2.67
-times the area nearest each marker with nothing moving; at the step ends 64 to 95 per cent of the area changes the
-tessellation itself made sat on markers whose neighbours had crossed the hop limit. With the path, no cell is capped
-there and the areas are 0.68 to 1.10 times the nearest-marker areas (the least at the rounded edges and corners, where
-a tangent plane stands in poorly for the surface); on a 10 mm sphere on the design's 0.7 mm cells with markers at
-2 mm, 0.98 to 1.02 and none capped. The bound is two reaches, not less, because the centroids' path zigzags across
-sliver patches: with one marker per patch on a 25 mm sphere at 2 mm cells it is 1.04 times the straight distance at the
-median and 1.7 at the 95th percentile, and at 1.5 reaches a rotation of those markers lost 306 far pairs and changed
-areas by 8 %; at two it loses none. A slot 1.5 mm wide keeps its two walls apart from 1 mm above its floor, where the
-path round the floor passes the bound. The plan named 1.5 spacings for the reach; with one marker per patch at creation (the
-patches' areas spread over three decades) the true Voronoi cells reach past 0.75 spacings on most markers, so at 1.5
-the cap bound 78 % of the cells on a 25 mm sphere at 2 mm cells, a capped cell could not grow with the surface (a
-uniform stretch to 26 mm gave 6 % less than (26/25)^2) and a rotation changed areas by 73 % (7 % with the two hops). At
-3.0 none is capped there (0.55 % at 0.7 mm cells near the surface, one marker per patch), no pair within the reach is
-lost to the path bound, and the rotation changes areas by 0.3 %. In each marker's tangent plane the neighbours' offsets, projected, bound its Voronoi
+centroids; `patch_paths`) no longer than NEIGHBOUR_PATH reaches, less the pairs that face each other across gas: their
+normals' dot product below OPPOSED_NORMALS (more than 120 degrees apart) and each in front of the other (n_i . d > 0 and
+n_j . d < 0, d from i to j), as the two walls of a slot are. The path bound parts sheets that the surface joins only far
+round, whatever lies between them; the normals part facing sheets however near the surface joins them. Neither parts
+the two faces of a thin plate of metal (back to back, each behind the other) where the surface joins them within the
+bound, nor a wall from the rim of the wall facing it, where the rim's normal blends with the face beyond it (10 short
+faces in the slot below).
+
+Task 9b. The rule before allowed at most two hops of the graph, but the patches are pieces of cut cells, on the body's
+meshes about a sixth of the 2 mm spacing across, so two hops reached about one spacing. On the 10 mm test cube 123 of its
+219 cells were capped and the areas were 0.38 to 2.67 times the area nearest each marker with nothing moving; at the
+step ends 64 to 95 per cent of the area changes the tessellation itself made sat on markers whose neighbours had crossed
+the hop limit. With the path, no cell is capped there and the areas are 0.68 to 1.10 times the nearest-marker areas (the
+least at the rounded edges and corners, where a tangent plane stands in poorly for the surface); on a 10 mm sphere on the
+design's 0.7 mm cells with markers at 2 mm, 0.98 to 1.02 and none capped. The bound is two reaches, not less, because
+the centroids' path zigzags across sliver patches: with one marker per patch on a 25 mm sphere at 2 mm cells it is 1.04
+times the straight distance at the median, 1.7 at the 95th percentile and 2.5 at the 99th, and at 1.5 reaches a rotation
+of those markers lost 306 far pairs and changed areas by 8 %; at two it loses none. The path bound alone (fix round 1)
+left 23 pairs of a slot's walls neighbours (the slot 1.5 mm wide, markers 1 mm apart, the walls joined round the floor
+within the bound up to 2.7 mm above it), and they cut the lowest wall markers' areas to 0.137 of the nearest-marker
+area; with the normals none is, and the least is 0.455, by the floor's concave corner. The threshold: walls facing each
+other within 60 degrees of parallel (a V narrower than 60 degrees, a slot) are across gas, and a tangent plane cannot
+stand for both; at a concave right angle the dot product is about zero (0.34 to 0.47 measured, the normals blending
+within a cell of the corner) and the pairs stay. In the slot the facing walls' pairs lie below -0.9 and the pairs of a
+wall with the facing rim between -0.9 and -0.5.
+
+The plan named 1.5 spacings for the reach; with one marker per patch at creation (the patches' areas spread over three
+decades) the true Voronoi cells reach past 0.75 spacings on most markers, so at 1.5 the cap bound 78 % of the cells on a
+25 mm sphere at 2 mm cells, a capped cell could not grow with the surface (a uniform stretch to 26 mm gave 6 % less than
+(26/25)^2) and a rotation changed areas by 73 % (7 % with the two hops). At 3.0 none is capped there (0.55 % at 0.7 mm
+cells near the surface, one marker per patch), no pair within the reach is lost to the path bound, and the rotation
+changes areas by 0.3 %.
+
+In each marker's tangent plane the neighbours' offsets, projected, bound its Voronoi
 cell (the half-planes y . d <= |d|^2 / 2), clipped from a CAP_SIDES-gon whose inscribed radius is half the reach (no
 neighbour beyond the reach could bound the cell inside it); a cell that the cap still bounds is flagged `capped`. Each
 edge is a face to the neighbour that made it. Faces are symmetrised: a pair's face has the mean of its two edge lengths
@@ -87,6 +103,8 @@ NEIGHBOUR_REACH = 3.0      # target spacings: markers farther apart are never ne
 NEIGHBOUR_PATH = 2.0       # the path along phi's patch graph between neighbours' patches at most this times the reach
                            # (Task 9b; see the docstring)
 PATH_CHUNK = 64            # sources of one Dijkstra in `patch_paths` at most
+OPPOSED_NORMALS = -0.5     # two markers whose normals' dot product is below this, each in front of the other, face
+                           # each other across gas and are never neighbours (Task 9b, fix round 1; see the docstring)
 CAP_SIDES = 16             # sides of the polygon a Voronoi cell is clipped from
 SNAP_PASSES = 2            # the snap applied once and iterated once (section 9.1)
 NEWTON_ROUNDS = 8          # cell-gradient Newton steps after them at most (`_cell_newton`; Task 9, fix round 4)
@@ -434,8 +452,13 @@ class Markers:
         pairs = cKDTree(self.x).query_pairs(reach, output_type="ndarray")
         if not len(pairs):
             return pairs.reshape(0, 2)
-        pi, pj = self.patch[pairs[:, 0]], self.patch[pairs[:, 1]]
-        ok = (pi >= 0) & (pj >= 0)
+        i, j = pairs[:, 0], pairs[:, 1]
+        d = self.x[j] - self.x[i]
+        ni, nj = self.normal[i], self.normal[j]
+        facing = ((np.einsum("ij,ij->i", ni, nj) < OPPOSED_NORMALS) & (np.einsum("ij,ij->i", ni, d) > 0.0)
+                  & (np.einsum("ij,ij->i", nj, d) < 0.0))       # across a gap of gas: each in front of the other
+        pi, pj = self.patch[i], self.patch[j]
+        ok = (pi >= 0) & (pj >= 0) & ~facing
         pairs, pi, pj = pairs[ok], pi[ok], pj[ok]
         limit = NEIGHBOUR_PATH * reach
         return pairs[patch_paths(mesh, P, pi, pj, limit) <= limit]
