@@ -726,7 +726,7 @@ class Skins:
         eta[flowing] = rheology.viscosity(T[flowing], f_s, gamma[flowing], liquid.mu, f_s_bridge)
         return eta
 
-    def momentum_step(self, dt, tau, push, g_n=None):
+    def momentum_step(self, dt, tau, push):
         """One implicit (backward-Euler) step dt [s] of every column's velocities through its depth, each component
         apart (the skyscrapers' momentum step, matched by amendment):
 
@@ -744,9 +744,6 @@ class Skins:
         CRUST_VISCOSITY. Each flowing cell's viscosity (`viscosity`) is at its own shear rate, the mean over its two
         faces of the stress there over its viscosity, found by fixed point from the step's starting velocities: at
         most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by more than SHEAR_TOL relatively.
-
-        `g_n` [m/s2], the deceleration's part along the normal, is accepted for the plan's interface and not used: the
-        momentum through the depth does not depend on it (it enters the thickness push that Task 6 builds into `push`).
 
         Updates U and returns a MomentumBook: the impulses of the push and the shear on the moving cells and the
         momentum given to the wall (the anchored metal and the volume beneath), so that the columns' momentum change is
