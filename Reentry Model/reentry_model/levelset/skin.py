@@ -138,11 +138,17 @@ class MomentumBook:
     """What one `Skins.momentum_step` did, per column [kg m/s] (n, 3): the impulses of the push and of the gas shear on
     the moving cells, and the momentum given to the wall -- the anchored metal and the volume beneath the base: the
     momentum the anchored cells held and the drag the moving cells lost to them -- so that the momentum change is
-    push + shear - wall; and the shear-rate fixed point's passes."""
+    push + shear - wall; and the shear-rate fixed point's passes. With response=True (Task 6, for the implicit thickness
+    terms): every cell's velocity per unit push, `response` (n, K) [m/s per N/m3], from the last pass's system with the
+    push alone as its right-hand side, and the drag of the anchored metal and the volume beneath on it, `wall_response`
+    (n,) [m3] (the drag coefficients times the response), so that a change dG [N/m3] of the push changes the cells'
+    momentum by dt (V - wall_response) dG, V the column's moving volume, the rest going to the wall."""
     push: np.ndarray
     shear: np.ndarray
     wall: np.ndarray
     passes: int
+    response: np.ndarray = None
+    wall_response: np.ndarray = None
 
 
 def _tridiagonal(lower, diag, upper, rhs):
@@ -186,6 +192,8 @@ class Skins:
         self.props = PropertyTable(material)      # every h, cp_eff, k and f_l the skins read (module docstring)
         self.dH = None             # (n, K) J/K, each cell's dH/dT_b while a trial pass is open (`conduct`), else None
         self.momentum_out = np.zeros((self.n, 3))   # kg m/s, what the last `remove_feed` took with the metal
+        self.flow_memory = np.zeros(3)  # the last heat sub-step's largest Courant number, Rayleigh-Taylor growth and flow
+                                        # sub-step [s] (Task 6, `runoff.flow_cycles`); zeros: no flow remembered
         self.install(np.zeros((self.n, 1)), np.zeros((self.n, 1)), np.zeros(self.n, dtype=np.int64))
 
     # -- storage ----------------------------------------------------------------------------------------------------
@@ -824,7 +832,7 @@ class Skins:
         eta[flowing] = rheology.viscosity(T[flowing], f_s, gamma[flowing], liquid.mu, f_s_bridge)
         return eta
 
-    def momentum_step(self, dt, tau, push):
+    def momentum_step(self, dt, tau, push, response=False):
         """One implicit (backward-Euler) step dt [s] of every column's velocities through its depth, each component
         apart (the skyscrapers' momentum step, matched by amendment):
 
@@ -843,6 +851,7 @@ class Skins:
         faces of the stress there over its viscosity, found by fixed point from the step's starting velocities: at
         most SHEAR_PASSES passes, ending when no flowing cell's viscosity moves by more than SHEAR_TOL relatively.
 
+        With `response` the book also carries each cell's velocity per unit push and the wall's share of it (MomentumBook).
         Updates U and returns a MomentumBook: the impulses of the push and the shear on the moving cells and the
         momentum given to the wall (the anchored metal and the volume beneath), so that the columns' momentum change is
         push + shear - wall to round-off. Only the columns where a cell moves are solved; in the others every cell is
@@ -856,19 +865,24 @@ class Skins:
         moving = valid & ~anchored
         wall = ((self.m * anchored)[..., None] * self.U).sum(axis=1)       # what the anchored cells held, now at rest
         book = MomentumBook(np.zeros((n, 3)), np.zeros((n, 3)), wall, 0)
+        if response:
+            book.response, book.wall_response = np.zeros(self.m.shape), np.zeros(n)
         U = np.zeros_like(self.U)
         live = np.flatnonzero(moving.any(axis=1))
         if len(live):
-            U[live], push_i, shear_i, wall_i, book.passes = self._momentum_columns(live, T, anchored, dt, tau[live],
-                                                                                      push[live])
+            U[live], push_i, shear_i, wall_i, book.passes, resp = self._momentum_columns(
+                live, T, anchored, dt, tau[live], push[live], response)
             book.push[live], book.shear[live] = push_i, shear_i
             book.wall[live] += wall_i
+            if response:
+                book.response[live], book.wall_response[live] = resp
         self.U = U
         return book
 
-    def _momentum_columns(self, r, T_all, anchored, dt, tau, push):
+    def _momentum_columns(self, r, T_all, anchored, dt, tau, push, response=False):
         """`momentum_step` on the columns r (each with a moving cell): (U (len r, K, 3), push impulse, shear impulse,
-        the wall's share of the moving cells' momentum (both (len r, 3)), the fixed point's passes)."""
+        the wall's share of the moving cells' momentum (both (len r, 3)), the fixed point's passes, and with `response`
+        (the cells' velocity per unit push (len r, K), its drag on the wall (len r,)), else None)."""
         nr, K = len(r), self.m.shape[1]
         rows = np.arange(nr)
         valid, T = self.valid[r], T_all[r]
@@ -918,7 +932,9 @@ class Skins:
             Db = np.where(bottom_flows, np.where(np.isfinite(eta_b), eta_b, 0.0) / (0.5 * dz[rows, last]), 0.0)
             return D, Db
 
-        def solve(D, Db):
+        def solve(D, Db, rhs_u=rhs_u):
+            """The cells' velocities (nr, K, c) for the right-hand sides rhs_u (c, nr, Ku), one per component."""
+            nc = rhs_u.shape[0]
             C = A_i * D                                                   # N s/m: the drag through each interface
             Cu = np.zeros((nr, max(Ku - 1, 0)))
             Cu[ir, unit[ir, ik]] = C[ir, ik]                              # unit a's face with unit a + 1
@@ -931,11 +947,11 @@ class Skins:
             upper[:, :-1] = np.where(moving_u[:, 1:], -Cu, 0.0)
             held = ~moving_u
             diag, lower, upper = np.where(held, 1.0, diag), np.where(held, 0.0, lower), np.where(held, 0.0, upper)
-            def three(x):                                                 # the three components solved as rows
-                return np.concatenate([x, x, x])
-            rhs = np.where(three(held), 0.0, rhs_u.reshape(3 * nr, Ku))
+            def three(x):                                                 # the components solved as rows
+                return np.concatenate([x] * nc)
+            rhs = np.where(three(held), 0.0, rhs_u.reshape(nc * nr, Ku))
             u = _tridiagonal(three(lower), three(diag), three(upper), rhs)
-            u = np.moveaxis(u.reshape(3, nr, Ku), 0, -1)
+            u = np.moveaxis(u.reshape(nc, nr, Ku), 0, -1)
             return np.where(moving[..., None], u[rows[:, None], unit], 0.0)
 
         def rates(U, D, Db, eta):
@@ -966,4 +982,8 @@ class Skins:
         to_wall = dt * (drag[..., None] * U).sum(axis=1)
         push_impulse = dt * np.where(moving[..., None], push[:, None, :] * V[..., None], 0.0).sum(axis=1)
         shear_impulse = dt * np.where(top_moves[:, None], tau * A_top[:, None], 0.0)
-        return U, push_impulse, shear_impulse, to_wall, passes
+        resp = None
+        if response:                                                       # the last pass's system, a unit push alone
+            rr = solve(D, Db, lump(np.where(moving, V, 0.0))[None])[..., 0]
+            resp = rr, (drag * rr).sum(axis=1)
+        return U, push_impulse, shear_impulse, to_wall, passes, resp
