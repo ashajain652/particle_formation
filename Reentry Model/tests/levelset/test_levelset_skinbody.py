@@ -555,3 +555,19 @@ def test_the_snap_books_the_markers_its_last_round_brings_from_afar_and_their_sl
     assert far == 3 and tally.snap_fallback == 3
     assert tally.snap_slide == slide and slide > 0.0
     assert off <= SNAP_TOL
+
+
+def test_the_test_cube_s_markers_keep_their_neighbours():
+    """Task 9b (the ruling on the neighbour test): on the test cube as the body builds it (1.4 mm fine cells, 0.7 mm at
+    the rounded edges, markers one per 2 mm voxel) under 1 % of the cells are bounded by the cap and every area is within
+    a factor of 1.5 of the area nearest the marker. Measured before the ruling: 123 of 219 cells capped, areas 0.38 to
+    2.67 times the nearest-marker areas."""
+    from test_levelset_markers import CAPPED_SHARE, OWNERSHIP_FACTOR, nearest_ratio
+    body = cube_body()
+    mk = body.markers
+    mk.tessellate(body.mesh, body.phi)
+    r = nearest_ratio(mk, body.mesh, body.phi)
+    print("test cube: {} markers, {} capped; areas {:.3f} to {:.3f} times the nearest-marker areas".format(
+        mk.n, int(mk.capped.sum()), r.min(), r.max()))
+    assert mk.capped.mean() < CAPPED_SHARE
+    assert r.min() >= 1.0 / OWNERSHIP_FACTOR and r.max() <= OWNERSHIP_FACTOR

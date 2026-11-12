@@ -4,9 +4,12 @@ split, merged by the hand-over rule and trapped, with the skins' books exact."""
 import numpy as np
 import pytest
 
+from scipy.spatial import cKDTree
+
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
-from reentry_model.levelset.markers import Markers
+from reentry_model.levelset.levelset import redistance
+from reentry_model.levelset.markers import Markers, surface_samples
 from reentry_model.levelset.skin import Skins, SkinSettings
 
 from materials import ConstMaterial, LinearMeltMaterial
@@ -312,3 +315,97 @@ def test_snap_converges_where_phi_is_far_from_a_distance():
     mk = Markers(x0, [[0.0, 0.0, 1.0]], [1.0], [[0.0, 0.0]], [0], [-1], h)
     mk.snap(mesh, phi, reach=np.inf)
     assert abs(mk.x[0, 2] - 0.3e-3) <= 1e-15 and np.allclose(mk.x[0, :2], x0[0, :2], atol=1e-15)
+
+
+# -- the neighbours on meshes whose patches are much smaller than the spacing (Task 9b) -------------------------------
+DESIGN_SPACING = 2e-3      # m: the body's marker spacing (skinbody.MARKER_SPACING)
+DESIGN_FINE = 0.7e-3       # m: the body's fine cells (its default fine_size)
+CAPPED_SHARE = 0.01        # of the cells: at most this many bounded by the cap on a continuous surface (Task 9b ruling)
+OWNERSHIP_FACTOR = 1.5     # a static tessellation's area within this factor of the area nearest the marker (the same)
+
+
+def seeded(mesh, phi, spacing, lo):
+    """Markers seeded as the body seeds them (skinbody.LevelSetSkinBody): one per voxel of the target spacing, on the
+    voxel's largest patch."""
+    P = patches(mesh, phi)
+    key = np.floor((P.centroid - np.asarray(lo)) / spacing).astype(np.int64)
+    order = np.lexsort((-P.area, key[:, 2], key[:, 1], key[:, 0]))
+    k = key[order]
+    first = np.r_[True, np.any(k[1:] != k[:-1], axis=1)]
+    return Markers.create(mesh, phi, np.sort(order[first]), spacing=spacing)
+
+
+def nearest_ratio(mk, mesh, phi):
+    """Each marker's tessellated area over the area of phi nearer to it than to any other marker (surface samples a
+    sixteenth of the spacing across), the two scaled to the same total."""
+    y, w = surface_samples(mesh, phi, mk.spacing / 16.0)
+    _, j = cKDTree(mk.x).query(y)
+    near = np.bincount(j, w, minlength=mk.n)
+    return mk.area / near * near.sum() / mk.area.sum()
+
+
+def _refined(base, level, fine):
+    """The box mesh refined to `fine` where |level| is within two fine cells (and the leaf's own size) of zero."""
+    return build(base, lambda x, s: np.where(np.abs(level(x)) < 2.0 * fine + 0.87 * s, fine, np.inf))
+
+
+def test_the_tessellation_keeps_its_neighbours_on_a_sphere_at_design_size_cells():
+    """Task 9b (the ruling on the neighbour test): a 10 mm sphere on the body's design cells (0.7 mm near the surface)
+    with markers seeded as the body seeds them, one per 2 mm voxel. The patches are pieces of cut cells, about a sixth of
+    the spacing across; the neighbour test bounds the path along the patch graph, not its hops, so the true neighbours
+    are found: under 1 % of the cells are bounded by the cap, and every area is within a factor of 1.5 of the area
+    nearest the marker. (Two hops of the patch graph, the rule before, capped most cells on the test cube and left areas
+    0.38 to 2.67 times their nearest-marker areas.)"""
+    R = 10e-3
+    base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
+    mesh = _refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
+    phi = np.linalg.norm(mesh.points, axis=1) - R
+    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    mk.tessellate(mesh, phi)
+    r = nearest_ratio(mk, mesh, phi)
+    print("design-size sphere: {} markers, {} capped; areas {:.3f} to {:.3f} times the nearest-marker areas".format(
+        mk.n, int(mk.capped.sum()), r.min(), r.max()))
+    assert mk.capped.mean() < CAPPED_SHARE
+    assert r.min() >= 1.0 / OWNERSHIP_FACTOR and r.max() <= OWNERSHIP_FACTOR
+
+
+def slot_body():
+    """A block 7 x 7 x 5 mm with a slot 1.5 mm wide cut 5 mm deep into it from its +y face through its whole height, on
+    0.25 mm cells near the surface; markers seeded at a 1 mm spacing (a reach of 3 mm, wider than the slot)."""
+    base = BoxBase.around((-5e-3,) * 3, (5e-3,) * 3, 1e-3)
+
+    def level(x):
+        block = np.max(np.abs(x) - np.array([3.5e-3, 3.5e-3, 2.5e-3]), axis=1)
+        cut = np.maximum(np.abs(x[:, 0]) - 0.75e-3, -1.5e-3 - x[:, 1])          # negative inside the slot
+        return np.maximum(block, -cut)
+    mesh = _refined(base, level, 0.25e-3)
+    phi = redistance(mesh, level(mesh.points))
+    return mesh, phi, seeded(mesh, phi, 1e-3, base.lo)
+
+
+def test_two_sheets_across_a_thin_gap_are_not_neighbours():
+    """Task 9b: the slot's two walls face each other 1.5 mm apart, half the 3 mm reach, and meet only round the slot's
+    floor at y = -1.5 mm. Between two wall points at heights y_a, y_b the path along the surface is about
+    (y_a + 1.5 mm) + (y_b + 1.5 mm) + 1.5 mm; with half a millimetre allowed for the patch graph cutting the floor's
+    corners, every pair above the height where it reaches the bound (NEIGHBOUR_PATH reaches, 6 mm: 1 mm) is past it. No
+    marker on one wall there is a neighbour of one on the other, though dozens of such pairs lie within the reach; every
+    wall marker keeps a neighbour on its own wall."""
+    from reentry_model.levelset.markers import NEIGHBOUR_PATH, NEIGHBOUR_REACH
+    mesh, phi, mk = slot_body()
+    faces = mk.tessellate(mesh, phi)
+    x, n = mk.x, mk.normal
+    bound = NEIGHBOUR_PATH * NEIGHBOUR_REACH * mk.spacing
+    high = x[:, 1] > (bound - 1.5e-3 + 0.5e-3) / 2.0 - 1.5e-3
+    wa = (np.abs(x[:, 0] + 0.75e-3) < 0.1e-3) & (n[:, 0] > 0.9) & high
+    wb = (np.abs(x[:, 0] - 0.75e-3) < 0.1e-3) & (n[:, 0] < -0.9) & high
+    across = (wa[faces.i] & wb[faces.j]) | (wb[faces.i] & wa[faces.j])
+    within = (np.linalg.norm(x[wa][:, None] - x[wb][None], axis=2) < NEIGHBOUR_REACH * mk.spacing).sum()
+    own = np.zeros(mk.n, bool)
+    for side in (wa, wb):
+        same = side[faces.i] & side[faces.j]
+        own[faces.i[same]] = own[faces.j[same]] = True
+    print("slot: walls of {} and {} markers, {} pairs across within the reach, {} of them neighbours".format(
+        int(wa.sum()), int(wb.sum()), int(within), int(across.sum())))
+    assert wa.sum() >= 4 and wb.sum() >= 4 and within >= 10
+    assert not across.any()
+    assert own[wa | wb].all()
