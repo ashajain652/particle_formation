@@ -31,8 +31,10 @@ theory the spraying solves, `--dispersion table|profile`:
   its threshold temperature.
 
 The flights compare the two on the floor-like share (the fraction of resolved columns whose wall is a floor-like kink),
-where the walls land against the 906.4 K isotherm (the temperature of the bridge between slurry and rigid metal), the mass
-each mode sprayed (gradient, gas-driven, Rayleigh-Taylor and slurry) and the droplet sizes. The options below are
+where the walls land against the 906.4 K isotherm (the low end of the rheology's bridge, `rheology.BRIDGE_LOW`: the
+906.4 to 908 K band in which the slurry's viscosity is interpolated, without data, to the liquid's; Step 8 names the
+columns this comparison reads), the mass each mode sprayed (gradient, gas-driven, Rayleigh-Taylor and slurry) and the
+droplet sizes. The options below are
 `--spray-gates 2026-11-10` and `--slip-band on` throughout, so that the only thing that differs inside a pair is
 `--dispersion`.
 
@@ -242,7 +244,10 @@ launch d100__kd__table "${FRESH[@]}" --dispersion table
 ```
 
 Then wait until (c) has built the mesh and made its first history row (its `.progress` file then has a line), for at most
-30 minutes, and stop if the flight has already ended:
+30 minutes, and stop if the flight has already ended. **The block below polls with `sleep`, and a Claude Code harness may
+block a `sleep` run in the foreground:** an agent should run this block with its background-run facility
+(`run_in_background`) and read its output when it ends, or wait with its own monitoring facility instead, checking the
+same three things (the `.progress` file has a line, the log has an `exit` line, 30 minutes have passed):
 
 ```bash
 source "$HOME/kinked-dispersion-flights/env.sh"
@@ -352,21 +357,44 @@ What comes back, per flight, and why:
   stopped early), and `<label>.csv`, the macro-step history written at the end. On `profile` flights it carries the history columns of
   `melt_profile.DISPERSION_COLUMNS`: `floor_like_share` (the share of resolved columns whose wall is a floor-like kink),
   `fluid_like_columns` (the count of columns that are fluid-like), `depth_to_wall_median_mm` (the median depth to the
-  wall in millimetres), `floor_re_median` (the median floor Reynolds number), `we_s_profile_median` (the median surface
-  Weber number the profile gave) and `sprayed_gradient_kg` and `sprayed_gas_driven_kg` (the mass sprayed by the gradient
-  mode and by the gas-driven mode, in kilograms). Also `released_mass_kg`, `n_released`, `r_median_um` and `r_max_um`.
-  On `table` flights those seven columns are absent.
+  wall in millimetres), `depth_to_bridge_low_median_mm` (the median depth below the surface of the 906.4 K isotherm, in
+  millimetres), `T_at_wall_median_K` (the median temperature at the wall's depth, in kelvin), `floor_re_median` (the
+  median floor Reynolds number), `we_s_profile_median` (the median surface Weber number the profile gave) and
+  `sprayed_gradient_kg` and `sprayed_gas_driven_kg` (the mass sprayed by the gradient mode and by the gas-driven mode, in
+  kilograms). Also `released_mass_kg`, `n_released`, `r_median_um` and `r_max_um`. On `table` flights those nine
+  columns are absent. In flight (b)'s `<label>.csv` the first row, the saved step's at 178.5 s, carries an empty step's
+  values (a share of NaN, a count of 0, NaN medians), because the state's last plan was made on `table`; its row at
+  179.0 s, the only row of its `.rows.csv`, is the profile path's.
 - `<label>.json`: the run's settings, results (mass released, droplets, residuals) and provenance, with `settings.dispersion`.
 - `<label>.log`: the end of the flight, its wall time and peak memory.
 - `<label>/particles_summary.csv` and `size_distribution.csv`: droplets per macro step and per size bin.
 - `<label>/particles.npz`, **the droplet records, one row per released patch** (27 columns on `table`; 36 on `profile`,
   the 27 followed by `depth_to_wall_m`, `floor_like_wall`, `floor_re`, `kink_depth_m`, `kink_T_K`, `release_depth_m`,
-  `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`). The mass by mode and the droplet sizes come from it: `branch`
+  `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`; `depth_to_wall_m` is the wall's depth in metres,
+  `floor_like_wall` is 1 for a floor-like wall and 0 for the rigid front, and `kink_depth_m` and `kink_T_K` are the
+  depth in metres and the temperature in kelvin of the column's first kink). The mass by mode and the droplet sizes come
+  from it: `branch`
   (0 Girin thick, 1 thin, 2 rarefied, 3 Rayleigh-Taylor, 4 regime 2, 5 the gradient mode on the profile), `dm_kg` (mass
   released), `r_m` (droplet radius) and `solid_fraction` (above zero for slurry). **It is not committed**: it can be tens of
   MB. Check its size in `large_files.txt`; if it is under 50 MB per flight, copy the `particles.npz` files into the
   results folder too (`cp "$OUT/<label>/particles.npz" "$R/<label>/"`) and commit them, otherwise tell Asha where they are
   and how big they are, and Asha fetches them (Asha's report needs them).
+
+**Where the walls land against the 906.4 K isotherm** is read from two sources, and only from these; name them in the
+report:
+
+- **The history, per macro step, in aggregate** (`profile` flights): `depth_to_wall_median_mm` against
+  `depth_to_bridge_low_median_mm`, and `T_at_wall_median_K` against 906.4 K. All three are taken over the same resolved
+  columns, each interpolated between cell centres as the rigid front is. A column that the isotherm does not cross (its
+  top cell colder than 906.4 K, or every cell warmer) has no isotherm depth and is left out of that median only, so the
+  two depth medians can be over different columns: they compare the walls with the isotherm in aggregate, not column by
+  column. A median temperature at the wall above 906.4 K means that the median wall sits in metal warmer than the
+  bridge's low end, which, where the temperature falls with depth, is above the isotherm; a fluid-like wall is the
+  rigid front and sits at the rigid temperature (895.1 K for AA7075) by construction. For (b) only the row at 179.0 s
+  has these values (above); (a), on `table`, has none.
+- **The droplet records, per spraying patch** (`profile` flights' `particles.npz`): `depth_to_wall_m` against
+  `kink_depth_m`, with `kink_T_K`, the first kink's temperature, against 906.4 K, and `floor_like_wall`. These exist only
+  for patches that released mass, and the first kink is not always the wall.
 
 ```bash
 source "$HOME/kinked-dispersion-flights/env.sh"
@@ -391,12 +419,18 @@ measures, its units and why it matters; terms spelled out; no symbols in prose).
 2. For each flight, from its JSON's `results` and its history: the mass released (`released_mass_kg`), the number of
    droplets (`n_released`), their median and largest radius (`r_median_um`, `r_max_um`, in micrometres) and, for (c) and
    (d), when the first droplet left (the first row with `n_released` above zero).
-3. For the `profile` flights, the `DISPERSION_COLUMNS` at the first spraying step and at the end: the floor-like share,
-   the number of fluid-like columns, the median depth to the wall, the median floor Reynolds number, the median surface
-   Weber number, and the mass sprayed by the gradient and the gas-driven modes.
-4. The cost: each flight's wall time and peak memory (the end of its log), the timing check's two medians (Step 4), and
+3. For the `profile` flights, the `DISPERSION_COLUMNS` at the first spraying step and at the end (for (b), its row at
+   179.0 s): the floor-like share, the number of fluid-like columns, the median depth to the wall, the median depth of
+   the 906.4 K isotherm, the median temperature at the wall, the median floor Reynolds number, the median surface Weber
+   number, and the mass sprayed by the gradient and the gas-driven modes.
+4. For the `profile` flights, the numbers for where the walls land against the 906.4 K isotherm, from the two sources
+   that Step 8 names and saying which is which. From the history (aggregate): `depth_to_wall_median_mm` beside
+   `depth_to_bridge_low_median_mm`, and `T_at_wall_median_K`, at the same rows as item 3. From the records (per spraying
+   patch): the median, 10th and 90th percentiles of `depth_to_wall_m` over `kink_depth_m` and of `kink_T_K`, split by
+   `floor_like_wall`, and the number of patches.
+5. The cost: each flight's wall time and peak memory (the end of its log), the timing check's two medians (Step 4), and
    that the four ran side by side.
-5. Anything unexpected: a restart, a failure, an environment difference from the laptop (Step 3), or a timing check that
+6. Anything unexpected: a restart, a failure, an environment difference from the laptop (Step 3), or a timing check that
    differed from Step 4's expected values.
 
 Do not interpret the results beyond this: the comparison of the two theories (the floor-like share, where the walls land
