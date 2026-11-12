@@ -1,5 +1,6 @@
 """dispersion.py: Girin's Eq. (1) solved numerically -- onset, asymptotes, the cached table (spec Step 3 section 9)."""
 import os
+import warnings
 
 import numpy as np
 import pytest
@@ -254,3 +255,103 @@ def test_the_generalised_route_agrees_with_the_standard_one(monkeypatch):
         for j in range(len(k)):
             want = standard[i, j, :n + 2]
             assert_same_roots(general[i, j, :n + 2], want, atol=1e-10 * np.max(np.abs(want)))
+
+
+# ---- the floor test and the wall (spec 6.3) ----
+
+NU_L = 1.3e-3 / 2400.0          # the liquid's kinematic viscosity, m2/s
+
+
+def _plug(depth, u_top, u_floor=0.0, wall_factor=2.0, rho=1.0):
+    """One breakpoint at `depth`: the speed falls from u_top to u_floor there and is uniform below (a kink)."""
+    return dp.KinkedProfiles.one([depth], [u_top, u_floor, u_floor], wall=wall_factor * depth, rho=rho)
+
+
+def test_the_floor_constants_are_the_specs():
+    assert dp.KINK_DROP == 0.2 and dp.FLOOR_RE == 1.0 and dp.FASTEST_KD == 1.225
+
+
+def test_floor_reynolds_reproduces_the_crossover_speeds():
+    expected = {500.0: (66.0, 6.6, 2.2, 0.74), 4000.0: (530.0, 53.0, 18.0, 5.9)}
+    for factor, speeds in expected.items():
+        for d, u_cross in zip((5e-6, 50e-6, 150e-6, 450e-6), speeds):
+            re1 = dp.floor_reynolds(_plug(d, 1.0), np.array([[factor * NU_L]]))
+            assert re1.shape == (1, 1)
+            assert 1.0 / re1[0, 0] == pytest.approx(u_cross, rel=0.02)     # Re_f is linear in the jump
+            assert dp.floor_reynolds(_plug(d, u_cross), np.array([[factor * NU_L]]))[0, 0] == pytest.approx(1.0, rel=0.02)
+
+
+def test_a_five_fold_drop_is_a_kink_and_a_four_fold_is_not():
+    five = dp.KinkedProfiles.one([1.0], [3.0, 2.0, 1.8], wall=2.0)        # slopes 1.0 above and 0.2 below
+    four = dp.KinkedProfiles.one([1.0], [3.0, 2.0, 1.75], wall=2.0)       # slopes 1.0 and 0.25
+    for p, ratio in ((five, 0.2), (four, 0.25)):
+        s = p.slopes()
+        assert abs(s[0, 1]) / abs(s[0, 0]) == pytest.approx(ratio, rel=1e-12)
+    assert dp.kinks(five)[0, 0] and not dp.kinks(four)[0, 0]
+    assert dp.kinks(four, kink_drop=0.3)[0, 0]                           # the threshold is a parameter
+    assert dp.kinks(_plug(1.0, 2.0))[0, 0]                               # a plug: the shear drops to zero below
+    reversed_ = dp.KinkedProfiles.one([1.0], [1.0, 2.0, 0.0], wall=2.0)  # the speed rises then falls: |S| 1 then 2
+    assert not dp.kinks(reversed_)[0, 0]
+    still = dp.KinkedProfiles.one([1.0], [1.0, 1.0, 0.0], wall=2.0)      # no shear above: not a kink whatever is below
+    assert not dp.kinks(still)[0, 0]
+    flat = dp.KinkedProfiles.one([1.0], [1.0, 1.0, 1.0], wall=2.0)
+    assert not dp.kinks(flat)[0, 0]
+
+
+def test_the_wall_is_the_shallowest_floor_like_kink():
+    # Two kinks with the jump measured from the surface: |10 - 6| * 1 and |10 - 2| * 2 over 1.225 nu.
+    # Kinks at both breakpoints, with slopes 4, 0.5, 0.05.
+    p = dp.KinkedProfiles.one([1.0, 2.0], [10.0, 6.0, 5.5, 5.45], wall=3.0)
+    assert dp.kinks(p).tolist() == [[True, True]]
+    re_a = 4.0 * 1.0 / (dp.FASTEST_KD * 1.0)           # nu 1 at both: jumps 4 and 4.5, depths 1 and 2
+    re_b = 4.5 * 2.0 / (dp.FASTEST_KD * 1.0)
+    # (3, 0.5): choose nu_below so the first is 3 and the second 0.5.
+    nu = np.array([[re_a / 3.0, re_b / 0.5]])
+    w = dp.place_wall(p, nu)
+    assert np.allclose(dp.floor_reynolds(p, nu), [[3.0, 0.5]])
+    assert w.floor.tolist() == [True] and w.index.tolist() == [1]          # the deep one
+    assert w.depth[0] == 2.0 and w.speed[0] == 5.5 and w.re_f[0] == pytest.approx(0.5)
+    # Both below the threshold: the shallow one.
+    w = dp.place_wall(p, np.array([[re_a / 0.4, re_b / 0.5]]))
+    assert w.floor[0] and w.index[0] == 0 and w.depth[0] == 1.0 and w.speed[0] == 6.0
+    assert w.re_f[0] == pytest.approx(0.4)
+    # Neither: the front, with the first kink's Re_f.
+    w = dp.place_wall(p, np.array([[re_a / 3.0, re_b / 2.0]]))
+    assert not w.floor[0] and w.index[0] == -1
+    assert w.depth[0] == 3.0 and w.speed[0] == 5.45 and w.re_f[0] == pytest.approx(3.0)
+    # The jump is measured against the moving floor, not against zero: a floor at 5.5 m/s, not 0.
+    assert dp.floor_reynolds(p, np.array([[1.0, 1.0]]))[0, 1] == pytest.approx(4.5 * 2.0 / dp.FASTEST_KD)
+    # No kink at all: re_f is NaN and the column is fluid-like.
+    smooth = dp.KinkedProfiles.one([1.0], [2.0, 1.0, 0.0], wall=2.0)
+    w = dp.place_wall(smooth, np.array([[1e-3]]))
+    assert not w.floor[0] and w.index[0] == -1 and np.isnan(w.re_f[0]) and w.depth[0] == 2.0
+
+
+def test_above_wall_cuts_the_profile_at_the_wall():
+    p = dp.KinkedProfiles.one([1.0, 2.0], [10.0, 6.0, 5.5, 5.45], wall=3.0, rho=[1.0, 2.0, 3.0])
+    both = dp.KinkedProfiles(count=np.array([2, 1]), depth=np.array([[1.0, 2.0], [0.5, np.nan]]),
+                             u_top=np.array([10.0, 4.0]), u_break=np.array([[6.0, 5.5], [0.0, np.nan]]),
+                             wall=np.array([3.0, 1.0]), u_wall=np.array([5.45, 0.0]),
+                             rho=np.array([[1.0, 2.0, 3.0], [1.0, 1.0, np.nan]]))
+    with np.errstate(all="raise"), warnings.catch_warnings():
+        warnings.simplefilter("error")
+        nu = np.array([[1e-3, 1e-3], [np.inf, np.nan]])       # the second column's kink sits on a rigid cell: Re_f = 0
+        re = dp.floor_reynolds(both, nu)
+        assert re[1, 0] == 0.0 and np.isnan(re[1, 1]) and np.isfinite(re[0, 0])
+        w = dp.place_wall(both, nu, floor_re=1e9)
+        cut = dp.above_wall(both, w)
+    assert w.floor.tolist() == [True, True] and w.index.tolist() == [0, 0] and w.re_f[1] == 0.0
+    assert cut.count.tolist() == [0, 0]
+    assert cut.wall.tolist() == [1.0, 0.5] and cut.u_wall.tolist() == [6.0, 0.0]
+    assert np.isnan(cut.depth).all() and np.isnan(cut.u_break).all()       # padding beyond the new count
+    assert cut.u_top.tolist() == [10.0, 4.0]
+    # A deeper wall keeps the breakpoints above it and leaves a fluid-like column untouched.
+    w = dp.place_wall(p, np.array([[1e-3, 1e30]]), floor_re=1.0)
+    assert w.index[0] == 1
+    c = dp.above_wall(p, w)
+    assert c.count.tolist() == [1] and c.wall[0] == 2.0 and c.u_wall[0] == 5.5 and c.depth[0, 0] == 1.0
+    assert np.isnan(c.depth[0, 1]) and c.rho[0, :2].tolist() == [1.0, 2.0] and np.isnan(c.rho[0, 2])
+    w = dp.place_wall(p, np.array([[1e-30, 1e-30]]))
+    f = dp.above_wall(p, w)
+    assert not w.floor[0] and f.count.tolist() == [2] and f.wall[0] == 3.0
+    assert np.array_equal(f.depth, p.depth) and np.array_equal(f.rho, p.rho)

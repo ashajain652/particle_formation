@@ -540,3 +540,84 @@ def fastest_waves(profiles, sigma):
         waves.c[v[u]] = cb[u]
         waves.release_depth[v[u]] = _release_depth(q.rows(u), kf, cb[u])
     return waves
+
+
+# ---- The floor test and the wall (spec 6.3): does a sharp drop in shear act as a floor the wave cannot pass? ----
+
+KINK_DROP = 0.2     # a breakpoint is a kink (a wall candidate) where the shear below is at most this times the shear above; assumed until stage 6
+FLOOR_RE = 1.0      # a kink is floor-like where its floor Reynolds number is below this (the crossover of spec 3); assumed until stage 6
+FASTEST_KD = 1.225  # Girin's fastest wavenumber times the layer depth above the kink, k d
+
+
+def kinks(profiles, kink_drop=KINK_DROP):
+    """(n, B) bool: breakpoint j is a kink where |S_below| <= kink_drop * |S_above| and S_above != 0 (S the segment's
+    shear rate, 1/s). False for padding and for the other breakpoints, which only describe curvature."""
+    s = np.abs(profiles.slopes())
+    above, below = s[:, :-1], s[:, 1:]
+    valid = np.arange(above.shape[1])[None, :] < profiles.count[:, None]
+    return valid & (above != 0.0) & (below <= kink_drop * above)
+
+
+def floor_reynolds(profiles, nu_below, kink_drop=KINK_DROP):
+    """(n, B) floor Reynolds number Re_f = |u_top - u_break_j| d_j / (FASTEST_KD nu_below_j) at each kink: the speed jump
+    relative to the (moving) candidate floor, times the layer's depth, over the viscous diffusion of the fastest wave
+    in the material just below. nu_below (n, B) is that material's kinematic viscosity in m2/s; inf gives 0 (a rigid
+    cell). NaN off kinks and in padding."""
+    nu = np.broadcast_to(np.asarray(nu_below, dtype=float), profiles.depth.shape)
+    jump = np.abs(profiles.u_top[:, None] - profiles.u_break)
+    with np.errstate(all="ignore"):         # padding and non-kink entries are masked below
+        re = jump * profiles.depth / (FASTEST_KD * nu)
+    return np.where(kinks(profiles, kink_drop), re, np.nan)
+
+
+@dataclass
+class Wall:
+    """Where each column's wall is. floor: the wall is a kink that acts as a floor (a floor-like column); index: that
+    kink's breakpoint index, -1 where the wall is the profile's own (the rigid front); depth (m) and speed (m/s) of the
+    wall; re_f: the floor Reynolds number at the wall for floor-like columns, and at the first kink for fluid-like ones
+    (NaN with no kink)."""
+    floor: np.ndarray       # (n,) bool
+    index: np.ndarray       # (n,) int
+    depth: np.ndarray       # (n,) m
+    speed: np.ndarray       # (n,) m/s
+    re_f: np.ndarray        # (n,)
+
+
+def place_wall(profiles, nu_below, floor_re=FLOOR_RE, kink_drop=KINK_DROP):
+    """The wall of every column: the shallowest kink with Re_f < floor_re, else the profile's own wall (the rigid
+    front). nu_below is (n, B), as for floor_reynolds."""
+    n, B = profiles.depth.shape
+    re = floor_reynolds(profiles, nu_below, kink_drop)
+    isk = ~np.isnan(re)
+    with np.errstate(invalid="ignore"):
+        like = re < floor_re                          # NaN (off kinks, padding) is False
+    floor = like.any(axis=1)
+    rr = np.arange(n)
+    first_floor = np.argmax(like, axis=1)
+    first_kink = np.argmax(isk, axis=1)
+    pick = np.where(floor, first_floor, first_kink)
+    if B:
+        depth = np.where(floor, profiles.depth[rr, first_floor], profiles.wall)
+        speed = np.where(floor, profiles.u_break[rr, first_floor], profiles.u_wall)
+        re_f = np.where(isk.any(axis=1), re[rr, pick], np.nan)
+    else:
+        depth, speed, re_f = profiles.wall.copy(), profiles.u_wall.copy(), np.full(n, np.nan)
+    return Wall(floor=floor, index=np.where(floor, first_floor, -1), depth=depth, speed=speed, re_f=re_f)
+
+
+def above_wall(profiles, wall):
+    """The profiles cut at their walls: floor-like columns keep the breakpoints above the wall's kink (count = index),
+    with the wall at the kink's depth and speed, and padding beyond; fluid-like columns are unchanged."""
+    out = profiles.rows(np.arange(profiles.count.size))      # a copy
+    cut = wall.floor
+    count = np.where(cut, wall.index, profiles.count)
+    B = profiles.depth.shape[1]
+    j = np.arange(B)[None, :]
+    drop = j >= count[:, None]
+    out.count = count
+    out.depth = np.where(drop, np.nan, profiles.depth)
+    out.u_break = np.where(drop, np.nan, profiles.u_break)
+    out.rho = np.where(np.arange(B + 1)[None, :] > count[:, None], np.nan, profiles.rho)
+    out.wall = np.where(cut, wall.depth, profiles.wall)
+    out.u_wall = np.where(cut, wall.speed, profiles.u_wall)
+    return out
