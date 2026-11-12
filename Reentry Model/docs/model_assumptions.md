@@ -584,7 +584,15 @@ the band, never more than their true distance. (The search radius is widened by 
 **Volume correction.** After motion, each connected piece's level set is shifted so that the piece's volume is restored
 exactly (relative error about 1e-13 in the tests, including two pieces three cells apart). Each shift excludes the other
 pieces' nodes and cells. Pieces closer than about two cells share faces of metal-holding cells and count as one piece,
-so pieces join and separate at the scale of the cell, not of the surface.
+so pieces join and separate at the scale of the cell, not of the surface. Where two pieces' shifted regions meet, each
+node is shifted with one piece only and each cell that held no metal is counted with one piece only, and the pieces are
+corrected in turn until every piece holds its target at once (level-set stage 3, Task 9, fix round 4, 2026-11-12). Before
+that change, metal that a shift grew in a cell between two pieces was counted for both: two spheres 0.25 mm apart on
+0.125 mm cells, one grown by 5 per cent and the other shrunk as much, came out with a total volume 3.2e-5 of the target
+too small, and on the full-size test cube's second step one move left 1e-14 m³ of metal unbooked, a mass residual of
+-9.4e-9 over the step; after it the total is exact to 6e-16 in that test and the step's residual is 2.6e-14. When
+metal grows in a shared cell, it is booked with the piece that counts the cell, which may not be the piece it joins, so
+the split between the two pieces can then be off by up to 7e-5 (measured once) while their total stays exact.
 
 **Refinement reach.** A cell's test region is grown by 0.94 of its size, the distance from a cell's centroid to its
 farthest vertex (0.935 h for a Kuhn tetrahedron). The larger square root of three times h would have widened the fine band
