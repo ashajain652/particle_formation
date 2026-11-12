@@ -182,6 +182,7 @@ def fit_profiles(cols, tol=FIT_TOL, n_max=N_MAX):
     wall = np.full(n, np.nan)
     u_wall = np.full(n, np.nan)
     cell = np.full((n, n_max), -1)
+    rho = np.full((n, n_max + 1), np.nan)
     r = np.flatnonzero(reducible(cols))
     if r.size:
         sub = cols.rows(r)
@@ -205,9 +206,7 @@ def fit_profiles(cols, tol=FIT_TOL, n_max=N_MAX):
         u_top[r] = top
         wall[r] = front
         u_wall[r] = 0.0
-    rho = np.full((n, n_max + 1), np.nan)
-    if r.size:
-        rho[r] = _segment_densities(cols.rows(r), depth[r], count[r], wall[r])
+        rho[r] = _segment_densities(sub, depth[r], c, front)
     profiles = KinkedProfiles(count=count, depth=depth, u_top=u_top, u_break=u_break, wall=wall, u_wall=u_wall, rho=rho)
     return Fit(profiles=profiles, cell=cell)
 

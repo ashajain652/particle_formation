@@ -11,6 +11,7 @@ import pytest
 from reentry_model import PROJECT_ROOT
 from reentry_model.shared import dispersion as dp
 from reentry_model.shared import melt_profile as mp
+from reentry_model.shared import rheology
 
 K = 40
 DZ = 10e-6
@@ -211,8 +212,9 @@ def test_layer_columns_take_their_fields_as_keywords_and_select_rows():
 
 # -- the d050 fixture (spec stage 3) -------------------------------------------------------------------------------------
 def load_fixture():
-    """The fixture's LayerColumns and its other arrays (theta, tau), ruling R3: the npz keeps theta and tau beside the
-    LayerColumns fields, and loading filters to the dataclass's own fields."""
+    """The fixture's LayerColumns and its other arrays (theta, tau, group), ruling R3: the npz keeps them beside the
+    LayerColumns fields, and loading filters to the dataclass's own fields. `group` is 0 for a thick column, 1 for a
+    plug column and 2 for another wet windward column."""
     names = {f.name for f in dataclasses.fields(mp.LayerColumns)}
     with np.load(FIXTURE) as data:
         cols = mp.LayerColumns(**{k: data[k] for k in data.files if k in names})
@@ -239,13 +241,17 @@ def isotherm_depth(cols, T_level):
 def test_every_fit_holds_its_tolerance_or_its_cap_on_the_d050_fixture():
     """On the 36 columns of the d050 state at 178.5 s (`analysis/kinked_dispersion/extract_fixture.py`): every column is
     reducible, every fit holds every fitted cell within FIT_TOL of its top cell's speed or has N_MAX breakpoints, and the
-    breakpoint depths increase from the surface to above the front. Printed, as a measurement (spec stage 3), not a
-    pass/fail: the medians of the first kink's depth and of the wall's depth (`dispersion.place_wall` with `nu_below`),
-    each over the depth of the 906.4 K isotherm. The builder check measured 0.94 for the first kink on the 622 thick
-    columns."""
+    breakpoint depths increase from the surface to above the front. The plug rows (group 1) are genuine plug columns:
+    their fitted top segment slopes the other way, the speed rising with depth (Review Focus 1). Printed, as a
+    measurement (spec stage 3), not a pass/fail: the medians of the first kink's depth and of the wall's depth
+    (`dispersion.place_wall` with `nu_below`), each over the depth of the isotherm at the bridge's base (906.4 K). The
+    builder check measured 0.94 for the first kink on the 622 thick columns."""
     cols, extra = load_fixture()
     n = cols.front.size
-    assert n == 36 and set(extra) == {"theta", "tau"} and extra["theta"].shape == extra["tau"].shape == (n,)
+    assert n == 36 and set(extra) == {"theta", "tau", "group"}
+    assert all(a.shape == (n,) for a in extra.values())
+    group = extra["group"]
+    assert np.bincount(group, minlength=3).tolist() == [24, 6, 6]
     with np.errstate(all="raise"), warnings.catch_warnings():
         warnings.simplefilter("error")
         assert mp.reducible(cols).all()
@@ -264,7 +270,8 @@ def test_every_fit_holds_its_tolerance_or_its_cap_on_the_d050_fixture():
         d = p.depth[i, :c]
         assert (np.diff(np.concatenate([[0.0], d, [p.wall[i]]])) > 0.0).all(), i
         assert np.array_equal(d, cols.z[i, fit.cell[i, :c]]) and p.wall[i] == cols.front[i] and p.u_wall[i] == 0.0
-    d906 = isotherm_depth(cols, 906.4)
+    assert (p.slopes()[group == 1, 0] < 0.0).all()
+    d906 = isotherm_depth(cols, rheology.BRIDGE_LOW)
     has = kinks.any(axis=1)
     first = np.where(has, p.depth[np.arange(n), np.argmax(kinks, axis=1)], np.nan)
     ok = d906 > 0.0
@@ -274,8 +281,8 @@ def test_every_fit_holds_its_tolerance_or_its_cap_on_the_d050_fixture():
           "count 0 to {} {}; {} within tolerance, the rest at the cap; {} with a kink".format(
               n, int(ok.sum()), mp.N_MAX, np.bincount(p.count, minlength=mp.N_MAX + 1).tolist(), int(within.sum()),
               int(has.sum())))
-    print("  median first kink depth / 906.4 K depth: {:.3g} (p10 {:.3g}, p90 {:.3g}, {} columns)".format(
+    print("  median first kink depth / 906.4 K depth: {:.3f} (p10 {:.3g}, p90 {:.3g}, {} columns)".format(
         np.median(kink_ratio), *np.percentile(kink_ratio, [10, 90]), kink_ratio.size))
-    print("  median wall depth / 906.4 K depth: {:.3g} (p10 {:.3g}, p90 {:.3g}, {} columns, {} of them floor-like)".format(
+    print("  median wall depth / 906.4 K depth: {:.3f} (p10 {:.3g}, p90 {:.3g}, {} columns, {} of them floor-like)".format(
         np.median(wall_ratio), *np.percentile(wall_ratio, [10, 90]), wall_ratio.size, int((wall.floor & ok).sum())))
     assert np.isfinite(kink_ratio).all() and np.isfinite(wall_ratio).all() and kink_ratio.size > 0
