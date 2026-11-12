@@ -117,7 +117,8 @@ From inside `Reentry Model/`:
 ```bash
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
     --atmosphere us76 --thermal fem --surface-model elements --heating physics --animate
-# a short melting smoke flight (65 km, 0.125 s), not a production one:
+# a short melting smoke flight (65 km, 0.125 s), not a production one; it sprays from the skins on the profile path,
+# the default (--dispersion profile), and --dispersion table switches back to Girin's theory (named _dispersion-table):
 "$PY" -m reentry_model run --diameter 100 --velocity 7.24 --altitude 65 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --heating physics --h-surface 4 --h-core 20 --melt on --temperature 893 --dt 0.025 --t-max 0.125 \
     --skin-preset dev --fine-size 2 --frames-every 0
@@ -204,14 +205,28 @@ These modules sit in `reentry_model/skyscrapers/` since 2026-11-11 (the old path
 Physics shared with the other (level-set) architecture:
 
 - `lubrication` — melt-film lubrication flow (`lubrication()` and `deep_flux()`).
-- `spray` — Girin's gradient instability per patch and the droplet release bookkeeping.
-- `dispersion` — the numerical solution of Girin's dispersion relation.
+- `spray` — Girin's gradient instability per patch and the droplet release bookkeeping; on the profile path
+  (`SprayModel.dispersion` "profile") the choice between the gradient mode solved on the profile and the gas-driven mode
+  on the wall (branch 5), and the records' layout (27 columns on `table`, 36 on `profile`: `record_columns`).
+- `dispersion` — the numerical solution of Girin's dispersion relation, and for the profile path the broken-line solver
+  (Girin's gradient mode on any profile of straight segments with a free surface and a wall) and the floor test that
+  places the wall.
 - `melt_profile` — the melt layer's speed profile fitted as straight segments on plain arrays (`LayerColumns`, which the
   skins fill in `skinbody.layer_columns`), with the kinematic viscosity below each breakpoint and the layer's Couette
-  viscosity, for the broken-line solver and the floor test in `dispersion`.
+  viscosity, for the broken-line solver and the floor test in `dispersion`; the release-run rule (`threshold_run`), the
+  mode inputs (`profile_modes`, `select_run`, `run_properties`), the records' appended columns (`profile_rows`) and the
+  history's summary (`summary`, `DISPERSION_COLUMNS`).
 - `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
 - `rheology` — the viscosity of liquid and slurry AA7075.
 - `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
+
+`run --dispersion table|profile` chooses the theory the skins' spraying solves (the kinked-profile dispersion design,
+`docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md`): `profile`, the default on a spraying skin run
+(`--surface-model skin --melt on --skin-flow on`; Asha, 2026-11-11), or `table`, Girin's theory as it stood before,
+bit for bit apart from the JSON's `dispersion` key (`analysis/skyscrapers_port/same_results.py`). It is refused (exit 2)
+on any other run, the element model is always on `table`, `resume --dispersion` switches a saved spraying skin flight,
+and a state saved before the option existed resumes on `table`. Its assumptions are `docs/model_assumptions.md`
+section 12.
 
 ### The droplet stage (`reentry_model/droplet_reentry/`)
 

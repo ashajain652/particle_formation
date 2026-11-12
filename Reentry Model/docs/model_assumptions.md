@@ -752,3 +752,104 @@ of the 50 mm sphere (1 055 790 cells here, 1 290 192 for the geometry), so the r
 **Not yet verified.** The solve with skins on its patches (stage 3), with a flow and advection (stage 4) and in a
 flight; the plates at 0.5 s steps (stage 3); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
 cost at 100 mm.
+
+## 12. The skins' spraying solved on their own speed profile (`--dispersion`)
+
+This section describes the profile path of the layered skins' spraying, built on 2026-11-12 from
+`superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md` (the design, with Asha's nine decisions) and its plan.
+Its physics lives in the shared package (`reentry_model/shared/`: the solver and the floor test in `dispersion`, the fit,
+the layer's properties, the release-run rule, the mode inputs and the history summary in `melt_profile`, the mode choice
+and the record layout in `spray`); the skins only read their cells into those arrays and take cells off the top.
+
+**The setting and its default.** `run --dispersion table|profile` chooses the theory a spraying skin run
+(`--surface-model skin --melt on --skin-flow on`) sprays by. The default is `profile` (Asha, 2026-11-11, decision 9).
+On it, each windward column whose top cell flows and moves has its cells' speeds fitted as a continuous line of straight
+segments (the speed profile), a wall is placed by the floor test below, Girin's gradient mode is solved on the profile
+above that wall, and the faster of that mode and Girin & Kopyt's gas-driven mode (with the film depth taken as the depth
+to the wall) releases the column's cells from the top down while they are at least as warm as the mode's threshold
+temperature, liquid and slurry together (the heat-limited release, decision 5). A column whose top cell does not move
+falls back to Girin's theory. `--dispersion table` switches back to Girin's theory as it stood before, with his
+theoretical layer depth and surface speed. The element model has no resolved profile and is always on `table`. Both
+shear modes act only where Girin's continuum closure (or the slip band's balance, with `--slip-band on`) gives a layer
+depth, as before (decision 6). `--dispersion` given to any other kind of run is refused with exit code 2, and a state
+saved before the option existed resumes on `table`.
+
+**Verified (tests in `tests/test_reentry_model_dispersion.py`).** The broken-line solver, the inviscid model of a profile
+made of straight segments with a free surface on top and a wall below, is our own derivation (the side session's, not
+published). It is checked against Girin's printed equation and against Ghosh et al. (2017): on Girin's profile (one
+linear layer over stagnant liquid) it reproduces the roots of Girin's Eq. 1 cubic to 1e-10 at four pairs of wavenumber and
+Weber number, and its fastest wave at a surface Weber number of 10 000 matches the cached table of the `table` path
+within the table's grid spacing (`test_girin_profile_gives_the_roots_of_his_cubic`,
+`test_girin_profile_fastest_wave_matches_the_cached_table`); it reproduces the side session's closed form for a slurry
+over a wall to 1e-10 (`test_slurry_over_a_wall_gives_the_closed_form_roots`); and it reproduces Ghosh's limits, a peak
+growth rate of 0.229 at a slope ratio of 1.5 and the stability of a single straight film on a wall and of a more viscous
+fluid on top (`test_ghosh_limits`).
+
+**The threshold.** Solved exactly, Girin's Eq. 1 becomes unstable above a surface Weber number of 3.00, not the 3.08 Girin
+printed (`test_girin_threshold_is_three`: stable at 3.00, unstable at 3.01). On `profile` no critical Weber number is
+applied: whether the gradient mode grows is the solver's own answer, gated only by its growth exceeding the viscous
+damping of its own wave (twice the layer's Couette viscosity times the wavenumber squared), so the threshold there is
+the solver's 3.00 on Girin's profile. `--we-critical` (default 3.08) applies only on `table`, where Girin's tabulated
+dispersion is gated by it as before.
+
+**Assumed.**
+
+- *The floor test is a scaling argument* (the design's section 3), assumed until stage 6, the viscous (Orr-Sommerfeld)
+  check that is to calibrate it. A breakpoint of the fit where the shear rate below is at most `KINK_DROP` = 0.2 times the
+  shear rate above (a five-fold drop) is a kink. Kinks are tested from the top down, and the first whose floor Reynolds
+  number, Re_f = (the speed jump from the surface to the kink) times (the kink's depth) over (1.225 times the kinematic
+  viscosity of the cell just below the kink), is below `FLOOR_RE` = 1.0 becomes the wall: the material below it is taken to
+  act as a no-slip floor on the wave's time scale, because its viscous diffusion outruns the wave's advection. The test
+  assumes a Newtonian slurry; a shear-thinning or yielding slurry would make a weaker floor. Without such a kink the wall
+  is the rigid front.
+- *The kink rests on the bridge's 906.4 K end point.* In the thick windward columns of the 50 mm flight the steep top
+  layer is not liquid: it is the rheology's bridge, the 906.4 to 908 K band in which the viscosity is interpolated, without
+  data, from Li et al.'s slurry law down to the liquid's. On the d050 state at 178.5 s (one state), the first kink lies at a
+  median 0.936 times the depth of the 906.4 K isotherm on the 28 columns of the committed fixture that have one, and 0.992
+  times it on the 558 of the 622 thick columns that have one; the wall lies at a median 1.004 times that depth on the
+  fixture (30 columns, 28 of them floor-like) and 1.03 times it on the thick set (609 columns). So where the kink and the
+  wall sit, and every input to the floor test, follow the bridge's unmeasured end point. The records carry the
+  kink's depth and temperature so that this stays visible.
+- *The constants are assumed* until stage 6: `KINK_DROP` = 0.2, `FLOOR_RE` = 1.0, `FIT_TOL` = 0.03 (every fitted cell
+  within 3 % of the top cell's speed of the fit) and `N_MAX` = 6 breakpoints at most. Unchanged from `table`: the droplet
+  radius over the wavelength `K_R` = 0.17, the release period over the growth time `K_T` = 1.1 and the surface tension of
+  0.80 N/m (the liquid's and the exposed slurry's).
+- The solver is inviscid and neglects the gas density and any surface tension at the kinks. The d050 thick columns' top
+  layer has a Reynolds number of order 1, where an inviscid solver is least trustworthy; stage 6 is the check.
+
+**Records and history.** On `profile` the droplet records gain nine columns after the 27 of `table` (`spray.PROFILE_COLUMNS`:
+the depth to the wall, whether it is a floor, the floor Reynolds number, the first kink's depth and temperature, the
+gradient mode's release depth and growth rate, and Girin's theoretical layer depth and surface speed beside them), and
+the history gains seven per macro step (`melt_profile.DISPERSION_COLUMNS`: the share of resolved columns that are
+floor-like, the count that are fluid-like, the medians of the depth to the wall, of the floor Reynolds number and of the
+recorded Weber number, and the mass sprayed by the gradient and the gas-driven modes). On `table` neither is written.
+Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's, `settings.dispersion`).
+
+**What `table` keeps (verified).** On 2026-11-12 the three cases of `analysis/skyscrapers_port/same_results.py` were run
+with this change and compared with the same cases run before the option existed (the branch's baseline): a 0.125 s
+spraying skin flight run with `--dispersion table`, the same flight on the element model, and the 22.6 s resume of the
+saved 100 mm flight state (`d100__physics__skin.state.pkl`, saved before the option existed, so it resumes on `table`).
+Of the 22 files compared on each side, the only differences were the new `dispersion` key, recorded as `table`, in the
+skin flight's JSON (`settings.skin.dispersion`) and in the resume's (`settings.dispersion`). Every history column, every
+droplet record and the whole of the element model's output were identical to the last bit (the comparison leaves out
+only the wall-clock columns `wall_*` and `runtime_s`). `--dispersion table` is therefore Girin's theory exactly as it
+was.
+
+**Cost (measured once, 2026-11-12).** The spray plan is evaluated once per macro step, at its start.
+`analysis/kinked_dispersion/plan_cost.py` repeated it five times on each setting on the saved 50 mm flight state
+`d050__handdown-off.state.pkl` (178.5 s, 2367 columns, 909 of them resolved on `profile`, 752 of those floor-like): it took
+a median 0.025 s on `table` and 0.815 s on `profile`, so the profile path adds about 0.79 s to a macro step. That flight's
+macro steps from 177.5 to 179.5 s (four steps of 0.5 s) took a median 3480 s of wall time in the skins, the 3D solve and
+the mesh's moves and rebuilds, so the profile path adds about 0.023 % of a macro step, far inside the design's budget of
+5 % (about 174 s). The measurement used the state's own last surface-flow evaluation, which was saved before the slip
+band's fields existed, so no column had a layer depth and neither path released anything in it; the fit, the floor test
+and the solver, which are the profile path's added work, ran on every resolved column all the same. The cost of finding
+the release run in every flow sub-step (the cascade's threshold rule) is not in this figure; the comparison flights'
+wall times will show it.
+
+**Observed, one state, not yet judged.** On the 100 mm test sphere at 65 km (one 0.25 s macro step, measured 2026-11-12 in
+Task 7) the profile path released 11.0 g against the table's 1.54 g, about 7.2 times as much, almost all by the gas-driven
+mode on floor-like columns (497 columns, against 1 by the gradient mode, of 919 resolved columns, 78.6 % of them
+floor-like). The reviewer found this to be the design's physics, not a defect: the gas-driven mode has no Weber-number
+threshold, and the heat-limited release takes every cell that warms to the mode's threshold temperature during the step.
+The comparison flights of stage 5 measure it on the d050 state.
