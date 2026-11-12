@@ -426,8 +426,10 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
   kink below which the slurry acts as a floor (otherwise at the rigid front); Girin's gradient mode is solved on the
   profile above that wall by a broken-line solver, and the faster of it and Girin & Kopyt's gas-driven mode on the wall
   releases the column's cells from the top down while they are at least as warm as the mode's threshold temperature,
-  liquid and slurry together. A column whose top does not move keeps Girin's theory. No critical Weber number is applied:
-  the solver's own threshold is a surface Weber number of 3.00 on Girin's profile.
+  liquid and slurry together. No critical Weber number is applied to the gradient mode on the profile, which sprays where
+  its growth beats its own wave's viscous damping and its wave fits (the solver's own threshold is a surface Weber number
+  of 3.00 on Girin's profile). A column whose top does not move, or that has no conjugate layer depth or no layer above
+  its wall, keeps Girin's theory, `--we-critical` included.
 - **`--dispersion table`**, the switch back: Girin's theory as it stood before, with his theoretical layer depth and surface
   speed and the critical Weber number `--we-critical` (3.08). The run's name ends in `_dispersion-table`; `profile` is
   unmarked. The element model (`--surface-model elements`) is always on `table`, and `--dispersion` given to any run that
@@ -436,7 +438,7 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
   `settings.dispersion`). On `profile`, `particles.npz` has 36 columns, the 27 of `table` followed by nine
   (`spray.PROFILE_COLUMNS`: `wall_depth_m`, `wall_floor`, `floor_re`, `kink_depth_m`, `kink_T_K`, `release_depth_m`,
   `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has seven more columns
-  (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `wall_depth_median_mm`, `floor_re_median`,
+  (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `depth_to_wall_median_mm`, `floor_re_median`,
   `we_s_profile_median`, `sprayed_gradient_kg`, `sprayed_gas_driven_kg`); on `table` there are neither. A resume that
   changes the setting drops or adds the history columns from the saved row, cuts records held in memory to 27 columns or
   pads them with NaN to 36, and writes the records after the resume under the new layout.

@@ -398,8 +398,11 @@ def test_summary_of_an_empty_step_is_nan():
     """Spec 6.8 and Review Focus 3: a macro step with no resolved column -- or none evaluated yet -- writes a share of
     NaN, a count of 0, NaN medians and nothing sprayed by either mode, in DISPERSION_COLUMNS order, with no
     floating-point error or warning."""
-    assert mp.DISPERSION_COLUMNS == ("floor_like_share", "fluid_like_columns", "wall_depth_median_mm", "floor_re_median",
+    assert mp.DISPERSION_COLUMNS == ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "floor_re_median",
                                      "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")
+    # no history column may look like a wall-clock timer: same_results.py's comparison and the tests' row helpers skip every
+    # column whose name starts with "wall_" (review of Task 8, 2026-11-12)
+    assert not any(k.startswith("wall_") for k in mp.DISPERSION_COLUMNS)
     with strict():
         outs = [mp.summary(no_modes([False] * 3), record(3, wall_floor=[1.0, 0.0, np.nan]), np.array([5, 1, 3]),
                            np.array([1.0, 2.0, 3.0])),
@@ -408,7 +411,7 @@ def test_summary_of_an_empty_step_is_nan():
     for out in outs:
         assert tuple(out) == mp.DISPERSION_COLUMNS
         assert np.isnan(out["floor_like_share"]) and out["fluid_like_columns"] == 0
-        assert all(np.isnan(out[k]) for k in ("wall_depth_median_mm", "floor_re_median", "we_s_profile_median"))
+        assert all(np.isnan(out[k]) for k in ("depth_to_wall_median_mm", "floor_re_median", "we_s_profile_median"))
         assert out["sprayed_gradient_kg"] == 0.0 and out["sprayed_gas_driven_kg"] == 0.0
 
 
@@ -424,7 +427,7 @@ def test_summary_counts_the_resolved_columns_and_each_mode_s_mass():
     with strict():
         out = mp.summary(modes, rec, np.array([5, 1, 3, 2, 1]), np.array([1.0, 2.0, 4.0, 8.0, 16.0]))
     assert out["floor_like_share"] == 0.5 and out["fluid_like_columns"] == 2
-    assert out["wall_depth_median_mm"] == pytest.approx(0.25, rel=1e-14)
+    assert out["depth_to_wall_median_mm"] == pytest.approx(0.25, rel=1e-14)
     assert out["floor_re_median"] == 0.5 and out["we_s_profile_median"] == 30.0
     assert out["sprayed_gradient_kg"] == 1.0 and out["sprayed_gas_driven_kg"] == 10.0
 

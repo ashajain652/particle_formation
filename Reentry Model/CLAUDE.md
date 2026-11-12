@@ -206,8 +206,8 @@ Physics shared with the other (level-set) architecture:
 
 - `lubrication` — melt-film lubrication flow (`lubrication()` and `deep_flux()`).
 - `spray` — Girin's gradient instability per patch and the droplet release bookkeeping; on the profile path
-  (`SprayModel.dispersion` "profile") the choice between the gradient mode solved on the profile and the gas-driven mode
-  on the wall (branch 5), and the records' layout (27 columns on `table`, 36 on `profile`: `record_columns`).
+  (`SprayModel.dispersion` "profile") the choice between the gradient mode solved on the profile (branch 5) and the
+  gas-driven mode on the wall, and the records' layout (27 columns on `table`, 36 on `profile`: `record_columns`).
 - `dispersion` — the numerical solution of Girin's dispersion relation, and for the profile path the broken-line solver
   (Girin's gradient mode on any profile of straight segments with a free surface and a wall) and the floor test that
   places the wall.

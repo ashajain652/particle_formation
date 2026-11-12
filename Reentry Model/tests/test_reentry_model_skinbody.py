@@ -2935,7 +2935,7 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
           "wall depth median {:.4g} mm, floor Re median {:.3g}, We_s median {:.3g}; sprayed {:.4g} kg by the gradient "
           "mode, {:.4g} kg gas-driven, {:.4g} kg in all (liquid's modes {:.4g} kg, slurry's {:.4g} kg); branches {}".format(
               int(on.sum()), int(((b.theta <= 0.5 * np.pi) & (p.flowing > 0.0)).sum()), s["floor_like_share"],
-              s["fluid_like_columns"], s["wall_depth_median_mm"], s["floor_re_median"], s["we_s_profile_median"],
+              s["fluid_like_columns"], s["depth_to_wall_median_mm"], s["floor_re_median"], s["we_s_profile_median"],
               s["sprayed_gradient_kg"], s["sprayed_gas_driven_kg"], b.released_mass, p.mass.sum(), p.mass_slurry.sum(),
               {int(x): int((branch[p.mass > 0.0] == x).sum()) for x in np.unique(branch[p.mass > 0.0])}))
 

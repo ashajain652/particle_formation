@@ -274,8 +274,8 @@ def threshold_run(T, flowing, liquid, T_run):
 # the history's columns on the profile path (spec 6.8), per macro step, over the resolved (wet windward) columns: the
 # share that are floor-like, the count that are fluid-like, the medians of the depth to the wall [mm], of the floor
 # Reynolds number and of the recorded Weber number, and the mass [kg] sprayed by the gradient mode and by the gas-driven
-# mode
-DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "wall_depth_median_mm", "floor_re_median",
+# mode. No name begins with `wall_`, the prefix of the wall-clock timers, which the comparisons of runs skip.
+DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "floor_re_median",
                       "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")
 
 

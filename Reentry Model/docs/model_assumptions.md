@@ -786,11 +786,14 @@ growth rate of 0.229 at a slope ratio of 1.5 and the stability of a single strai
 fluid on top (`test_ghosh_limits`).
 
 **The threshold.** Solved exactly, Girin's Eq. 1 becomes unstable above a surface Weber number of 3.00, not the 3.08 Girin
-printed (`test_girin_threshold_is_three`: stable at 3.00, unstable at 3.01). On `profile` no critical Weber number is
-applied: whether the gradient mode grows is the solver's own answer, gated only by its growth exceeding the viscous
-damping of its own wave (twice the layer's Couette viscosity times the wavenumber squared), so the threshold there is
-the solver's 3.00 on Girin's profile. `--we-critical` (default 3.08) applies only on `table`, where Girin's tabulated
-dispersion is gated by it as before.
+printed (`test_girin_threshold_is_three`: stable at 3.00, unstable at 3.01). On the profile path no critical Weber number
+is applied to the gradient mode solved on a column's profile (branch 5): whether it grows is the solver's own answer, and
+it sprays only where its growth rate exceeds the viscous damping of its own wave (twice the layer's Couette viscosity
+times the wavenumber squared) and one whole wavelength fits in the column's region (the contiguous windward columns
+whose layer above the wall is at least `spray.B_MIN` deep), so the threshold there is the solver's 3.00 on Girin's
+profile. `--we-critical` (default 3.08) applies on `table`, and on a `profile` run only to the columns that fall back to
+Girin's theory: those whose profile is not resolved, those without a finite layer depth (delta_m, Girin's conjugate
+layer depth), and those whose wall is shallower than `spray.B_MIN`. Their thick branch is gated by it as before.
 
 **Assumed.**
 

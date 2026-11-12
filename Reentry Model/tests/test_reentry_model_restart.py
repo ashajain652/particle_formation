@@ -709,7 +709,7 @@ def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_
     from reentry_model.shared import melt_profile
     columns = list(melt_profile.DISPERSION_COLUMNS)
 
-    def header(path):          # the history's header, every column (`rows_of` leaves out `wall_` ones: wall_depth_median_mm)
+    def header(path):          # the history's header: every column, in order
         with open(path) as fh:
             return next(csv.reader(fh))
 

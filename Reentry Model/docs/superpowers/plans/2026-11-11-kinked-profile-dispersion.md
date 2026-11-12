@@ -309,7 +309,7 @@ The profile block inside `evaluate` applies only to `profile.resolved` columns. 
   - `select_run(branch, modes, record) -> T_run (n,)`: `T_gradient` where branch 5, `T_driven` where a resolved column took branch 1 or 2, and NaN elsewhere.
   - `run_properties(cols, run) -> (rho (n,), mu (n,))`, mass-weighted over the run's cells. **[plan call: the run at the step's start stands in for "the released cells".]**
   - `profile_rows(record, delta_m, v_s) -> (n, 9)`, in `PROFILE_COLUMNS` order.
-  - `DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "wall_depth_median_mm", "floor_re_median", "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")` and `summary(modes, record, branch, mass) -> dict` over the resolved columns. A step with none gives a share of NaN, a count of 0 and NaN medians.
+  - `DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "floor_re_median", "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")` and `summary(modes, record, branch, mass) -> dict` over the resolved columns. A step with none gives a share of NaN, a count of 0 and NaN medians.
 - Produces, in `skinbody` (wiring only):
   - `girin_plan` reads `model.dispersion`. On `"profile"`, it builds `layer_columns(sk, |flow.tau|)` and calls `profile_modes`.
     - The wave-fit extent is `region_extent(edges, windward & (D >= B_MIN), A_top)`, where D is the wall depth on resolved columns and F elsewhere. `rt_extent` is today's liquid extent.
