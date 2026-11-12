@@ -34,7 +34,7 @@ moved metal through its base for no reason (a backlog handed down 10 mm at once 
 tessellation is followed by `_repartition`: from each marker's old owners (its position and normal at the tessellation
 before, `Markers.x_tess`), its skin's area and the surface then (the step's old phi for the first, phi as it is for the
 one after split and merge), and the new tessellation, `markers.transfer_matrix` gives every old column's stretch and
-the transfer T[j, i], the area of old column j that new column i receives. Each old column is scaled by its stretch
+the transfer T[j, i], the area of old column j that new column i receives (`repartition`). Each old column is scaled by its stretch
 (its top area becomes its old area times its stretch, its metal unchanged: section 9.2's draw or return at its base
 follows in the next part, by the draw to the minimum mass and the hand-down, as for any stretched or gathered skin),
 then cut into the fractions T[j, i] / (its row's sum) of its profile (`Skins.cut`) and each new column is the hand-over
@@ -55,7 +55,8 @@ from .boxmesh import build
 from .criteria import finite_values, kappa_max_nodal, make_target
 from .cutcell import inside_volumes
 from .levelset import correct_volumes, pieces, redistance
-from .markers import NEWTON_REACH, surface_samples, transfer_matrix
+from .markers import NEWTON_REACH
+from .repartition import SAMPLE_SHARE, apply_transfer, surface_samples, transfer_matrix
 from .surfaces import molten_rigid_surface, outer_surface
 from .transfer import interpolate, locate
 
@@ -70,7 +71,6 @@ CURVATURE_SLACK = 2.0             # or once a leaf is more than this times its c
 COARSEN_SHARE = 0.1               # of the metal's volume: leaves that could be COARSEN_SIZES times coarser before the mesh
 MODES = ("full", "top")           # a marker's skin: full-depth (Task 9, everywhere) or top-zone (Task 10)
 COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading keeps one-size steps finer than asked)
-SAMPLE_SHARE = 1.0 / 16.0         # of the target spacing: the surface samples' size for the re-partition (Task 9b)
 
 Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
 
@@ -316,22 +316,7 @@ class StepEnd:
         mk, sk = self.markers, self.skins
         old_x, old_normal, old_area, old_surface = old
         T, stretch = transfer_matrix(old_x, old_normal, old_area, old_surface, mk.x, mk.area, mk.faces, surface)
-        rows = mk.skin_index
-        sk.area[rows] = old_area * stretch
-        R = np.asarray(T.sum(axis=1)).ravel()
-        coo = T.tocoo()
-        give = (coo.row != coo.col) & (coo.data > 0.0)
-        donor, receiver = coo.row[give], coo.col[give]
-        if len(donor):
-            pieces = sk.cut(rows[donor], coo.data[give] / R[donor])
-            order = np.argsort(receiver, kind="stable")
-            donor, receiver, pieces = donor[order], receiver[order], pieces[order]
-            first = np.r_[0, np.flatnonzero(np.diff(receiver)) + 1]
-            rank = np.arange(len(receiver)) - np.repeat(first, np.diff(np.r_[first, len(receiver)]))
-            for k in range(int(rank.max()) + 1):           # one piece per receiver at a time: distinct pairs
-                at = rank == k
-                sk.combine(rows[receiver[at]], pieces[at])
-            sk.remove(pieces)                              # emptied by combine; appended after every marker's row
+        apply_transfer(sk, mk.skin_index, old_area, T, stretch)
         self.last_settle.append(Repartition(T, stretch, old_area, mk.area.copy()))
 
     def _settle(self, tally, surface=None):

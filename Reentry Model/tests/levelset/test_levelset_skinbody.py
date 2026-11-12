@@ -17,6 +17,8 @@ from reentry_model.levelset.skin import SKIN_PRESETS, Skins, SkinSettings
 from reentry_model.levelset.transfer import interpolate
 from reentry_model.shared.material import Material
 
+from cases import CAPPED_SHARE, DESIGN_FINE, DESIGN_SPACING, OWNERSHIP_FACTOR, gas_state, nearest_ratio, seeded
+
 HALF = 5e-3            # m: the cube's half side (a 10 mm cube)
 OFF = 0.13e-3          # m: the cube's centre off the grid, so that its faces cut the cells
 SETTINGS = SkinSettings(cell=SKIN_PRESETS["dev"])
@@ -216,7 +218,6 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
     the plan's books hold exactly what the step booked as sprayed, the history row carries the droplet columns, and
     what a trial pass is undone to restores the cells, the flow memory and the plan's books. (At this state the top
     does not reach the liquidus within 0.1 s, so nothing sprays: the release itself is tested in Task 8's tests.)"""
-    from test_levelset_loads import _state
     from reentry_model.levelset import loads
     from reentry_model.shared import heating, spray, surface_flow
     from reentry_model.shared.material import LiquidProperties
@@ -225,7 +226,7 @@ def test_a_step_at_a_gas_state_with_the_flow_and_the_spray_on_closes_its_books()
     model = spray.SprayModel(LiquidProperties(mat.liquid.rho, mat.liquid.mu, mat.liquid.sigma), spray_gates="2026-11-10")
     body = cube_body(loads=gl, spray_model=model, T_ambient=200.0, emissivity=0.2)
     started = time.perf_counter()
-    book = body.advance(0.1, state=_state(rho=1e-4))
+    book = body.advance(0.1, state=gas_state(rho=1e-4))
     print("gas state: {:.1f} s, {} parts, {} passes; heat in {:.3f} J, radiated {:.3e} J, sprayed {:.3e} kg; residuals "
           "mass {:.2e}, enthalpy {:.2e}; momentum to the wall {}".format(
               time.perf_counter() - started, book.parts, book.passes, book.enthalpy_in, book.enthalpy_radiated,
@@ -300,11 +301,10 @@ CONTINUUM = dict(rho=1e-4, kn=1e-3)   # 7.5 km/s at a density of 1e-4 kg/m3 with
 def sprayed():
     """The cube with liquid formed on its +x face by 0.25 s of 6 MW/m2 (no flow, nothing removed), then one 0.05 s macro
     step at the continuum gas state with the runoff and Girin's plan on."""
-    from test_levelset_loads import _state
     body = gas_body()
     melt = body.advance(0.25, q_prescribed=one_face(6e6))
     started = time.perf_counter()
-    book = body.advance(0.05, state=_state(**CONTINUUM))
+    book = body.advance(0.05, state=gas_state(**CONTINUUM))
     return body, melt, book, time.perf_counter() - started
 
 
@@ -335,10 +335,9 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     a step's hint is at most 1.25 times the parts it took: both steps stay within PART_BOUND parts, the second step's
     hint is below the skyscrapers' for it, both hints are 1.25 times their step's parts at most, and the books
     close."""
-    from test_levelset_loads import _state
     body, _, first, _ = sprayed
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
-    second = body.advance(0.05, state=_state(**CONTINUUM))
+    second = body.advance(0.05, state=gas_state(**CONTINUUM))
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
         second.parts_skyscrapers))
@@ -576,7 +575,6 @@ def test_the_test_cube_s_markers_keep_their_neighbours():
     the rounded edges, markers one per 2 mm voxel) under 1 % of the cells are bounded by the cap and every area is within
     a factor of 1.5 of the area nearest the marker. Measured before the ruling: 123 of 219 cells capped, areas 0.38 to
     2.67 times the nearest-marker areas."""
-    from test_levelset_markers import CAPPED_SHARE, OWNERSHIP_FACTOR, nearest_ratio
     body = cube_body()
     mk = body.markers
     mk.tessellate(body.mesh, body.phi)
@@ -723,9 +721,8 @@ def test_a_uniform_stretch_still_draws(monkeypatch):
     from reentry_model.levelset import markers
     monkeypatch.setattr(markers, "SPLIT_FACTOR", np.inf)
     monkeypatch.setattr(markers, "MERGE_FRACTION", 0.0)
-    from test_levelset_markers import DESIGN_FINE, DESIGN_SPACING, seeded
     from reentry_model.levelset.boxmesh import build
-    from reentry_model.levelset.markers import surface_samples
+    from reentry_model.levelset.repartition import surface_samples
     from reentry_model.levelset.stepend import StepEnd, cap_curvature
 
     class Host(StepEnd):

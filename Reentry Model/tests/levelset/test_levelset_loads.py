@@ -4,13 +4,14 @@ from datetime import datetime
 import numpy as np
 import pytest
 
-from reentry_model import atmosphere, trajectory as tj
 from reentry_model.levelset import loads
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
 from reentry_model.levelset.levelset import redistance
 from reentry_model.levelset.markers import Markers
 from reentry_model.shared import heating, nose, surface_flow
+
+from cases import gas_state
 
 V_HAT = np.array([1.0, 0.0, 0.0])
 
@@ -22,12 +23,6 @@ def _sphere_markers(R=25e-3, centre=(0.0, 0.0, 0.0), n=400):
     c = np.array(centre)
     return Markers(c + R * u, u, np.full(n, 4 * math.pi * R * R / n), np.full((n, 2), 1 / R), np.arange(n),
                    np.arange(n), 1e-3)
-
-
-def _state(rho=2.727e-5, T=203.6, V=7500.0, kn=0.0298, ma=26.2):
-    fs = atmosphere.Freestream(rho, T, rho / 28.9644e-3 * 8.314462618 * T, 28.9644 * 1.66053906660e-27, np.zeros(3))
-    return tj.AeroState(77.5e3, 0.0, 0.0, fs, np.array([V, 0.0, 0.0]), V, kn, ma, 0.9, np.array([-V * 1e-3, 0, 0]),
-                        0.5 * rho * V * V)
 
 
 def test_a_sphere_fits_its_own_radius():
@@ -63,7 +58,7 @@ def test_loads_are_the_shared_laws():
     ang = nose.load_angles(theta, ~lee)
     fit = loads.fit_nose(m, np.zeros(3), V_HAT, "current", fallback=0.05)
     T_top = np.linspace(500.0, 900.0, m.n)
-    st = _state()
+    st = gas_state()
     rho_l = 2400.0
     for h in (heating.PhysicsHeating(), heating.SesamEquivalentHeating()):
         flow = surface_flow.SurfaceFlow()

@@ -4,14 +4,13 @@ split, merged by the hand-over rule and trapped, with the skins' books exact."""
 import numpy as np
 import pytest
 
-from scipy.spatial import cKDTree
-
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
 from reentry_model.levelset.levelset import redistance
-from reentry_model.levelset.markers import Markers, surface_samples
+from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.skin import Skins, SkinSettings
 
+from cases import DESIGN_FINE, DESIGN_SPACING, CAPPED_SHARE, OWNERSHIP_FACTOR, nearest_ratio, refined, seeded
 from materials import ConstMaterial, LinearMeltMaterial
 
 R = 25e-3                  # m, the sphere
@@ -318,37 +317,6 @@ def test_snap_converges_where_phi_is_far_from_a_distance():
 
 
 # -- the neighbours on meshes whose patches are much smaller than the spacing (Task 9b) -------------------------------
-DESIGN_SPACING = 2e-3      # m: the body's marker spacing (skinbody.MARKER_SPACING)
-DESIGN_FINE = 0.7e-3       # m: the body's fine cells (its default fine_size)
-CAPPED_SHARE = 0.01        # of the cells: at most this many bounded by the cap on a continuous surface (Task 9b ruling)
-OWNERSHIP_FACTOR = 1.5     # a static tessellation's area within this factor of the area nearest the marker (the same)
-
-
-def seeded(mesh, phi, spacing, lo, material=None):
-    """Markers seeded as the body seeds them (skinbody.LevelSetSkinBody): one per voxel of the target spacing, on the
-    voxel's largest patch; with a `material`, each with an empty skin."""
-    P = patches(mesh, phi)
-    key = np.floor((P.centroid - np.asarray(lo)) / spacing).astype(np.int64)
-    order = np.lexsort((-P.area, key[:, 2], key[:, 1], key[:, 0]))
-    k = key[order]
-    first = np.r_[True, np.any(k[1:] != k[:-1], axis=1)]
-    return Markers.create(mesh, phi, np.sort(order[first]), material=material, settings=SETTINGS, spacing=spacing)
-
-
-def nearest_ratio(mk, mesh, phi):
-    """Each marker's tessellated area over the area of phi nearer to it than to any other marker (surface samples a
-    sixteenth of the spacing across), the two scaled to the same total."""
-    y, w = surface_samples(mesh, phi, mk.spacing / 16.0)
-    _, j = cKDTree(mk.x).query(y)
-    near = np.bincount(j, w, minlength=mk.n)
-    return mk.area / near * near.sum() / mk.area.sum()
-
-
-def _refined(base, level, fine):
-    """The box mesh refined to `fine` where |level| is within two fine cells (and the leaf's own size) of zero."""
-    return build(base, lambda x, s: np.where(np.abs(level(x)) < 2.0 * fine + 0.87 * s, fine, np.inf))
-
-
 def test_the_tessellation_keeps_its_neighbours_on_a_sphere_at_design_size_cells():
     """Task 9b (the ruling on the neighbour test): a 10 mm sphere on the body's design cells (0.7 mm near the surface)
     with markers seeded as the body seeds them, one per 2 mm voxel. The patches are pieces of cut cells, about a sixth of
@@ -358,7 +326,7 @@ def test_the_tessellation_keeps_its_neighbours_on_a_sphere_at_design_size_cells(
     0.38 to 2.67 times their nearest-marker areas.)"""
     R = 10e-3
     base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
-    mesh = _refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
+    mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
     phi = np.linalg.norm(mesh.points, axis=1) - R
     mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
     mk.tessellate(mesh, phi)
@@ -378,7 +346,7 @@ def slot_body():
         block = np.max(np.abs(x) - np.array([3.5e-3, 3.5e-3, 2.5e-3]), axis=1)
         cut = np.maximum(np.abs(x[:, 0]) - 0.75e-3, -1.5e-3 - x[:, 1])          # negative inside the slot
         return np.maximum(block, -cut)
-    mesh = _refined(base, level, 0.25e-3)
+    mesh = refined(base, level, 0.25e-3)
     phi = redistance(mesh, level(mesh.points))
     return mesh, phi, seeded(mesh, phi, 1e-3, base.lo)
 
@@ -436,7 +404,7 @@ def test_a_concave_right_angle_corner_keeps_its_neighbours():
         step = np.maximum(np.maximum(x[:, 0], x[:, 2] - 3e-3), -x[:, 2] - 2.5e-3)   # and the block x < 0, z < 3 mm
         box = np.maximum(np.abs(x[:, 0]) - 3.5e-3, np.abs(x[:, 1]) - 2.5e-3)
         return np.maximum(np.minimum(floor, step), box)
-    mesh = _refined(base, lambda x: level(x + 0.13e-3), 0.25e-3)
+    mesh = refined(base, lambda x: level(x + 0.13e-3), 0.25e-3)
     phi = redistance(mesh, level(mesh.points + 0.13e-3))
     mk = seeded(mesh, phi, 1e-3, base.lo)
     faces = mk.tessellate(mesh, phi)
