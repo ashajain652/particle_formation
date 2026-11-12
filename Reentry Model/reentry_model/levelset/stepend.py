@@ -14,7 +14,8 @@ than the largest whose target is not positive -- the draws of the markers standi
 used up: its nodes are lifted just outside the metal (PIECE_GONE), so that its old metal and the draws at its points
 fall to the largest piece's target, and the pieces are found again (fix round 5 of Task 9: on the full-size cube's third
 step three markers over a 1.9e-10 m3 sliver of beta drew 2.0e-9 m3). The total stays exact; where the metal is drawn
-from is then the largest piece, not the sliver beneath the markers.
+from is then the largest piece, not the sliver beneath the markers. Draws that ask more than the largest piece then
+holds raise RuntimeError: nothing is left to give them.
 
 At the macro step's end (`_rebuild`): phi = `outer_surface(beta, H)` with every node taking the thickness of the marker
 whose base point is nearest; psi = `molten_rigid_surface(phi, T)` with T the volume's field inside beta, each skin's
@@ -172,6 +173,8 @@ class StepEnd:
             tally.pieces_used += len(used)
         else:
             raise RuntimeError("pieces kept being used up by a move after {} rounds".format(PIECE_ROUNDS))
+        if targets[0] <= 0.0:                              # no piece is left to give what the draws ask
+            raise RuntimeError("the draws ask {:.3e} m3 more than the skin base's largest piece holds".format(-targets[0]))
         new, worst = correct_volumes(mesh, new, label, targets)
         tally.correction = max(tally.correction, worst)
         removed = self.solver.move(new)

@@ -480,3 +480,78 @@ def test_a_piece_the_draws_use_up_leaves_and_the_largest_piece_gives_the_rest():
     assert pieces(mesh, host.beta)[1] == 1 and tally.pieces_used == 1
     assert after.sum() == pytest.approx(V0 + dV.sum(), rel=1e-12, abs=0.0)
     assert removed == pytest.approx(E0 - host.solver.energy(), rel=1e-12)
+
+
+def test_draws_asking_more_than_the_largest_piece_holds_raise():
+    """Task 9b (minor, left from Task 9): draws at a point inside the only piece of beta, a 1.2 mm sphere, asking twice
+    its volume: no piece is left to give the rest, so the move raises, naming the largest piece, and leaves beta as it
+    was."""
+    from materials import ConstMaterial
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutcell import inside_volumes
+    from reentry_model.levelset.cutthermal import CutThermal
+    from reentry_model.levelset.levelset import redistance
+    from reentry_model.levelset.stepend import StepEnd
+
+    class Host(StepEnd):
+        pass
+    mesh = build(BoxBase.around((0.0, 0.0, 0.0), (3e-3, 3e-3, 3e-3), 0.125e-3))
+    centre = np.array([1.5e-3, 1.5e-3, 1.5e-3])
+    beta = redistance(mesh, np.linalg.norm(mesh.points - centre, axis=1) - 1.2e-3)
+    host = Host()
+    host.mesh, host.beta, host.band, host.fine_margin = mesh, beta, 1e-3, 1e-3
+    host.solver = CutThermal(ConstMaterial())
+    host.solver.setup(mesh, beta)
+    host.solver.set_temperature(500.0)
+    dV = np.array([-2.0 * inside_volumes(mesh, beta).sum()])
+    with pytest.raises(RuntimeError, match="largest piece"):
+        host._move_beta(centre[None, :], dV, np.zeros(1), skinbody._Tally(0))
+    assert np.array_equal(host.beta, beta)
+
+
+def test_the_snap_books_the_markers_its_last_round_brings_from_afar_and_their_slide():
+    """Task 9b (minor, left from Task 9): phi = 0.05 (|x| - 2 mm), rising only 0.05 per metre along its normal, and
+    three markers 1 mm outside its zero contour: each recovered-normal step removes a twentieth of the distance, so 19
+    rounds leave them 1 mm x 0.95^38 = 0.14 mm off, where |phi| = 7e-6 is beyond the Newton steps' reach (1e-6); the last
+    round brings all three on by Newton steps from afar. The step's tally counts the three (`snap_fallback`) and holds
+    the largest sideways part of those Newton steps (`snap_slide`), as a replay of the rounds measures them, and every
+    marker ends on phi."""
+    from reentry_model.levelset import markers as M
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.markers import Markers
+    from reentry_model.levelset.stepend import SNAP_ROUNDS, SNAP_TOL, StepEnd
+
+    class Host(StepEnd):
+        pass
+    mesh = build(BoxBase.around((-4e-3,) * 3, (4e-3,) * 3, 1e-3))
+    phi = 0.05 * (np.linalg.norm(mesh.points, axis=1) - 2e-3)
+    u = np.array([[1.0, 0.2, 0.1], [-0.3, 1.0, 0.4], [0.2, -0.5, -1.0]])
+    u /= np.linalg.norm(u, axis=1)[:, None]
+    x0 = 3e-3 * u
+
+    def markers():
+        return Markers(x0, u, np.ones(3), np.zeros((3, 2)), np.arange(3), np.full(3, -1), 1e-3)
+    host = Host()
+    host.mesh, host.phi, host.markers = mesh, phi, markers()
+    tally = skinbody._Tally(0)
+    host._snap(tally)
+    # the replay: the first rounds within the reach, then the last round's recovered passes and Newton steps by hand
+    mk = markers()
+    for _ in range(SNAP_ROUNDS - 1):
+        mk.snap(mesh, phi)
+    x = mk.x
+    for _ in range(M.SNAP_PASSES):
+        val, n = M._field(mesh, phi, x)
+        x = x - val[:, None] * n
+    val, _ = M._field(mesh, phi, x)
+    far = int((np.abs(val) > M.NEWTON_REACH).sum())
+    after = M._cell_newton(mesh, phi, x)
+    _, n = M._field(mesh, phi, after)
+    d = after - x
+    slide = np.linalg.norm(d - np.einsum("ij,ij->i", d, n)[:, None] * n, axis=1).max()
+    off = np.abs(M._field(mesh, phi, host.markers.x)[0]).max()
+    print("snap from afar: {} markers by the fallback, largest slide {:.3e} m (replay {:.3e} m), off phi {:.1e}".format(
+        tally.snap_fallback, tally.snap_slide, slide, off))
+    assert far == 3 and tally.snap_fallback == 3
+    assert tally.snap_slide == slide and slide > 0.0
+    assert off <= SNAP_TOL
