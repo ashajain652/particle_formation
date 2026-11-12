@@ -13,6 +13,25 @@ def _sphere_mesh(h=0.125e-3):
     return build(BoxBase.around((0, 0, 0), (3e-3, 3e-3, 3e-3), h))
 
 
+def _matched_volumes(m, phi, label, n):
+    """The volume [m3] of each piece of phi after a correction, the pieces labelled afresh and matched to the labels
+    before it (`label`, n pieces) by overlap: each fresh piece goes to the old label holding most of its metal by cell,
+    and the matching must be one to one. Measured afresh, so metal a correction grew in cells that held none before
+    counts, and against a relative tolerance with no absolute one, so a wrong small piece fails (fix round 5)."""
+    from reentry_model.levelset.cutcell import inside_volumes
+    fresh, nf = pieces(m, phi)
+    assert nf == n
+    vol = inside_volumes(m, phi)
+    both = (fresh >= 0) & (label >= 0)
+    overlap = np.zeros((nf, n))
+    np.add.at(overlap, (fresh[both], label[both]), vol[both])
+    match = np.argmax(overlap, axis=1)
+    assert sorted(match) == list(range(n))
+    out = np.zeros(n)
+    out[match] = piece_volumes(m, phi, fresh, nf)
+    return out
+
+
 def test_point_triangle_distance_in_every_region():
     a, b, c = np.array([[0., 0, 0]]), np.array([[1., 0, 0]]), np.array([[0., 1, 0]])
     p = np.array([[0.2, 0.2, 0.5], [-1, -1, 0], [2, 0, 0], [0.5, -1, 0], [1, 1, 0], [-1, 0.5, 0]])
@@ -47,7 +66,7 @@ def test_the_volume_correction_is_exact_to_round_off():
     target = [4 / 3 * np.pi * 1.1e-3 ** 3]
     phi2, worst = correct_volumes(m, phi, label, target)
     assert n == 1
-    assert piece_volumes(m, phi2, label, n)[0] == pytest.approx(target[0], rel=1e-13)
+    np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), target, rtol=1e-12, atol=0.0)
     assert 0 < worst < 0.01
 
 
@@ -64,8 +83,8 @@ def test_a_dumbbell_pinches_into_two_pieces_with_exact_volumes():
     label, n = pieces(m, phi)
     assert n == 2
     targets = [4 / 3 * np.pi * 0.4e-3 ** 3] * 2
-    phi, _ = correct_volumes(m, phi, label, targets)
-    assert np.allclose(piece_volumes(m, phi, label, n), targets, rtol=1e-13)
+    phi2, _ = correct_volumes(m, phi, label, targets)
+    np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), targets, rtol=1e-12, atol=0.0)
 
 
 def test_two_pieces_three_cells_apart_are_corrected_independently():
@@ -78,8 +97,8 @@ def test_two_pieces_three_cells_apart_are_corrected_independently():
     label, n = pieces(m, phi)
     assert n == 2
     targets = [4 / 3 * np.pi * 0.62e-3 ** 3, 4 / 3 * np.pi * 0.58e-3 ** 3]
-    phi, _ = correct_volumes(m, phi, label, targets)
-    assert np.allclose(piece_volumes(m, phi, label, n), targets, rtol=1e-13)
+    phi2, _ = correct_volumes(m, phi, label, targets)
+    np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), targets, rtol=1e-12, atol=0.0)
 
 
 def test_two_pieces_whose_dilations_meet_hold_the_total_volume_exactly():
@@ -96,10 +115,9 @@ def test_two_pieces_whose_dilations_meet_hold_the_total_volume_exactly():
     label, n = pieces(m, phi)
     assert n == 2
     targets = piece_volumes(m, phi, label, n) * np.array([1.05, 1.0 / 1.05])
-    phi, _ = correct_volumes(m, phi, label, targets)
-    assert inside_volumes(m, phi).sum() == pytest.approx(targets.sum(), rel=1e-13, abs=0.0)
-    fresh, n = pieces(m, phi)
-    assert n == 2 and np.allclose(piece_volumes(m, phi, fresh, n), targets, rtol=1e-13, atol=0.0)
+    phi2, _ = correct_volumes(m, phi, label, targets)
+    assert inside_volumes(m, phi2).sum() == pytest.approx(targets.sum(), rel=1e-13, abs=0.0)
+    np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), targets, rtol=1e-12, atol=0.0)
 
 
 def test_a_zero_volume_target_is_refused():
