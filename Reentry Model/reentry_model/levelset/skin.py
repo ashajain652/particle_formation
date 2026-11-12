@@ -455,6 +455,46 @@ class Skins:
         self._trim()
         return mass, H, P
 
+    def take_top_mass(self, dm, admit, phase=None):
+        """Remove dm >= 0 [kg] (n,) per column from its top down through the run of admissible cells from the top
+        (`admit`, (n, K) bool), at most what that run holds (stage 3 Task 8, the release; the skyscrapers' rule, matched
+        by amendment). Each cell's metal leaves at its own specific enthalpy and velocity: a partly taken cell keeps
+        both, and its trial sensitivity per kilogram, and the cells beneath are untouched; the cells wholly taken leave
+        by `take_top`. Returns (mass [kg], enthalpy [J], solid [kg], momentum [kg m/s] (n, 3), by_phase): solid the
+        mass of solid in what left, by the cells' liquid fractions; by_phase None, or with `phase` ((n, K) bool) the
+        same four split by the cells they came from, each with a leading axis of two, [0] the cells in `phase` and [1]
+        the others. `momentum_out` is left holding the momentum."""
+        dm = np.broadcast_to(np.asarray(dm, dtype=float), (self.n,))
+        if not np.all(np.isfinite(dm) & (dm >= 0.0)):
+            raise ValueError("a release from a skin's top must be a finite, non-negative mass")
+        valid, T = self.valid, self.T()
+        run = np.cumprod(valid & np.asarray(admit, dtype=bool), axis=1).astype(bool)
+        above = np.concatenate([np.zeros((self.n, 1)), np.cumsum(self.m, axis=1)[:, :-1]], axis=1)
+        taken = np.where(run, np.clip(dm[:, None] - above, 0.0, self.m), 0.0)
+        frac = np.divide(taken, self.m, out=np.zeros_like(taken), where=self.m > 0.0)
+        f_s = np.zeros(self.m.shape)
+        f_s[valid] = 1.0 - self.props.liquid_fraction(T[valid])
+
+        def parts(on):
+            t = taken * on
+            return t.sum(axis=1), (self.H * frac * on).sum(axis=1), (t * f_s).sum(axis=1), (t[..., None] * self.U).sum(axis=1)
+
+        mass, H, solid, momentum = parts(1.0)
+        by_phase = None
+        if phase is not None:
+            ph = np.asarray(phase, dtype=bool)
+            by_phase = tuple(np.stack(pair) for pair in zip(parts(ph), parts(~ph)))
+        whole = np.cumprod(run & (taken >= self.m), axis=1).sum(axis=1)       # the cells wholly taken, from the top
+        part = (taken > 0.0) & (np.arange(self.m.shape[1])[None, :] >= whole[:, None])
+        self.m, self.H = np.where(part, self.m - taken, self.m), np.where(part, self.H * (1.0 - frac), self.H)
+        if self.dH is not None:
+            self.dH = np.where(part, self.dH * (1.0 - frac), self.dH)
+        rows = np.flatnonzero(whole > 0)
+        if len(rows):
+            self.take_top(rows, whole[rows])
+        self.momentum_out = momentum
+        return mass, H, solid, momentum, by_phase
+
     # -- columns appear, combine and leave with their markers (Task 5) -----------------------------------------------
     def _no_trial(self, what):
         if self.dH is not None:
