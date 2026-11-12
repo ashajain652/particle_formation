@@ -1102,7 +1102,8 @@ def cmd_resume(args, parser):
         h = getattr(run.body, name, None)
         if h is not None and len(h) < spray.N_BINS:
             setattr(run.body, name, np.concatenate([h, np.zeros(spray.N_BINS - len(h))]))
-    if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written
+    # only the records after the resume are written; the element model's body that does not melt (`ThermalBody`) has none
+    if isinstance(getattr(run.body, "source_rows", None), spray.SourceSpool):
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
     if args.seed is not None:
         np.random.seed(args.seed)

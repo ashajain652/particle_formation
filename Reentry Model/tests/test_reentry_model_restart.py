@@ -24,6 +24,10 @@ DEFAULT_FLIGHT = FLIGHT
 # change and of the state's `flown` saved options, which need those settings and not the new defaults (Task 5h); it flies
 # `--spray-gates 2026-11-10`, the default, as every other flight here does
 FLIGHT_ON = FLIGHT[:-3] + ["--hand-down", "on", "--part-count-from", "moves"] + FLIGHT[-3:]
+# The element model's melting flight (`--surface-model elements`): the same 65 km, 893 K body and 25 ms first step, with no
+# prism-layer, skin or fine-band option (the port's `element` case of analysis/skyscrapers_port/same_results.py)
+MELTING_ELEMENTS = FLIGHT[:FLIGHT.index("--prism-layers")] + ["--temperature", "893", "--dt", "0.025",
+                                                               "--surface-model", "elements", "--quiet"]
 
 
 def rows_of(path):
@@ -520,30 +524,57 @@ def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_a
     assert exc.value.code == 2 and "--leeward-test needs a saved flight of skins" in capsys.readouterr().err
 
 
-def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
-    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
-    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose body (`body.Body`) holds
-    `hist_n` and `hist_m` as the skins do. **No flight of the element model can save such a state today** (found 2026-11-11, reported,
-    not fixed here): the flight that sprays (`--melt on`) fails its save with `state_save_error` "TypeError: cannot pickle
-    'module' object", and the one that saves (no melting) runs a `ThermalBody`, which has no accumulators. So the state is made
-    by hand: a saved element-model state (the thermal body, as the other tests of this file use) is given a `source_rows` list
-    and 40-bin accumulators holding known counts, saved again, and resumed: the state the resumed flight saves has them 50 long, the first 40 bins exactly
-    as they were and the added ten empty."""
+def test_a_melting_element_flight_saves_its_state_and_resumes_to_the_last_bit(tmp_path):
+    """Defect 1 of the 2026-11-11 handoff: the element model's melting body (`body.MeltingBody`) held the film module as an
+    attribute, which pickle cannot save, so its flight recorded `state_save_error` "TypeError: cannot pickle 'module' object"
+    and saved nothing. The flight to 0.125 s twice, once saving at 0.05 s: the save succeeds and changes nothing in the
+    flight, and the resumed flight repeats the unbroken one's rows from the saved step on, to the last bit."""
+    pytest.importorskip("cantera")
+    plain, saved = str(tmp_path / "plain"), str(tmp_path / "saved")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.125", "--outdir", plain, "--name", "f"]) == 0
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.125", "--outdir", saved, "--name", "f", "--save-state-at", "0.05"]) == 0
+    results = json.load(open(os.path.join(saved, "f.json")))["results"]
+    assert results["state_save_error"] is None and results["state_saved_at_s"] == pytest.approx(0.05)
+    flight = rows_of(os.path.join(plain, "f.csv"))
+    assert rows_of(os.path.join(saved, "f.csv")) == flight
+    assert cli.main(["resume", os.path.join(saved, "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    resumed = rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 11 and len(resumed) == 8 and resumed == flight[-8:]
+
+
+def test_a_non_melting_element_flight_resumes_to_the_last_bit(tmp_path):
+    """Defect 2 of the 2026-11-11 handoff: a non-melting element flight's body is a plain `ThermalBody`, which has no
+    `source_rows`, and `cmd_resume` read them unconditionally (AttributeError). Saved at 0.05 s of a 0.1 s flight, it
+    resumes and repeats the unbroken flight's rows from the saved step on, to the last bit."""
     pytest.importorskip("cantera")
     k = FLIGHT.index("--melt")
     elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
-    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    assert cli.main(elements + ["--t-max", "0.1", "--outdir", str(tmp_path), "--name", "f", "--save-state-at", "0.05"]) == 0
+    assert cli.main(["resume", str(tmp_path / "f.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    flight, resumed = rows_of(str(tmp_path / "f.csv")), rows_of(str(tmp_path / "r.csv"))
+    assert len(flight) == 5 and len(resumed) == 3 and resumed == flight[-3:]
+
+
+def test_an_element_model_state_saved_with_40_size_bins_is_padded_to_50_on_resume(tmp_path):
+    """The parked gap of Task 5j's re-review (Task 5k): the skins' state with 40-bin histogram accumulators resumes padded to
+    the 50 bins (`cmd_resume`, the first 40 edges unchanged), and so must an element model's, whose melting body
+    (`body.MeltingBody`) holds `hist_n` and `hist_m` as the skins do. A melting element flight's saved state is given 40-bin
+    accumulators holding known counts, as saved before Task 5j, saved again and resumed: the state the resumed flight saves
+    has them 50 long, the first 40 bins exactly as they were (the flight sprays nothing in this time) and the added ten
+    empty."""
+    pytest.importorskip("cantera")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el",
+                                        "--save-state-at", "0.05"]) == 0
     state = restart.load(str(tmp_path / "el.state.pkl"))
     body = state["run"].body
-    assert not hasattr(body, "skins")
-    body.source_rows = []          # which `cmd_resume` reads, and a thermal body has not (a plain resume of it raises AttributeError: also found
-    #                                2026-11-11, outside this task); the spraying element model's body has it with the accumulators
+    assert not hasattr(body, "skins") and len(body.hist_n) == spray.N_BINS
     body.hist_n, body.hist_m = np.arange(1.0, 41.0), 1e-9 * np.arange(1.0, 41.0)         # as saved with 40 bins before Task 5j
     old = str(tmp_path / "old.state.pkl")
     restart.save(old, state)
     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o", "--t-max", "0.125",
                      "--save-state-at", "0.075"]) == 0
     after = restart.load(str(tmp_path / "o.state.pkl"))["run"].body
+    assert after.n_released == 0.0
     assert len(after.hist_n) == len(after.hist_m) == spray.N_BINS == 50
     np.testing.assert_array_equal(after.hist_n[:40], np.arange(1.0, 41.0))
     np.testing.assert_array_equal(after.hist_m[:40], 1e-9 * np.arange(1.0, 41.0))

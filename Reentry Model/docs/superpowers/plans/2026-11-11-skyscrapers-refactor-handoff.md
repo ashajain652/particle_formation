@@ -140,6 +140,10 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
    fails with "cannot pickle module". A non-melting element-model resume raises `AttributeError` on `source_rows`.
    Both were found in sub-plan 22, Task 5k, while testing a 40-to-50-bin padding of the saved state for a non-skin
    body, and they are in the prototype's code as well. Skin flights save and resume correctly (the `resume` case).
+   **Fixed on 2026-11-12** (Asha's approval; branch `skyscrapers-fixes`): `skyscrapers/body.py` imports the film module at
+   module level instead of holding it on the body, and `cmd_resume` reads `source_rows` only where the body has them.
+   Neither touches a calculation; `tests/test_reentry_model_restart.py` pins both (a melting and a non-melting element
+   flight each resume to the last bit).
 2. **Mesh cache race.** `reentry_model/mesh.py` caches each generated mesh in `Reentry Model/output/meshes/`,
    writing a temporary file with a fixed name (`.tmp.msh`) and then moving it into place with `os.replace`. Two
    processes meshing the same sphere into an empty cache can collide on that file. It broke one test in the first
