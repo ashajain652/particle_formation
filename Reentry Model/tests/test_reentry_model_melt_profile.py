@@ -372,6 +372,52 @@ def test_a_wall_at_the_top_cell_s_centre_gives_the_top_cell_s_threshold(monkeypa
     assert modes.cap_driven[0] == pytest.approx(DZ, rel=1e-12)                # the top cell alone is that warm
 
 
+def test_the_walls_against_the_bridge_s_low_end_on_linear_temperature_profiles():
+    """Where the walls land against the 906.4 K isotherm, the low end of the rheology's bridge (`rheology.BRIDGE_LOW`;
+    the Task 9 report's comparison): on hand-made columns whose temperature falls linearly with depth, the isotherm's
+    depth below the surface and the temperature at the wall's depth, each interpolated linearly between cell centres as
+    the rigid front is located, come out exact:
+
+    - Girin's profile at 3 m/s, whose wall is the rigid front at 0.3 mm (fluid-like), at T = 920 K less 0.1 K per um:
+      the isotherm at 136 um, between the centres at 135 and 145 um, and 890 K at the wall -- the temperature whose
+      isotherm the front at 0.3 mm is;
+    - the same at 950 K less 0.01 K per um, every cell warmer than 906.4 K: no crossing, NaN, and 947 K at the wall;
+    - the same at 900 K less 0.01 K per um, the top cell colder: no crossing, NaN, and 897 K at the wall;
+    - the bridge over slurry, whose wall is the floor-like kink at the tenth cell's centre (95 um): the isotherm between
+      that cell (906.55 K) and the next (905 K), and the tenth cell's own temperature at the wall;
+    - the first column again, on the leeward face: not resolved, NaN in both.
+
+    The history's medians are over the resolved columns, as the median depth to the wall's is, with the columns that have
+    no crossing left out as NaN: of the isotherm's depth (136 and 95.97 um) and of the temperature at the wall (890, 897,
+    906.55 and 947 K). A temperature asked above the top cell's centre is the top cell's, and at a NaN depth NaN. No
+    floating-point error or warning is raised."""
+    girin = girin_column(3.0).rows([0, 0, 0, 0])
+    top, slope = np.array([920.0, 950.0, 900.0, 920.0]), np.array([1e5, 1e4, 1e4, 1e5])      # K and K/m
+    girin.T[:] = top[:, None] - slope[:, None] * Z[None, :]
+    bridge = bridge_over_slurry()
+    cols = mp.LayerColumns(**{f.name: np.concatenate([getattr(girin, f.name)[:3], getattr(bridge, f.name),
+                                                      getattr(girin, f.name)[3:]])
+                              for f in dataclasses.fields(mp.LayerColumns)})
+    T9, T10 = bridge.T[0, 9], bridge.T[0, 10]
+    with strict():
+        modes, rec = mp.profile_modes(cols, np.array([True, True, True, True, False]), 0.8)
+        out = mp.summary(modes, rec, np.full(5, -1), np.zeros(5))
+        front = mp.isotherm_depth(cols.rows([0]), 890.0)
+        T_edges = mp.temperature_at_depth(cols.rows([0, 0, 0]), np.array([0.0, Z[7], np.nan]))
+    assert rheology.BRIDGE_LOW == 906.4
+    assert modes.resolved.tolist() == [True, True, True, True, False]
+    assert rec.floor_like_wall[:4].tolist() == [0.0, 0.0, 0.0, 1.0] and rec.wall_depth[3] == Z[9]
+    want_depth = [136e-6, np.nan, np.nan, Z[9] + DZ * (T9 - 906.4) / (T9 - T10), np.nan]
+    np.testing.assert_allclose(rec.depth_to_bridge_low, want_depth, rtol=1e-12)
+    np.testing.assert_allclose(rec.T_at_wall, [890.0, 947.0, 897.0, T9, np.nan], rtol=1e-14)
+    assert rec.T_at_wall[3] == T9                                       # at the kink cell's centre, its own temperature
+    assert front[0] == pytest.approx(FRONT, rel=1e-12)                  # the front is the 890 K isotherm
+    assert T_edges[0] == cols.T[0, 0] and T_edges[1] == cols.T[0, 7] and np.isnan(T_edges[2])
+    assert out["depth_to_wall_median_mm"] == pytest.approx(0.3, rel=1e-12)
+    assert out["depth_to_bridge_low_median_mm"] == pytest.approx(0.5e3 * (want_depth[0] + want_depth[3]), rel=1e-12)
+    assert out["T_at_wall_median_K"] == pytest.approx(0.5 * (897.0 + T9), rel=1e-14)
+
+
 def no_modes(resolved):
     """ProfileModes with only `resolved` set (the rest NaN): what select_run and summary read beyond the record."""
     from reentry_model.shared import spray
@@ -416,36 +462,44 @@ def test_summary_of_an_empty_step_is_nan():
     """Spec 6.8 and Review Focus 3: a macro step with no resolved column -- or none evaluated yet -- writes a share of
     NaN, a count of 0, NaN medians and nothing sprayed by either mode, in DISPERSION_COLUMNS order, with no
     floating-point error or warning."""
-    assert mp.DISPERSION_COLUMNS == ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "floor_re_median",
+    assert mp.DISPERSION_COLUMNS == ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm",
+                                     "depth_to_bridge_low_median_mm", "T_at_wall_median_K", "floor_re_median",
                                      "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")
     # no history column may look like a wall-clock timer: same_results.py's comparison and the tests' row helpers skip every
     # column whose name starts with "wall_" (review of Task 8, 2026-11-12)
     assert not any(k.startswith("wall_") for k in mp.DISPERSION_COLUMNS)
+    medians = ("depth_to_wall_median_mm", "depth_to_bridge_low_median_mm", "T_at_wall_median_K", "floor_re_median",
+               "we_s_profile_median")
     with strict():
-        outs = [mp.summary(no_modes([False] * 3), record(3, floor_like_wall=[1.0, 0.0, np.nan]), np.array([5, 1, 3]),
-                           np.array([1.0, 2.0, 3.0])),
+        outs = [mp.summary(no_modes([False] * 3),
+                           record(3, floor_like_wall=[1.0, 0.0, np.nan], depth_to_bridge_low=[1e-4, 2e-4, 3e-4],
+                                  T_at_wall=[900.0, 905.0, 910.0]),
+                           np.array([5, 1, 3]), np.array([1.0, 2.0, 3.0])),
                 mp.summary(no_modes([]), record(0), np.zeros(0, dtype=int), np.zeros(0)),
                 mp.summary(None, None, None, None)]
     for out in outs:
         assert tuple(out) == mp.DISPERSION_COLUMNS
         assert np.isnan(out["floor_like_share"]) and out["fluid_like_columns"] == 0
-        assert all(np.isnan(out[k]) for k in ("depth_to_wall_median_mm", "floor_re_median", "we_s_profile_median"))
+        assert all(np.isnan(out[k]) for k in medians)
         assert out["sprayed_gradient_kg"] == 0.0 and out["sprayed_gas_driven_kg"] == 0.0
 
 
 def test_summary_counts_the_resolved_columns_and_each_mode_s_mass():
     """Over the resolved columns only: the floor-like share and the fluid-like count, the medians of the wall's depth
-    [mm], of the floor Reynolds number (over the columns that have one) and of the recorded Weber number, and the mass
-    each mode sprayed -- the gradient mode's on branch 5, the gas-driven mode's on the resolved columns' thin and
-    rarefied branches; a Rayleigh-Taylor column and an unresolved one count in neither."""
+    [mm], of the 906.4 K isotherm's depth [mm] and of the temperature at the wall [K] (each over the columns that have
+    one), of the floor Reynolds number (likewise) and of the recorded Weber number, and the mass each mode sprayed -- the
+    gradient mode's on branch 5, the gas-driven mode's on the resolved columns' thin and rarefied branches; a
+    Rayleigh-Taylor column and an unresolved one count in neither."""
     modes = no_modes([True, True, True, True, False])
     modes.we_s[:] = [10.0, 20.0, 40.0, 80.0, 1e9]
     rec = record(5, floor_like_wall=[1.0, 0.0, 0.0, 1.0, np.nan], wall_depth=[1e-4, 3e-4, 2e-4, 4e-4, 9.0],
-                 floor_re=[0.5, np.nan, 5.0, 0.2, 1e9])
+                 floor_re=[0.5, np.nan, 5.0, 0.2, 1e9], depth_to_bridge_low=[1e-4, 2e-4, np.nan, 6e-4, 9.0],
+                 T_at_wall=[906.0, 902.0, 904.0, 908.0, 1e9])
     with strict():
         out = mp.summary(modes, rec, np.array([5, 1, 3, 2, 1]), np.array([1.0, 2.0, 4.0, 8.0, 16.0]))
     assert out["floor_like_share"] == 0.5 and out["fluid_like_columns"] == 2
     assert out["depth_to_wall_median_mm"] == pytest.approx(0.25, rel=1e-14)
+    assert out["depth_to_bridge_low_median_mm"] == pytest.approx(0.2, rel=1e-14) and out["T_at_wall_median_K"] == 905.0
     assert out["floor_re_median"] == 0.5 and out["we_s_profile_median"] == 30.0
     assert out["sprayed_gradient_kg"] == 1.0 and out["sprayed_gas_driven_kg"] == 10.0
 
@@ -512,6 +566,12 @@ def test_every_fit_holds_its_tolerance_or_its_cap_on_the_d050_fixture():
         assert np.array_equal(d, cols.z[i, fit.cell[i, :c]]) and p.wall[i] == cols.front[i] and p.u_wall[i] == 0.0
     assert (p.slopes()[group == 1, 0] < 0.0).all()
     d906 = isotherm_depth(cols, rheology.BRIDGE_LOW)
+    # the module's own reading, which the history's median takes: the same where the isotherm crosses the column, NaN
+    # where it does not (the top cell colder, or every cell warmer)
+    with np.errstate(all="raise"):
+        crossing = mp.isotherm_depth(cols, rheology.BRIDGE_LOW)
+    inside = (d906 > 0.0) & (d906 < cols.dz.sum(axis=1))
+    assert inside.any() and np.array_equal(crossing[inside], d906[inside]) and np.isnan(crossing[~inside]).all()
     has = kinks.any(axis=1)
     first = np.where(has, p.depth[np.arange(n), np.argmax(kinks, axis=1)], np.nan)
     ok = d906 > 0.0

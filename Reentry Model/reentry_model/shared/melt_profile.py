@@ -25,12 +25,14 @@ The mode inputs and the summary (spec 6.4-6.8): `profile_modes` puts the fit, th
 the layer's properties above the wall together into what the shared spray model's profile path reads
 (`spray.ProfileModes`) and what the records and the history report (`ProfileRecord`); `select_run` picks each column's
 threshold temperature by the mode that took it, `run_properties` gives the droplets' properties from the run's cells,
-`profile_rows` the records' appended columns (`spray.PROFILE_COLUMNS`) and `summary` the history's (`DISPERSION_COLUMNS`)."""
+`profile_rows` the records' appended columns (`spray.PROFILE_COLUMNS`) and `summary` the history's (`DISPERSION_COLUMNS`).
+To place the walls against the low end of the rheology's bridge (906.4 K, `rheology.BRIDGE_LOW`), `isotherm_depth` and
+`temperature_at_depth` read a column's temperatures between its cell centres as the rigid front is located."""
 from dataclasses import dataclass, fields
 
 import numpy as np
 
-from . import spray
+from . import rheology, spray
 from .dispersion import KinkedProfiles, above_wall, fastest_waves, kinks, place_wall
 
 FIT_TOL = 0.03      # every fitted cell within this times |the top cell's speed| of the fit; assumed until stage 6
@@ -272,24 +274,30 @@ def threshold_run(T, flowing, liquid, T_run):
 
 # -- the mode inputs and the summary (spec 6.4-6.8) ---------------------------------------------------------------------
 # the history's columns on the profile path (spec 6.8), per macro step, over the resolved (wet windward) columns: the
-# share that are floor-like, the count that are fluid-like, the medians of the depth to the wall [mm], of the floor
-# Reynolds number and of the recorded Weber number, and the mass [kg] sprayed by the gradient mode and by the gas-driven
-# mode. No name begins with `wall_`, the prefix of the wall-clock timers, which the comparisons of runs skip.
-DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "floor_re_median",
-                      "we_s_profile_median", "sprayed_gradient_kg", "sprayed_gas_driven_kg")
+# share that are floor-like, the count that are fluid-like, the medians of the depth to the wall [mm], of the depth of
+# the bridge's low end, the 906.4 K isotherm [mm], and of the temperature at the wall [K] (the two that place the walls
+# against that isotherm, added in the final review's fix round for the Task 9 report), of the floor Reynolds number and
+# of the recorded Weber number, and the mass [kg] sprayed by the gradient mode and by the gas-driven mode. No name
+# begins with `wall_`, the prefix of the wall-clock timers, which the comparisons of runs skip.
+DISPERSION_COLUMNS = ("floor_like_share", "fluid_like_columns", "depth_to_wall_median_mm", "depth_to_bridge_low_median_mm",
+                      "T_at_wall_median_K", "floor_re_median", "we_s_profile_median", "sprayed_gradient_kg",
+                      "sprayed_gas_driven_kg")
 
 
 @dataclass
 class ProfileRecord:
     """What the profile path reports per column (spec 6.6 and 6.8), all (n,) arrays, NaN on the columns it does not
     resolve: `wall_depth` [m], the depth to the wall; `floor_like_wall`, 1 where the wall is a floor-like kink and 0
-    where it is the rigid front; `floor_re`, the floor Reynolds number at the wall, or at the first kink of a fluid-like column
-    (`dispersion.Wall.re_f`; NaN with no kink); `kink_depth` [m] and `kink_T` [K], the first kink's depth and its cell's
-    temperature (NaN with none); `release_depth` [m], the gradient mode's (NaN where it is stable or the layer above the
-    wall is one straight segment); `growth` [1/s], its growth rate (0 there); and the threshold temperatures [K] of the
-    two modes' release runs: `T_gradient`, that of the cell the release depth falls in, or the gas-driven mode's where
-    it reaches the wall (NaN without a release depth), and `T_driven`, that of the deepest cell whose centre lies
-    strictly above the wall, or the top cell's where the wall is at or above its centre."""
+    where it is the rigid front; `floor_re`, the floor Reynolds number at the wall, or at the first kink of a fluid-like
+    column (`dispersion.Wall.re_f`; NaN with no kink); `kink_depth` [m] and `kink_T` [K], the first kink's depth and its
+    cell's temperature (NaN with none); `release_depth` [m], the gradient mode's (NaN where it is stable or the layer
+    above the wall is one straight segment); `growth` [1/s], its growth rate (0 there); the threshold temperatures [K] of
+    the two modes' release runs: `T_gradient`, that of the cell the release depth falls in, or the gas-driven mode's
+    where it reaches the wall (NaN without a release depth), and `T_driven`, that of the deepest cell whose centre lies
+    strictly above the wall, or the top cell's where the wall is at or above its centre; and, to place the wall against
+    the bridge's low end, `depth_to_bridge_low` [m], the depth of the rheology.BRIDGE_LOW (906.4 K) isotherm
+    (`isotherm_depth`; NaN where the column does not cross it), and `T_at_wall` [K], the temperature at the wall's
+    depth (`temperature_at_depth`). The history takes their medians; the records do not carry them."""
     wall_depth: np.ndarray
     floor_like_wall: np.ndarray
     floor_re: np.ndarray
@@ -299,6 +307,43 @@ class ProfileRecord:
     growth: np.ndarray
     T_gradient: np.ndarray
     T_driven: np.ndarray
+    depth_to_bridge_low: np.ndarray
+    T_at_wall: np.ndarray
+
+
+def isotherm_depth(cols, T_level):
+    """(n,) m: the depth below the surface at which each column's contiguous run of cells from the top warmer than
+    T_level [K] ends, interpolated linearly between the centres of the run's last cell and the next, as the rigid front
+    is located (`skinbody.layer_columns`' `front`, the skins' `depth_above`); NaN where the column has no such crossing:
+    its top cell is not warmer than T_level, or every cell is."""
+    valid = cols.dz > 0.0
+    T = np.where(valid, cols.T, np.nan)                  # NaN compares False and propagates quietly
+    n, K = T.shape
+    k = np.cumprod(valid & (T > T_level), axis=1).sum(axis=1)
+    rows = np.arange(n)
+    Ka, Kb = np.clip(k - 1, 0, K - 1), np.clip(k, 0, K - 1)
+    Ta, Tb = T[rows, Ka], T[rows, Kb]
+    cross = (k > 0) & (k < valid.sum(axis=1))
+    frac = np.clip(np.divide(Ta - T_level, Ta - Tb, out=np.zeros(n), where=cross & (Ta > Tb)), 0.0, 1.0)
+    za, zb = cols.z[rows, Ka], cols.z[rows, Kb]
+    return np.where(cross, za + frac * (zb - za), np.nan)
+
+
+def temperature_at_depth(cols, depth):
+    """(n,) K: each column's temperature at `depth` [m, (n,)], interpolated linearly between the centres of the cells
+    about it, as the rigid front is located (`isotherm_depth`): the top cell's above its centre and the last cell's below
+    its centre; NaN for a NaN depth or a column without cells."""
+    depth = np.asarray(depth, dtype=float)
+    valid = cols.dz > 0.0
+    n, K = cols.T.shape
+    count = valid.sum(axis=1)
+    j = (np.where(valid, cols.z, np.inf) <= depth[:, None]).sum(axis=1)      # the centres at or above the depth
+    rows = np.arange(n)
+    Ka, Kb = np.clip(j - 1, 0, K - 1), np.clip(np.minimum(j, count - 1), 0, K - 1)
+    za, zb, Ta, Tb = cols.z[rows, Ka], cols.z[rows, Kb], cols.T[rows, Ka], cols.T[rows, Kb]
+    span = zb - za
+    w = np.clip(np.divide(depth - za, span, out=np.zeros(n), where=span > 0.0), 0.0, 1.0)
+    return np.where(np.isfinite(depth) & (count > 0), Ta + w * (Tb - Ta), np.nan)
 
 
 def _temperature_at(cols, depth):
@@ -337,7 +382,9 @@ def profile_modes(cols, windward, sigma):
       top segment's density times the square of its velocity jump (the surface's speed less the first breakpoint's, or
       the wall's where the layer is straight) times its depth, over sigma;
     - the two modes' threshold temperatures (`ProfileRecord`) and, as the crest cap's depths, the depths at the step's
-      start of the runs they give (`threshold_run`; NaN gives the liquid run's)."""
+      start of the runs they give (`threshold_run`; NaN gives the liquid run's);
+    - for the history, the depth of the bridge's low end (`rheology.BRIDGE_LOW`, `isotherm_depth`) and the temperature
+      at the wall (`temperature_at_depth`)."""
     n = cols.front.size
     sigma = np.broadcast_to(np.asarray(sigma, dtype=float), (n,))
     resolved = reducible(cols) & np.asarray(windward, dtype=bool)
@@ -374,7 +421,8 @@ def profile_modes(cols, windward, sigma):
                             ("floor_re", wall.re_f), ("kink_depth", np.where(has, p.depth[rows, first], np.nan)),
                             ("kink_T", np.where(has, sub.T[rows, np.maximum(fit.cell[rows, first], 0)], np.nan)),
                             ("release_depth", release), ("growth", g), ("T_gradient", T_gradient),
-                            ("T_driven", T_driven)):
+                            ("T_driven", T_driven), ("depth_to_bridge_low", isotherm_depth(sub, rheology.BRIDGE_LOW)),
+                            ("T_at_wall", temperature_at_depth(sub, wall.depth))):
             getattr(rec, name)[r] = value
     modes = spray.ProfileModes(resolved=resolved, growth=growth, k=k, wall_depth=wall_depth, nu_eff=nu_eff, we_s=we_s,
                                cap_gradient=cap_gradient, cap_driven=cap_driven)
@@ -425,22 +473,25 @@ def _median(x):
 
 def summary(modes, record, branch, mass):
     """The history's DISPERSION_COLUMNS for a macro step (spec 6.8) over its resolved columns: the share that are
-    floor-like (NaN with none), the count that are fluid-like, the medians of the wall's depth [mm], of the floor
-    Reynolds number (over the columns that have one) and of the recorded Weber number (NaN with none), and the mass
-    [kg] each mode sprayed: `mass` [kg, (n,)], the liquid's mode's per column, summed where a resolved column took
-    branch 5 (the gradient mode) and where it took the thin or rarefied branch (the gas-driven mode). `modes` None --
-    no step evaluated on the profile path yet -- is a step with none."""
+    floor-like (NaN with none), the count that are fluid-like, the medians of the wall's depth [mm], of the depth of the
+    bridge's low end, the 906.4 K isotherm [mm], and of the temperature at the wall [K] (each over the columns that
+    have one: a column the isotherm does not cross is left out), of the floor Reynolds number (likewise) and of the
+    recorded Weber number (NaN with none), and the mass [kg] each mode sprayed: `mass` [kg, (n,)], the liquid's mode's
+    per column, summed where a resolved column took branch 5 (the gradient mode) and where it took the thin or rarefied
+    branch (the gas-driven mode). `modes` None -- no step evaluated on the profile path yet -- is a step with none."""
     if modes is None:
-        floor = wall = re = we = np.zeros(0)
+        floor = wall = bridge_low = T_wall = re = we = np.zeros(0)
         gradient = driven = 0.0
     else:
         on = np.asarray(modes.resolved, dtype=bool)
-        floor, wall, re = (np.asarray(x, dtype=float)[on]
-                           for x in (record.floor_like_wall, record.wall_depth, record.floor_re))
+        floor, wall, bridge_low, T_wall, re = (
+            np.asarray(x, dtype=float)[on] for x in (record.floor_like_wall, record.wall_depth,
+                                                     record.depth_to_bridge_low, record.T_at_wall, record.floor_re))
         we = np.asarray(modes.we_s, dtype=float)[on]
         branch, mass = np.asarray(branch), np.asarray(mass, dtype=float)
         gradient = float(mass[on & (branch == spray.BRANCH_PROFILE)].sum())
         driven = float(mass[on & np.isin(branch, (spray.BRANCH_THIN, spray.BRANCH_RAREFIED))].sum())
     share = float(np.mean(floor == 1.0)) if floor.size else float("nan")
-    return dict(zip(DISPERSION_COLUMNS, (share, int((floor == 0.0).sum()), _median(wall) * 1e3, _median(re), _median(we),
+    return dict(zip(DISPERSION_COLUMNS, (share, int((floor == 0.0).sum()), _median(wall) * 1e3,
+                                         _median(bridge_low) * 1e3, _median(T_wall), _median(re), _median(we),
                                          gradient, driven)))

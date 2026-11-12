@@ -819,7 +819,14 @@ gate, can still take such a column.
   times it on the 558 of the 622 thick columns that have one; the wall lies at a median 1.004 times that depth on the
   fixture (30 columns, 28 of them floor-like) and 1.03 times it on the thick set (609 columns). So where the kink and the
   wall sit, and every input to the floor test, follow the bridge's unmeasured end point. The records carry the
-  kink's depth and temperature so that this stays visible.
+  kink's depth and temperature, and the history, per macro step over the resolved columns, the median depth of the
+  906.4 K isotherm (`depth_to_bridge_low_median_mm`, NaN on a column the isotherm does not cross, which the median leaves
+  out) and the median temperature at the wall's depth (`T_at_wall_median_K`), both read between cell centres as the
+  rigid front is, so that this stays visible in every flight. The two medians can be over different columns, so they
+  compare the walls with the isotherm in aggregate, not column by column: on the fixture's 36 columns (measured once)
+  the isotherm's median depth is 0.0558 mm over the 30 columns it crosses and the wall's 0.0668 mm over all 36, while
+  the median of the per-column ratio is the 1.004 above; the median temperature at the wall is 905.96 K, and the four
+  fluid-like walls sit at the rigid front's own temperature, 895.10 K, as they must.
 - *The constants are assumed* until stage 6: `KINK_DROP` = 0.2, `FLOOR_RE` = 1.0, `FIT_TOL` = 0.03 (every fitted cell
   within 3 % of the top cell's speed of the fit) and `N_MAX` = 6 breakpoints at most. Unchanged from `table`: the droplet
   radius over the wavelength `K_R` = 0.17, the release period over the growth time `K_T` = 1.1 and the surface tension of
@@ -830,9 +837,10 @@ gate, can still take such a column.
 **Records and history.** On `profile` the droplet records gain nine columns after the 27 of `table` (`spray.PROFILE_COLUMNS`:
 the depth to the wall, whether it is a floor, the floor Reynolds number, the first kink's depth and temperature, the
 gradient mode's release depth and growth rate, and Girin's theoretical layer depth and surface speed beside them), and
-the history gains seven per macro step (`melt_profile.DISPERSION_COLUMNS`: the share of resolved columns that are
-floor-like, the count that are fluid-like, the medians of the depth to the wall, of the floor Reynolds number and of the
-recorded Weber number, and the mass sprayed by the gradient and the gas-driven modes). On `table` neither is written.
+the history gains nine per macro step (`melt_profile.DISPERSION_COLUMNS`: the share of resolved columns that are
+floor-like, the count that are fluid-like, the medians of the depth to the wall, of the depth of the 906.4 K isotherm
+and of the temperature at the wall, of the floor Reynolds number and of the recorded Weber number, and the mass sprayed
+by the gradient and the gas-driven modes). On `table` neither is written.
 Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's, `settings.dispersion`).
 
 **What `table` keeps (verified).** On 2026-11-12 the three cases of `analysis/skyscrapers_port/same_results.py` were run

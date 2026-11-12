@@ -440,9 +440,13 @@ design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-disper
 - **Records.** Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's
   `settings.dispersion`). On `profile`, `particles.npz` has 36 columns, the 27 of `table` followed by nine
   (`spray.PROFILE_COLUMNS`: `depth_to_wall_m`, `floor_like_wall`, `floor_re`, `kink_depth_m`, `kink_T_K`,
-  `release_depth_m`, `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has seven more columns
-  (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `depth_to_wall_median_mm`, `floor_re_median`,
-  `we_s_profile_median`, `sprayed_gradient_kg`, `sprayed_gas_driven_kg`); on `table` there are neither. A resume that
+  `release_depth_m`, `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has nine more columns
+  (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `depth_to_wall_median_mm`,
+  `depth_to_bridge_low_median_mm`, `T_at_wall_median_K`, `floor_re_median`, `we_s_profile_median`, `sprayed_gradient_kg`,
+  `sprayed_gas_driven_kg`); on `table` there are neither. The two after the wall's depth place the walls against the
+  906.4 K isotherm, the low end of the rheology's bridge (`rheology.BRIDGE_LOW`): over the same resolved columns, the
+  median depth of that isotherm below the surface (mm) and the median temperature at the wall's depth (K), each
+  interpolated between cell centres as the rigid front is, a column the isotherm does not cross left out. A resume that
   changes the setting drops or adds the history columns from the saved row, cuts records held in memory to 27 columns or
   pads them with NaN to 36, and writes the records after the resume under the new layout.
 - **Same results and cost.** With `--dispersion table` a spraying skin run is what it was before the option existed, to the

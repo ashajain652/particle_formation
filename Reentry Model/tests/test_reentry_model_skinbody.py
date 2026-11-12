@@ -2881,16 +2881,18 @@ def test_a_plug_column_whose_run_is_empty_releases_nothing_or_by_the_slurry_s_mo
         np.testing.assert_allclose(sk.H.sum(axis=1) + book.enthalpy, H0, rtol=1e-12)
 
 
-def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_path):
+def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_path, monkeypatch):
     """The profile path in the skin body (spec 6.1-6.8): Task 1c's spraying test -- the 4 mm test sphere heated at 3 MW/m2
     from 890 K under the 100 mm flight's gas state at 93 s, two 0.25 s steps, one flow sub-step a heat sub-step -- with
     the spray model on `profile`. The released metal leaves the body: the mass left and released is the starting mass
     to round-off, the energy books close with the released enthalpy and the momentum books with the droplets' momentum.
     The history's DISPERSION_COLUMNS come last in every row (an empty step's before the first: a share of NaN), every
     record is `record_columns(36)` wide, in memory and in the coupled writer's file, which writes the profile run's names
-    even before any record exists, and the history's sprayed masses are the plan's records by mode. A spray model on
-    `profile` needs the flow on. Printed, as a measurement: the share of floor-like columns and the mass each mode
-    sprayed."""
+    even before any record exists, and the history's sprayed masses are the plan's records by mode. The two columns that
+    place the walls against the 906.4 K isotherm are the medians of the plan's record, and a fluid-like wall's
+    temperature is T_rigid, or, where every cell of the column is warmer and the front is its bottom, the bottom cell's.
+    A spray model on `profile` needs the flow on. Printed, as a measurement: the share of floor-like columns, the two
+    medians against the isotherm and the mass each mode sprayed."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import spray
@@ -2900,6 +2902,12 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     with pytest.raises(ValueError, match="needs the flow on"):
         make(coarse_sphere_mesh, spray=model)
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model)
+    seen, profile_modes = {}, skinbody.melt_profile.profile_modes
+
+    def keep(cols, windward, sigma):                     # the cells the plan read, which pass through unchanged
+        seen["cols"] = cols
+        return profile_modes(cols, windward, sigma)
+    monkeypatch.setattr(skinbody.melt_profile, "profile_modes", keep)
     names = spray.record_columns(36)
     assert b.record_names() == names and b.source_rows == []
     history = tj.History({"time_s": np.zeros(1)}, np.zeros((1, 6)), None)
@@ -2929,14 +2937,31 @@ def test_a_profile_skin_body_sprays_and_keeps_its_books(coarse_sphere_mesh, tmp_
     assert s["sprayed_gradient_kg"] == pytest.approx(p.mass[on & (branch == spray.BRANCH_PROFILE)].sum(), rel=1e-14)
     driven = on & np.isin(branch, (spray.BRANCH_THIN, spray.BRANCH_RAREFIED))
     assert s["sprayed_gas_driven_kg"] == pytest.approx(p.mass[driven].sum(), rel=1e-14)
+    # the walls against the bridge's low end, 906.4 K (the final review's fix round, for the Task 9 report): the medians of
+    # the plan's record over the resolved columns, a column the isotherm does not cross left out; a fluid-like wall is the
+    # rigid front, read between the same cell centres, so the temperature there is T_rigid where the front lies inside the
+    # column, and the bottom cell's where every cell is warmer and `depth_above` puts the front at the column's bottom
+    rec, cols = p.record, seen["cols"]
+    med = lambda x: float(np.median(x[np.isfinite(x)])) if np.isfinite(x).any() else float("nan")
+    assert s["depth_to_bridge_low_median_mm"] == pytest.approx(med(rec.depth_to_bridge_low[on]) * 1e3, rel=1e-14,
+                                                               nan_ok=True)
+    assert s["T_at_wall_median_K"] == pytest.approx(med(rec.T_at_wall[on]), rel=1e-14, nan_ok=True)
+    count = (cols.dz > 0.0).sum(axis=1)
+    bottom = (rec.wall_depth == cols.dz.sum(axis=1)) & (cols.T[np.arange(len(count)), count - 1] > mat.T_rigid)
+    fluid = on & (rec.floor_like_wall == 0.0)
+    assert np.isfinite(rec.T_at_wall[on]).all() and (fluid & ~bottom).any()
+    np.testing.assert_allclose(rec.T_at_wall[fluid & ~bottom], mat.T_rigid, rtol=1e-9)
+    assert np.array_equal(rec.T_at_wall[fluid & bottom], cols.T[np.arange(len(count)), count - 1][fluid & bottom])
     files = coupled.write_particles(str(tmp_path / "after"), b, history)
     npz = np.load(files["particles"])
     assert npz.files == names and all(np.array_equal(npz[k], rows[:, i], equal_nan=True) for i, k in enumerate(names))
     print("\nprofile skin body at 0.5 s: {} resolved columns of {} wet windward, floor-like share {:.3f}, {} fluid-like; "
-          "wall depth median {:.4g} mm, floor Re median {:.3g}, We_s median {:.3g}; sprayed {:.4g} kg by the gradient "
+          "wall depth median {:.4g} mm, 906.4 K isotherm depth median {:.4g} mm, temperature at the wall median {:.6g} K, "
+          "floor Re median {:.3g}, We_s median {:.3g}; sprayed {:.4g} kg by the gradient "
           "mode, {:.4g} kg gas-driven, {:.4g} kg in all (liquid's modes {:.4g} kg, slurry's {:.4g} kg); branches {}".format(
               int(on.sum()), int(((b.theta <= 0.5 * np.pi) & (p.flowing > 0.0)).sum()), s["floor_like_share"],
-              s["fluid_like_columns"], s["depth_to_wall_median_mm"], s["floor_re_median"], s["we_s_profile_median"],
+              s["fluid_like_columns"], s["depth_to_wall_median_mm"], s["depth_to_bridge_low_median_mm"],
+              s["T_at_wall_median_K"], s["floor_re_median"], s["we_s_profile_median"],
               s["sprayed_gradient_kg"], s["sprayed_gas_driven_kg"], b.released_mass, p.mass.sum(), p.mass_slurry.sum(),
               {int(x): int((branch[p.mass > 0.0] == x).sum()) for x in np.unique(branch[p.mass > 0.0])}))
 
@@ -2951,8 +2976,11 @@ def test_a_table_skin_body_has_no_dispersion_columns(coarse_sphere_mesh, tmp_pat
         b = make(coarse_sphere_mesh, flow=True, remove=False, spray=model, spool=str(tmp_path / "table"))
         assert b.dispersion_stats() == {} and b.record_names() == spray.SOURCE_COLUMNS
         assert not set(skinbody.melt_profile.DISPERSION_COLUMNS) & set(b.skin_stats())
+        # nor the two that place the walls against the 906.4 K isotherm (the final review's fix round): profile-only
+        assert not {"depth_to_bridge_low_median_mm", "T_at_wall_median_K"} & set(b.skin_stats())
         assert b.source_rows.names == tuple(spray.SOURCE_COLUMNS)
     b = make(coarse_sphere_mesh, flow=True, remove=False, spray=spray.SprayModel(mat.liquid, dispersion="profile"),
              spool=str(tmp_path / "profile"))
     assert b.source_rows.names == tuple(spray.record_columns(36))
-    assert tuple(b.skin_stats())[-7:] == skinbody.melt_profile.DISPERSION_COLUMNS
+    D = skinbody.melt_profile.DISPERSION_COLUMNS
+    assert tuple(b.skin_stats())[-len(D):] == D and {"depth_to_bridge_low_median_mm", "T_at_wall_median_K"} <= set(D)
