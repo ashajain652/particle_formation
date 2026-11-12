@@ -33,6 +33,7 @@ from .boxmesh import build
 from .criteria import finite_values, kappa_max_nodal, make_target
 from .cutcell import inside_volumes
 from .levelset import correct_volumes, pieces, redistance
+from .markers import NEWTON_REACH
 from .surfaces import molten_rigid_surface, outer_surface
 from .transfer import interpolate, locate
 
@@ -226,12 +227,15 @@ class StepEnd:
 
     def _snap(self, tally):
         """The markers onto phi, `Markers.snap` round after round until none is farther than SNAP_TOL from its zero
-        contour, at most SNAP_ROUNDS rounds. (`tally` is the step's, kept for the release paths that call this.)"""
+        contour, at most SNAP_ROUNDS rounds, the last finishing every marker by its cell's Newton steps whatever its
+        distance (`Markers.snap`'s reach; fix round 4). (`tally` is the step's, kept for the release paths that call this.)"""
         mk = self.markers
-        for _ in range(SNAP_ROUNDS):
+        for k in range(SNAP_ROUNDS):
             if np.abs(interpolate(self.mesh, self.phi, mk.x)).max() <= SNAP_TOL:
                 return
-            mk.snap(self.mesh, self.phi)
+            mk.snap(self.mesh, self.phi, reach=np.inf if k == SNAP_ROUNDS - 1 else NEWTON_REACH)
+        if np.abs(interpolate(self.mesh, self.phi, mk.x)).max() <= SNAP_TOL:
+            return
         raise RuntimeError("the markers did not snap onto phi within {} m in {} rounds".format(SNAP_TOL, SNAP_ROUNDS))
 
     def _release(self, idx, tally):

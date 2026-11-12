@@ -3,12 +3,16 @@ gas surface, each carrying one skin (a row of a `Skins`) and an area (Ruling 1: 
 skin's base at x - H n, H the skin's thickness).
 
 Motion. `carry` moves the markers by a velocity field; `snap` returns them to phi's zero contour along the normal,
-x <- x - phi(x) n(x), n the unit recovered gradient, applied once and iterated once more (section 9.1), then finished
-by Newton steps along the gradient of the cell each marker lies in, x <- x - phi g / |g|^2, the exact root of the P1
-field within the cell (Task 9, fix round 4: the recovered step assumes phi rises one metre per metre along n; where
-phi's cells are far from a distance -- |grad phi| 0.2 and 0.9, 30 and 73 degrees off n, on the full-size cube's second
-step -- it removes only a fifth to a quarter of the distance a pass, and 40 passes left two markers 4e-8 m off). phi
-is read as its P1 interpolant; the recovered gradient is the nodal (volume-weighted) average of the cells' gradients,
+x <- x - phi(x) n(x), n the unit recovered gradient, applied once and iterated once more (section 9.1); a marker then
+within NEWTON_REACH of the contour is finished by Newton steps along the gradient of the cell it lies in,
+x <- x - phi g / |g|^2, the exact root of the P1 field within the cell (`snap(reach=...)`: the body's last snap round
+takes any reach). Task 9, fix round 4: the recovered step assumes phi rises one metre per metre along n; where phi's
+cells are far from a distance (|grad phi| 0.20 and 0.88, the slope along n 0.17 and 0.25, on the full-size cube's
+second step) it removes only a sixth to a quarter of the distance a pass, and 40 passes left two markers 4e-8 and
+4e-10 m off phi against the body's 1e-10 m. The reach keeps the landing where the recovered path lands: Newton from a
+millimetre off moves a marker along a gradient up to 73 degrees off n, and on that step's markers landed up to 1.5 mm
+(a tenth of them over 0.1 mm) from where 400 recovered passes land, against 2.6 um with a reach of 1 um. phi is read
+as its P1 interpolant; the recovered gradient is the nodal (volume-weighted) average of the cells' gradients,
 interpolated, so the normal varies continuously along the surface.
 
 Tessellation (Ruling 2). Each marker's neighbours are the markers within NEIGHBOUR_REACH target spacings whose patches
@@ -53,6 +57,7 @@ NEIGHBOUR_HOPS = 2         # patch-graph hops between neighbours' patches at mos
 CAP_SIDES = 16             # sides of the polygon a Voronoi cell is clipped from
 SNAP_PASSES = 2            # the snap applied once and iterated once (section 9.1)
 NEWTON_ROUNDS = 8          # cell-gradient Newton steps after them at most (`_cell_newton`; Task 9, fix round 4)
+NEWTON_REACH = 1.0e-6      # m: only markers this close to phi's zero contour take them (module docstring)
 NEWTON_TOL = 1.0e-13       # m: points this close to phi's zero contour take no Newton step (a thousandth of the body's
                            # snap tolerance, stepend.SNAP_TOL)
 SPLIT_FACTOR = 2.0         # a marker splits above this times the target area (section 9.2)
@@ -179,13 +184,17 @@ class Markers:
         """x <- x + velocity(x) dt, velocity a function of the positions (n, 3) [m/s]."""
         self.x = self.x + np.asarray(velocity(self.x), dtype=float) * dt
 
-    def snap(self, mesh, phi):
+    def snap(self, mesh, phi, reach=NEWTON_REACH):
         """Back onto phi's zero contour (module docstring): SNAP_PASSES steps along the recovered normal, then Newton
-        steps along each marker's own cell gradient (`_cell_newton`); the normals are updated."""
+        steps along its own cell's gradient (`_cell_newton`) for each marker within `reach` [m] of the contour (np.inf:
+        every marker); the normals are updated."""
         for _ in range(SNAP_PASSES):
             val, n = _field(mesh, phi, self.x)
             self.x = self.x - val[:, None] * n
-        self.x = _cell_newton(mesh, phi, self.x)
+        val, _ = _field(mesh, phi, self.x)
+        near = np.abs(val) <= reach
+        if near.any():
+            self.x[near] = _cell_newton(mesh, phi, self.x[near])
         _, self.normal = _field(mesh, phi, self.x)
 
     def base(self):
