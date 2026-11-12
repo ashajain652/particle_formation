@@ -91,6 +91,15 @@ the columns (§20.6's hand-down below the stub instead), the leeward centroid te
   would fold, and is off by default (it needs `--hand-down on`). The level set's volume mesh does not move, so nothing
   folds. Recommendation: **not applicable**; revisit if a level-set surface shows a reason for it.
 
+- **D4 — where the release cascade lives** (passed from Asha's forked session, 2026-11-11). The cascade (liquid cells
+  first from the top, then the flowing slurry with `--slurry-spray on`, never rigid metal, each cell at its own enthalpy
+  and velocity) could move into `shared/` as a function on cell arrays, or stay in each architecture's skin code with a
+  test that compares the two releases on the same column. Recommendation (the forked session's, which I share): keep
+  it per architecture — it acts on each skin's own cells, which are never shared — and pin it with
+  `test_the_cascade_matches_the_skyscrapers_release_on_one_column` in Task 8 (the same column of cells released by both
+  over one macro step: the same masses, enthalpies and momenta within 1e-12; the test may import skyscrapers' `skin.py`
+  because tests are not the level-set package). Until Asha answers, Task 8 builds it per architecture with that test.
+
 ## Rulings made while planning (recorded; each with its cost if wrong)
 
 1. **Markers sit on φ** (the gas surface), one per φ-patch at creation, and carry their skin's base at x − H n.
@@ -353,9 +362,19 @@ out of `test_levelset_cutthermal.py`); test `tests/levelset/test_levelset_skin.p
   at its own rate with `slurry`, never rigid metal; each cell leaves at its own enthalpy and velocity) `-> ReleaseBook`;
   `SprayPlan.records(t, state, ...)` → rows by the shared `source_block`; `step_summary() -> dict` with every
   `SKIN_SUMMARY_COLUMNS` key.
+- **No renewal limit** (ruling of 2026-11-11, on a question passed from Asha's forked session). Design §9.5 caps
+  liquid deeper than δ_m below the top at ρ_l δ_m A per renewal time δ_m²/ν_l; §20.6 says spraying acts "as in §9.5".
+  The skyscrapers code at the parity commit ae20dd3 applies no renewal limit (searched: `skin.py`, `skinbody.py`,
+  `shared/spray.py`, `film.py`); the limit belongs to the 2026-10-07 two-zone skin design, where it stood in for the
+  momentum diffusion of an unresolved deep layer. The layered skins resolve the velocity through the depth cell by cell,
+  so the release is capped only as the skyscrapers cap it (the cap depth and the cascade). §9.5's renewal clause is
+  therefore not built; Task 12 records this as an amendment of §9.5 in the design.
 - [ ] **Step 1: Write the failing tests:** `test_marker_release_equals_the_shared_model` (for a set of markers with
   given depths and a fixed gas state, the plan's `mdot`, `r`, `branch` equal `SprayModel.evaluate` called directly with
-  the same arrays, bit-for-bit); `test_the_cascade_takes_liquid_first_and_never_rigid_metal`; `test_release_books_close`
+  the same arrays, bit-for-bit); `test_the_cascade_takes_liquid_first_and_never_rigid_metal`;
+  `test_the_cascade_matches_the_skyscrapers_release_on_one_column` (D4); `test_release_is_not_capped_by_a_renewal_time`
+  (a 2 mm liquid column on rigid metal whose shared rate over one 0.5 s macro step releases more than ρ_l δ_m A per
+  δ_m²/ν_l releases the shared rate's mass, within 1e-12); `test_release_books_close`
   (1e-14); `test_droplet_records_go_through_the_shared_writer` (a fake history of three steps and the plan's rows:
   `shared.droplets.write_particles` writes `particles.npz`, `particles_summary.csv`, `size_distribution.csv`, and the
   released mass in them equals the books'); `test_girin_cases_through_the_level_set_path` (the 1994 Table 2 case's
