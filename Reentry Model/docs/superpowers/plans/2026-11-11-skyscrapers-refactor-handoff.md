@@ -150,7 +150,9 @@ fixing any of them, because a fix changes behaviour and so changes what "same re
    parallel unit-tier run (701 passed, 1 failed; the second run, with the cache full, gave 702 passed, 1 skipped). The
    old main has the same code, so the race is older than the port. Any parallel run on an empty cache can hit it.
    Warm the cache by running the unit tier once serially, or rerun after a failure; a fix would write the temporary
-   file with a unique name.
+   file with a unique name. **Fixed on 2026-11-12** (Asha's approval; branch `skyscrapers-fixes`): each writer writes
+   its own temporary file, named with its process id and a random suffix and still ending in `.msh`, and removes it if
+   the write fails (`mesh.temporary_mesh_path`, pinned in `tests/test_reentry_model_mesh.py`).
 3. **The default surface model without melting.** With `--thermal fem`, `--surface-model` defaults to `skin` even
    with `--melt off`; this became the prototype's default in sub-plan 22. The non-melting case (100 mm, 7.5 km/s,
    77.5 km altitude) then stops after about 50 s of wall time (51.6 s on the port, 48.6 s on the prototype) with

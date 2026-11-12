@@ -21,6 +21,7 @@ re-parametrising; the radial construction gives the same layers deterministicall
 Kuhn-split box for the analytic (Stefan) tests.
 """
 import os
+import secrets
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -330,6 +331,14 @@ def band_limits(band, ramp, radius):
     return d_min, max(min(band + ramp, radius), d_min + 1e-9)
 
 
+def temporary_mesh_path(path):
+    """A temporary name of one writer's own for the cache file `path`, beside it: two processes meshing the same sphere at
+    once each write their own file and `os.replace` it into place, so neither moves the other's half-written one (with one
+    shared name they could: handoff defect 2, 2026-11-11). The process id and a random suffix make it unique; it keeps the
+    `.msh` ending, from which gmsh picks the format."""
+    return "{}.tmp-{}-{}.msh".format(path[:-4], os.getpid(), secrets.token_hex(4))
+
+
 def generate_sphere_mesh(radius, h_surface=DEFAULT_H_SURFACE, h_core=DEFAULT_H_CORE, mesh_dir=DEFAULT_MESH_DIR,
                          band=DEFAULT_BAND, ramp=DEFAULT_BAND_RAMP):
     """gmsh sphere of `radius`, at h_surface throughout the outer `band` and then graded to h_core over `ramp`;
@@ -339,6 +348,7 @@ def generate_sphere_mesh(radius, h_surface=DEFAULT_H_SURFACE, h_core=DEFAULT_H_C
     if os.path.isfile(path):
         return path
     import gmsh                                   # imported here: only mesh generation needs gmsh
+    tmp = temporary_mesh_path(path)
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -365,8 +375,11 @@ def generate_sphere_mesh(radius, h_surface=DEFAULT_H_SURFACE, h_core=DEFAULT_H_C
             gmsh.option.setNumber(option, 0)
         gmsh.option.setNumber("Mesh.Algorithm3D", 10)          # HXT
         gmsh.model.mesh.generate(3)
-        tmp = path[:-4] + ".tmp.msh"           # gmsh.write needs the .msh extension to pick the format
         gmsh.write(tmp)
+    except BaseException:
+        if os.path.exists(tmp):                # a failed or interrupted write leaves no temporary file behind
+            os.remove(tmp)
+        raise
     finally:
         gmsh.finalize()
     os.replace(tmp, path)                      # atomic: an interrupted generation never leaves a reusable partial .msh
