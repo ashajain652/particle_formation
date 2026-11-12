@@ -94,3 +94,24 @@ def test_coupled_reexports_the_droplet_writer():
     for bad in ("skin", "column"):
         assert not [ln for ln in src.splitlines()
                     if ln.lstrip().startswith(("import ", "from ")) and bad in ln.split("#")[0]]
+
+
+def test_body_and_thermal_reexport_the_shared_names():
+    import pickle
+    import numpy as np
+    from reentry_model import body, thermal
+    from reentry_model.shared import body as sbody, thermal as sthermal
+    for name in ("Body", "sphere_mass", "ConstantBody"):
+        assert getattr(body, name) is getattr(sbody, name)
+    for name in ("SIGMA_SB", "MissingBackend", "StepResult", "ThermalSolver"):
+        assert getattr(thermal, name) is getattr(sthermal, name)
+    r = sthermal.StepResult(T=np.array([1.0, 2.0]), Q_conv=3.0, Q_rad=4.0, iterations=5, Q_extra=6.0,
+                            Q_dropped=7.0, Q_interface=8.0)
+    back = pickle.loads(pickle.dumps(r))
+    assert type(back) is sthermal.StepResult
+    assert np.array_equal(back.T, r.T) and (back.Q_conv, back.Q_interface) == (3.0, 8.0)
+    # the shared modules import nothing of the package outside shared
+    import inspect
+    for mod in (sbody, sthermal):
+        assert not [ln for ln in inspect.getsource(mod).splitlines()
+                    if ln.lstrip().startswith(("import reentry_model", "from reentry_model", "from .."))]
