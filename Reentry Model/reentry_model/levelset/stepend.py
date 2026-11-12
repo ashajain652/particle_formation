@@ -228,12 +228,17 @@ class StepEnd:
     def _snap(self, tally):
         """The markers onto phi, `Markers.snap` round after round until none is farther than SNAP_TOL from its zero
         contour, at most SNAP_ROUNDS rounds, the last finishing every marker by its cell's Newton steps whatever its
-        distance (`Markers.snap`'s reach; fix round 4). (`tally` is the step's, kept for the release paths that call this.)"""
+        distance (`Markers.snap`'s reach; fix round 4); the step's `tally` counts that round's fallback markers and largest
+        sideways slide (`snap_fallback`, `snap_slide`; fix round 5)."""
         mk = self.markers
         for k in range(SNAP_ROUNDS):
             if np.abs(interpolate(self.mesh, self.phi, mk.x)).max() <= SNAP_TOL:
                 return
-            mk.snap(self.mesh, self.phi, reach=np.inf if k == SNAP_ROUNDS - 1 else NEWTON_REACH)
+            last = k == SNAP_ROUNDS - 1
+            fallback, slide = mk.snap(self.mesh, self.phi, reach=np.inf if last else NEWTON_REACH)
+            if last and tally is not None:
+                tally.snap_fallback += fallback
+                tally.snap_slide = max(tally.snap_slide, slide)
         if np.abs(interpolate(self.mesh, self.phi, mk.x)).max() <= SNAP_TOL:
             return
         raise RuntimeError("the markers did not snap onto phi within {} m in {} rounds".format(SNAP_TOL, SNAP_ROUNDS))

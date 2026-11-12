@@ -187,15 +187,21 @@ class Markers:
     def snap(self, mesh, phi, reach=NEWTON_REACH):
         """Back onto phi's zero contour (module docstring): SNAP_PASSES steps along the recovered normal, then Newton
         steps along its own cell's gradient (`_cell_newton`) for each marker within `reach` [m] of the contour (np.inf:
-        every marker); the normals are updated."""
+        every marker); the normals are updated. Returns (the markers that took the Newton steps from farther than
+        NEWTON_REACH -- the fallback, with a reach beyond it -- and the largest sideways slide [m] of the Newton steps, the
+        displacement's part along the surface, normal to the new normal)."""
         for _ in range(SNAP_PASSES):
             val, n = _field(mesh, phi, self.x)
             self.x = self.x - val[:, None] * n
         val, _ = _field(mesh, phi, self.x)
         near = np.abs(val) <= reach
+        before = self.x.copy()
         if near.any():
             self.x[near] = _cell_newton(mesh, phi, self.x[near])
         _, self.normal = _field(mesh, phi, self.x)
+        d = self.x - before
+        slide = np.linalg.norm(d - np.einsum("ij,ij->i", d, self.normal)[:, None] * self.normal, axis=1)
+        return int((near & (np.abs(val) > NEWTON_REACH)).sum()), float(slide.max(initial=0.0))
 
     def base(self):
         """Each marker's skin base [m] (n, 3), x - H n with H its skin's thickness (Ruling 1)."""
