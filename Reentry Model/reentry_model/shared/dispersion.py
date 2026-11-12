@@ -588,6 +588,9 @@ def place_wall(profiles, nu_below, floor_re=FLOOR_RE, kink_drop=KINK_DROP):
     front). nu_below is (n, B), as for floor_reynolds."""
     n, B = profiles.depth.shape
     re = floor_reynolds(profiles, nu_below, kink_drop)
+    if B == 0:                                        # no breakpoints, so no kink: the wall is the front
+        return Wall(floor=np.zeros(n, dtype=bool), index=np.full(n, -1), depth=profiles.wall.copy(),
+                    speed=profiles.u_wall.copy(), re_f=np.full(n, np.nan))
     isk = ~np.isnan(re)
     with np.errstate(invalid="ignore"):
         like = re < floor_re                          # NaN (off kinks, padding) is False
@@ -596,12 +599,9 @@ def place_wall(profiles, nu_below, floor_re=FLOOR_RE, kink_drop=KINK_DROP):
     first_floor = np.argmax(like, axis=1)
     first_kink = np.argmax(isk, axis=1)
     pick = np.where(floor, first_floor, first_kink)
-    if B:
-        depth = np.where(floor, profiles.depth[rr, first_floor], profiles.wall)
-        speed = np.where(floor, profiles.u_break[rr, first_floor], profiles.u_wall)
-        re_f = np.where(isk.any(axis=1), re[rr, pick], np.nan)
-    else:
-        depth, speed, re_f = profiles.wall.copy(), profiles.u_wall.copy(), np.full(n, np.nan)
+    depth = np.where(floor, profiles.depth[rr, first_floor], profiles.wall)
+    speed = np.where(floor, profiles.u_break[rr, first_floor], profiles.u_wall)
+    re_f = np.where(isk.any(axis=1), re[rr, pick], np.nan)
     return Wall(floor=floor, index=np.where(floor, first_floor, -1), depth=depth, speed=speed, re_f=re_f)
 
 

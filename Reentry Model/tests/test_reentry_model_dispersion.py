@@ -355,3 +355,23 @@ def test_above_wall_cuts_the_profile_at_the_wall():
     f = dp.above_wall(p, w)
     assert not w.floor[0] and f.count.tolist() == [2] and f.wall[0] == 3.0
     assert np.array_equal(f.depth, p.depth) and np.array_equal(f.rho, p.rho)
+
+
+def test_profiles_without_breakpoints_have_no_kink_and_the_front_is_the_wall():
+    p = dp.KinkedProfiles.one([], [2.0, 0.0], wall=1.0)
+    assert p.depth.shape == (1, 0)
+    two = dp.KinkedProfiles(count=np.zeros(2, dtype=int), depth=np.empty((2, 0)), u_top=np.array([2.0, 1.0]),
+                            u_break=np.empty((2, 0)), wall=np.array([1.0, 3.0]), u_wall=np.array([0.0, 0.5]),
+                            rho=np.ones((2, 1)))
+    with np.errstate(all="raise"), warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for q in (p, two):
+            n = q.count.size
+            nu = np.empty((n, 0))
+            assert dp.kinks(q).shape == (n, 0)
+            assert dp.floor_reynolds(q, nu).shape == (n, 0)
+            w = dp.place_wall(q, nu)
+            assert not w.floor.any() and (w.index == -1).all() and np.isnan(w.re_f).all()
+            assert np.array_equal(w.depth, q.wall) and np.array_equal(w.speed, q.u_wall)
+            c = dp.above_wall(q, w)
+            assert (c.count == 0).all() and np.array_equal(c.wall, q.wall) and c.depth.shape == (n, 0)
