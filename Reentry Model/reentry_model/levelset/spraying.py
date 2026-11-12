@@ -254,14 +254,16 @@ class SprayPlan:
 
 
 def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, nose_radius, slurry=False, b_mode="skin",
-               depth_phi_psi=None, theta=None, centre=None, v_hat=None):
+               depth_phi_psi=None, top=None, theta=None, centre=None, v_hat=None):
     """Girin's spraying from each marker's skin for the macro step about to run (module docstring): a SprayPlan, per
     marker in the markers' order. `skins` the markers' skins (marker i's is row `markers.skin_index[i]`); `markers`
     tessellated (its faces are the wave's domain graph); `flow` the shared SurfaceFlowResult per marker; `state` the
     aero state; `model` the shared SprayModel; `windward` bool (n,) and `w_n` [m/s2] (n,) the normal deceleration
     W cos(theta) (the loads' leeward test and angles); `dt` [s] the macro step; `radius` [m] the body radius of the
     quarter cap; `nose_radius` [m] the radius the slip band's integrated shear was taken at. `slurry` the exposed slurry's
-    mode too (`--slurry-spray on`); `b_mode` "skin" or "phi_psi" with `depth_phi_psi` [m] (n,) (module docstring);
+    mode too (`--slurry-spray on`); `b_mode` "skin" or "phi_psi" with `top` (n,) bool, the markers whose skins are
+    top-zone (`Markers.top`), and `depth_phi_psi` [m] (n,), the depth from phi to psi, read where `top` (module
+    docstring);
     `theta` [rad] (n,) the markers' angles to the flow (the slip band and the records; nan if not given); `centre` [m]
     and `v_hat` for the records' release angle."""
     if b_mode not in B_MODES:
@@ -277,10 +279,12 @@ def spray_plan(skins, markers, flow, state, model, windward, w_n, dt, radius, no
     F_skin = skins.depth_above(mat.T_rigid)[rows]
     L = skins.depth_above(mat.T_liquidus)[rows]
     if b_mode == "phi_psi":
-        if depth_phi_psi is None:
-            raise ValueError("b_mode 'phi_psi' needs the depth from phi to psi per marker")
+        if top is None or depth_phi_psi is None:
+            raise ValueError("b_mode 'phi_psi' needs the top-zone markers (top) and the depth from phi to psi per marker")
+        top = np.asarray(top, dtype=bool).reshape(n)
         d = np.asarray(depth_phi_psi, dtype=float).reshape(n)
-        top = np.isfinite(d)                                   # the top-zone skins (module docstring)
+        if not np.all(np.isfinite(d[top]) & (d[top] >= 0.0)):
+            raise ValueError("b_mode 'phi_psi' needs a finite, non-negative depth from phi to psi at every top-zone marker")
         b = np.where(top, d, F_skin)
     else:
         top = np.zeros(n, dtype=bool)

@@ -56,8 +56,15 @@ at the base whatever its phase (`modes.hand_down`), draws the thick melt beneath
 (`modes.draw_cap`), and the momentum its base and its returned cells give goes to the held volume (`momentum_to_volume`,
 Ruling 4); between a full-depth and a top-zone skin only the top zones exchange (`runoff`, Ruling 3); Girin's plan reads
 a top-zone skin's depths from phi to psi (`spraying.spray_plan`'s b_mode "phi_psi", decision D2). A step that finds no
-rigid core left stops with RuntimeError (`stepend.NO_CORE`), at its end or, if a part fails first, then. No run driver
-(Ruling 6): tests and scripts drive `advance` at prescribed gas states.
+rigid metal left anywhere stops with RuntimeError (`stepend.NO_CORE`): at its end, after its mode changes, or when a part
+fails and, the part having restored the state it started from, psi then finds no rigid metal (the part's error chained
+as the cause; if psi cannot be found the part's error stands). No run driver (Ruling 6): tests and scripts drive
+`advance` at prescribed gas states.
+
+A step that fails leaves the body in an undefined state (fix round 1 of Task 10): a part that fails in its passes restores
+the cells, the curvatures and the volume's temperatures it started from, but the parts accepted before it, a base move
+that failed partway (its earlier rounds are not undone, `stepend.StepEnd._move_beta`) and a failed step end are not
+undone. A body pickled after a failure is for diagnosis only, not for resuming.
 
 A skin deeper than its radius of curvature: each column's curvatures are capped (`stepend.cap_curvature`) before
 every part, every heat sub-step and every flow sub-step (runoff can gather metal into one column) and at every sync;
@@ -100,7 +107,7 @@ from .modes import ModeSettings
 from .runoff import FlowBook, Forcing, flow_substeps
 from .skin import SkinSettings
 from .spraying import spray_plan
-from .stepend import KAPPA_DEPTH_SHARE, MODES, StepEnd, cap_curvature  # noqa: F401  (re-exported for the tests)
+from .stepend import KAPPA_DEPTH_SHARE, MODES, NO_CORE, StepEnd, cap_curvature  # noqa: F401  (re-exported for the tests)
 from .surfaces import outer_surface
 
 # the parts of a macro step (Ruling 7, the skyscrapers' skinbody.py rules, matched by amendment)
@@ -168,8 +175,10 @@ class StepBook:
     `momentum_removed` what the feed removal took. The modes (Task 10): `n_top` the top-zone markers after the step,
     `modes_to_top` and `modes_to_full` the changes at its end, `mass_modes_handed` [kg] what top-zone skins gave the
     volume at the step end (the cells below their fine zones: the changes to top-zone and what the re-partition gave
-    them) and `mass_modes_absorbed` [kg] what the skins turning full-depth took from it, `momentum_modes_normal` the
-    normal part of the momentum the step end handed the volume (in `momentum_to_volume` with the rest). The heat
+    them) and `mass_modes_absorbed` [kg] what the skins turning full-depth took from it, `enthalpy_modes_J` the enthalpy
+    that passed either way and `residual_modes_J` the heat that left owed to the volume (in `residual_move_J` too; it
+    scales with what was handed, not with the step's heat in), `momentum_modes_normal` the normal part of the momentum
+    the step end handed the volume (in `momentum_to_volume` with the rest). The heat
     deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
@@ -231,6 +240,8 @@ class StepBook:
     modes_to_full: int
     mass_modes_handed: float
     mass_modes_absorbed: float
+    enthalpy_modes_J: float
+    residual_modes_J: float
     momentum_modes_normal: np.ndarray
     summary: dict = field(default_factory=dict)
 
@@ -263,7 +274,8 @@ class _Tally:
         self.newton = self.move = self.remesh = 0.0
         self.elapsed, self.pending_flux = 0.0, 0.0
         self.to_top = self.to_full = 0
-        self.mode_handed = self.mode_absorbed = 0.0
+        self.fill_new = self.fill_done = 0             # the step end's move: nodes brought inside, those filled
+        self.mode_handed = self.mode_absorbed = self.mode_H = self.mode_owed = 0.0
         self.mode_normal = np.zeros(3)
 
 
@@ -465,6 +477,20 @@ class LevelSetSkinBody(StepEnd):
                 break
         self._fill_stub(T0)
 
+    def __setstate__(self, state):
+        """Unpickling: a body from before Task 10 has no `mode_settings`; it takes the defaults (`modes.ModeSettings`)."""
+        self.__dict__.update(state)
+        if "mode_settings" not in state:
+            self.mode_settings = ModeSettings()
+
+    def _no_rigid_metal(self):
+        """Whether psi, found now from the body's fields, finds no rigid metal (`stepend.StepEnd._check_core`); False if
+        psi cannot be found (the caller's own error then stands)."""
+        try:
+            return not np.any(self._psi(self.phi) < 0.0)
+        except Exception:
+            return False
+
     def _fill_stub(self, T0):
         """Every skin anew: the stub's depth of metal at T0 under its (capped) cross-section, then drawn at T0 up to its
         minimum mass (a concave column's stub holds less than its minimum, rho_s A(z_bottom) stub) until no draw is
@@ -618,51 +644,58 @@ class LevelSetSkinBody(StepEnd):
         largest = S.max(axis=1).toarray().ravel() * A_group            # each group's largest patch [m2]
         tally.group_trimmed = max(tally.group_trimmed, float(((A_group - largest) / sk.base_area()).max()))
         saved = self._save(ctx)
-        T_b0 = S @ solver.patch_T()
-        m_min = modes.minimum_mass(sk, ctx["top"]) * (1.0 - DRAW_SLACK)
-        A_p = solver.P.area
-        share = min(1.0, dt / max(dt_macro - tally.elapsed, PENDING_TIME_MIN))   # of the pending heat, this part's
-        q_pend = share * self._pending_per_patch(S, base) / (A_p * dt)              # (at its rate over the step's rest)
-        tally.pending_flux = max(tally.pending_flux, float(np.abs(q_pend).max(initial=0.0)))
-        E_vol0 = solver.energy()
-        T_lin = T_b0
-        omega, r_prev = DAMPED_OMEGA0, None
-        for attempt in range(DAMPED_MAX_PASSES):
-            a, b = self._pass(dt, T_lin, g0, m_min, ctx, trial=True)
-            self._restore(saved, ctx, solver=False)
-            q0 = (S.T @ a) / A_p + q_pend
-            q1 = (S.T @ b) / A_p
-            Q = solver.step(dt, q0, q1)
-            T_b1 = S @ solver.patch_T()
-            book = self._pass(dt, T_b1, g0, m_min, ctx, trial=False)
-            mismatch = book.E_base - (a + b * T_b1) * dt
-            scale = np.abs(book.E_top) + np.abs(book.E_base)
-            total = float(np.abs(mismatch).sum() / max(scale.sum(), 1e-300))
-            r = T_b1 - T_lin
-            if total <= INTERFACE_TOLERANCE or np.abs(r).max() <= DAMPED_TOL_K or attempt == DAMPED_MAX_PASSES - 1:
-                break
-            if r_prev is not None:                          # Aitken: omega from the change of the residual
-                dr = r - r_prev
-                denom = float(dr @ dr)
-                if denom > 0.0:
-                    omega = float(np.clip(-omega * float(r_prev @ dr) / denom, *DAMPED_OMEGA_RANGE))
+        try:
+            T_b0 = S @ solver.patch_T()
+            m_min = modes.minimum_mass(sk, ctx["top"]) * (1.0 - DRAW_SLACK)
+            A_p = solver.P.area
+            share = min(1.0, dt / max(dt_macro - tally.elapsed, PENDING_TIME_MIN))   # of the pending heat, this part's
+            q_pend = share * self._pending_per_patch(S, base) / (A_p * dt)              # (at its rate over the step's rest)
+            tally.pending_flux = max(tally.pending_flux, float(np.abs(q_pend).max(initial=0.0)))
+            E_vol0 = solver.energy()
+            T_lin = T_b0
+            omega, r_prev = DAMPED_OMEGA0, None
+            for attempt in range(DAMPED_MAX_PASSES):
+                a, b = self._pass(dt, T_lin, g0, m_min, ctx, trial=True)
+                self._restore(saved, ctx, solver=False)
+                q0 = (S.T @ a) / A_p + q_pend
+                q1 = (S.T @ b) / A_p
+                Q = solver.step(dt, q0, q1)
+                T_b1 = S @ solver.patch_T()
+                book = self._pass(dt, T_b1, g0, m_min, ctx, trial=False)
+                mismatch = book.E_base - (a + b * T_b1) * dt
+                scale = np.abs(book.E_top) + np.abs(book.E_base)
+                total = float(np.abs(mismatch).sum() / max(scale.sum(), 1e-300))
+                r = T_b1 - T_lin
+                if total <= INTERFACE_TOLERANCE or np.abs(r).max() <= DAMPED_TOL_K or attempt == DAMPED_MAX_PASSES - 1:
+                    break
+                if r_prev is not None:                          # Aitken: omega from the change of the residual
+                    dr = r - r_prev
+                    denom = float(dr @ dr)
+                    if denom > 0.0:
+                        omega = float(np.clip(-omega * float(r_prev @ dr) / denom, *DAMPED_OMEGA_RANGE))
+                self._restore(saved, ctx)
+                T_lin, r_prev = T_lin + omega * r, r
+            passes = attempt + 1
+            handed, handed_H, handed_P, given = modes.hand_down(sk, ctx["top"], self.settings.stub, cells=True)
+        except Exception as err:                            # the part failed: back to where it started
             self._restore(saved, ctx)
-            T_lin, r_prev = T_lin + omega * r, r
-        passes = attempt + 1
-        handed, handed_H, handed_P = modes.hand_down(sk, ctx["top"], self.settings.stub)
+            err.part_restored = True                        # `advance` may then ask whether rigid metal is left
+            raise
         A_base = sk.base_area()
         move = np.abs(book.drawn - handed) / (self.rho * A_base)
         allowance = MOVE_SHARE * self.spacing
         ratio = float((move / allowance).max()) if len(move) else 0.0
-        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, A_base,
+        return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base,
                                            mismatch, Q, E_vol0, share, base, ctx["top"], tally), \
             lambda: self._restore(saved, ctx)
 
-    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, A_base, mismatch, Q, E_vol0, share,
-                base, top, tally):
+    def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base, mismatch, Q, E_vol0,
+                share, base, top, tally):
         """The accepted part's books (step 5) and beta moved by its draws and hand-downs (step 6). What a top-zone skin
         (`top`, per row) gives the volume beneath -- its returned cells' momentum, its base's drag -- goes to the held
-        volume (Ruling 4), a full-depth skin's base drag to the wall."""
+        volume (Ruling 4), a full-depth skin's base drag to the wall; the volume's nodes the move brings inside the metal
+        beneath a top-zone skin's returned cells (`given`, (mass, enthalpy) in place) take their profile
+        (`stepend.StepEnd._fill`, fix round 1 of Task 10)."""
         solver = self.solver
         tally.parts += 1
         tally.elapsed += dt
@@ -699,9 +732,13 @@ class LevelSetSkinBody(StepEnd):
         dV = (handed - book.drawn) / self.rho
         if np.any(dV != 0.0):
             expected = float(handed_H.sum() - book.drawn_H.sum())
-            removed = self._move_beta(base, dV, dV / A_base, tally)
-            tally.move += abs(expected + removed)
-            self._book_move(base, np.abs(dV), expected + removed)
+            E0, beta0 = solver.energy(), self.beta.copy()
+            self._move_beta(base, dV, dV / A_base, tally)
+            if np.any(given[0] > 0.0):
+                self._fill(beta0, base, self._row_normals(), A_base, given)
+            owed = expected + E0 - solver.energy()
+            tally.move += abs(owed)
+            self._book_move(base, np.abs(dV), owed)
 
 
 
@@ -740,10 +777,12 @@ class LevelSetSkinBody(StepEnd):
             if self.spray_model is not None:
                 windward = ang <= 0.5 * np.pi
                 w_n = float(np.linalg.norm(g)) * np.maximum(np.cos(ang), 0.0)
-                depth = np.where(mk.top, modes.melt_depth(self.mesh, self.psi, mk.x), np.nan)   # phi to psi (D2)
+                depth = np.full(mk.n, np.nan)                       # phi to psi at the top-zone markers only (D2)
+                depth[mk.top] = modes.melt_depth(self.mesh, self.psi, mk.x[mk.top])
                 ctx["plan"] = spray_plan(sk, mk, flow, state, self.spray_model, windward, w_n, dt,
                                          self._radius(centroid), fit.used, slurry=self.slurry_spray, b_mode="phi_psi",
-                                         depth_phi_psi=depth, theta=ang, centre=centroid, v_hat=self.v_hat)
+                                         depth_phi_psi=depth, top=mk.top, theta=ang, centre=centroid,
+                                         v_hat=self.v_hat)
         elif decel_vec is not None:
             still = _StillGas(np.zeros(mk.n), np.zeros(mk.n))
             ctx["forcing"] = Forcing.from_surface_flow(still, np.asarray(decel_vec, float), self.v_hat,
@@ -772,11 +811,9 @@ class LevelSetSkinBody(StepEnd):
         try:
             counts = [self._part(dt / n, dt, 0 if n == 1 else 1, ctx, tally)    # the skyscrapers' part loop starts a
                       for _ in range(n)]                                         # multi-part step one level down; matched
-        except (RuntimeError, ValueError) as err:          # a part failed: say so plainly if the core has gone
-            try:
-                self._check_core(self._psi(self.phi))
-            except RuntimeError as gone:
-                raise gone from err
+        except (RuntimeError, ValueError) as err:          # a part failed: say so plainly if no rigid metal is left,
+            if getattr(err, "part_restored", False) and self._no_rigid_metal():    # judged on the restored state only
+                raise RuntimeError(NO_CORE.format(mat.T_rigid)) from err
             raise
         self._hint = next_hint(counts)
         tally.depth = max(c.depth for c in counts)
@@ -785,7 +822,7 @@ class LevelSetSkinBody(StepEnd):
 
         # the step's end: phi, psi, the mesh, the markers
         self._rebuild(tally, check_core=True)
-        self._modes(tally)
+        self._modes(tally, check_core=True)
         self.momentum_to_volume += tally.to_volume
         reps = self.last_settle
         passed = math.fsum(float(r.transfer.sum() - r.transfer.diagonal().sum()) for r in reps)
@@ -824,7 +861,8 @@ class LevelSetSkinBody(StepEnd):
             interface_mismatch_J=tally.mismatch, volume_correction_max=tally.correction, n_pieces=int(n_pieces),
             frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), n_top=int(mk.top.sum()),
             modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
-            mass_modes_absorbed=tally.mode_absorbed, momentum_modes_normal=tally.mode_normal, summary=summary)
+            mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
+            momentum_modes_normal=tally.mode_normal, summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

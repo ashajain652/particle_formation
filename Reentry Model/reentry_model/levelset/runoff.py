@@ -52,7 +52,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
-from .skin import Skins
+from .skin import Skins, above
 
 SLIVER = 1.0e-12          # a piece of a donor cell shorter than this share of it is a shared boundary's round-off, and a
                           # landing estimate below this share of the largest stays where it lands (skyscrapers' SLIVER)
@@ -311,7 +311,8 @@ def thickness_step(skins, sheet, dt, mbook, applied, g, sigma, kappa, J):
     phi_d = np.r_[phi0, -phi0][keep]
     dphi_d = sp.vstack([dphi, -dphi]).tocsr()[keep]
     un = np.where(moving[a], np.einsum("dkx,dx->dk", (skins.U - r[..., None] * applied[:, None, :])[a], f), 0.0)
-    sends = moving[a] & _zone_cells(sheet, dz, a, np.r_[sheet.mixed(), sheet.mixed()][keep])   # as `transport`
+    mx = np.r_[sheet.mixed(), sheet.mixed()][keep]
+    sends = moving[a] & _zone_cells(sheet, dz, a, mx)                                   # as `transport`
     ra, da = r[a], np.where(sends, dz[a], 0.0)
 
     def flux(phi):
@@ -327,7 +328,10 @@ def thickness_step(skins, sheet, dt, mbook, applied, g, sigma, kappa, J):
     F = flux(phi)
     for passes in range(1, (THICKNESS_PASSES if D else 0) + 1):
         M = (ra * da * (un + ra * phi[:, None] > 0.0)).sum(axis=1)                          # m5/(N s)
-        Pa = sp.csr_matrix((F / np.where(thick[a] > 0.0, thick[a], 1.0), (np.arange(D), a)), shape=(D, n))
+        # the flux's change with the donor's height, F / its moving depth; none across a mixed face, whose flux the
+        # fixed top zone carries (Ruling 3: a deeper column adds cells below it)
+        dF = np.where(mx, 0.0, F / np.where(thick[a] > 0.0, thick[a], 1.0))
+        Pa = sp.csr_matrix((dF, (np.arange(D), a)), shape=(D, n))
         N = (sp.diags(A) + dt * C @ (Pa + sp.diags(M) @ dphi_d)).tocsr()[act][:, act]
         dH = np.zeros(n)
         dH[act] = spla.splu(N.tocsc()).solve(-dt * (C @ (F + M * (phi_d - phi)))[act])
@@ -373,8 +377,7 @@ class TransportBook:
 def _zone_cells(sheet, dz, a, mixed):
     """Which cells (D, K) of the donors `a` (D,) may send across their directed faces: all of them, but across a mixed
     face (`mixed` (D,)) only those whose tops lie within the fine zone (Ruling 3, module docstring)."""
-    z_top = np.cumsum(dz, axis=1) - dz
-    return ~mixed[:, None] | (z_top[a] < sheet.zone * (1.0 - 1e-12))
+    return ~mixed[:, None] | above(dz, sheet.zone)[a]
 
 
 def _fractions(depth):
@@ -546,7 +549,7 @@ def transport(skins, sheet, dt, faces=None):
     if not len(a):
         return book
     # where it joins: by fraction of the flowing depth (within the fine zone across a mixed face), or on top
-    inzone = np.cumsum(dz, axis=1) - dz < sheet.zone * (1.0 - 1e-12)
+    inzone = above(dz, sheet.zone)
     run = np.cumprod(flowing, axis=1).sum(axis=1)
     run_z = np.cumprod(flowing & inzone, axis=1).sum(axis=1)
     sig, sig_z = _fractions(np.where(flowing, dz, 0.0)), _fractions(np.where(flowing & inzone, dz, 0.0))

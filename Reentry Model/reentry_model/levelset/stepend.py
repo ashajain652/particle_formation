@@ -52,14 +52,21 @@ those the re-partition gave metal below the fine zone (the controller's ruling (
 zone to the volume (`modes.to_thick`); one beta move takes both (in rounds, below), the volume's nodes it brings inside
 the metal take the temperature of the metal the nearest handing skin gave (`_fill`), what the volume's enthalpy still
 differs from the skins' booked as pending heat, and the handed cells' momentum goes to the volume; then phi and psi are
-rebuilt and the markers snapped onto phi (their
-tessellation and areas kept: phi stands where it stood within a snap, the base under it having moved). A full-depth
+rebuilt, the markers snapped onto phi, tessellated afresh and their skins re-partitioned by the step end's own
+machinery (`_tessellate`, `_repartition`), so that their areas are the moved phi's. phi does move: the volume holds
+metal at the one density of stage 2 (the solid's) while a skin's liquid cells take the liquid's, so a molten column
+handed to the volume shrinks by rho_l / rho_s and phi falls there by the handed depth times 1 - rho_l / rho_s (0.147 for
+AA7075; measured 0.220 mm against 0.274 mm on the test cube's face, `test_a_mode_change_over_melt_moves_phi_by_the_
+density_ratio`), and a column taken back from the volume swells by the same ratio (a known limitation, fix round 1 of
+Task 10). What the second re-partition gives a top-zone skin below its fine zone goes to the volume with the next part's
+return at its base. A full-depth
 skin that received top-zone area takes the thinner column (the draw tops it up). Each marker's mode is the markers' own
 (`Markers.top`), so it survives split, merge, release and re-partition; `mode` gives it by name (MODES).
 
-No rigid core (the controller's ruling (d)): a step end whose psi finds no rigid metal (nothing below T_rigid joined to
-the core) raises RuntimeError saying so (`_check_core`): the molten metal has nothing to stand on, and stage 3 holds the
-volume's melt (no flow solve).
+No rigid metal left (the controller's ruling (d)): a step end whose psi finds no rigid metal raises RuntimeError saying
+so (`_check_core`, after the rebuild and again after the mode changes): the molten metal has nothing to stand on, and
+stage 3 holds the volume's melt (no flow solve). What is checked is that no metal below T_rigid is left anywhere; a
+rigid crust over a molten core passes (psi then takes the crust for the core).
 
 A skin deeper than its radius of curvature (`Skins.dz` raises for all columns if one is): each column's principal
 curvatures are held, either way, at KAPPA_DEPTH_SHARE over its flat depth (`cap_curvature`), so the cross-section
@@ -99,7 +106,9 @@ BARE_ROUNDS = 4                   # tessellations at most, each releasing the ma
 MOVE_ROUND_SHARE = 0.5            # of fine_margin: a base move whose largest displacement is longer is made in rounds no
                                   # longer (`_move_beta`; Task 10: a mode change moves beta by a whole column at once, and
                                   # the displacement reaches only the nodes within fine_margin of beta)
-NO_CORE = ("the body has no rigid core left: no metal below T_rigid ({:.1f} K) is joined to the core, so its molten "
+FILL_SLACK = 0.5                  # fine cells: a node the move brought inside the metal takes a handed column's profile
+                                  # within this beyond the column's span along its normal (`_fill`)
+NO_CORE = ("the body has no rigid metal left: psi finds no metal below T_rigid ({:.1f} K) anywhere in it, so its molten "
            "metal has nothing to stand on (it has melted through); that is beyond level-set stage 3, which holds the "
            "volume's melt (no flow solve)")
 
@@ -135,7 +144,8 @@ class StepEnd:
         return np.where(self.markers.top, MODES[1], MODES[0])
 
     def _check_core(self, psi):
-        """RuntimeError (NO_CORE) when psi finds no rigid metal: no node of the metal below T_rigid joined to the core."""
+        """RuntimeError (NO_CORE) when psi finds no rigid metal: no node of the metal below T_rigid anywhere (a rigid crust
+        over a molten core passes: `surfaces.molten_rigid_surface` then takes it for the core)."""
         if not np.any(np.asarray(psi) < 0.0):
             raise RuntimeError(NO_CORE.format(self.material.T_rigid))
 
@@ -421,27 +431,55 @@ class StepEnd:
         self.skins.regrid()
         self._sync()
 
-    def _fill(self, beta0, base, mass, H):
-        """After a move that gave the volume metal (`_modes`): the volume's nodes the move brought inside the metal take
-        the temperature of the metal the row whose base point (`base`) is nearest handed (`mass` [kg], `H` [J] per row:
-        its specific enthalpy's), not the old metal's extrapolated (`CutThermal.move`), where that row handed any; the
-        rest of the difference is the caller's to book as pending heat. (Task 10: on the test cube's third flow-on step
-        a change to top-zone of 14 markers left 6 % of the step's heat in owed before the fill.)"""
-        solver = self.solver
-        new = np.flatnonzero(solver.active & (beta0 >= 0.0) & (self.beta < 0.0))
-        if not len(new) or not np.any(mass > 0.0):
-            return
-        _, near = cKDTree(base).query(self.mesh.points[new])
-        gave = mass[near] > 0.0
-        T = solver.T.copy()
-        T[new[gave]] = self.skins.props.temperature_from_enthalpy(H[near[gave]] / mass[near[gave]])
-        solver.T = T
+    def _row_normals(self):
+        """Each skin row's marker's unit normal (n, 3)."""
+        out = np.zeros((self.skins.n, 3))
+        out[self.markers.skin_index] = self.markers.normal
+        return out
 
-    def _modes(self, tally, update=True):
+    def _fill(self, beta0, base, normal, A_b, cells):
+        """After a move that gave the volume cells from the skins (`_modes`, and a part's top-zone returns): the volume's
+        nodes the move brought inside the metal (inside `self.beta`, outside `beta0`) take the temperature of the handed
+        cells at their depth -- the row whose base point (`base` (n, 3)) is nearest the node handed `cells` ((mass,
+        enthalpy) (n, K) in place); the node's distance out from that base along its `normal` (n, 3) over the span the
+        cells fill in the volume, their mass over rho and the base area `A_b` (n,) [m2], is the share of their mass below
+        it, counted from the deepest -- where the node lies within FILL_SLACK fine cells of that span; the others keep the
+        old metal's extrapolated temperature (`CutThermal.move`), the rest of the difference being the caller's to book as
+        pending heat. Returns (the nodes the move brought inside, those filled). (Task 10: on the test cube's third
+        flow-on step a change to top-zone of 14 markers left 6 % of the step's heat in owed before any fill; fix round 1:
+        the column's profile, not its mean, and not on nodes the volume correction brought in elsewhere.)"""
+        solver = self.solver
+        m_c, H_c = cells
+        total = m_c.sum(axis=1)
+        new = np.flatnonzero(solver.active & (beta0 >= 0.0) & (self.beta < 0.0))
+        if not len(new) or not np.any(total > 0.0):
+            return len(new), 0
+        _, near = cKDTree(base).query(self.mesh.points[new])
+        span = np.divide(total, self.rho * A_b, out=np.zeros_like(total), where=A_b > 0.0)
+        s = np.einsum("ij,ij->i", self.mesh.points[new] - base[near], normal[near])
+        slack = FILL_SLACK * self.fine_size
+        take = (total[near] > 0.0) & (s >= -slack) & (s <= span[near] + slack)
+        node, row, s = new[take], near[take], s[take]
+        if not len(node):
+            return len(new), 0
+        f = np.clip(s / span[row], 1e-12, 1.0 - 1e-12)       # the share of the handed mass below the node
+        up = np.cumsum(m_c[row][:, ::-1], axis=1) / total[row][:, None]       # from the deepest cell up
+        j = np.minimum((up < f[:, None]).sum(axis=1), m_c.shape[1] - 1)
+        col = m_c.shape[1] - 1 - j
+        empty = m_c[row, col] <= 0.0                         # rounding past the shallowest handed cell: that cell
+        col[empty] = np.argmax(m_c[row[empty]] > 0.0, axis=1)
+        T = solver.T.copy()
+        T[node] = self.skins.props.temperature_from_enthalpy(H_c[row, col] / m_c[row, col])
+        solver.T = T
+        return len(new), len(node)
+
+    def _modes(self, tally, update=True, check_core=False):
         """The thin test and the mode changes at the step end (module docstring); with update=False no test, only every
         top-zone skin's cells below its fine zone to the volume. Counts in `tally`: `to_top`, `to_full` the changes,
-        `mode_handed` [kg] what went to the volume, `mode_absorbed` [kg] what the skins took from it, `mode_normal`
-        [kg m/s] the normal part of the handed momentum (all of it to `to_volume`)."""
+        `mode_handed` [kg] what went to the volume, `mode_absorbed` [kg] what the skins took from it, `mode_H` [J] the
+        enthalpy that passed either way, `mode_owed` [J] the heat this left owed to the volume (in `move` too),
+        `mode_normal` [kg m/s] the normal part of the handed momentum (all of it to `to_volume`). With `check_core`, a psi with no rigid
+        metal after the changes raises (`_check_core`)."""
         mk, sk, s = self.markers, self.skins, self.settings
         changed = np.zeros(mk.n, bool)
         if update:
@@ -451,8 +489,10 @@ class StepEnd:
         tally.to_top += int((changed & mk.top).sum())
         tally.to_full += len(to_full)
         base, A_b, normal = self._bases(), sk.base_area(), mk.normal.copy()
+        normal_rows = self._row_normals()
+        surface = self._samples()                          # the surface the markers' areas were given on
         dV, H = np.zeros(sk.n), 0.0
-        given_m, given_H = np.zeros(sk.n), np.zeros(sk.n)       # what each row handed the volume
+        given = (np.zeros(sk.m.shape), np.zeros(sk.m.shape))    # the cells each row handed the volume, in place
         if len(to_full):                                   # thick to thin: the volume's metal down to the stub below psi
             r = mk.skin_index[to_full]
             h = m.h[to_full]
@@ -464,26 +504,39 @@ class StepEnd:
             dV[r] += ho.volume
             H += float(ho.enthalpy.sum())
             tally.mode_absorbed -= float(ho.mass.sum())
+            tally.mode_H += float(np.abs(ho.enthalpy).sum())
         top = np.flatnonzero(mk.top)
         if len(top):                                       # thin to thick, and what a re-partition gave below the fine zone
             r = mk.skin_index[top]
             ho = modes.to_thick(sk, r, normal=normal[top], rho=self.rho)
-            given_m[r], given_H[r] = ho.mass, ho.enthalpy
+            K = ho.cells[0].shape[1]
+            given = tuple(np.pad(g, ((0, 0), (0, max(K - g.shape[1], 0)))) for g in given)
+            given[0][r, :K], given[1][r, :K] = ho.cells
             dV[r] += ho.volume
             H += float(ho.enthalpy.sum())
             tally.mode_handed += float(ho.mass.sum())
+            tally.mode_H += float(np.abs(ho.enthalpy).sum())
             tally.to_volume += ho.momentum.sum(axis=0) + ho.normal.sum(axis=0)
             tally.mode_normal += ho.normal.sum(axis=0)
         if not np.any(dV != 0.0):
             return
         E0, beta0 = self.solver.energy(), self.beta.copy()
         self._move_beta(base, dV, dV / A_b, tally)
-        self._fill(beta0, base, given_m, given_H)
+        tally.fill_new, tally.fill_done = self._fill(beta0, base, normal_rows, A_b, given)
         owed = H + E0 - self.solver.energy()
         tally.move += abs(owed)
+        tally.mode_owed += abs(owed)
         self._book_move(base, np.abs(dV), owed)
         sk.regrid()
         self._sync()
         self.phi = outer_surface(self.mesh, self.beta, self._thickness_nodal(), band=self.band)
         self.psi = self._psi(self.phi)
+        if check_core:
+            self._check_core(self.psi)
+        old = self._owners(surface)                        # phi moved (module docstring): the areas follow it
         self._snap(tally)
+        old = self._tessellate(old, tally)
+        self._repartition(old, self._samples())
+        self._sync()
+        sk.regrid()
+        self._sync()

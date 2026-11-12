@@ -471,3 +471,24 @@ def test_markers_pickled_before_task_9b_load_with_their_positions_as_the_last_te
     mk.x_tess, mk.normal_tess = mk.x + 1e-6, -mk.normal
     new = pickle.loads(pickle.dumps(mk))
     assert np.array_equal(new.x_tess, mk.x + 1e-6) and np.array_equal(new.normal_tess, -mk.normal)
+
+
+def test_a_merge_across_modes_keeps_the_top_zone_marker_s_mode_and_hold():
+    """Stage 3 Task 10, fix round 1 (the controller's ruling (4)): two markers closer than a third of the spacing merge,
+    their skins mixed by the hand-over rule; where one is top-zone and the other full-depth, the merged marker is
+    top-zone with the top-zone marker's hold, whichever of the two the merge keeps (the step end then gives the volume
+    what the mixed column holds below its fine zone); where both share a mode, the kept marker's mode and hold stay.
+    Three pairs 0.1 mm apart on a flat row 1 mm apart: (full, top), (top, full) and (full, full)."""
+    mat = ConstMaterial()
+    x = np.array([[0, 0, 0], [1e-4, 0, 0], [3e-3, 0, 0], [3.1e-3, 0, 0], [6e-3, 0, 0], [6.1e-3, 0, 0]], float)
+    n = len(x)
+    sk = Skins(mat, np.full(n, 1e-6), np.zeros((n, 2)), SETTINGS)
+    sk.fill(mat.rho * 1e-6 * 0.8e-3, 600.0)
+    mk = Markers(x, np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, 1e-6), np.zeros((n, 2)), np.arange(n),
+                 np.full(n, -1), 1e-3, skins=sk)
+    mk.top = np.array([False, True, True, False, False, False])
+    mk.hold = np.array([2, 1, 0, 2, 1, 2])
+    assert mk.merge(1e-3) == 3 and mk.n == 3
+    order = np.argsort(mk.x[:, 0])
+    np.testing.assert_array_equal(mk.top[order], [True, True, False])
+    np.testing.assert_array_equal(mk.hold[order], [1, 0, 1])

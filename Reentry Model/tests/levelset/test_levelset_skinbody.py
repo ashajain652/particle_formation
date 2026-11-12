@@ -31,13 +31,23 @@ OWED_SHARE = 0.05      # the heat still owed to the volume at a step's end, summ
                        # temperatures -- about 4 % of the heat in over the receding step, most of it delivered within it
                        # (the mismatch itself is 1e-4 of the heat in or less)
 OWED_SHARE_HEATED = 0.01    # the same on the heated face, whose step owes little (measured 5.3e-4; fix round 5)
+MODES_OWED_SHARE = 0.1      # the heat a step end's mode changes leave owed, at most this share of the enthalpy they hand
+                            # (Task 10, fix round 1: 4 to 7 % on the full-size cube's second step, measured once each with
+                            # the fill off, by the mean and by the profile); not counted in OWED_SHARE, whose scale, the
+                            # step's heat in, it does not share
 PENDING_FLUX_SHARE = 10.0   # the pending heat's flux on a patch at most this times the largest surface flux (fix round 3)
 
 
 def owed(body, book):
     """(the heat still owed to the volume, summed in absolute value [J], the last part's sum |mismatch| [J]) as shares of
-    the step's heat in, printed with the step's deferred residuals by source."""
-    pend, mism = np.abs(body.pending_J).sum() / book.enthalpy_in, book.interface_mismatch_J / book.enthalpy_in
+    the step's heat in, printed with the step's deferred residuals by source. What the step end's mode changes left
+    owed is taken out of the first and bounded on its own scale, the enthalpy they handed (MODES_OWED_SHARE)."""
+    assert book.residual_modes_J <= MODES_OWED_SHARE * book.enthalpy_modes_J + 1e-12 * book.enthalpy_in
+    pend = max(np.abs(body.pending_J).sum() - book.residual_modes_J, 0.0) / book.enthalpy_in
+    mism = book.interface_mismatch_J / book.enthalpy_in
+    print("  the step end's mode changes handed {:.3e} J and left {:.3e} J owed ({:.3f} of it)".format(
+        book.enthalpy_modes_J, book.residual_modes_J,
+        book.residual_modes_J / book.enthalpy_modes_J if book.enthalpy_modes_J else 0.0))
     lo, hi = skinbody.GROUP_AREA_RANGE
     # a group formed again stops at the first patch that takes it past the base area, so it may overshoot the range's
     # top by that one patch (accepted, fix round 5: 2.17 on the full-size cube's second step): less its largest patch,
@@ -346,15 +356,17 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
     31 521, far past PARTS_MAX; with the groups of fix round 2, 3 and 18 parts, their rule asking 5 and then 6 448. A
     part that meets its allowance only after splits, or never, carries the splits' shortness into their estimate. Here
     a step's hint is at most 1.25 times the parts it took: both steps stay within PART_BOUND parts, the second step's
-    hint is below the skyscrapers' for it, both hints are 1.25 times their step's parts at most, and the books
-    close."""
+    hint is at most the skyscrapers' for it, both hints are 1.25 times their step's parts at most, and the books
+    close. (Since fix round 1 of Task 10 the face's markers turn top-zone at the first step end, their melt goes to the
+    volume, and the skyscrapers' rule no longer runs away on this case: 4 then 5 parts, their hints 7 then 5, measured
+    once; the ratchet itself is pinned by the `_hints` tests below.)"""
     body, _, first, _ = sprayed
     assert first.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * first.parts)))
     second = body.advance(0.05, state=gas_state(**CONTINUUM))
     print("two flow-on steps: parts {} then {}; hints {} then {}; the skyscrapers' hints {} then {}".format(
         first.parts, second.parts, first.parts_next, second.parts_next, first.parts_skyscrapers,
         second.parts_skyscrapers))
-    assert first.parts <= PART_BOUND and second.parts <= PART_BOUND and second.parts_next < second.parts_skyscrapers
+    assert first.parts <= PART_BOUND and second.parts <= PART_BOUND and second.parts_next <= second.parts_skyscrapers
     assert second.parts_next <= max(1, int(np.ceil(skinbody.MOVE_HINT_MARGIN * second.parts)))
     assert abs(second.mass_residual) <= 1e-12 and abs(second.enthalpy_residual) <= 1e-8
     assert max(owed(body, second)) <= OWED_SHARE
@@ -871,17 +883,62 @@ def _books(body):
     return b["mass_volume"] + b["mass_skins"], b["enthalpy_volume"] + b["enthalpy_skins"] + b["pending_J"]
 
 
-def test_a_body_with_no_rigid_core_left_stops_with_a_clear_message():
-    """The controller's ruling (d) of Task 10: a body whose metal is all above T_rigid has no rigid core, nothing for its
-    molten metal to stand on; stage 3 holds the volume's melt (no flow solve), so a step that finds it so stops with a
-    RuntimeError that says so, not some later failure of the geometry. The test cube, set to 1000 K throughout (volume
-    and skins), one 0.01 s step with no heating."""
-    body = cube_body()
-    body.solver.set_temperature(1000.0)
+def _melt_all(body, T=1000.0):
+    """The body's volume and skins all at T [K], above the liquidus."""
+    body.solver.set_temperature(T)
     sk = body.skins
-    sk.H = np.where(sk.valid, sk.m * sk.props.enthalpy(np.full(sk.m.shape, 1000.0)), 0.0)
-    with pytest.raises(RuntimeError, match="no rigid core left"):
+    sk.H = np.where(sk.valid, sk.m * sk.props.enthalpy(np.full(sk.m.shape, T)), 0.0)
+
+
+def test_a_body_with_no_rigid_core_left_stops_with_a_clear_message():
+    """The controller's ruling (d) of Task 10: a body whose metal is all above T_rigid has no rigid metal left, nothing for
+    its molten metal to stand on; stage 3 holds the volume's melt (no flow solve), so a step that finds it so stops
+    with a RuntimeError that says so, not some later failure of the geometry. (What is checked is that no metal below
+    T_rigid is left anywhere: a rigid crust over a molten core would pass.) The test cube, set to 1000 K throughout
+    (volume and skins), one 0.01 s step with no heating."""
+    body = cube_body()
+    _melt_all(body)
+    with pytest.raises(RuntimeError, match="no rigid metal left"):
         body.advance(0.01)
+
+
+def test_a_failed_part_is_reported_as_no_rigid_metal_only_on_restored_state(monkeypatch):
+    """Fix round 1 of Task 10 (the controller's ruling (4)): when a part fails, the step asks whether any rigid metal is
+    left only once the part has restored the state it started from, and chains the original error. The test cube with
+    the skins' conduction made to fail: with rigid metal left the original error comes through unchanged; all molten,
+    the no-rigid-metal error comes, caused by the original; and if psi itself cannot be found then, the original comes
+    through, not psi's error. The part restores the skins and the volume's temperatures it started from."""
+    from reentry_model.levelset.skin import Skins
+    body = cube_body()
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("boom: the skins' conduction failed")
+    monkeypatch.setattr(Skins, "conduct", boom)
+    m0, T0 = body.skins.m.copy(), body.solver.T.copy()
+    with pytest.raises(RuntimeError, match="boom") as rigid:
+        body.advance(0.01)
+    assert rigid.value.__cause__ is None
+    assert np.array_equal(body.skins.m, m0) and np.array_equal(body.solver.T, T0)
+    _melt_all(body)
+    with pytest.raises(RuntimeError, match="no rigid metal left") as molten:
+        body.advance(0.01)
+    assert "boom" in str(molten.value.__cause__)
+
+    def no_psi(self, phi):
+        raise ValueError("psi failed")
+    monkeypatch.setattr(skinbody.LevelSetSkinBody, "_psi", no_psi)
+    with pytest.raises(RuntimeError, match="boom"):
+        body.advance(0.01)
+
+
+def test_an_old_body_pickle_loads_with_the_default_mode_settings():
+    """Fix round 1 of Task 10: a body pickled before Task 10 has no `mode_settings`; it loads with the defaults."""
+    import pickle
+    from reentry_model.levelset import modes
+    body = cube_body()
+    del body.__dict__["mode_settings"]
+    back = pickle.loads(pickle.dumps(body))
+    assert back.mode_settings == modes.ModeSettings()
 
 
 def _top_face(body, frac=0.9):
@@ -897,7 +954,7 @@ def test_mode_changes_through_the_body_close_the_books(monkeypatch):
     absorbing the volume's metal down to the stub below psi (psi is phi here: all rigid). Both ways the body's mass
     closes to 1e-12 and its enthalpy, the heat owed to the volume included, to 1e-12; the markers lie on phi."""
     from reentry_model.levelset import modes
-    body = cube_body(mode_settings=modes.ModeSettings(hold=1, min_markers=1))
+    body = cube_body(mode_settings=modes.ModeSettings(hold_thick=1, hold_thin=1, min_markers=1))
     face = _top_face(body)
     mk, sk = body.markers, body.skins
     assert len(face) >= 7 and not mk.top.any()
@@ -930,8 +987,10 @@ def test_mode_changes_through_the_body_close_the_books(monkeypatch):
         tally.to_full, tally.mode_absorbed, M2 / M0 - 1, E2 / E0 - 1))
     assert not mk.top.any() and tally.to_full == len(face) and tally.mode_absorbed > 0.0
     assert abs(M2 / M0 - 1.0) <= 1e-12 and abs(E2 / E0 - 1.0) <= 1e-12
+    # about at the stub (within 20 %: after the change the markers are tessellated afresh on the moved phi and their
+    # columns re-partitioned with their neighbours', the next part drawing or returning what the stretch leaves)
     np.testing.assert_allclose(sk.m[mk.skin_index[face]].sum(axis=1), sk.minimum_mass()[mk.skin_index[face]],
-                               rtol=0.1)
+                               rtol=0.2)
 
 
 def test_steps_with_top_zone_skins_close_their_books():
@@ -992,3 +1051,107 @@ def test_a_base_move_longer_than_the_fine_margin_goes_where_it_is_asked():
         1e3 * x0, 1e3 * x1, 1e3 * (x0 - extra), 1e3 * back0, 1e3 * back1))
     assert abs(x1 - (x0 - extra)) <= 0.1e-3 and abs(back1 - back0) <= 0.1e-3
     assert V1 == pytest.approx(V0 + dV.sum(), rel=1e-12)
+
+
+def test_a_base_move_whose_round_fails_partway_raises_and_keeps_its_earlier_rounds(monkeypatch):
+    """Fix round 1 of Task 10 (the controller's ruling (4), and (5): recorded, not fixed): a base move made in rounds
+    whose second round fails raises that round's error, and the first round is not undone -- beta holds the old volume
+    plus one round's share -- which is why a failed step leaves the body in an undefined state (the body's docstring).
+    The +x face's bases asked to move 3.2 mm in (four rounds of 0.8 mm on the 2 mm fine margin)."""
+    from reentry_model.levelset import stepend
+    from reentry_model.levelset.cutcell import inside_volumes
+    body = cube_body()
+    sk = body.skins
+    r = body.markers.skin_index[_top_face(body)]
+    dV = np.zeros(sk.n)
+    dV[r] = -3.2e-3 * sk.base_area()[r]
+    V0 = inside_volumes(body.mesh, body.beta).sum()
+    calls = {"n": 0}
+    correct = stepend.correct_volumes
+
+    def failing(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("the volume correction failed in round two")
+        return correct(*args, **kwargs)
+    monkeypatch.setattr(stepend, "correct_volumes", failing)
+    with pytest.raises(RuntimeError, match="round two"):
+        body._move_beta(body._bases(), dV, dV / sk.base_area(), skinbody._Tally(sk.n))
+    V1 = inside_volumes(body.mesh, body.beta).sum()
+    assert calls["n"] == 2
+    assert V1 == pytest.approx(V0 + dV.sum() / 4, rel=1e-12)
+
+
+PHI_MOVE_RTOL = 0.25      # phi's fall at a molten column's mode change within this share of what the densities give
+PHI_MOVE_ATOL = 0.05e-3   # m: and a solid column's within this of its own (its small swelling at 850 K)
+
+
+def _face_column_turned_top(T, extra=1.2e-3, cells=60):
+    """The test cube's +x face skins given `extra` [m] more metal (beta moved in by its volume, the books whole) at T
+    [K], phi rebuilt and the markers snapped, then the face turned top-zone (`StepEnd._modes`). Returns (the body, at the
+    face's centre: phi's fall [m], the handed skin depth [m], what the densities give for the fall [m]; the books before
+    and after)."""
+    import copy
+    from reentry_model.levelset import modes
+    from reentry_model.levelset.surfaces import outer_surface
+    body = cube_body()
+    mk, sk = body.markers, body.skins
+    face = _top_face(body)
+    r = mk.skin_index[face]
+    m = body.rho * sk.area[r] * extra / cells
+    h850 = float(sk.props.enthalpy(np.array([850.0]))[0])
+    sk.append_bottom(r, np.repeat(m[:, None], cells, axis=1), np.repeat((m * h850)[:, None], cells, axis=1))
+    body._cap()
+    sk.regrid()
+    dV = np.zeros(sk.n)
+    dV[r] = -m * cells / body.rho
+    t = skinbody._Tally(sk.n)
+    body._move_beta(body._bases(), dV, dV / sk.base_area(), t)
+    sk.H[r] = np.where(sk.valid[r], sk.m[r] * float(sk.props.enthalpy(np.array([T]))[0]), 0.0)
+    body._cap()
+    sk.regrid()
+    body._sync()
+    body.phi = outer_surface(body.mesh, body.beta, body._thickness_nodal(), band=body.band)
+    body.psi = body._psi(body.phi)
+    body._snap(t)
+    line = np.column_stack([np.linspace(1e-3, 9e-3, 3201), np.zeros(3201), np.zeros(3201)])
+    where = lambda: line[np.argmin(np.abs(interpolate(body.mesh, body.phi, line))), 0]
+    centre = face[np.argmin(np.linalg.norm(mk.x[face, 1:], axis=1))]
+    rc = mk.skin_index[centre]
+    trial = copy.deepcopy(sk)                          # the centre's hand-over alone, before the re-partition mixes it
+    ho = modes.to_thick(trial, [rc], rho=body.rho)
+    depth = sk.thickness()[rc] - trial.thickness()[rc]
+    want = depth - float(ho.volume[0]) / sk.base_area()[rc]
+    x0, before = where(), _books(body)
+    mk.top[face] = True
+    body._modes(skinbody._Tally(sk.n), update=False)
+    return body, x0 - where(), depth, want, before, _books(body)
+
+
+def test_a_mode_change_over_melt_moves_phi_by_the_density_ratio():
+    """Fix round 1 of Task 10 (the controller's ruling (1), a known limitation for Asha): the volume holds metal at the
+    solid's density (stage 2's design), a skin's liquid cells at the liquid's, so a molten column handed to the volume
+    shrinks by rho_l / rho_s and phi falls there by the handed depth times 1 - rho_l / rho_s (0.147 for AA7075). The +x
+    face's skins given 1.2 mm more metal and turned top-zone, once solid (850 K) and once melted (950 K): solid, phi stays
+    within PHI_MOVE_ATOL of its small fall from the swelling at 850 K; molten, phi falls at the face's centre by what the
+    handed cells' depth less their mass over the volume's density gives (the centre's hand-over alone), within
+    PHI_MOVE_RTOL (measured 0.220 mm against 0.274 mm: beta lands 3 % beyond what it is asked), that being 0.147 of the handed
+    depth; the books close; and the markers are tessellated afresh on the moved phi (their last tessellation where they
+    now are), so that their areas are phi's. (With 2.4 mm the solid column's own phi moved 0.45 mm: phi is rebuilt from
+    the nearest base's thickness, and the face's columns then stood 2.4 mm deeper than the edges' beside them.)"""
+    for T in (850.0, 950.0):
+        body, fall, depth, want, (M0, E0), (M1, E1) = _face_column_turned_top(T)
+        ratio = 1.0 - body.material.liquid.rho / body.rho
+        print("column at {:.0f} K turned top-zone: handed {:.3f} mm of skin; phi fell {:.3f} mm at the face's centre, the "
+              "densities give {:.3f} mm ({:.3f} of the handed depth; 1 - rho_l/rho_s = {:.3f}); books {:.1e} {:.1e}".format(
+                  T, 1e3 * depth, 1e3 * fall, 1e3 * want, want / depth, ratio, M1 / M0 - 1, E1 / E0 - 1))
+        assert depth > 1.4e-3
+        assert abs(M1 / M0 - 1) <= 1e-12 and abs(E1 / E0 - 1) <= 1e-12
+        mk = body.markers
+        assert np.abs(interpolate(body.mesh, body.phi, mk.x)).max() <= 1e-9
+        np.testing.assert_array_equal(mk.x_tess, mk.x)
+        if T < 900.0:
+            assert abs(fall - want) <= PHI_MOVE_ATOL
+        else:
+            assert fall == pytest.approx(want, rel=PHI_MOVE_RTOL)
+            assert want / depth == pytest.approx(ratio, rel=0.05)

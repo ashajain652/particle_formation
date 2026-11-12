@@ -213,8 +213,9 @@ class Markers:
     (Task 9b, `repartition.transfer_matrix`); a split or a merge sets them to the new markers' own. `top` (n,) bool
     each marker's mode (design 20.6: False a full-depth skin, True a top-zone skin) and `hold` (n,) the macro steps in a
     row its thin test has given the other answer (`modes`, Task 10); a split's new half takes its parent's mode and
-    hold (the same surface: a new half alone could never make the group a change needs), a merge keeps the first's,
-    and a release drops them."""
+    hold (the same surface: a new half alone could never make the group a change needs), a merge across modes the
+    top-zone marker's (the step end hands the volume what the mixed column holds below its fine zone) and otherwise the
+    first's, and a release drops them."""
 
     def __init__(self, x, normal, area, kappa, skin_index, patch, spacing, skins=None):
         self.x = np.array(x, dtype=float).reshape(-1, 3)
@@ -467,7 +468,8 @@ class Markers:
         """Markers closer than MERGE_FRACTION of `target_spacing` [m] merge in pairs, the closest first, each marker in
         at most one pair per call: the pair's first keeps the area-weighted position, normal and curvatures and the
         summed area; their skins are mixed by the hand-over rule (`Skins.combine`) and the second leaves. The caller
-        snaps and tessellates. Returns the number of merges."""
+        snaps and tessellates. Where the two differ in mode the merged marker is top-zone with the top-zone marker's hold
+        (`Markers.top`, `Markers.hold`). Returns the number of merges."""
         pairs = cKDTree(self.x).query_pairs(MERGE_FRACTION * target_spacing, output_type="ndarray")
         if not len(pairs):
             return 0
@@ -491,6 +493,8 @@ class Markers:
         self.kappa[keep] = fa[:, None] * self.kappa[keep] + fb[:, None] * self.kappa[gone]
         self.x_tess[keep], self.normal_tess[keep] = self.x[keep], self.normal[keep]
         self.area[keep] = A
+        across = self.top[gone] & ~self.top[keep]        # across modes the top-zone marker's mode and hold (Task 10)
+        self.top[keep], self.hold[keep] = self.top[keep] | across, np.where(across, self.hold[gone], self.hold[keep])
         if self.skins is not None:
             self.skins.combine(self.skin_index[keep], self.skin_index[gone])
         self._remove(gone)

@@ -634,3 +634,21 @@ def test_cut_refuses_bad_fractions_and_an_open_trial():
     sk.conduct(1e-3, 0.0, 0.0, 0.0, 800.0, trial=True)
     with pytest.raises(RuntimeError, match="trial pass"):
         sk.cut([0], [0.5])
+
+
+def test_append_bottom_adds_whole_cells_and_refuses_a_gap():
+    """Stage 3 Task 10 (`Skins.append_bottom`, the volume's metal a top-zone skin takes when it turns full-depth): new
+    cells at rest below each column's bottom, top first, the books adding exactly; a row's trailing zeros end it, but a
+    zero-mass cell with metal after it is refused (fix round 1: it was silently dropped, with the metal after it)."""
+    mat = ConstMaterial()
+    sk = Skins(mat, np.full(2, 1e-6), np.zeros((2, 2)), SkinSettings(cell=20e-6))
+    sk.fill(mat.rho * 1e-6 * 0.4e-3, 600.0)
+    M0, E0 = sk.m.sum(), sk.H.sum()
+    c0 = sk.count.copy()
+    m = np.array([[1e-9, 2e-9, 0.0], [3e-9, 0.0, 0.0]])
+    sk.append_bottom([0, 1], m, 1e3 * m)
+    assert np.array_equal(sk.count, c0 + [2, 1])
+    assert sk.m.sum() == pytest.approx(M0 + m.sum(), rel=1e-15) and sk.H.sum() == pytest.approx(E0 + 1e3 * m.sum(), rel=1e-15)
+    assert np.all(sk.U == 0.0)
+    with pytest.raises(ValueError, match="zero"):
+        sk.append_bottom([0], [[1e-9, 0.0, 2e-9]], [[1e-6, 0.0, 2e-6]])

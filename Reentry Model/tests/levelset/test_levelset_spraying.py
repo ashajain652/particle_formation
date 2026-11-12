@@ -214,13 +214,21 @@ def test_a_top_zone_skin_sprays_by_its_depth_from_phi_to_psi():
     n = len(cols)
     top = np.array([False, False, True, True])
     d = np.array([np.nan, np.nan, 3.0e-3, 2.0e-3])                        # phi to psi at the top-zone markers [m]
+                                                                          # (read only where top)
     mk = row_markers(n, h=0.05)
     sk = stacked(mk, cols, mat)
     flow, model = gas(n, tau=TAU_RENEWAL), model_of(mat)
     theta = np.full(n, 0.3)
     windward, w_n = np.ones(n, bool), flow.deceleration * np.cos(theta)
     plan = spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, slurry=True,
-                               b_mode="phi_psi", depth_phi_psi=d, theta=theta)
+                               b_mode="phi_psi", depth_phi_psi=d, top=top, theta=theta)
+    # the mode is given, not read off the depths: without it, or with no depth at a top-zone marker, the plan refuses
+    with pytest.raises(ValueError, match="top"):
+        spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, b_mode="phi_psi",
+                            depth_phi_psi=d, theta=theta)
+    with pytest.raises(ValueError, match="depth"):
+        spraying.spray_plan(sk, mk, flow, STATE, model, windward, w_n, 0.5, 0.05, 0.05, b_mode="phi_psi",
+                            depth_phi_psi=np.where(top, np.nan, 1e-3), top=top, theta=theta)
     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
     b = np.where(top, d, F)
     np.testing.assert_array_equal(plan.flowing, b)

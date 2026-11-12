@@ -7,10 +7,13 @@ The thin test per marker (`measures`, `candidates`, `update`). Stage 1's test (`
 read at the markers: the molten depth h from phi to psi, the largest principal curvature of phi at the marker and of
 psi at its foot, and the slope of the depth along the surface; thin when h is at most c_kappa over the curvature and the
 slope at most c_slope. Stage 1's hysteresis (`thin.ModeState`) keyed by marker: a marker changes mode only after the
-test has given the other answer at `hold` macro steps in a row, and only with a connected group (on the markers' faces)
-of at least `min_markers` markers ready to change. The mode and the count are the markers' own (`Markers.top`,
-`Markers.hold`), so they survive split (a new half takes its parent's), merge (the first's) and release; markers start
-full-depth with no hold counted, so a new body changes no mode before its third step end.
+test has given the other answer at a number of step ends in a row -- `hold_thick` (1) to turn top-zone, `hold_thin` (3)
+to turn back full-depth (the controller's ruling (2) of Task 10's fix round 1, a design value for Asha: deep pooled melt
+in a full-depth skin is the failure path, and the full-size cube failed in its second step before a hold of three let
+any marker change; flicker back to thin is what the hold guards against) -- and only with a connected group (on the
+markers' faces) of at least `min_markers` markers ready to change. The mode and the count are the markers' own
+(`Markers.top`, `Markers.hold`), so they survive split (a new half takes its parent's), merge (a top-zone marker's, when
+the two differ) and release; markers start full-depth with no hold counted.
 
 The mode changes, exact in mass and enthalpy (the volume's side through the body's pending load), each a `Handover` of
 what passed to the volume (negative: from it):
@@ -41,7 +44,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 
 from .criteria import BIG, finite_values
-from .skin import _volume
+from .skin import volume_per_area
 from .thin import ModeState, patch_measures, thin_candidate
 from .transfer import locate
 
@@ -49,19 +52,21 @@ from .transfer import locate
 @dataclass(frozen=True)
 class ModeSettings:
     """The thin test's settings (design 20.5, the builder's starting values, recorded with every run): `c_kappa`
-    (`--thin-curvature`), `c_slope` (`--thin-slope`), `hold` (`--mode-hold`, macro steps) and `min_markers`
-    (`--mode-min-markers`)."""
+    (`--thin-curvature`), `c_slope` (`--thin-slope`), the holds (`--mode-hold`, step ends in a row) `hold_thick` to turn
+    top-zone and `hold_thin` to turn back full-depth (module docstring), and `min_markers` (`--mode-min-markers`)."""
     c_kappa: float = 0.1
     c_slope: float = 0.2
-    hold: int = 3
+    hold_thick: int = 1
+    hold_thin: int = 3
     min_markers: int = 7
 
 
-Handover = namedtuple("Handover", "rows mass enthalpy volume momentum normal")
+Handover = namedtuple("Handover", "rows mass enthalpy volume momentum normal cells")
 Handover.__doc__ = """What a mode change passed to the volume, per skin row `rows`: `mass` [kg], `enthalpy` [J] (above T_REF),
 `volume` [m3] the mass over the volume's density (beta steps out by it; negative: in), `momentum` [kg m/s] (k, 3) its
-part along the surface and `normal` (k, 3) its part along the marker's normal. Negative mass and enthalpy: from the
-volume to the skin."""
+part along the surface and `normal` (k, 3) its part along the marker's normal; `cells` the cells handed, (mass, enthalpy)
+(k, K) each in its place in the column, for the volume to take their profile (None for `to_thin`). Negative mass and
+enthalpy: from the volume to the skin."""
 
 Measures = namedtuple("Measures", "h kmax slope")
 _Points = namedtuple("_Points", "centroid normal")
@@ -100,9 +105,11 @@ def adjacency(markers):
 def update(markers, candidate, settings):
     """One step end's hysteresis (stage 1's `ModeState`, keyed by marker): each marker's count of step ends in a row its
     test (`candidate`, True for thin) gave the other answer, and the change of every connected group of at least
-    `settings.min_markers` markers whose counts reached `settings.hold`. Updates `markers.top` and `markers.hold`;
-    returns which markers changed (n,) bool."""
-    st = ModeState(~markers.top, hold=settings.hold, min_group=settings.min_markers)
+    `settings.min_markers` markers whose counts reached their hold (`settings.hold_thick` for a full-depth marker,
+    `settings.hold_thin` for a top-zone one). Updates `markers.top` and `markers.hold`; returns which markers changed
+    (n,) bool."""
+    hold = np.where(markers.top, settings.hold_thin, settings.hold_thick)
+    st = ModeState(~markers.top, hold=hold, min_group=settings.min_markers)
     st.count = np.asarray(markers.hold, dtype=np.int64).copy()
     changed = st.update(np.asarray(candidate, bool), adjacency(markers))
     markers.top, markers.hold = ~st.thin, st.count
@@ -129,17 +136,19 @@ def draw_cap(skins, top):
     return np.where(np.asarray(top, bool), np.inf, skins.material.T_rigid)
 
 
-def hand_down(skins, top, stub):
+def hand_down(skins, top, stub, cells=False):
     """One part's return at the bases (module docstring): a full-depth skin's anchored rigid cells below `stub` [m]
     (`Skins.hand_down`), a top-zone skin's cells below its fine zone whatever their phase (`Skins.take_bottom`), each
     keeping its minimum mass. Returns (mass [kg], enthalpy [J], momentum [kg m/s] (n, 3)) per row: the cells' own
-    momentum (anchored cells are at rest after a momentum step, but a cell that froze since may still hold some)."""
+    momentum (anchored cells are at rest after a momentum step, but a cell that froze since may still hold some); with
+    `cells` also the top-zone skins' cells handed, (mass, enthalpy) (n, K) in place (`Skins.take_bottom`)."""
     top = np.asarray(top, bool)
     keep = minimum_mass(skins, top)
-    mass, H, P = skins.take_bottom(np.where(top, skins.settings.fine_zone, np.inf), keep)     # the top-zone skins
+    mass, H, P, given = skins.take_bottom(np.where(top, skins.settings.fine_zone, np.inf), keep, cells=True)
     P_held = skins.totals()[2]
     m_f, H_f, _ = skins.hand_down(stub, m_keep=np.where(top, np.inf, keep))                   # the full-depth skins
-    return mass + m_f, H + H_f, P + (P_held - skins.totals()[2])
+    out = (mass + m_f, H + H_f, P + (P_held - skins.totals()[2]))
+    return out + (given,) if cells else out
 
 
 # -- the mode changes ------------------------------------------------------------------------------------------------
@@ -158,13 +167,13 @@ def to_thick(skins, i, normal=None, rho=None):
     rho = skins.rho_s if rho is None else float(rho)
     depth = np.full(skins.n, np.inf)
     depth[i] = skins.settings.fine_zone
-    mass, H, P = skins.take_bottom(depth, fine_zone_mass(skins))
+    mass, H, P, (m_c, H_c) = skins.take_bottom(depth, fine_zone_mass(skins), cells=True)
     P = P[i]
     if normal is None:
         along, normal_part = P, np.zeros_like(P)
     else:
         along, normal_part = _split(P, np.asarray(normal, dtype=float).reshape(-1, 3))
-    return Handover(i, mass[i], H[i], mass[i] / rho, along, normal_part)
+    return Handover(i, mass[i], H[i], mass[i] / rho, along, normal_part, (m_c[i], H_c[i]))
 
 
 def _cells(skins, rows, depth):
@@ -210,8 +219,7 @@ def to_thin(skins, i, depth, temperature, rho=None, kappa_share=None):
         skins.kappa[i] = np.clip(skins.kappa[i], -lim[:, None], lim[:, None])
     zt, zb = _cells(skins, i, depth)
     k1, k2 = skins.kappa[i, 0][:, None], skins.kappa[i, 1][:, None]
-    s, p = k1 + k2, k1 * k2
-    vol = skins.area[i][:, None] * (_volume(zb, s, p) - _volume(zt, s, p))
+    vol = skins.area[i][:, None] * (volume_per_area(zb, k1, k2) - volume_per_area(zt, k1, k2))
     m = np.where(zb > zt, rho * vol, 0.0)
     mid = 0.5 * (zt + zb) - skins.thickness()[i][:, None]
     kk = np.broadcast_to(np.arange(len(i))[:, None], m.shape)
@@ -222,4 +230,4 @@ def to_thin(skins, i, depth, temperature, rho=None, kappa_share=None):
     mass, enthalpy = m.sum(axis=1), H.sum(axis=1)
     skins.append_bottom(i, m, H)
     zero = np.zeros((len(i), 3))
-    return Handover(i, -mass, -enthalpy, -mass / rho, zero, zero.copy())
+    return Handover(i, -mass, -enthalpy, -mass / rho, zero, zero.copy(), None)

@@ -125,13 +125,13 @@ def test_mode_changes_conserve_mass_enthalpy_and_tangential_momentum():
 
 # -- the thin test per marker: the hold and the group -----------------------------------------------------------------
 def test_a_new_marker_may_change_mode_only_after_the_hold():
-    """Design 20.5: a marker changes mode only after its thin test has given the other answer for `hold` macro steps in a
-    row (3). New markers (as the body creates them, all full-depth with no hold counted) whose test wants thick from the
-    first step end do not change at the first nor the second update, and change at the third. A marker split between the
-    second and third updates takes its parent's mode and hold, so its new half changes with the group (alone it could
-    never make the group a change needs). A marker whose test wavers starts its count again."""
-    st = modes.ModeSettings()
-    assert (st.c_kappa, st.c_slope, st.hold, st.min_markers) == (0.1, 0.2, 3, 7)
+    """Design 20.5: a marker changes mode only after its thin test has given the other answer at `hold` step ends in a
+    row. With a hold of three both ways: new markers (as the body creates them, all full-depth with no hold counted)
+    whose test wants thick from the first step end do not change at the first nor the second update, and change at the
+    third. A marker split between the second and third updates takes its parent's mode and hold, so its new half changes
+    with the group (alone it could never make the group a change needs). A marker whose test wavers starts its count
+    again."""
+    st = modes.ModeSettings(hold_thick=3, hold_thin=3)
     mk = grid_markers(4, 4)
     want = np.zeros(mk.n, bool)                         # thin_candidate's answer: False, thick, everywhere
     want[15] = True                                     # one corner wavers: thick, thick, thin, thick ...
@@ -158,10 +158,33 @@ def test_a_new_marker_may_change_mode_only_after_the_hold():
     assert not mk.top[late].any()
 
 
+def test_the_hold_is_one_step_end_to_thick_and_three_back_to_thin():
+    """The controller's ruling (2) of Task 10's fix round 1 (a design value for Asha): the defaults change a full-depth
+    skin to top-zone after one step end of the test saying thick (`hold_thick`), since deep pooled melt in a full-depth
+    skin is the failure path (the full-size cube failed in its second step with a hold of three, before any change), and
+    back to full-depth only after three step ends saying thin (`hold_thin`), against flicker; the group stays seven. New
+    markers wanting thick change at the first update; wanting thin again, they change back at the third, not before; one
+    step end of thick in between starts the count again."""
+    st = modes.ModeSettings()
+    assert (st.c_kappa, st.c_slope, st.hold_thick, st.hold_thin, st.min_markers) == (0.1, 0.2, 1, 3, 7)
+    mk = grid_markers(4, 4)
+    want = np.zeros(mk.n, bool)
+    assert modes.update(mk, want, st).all() and mk.top.all() and np.all(mk.hold == 0)
+    want[:] = True
+    assert not modes.update(mk, want, st).any() and not modes.update(mk, want, st).any()
+    want[:] = False                                     # the test wavers: thick once
+    assert not modes.update(mk, want, st).any() and mk.top.all() and np.all(mk.hold == 0)
+    want[:] = True
+    for k in range(3):
+        changed = modes.update(mk, want, st)
+        assert changed.all() == (k == 2) and (not changed.any()) == (k < 2)
+    assert not mk.top.any()
+
+
 def test_a_small_group_does_not_change_mode():
     """Design 20.5: a mode change needs a connected group of at least `min_markers` (7) markers whose holds are full.
     On a row of 20 markers, six neighbours wanting thick stay thin however long their test says so; seven change at the
-    third update; a lone marker never does."""
+    first update (the default hold to thick); a lone marker never does."""
     st = modes.ModeSettings()
     mk = grid_markers(20, 1)
     want = np.ones(mk.n, bool)
@@ -169,15 +192,16 @@ def test_a_small_group_does_not_change_mode():
     want[12:19] = False                                 # seven in a row want thick
     for k in range(6):
         changed = modes.update(mk, want, st)
-        if k == 2:
+        if k == 0:
             assert np.array_equal(np.flatnonzero(changed), np.arange(12, 19))
         else:
             assert not changed.any()
     assert not mk.top[2:8].any() and mk.top[12:19].all() and mk.top.sum() == 7
-    # and back: the seven, wanting thin again, change back together after the hold
+    # and back: the seven, wanting thin again, change back together after the hold to thin (three)
     want[12:19] = True
     for k in range(3):
         changed = modes.update(mk, want, st)
+        assert changed.any() == (k == 2)
     assert np.array_equal(np.flatnonzero(changed), np.arange(12, 19)) and not mk.top.any()
 
 
