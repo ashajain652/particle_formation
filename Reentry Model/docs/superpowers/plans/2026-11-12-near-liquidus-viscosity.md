@@ -39,6 +39,11 @@ it; sections are cited below as "spec 3.4" and so on.
   - `STRUCTURE_EXPONENTS` = (2.0, 3.0), `STRUCTURE_EXPONENT` = 2.0, `GAMMA_FLOOR` = 1.0e-3 per second;
   - `LAWS` = ("composite", "bridge"), `DEFAULT_LAW` = "composite";
   - `SHEAR_TOL` stays 1e-3.
+- Wherever the law is described, it states that two things are assumed and not supported by literature (Asha,
+  2026-11-12). This covers the module docstring, `model_assumptions.md`, fact 196, and any analysis script's report.
+  - Above 489.88 per second, the position of the flow curve's valley and the slope n_x are assumed. No option is added
+    for them.
+  - Below 10 % solid, the behaviour is assumed, and the uncertainties are those of spec 3.10.
 - Bad arguments exit 2 with a message (`parser.error`).
 - Outputs go under `Reentry Model/output/` (git-ignored).
 - Commit messages are a scope prefix and a sentence on the behaviour that changed (`reentry_model: ...`, `docs: ...`,
@@ -88,9 +93,13 @@ it; sections are cited below as "spec 3.4" and so on.
 **Interfaces:**
 - Produces:
   - `suspension_viscosity(f_s, mu_liquid) -> ndarray`, which is spec 3.2's eta_inf;
-  - `composite_viscosity(f_s, gamma, mu_liquid, p=STRUCTURE_EXPONENT, n_x=EXCESS_RATE_EXPONENT) -> ndarray`, in Pa s;
-  - `flow_stress(f_s, gamma, mu_liquid, p=STRUCTURE_EXPONENT, n_x=EXCESS_RATE_EXPONENT) -> ndarray`, which is
-    composite_viscosity times gamma, in Pa.
+  - `composite_viscosity(f_s, gamma, mu_liquid, p=STRUCTURE_EXPONENT, n_x=None) -> ndarray`, in Pa s;
+  - `flow_stress(f_s, gamma, mu_liquid, p=STRUCTURE_EXPONENT, n_x=None) -> ndarray`, which is composite_viscosity times
+    gamma, in Pa.
+
+  `n_x=None` means `EXCESS_RATE_EXPONENT`, read at call time, not bound when the function is defined. The analysis
+  scripts can then change the module constant for their sensitivity runs, and the skins' calls follow; Task 7 relies
+  on this. `p` is passed explicitly by every caller.
 
   All three broadcast their array-like arguments and return float arrays. `composite_viscosity` is `inf` at
   f_s >= `RIGID_SOLID_FRACTION` and `mu_liquid` at f_s <= 0. It evaluates the law at max(gamma, `GAMMA_FLOOR`)
@@ -166,7 +175,13 @@ Write the constants (Global Constraints) and the three functions in `reentry_mod
 Rewrite the module docstring. It describes both laws:
 
 - `composite`, region by region, each region with its source and status as in spec 4's table: the paper, the page
-  and the table or figure, and whether the value was measured, fitted or assumed.
+  and the table or figure, and whether the value was measured, fitted or assumed. Two regions say plainly that they
+  are assumed, not supported by literature:
+  - above 489.88 per second: the valley's position and the slope, with the bounds of spec 3.10 (n_x from -0.4 to
+    -1.6);
+  - below 10 % solid: with spec 3.10's nine uncertainties, numbered as there.
+
+  The constants `EXCESS_RATE_EXPONENT` and `STRUCTURE_EXPONENT` carry a one-line comment saying they are assumed.
 - `bridge`, the present text, kept.
 
 It also names `DEFAULT_LAW` as the run command's default and `SkinSettings`' `"bridge"` as the library default
@@ -193,8 +208,8 @@ git commit -m "reentry_model: the composite near-liquidus viscosity law (Li et a
 
 **Interfaces:**
 - Consumes: `flow_stress` and `composite_viscosity` (Task 1).
-- Produces: `continued_rate(f_s, tau, gamma_from, mu_liquid, p=STRUCTURE_EXPONENT, n_x=EXCESS_RATE_EXPONENT) ->
-  ndarray`, spec 5.2's root, broadcast over its arguments, in per second. It returns:
+- Produces: `continued_rate(f_s, tau, gamma_from, mu_liquid, p=STRUCTURE_EXPONENT, n_x=None) -> ndarray`, spec 5.2's
+  root (`n_x=None` as in Task 1), broadcast over its arguments, in per second. It returns:
   - 0 where f_s >= 0.5 or tau <= 0;
   - tau / mu_liquid where f_s <= 0;
   - otherwise a rate g with `flow_stress(f_s, g, ...)` equal to tau within 1e-9 relative.
@@ -627,8 +642,9 @@ git commit -m "reentry_model: run and resume take --rheology composite|bridge (c
 - A `--single-column` mode picks the windward column with the median flowing depth among those holding slurry cells.
   It runs `momentum_step` alone on `sk.rows([i])` with that column's loads until steady (relative change below 1e-9,
   at most 2000 sub-steps of 1 ms), for bridge, composite from rest, composite broken down, and composite with n_x at
-  -0.7 and -1.0. The n_x cases monkeypatch `rheology.EXCESS_RATE_EXPONENT` in the script, not in the package. It
-  writes the profiles of velocity, viscosity, rate and stress.
+  -0.4 and -1.6, the literature bounds of spec 3.10 on the assumed slope. The n_x cases set
+  `rheology.EXCESS_RATE_EXPONENT` in the script's own process, never in the package source; this works because of
+  `n_x=None` (Task 1). It writes the profiles of velocity, viscosity, rate and stress.
 
 - [ ] **Step 2: Measure the cost before running**
 
@@ -678,6 +694,8 @@ git commit -m "analysis: near_liquidus_probe.py runs the skins' flow alone from 
 
 - `model_assumptions.md`: a new section on the slurry viscosity. It gives:
   - the composite law region by region, with spec 4's table of sources and statuses;
+  - spec 3.10 in full: the behaviour above 489.88 per second marked as assumed and not supported by literature, with
+    its sensitivity table, and the nine uncertainties below 10 % solid;
   - the history rule;
   - the zero-rate floor marked as numerical;
   - the limitations of spec 10;
@@ -690,7 +708,9 @@ git commit -m "analysis: near_liquidus_probe.py runs the skins' flow alone from 
   - the regression (the present law identical on the smoke flights);
   - the unit tier's counts;
   - the convergence measured in the probe;
-  - the probe's answers to Task 7's three questions.
+  - the probe's answers to Task 7's three questions;
+  - that the behaviour above 489.88 per second and below 10 % solid is assumed (spec 3.10), and how far the single
+    column's n_x bounds moved the result.
 - `README.md` and `CLAUDE.md`: the two options and the default in the command surface.
 
 - [ ] **Step 2: Check the documents against the measurements**

@@ -123,6 +123,16 @@ The excess at the nearer edge of the window continues as a power of the shear ra
 With n_x = -0.85, the excess stress X gamma grows only as gamma^0.15, nearly a constant stress. At high rates the
 viscosity therefore falls toward eta_inf, and at low rates it rises as gamma^-0.85 without a plateau.
 
+**Status: above 489.88 per second this behaviour is assumed, not supported by literature** (Asha, 2026-11-12: keep it
+as a fixed assumption, with no command-line option, and say so in the documents and the code). Section 3.10 gives the
+details. In short:
+
+- The flow curve's valley sits at 489.88 per second only because Li et al.'s data end there.
+- The exponent -0.85 was measured below about 400 per second.
+- Above 490 per second, the data disagree in both directions.
+
+Only the eventual rise of the stress is supported, by the suspension limit.
+
 ### 3.5 Below 10 % solid
 
 The structural excess is Li et al.'s at 10 % solid, scaled to vanish at the liquid:
@@ -130,6 +140,8 @@ The structural excess is Li et al.'s at 10 % solid, scaled to vanish at the liqu
     X(f_s, gamma) = X(0.1, gamma) (f_s / 0.1)^p,   p = 2 by default, 3 as the option.
 
 The law is continuous at 10 % solid by construction. At zero solid it is the liquid.
+
+**Status: assumed.** No aluminium alloy has been measured below 10 % solid. Section 3.10 lists what is uncertain there.
 
 ### 3.6 Rigid
 
@@ -196,6 +208,90 @@ one), and the middle root is unstable. The present solver already meets the fall
 sub-plan 21 Task 6d in `00-shared-context.md` records this. The new law's falling piece is wider and steeper, which is
 why section 5 changes the solver.
 
+### 3.10 What is assumed above Li et al.'s rates, and what is uncertain below 10 % solid
+
+Asha asked on 2026-11-12 that these be stated wherever the law is described: the module docstring, `model_assumptions.md`
+and the shared-context fact. Each item gives its source, and the research notes named in section 4 hold the details.
+
+**Above Li et al.'s highest rate (489.88 per second), at every solid fraction: assumed, not supported by literature.**
+
+1. The valley's position is set by the measurement range, not by physics. The law switches from Li et al.'s fits to
+   the extrapolation of section 3.4 at their last rate, so the valley lands there. Data made the way Li et al. made
+   theirs (one slurry per rate, each held at its rate) can keep falling past that rate. Joly and Mehrabian's tin-lead
+   at 45 % solid fell from 218 Pa at 230 per second to 157 at 350 and 75 at 750 (their Fig. 16, p. 1406; stresses by
+   my calculation). The true minimum for 7075 may lie at a higher rate and a lower stress.
+2. The slope after the valley is borrowed. n_x = -0.85 was measured below about 400 per second (Joly and Mehrabian at
+   10-40 per second; Turng and Wang, in Fan, at 105-300; Moon at 100-400). Above 490 per second the data disagree in
+   both directions:
+   - One structure sped up quickly rises more steeply: Joly and Mehrabian's step tests as the rate to the power
+     0.56-0.70 (Table IV, p. 1415), and Moon's high-rate branch roughly in proportion to the rate (thesis Fig. 4.7).
+   - Steady states shed the excess faster. Turng and Wang's stress above their high-shear limit fell from about 12 Pa
+     at 105 per second to 2 Pa at 1900 per second at 17 % solid (Fan, Fig. 4, p. 52; my calculation), roughly as the
+     rate to the power -0.6.
+3. What is supported is that the stress rises eventually. Once the grains are separate, the slurry is a suspension
+   whose viscosity is at least the liquid's, so its stress grows at least in proportion to the rate:
+   - Koke and Modigell 2003, Eq. 16, p. 158;
+   - Fan 2002, pp. 52 and 54;
+   - Moon's measured high-rate Newtonian branch, thesis pp. 84 and 97-99.
+4. The slope matters for spraying. The broken-down state's viscosity at the median gas stress of 101 Pa, as a multiple
+   of the liquid's, depends on how the excess stress grows above 489.88 per second (the law below 61 per second
+   unchanged; scratch computation, 2026-11-12):
+
+| Excess stress grows as | Basis | 2.5 % solid | 5.7 % | 10 % | 20 % |
+|---|---|---|---|---|---|
+| rate^0.6 (n_x = -0.4) | one structure sped up (Joly) | 1.5 | 4.8 | 21.5 | 36 |
+| rate^0.3 (n_x = -0.7) | between | 1.2 | 1.8 | 5.8 | 12 |
+| rate^0.15 (n_x = -0.85, the law) | the low-rate measurements | 1.1 | 1.5 | 2.8 | 5.5 |
+| rate^0 (n_x = -1.0) | between | 1.1 | 1.3 | 1.9 | 3.2 |
+| rate^-0.6 (n_x = -1.6) | Turng and Wang's steady states | 1.1 | 1.2 | 1.4 | 2.0 |
+
+   The spraying criterion (the Weber number) goes as one over the viscosity squared. So the factor of up to about 4
+   the top cells see between the rows is up to about 16 in the criterion. At 10 % solid the factor is about 15 in
+   viscosity.
+
+**Below 10 % solid, for aluminium: assumed throughout, with these uncertainties.**
+
+1. Nothing has been measured. No rheological measurement of any aluminium alloy between the liquid and 10 % solid was
+   found:
+   - Li et al.'s lowest point is 10 % solid.
+   - Pan et al.'s yield stresses start at 31 %.
+   - Moon's Al-6.5Si rig read the liquid at 15-16 times its true viscosity (thesis Table 5.1, p. 216), so his values
+     below about 0.03-0.04 Pa s are at the instrument's floor.
+2. How the structure vanishes is a choice of fitted form. The square (Pan et al.'s Eq. 9) and the cube (the
+   Loue-Sigworth law, Eq. 11) come from forms tested only above 31 % solid. A power law fitted to the same Pan et al.
+   points falls as the solid fraction to the power 5 to 7, and gives a yield stress at 10 % solid of 0.03-1.8 Pa
+   instead of 4-35 Pa (`fulltext_joly_koke_pan.md` section 3.3). The structural part is uncertain by about two orders
+   of magnitude at 10 % solid and more below it.
+3. Whether there is any structure below 10 % solid is uncertain. The coherency solid fraction is where grains first form
+   a connected network; before it the mush has negligible shear strength. It was measured at:
+   - 16-21 % solid in A319 (Malekan and Shabestari 2009);
+   - 55-85 % in AA7075, by thermal analysis while solidifying (Ahmad, Naher and Brabazon 2013).
+
+   Taken alone, these say metal below 10 % solid is a loose suspension at about 1.1-1.4 times the liquid (section 3.2),
+   with no structural excess. Li et al. measured 40-750 times the liquid at 10 % solid. The law follows Li et al. at
+   10 % and scales their excess down. If the coherency picture holds for melting metal, the law overstates the viscosity
+   below 10 % solid.
+4. Li et al.'s 10 % point is itself uncertain. Their plotted points at 10 % solid scatter by a factor of about 4 (0.05-0.2
+   Pa s at 490 per second; Figs. 3, 5, 8, 9). Their rig was not calibrated with a known liquid, so part of the measured
+   stress may be an instrument offset.
+5. The microstructure differs. Li et al.'s slurry was solidified while stirred, and was coarsely dendritic at 10 % solid
+   and 122 per second (Fig. 11). The sphere remelts wrought metal: grains that were never sheared, probably
+   agglomerated, and heated far faster than in any experiment. Atkinson et al. saw rounded grains largely separated by
+   liquid at 65 % liquid after 10-minute holds, and nothing on the melting path at 90-100 % liquid. In stirred slurries,
+   breakdown takes seconds and rebuilding hundreds to thousands of seconds (Fan 2002, pp. 59-67).
+6. The layer's position is uncertain by more than its width. Measured 7075 liquidus temperatures span 903 to 913 K
+   (Ahmad et al. 2013, Bäckerud, ASM), about six times the 1.6 K the model's Scheil curve gives the 0-10 % solid layer.
+   Li et al.'s DSC put 10 % solid at 903.45 K, against the model's 906.4 K.
+7. The liquid itself is uncertain by 14 % for pure aluminium (Assael et al. 2006), alloying moves it by up to 25 %
+   (Wang and Overfelt 2002), and no 7xxx liquid has been measured.
+8. The history rule of section 5 is assumed. Its direct evidence is one tin-lead stress ramp at an unstated solid
+   fraction (Koke and Modigell 2003, Fig. 15, p. 155). A literature review of stress-controlled hysteresis was under
+   way on 2026-11-12, and the build waits for it (Asha).
+9. The law is a steady-state law. The stress just after a sudden jump in rate rises as the rate to the power 2.07
+   (Koke and Modigell 2003, Fig. 18, p. 157), and that transient is not included.
+
+The present `bridge` law has the same gap below 10 % solid. It was labelled "no data" when written.
+
 ## 4. Sources for each choice
 
 The PDFs are in `Research/Literature Review/Near Liquidus Viscosity/` (above the repository). The page-by-page
@@ -213,7 +309,7 @@ measured an Al-Zn-Mg-Cu (7xxx) alloy except Li et al. (rheology) and Atkinson et
 | S = 3 (spheres) rather than 11.8 (angular) | Rounded grains | Atkinson, Burke and Vaneetveld 2008, MSE A490, 266-276: remelted extruded 7075 is fully spheroidal by about 5 % liquid (abstract; pp. 269-274), grains 50-100 micrometres (Fig. 6, p. 272; Fig. 11, p. 275) | Inferred. Atkinson et al. held samples for 10 min; a re-entering sphere heats far faster |
 | The liquid under the high-shear limit is the real liquid | mu_l = 1.3 mPa s inside eta_inf, not 13-18 mPa s | Koke and Modigell 2003, JNNFM 112, 141-160, Eq. 16 (p. 158): eta tends to eta_l at zero solid and at infinite rate. Fan 2002, Int. Mater. Rev. 47, 49-85, pp. 52 and 54: the asymptotic viscosity depends only on solid fraction and is a suspension law in the liquid's viscosity (Chen and Fan's and Brown's models) | Asha's decision 3. The rheometer-implied 13.4 mPa s matrix (Fan's Fig. 8, p. 54, by my calculation) is about 5 times the Sn-Pb liquid, and Moon's rig read the liquid at 15-16 times true; both are taken as instrument floors |
 | The liquid's value, 1.3 mPa s | Unchanged material value | Assael et al. 2006, J. Phys. Chem. Ref. Data 35, 285-300, Eq. 19 (p. 295): 1.42 mPa s at 908 K, extrapolated 25 K below its range, uncertainty 14 % | Pure aluminium. 1.3 mPa s is 8 % below, inside the uncertainty. Wang and Overfelt 2002 (Int. J. Thermophys. 23, 1063-1076) show alloying moves it by up to 25 %; no 7xxx data exist |
-| The excess falls as gamma^-0.85 outside Li et al.'s rates | n_x = -0.85: the excess stress grows as gamma^0.15 | Joly and Mehrabian 1976, J. Mater. Sci. 11, 1393-1418, Table IV (p. 1415): n = -0.82 at 10-40 per second, 45 % solid (Sn-15Pb). Fan 2002, Fig. 4 (p. 52), Turng and Wang's Sn-15Pb: -0.84 to -0.94 between 105 and 300 per second (my calculation). Moon 1990, Eq. 47 (pp. 83, 89): n' = -0.85 for Al-6.5Si at 40 % solid; Table 5.2 (p. 217): -0.68 to -0.85 for SiC suspensions | Measured on other alloys at 10-1400 per second; beyond that it is extrapolation. Above 300 per second, Turng and Wang's excess falls faster than this (about 12 Pa at 105 per second to 2 Pa at 1900 per second over their asymptote, at 17 % solid), so -0.85 errs on the viscous side at 1e3-1e5 per second |
+| The excess falls as gamma^-0.85 outside Li et al.'s rates | n_x = -0.85: the excess stress grows as gamma^0.15 | Joly and Mehrabian 1976, J. Mater. Sci. 11, 1393-1418, Table IV (p. 1415): n = -0.82 at 10-40 per second, 45 % solid (Sn-15Pb). Fan 2002, Fig. 4 (p. 52), Turng and Wang's Sn-15Pb: -0.84 to -0.94 between 105 and 300 per second (my calculation). Moon 1990, Eq. 47 (pp. 83, 89): n' = -0.85 for Al-6.5Si at 40 % solid; Table 5.2 (p. 217): -0.68 to -0.85 for SiC suspensions | Below 61 per second: measured as a yield-like stress on other alloys. **Above 489.88 per second: assumed, not supported by literature** (section 3.10). The exponent was measured below about 400 per second. Above 490 the data disagree both ways: one structure sped up rises more steeply (Joly, as rate^0.56-0.70), and steady states shed the excess faster (Turng and Wang, rate^-0.6). The valley's position at 489.88 is where Li et al.'s data end |
 | No zero-shear plateau below 61 per second | X keeps rising as the rate falls | Joly and Mehrabian 1976, Table IV and section 1.8 of the notes (near-constant 58-74 Pa at 10-40 per second); Fan 2002, Fig. 1 (p. 51): flat stress at about 35 % solid below 50 per second; Moon 1990, p. 99 and paper p. 258: his low-shear Newtonian region was assumed, never measured | Measured as a yield-like stress on other alloys; no data below 10 per second |
 | Below 10 % solid, scale the excess by (f_s/0.1)^p | p = 2 default, 3 option | Pan, Apelian and Alexandrou 2004, Metall. Mater. Trans. B 35, 1187-1202: Eq. 9 (p. 1192) makes the yield stress vanish as f_s squared; the Loue-Sigworth law, Eq. 11 (pp. 1197-1198), as f_s cubed; both give about 19-24 Pa at 10 % solid for Al-Si, near the bottom of Li et al.'s 25-100 Pa. Koke and Modigell 2003, p. 158: at zero solid the alloy is the Newtonian liquid | Assumed. No source measured below 31 % solid (Pan) or 10 % solid (any). The exponent is a property of the fitted forms, not of data. p = 2 is Asha's decision 2 |
 | Rigid at half solid | Infinite viscosity | Unchanged from the layered-skin design (spec 6.4); Li et al. saw torque fluctuations from particle bridging above 50 % solid (pp. 82-83) | As before |
@@ -399,6 +495,13 @@ structured / broken down, for p = 2.
 The present law gives the 2.5 % and 5.7 % solid cells 3.7 to 5.6 and 18.5 to 48 times the liquid. With p = 3, the
 5.7 % cell at 10 Pa is 476 times structured and 3.5 times broken down.
 
+The broken-down values rest on the assumed slope above 489.88 per second (section 3.10). Across that section's bounds,
+the broken-down state at 101 Pa ranges as follows:
+
+- 1.1-1.5 times the liquid at 2.5 % solid;
+- 1.2-4.8 times at 5.7 % solid;
+- 1.4-21.5 times at 10 % solid.
+
 Read with the history rule, the table says:
 
 - The top cells (2.5 to 5.7 % solid) break down under any gas shear above about 38 Pa and then run within a factor of 1.7
@@ -483,7 +586,7 @@ Level 4, a probe of the skins alone on the laptop (Asha, 2026-11-12, option A; n
 - What it cannot show: feedback. No metal leaves, and the heating does not respond, so it describes the state at
   178.5 s, not the rest of the flight.
 - A single-column script runs one representative windward column's profile to a steady state under both laws. It also
-  runs n_x at -0.7 and -1.0 as a sensitivity check.
+  runs n_x at -0.4 and -1.6, the literature bounds of section 3.10, as a sensitivity check of the assumed slope.
 
 Level 5, resumed flights (after level 4, only if Asha decides it): resume the same state at 178.5 s under both laws
 with `--slurry-spray on`, to 179.5 s, on the Mac Studio by a runbook. This captures the feedback that level 4 leaves
@@ -492,7 +595,9 @@ out. The estimated cost is about 2.5 hours under `bridge` and 6 to 9 hours under
 ## 9. Documentation
 
 - `docs/model_assumptions.md`: a new section on the near-liquidus viscosity (shared physics). It gives the law region by
-  region, with section 4's table of sources and statuses, and the limitations of section 10.
+  region, with section 4's table of sources and statuses, the limitations of section 10, and section 3.10 in full.
+  The section marks the behaviour above 489.88 per second as assumed and not supported by literature, and lists the
+  uncertainties below 10 % solid.
 - The layered-skin design (`2026-10-11-layered-skin-moving-mesh-design.md`): a dated amendment where it states the
   present law: the table at line 67, section 6.4 near line 343, the slurry mode near lines 611-617, line 958, and
   assumption 5 near line 1082. It says the default is now this design's law and the bridge is kept as `--rheology
@@ -505,6 +610,7 @@ out. The estimated cost is about 2.5 hours under `bridge` and 6 to 9 hours under
 
 ## 10. Limitations that stay
 
+- Everything in section 3.10: the assumed behaviour above 489.88 per second, and the uncertainties below 10 % solid.
 - No data between the liquid and 10 % solid. The exponent p, and where the structured slurry gives way to loose grains,
   are inferences.
 - Li et al.'s slurry was solidified while sheared. A re-entering sphere remelts wrought metal, whose grains start
@@ -536,8 +642,9 @@ Calls made in this design that Asha did not decide (she should check these):
 
 - Solid fraction, not temperature, carries Li et al.'s data (section 3.1).
 - GAMMA_FLOOR = 1e-3 per second (section 3.7).
-- n_x = -0.85 is a constant, not a command-line option. Sensitivity at -0.7 and -1.0 can be run in the analysis script
-  and the single-column test, not in flights.
+- n_x = -0.85 is a constant, not a command-line option. Asha confirmed this on 2026-11-12, asking that the behaviour
+  above 489.88 per second be marked as assumed instead (section 3.10). Its literature bounds, -0.4 and -1.6, run in the
+  analysis script and the single-column test, not in flights.
 - `--structure-exponent` takes only 2 or 3, the two sourced forms.
 - Merged cells take the mass-weighted mean rate. Rigid cells hold zero. Old states start structured (section 5.1).
 - Under `composite`, the cascade's `T_slurry` gate is unchanged (section 5.4).
