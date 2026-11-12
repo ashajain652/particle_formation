@@ -105,8 +105,9 @@ clashing.
 | `cli.py`: `parse_epoch`, `make_atmosphere`, `provenance`, `git_commit`, the common run arguments | `shared/cli_common.py` | both run commands take the same flight arguments |
 | `viz.py`: frame reading and the time series plots | `shared/viz.py` | both write VTK series |
 
-The skyscrapers-specific code stays where it is (`mesh.py`, `coupled.py`, `thermal/skfem_backend.py`,
-`thermal/fenicsx_backend.py`, the thermal part of `body.py`, the run driver in `cli.py`) and imports from `shared`.
+The skyscrapers-specific code now lives in `reentry_model/skyscrapers/` (`mesh`, `coupled`, the thermal part of `body`, and
+the other skin modules), with `thermal/skfem_backend.py`, `thermal/fenicsx_backend.py` and the run driver in `cli.py`
+at the top (moved 2026-11-11, Asha; `cli.py` and `thermal/` stay at the top), and imports from `shared`.
 **The old module paths stay importable as one-line re-exports** (for example `reentry_model/atmosphere.py` containing
 `from .shared.atmosphere import *`), so the tests, the analysis scripts and the skyscrapers prototype work copies keep
 working unchanged; the package's own modules import from `shared` directly.
