@@ -1,0 +1,12 @@
+{
+ "flight_cases": 87,
+ "own_speed_cases": 69,
+ "scaled_cases": 18,
+ "flight_wall_s": 1627,
+ "started": "2026-11-12 12:31:07 EST",
+ "flight_csv_written": "2026-11-12 12:58:14 EST",
+ "worker_seconds_own": 4616,
+ "worker_seconds_scaled": 1836,
+ "workers": 4,
+ "note": "the machine was shared with other sessions' jobs; the run's own resolution step was stopped after a scaled column at doubled resolution ran over 25 minutes, and the checks were re-run with `floor_sweep resolution` (resolution_flight.csv)"
+}
