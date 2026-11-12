@@ -91,7 +91,7 @@ def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_l
     run = state["run"]
     assert run.body.solver._solves == 28 and run.body.solver.amg_rebuild_every == 30
     np.random.set_state(state["rng"])
-    run.body.source_rows = spray.SourceSpool(str(tmp_path / "resumed_rows"))
+    run.body.source_rows = spray.SourceSpool(str(tmp_path / "resumed_rows"), run.body.record_names())
     run.settings.save_at = None
     history = run.run(resume=state)
     assert run.body.solver._solves == 32                          # the 31st solve built a new hierarchy
@@ -189,9 +189,14 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
     limit, or the later rows would raise KeyError (sub-plan 22 Task 5c). The test flight's state saved without a limit, as the
     two real states were, resumed with one: the columns are in every row, zero in the saved one, the JSON records the limit in
     its settings, its results and what was changed, and every other column is the flight's, the limit binding nowhere. Then
-    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set."""
+    the flight saved with a limit: the resume keeps it unless told, and `off` gives back the flight's column set. The test
+    flight flies on `profile` (the kinked-profile dispersion's default), whose history columns come last in a flight's rows,
+    after the spreading ones; a resume appends what it adds after the saved row's."""
+    from reentry_model.shared import melt_profile
     out, flight, records, state_path = flown
     names = ["spread_mass_kg", "spread_unplaced_kg", "spread_edges_over", "spread_jump_max_K"]
+    last = [k for k in flight[0] if k in melt_profile.DISPERSION_COLUMNS]
+    limited_columns = [k for k in flight[0] if k not in last] + names + last
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on", "--spread-limit", "60"]) == 0
     rows = rows_of(str(tmp_path / "on.csv"))
     assert len(rows) == 3 and list(rows[0]) == list(flight[14]) + names and all(list(r) == list(rows[0]) for r in rows)
@@ -207,10 +212,10 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
     saved = os.path.join(limited, "f.state.pkl")
     doc = json.load(open(os.path.join(limited, "f.json")))
     assert doc["settings"]["skin"]["spread_limit_deg"] == 60.0 and doc["results"]["spread_limit_deg"] == 60.0
-    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == list(flight[0]) + names
+    assert list(rows_of(os.path.join(limited, "f.csv"))[0]) == limited_columns
 
     assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "kept"]) == 0
-    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == list(flight[0]) + names
+    assert list(rows_of(str(tmp_path / "kept.csv"))[0]) == limited_columns
     assert json.load(open(str(tmp_path / "kept.json")))["results"]["spread_limit_deg"] == 60.0
 
     assert cli.main(["resume", saved, "--outdir", str(tmp_path), "--name", "off", "--spread-limit", "off"]) == 0
@@ -222,14 +227,23 @@ def test_resuming_with_a_limit_adds_the_spreading_columns_and_off_drops_them(flo
 
 
 @pytest.mark.parametrize("case", ["missing", "format", "t_max", "dt_continuum", "t_max_nan", "dt_continuum_nan",
-                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan"])
-def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path):
+                                  "spread_0", "spread_180", "spread_nan", "save_not_after", "save_at_end", "save_nan",
+                                  "dispersion_kinked", "dispersion_dry"])
+def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path, capsys):
     """A missing state file, a state of another format, an end of flight not after the saved time, a continuum step outside
-    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees and a value that is not a number are
-    refused with exit 2 (bad input), and nothing is written."""
+    (0, the saved flight's --dt of 0.025 s], a spread limit outside (0, 180) degrees, a value that is not a number, a
+    dispersion that is neither `table` nor `profile`, and `--dispersion profile` on a saved flight without the skins'
+    spraying (the kinked-profile dispersion's Task 8) are refused with exit 2 (bad input), and nothing is written."""
     out, flight, records, state_path = flown
     bad_format = str(tmp_path / "other.pkl")
     restart.save(bad_format, {"format": restart.FORMAT + 1})
+    dry = str(tmp_path / "dry" / "dry.state.pkl")
+    if case == "dispersion_dry":                    # a flight that does not melt, so has no spray model
+        k = FLIGHT.index("--melt")
+        argv = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--quiet"]
+        assert cli.main(argv + ["--t-max", "0.075", "--outdir", str(tmp_path / "dry"), "--name", "dry",
+                                "--save-state-at", "0.05"]) == 0
+        capsys.readouterr()
     state, options = {"missing": (str(tmp_path / "none.pkl"), []), "format": (bad_format, []),
                       "t_max": (state_path, ["--t-max", "0.1875"]), "dt_continuum": (state_path, ["--dt-continuum", "0.05"]),
                       "t_max_nan": (state_path, ["--t-max", "nan"]), "dt_continuum_nan": (state_path, ["--dt-continuum", "nan"]),
@@ -237,10 +251,14 @@ def test_the_resume_command_refuses_what_it_cannot_resume(case, flown, tmp_path)
                       "spread_nan": (state_path, ["--spread-limit", "nan"]),
                       "save_not_after": (state_path, ["--save-state-at", "0.1875"]),
                       "save_at_end": (state_path, ["--save-state-at", "0.2125"]),
-                      "save_nan": (state_path, ["--save-state-at", "nan"])}[case]
+                      "save_nan": (state_path, ["--save-state-at", "nan"]),
+                      "dispersion_kinked": (state_path, ["--dispersion", "kinked"]),
+                      "dispersion_dry": (dry, ["--dispersion", "profile"])}[case]
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", state, "--outdir", str(tmp_path / "o"), "--name", "r", *options])
     assert exc.value.code == 2 and not os.path.exists(str(tmp_path / "o"))
+    if case == "dispersion_dry":
+        assert "--dispersion needs a saved flight with the skins' spraying" in capsys.readouterr().err
 
 
 def test_a_spread_limit_is_refused_on_a_flight_that_does_not_melt(tmp_path):
@@ -675,3 +693,89 @@ def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_with
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r", "--slip-band", "on"])
     assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
+
+
+def test_resuming_with_dispersion_table_cuts_its_columns_and_a_state_without_it_resumes_on_table(flown, tmp_path, capsys):
+    """`--dispersion` on a resume (the kinked-profile dispersion design, spec 6.1 and 6.8; Review Focus 4). The test flight
+    flies on `profile`, the default of a spraying skin run: its JSON records it, its droplet records have the 36 columns
+    and its history the DISPERSION_COLUMNS. Resumed with `--dispersion table`, the spray model loses its stored setting (so
+    it pickles as a model built on `table`) and the saved row its DISPERSION_COLUMNS, so that no row carries them; the
+    records after the resume have the 27 SOURCE_COLUMNS; the line before the flight names the setting, the JSON records it
+    in the settings and in what was changed, and the state the resumed flight saves keeps it. Records held in memory
+    (a body without a spool) are cut to their 27 columns. A state saved before the option existed (the setting removed
+    from its spray model, which then reads the class default, and the columns from its row) resumes on `table`, recorded
+    as such, and `profile` asked of it adds the columns to its rows and pads its records held in memory with nan. Resuming
+    with nothing changed repeats the flight to the last bit (`test_the_resume_command_repeats_the_flight_...`)."""
+    from reentry_model.shared import melt_profile
+    columns = list(melt_profile.DISPERSION_COLUMNS)
+
+    def header(path):          # the history's header, every column (`rows_of` leaves out `wall_` ones: wall_depth_median_mm)
+        with open(path) as fh:
+            return next(csv.reader(fh))
+
+    def doc_of(path):
+        with open(path) as fh:
+            return json.load(fh)
+
+    def records_of(path):
+        with np.load(path) as z:
+            return {k: z[k] for k in z.files}
+
+    out, flight, records, state_path = flown
+    assert doc_of(os.path.join(out, "f.json"))["settings"]["skin"]["dispersion"] == "profile"
+    assert list(records) == spray.record_columns(36) and header(os.path.join(out, "f.csv"))[-len(columns):] == columns
+    resume = lambda state, name, *options: cli.main(["resume", state, "--outdir", str(tmp_path), "--name", name, *options])
+
+    # profile to table, the records on the spool
+    assert resume(state_path, "t", "--dispersion", "table", "--save-state-at", "0.2") == 0
+    line = [l for l in capsys.readouterr().out.splitlines() if l.startswith("resuming ")][0]
+    assert "dispersion table" in line
+    doc = doc_of(str(tmp_path / "t.json"))
+    assert doc["settings"]["dispersion"] == "table"
+    assert doc["resumed_from"]["changed"] == {"--dispersion": "table", "--save-state-at": 0.2}
+    rows = rows_of(str(tmp_path / "t.csv"))
+    assert len(rows) == 3 and not set(columns) & set(header(str(tmp_path / "t.csv")))
+    assert rows[0] == {k: v for k, v in flight[14].items() if k not in columns}
+    assert list(records_of(str(tmp_path / "t" / "particles.npz"))) == spray.SOURCE_COLUMNS
+    saved = restart.load(str(tmp_path / "t.state.pkl"))
+    model = saved["run"].body.spray
+    assert model.dispersion == "table" and "dispersion" not in vars(model) and saved["meta"]["args"]["dispersion"] == "table"
+
+    # profile to table, the records in memory: cut to the 27 SOURCE_COLUMNS, bit for bit
+    state = restart.load(state_path)
+    held = np.arange(2.0 * 36).reshape(2, 36)
+    state["run"].body.source_rows = [held.copy()]
+    memory = str(tmp_path / "memory.state.pkl")
+    restart.save(memory, state)
+    assert resume(memory, "m", "--dispersion", "table") == 0
+    got = records_of(str(tmp_path / "m" / "particles.npz"))
+    assert list(got) == spray.SOURCE_COLUMNS
+    assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
+
+    # a state saved before the option existed: table, with no columns for it
+    state = restart.load(state_path)
+    vars(state["run"].body.spray).pop("dispersion")                          # pickled before the setting existed
+    for key in columns:
+        del state["row"][key]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    capsys.readouterr()
+    assert resume(old, "o") == 0
+    assert "dispersion table" in capsys.readouterr().out
+    doc = doc_of(str(tmp_path / "o.json"))
+    assert doc["settings"]["dispersion"] == "table" and doc["resumed_from"]["changed"] == {}
+    assert not set(columns) & set(header(str(tmp_path / "o.csv")))
+    assert list(records_of(str(tmp_path / "o" / "particles.npz"))) == spray.SOURCE_COLUMNS
+
+    # ... switched to profile, its records in memory: padded with nan, and the columns in every row
+    state["run"].body.source_rows = [held[:, :27].copy()]
+    restart.save(old, state)
+    assert resume(old, "p", "--dispersion", "profile") == 0
+    assert "dispersion profile" in capsys.readouterr().out
+    doc = doc_of(str(tmp_path / "p.json"))
+    assert doc["settings"]["dispersion"] == "profile" and doc["resumed_from"]["changed"] == {"--dispersion": "profile"}
+    assert header(str(tmp_path / "p.csv"))[-len(columns):] == columns and len(rows_of(str(tmp_path / "p.csv"))) == 3
+    got = records_of(str(tmp_path / "p" / "particles.npz"))
+    assert list(got) == spray.record_columns(36)
+    assert all(np.array_equal(got[k][:2], held[:, i]) for i, k in enumerate(spray.SOURCE_COLUMNS))
+    assert all(np.isnan(got[k][:2]).all() for k in spray.PROFILE_COLUMNS)

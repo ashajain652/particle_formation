@@ -324,3 +324,29 @@ def test_run_resolves_relative_out_against_the_callers_folder(tmp_path, monkeypa
     outdir = Path(command[command.index("--outdir") + 1])
     assert outdir == tmp_path / "rel_out" / "nomelt"                          # not relative to --code
     assert (tmp_path / "rel_out" / "nomelt.log").exists()
+
+
+def test_append_adds_arguments_to_every_listed_case(tmp_path, monkeypatch):
+    """``run --append "ARGS"`` adds the arguments, split as a shell would, after every listed case's own and before
+    ``--outdir`` and ``--name``, and the log records the command it ran; without it the commands are the cases' own (the
+    kinked-profile dispersion's Task 8 runs the skins case with ``--append "--dispersion table"``)."""
+    code = tmp_path / "code"
+    code.mkdir()
+    calls = []
+
+    class Done:
+        returncode = 0
+
+    monkeypatch.setattr(same_results.subprocess, "run",
+                        lambda command, **kw: calls.append(command) or Done())
+    monkeypatch.setattr(same_results, "power_line", lambda: "AC Power")
+    cases = same_results.case_arguments(Path("/state.pkl"))
+    assert same_results.main(["run", "--code", str(code), "--out", str(tmp_path / "with"), "--state", "/state.pkl",
+                              "--cases", "skins,resume", "--append", "--dispersion table"]) == 0
+    assert [c[4:c.index("--outdir")] for c in calls] == [cases["skins"] + ["--dispersion", "table"],
+                                                          cases["resume"] + ["--dispersion", "table"]]
+    assert "--dispersion table --outdir" in (tmp_path / "with" / "skins.log").read_text()
+    calls.clear()
+    assert same_results.main(["run", "--code", str(code), "--out", str(tmp_path / "without"), "--state", "/state.pkl",
+                              "--cases", "element,resume"]) == 0
+    assert [c[4:c.index("--outdir")] for c in calls] == [cases["element"], cases["resume"]]
