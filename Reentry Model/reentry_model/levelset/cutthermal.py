@@ -27,9 +27,9 @@ face area, keeps the system conditioned when a cell holds almost no metal. The j
 cell 2] annihilates any function that is linear across the face, so constants are untouched. `ghost` is gamma.
 
 Moving surface. `move(phi_new)` changes the level set on the same mesh: the nodal temperatures are kept, nodes that
-become active are filled ring by ring with the mean of their already-valued neighbours (the previously active nodes
-are the first donors), the geometry is rebuilt, and the enthalpy the move removed (negative if metal was added) is
-returned. `remesh(new_mesh, phi_new)` carries the temperature to a new mesh: it is first extended three rings outside
+become active, and nodes that come inside the metal from outside it, are filled ring by ring with the mean of their
+already-valued neighbours (the old metal's own nodes are the first donors), the geometry is rebuilt, and the enthalpy
+the move removed (negative if metal was added) is returned. `remesh(new_mesh, phi_new)` carries the temperature to a new mesh: it is first extended three rings outside
 the metal (so the projection sees a smooth field across the surface), projected with `transfer.project`, the geometry
 is rebuilt on the new mesh, and one uniform temperature offset, found by bisection to 1e-12 K, makes the stored
 enthalpy equal the old one; the enthalpy residual before the offset is returned, divided by the larger of the old
@@ -267,13 +267,20 @@ class CutThermal:
 
     def move(self, phi_new):
         """Move the surface on the same mesh; returns the enthalpy the move removed from the metal [J] (negative
-        when metal is added). If the move raises, the solver is left exactly as it was before the call."""
+        when metal is added). The nodes that become active, and the nodes that come inside the metal from outside it,
+        are filled from the old metal's own nodes by `_extend` (the mean of their valued neighbours, ring by ring): a
+        node of a cut cell outside the metal holds no metal temperature (stage 3 Task 9, fix round 3: under a stiff skin
+        law such nodes swung to +-1e5 K and, carried inside by a growing surface, broke the volume's Newton iteration);
+        the enthalpy the refill changes is in what this returns. Active nodes that stay outside keep their values. If
+        the move raises, the solver is left exactly as it was before the call."""
         E0 = self.energy()
-        donors = self.active.copy()
+        was_active, was_inside = self.active.copy(), self.phi < 0
+        donors = was_active & was_inside                # only the metal's own nodes hold metal temperatures
         saved = dict(self.__dict__)                  # setup only rebinds attributes, so a shallow copy restores them
         try:
             self.setup(self.mesh, phi_new)
-            self.T = self._extend(donors, self.active)
+            refill = self.active & (~was_active | ((self.phi < 0) & ~was_inside))
+            self.T = self._extend(donors & ~refill, refill)
         except Exception:
             self.__dict__.clear(); self.__dict__.update(saved)
             raise

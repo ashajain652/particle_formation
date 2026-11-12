@@ -29,7 +29,8 @@ exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most
    sub-step's conduction
    with the trial sensitivity, the flow sub-steps with the release, the feed removal (remove="feed"), the draw and the
    regrid, at the linearisation temperature T_lin; its base law (a, b) per marker;
-2. `CutThermal.step` with each patch's law and the pending load (last part's deferred heat, at its points);
+2. `CutThermal.step` with each patch's law and the pending load: the heat owed to the volume, delivered at its amount
+   over the macro step's time left (at least PENDING_TIME_MIN), spread over the owing markers' patch groups;
 3. the real pass from the same saved state with T_b read from the 3D field as above;
 4. the mismatch per marker, E_base - (a + b T_b) dt, and the repetition from the saved states by the damped Aitken rule
    (omega0 DAMPED_OMEGA0, omega within DAMPED_OMEGA_RANGE, until the total relative mismatch is at most
@@ -99,6 +100,9 @@ GROUP_AREA_RANGE = (0.5, 2.0)     # a marker's group of patches of beta has an a
                                   # (the ruling of fix round 2: a whole law on a group 20 times smaller than the base was a
                                   # Robin condition with a Biot number of about 800, and the volume's Newton iteration stalled)
 GROUP_CANDIDATES = 64             # patches nearest a base searched first when its group is formed again (then four times more)
+PENDING_TIME_MIN = 0.010          # s: the pending heat is delivered at its amount over the macro step's time left, but never
+                                  # over less than this (the heat sub-step); what the step's last parts leave stays owed
+                                  # into the next step (fix round 3: a whole deferral within a 2 ns part was 1e14 W/m2)
 PARTS_MAX = 1000                  # a macro step never starts with more parts: the next step's hint is capped here
 # the interface's damped repetition (the skyscrapers' "damped" rule, their skinbody.py and skin.py)
 INTERFACE_TOLERANCE = 1e-3        # of sum |E_top| + |E_base|: the total relative mismatch that ends the repetition
@@ -132,7 +136,9 @@ class StepBook:
     pending then - in + out) / (|stored then| + |in|). `parts` the parts the step took, `parts_next` the next step's
     hint, and `parts_skyscrapers` the hint the skyscrapers' rule would have given (every accepted part's move ratio,
     unlimited). `group_area_ratio_min`, `group_area_ratio_max` the least and largest
-    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`). `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
+    area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`). `pending_flux_max` the largest
+    flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max` the largest convective flux on
+    a top. `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
     volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
     total since the start), `momentum_to_wall` what the skins' flow gave the wall over the step and
     `momentum_removed` what the feed removal took. The heat deferred to the volume over the step, by source, each
@@ -149,6 +155,8 @@ class StepBook:
     parts_skyscrapers: int
     group_area_ratio_min: float
     group_area_ratio_max: float
+    pending_flux_max: float
+    surface_flux_max: float
     passes: int
     enthalpy_in: float
     mass_sprayed: float
@@ -206,6 +214,7 @@ class _Tally:
         self.ratio_all = 0.0
         self.group_min, self.group_max = np.inf, 0.0
         self.newton = self.move = self.remesh = 0.0
+        self.elapsed, self.pending_flux = 0.0, 0.0
 
 
 @dataclass
@@ -504,7 +513,9 @@ class LevelSetSkinBody(StepEnd):
         T_b0 = S @ solver.patch_T()
         m_min = sk.minimum_mass() * (1.0 - DRAW_SLACK)
         A_p = solver.P.area
-        q_pend = self._pending_per_patch(S, base) / (A_p * dt)
+        share = min(1.0, dt / max(dt_macro - tally.elapsed, PENDING_TIME_MIN))   # of the pending heat, this part's
+        q_pend = share * self._pending_per_patch(S, base) / (A_p * dt)              # (at its rate over the step's rest)
+        tally.pending_flux = max(tally.pending_flux, float(np.abs(q_pend).max(initial=0.0)))
         E_vol0 = solver.energy()
         T_lin = T_b0
         omega, r_prev = DAMPED_OMEGA0, None
@@ -543,6 +554,7 @@ class LevelSetSkinBody(StepEnd):
             return
         # the accepted part's books
         tally.parts += 1
+        tally.elapsed += dt
         tally.passes = max(tally.passes, passes)
         tally.ratio_all = max(tally.ratio_all, ratio * dt_macro / dt)       # the skyscrapers' rule, for the record
         if ratio <= 1.0:                                    # a part still over its allowance at the deepest split is
@@ -564,8 +576,14 @@ class LevelSetSkinBody(StepEnd):
         residual = Q - (solver.energy() - E_vol0)
         tally.newton += abs(residual)
         w = np.abs(book.E_base)
-        share = w / w.sum() if w.sum() > 0.0 else np.full(len(w), 1.0 / max(len(w), 1))
-        self.pending_x, self.pending_J = base.copy(), mismatch + residual * share
+        weight = w / w.sum() if w.sum() > 0.0 else np.full(len(w), 1.0 / max(len(w), 1))
+        owed = self.pending_J * (1.0 - share)                    # what this part did not deliver stays owed
+        if len(owed):                                            # (merged onto the base nearest each point)
+            _, row = cKDTree(base).query(self.pending_x)
+            owed = np.bincount(row, owed, minlength=len(base))
+        else:
+            owed = np.zeros(len(base))
+        self.pending_x, self.pending_J = base.copy(), owed + mismatch + residual * weight
         # beta moved by the draws and the hand-downs, the move's enthalpy against what the skins took and gave
         dV = (handed - book.drawn) / self.rho
         if np.any(dV != 0.0):
@@ -659,7 +677,8 @@ class LevelSetSkinBody(StepEnd):
         self.last_step = StepBook(
             time=self.time, dt=dt, parts=tally.parts, parts_next=self._hint,
             parts_skyscrapers=int(math.ceil(MOVE_HINT_MARGIN * tally.ratio_all)),
-            group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max, passes=tally.passes, enthalpy_in=tally.E_top,
+            group_area_ratio_min=tally.group_min, group_area_ratio_max=tally.group_max,
+            pending_flux_max=tally.pending_flux, surface_flux_max=float(np.max(ctx["q"], initial=0.0)), passes=tally.passes, enthalpy_in=tally.E_top,
             mass_sprayed=tally.sprayed, enthalpy_sprayed=tally.sprayed_H, mass_removed=tally.removed,
             enthalpy_removed=tally.removed_H, enthalpy_radiated=tally.E_rad, mass_volume=end["mass_volume"],
             mass_skins=end["mass_skins"], enthalpy_volume=end["enthalpy_volume"], enthalpy_skins=end["enthalpy_skins"],

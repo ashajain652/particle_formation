@@ -125,6 +125,26 @@ def test_move_books_the_enthalpy_it_removes_and_fills_new_nodes():
     assert s.T[new].min() >= 300.0 and s.T[new].max() <= 300.0 + 1e4 * 28e-3
 
 
+def test_a_node_the_move_brings_inside_takes_its_value_from_the_metal():
+    """Stage 3 Task 9, fix round 3: a node of a cut cell that lies outside the metal holds no metal temperature (with a
+    stiff skin law on its patch it swung to +-1e5 K in the coupled step); when the surface grows past it, `move` refills
+    it, with every node newly inside the metal, from the metal's own nodes, as it fills newly active nodes, and the
+    enthalpy that changes is in what the move returns."""
+    m, phi = sphere()
+    s = CutThermal(ConstMaterial()); s.setup(m, phi)
+    s.set_temperature(850.0 + 1e3 * (m.points[:, 0] + 14e-3))
+    outside = s.active & (s.phi >= 0)
+    s.T = np.where(outside, -5e4, s.T)                                   # the swung values of the coupled step
+    E0 = s.energy()
+    old_phi = s.phi.copy()
+    out = s.move(np.linalg.norm(m.points, axis=1) - 10.4e-3)              # grow past those nodes
+    newly = (s.phi < 0) & (old_phi >= 0)
+    assert (newly & outside).any()
+    inside = s.active & (s.phi < 0)
+    assert s.T[inside].min() >= 850.0 and s.T[inside].max() <= 850.0 + 1e3 * 28e-3
+    assert out == pytest.approx(E0 - s.energy(), rel=1e-12)
+
+
 def test_receding_surface_through_slivers_gives_no_temperature_jumps():
     h = 1e-3
     m = build(BoxBase.around((-3.37e-3, -3.37e-3, -8e-3), (3.37e-3, 3.37e-3, 3e-3), h))

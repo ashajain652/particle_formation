@@ -28,6 +28,7 @@ OWED_SHARE = 0.05      # the heat still owed to the volume at a step's end, summ
                        # metal it takes on the profile capped at T_rigid, the volume removes it at its own, hotter,
                        # temperatures -- about 4 % of the heat in over the receding step, most of it delivered within it
                        # (the mismatch itself is 1e-4 of the heat in or less)
+PENDING_FLUX_SHARE = 10.0   # the pending heat's flux on a patch at most this times the largest surface flux (fix round 3)
 
 
 def owed(body, book):
@@ -36,6 +37,9 @@ def owed(body, book):
     pend, mism = np.abs(body.pending_J).sum() / book.enthalpy_in, book.interface_mismatch_J / book.enthalpy_in
     lo, hi = skinbody.GROUP_AREA_RANGE
     assert lo <= book.group_area_ratio_min and book.group_area_ratio_max <= hi
+    print("  pending flux at most {:.3e} W/m2 against the surface's {:.3e} W/m2".format(book.pending_flux_max,
+                                                                                    book.surface_flux_max))
+    assert book.pending_flux_max <= PENDING_FLUX_SHARE * book.surface_flux_max
     print("  owed |pending| {:.2e} and mismatch {:.2e} of the heat in; deferred Newton {:.2e} J, moves {:.2e} J, "
           "remesh {:.2e} J; groups {:.2f} to {:.2f} of the base areas".format(
               pend, mism, book.residual_newton_J, book.residual_move_J, book.residual_remesh_J,
