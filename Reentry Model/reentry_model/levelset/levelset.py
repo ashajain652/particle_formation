@@ -106,46 +106,70 @@ def piece_volumes(mesh, phi, label, n):
     return np.bincount(label[m], vol[m], minlength=n)
 
 
+SWEEPS_MAX = 20     # sweeps over the pieces at most in `correct_volumes`
+
+
 def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60):
     """Shift phi uniformly over each piece (its cells' nodes, dilated by `rings` rings of cells) so that the
-    piece's volume equals targets[p] to round-off. Returns (phi, largest relative correction)."""
+    piece's volume equals targets[p] to round-off. Returns (phi, largest relative correction).
+
+    Pieces whose dilations meet (Task 9, fix round 4): each node is shifted with the first piece (in label order) that
+    reaches it, and each cell holding no metal before is counted with the first piece that reaches it, so no metal is
+    counted for two pieces; the pieces are corrected in turn, sweep after sweep (at most SWEEPS_MAX), until every piece
+    holds its target at once, since a later piece's shift moves the contour in a cell an earlier piece counts. (Counted
+    for both, the metal a shift grew in a cell between two pieces 0.25 to 0.4 mm apart on 0.125 mm cells was booked
+    twice and the total fell short by up to 3e-5; on the full-size cube's second step, with a 2e-9 m3 piece beside the
+    body, a short 1e-14 m3 a move made the step's mass residual -9.4e-9.) One piece is corrected as before."""
     phi = phi.copy()
-    worst = 0.0
     targets = np.asarray(targets, float)
     if (targets <= 0).any():
         raise ValueError("volume target of piece {} is not positive; remove the piece instead".format(
             int(np.flatnonzero(targets <= 0)[0])))
-    for p, target in enumerate(targets):
+    claimed_nodes = np.zeros(len(mesh.points), bool)
+    claimed_cells = np.zeros(len(mesh.tets), bool)
+    sets = []
+    for p in range(len(targets)):
         others = np.zeros(len(mesh.points), bool)
         others[mesh.tets[(label >= 0) & (label != p)].ravel()] = True       # nodes of every other piece
         nodes = np.unique(mesh.tets[label == p])
         for _ in range(rings):
             touch = np.isin(mesh.tets, nodes).any(axis=1)
             nodes = np.unique(mesh.tets[touch])
-        nodes = nodes[~others[nodes]]
-        cells = np.flatnonzero(np.isin(mesh.tets, nodes).any(axis=1) & ((label < 0) | (label == p)))
-        base = phi[nodes].copy()
-        lo, hi, c = None, None, 0.0
-        V0 = inside_volumes(mesh, phi, cells).sum()
-        for _ in range(max_iter):
-            phi[nodes] = base - c
-            V = inside_volumes(mesh, phi, cells).sum()
-            err = target - V
-            if abs(err) <= rtol * target:
-                break
-            if err > 0:
-                lo = c
+        nodes = nodes[~others[nodes] & ~claimed_nodes[nodes]]
+        claimed_nodes[nodes] = True
+        cells = np.flatnonzero(np.isin(mesh.tets, nodes).any(axis=1) & ((label < 0) | (label == p)) & ~claimed_cells)
+        claimed_cells[cells] = True
+        sets.append((nodes, cells, phi[nodes].copy()))
+    shift = np.zeros(len(targets))
+    worst = 0.0
+    for sweep in range(SWEEPS_MAX):
+        for p, target in enumerate(targets):
+            nodes, cells, base = sets[p]
+            lo, hi, c = None, None, shift[p]
+            for _ in range(max_iter):
+                phi[nodes] = base - c
+                V = inside_volumes(mesh, phi, cells).sum()
+                err = target - V
+                if sweep == 0 and c == 0.0:
+                    worst = max(worst, abs(err) / target)
+                if abs(err) <= rtol * target:
+                    break
+                if err > 0:
+                    lo = c
+                else:
+                    hi = c
+                A = patches_area(mesh, phi, cells)
+                c_new = c + err / max(A, 1e-300)
+                if (lo is not None and c_new <= lo) or (hi is not None and c_new >= hi):
+                    c_new = 0.5 * (lo + hi) if (lo is not None and hi is not None) else c + 2 * (c_new - c)
+                c = c_new
             else:
-                hi = c
-            A = patches_area(mesh, phi, cells)
-            c_new = c + err / max(A, 1e-300)
-            if (lo is not None and c_new <= lo) or (hi is not None and c_new >= hi):
-                c_new = 0.5 * (lo + hi) if (lo is not None and hi is not None) else c + 2 * (c_new - c)
-            c = c_new
-        else:
-            raise RuntimeError("volume correction of piece {} did not converge".format(p))
-        worst = max(worst, abs(target - V0) / target)
-    return phi, worst
+                raise RuntimeError("volume correction of piece {} did not converge".format(p))
+            shift[p] = c
+        if len(targets) == 1 or all(abs(t - inside_volumes(mesh, phi, sets[p][1]).sum()) <= rtol * t
+                                    for p, t in enumerate(targets)):
+            return phi, worst
+    raise RuntimeError("the volume correction did not hold every piece's target at once in {} sweeps".format(SWEEPS_MAX))
 
 
 def patches_area(mesh, phi, cells):
