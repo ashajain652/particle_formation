@@ -23,6 +23,8 @@ the minimum mass and the hand-down), cut into the fractions of its row of the tr
 is the hand-over mix (`Skins.combine`) of the pieces it receives.
 
 Numbers here are numerical settings; no physics."""
+import math
+
 import numpy as np
 from scipy.sparse import coo_matrix, diags, identity
 from scipy.sparse.csgraph import connected_components
@@ -34,8 +36,9 @@ from .cutcell import patches as cut_patches
 SAMPLE_SHARE = 1.0 / 16.0   # of the markers' target spacing: the surface samples' size for a re-partition
 SAMPLE_LEVEL_MAX = 5        # midpoint subdivisions of a patch triangle at most for the surface samples (`surface_samples`)
 FIT_PASSES = 4              # flows at most that bring the re-partition's columns to the new areas (`_fit_columns`)
-FIT_RTOL = 1e-14            # of a column's area: the fit stops when no column is farther from it than this
-FIT_FAIL = 1e-12            # of a column's area: a fit still farther from it after FIT_PASSES raises
+FIT_RTOL = 1e-14            # of a piece's mean area: the fit stops when no column is farther from its area than this
+FIT_FAIL = 1e-12            # of a piece's mean area: a fit still farther after FIT_PASSES raises (fix round 1: of the
+                            # mean, not of the column's own area, which may be zero)
 
 
 def _subdivision(level):
@@ -88,29 +91,40 @@ def transfer_matrix(old_x, old_normal, old_area, old_samples, x, area, faces, sa
         s = (W @ np.bincount(own1, w1, minlength=n)) / (W @ np.bincount(own0, w0, minlength=n))
     R = np.zeros(n)
     for c in range(ncomp):                                  # normalised to the covered area's change, piece by piece
-        m = comp == c
-        A_new, A_old = area[m].sum(), old_area[m].sum()
+        m = np.flatnonzero(comp == c)
+        A_new, A_old = math.fsum(area[m]), math.fsum(old_area[m])
         sc = np.where(np.isfinite(s[m]) & (s[m] > 0.0), s[m], A_new / A_old if A_old > 0.0 else 1.0)
         R[m] = old_area[m] * sc
-        R[m] *= A_new / R[m].sum() if R[m].sum() > 0.0 else 0.0
+        total = math.fsum(R[m])
+        if total > 0.0:
+            R[m] *= A_new / total
+            big = m[np.argmax(R[m])]                       # the rows' total to the new areas' to round-off: what the
+            R[big] += A_new - math.fsum(R[m])              # scaling's rounding left, on the largest row
+        else:
+            R[m] = 0.0
     stretch = np.divide(R, old_area, out=np.ones(n), where=old_area > 0.0)
     K = coo_matrix((w1, (own1, new1)), shape=(n, n)).tocsr().multiply(W).tocsr()   # between neighbours or itself
     rs = np.asarray(K.sum(axis=1)).ravel()
     T = (diags(np.divide(R, rs, out=np.zeros(n), where=rs > 0.0)) @ K
          + diags(np.where(rs > 0.0, 0.0, R))).tocsr()          # rows to their stretched old areas
     length = np.zeros(0) if faces is None else faces.length
-    return _fit_columns(T, area, fi, fj, length, x, comp), stretch
+    return _fit_columns(T, R, area, fi, fj, length, x, comp), stretch
 
 
-def _fit_columns(T, area, fi, fj, length, x, comp):
-    """T (csr) with each column's sum brought to `area`, its rows' sums kept: the columns' shortfalls, r = area less the
+def _fit_columns(T, rows, area, fi, fj, length, x, comp):
+    """T (csr) with each column's sum brought to `area` and each row's to `rows`: the columns' shortfalls, r = area less the
     column sums, are met by a flow of area between the columns of neighbours across their faces, the potential flow of
     the faces' graph (conductance the face length over the markers' distance; one potential held per piece `comp`)
     with L p = -r, so that column i passes g = c (p_i - p_k) to column k; the columns are visited from the highest
     potential down, and what one passes on it takes from its own column's metal first (row i's entry T[i, i], moved to
     T[i, k]) and the rest from what it received, in proportion (row j's T[j, i] moved to T[j, k]): every move stays
     within its row and nothing turns negative, since a column passes on less than it holds (it keeps its area).
-    Repeated on the round-off left, FIT_PASSES times at most; a fit still FIT_FAIL of an area short raises."""
+    Repeated on the round-off left, FIT_PASSES times at most, until no column but the one whose potential is held is
+    further from its area than FIT_RTOL of its piece's mean area (a column whose new area is zero, too, is then met); a
+    fit with any column still FIT_FAIL of that short raises. Before each pass every row is scaled back to `rows`; the
+    sums are exactly rounded (`math.fsum`), so the tolerances hold for the true sums. The held column carries what no
+    flow can move, the piece's total less its new areas' total: the rounding of every move and scaling, summed (fix round
+    1: on 443 markers turned until 94 % of the area changed hands, 6e-14 of a mean area, against n eps = 1e-13)."""
     n = len(area)
     cols = [dict() for _ in range(n)]
     coo = T.tocoo()
@@ -118,19 +132,33 @@ def _fit_columns(T, area, fi, fj, length, x, comp):
         if v > 0.0:
             cols[i][j] = cols[i].get(j, 0.0) + v
 
-    def shortfall():
-        return area - np.array([sum(c.values()) for c in cols])
+    def shortfall():                                       # each column's sum exactly rounded (math.fsum)
+        return area - np.array([math.fsum(c.values()) for c in cols])
+
+    def rescale_rows():                                    # each row back to its target, its entries in proportion
+        held = [[] for _ in range(n)]
+        for c in cols:
+            for j, v in c.items():
+                held[j].append(v)
+        f = [rows[j] / math.fsum(h) if h else 1.0 for j, h in enumerate(held)]
+        for c in cols:
+            for j in c:
+                c[j] *= f[j]
+    scale = (np.bincount(comp, area) / np.bincount(comp))[comp]   # each column's piece's mean area
     if len(fi):
         g = length / np.linalg.norm(x[fi] - x[fj], axis=1)
         C = coo_matrix((g, (fi, fj)), shape=(n, n))
         C = (C + C.T).tocsr()
         L = (diags(np.asarray(C.sum(axis=1)).ravel()) - C).tocsr()
         free = np.ones(n, bool)
-        free[np.unique(comp, return_index=True)[1]] = False
+        free[np.unique(comp, return_index=True)[1]] = False   # one potential held per piece
         Lf = L[free][:, free].tocsc()
+    else:
+        free = np.zeros(n, bool)
     for _ in range(FIT_PASSES):
+        rescale_rows()
         r = shortfall()
-        if np.all(np.abs(r) <= FIT_RTOL * area) or not len(fi):
+        if np.all(np.abs(r[free]) <= FIT_RTOL * scale[free]):
             break
         p = np.zeros(n)
         if free.any():
@@ -160,9 +188,9 @@ def _fit_columns(T, area, fi, fj, length, x, comp):
                     for k, q in out[i]:
                         cols[k][h] = cols[k].get(h, 0.0) + moved * (q / O)
     r = shortfall()
-    if np.any(np.abs(r) > FIT_FAIL * area):
-        raise RuntimeError("the re-partition's columns did not meet the new areas: {:.1e} of an area left".format(
-            float(np.max(np.abs(r) / area))))
+    if np.any(np.abs(r) > FIT_FAIL * scale):
+        raise RuntimeError("the re-partition's columns did not meet the new areas: {:.1e} of their mean area left".format(
+            float(np.max(np.abs(r) / scale))))
     rows = [j for c in cols for j in c]
     at = [i for i, c in enumerate(cols) for _ in c]
     vals = [v for c in cols for v in c.values()]

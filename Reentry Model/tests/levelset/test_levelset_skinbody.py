@@ -818,3 +818,35 @@ def test_a_thick_skin_losing_area_gives_its_metal_to_its_neighbour():
     share = np.asarray(tr[thick].todense()).ravel() / tr[thick].sum()
     np.testing.assert_allclose(after, E_ex[thick] * share, rtol=0.0, atol=1e-12 * E_ex[thick])
     assert share[left] + share[right] >= 0.9 * (1.0 - share[thick])
+
+
+def test_a_marker_the_second_tessellation_leaves_without_area_is_released(monkeypatch):
+    """Fix round 1 (minor 1): the step end's tessellation after split and merge may leave a marker no area, as the first
+    may; it is released (its skin's metal to the volume) before its skins are re-partitioned, as after the first. Here
+    the test cube's step end reports a merge, so that it tessellates a second time, and that tessellation leaves one
+    marker no area: the marker leaves, counted as released, and the body's mass closes (before, the re-partition ran
+    with the zero-area column and the marker stayed, with no area)."""
+    from reentry_model.levelset.markers import Markers
+    body = cube_body()
+    mk = body.markers
+    calls = {"n": 0}
+    tessellate = Markers.tessellate
+
+    def tess(self, mesh, phi):
+        faces = tessellate(self, mesh, phi)
+        calls["n"] += 1
+        if calls["n"] == 2:                               # the tessellation after split and merge
+            self.area[0] = 0.0
+        return faces
+    monkeypatch.setattr(Markers, "tessellate", tess)
+    monkeypatch.setattr(Markers, "merge", lambda self, spacing: 1)
+    before = body.books()
+    n0, released0 = mk.n, mk.trapped
+    body._settle(skinbody._Tally(0))
+    after = body.books()
+    M0, M1 = before["mass_volume"] + before["mass_skins"], after["mass_volume"] + after["mass_skins"]
+    print("second tessellation: {} markers then {}, released {}; mass {:.1e}".format(n0, mk.n, mk.trapped - released0,
+                                                                                    M1 / M0 - 1))
+    assert mk.n == n0 - 1 and mk.trapped == released0 + 1
+    assert np.all(mk.area > 0.0)
+    assert abs(M1 / M0 - 1) <= 1e-12

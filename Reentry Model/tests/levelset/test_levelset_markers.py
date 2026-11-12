@@ -421,3 +421,35 @@ def test_a_concave_right_angle_corner_keeps_its_neighbours():
     assert fl.sum() >= 3 and wl.sum() >= 3 and len(across) >= 3
     assert front.all() and dot.min() > OPPOSED_NORMALS + 0.5
     assert not mk.capped[fl | wl].any()
+
+
+def test_patch_paths_match_an_unrestricted_dijkstra(monkeypatch):
+    """Task 9b (fix round 1, minor 2): `patch_paths`, Dijkstra from its sources in spatial chunks each on the patches
+    within the bound of its sources, gives every pair's path along the patch graph exactly as Dijkstra over the whole
+    graph does, and np.inf beyond the bound: on a 10 mm sphere on 0.7 mm cells, 2000 random pairs of patches up to the
+    sphere's diameter apart, a 6 mm bound, and chunks of 7 sources (so that most sources share a chunk with others)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import dijkstra
+    from reentry_model.levelset import markers as M
+    from reentry_model.levelset.thin import patch_adjacency
+    R = 10e-3
+    base = BoxBase.around((-R - 5.6e-3,) * 3, (R + 5.6e-3,) * 3, 2.8e-3)
+    mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - R, DESIGN_FINE)
+    phi = np.linalg.norm(mesh.points, axis=1) - R
+    P = patches(mesh, phi)
+    rng = np.random.default_rng(12)
+    a, b = rng.integers(0, len(P.cell), 2000), rng.integers(0, len(P.cell), 2000)
+    limit = 6e-3
+    monkeypatch.setattr(M, "PATH_CHUNK", 7)
+    got = M.patch_paths(mesh, P, a, b, limit)
+    A = patch_adjacency(mesh, P).tocoo()
+    w = np.maximum(np.linalg.norm(P.centroid[A.row] - P.centroid[A.col], axis=1), 1e-300)
+    src = np.unique(a)
+    D = dijkstra(coo_matrix((w, (A.row, A.col)), shape=A.shape).tocsr(), indices=src, limit=limit)
+    want = D[np.searchsorted(src, a), b]
+    within = np.isfinite(want)
+    print("patch paths: {} pairs, {} within the bound, largest difference {:.1e} m".format(
+        len(a), int(within.sum()), np.abs(got[within] - want[within]).max()))
+    assert 100 < within.sum() < len(a)
+    assert np.array_equal(np.isfinite(got), within)
+    np.testing.assert_allclose(got[within], want[within], rtol=1e-12, atol=0.0)

@@ -72,6 +72,8 @@ COARSEN_SHARE = 0.1               # of the metal's volume: leaves that could be 
 MODES = ("full", "top")           # a marker's skin: full-depth (Task 9, everywhere) or top-zone (Task 10)
 COARSEN_SIZES = 4.0               # is rebuilt (two sizes: the closure's grading keeps one-size steps finer than asked)
 
+BARE_ROUNDS = 4                   # tessellations at most, each releasing the markers the last left no area (`_tessellate`)
+
 Repartition = namedtuple("Repartition", "transfer stretch old_area area")   # one re-partition of a step end
 
 
@@ -319,6 +321,26 @@ class StepEnd:
         apply_transfer(sk, mk.skin_index, old_area, T, stretch)
         self.last_settle.append(Repartition(T, stretch, old_area, mk.area.copy()))
 
+    def _drop_owners(self, old, idx):
+        """`old` (from `_owners`) without the rows of the markers idx, which are about to be released."""
+        stay = np.setdiff1d(np.arange(self.markers.n), idx)
+        return [a[stay] for a in old[:3]] + [old[3]]
+
+    def _tessellate(self, old, tally):
+        """The markers tessellated on phi; those it leaves no area (the patchless) released and the rest snapped and
+        tessellated again until none is left, at most BARE_ROUNDS times, their rows leaving `old` (fix round 1 of Task 9b:
+        after every tessellation of the step end, not only the first). Returns `old`."""
+        mk = self.markers
+        for _ in range(BARE_ROUNDS):
+            mk.tessellate(self.mesh, self.phi)
+            bare = np.flatnonzero(mk.area <= 0.0)
+            if not len(bare):
+                return old
+            old = self._drop_owners(old, bare)
+            self._release(bare, tally)
+            self._snap(tally)
+        raise RuntimeError("markers were still left no area after {} tessellations".format(BARE_ROUNDS))
+
     def _settle(self, tally, surface=None):
         """The markers onto phi, the trapped (and the patchless) released, tessellated and their skins re-partitioned,
         split, merged, tessellated and re-partitioned again, and the skins regridded with their markers' areas and
@@ -331,18 +353,10 @@ class StepEnd:
         cell, _ = locate(self.mesh, mk.x)
         trapped = mk.trapped_markers(self.mesh, self.phi, self.mesh.size[cell])
         if len(trapped):
-            stay = np.setdiff1d(np.arange(mk.n), trapped)
-            old = [a[stay] for a in old[:3]] + [old[3]]
+            old = self._drop_owners(old, trapped)
             self._release(trapped, tally)
             self._snap(tally)
-        mk.tessellate(self.mesh, self.phi)
-        bare = np.flatnonzero(mk.area <= 0.0)
-        if len(bare):
-            stay = np.setdiff1d(np.arange(mk.n), bare)
-            old = [a[stay] for a in old[:3]] + [old[3]]
-            self._release(bare, tally)
-            self._snap(tally)
-            mk.tessellate(self.mesh, self.phi)
+        old = self._tessellate(old, tally)
         now = self._samples()
         self._repartition(old, now)
         self._sync()
@@ -351,8 +365,8 @@ class StepEnd:
         if len(big) or merged:
             old = self._owners(now)
             self._snap(tally)
-            mk.tessellate(self.mesh, self.phi)
-            self._repartition(old, now)
+            old = self._tessellate(old, tally)
+            self._repartition(old, self._samples())
         self._sync()                                       # a merged column holds both columns' metal: cap it first
         self.skins.regrid()
         self._sync()

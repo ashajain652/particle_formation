@@ -563,3 +563,74 @@ def test_a_floating_crust_moves_as_one_piece():
     h_l = sk.dz()[0, 3:18].sum()
     np.testing.assert_allclose(sk.U[0, 3:18, 0], s / MU, rtol=1e-6)
     np.testing.assert_allclose(sk.U[0, :3, 0], h_l / MU, rtol=1e-6)
+
+
+def _three_columns(mat):
+    """Three columns of 4, 3 and 5 cells, each cell at its own temperature and velocity (a profile), areas 4, 3, 5 mm2."""
+    rng = np.random.default_rng(9)
+    sk = Skins(mat, np.array([4e-6, 3e-6, 5e-6]), np.array([[50.0, 0.0], [0.0, 0.0], [-20.0, 10.0]]),
+               SkinSettings(cell=20e-6))
+    count = np.array([4, 3, 5])
+    m = np.where(np.arange(5)[None, :] < count[:, None], rng.uniform(1e-7, 4e-7, (3, 5)), 0.0)
+    T = rng.uniform(700.0, 950.0, (3, 5))
+    sk.install(m, m * mat.enthalpy(T), count, rng.normal(0.0, 1.0, (3, 5, 3)))
+    return sk
+
+
+def test_cut_gives_fractions_of_a_column_with_its_profile_and_keeps_the_rest():
+    """Task 9b (fix round 1, minor 2): `Skins.cut` gives each new column its fraction of every cell of its source --
+    mass and enthalpy times the fraction, velocity kept, the same count -- and that fraction of the area, with the
+    source's curvatures; the source keeps the rest of every cell and of its area. A row cut twice keeps one less both
+    fractions. Mass, enthalpy and momentum add to round-off."""
+    sk = _three_columns(LinearMeltMaterial())
+    m0, H0, U0, A0, k0 = sk.m.copy(), sk.H.copy(), sk.U.copy(), sk.area.copy(), sk.kappa.copy()
+    P0 = (sk.m[..., None] * sk.U).sum(axis=(0, 1))
+    new = sk.cut([0, 2, 0], [0.25, 0.4, 0.5])
+    assert list(new) == [3, 4, 5] and sk.n == 6
+    for row, src, f in ((3, 0, 0.25), (4, 2, 0.4), (5, 0, 0.5)):
+        assert sk.count[row] == sk.count[src]
+        np.testing.assert_allclose(sk.m[row], f * m0[src], rtol=1e-15, atol=0.0)
+        np.testing.assert_allclose(sk.H[row], f * H0[src], rtol=1e-15, atol=0.0)
+        assert np.array_equal(sk.U[row], U0[src]) and np.array_equal(sk.kappa[row], k0[src])
+        assert sk.area[row] == pytest.approx(f * A0[src], rel=1e-15)
+    np.testing.assert_allclose(sk.m[0], 0.25 * m0[0], rtol=1e-14, atol=0.0)
+    np.testing.assert_allclose(sk.m[2], 0.6 * m0[2], rtol=1e-14, atol=0.0)
+    assert np.array_equal(sk.m[1], m0[1]) and sk.area[0] == pytest.approx(0.25 * A0[0], rel=1e-14)
+    P1 = (sk.m[..., None] * sk.U).sum(axis=(0, 1))
+    assert sk.m.sum() == pytest.approx(m0.sum(), rel=1e-15) and sk.H.sum() == pytest.approx(H0.sum(), rel=1e-15)
+    np.testing.assert_allclose(P1, P0, rtol=0.0, atol=1e-15 * np.abs(m0[..., None] * U0).sum())
+
+
+def test_cut_of_a_whole_column_empties_it_within_its_slack():
+    """Task 9b (fix round 1, minor 2): fractions of one column summing to one -- exactly, or short of it by less than
+    CUT_SLACK (here by 1e-16) -- give the whole column away: the source is left empty with no area, and the fractions
+    are scaled to sum to one, so the pieces hold all its metal to round-off. Short by more than the slack (1e-12), the
+    source keeps the rest."""
+    from reentry_model.levelset.skin import CUT_SLACK
+    for short in (0.0, 1e-16):
+        sk = _three_columns(LinearMeltMaterial())
+        m0, H0, A0 = sk.m[1].sum(), sk.H[1].sum(), sk.area[1]
+        assert short < CUT_SLACK
+        new = sk.cut([1, 1], [0.3, 0.7 - short])
+        assert sk.count[1] == 0 and sk.m[1].sum() == 0.0 and sk.area[1] == 0.0
+        assert sk.m[new].sum() == pytest.approx(m0, rel=1e-15) and sk.H[new].sum() == pytest.approx(H0, rel=1e-15)
+        assert sk.area[new].sum() == pytest.approx(A0, rel=1e-15)
+    sk = _three_columns(LinearMeltMaterial())
+    m0 = sk.m[1].sum()
+    sk.cut([1, 1], [0.3, 0.7 - 1e-12])
+    assert sk.count[1] == 3 and sk.m[1].sum() == pytest.approx(1e-12 * m0, rel=1e-3)
+
+
+def test_cut_refuses_bad_fractions_and_an_open_trial():
+    """Task 9b (fix round 1, minor 2): `Skins.cut` refuses fractions that are not positive and finite, a fraction count
+    other than the rows', fractions of one column summing past one by more than CUT_SLACK, and a trial pass open (its
+    sensitivities would not follow the cut); a refused cut leaves the columns as they were."""
+    sk = _three_columns(LinearMeltMaterial())
+    m0 = sk.m.copy()
+    for rows, fractions in (([0], [0.0]), ([0], [-0.1]), ([0], [np.nan]), ([0, 1], [0.5]), ([0, 0], [0.6, 0.5])):
+        with pytest.raises(ValueError):
+            sk.cut(rows, fractions)
+    assert np.array_equal(sk.m, m0) and sk.n == 3
+    sk.conduct(1e-3, 0.0, 0.0, 0.0, 800.0, trial=True)
+    with pytest.raises(RuntimeError, match="trial pass"):
+        sk.cut([0], [0.5])
