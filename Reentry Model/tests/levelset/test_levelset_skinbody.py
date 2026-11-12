@@ -159,6 +159,13 @@ def test_pending_load_reaches_the_volume():
     hot = np.argmax(np.where(body.solver.active, T, -np.inf))
     assert np.linalg.norm(body.mesh.points[hot] - point) < 3e-3
 
+    # the load is spread over the group of the marker whose base is nearest the point, never on one patch alone
+    body.add_pending(point, 5.0)
+    S, _, base, _ = body._interface()
+    spread = body._pending_per_patch(S, base)
+    assert spread.sum() == pytest.approx(body.pending_J.sum(), rel=1e-12)
+    assert (spread != 0.0).sum() > 1
+
 
 def test_a_skin_deeper_than_its_radius_of_curvature_is_held_back_alone():
     """Skins.dz raises for every column if one column is deeper than its radius of curvature (a skin of 0.8 mm on the

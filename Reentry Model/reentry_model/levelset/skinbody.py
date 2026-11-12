@@ -422,12 +422,15 @@ class LevelSetSkinBody(StepEnd):
         g_patch = np.einsum("pk,pk->p", cell_gradients(self.mesh, self.solver.T, P.cell), P.normal)
         return S, A_group, base, S @ g_patch
 
-    def _pending_per_patch(self):
-        P = self.solver.P
-        out = np.zeros(len(P.area))
+    def _pending_per_patch(self, S, base):
+        """The pending heat [J] per patch of beta: each pending point's heat goes to the marker whose base point is
+        nearest it and is spread over that marker's group as its base law is (`patch_groups`, S), so that the sum is
+        exact. (Fix round 2: deposited whole on the single patch nearest each point, a few joules made -6e12 W/m2 on a
+        sliver over a 0.5 ms part and the volume went to -900 K inside the metal.)"""
+        out = np.zeros(S.shape[1])
         if len(self.pending_J):
-            _, near = cKDTree(P.centroid).query(self.pending_x)
-            out = np.bincount(near, self.pending_J, minlength=len(P.area))
+            _, row = cKDTree(base).query(self.pending_x)
+            out = S.T @ np.bincount(row, self.pending_J, minlength=S.shape[0])
         return out
 
     # -- one pass of the skins -----------------------------------------------------------------------------------------
@@ -501,7 +504,7 @@ class LevelSetSkinBody(StepEnd):
         T_b0 = S @ solver.patch_T()
         m_min = sk.minimum_mass() * (1.0 - DRAW_SLACK)
         A_p = solver.P.area
-        q_pend = self._pending_per_patch() / (A_p * dt)
+        q_pend = self._pending_per_patch(S, base) / (A_p * dt)
         E_vol0 = solver.energy()
         T_lin = T_b0
         omega, r_prev = DAMPED_OMEGA0, None
