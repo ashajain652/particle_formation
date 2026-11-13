@@ -104,7 +104,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests/levelset/test_levelset_stage3_ca
     -k "cold_plate and dev"
 ```
 
-Expected: `181 passed, 6 deselected`, then `1 passed` for the cold plate (about a minute; it writes
+Expected: `181 passed` (on the laptop, 7.4 minutes across four processes; pytest may also report 6 deselected), then `1 passed` for the cold plate (about a minute; it writes
 `output/levelset/stage3_plate_cold_dev.json`). Any failure: stop and report it with its output.
 
 ## 6. The two runs
