@@ -127,6 +127,8 @@ From inside `Reentry Model/`:
 "$PY" analysis/reentry_model_thermal_verification.py  # Step 2 verification table
 ```
 
+The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"bridge"` in the library, so a state saved before the option existed keeps the bridge law on resume. `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 12 for the law's sources and what is assumed before quoting a result under it.
+
 Exit codes are part of the interface: 0 ok, 1 a model/integration failure (message printed, including
 a Newton non-convergence from either thermal backend), 2 bad arguments or a missing optional library.
 
@@ -207,7 +209,7 @@ Physics shared with the other (level-set) architecture:
 - `spray` — Girin's gradient instability per patch and the droplet release bookkeeping.
 - `dispersion` — the numerical solution of Girin's dispersion relation.
 - `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
-- `rheology` — the viscosity of liquid and slurry AA7075.
+- `rheology` — the viscosity of liquid and slurry AA7075: the composite law (default for melting skins) and the earlier bridge law, chosen by name through `law_viscosity`.
 - `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
 
 ### The droplet stage (`reentry_model/droplet_reentry/`)
