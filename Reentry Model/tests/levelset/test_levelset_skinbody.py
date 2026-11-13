@@ -164,7 +164,9 @@ def test_markers_follow_the_recession():
 
 
 COLD_FACTOR = 2.0         # a skin's mass and enthalpy over a cold step change by at most this times its own area change
-                          # plus its stretch's departure from one (fix round 1 of Task 9b; measured: 1.08 times at most)
+                          # plus its stretch's departure from one (fix round 1 of Task 9b). Measured 2026-11-13 on the one
+                          # partition of phi (Task 11's fix round 1, C1): 1.94 times at most, 0.97 of this bound, so a
+                          # small change in the markers' areas could tip it; 1.08 times with the tangent-plane cells
 COLD_STRETCH = 1e-5       # the stretch of a cold step within this of one (measured 2.4e-6: phi itself moves by 1.9e-8 m
                           # on a cold step, the step end not settling, Task 11)
 
