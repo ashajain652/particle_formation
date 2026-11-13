@@ -41,7 +41,8 @@ def test_data_paths_resolve():
 
 
 SHARED_DIR = os.path.join(PROJECT_ROOT, "reentry_model", "shared")
-SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication"])   # the 22 modules besides __init__.py
+SHARED_MODULES = sorted(MOVED + ["droplets", "body", "thermal", "cli_common", "lubrication",
+                         "melt_profile"])   # the 23 modules besides __init__.py
 
 
 def _outside_shared(node, own_name, shared_names):
@@ -73,7 +74,7 @@ def test_shared_modules_import_nothing_outside_shared_statically():
     level 1 (`from . import x`, `from .x import y`) must name shared modules, absolute ones must name reentry_model.shared."""
     paths = sorted(glob.glob(os.path.join(SHARED_DIR, "*.py")))
     names = [os.path.basename(p)[:-3] for p in paths]
-    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 23
+    assert sorted(n for n in names if n != "__init__") == SHARED_MODULES and "__init__" in names and len(paths) == 24
     shared_names = set(names)
     violations, scanned_imports = [], 0
     for path, name in zip(paths, names):

@@ -752,3 +752,317 @@ of the 50 mm sphere (1 055 790 cells here, 1 290 192 for the geometry), so the r
 **Not yet verified.** The solve with skins on its patches (stage 3), with a flow and advection (stage 4) and in a
 flight; the plates at 0.5 s steps (stage 3); fine-size convergence on a pool at 0.7, 0.5 and 0.35 mm (stage 4); the
 cost at 100 mm.
+
+## 12. The skins' spraying solved on their own speed profile (`--dispersion`)
+
+This section describes the profile path of the layered skins' spraying, built on 2026-11-12 from
+`superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md` (the design, with Asha's nine decisions) and its plan.
+Its physics lives in the shared package (`reentry_model/shared/`: the solver and the floor test in `dispersion`, the fit,
+the layer's properties, the release-run rule, the mode inputs and the history summary in `melt_profile`, the mode choice
+and the record layout in `spray`); the skins only read their cells into those arrays and take cells off the top.
+
+**The setting and its default.** `run --dispersion table|profile` chooses the theory a spraying skin run
+(`--surface-model skin --melt on --skin-flow on`) sprays by. The default is `profile` (Asha, 2026-11-11, decision 9).
+On it, each windward column whose top cell flows and moves has its cells' speeds fitted as a continuous line of straight
+segments (the speed profile), a wall is placed by the floor test below, Girin's gradient mode is solved on the profile
+above that wall, and the faster of that mode and Girin & Kopyt's gas-driven mode (with the film depth taken as the depth
+to the wall) releases the column's cells from the top down while they are at least as warm as the mode's threshold
+temperature, liquid and slurry together (the heat-limited release, decision 5). A wet windward column whose profile is
+not resolved (its top cell does not flow, does not move, or has the rigid front at or above its centre) falls back to
+Girin's theory. `--dispersion table` switches back to Girin's theory as it stood before, with his
+theoretical layer depth and surface speed. The element model has no resolved profile and is always on `table`. Both
+shear modes act only where Girin's continuum closure (or the slip band's balance, with `--slip-band on`) gives a layer
+depth, as before (decision 6). `--dispersion` given to any other kind of run is refused with exit code 2, and a state
+saved before the option existed resumes on `table`.
+
+**Verified (tests in `tests/test_reentry_model_dispersion.py`).** The broken-line solver, the inviscid model of a profile
+made of straight segments with a free surface on top and a wall below, is our own derivation (the side session's, not
+published). It is checked against Girin's printed equation and against Ghosh et al. (2017): on Girin's profile (one
+linear layer over stagnant liquid) it reproduces the roots of Girin's Eq. 1 cubic to 1e-10 at four pairs of wavenumber and
+Weber number, and its fastest wave at a surface Weber number of 10 000 matches the cached table of the `table` path
+within the table's grid spacing (`test_girin_profile_gives_the_roots_of_his_cubic`,
+`test_girin_profile_fastest_wave_matches_the_cached_table`); it reproduces the side session's closed form for a slurry
+over a wall to 1e-10 (`test_slurry_over_a_wall_gives_the_closed_form_roots`); and it reproduces Ghosh's limits, a peak
+growth rate of 0.229 at a slope ratio of 1.5 and the stability of a single straight film on a wall and of a more viscous
+fluid on top (`test_ghosh_limits`).
+
+**The threshold.** Solved exactly, Girin's Eq. 1 becomes unstable above a surface Weber number of 3.00, not the 3.08 Girin
+printed (`test_girin_threshold_is_three`: stable at 3.00, unstable at 3.01). On the profile path no critical Weber number
+is applied to the gradient mode solved on a column's profile (branch 5): whether it grows is the solver's own answer, and
+it sprays only where its growth rate exceeds the viscous damping of its own wave (twice the layer's Couette viscosity
+times the wavenumber squared) and one whole wavelength fits in the column's region (the contiguous windward columns
+whose layer above the wall is at least `spray.B_MIN` deep), so the threshold there is the solver's 3.00 on Girin's
+profile. `--we-critical` (default 3.08) applies on `table`, and on a `profile` run only to the columns whose profile is
+not resolved (the wet windward columns whose top cell does not flow, does not move, or has the rigid front at or above
+its centre): they keep Girin's theory, their thick branch gated by it as before. A resolved column never falls back to
+Girin's theory. One without a finite layer depth (delta_m, Girin's conjugate layer depth), or whose layer above the wall
+is shallower than `spray.B_MIN` (1 µm), takes no shear mode at all, neither the gradient mode, the gas-driven mode nor
+any of Girin's branches (decision 6; `spray.py` removes every resolved column from those branches and gives the two
+modes only to the resolved columns with a finite delta_m and a wall at least `B_MIN` deep, which
+`test_no_delta_m_no_shear_mode_on_resolved_columns` pins). Only the Rayleigh–Taylor mode, which has no Weber-number
+gate, can still take such a column.
+
+**Assumed.**
+
+- *The floor test is a scaling argument* (the design's section 3), assumed until stage 6, the viscous (Orr-Sommerfeld)
+  check that is to calibrate it. A breakpoint of the fit where the shear rate below is at most `KINK_DROP` = 0.2 times the
+  shear rate above (a five-fold drop) is a kink. Kinks are tested from the top down, and the first whose floor Reynolds
+  number, Re_f = (the speed jump from the surface to the kink) times (the kink's depth) over (1.225 times the kinematic
+  viscosity of the cell just below the kink), is below `FLOOR_RE` = 1.0 becomes the wall: the material below it is taken to
+  act as a no-slip floor on the wave's time scale, because its viscous diffusion outruns the wave's advection. The test
+  assumes a Newtonian slurry; a shear-thinning or yielding slurry would make a weaker floor. Without such a kink the wall
+  is the rigid front.
+- *The kink rests on the bridge's 906.4 K end point.* In the thick windward columns of the 50 mm flight the steep top
+  layer is not liquid: it is the rheology's bridge, the 906.4 to 908 K band in which the viscosity is interpolated, without
+  data, from Li et al.'s slurry law down to the liquid's. On the d050 state at 178.5 s (one state), the first kink lies at a
+  median 0.936 times the depth of the 906.4 K isotherm on the 28 columns of the committed fixture that have one, and 0.992
+  times it on the 558 of the 622 thick columns that have one; the wall lies at a median 1.004 times that depth on the
+  fixture (30 columns, 28 of them floor-like) and 1.03 times it on the thick set (609 columns). So where the kink and the
+  wall sit, and every input to the floor test, follow the bridge's unmeasured end point. *These measurements, and the
+  flights in this section, were made under the bridge law.* Since the near-liquidus viscosity was merged into main on
+  2026-11-13 (section 13), the default is the composite law, under which the viscosity does not change across 906.4-908 K
+  and instead jumps by about 24 times at 10 % solid (906.36 K, 0.04 K below 906.4 K); where the kink and the wall lie
+  under it has not been measured. The records carry the
+  kink's depth and temperature, and the history, per macro step over the resolved columns, the median depth of the
+  906.4 K isotherm (`depth_to_bridge_low_median_mm`, NaN on a column the isotherm does not cross, which the median leaves
+  out) and the median temperature at the wall's depth (`T_at_wall_median_K`), both read between cell centres as the
+  rigid front is, so that this stays visible in every flight. The two medians can be over different columns, so they
+  compare the walls with the isotherm in aggregate, not column by column: on the fixture's 36 columns (measured once)
+  the isotherm's median depth is 0.0558 mm over the 30 columns it crosses and the wall's 0.0668 mm over all 36, while
+  the median of the per-column ratio is the 1.004 above; the median temperature at the wall is 905.96 K, and the four
+  fluid-like walls sit at the rigid front's own temperature, 895.10 K, as they must.
+- *The constants are assumed* until stage 6: `KINK_DROP` = 0.2, `FLOOR_RE` = 1.0, `FIT_TOL` = 0.03 (every fitted cell
+  within 3 % of the top cell's speed of the fit) and `N_MAX` = 6 breakpoints at most. Unchanged from `table`: the droplet
+  radius over the wavelength `K_R` = 0.17, the release period over the growth time `K_T` = 1.1 and the surface tension of
+  0.80 N/m (the liquid's and the exposed slurry's).
+- The solver is inviscid and neglects the gas density and any surface tension at the kinks. The d050 thick columns' top
+  layer has a Reynolds number of order 1, where an inviscid solver is least trustworthy; stage 6 is the check.
+
+**Records and history.** On `profile` the droplet records gain nine columns after the 27 of `table` (`spray.PROFILE_COLUMNS`:
+the depth to the wall, whether it is a floor, the floor Reynolds number, the first kink's depth and temperature, the
+gradient mode's release depth and growth rate, and Girin's theoretical layer depth and surface speed beside them), and
+the history gains nine per macro step (`melt_profile.DISPERSION_COLUMNS`: the share of resolved columns that are
+floor-like, the count that are fluid-like, the medians of the depth to the wall, of the depth of the 906.4 K isotherm
+and of the temperature at the wall, of the floor Reynolds number and of the recorded Weber number, and the mass sprayed
+by the gradient and the gas-driven modes). On `table` neither is written.
+Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's, `settings.dispersion`).
+
+**What `table` keeps (verified).** On 2026-11-12 the three cases of `analysis/skyscrapers_port/same_results.py` were run
+with this change and compared with the same cases run before the option existed (the branch's baseline): a 0.125 s
+spraying skin flight run with `--dispersion table`, the same flight on the element model, and the 22.6 s resume of the
+saved 100 mm flight state (`d100__physics__skin.state.pkl`, saved before the option existed, so it resumes on `table`).
+Of the 22 files compared on each side, the only differences were the new `dispersion` key, recorded as `table`, in the
+skin flight's JSON (`settings.skin.dispersion`) and in the resume's (`settings.dispersion`). Every history column, every
+droplet record and the whole of the element model's output were identical to the last bit (the comparison leaves out
+only the wall-clock columns `wall_*` and `runtime_s`). `--dispersion table` is therefore Girin's theory exactly as it
+was. The comparison was repeated the same day after the final review's fix round (the record columns renamed, the two
+history columns that place the walls against the 906.4 K isotherm added, and the gas-driven threshold's guard at the top
+cell), with the same result: the same 22 files, differing only in those two keys.
+
+**Cost (measured once, 2026-11-12).** The spray plan is evaluated once per macro step, at its start.
+`analysis/kinked_dispersion/plan_cost.py` repeated it five times on each setting on the saved 50 mm flight state
+`d050__handdown-off.state.pkl` (178.5 s, 2367 columns, 909 of them resolved on `profile`, 752 of those floor-like): it took
+a median 0.025 s on `table` and 0.815 s on `profile`, so the profile path adds about 0.79 s to a macro step. That flight's
+macro steps from 177.5 to 179.5 s (four steps of 0.5 s) took a median 3480 s of wall time in the skins, the 3D solve and
+the mesh's moves and rebuilds, so the profile path adds about 0.023 % of a macro step, far inside the design's budget of
+5 % (about 174 s). The measurement used the state's own last surface-flow evaluation, which was saved before the slip
+band's fields existed, so no column had a layer depth and neither path released anything in it; the fit, the floor test
+and the solver, which are the profile path's added work, ran on every resolved column all the same. The cost of finding
+the release run in every flow sub-step (the cascade's threshold rule) is not in this figure; the comparison flights'
+wall times will show it.
+
+**Observed, one state, not yet judged.** On the 100 mm test sphere at 65 km (one 0.25 s macro step, measured 2026-11-12 in
+Task 7) the profile path released 11.0 g against the table's 1.54 g, about 7.2 times as much, almost all by the gas-driven
+mode on floor-like columns (497 columns, against 1 by the gradient mode, of 919 resolved columns, 78.6 % of them
+floor-like). The reviewer found this to be the design's physics, not a defect: the gas-driven mode has no Weber-number
+threshold, and the heat-limited release takes every cell that warms to the mode's threshold temperature during the step.
+The comparison flights of stage 5 measure it on the d050 state.
+
+## 13. Near-liquidus viscosity of the slurry (shared physics, `reentry_model/shared/rheology.py`)
+
+Added on 2026-11-12 on the branch `near-liquidus-viscosity` (design: `superpowers/specs/2026-11-12-near-liquidus-viscosity-design.md`;
+shared-context fact 196). This section describes the viscosity of the slurry (the mixture of liquid and solid grains
+between the liquid and the rigid front at half solid) that the layered skins' flow and the exposed slurry's spraying
+mode use. It is shared physics: the level-set architecture will call the same law through `rheology.law_viscosity`
+(Asha, 2026-11-12). Almost all of this section is **assumed**, not measured on 7075 at the conditions of a re-entry; the
+status of each choice is in the table below, and what is assumed and uncertain is in 13.3. The jump in the law at 10 %
+solid is **unresolved** (13.2).
+
+### 13.1 The two laws and the choice between them
+
+`--rheology composite|bridge` chooses the law for a melting skin run. `composite`, new on this date, is the
+default, of the run command and, since the branch was merged into main on 2026-11-13, of `SkinSettings` in the library
+(Asha: "Default should be this new law, not the old one"). `bridge` is the law used until then: Li et al.'s (2014) averaged fit,
+eta = [0.871 - 0.00849 gamma^0.74924] exp(3.7311 f_s) Pa s (gamma the shear rate in 1/s, held at most 367 1/s, f_s the
+solid fraction), joined to the liquid's 1.3 mPa s by a log-linear "bridge" in temperature between 906.4 K and the 908 K
+liquidus, which had no data behind it. A state saved before the option existed flew the bridge law and keeps it on
+resume (`SkinSettings.__setstate__` gives such a state `"bridge"`, not the class default); a resume with no `--rheology`
+keeps the saved flight's law, and one given changes it and is recorded. The existing tests whose values were set on the
+bridge law name it. The run's JSON records `skin.rheology` and
+`skin.internal_solid_fraction`, and a melting skin run under `--rheology bridge` is named with the suffix
+`_rheology-bridge`; the composite default is unmarked. The option is accepted and ignored with `--surface-model elements`
+or without `--melt on`. `--slurry-spray` keeps its default, off, and the exposed slurry mode's closure is unchanged (both
+Asha, 2026-11-12); the Girin session's new spraying law will set the default spraying pattern.
+
+### 13.2 The composite law, region by region
+
+The composite law depends on the solid fraction f_s of the cell (from its temperature through the material's Scheil
+curve) and on the liquid's viscosity mu_l (1.3 mPa s, from the material file). It does not depend on the shear rate and
+keeps no history, so the skins' momentum step, whose shear-rate fixed point re-evaluates the viscosity at each pass's
+rates, finishes at its first pass, and the exposed slurry mode's recorded rate is the layer's own, not clipped at 367 1/s.
+
+| Region of f_s | Law | Status |
+|---|---|---|
+| 0 | eta = mu_l | the material file's value, unchanged |
+| above 0 and below 0.1 | eta = mu_l [1 + S / (1/phi - 1/phi_m)], phi = f_s / f_i, S = 3, phi_m = 0.55, f_i = 0.5 | **assumed** for 7075; the form is measured on silicon carbide in liquid aluminium; f_i is assumed |
+| 0.1 up to just below 0.5 | eta = 0.04346 exp(3.23 f_s) Pa s, at every shear rate | Li et al.'s fit at 489.88 1/s, fitted to 7075 data; applying it at every rate is **assumed** |
+| 0.5 and above | infinite (rigid) | unchanged |
+
+Below 10 % solid the law is the Mori-Ototake suspension law (Moon's form, S = 3 for spheres) applied to the grains'
+envelope fraction phi, the solid fraction divided by the internal solid fraction f_i. Each grain is enclosed in an
+envelope through its tips; f_i is the share of that envelope that is solid, and the liquid inside it moves with the
+grain. With f_i = 1 (compact grains) the law is Moon's on the true solid fraction. f_i must exceed 0.1 / 0.55, about 0.18
+(a smaller value is rejected with a ValueError), so that phi stays below the packing limit phi_m below 10 % solid.
+`INTERNAL_SOLID_FRACTION` = 0.5 is a constant in the code marked as assumed; there is no command-line option for it, by
+Asha's decision. Li et al.'s fit gives 46.2 times the liquid's viscosity at 10 % solid and 168 times at 50 % solid.
+
+**The jump at 10 % solid is unresolved.** At f_s = 0.1 the law jumps from the suspension value to Li et al.'s: from 1.94
+to 46.2 times the liquid with f_i = 0.5 (a factor of 24), from 1.37 to 46.2 with f_i = 1 (a factor of 34) and from 5.40
+to 46.2 with f_i = 0.25 (a factor of 8.6). No data say how the two join: Li et al.'s 7075 at 10 % solid is about a
+hundred times Hirai et al.'s aluminium-copper at the same fraction, and the literature reviews attribute that to
+different grain structures. The jump is left as it is. On the model's Scheil curve it sits at 906.36 K, 0.04 K below the
+lower end of the bridge law's bridge region (906.4 K, where the curve stands at 9.75 % solid). Li et al.'s own 10 % solid is at
+903.45 K by their calorimetry; the law places their data by solid fraction, not temperature, which is the builder's call.
+Reference values (viscosity over mu_l, f_i = 0.5): 1.062 at f_s = 0.01, 1.265 at 0.038, 1.431 at 0.057, 1.906 at 0.0975,
+46.18 at 0.1, 88.10 at 0.3 and 168.0 at 0.4999; the tests match the design's table to a relative 1e-3.
+
+### 13.3 What is assumed, and what is uncertain (design section 3.7, in full)
+
+"Abstract level" means the literature review read only the abstract or a search snippet of the source, as the reviews
+state for most semi-solid sources.
+
+**At 10 % solid and above.**
+
+1. *Assumed: the structure in flight is Li et al.'s most broken-down one.* This rests on measured breakdown and rebuild
+   times in other alloys: A357 fell to 6 Pa s in about 4 ms at 800 1/s (Yurko and Flemings, cited in Kirkwood and Ward
+   2004), and A356's fitted rebuild rate is 0.00191 1/s, about 500 s (Florides et al. 2024). Both are extrapolated to
+   7075 and to the gas's shear rates. Metal that has never been sheared (remelting from below, or a re-frozen deposit)
+   would be stiffer, and the law does not represent it.
+2. *Assumed: no rate dependence at a fixed structure.* Structural models are Newtonian at a fixed structure (Kirkwood
+   and Ward 2004, citing Chen and Fan). Rate-jump tests show the stress rising in proportion to the rate or faster
+   (Atkinson and Favier 2016, abstract level; Koke and Modigell 2003).
+3. *Upper bound above 489.88 1/s.* In steady tin-lead data the viscosity was still falling at 2000 1/s (Turng and Wang,
+   in Fan 2002, Fig. 4). A 7075 layer sheared faster than 490 1/s may break down further than this law allows.
+4. *Li et al.'s lowest values are uncertain.* At 10 % solid and 490 1/s their plotted points scatter from 0.05 to 0.2
+   Pa s, and their rig was not calibrated with a known liquid.
+5. *Different processing.* Li et al.'s slurry was solidified while stirred; the sphere remelts wrought metal.
+
+**Below 10 % solid (no aluminium measurement exists).**
+
+1. *Nothing has been measured.* No rheological measurement of any aluminium alloy between the liquid and 10 % solid was
+   found. The nearest are fitted curves, and analogue systems.
+2. *The internal solid fraction is unmeasured for 7075.* 0.5 is the solidification models' default. The only measured
+   values, 0.1 to 0.55, are for a transparent analogue, succinonitrile-acetone (Badillo, Ceynar and Beckermann). The
+   review infers about 1 for remelting wrought grains and 0.2 to 0.3 for re-frozen deposit.
+3. *No rate dependence is assumed.* Hirai et al.'s aluminium-10 % copper fits are strongly rate dependent for branched
+   crystals: 5.1 times the liquid at 75 1/s against 1.22 times at 200 1/s, at 5 % solid. These are values inferred from
+   fitted curves, not data points. At the gas's rates, of order 10^3 1/s and above, the sheared values are the relevant
+   ones.
+4. *Coherency may come earlier in coarse deposits.* Coherency, where grains first form a connected network, ranges from
+   below 10 % solid in poorly grain-refined aluminium alloys to above 50 % in fine-grained ones (Arnberg, Chai and
+   Backerud 1993; Chai et al. 1995). For 7075 it was measured at 55 to 85 % by a thermal method that reads high (Ahmad,
+   Naher and Brabazon 2013). A coarse re-frozen deposit could be coherent below 10 % solid, which this law cannot
+   represent.
+5. *The jump at 10 % solid is unresolved* (13.2).
+6. *The layer's position is uncertain by more than its width.* Measured 7075 liquidus temperatures span 903 to 913 K,
+   about six times the 1.6 K the model's Scheil curve gives the 0-10 % solid layer.
+7. *The liquid itself is uncertain.* Its viscosity is known to 14 % for pure aluminium (Assael et al. 2006), alloying
+   moves it by up to 25 % (Wang and Overfelt 2002), and no 7xxx liquid has been measured.
+8. *S = 3 comes from rigid particles.* It was measured on silicon carbide in liquid aluminium. Moon's ratios are taken
+   against his rig's 0.020 Pa s "liquid", 15-16 times the true value, so they hold only if that error is proportional.
+9. *The law is a steady-state law.* The stress just after a sudden jump in rate rises as the rate to the power 2.07
+   (Koke and Modigell 2003, Fig. 18), which is not included.
+
+Also not represented: a never-sheared, structured deposit, which would hold until it yields at kilopascals (design
+section 10), and the exposed slurry mode's closure, which gives its whole flowing depth the viscosity of the top
+slurry cell (13.5).
+
+### 13.4 Sources and statuses
+
+| Choice | Source | Status |
+|---|---|---|
+| Li et al.'s fit at 489.88 1/s for 10-50 % solid (A = 0.04346 Pa s, B = 3.23) | Li et al. 2014, China Foundry 11, 79-84: Table 3 (pp. 82-83); method pp. 79-81; Fig. 11 for the structures | fitted to 7075 data at 10, 20, 30, 40 and 50 % solid; read in full |
+| The structure in flight is the most broken-down | Breakdown: Yurko and Flemings (A357), via Kirkwood and Ward 2004; Liu et al. 2003 (Sn-15Pb). Rebuild: Florides et al. 2024 (A356) | assumed for 7075; measured on other alloys, abstract level except Kirkwood and Ward |
+| No rate dependence at fixed structure | Kirkwood and Ward 2004; Atkinson and Favier 2016; Koke and Modigell 2003 | assumed; abstract level except Koke and Modigell |
+| No history, no falling branch | Divoux et al. 2016; Yerushalmi, Katz and Shinnar 1970 (via Divoux); Coussot et al. 2002; Moller, Mewis and Bonn 2006; Li et al.'s method (one slurry per rate) | review consensus in soft matter; no semi-solid metal measurement of a falling within-structure curve found |
+| Suspension law below 10 % solid (Mori-Ototake, S = 3, phi_m = 0.55) | Moon 1990 (MIT thesis), pp. 101-102, Eq. 51, Fig. 5.14; Moon, Cornie and Flemings 1991, Mater. Sci. Eng. A144, 253-265 | measured on SiC in liquid aluminium; read in full |
+| Analogues behave as dilute suspensions | Ishibashi and Sato (basalt to 31 % crystals); AZ91D Couette (J. Wuhan Univ. Tech. 2015); ice slurries (Int. J. Air-Cond. Refrig. 2023) | measured on analogue systems, abstract level |
+| Envelope fraction phi = f_s / f_i | Beckermann and Wang 1997 (JOM); Wu and Ludwig 2009 (Acta Mater. 57, 5621-5631) | the solidification models' construction |
+| f_i = 0.5 | Zheng et al. 2018 (Leoben); measured 0.1-0.55 in succinonitrile-acetone (Badillo, Ceynar and Beckermann) | assumed for 7075 (Asha's decision); the tests bracket it with 1 and 0.25 |
+| The nearest aluminium values below 10 % (comparison, not used) | Hirai et al. 1993, ISIJ Int. 33 (Al-10Cu: 1.08, 1.22, 1.49 times the liquid at 2, 5, 10 % solid and 200 1/s; 2.5, 5.1, 10.3 times at 75 1/s) | inferred from fitted curves |
+| Coherency (the limit of the suspension picture) | Arnberg, Chai and Backerud 1993; Chai et al. 1995, MMTA 26, 965-970; Malekan and Shabestari 2009 (A319, 16-21 %); Ahmad, Naher and Brabazon 2013 (7075, 55-85 %, thermal) | measured; abstract level |
+| The liquid, 1.3 mPa s (unchanged) | Assael et al. 2006, J. Phys. Chem. Ref. Data 35, 285-300, Eq. 19: 1.42 mPa s at 908 K, 14 % | pure aluminium, extrapolated 25 K; read in full |
+| Rigid at half solid (unchanged) | layered-skin design section 6.4 | as before |
+| Li et al.'s data placed by solid fraction | Li et al. 2014, Table 2 (pp. 80-81) | builder's call |
+
+### 13.5 What was measured with it, on one saved state
+
+The bridge law is unchanged to the last bit. The regression is in fact 196: on the short melting smoke flight (65 km,
+0.125 s), the old code (commit f1ab736) and the new code with `--rheology bridge` wrote identical CSV files, with and
+without `--slurry-spray on`, and differed only in the two new JSON keys. The unit tier passed (875 passed, 1 skipped,
+3930 s on four processes).
+
+The composite law was probed on the saved 50 mm flight `d050__handdown-off` at 178.5 s (77.12 km, 7276 m/s), by
+`analysis/near_liquidus_probe.py`: the skins' flow alone for 0.1 s with the heat, the three-dimensional conduction and
+the trajectory held off, nothing released, on gas loads recomputed with the current surface-flow code at the saved
+step's aero state, with the state's windward columns (886 of 2367, within 60 degrees of the flight direction). It was
+run once per case on one state, so these are one measurement each, not a sweep. In that state no cell is at or above
+the 908 K liquidus.
+
+- *Viscosity of the top cells.* On the same cells, the median top cell is 1.26 times the liquid's viscosity under the
+  composite law (internal fraction 0.5) and 6.68 times under the bridge law; the third cell 1.46 against 21.5. With the
+  internal fraction at 1 and 0.25 the top cell is 1.12 and 1.61 times the liquid.
+- *Surface speed.* On column 1445 (16.1 degrees from the stagnation point, 0.833 mm of flowing metal, gas shear 86.2 Pa)
+  run to a steady state, the top cell moves at 3.26 m/s under the composite law against 0.213 m/s under the bridge law
+  (3.95 and 2.14 m/s at internal fractions 1 and 0.25), and the flow per unit width of the surface rose from 1.3e-5 to
+  2.9e-4 square metres per second (22 times). The stress each cell carries, 86 to 92 Pa, is set by the gas shear and the
+  push on the metal above, not by the law. Under the composite law 58 of the column's 62 cells between 10 and 50 % solid
+  shear faster than 489.88 1/s, where Li et al.'s fit is an upper bound on the viscosity (13.3, above-10 % item 3), so
+  the composite speeds below the jump are lower bounds.
+- *Runoff with the heat off.* The composite law runs the layer below 10 % solid off the windward face within about 0.04
+  to 0.06 s: the number of the 886 windward columns whose top cell is under 10 % solid fell from 850 at the start to 767,
+  236, 29 and 9 at 0.02, 0.04, 0.06 and 0.1 s (the bridge law kept 817 to 850 throughout), and the median flowing depth
+  fell from 0.833 mm to 0.216 mm at 0.1 s (0.679 mm under the bridge law). The skins behind the equator (90 to 180
+  degrees) gained 6.82 g under the composite law and 2.16 g under the bridge law. This describes a face stripped of its
+  warm layer with no heating to replace it; it is not what a flight would show, and the layer is 59 micrometres and 1.6
+  K thick on the model's Scheil curve (13.3, below-10 % item 6). The internal fraction changes the pace only: the
+  flowing depths for the three internal fractions agree within 0.0028 mm throughout. How much the absolute runoff
+  behind the equator depends on the recomputed gas loads was not separated.
+- *Spraying modes, without releasing metal.* The liquid's mode never sprays, because no cell is liquid. The exposed
+  slurry's mode under the saved flight's release rules (gates "before", slip band off) is on the thin branch on every
+  windward column, decided by the viscous-damping gate, and sprays on 722 columns under the bridge law and 850 under
+  the composite law at any internal fraction, at about 170 kg/(m^2 s), a rate that contains no viscosity. Under the
+  rules of the recent d050 work (gates 2026-11-10, slip band on) the critical Weber number (3.08) decides, its value in
+  the slip band does not depend on the viscosity, and 73 to 77 columns spray under every law; these columns sit near the
+  threshold, so their count depends on the recomputed gas loads. The composite law sets how much they release (0.212
+  kg/s over the windward face against 0.099 under the bridge law) and the droplets' median radius (143 against 787
+  micrometres). At 0.1 s, with the warm layer gone, the composite slurry mode is stopped by viscous damping on 877 of
+  the 886 columns and by the Weber number on the other 9 under the recent rules.
+- *The closure artefact (design section 2).* `slurry_modes` gives the whole flowing depth the viscosity of the top
+  slurry cell, here about 1.3 times the liquid's while the cells from 10 % solid down are 46 to 168 times. Under the
+  saved rules, on column 1445 under the composite law, the mode's surface speed is 50.5 m/s against the momentum step's
+  3.26 m/s (15 times), and its release 162 against 43.4 kg/(m^2 s) for the same mode with its layer ended at 10 % solid
+  (3.7 times; that variant's speed, 3.32 m/s, is within 2 % of the momentum step's). Over the windward face the total
+  is 0.506 against 0.091 kg/s (5.5 times). The 3.7 and 5.5 times ratios come from the thin branch's supply term (the
+  layer depth) and the viscous-damping gate, not from the whole-layer viscosity alone. Under the recent rules the total
+  is 0.212 against 0.086 kg/s (about 2.5 times, which is not small); the variant sprays on more columns (158 against
+  77), because its shallower layer moves some columns to the thin branch, but at a much lower median rate (50 against 456
+  kg/(m^2 s)).
+- *Cost.* Run one after another on a laptop with other sessions running, 0.1 s of flow took 32 flow sub-steps at 0.90 s
+  each (28.9 s) under the bridge law and 40 at 0.62 s each (24.8 s) under the composite law, because the momentum step's
+  shear-rate fixed point ends after one pass.
+
+Fact 196 and the probe report (`output/near_liquidus_viscosity/probe.md`, git-ignored) hold the rest. The probe held the
+heat off, so whether a heated flight keeps a near-liquid layer on the windward face under the composite law is not
+known; that is level 5 of the design (resumed flights on the Mac Studio), which Asha has deferred until more changes from
+other agents land on main (2026-11-12).

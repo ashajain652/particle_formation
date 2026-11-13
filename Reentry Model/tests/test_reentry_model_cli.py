@@ -397,6 +397,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
                          "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
                          "leeward_test": "centroid",                  # always recorded: new, centroid by default (Task 5j)
+                         "rheology": "composite", "internal_solid_fraction": 0.5,       # always recorded (Asha, 2026-11-12)
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
@@ -476,18 +477,22 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     the mass released, and size_distribution.csv, their histogram -- and, since Task 4, particles_summary.csv from the
     skin history's droplet columns, each step's released mass its rows', the rows having gone through a spool on disk
     that the run then removes; every row and step carries Register's release angle; the results count the sprayed
-    mass, the droplets and the rows; the history's flow columns and the frames' top speed are written."""
+    mass, the droplets and the rows; the history's flow columns and the frames' top speed are written. Its subject is
+    Girin's theory's spraying (its timing, masses and 27 record columns), so it flies `--dispersion table` (the kinked-profile
+    dispersion's switch back), and its timing and masses were set on the earlier viscosity law, so it flies `--rheology
+    bridge` (the near-liquidus viscosity's switch back); its name carries both."""
     pytest.importorskip("cantera")
     import glob
     import pyvista as pv
     from reentry_model import spray
     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
-                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--rheology", "bridge", "--dispersion", "table",
+                   "--outdir", str(tmp_path)]
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_rheology-bridge_dispersion-table")
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
@@ -1057,6 +1062,70 @@ def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, leeward_test="facing") == "_leeward-facing"
 
 
+def test_rheology_option():
+    """`--rheology` (Asha, 2026-11-12) is the composite law by default, reaches the skins' settings, is refused (exit 2)
+    for an unknown law, and is accepted without skins or without melting (it then marks no name)."""
+    from reentry_model.shared import rheology
+    p = cli.build_parser()
+    melt = SKINS + ["--melt", "on"]
+    assert p.parse_args(melt).rheology == rheology.DEFAULT_LAW == "composite"
+    assert cli.skin_settings(p.parse_args(melt)).rheology == "composite"
+    assert cli.skin_settings(p.parse_args(melt + ["--rheology", "bridge"])).rheology == "bridge"
+    with pytest.raises(SystemExit) as exc:
+        p.parse_args(melt + ["--rheology", "li"])
+    assert exc.value.code == 2
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    # the option is accepted, and marks no name, with the element model and with skins that do not melt, even for the bridge
+    for argv in (FEM, SKINS, FEM + ["--melt", "on", "--prism-layers", "0"]):
+        assert name(argv + ["--rheology", "bridge"]) == name(argv) and "rheology" not in name(argv + ["--rheology", "bridge"])
+        assert name(argv + ["--rheology", "composite"]) == name(argv)
+    assert name(melt + ["--rheology", "bridge"]) == name(melt) + "_rheology-bridge"
+
+
+def test_rheology_run_names():
+    """Only the bridge marks a run's name, `_rheology-bridge`, after the leeward test's mark and before the seed's; a default
+    melting run's name is what it was before the option."""
+    p = cli.build_parser()
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="composite") == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge") == ""      # not melting
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge",
+                                melting_skins=True, part_count_from="melting", hand_down=False) == "_rheology-bridge"
+    melt = SKINS + ["--melt", "on", "--removal", "instant"]
+    base = name(melt)
+    assert base.endswith("_fem-sesam_melt-instant_skinflow-off") and "rheology" not in base
+    assert name(melt + ["--rheology", "bridge"]) == base + "_rheology-bridge"
+    assert (name(melt + ["--leeward-test", "facing", "--rheology", "bridge", "--seed", "7"])
+            == base + "_leeward-facing_rheology-bridge_seed-7")
+    # the run command's defaults with --melt on (Girin removal, skin flow on): no mark, the same as with composite given,
+    # and the bridge adds its mark to that name
+    girin = SKINS + ["--melt", "on"]
+    assert "rheology" not in name(girin) and name(girin + ["--rheology", "composite"]) == name(girin)
+    assert name(girin + ["--rheology", "bridge"]) == name(girin) + "_rheology-bridge"
+    assert name(SKINS + ["--rheology", "bridge"]) == name(SKINS)           # skins that do not melt: no mark
+
+
+def test_rheology_json(tmp_path):
+    """A skin run's JSON always records `settings.skin.rheology` and the composite law's assumed internal solid fraction, 0.5."""
+    for law, name in (("composite", "c"), ("bridge", "b")):
+        argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+                        "--outdir", str(tmp_path), "--name", name] + (["--rheology", "bridge"] if law == "bridge" else [])
+        assert cli.main(argv) == 0
+        skin = json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]
+        assert skin["rheology"] == law and skin["internal_solid_fraction"] == 0.5
+
+
+def test_slurry_spray_help_names_the_law():
+    """The `run --slurry-spray` help names the viscosity law in use and no longer says the law has no data there."""
+    help_text = " ".join(next(a for a in _run_parser_early()._actions if "--slurry-spray" in a.option_strings).help.split())
+    assert "no data" not in help_text and "--rheology" in help_text
+
+
+def _run_parser_early():
+    return cli.build_parser()._subparsers._group_actions[0].choices["run"]
+
+
 def test_the_spray_gates_help_says_the_thin_and_rarefied_branches_need_a_conjugate_depth():
     """Review of Task 5i, Minor 1: the `run` help for --spray-gates names the thin branch's gate and the depths that pass it."""
     help_text = " ".join(next(a for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions
@@ -1109,9 +1178,127 @@ def test_the_spray_rules_mark_a_spraying_run_s_name_only_where_they_differ_from_
     assert cli.spray_name_suffix("2026-11-10", False) == "" and cli.spray_name_suffix("before", True, spraying=False) == ""
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# The kinked-profile dispersion (docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md, Task 8):
+# --dispersion table|profile, `profile` by default on spraying skin runs (Asha's decision 9)
+
+def test_dispersion_is_profile_by_default_on_spraying_skin_runs_and_reaches_the_spray_model(tmp_path, monkeypatch):
+    """--dispersion is not given by default on `run`, and resolves (`dispersion_of`) to `profile`
+    (dispersion.DEFAULT_DISPERSION) on a spraying skin run -- the skins with the flow on, the default of a melting run --
+    and to `table` on every other run. It reaches the spray model the skins are given: `profile` by default or when given,
+    stored on the model, and `table` when given, stored on no instance, so that the model pickles as one built before the
+    setting existed. The element model's spray model is always on `table`. The bodies are not built: their arguments are."""
+    from reentry_model import dispersion, skinbody
+    from reentry_model.skyscrapers import body as sky_body
+    p = cli.build_parser()
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).dispersion is None and dispersion.DEFAULT_DISPERSION == "profile"
+    assert cli.dispersion_of(p.parse_args(melt)) == cli.dispersion_of(p.parse_args(melt + ["--skin-flow", "on"])) == "profile"
+    assert cli.dispersion_of(p.parse_args(melt + ["--dispersion", "table"])) == "table"
+    for argv in (BASE, THERMAL, melt + ["--skin-flow", "off"], melt + ["--removal", "instant"],
+                 melt + ["--surface-model", "elements"]):
+        assert cli.dispersion_of(p.parse_args(argv)) == "table"
+
+    def built(*args, **kwargs):
+        raise _Built(args, kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    monkeypatch.setattr(sky_body, "MeltingBody", built)
+    run = melt + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    for argv, want in ((run, "profile"), (run + ["--skin-flow", "on"], "profile"), (run + ["--dispersion", "profile"], "profile"),
+                       (run + ["--dispersion", "table"], "table")):
+        with pytest.raises(_Built) as got:
+            cli.main(argv)
+        model = got.value.args[1]["spray"]
+        assert model.dispersion == want and ("dispersion" in vars(model)) == (want == "profile")
+    with pytest.raises(_Built) as got:
+        cli.main(run + ["--surface-model", "elements", "--prism-layers", "0"])
+    model = got.value.args[0][5]                       # MeltingBody(mesh, material, solver, mass, flow, spray, ...)
+    assert model.dispersion == "table" and "dispersion" not in vars(model)
+
+
+def test_spray_model_of_takes_the_dispersion_from_dispersion_of_alone():
+    """`spray_model_of` reads the setting from `dispersion_of` alone (final review, Task 8's Minor 6), so it does not depend
+    on `cmd_run` having written the run's resolved surface model into the arguments first: on the unresolved arguments of
+    a spraying skin run (no --surface-model given) it is `profile`, with --dispersion table `table`, and on the element
+    model and the heat-only skins `table`."""
+    from types import SimpleNamespace
+    from reentry_model.shared import material
+    mat = SimpleNamespace(liquid=material.LiquidProperties(2400.0, 1.3e-3, 0.8))
+    p = cli.build_parser()
+    melt = THERMAL + ["--melt", "on"]
+    assert p.parse_args(melt).surface_model is None
+    assert cli.spray_model_of(p.parse_args(melt), mat).dispersion == "profile"
+    assert cli.spray_model_of(p.parse_args(melt + ["--dispersion", "table"]), mat).dispersion == "table"
+    for argv in (melt + ["--surface-model", "elements"], melt + ["--skin-flow", "off"]):
+        assert cli.spray_model_of(p.parse_args(argv), mat).dispersion == "table"
+
+
+def test_dispersion_is_refused_off_the_skins_spraying(tmp_path, capsys):
+    """--dispersion given to a run that is not a spraying skin run -- the element model, the heat-only skins (by their flow
+    or by their removal), skins that do not melt, a run without a thermal model -- is refused with exit code 2 and a message
+    naming what it needs, `table` as much as `profile` (spec section 5); a value that is neither is refused by the parser."""
+    melt = THERMAL + ["--melt", "on"]
+    for argv in (melt + ["--surface-model", "elements", "--dispersion", "table"],
+                 melt + ["--skin-flow", "off", "--dispersion", "profile"],
+                 melt + ["--removal", "instant", "--dispersion", "table"],
+                 THERMAL + ["--dispersion", "profile"],
+                 BASE + ["--dispersion", "table"]):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv + ["--t-max", "1", "--outdir", str(tmp_path)])
+        assert exc.value.code == 2
+        assert ("--dispersion needs the skins' spraying: --surface-model skin --melt on --skin-flow on"
+                in capsys.readouterr().err)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(melt + ["--dispersion", "kinked", "--t-max", "1", "--outdir", str(tmp_path)])
+    assert exc.value.code == 2 and "invalid choice" in capsys.readouterr().err
+
+
+def test_the_switch_back_is_named_and_every_skin_run_records_its_dispersion(tmp_path):
+    """`--dispersion table`, the switch back to Girin's theory, ends a spraying skin run's settings in _dispersion-table,
+    after the skins' other marks and before the spray rules' and the seed's; `profile`, the default, leaves every name as it
+    was, and a run without the skins' spraying carries no mark (its `dispersion_of` is `table`, which concerns it not).
+    Every spraying skin run's JSON records `settings.skin.dispersion`, the default too (the default changed); a flight on
+    `profile` writes the history's DISPERSION_COLUMNS and droplet records of 36 columns, and one on `table` neither, its
+    records the 27 SOURCE_COLUMNS. One 25 ms step of the dev skins, which melt nothing: the records are empty but named."""
+    import glob
+    from reentry_model import spray
+    from reentry_model.shared import melt_profile
+    p = cli.build_parser()
+    base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    melt = THERMAL + ["--melt", "on"]
+    assert name(melt) == name(melt + ["--dispersion", "profile"]) == base + "_melt-girin"
+    assert name(melt + ["--dispersion", "table"]) == base + "_melt-girin_dispersion-table"
+    assert (name(melt + ["--leeward-test", "facing", "--dispersion", "table", "--spray-gates", "before", "--seed", "7"])
+            == base + "_melt-girin_leeward-facing_dispersion-table_gates-before_seed-7")
+    assert name(melt + ["--skin-flow", "off"]) == base + "_melt-instant_skinflow-off"           # the heat-only skins
+    assert name(melt + ["--surface-model", "elements"]) == base + "_melt-girin_surface-elements"
+    assert name(SKINS) == name(SKINS + ["--dispersion", "table"]) == base              # skins that do not melt: no mark
+    assert name(THERMAL) == name(THERMAL + ["--dispersion", "table"]) == base + "_surface-elements"   # nor the elements
+    suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, **k)
+    assert suffix() == suffix(dispersion="profile") == suffix(dispersion=None) == ""
+    assert suffix(dispersion="table") == "_dispersion-table"
+
+    run = melt + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.025", "--dt", "0.025", "--outdir", str(tmp_path)]
+    assert cli.main(run + ["--name", "default"]) == 0
+    assert cli.main(run + ["--dispersion", "table"]) == 0
+    (switched,) = [p for p in glob.glob(str(tmp_path / "*.json")) if not p.endswith("default.json")]
+    assert switched.endswith("_melt-girin_skin-dev_fine0_dispersion-table.json")
+    for path, setting, width in ((str(tmp_path / "default.json"), "profile", 36), (switched, "table", 27)):
+        with open(path) as fh:
+            doc = json.load(fh)
+        assert doc["settings"]["skin"]["dispersion"] == setting and doc["settings"]["skin"]["flow"] == "on"
+        with open(path[:-5] + ".csv") as fh:
+            header = next(csv.reader(fh))
+        assert [k for k in melt_profile.DISPERSION_COLUMNS if k in header] == (
+            list(melt_profile.DISPERSION_COLUMNS) if setting == "profile" else [])
+        with np.load(doc["files"]["particles"]) as records:
+            assert records.files == spray.record_columns(width)
+
+
 # --- the --architecture flag (Task 6 of the combined refactor) ---
 
-BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--leeward-test', '--geometry-stop', '--particles', '--no-particles']
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--dispersion', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--geometry-stop', '--particles', '--no-particles']
 
 
 def _run_parser():

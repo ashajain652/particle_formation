@@ -78,15 +78,19 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
 
 Each project is tested from inside its own folder; the three `tests/` folders each have a `helpers.py`,
 so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
-default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the skyscrapers
-port the unit tier, `pytest tests -m "not drama and not reference" -n 4`, gave 702 passed and 1 skipped in about
-24 minutes across four processes (the skip is the FEniCSx module, which needs `dolfinx`). The port's own tools
-have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/skyscrapers_port/README.md`).
+default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the near-liquidus viscosity
+was merged with main's kinked-profile dispersion (2026-11-13), the unit tier, `pytest tests -m "not drama and not
+reference" -n 4`, has 965 tests: 964 pass and 1 module is skipped (the FEniCSx module, which needs `dolfinx`). The whole
+tier ran once on the merged model code in 71 minutes across four processes, with other runs on the machine (950 passed;
+the 14 tests whose values were set on the bridge law failed under the new composite default and now name the bridge law,
+after which they and their two test files were run again and pass). Main's figure before the merge was 937 tests in
+about 35 minutes on a quiet machine. The port's own tools have their tests in `analysis/skyscrapers_port/`, run
+explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 702 passed, 1 skipped, ~24 min on four
+                                                          # the package's unit tier: 965 tests, 1 skipped, ~35-71 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
@@ -117,7 +121,8 @@ From inside `Reentry Model/`:
 ```bash
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 \
     --atmosphere us76 --thermal fem --surface-model elements --heating physics --animate
-# a short melting smoke flight (65 km, 0.125 s), not a production one:
+# a short melting smoke flight (65 km, 0.125 s), not a production one; it sprays from the skins on the profile path,
+# the default (--dispersion profile), and --dispersion table switches back to Girin's theory (named _dispersion-table):
 "$PY" -m reentry_model run --diameter 100 --velocity 7.24 --altitude 65 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --heating physics --h-surface 4 --h-core 20 --melt on --temperature 893 --dt 0.025 --t-max 0.125 \
     --skin-preset dev --fine-size 2 --frames-every 0
@@ -126,6 +131,8 @@ From inside `Reentry Model/`:
 "$PY" analysis/reentry_model_verification.py          # Step 1 verification table
 "$PY" analysis/reentry_model_thermal_verification.py  # Step 2 verification table
 ```
+
+The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"composite"` in the library too; a state saved before the option existed flew the bridge law and keeps it on resume (`SkinSettings.__setstate__`). `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 13 for the law's sources and what is assumed before quoting a result under it.
 
 Exit codes are part of the interface: 0 ok (the geometry stop included), 1 a model/integration failure (message printed,
 including a Newton non-convergence from either thermal backend) or an escape, 2 bad arguments or a missing optional
@@ -151,8 +158,8 @@ the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
-Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
-droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `melt_profile`, `surface_flow`, `spray`,
+`girin_case`), the droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
 keep their skyscrapers-only code and only re-export the moved shared names, so patching a shared name there (for example
@@ -164,7 +171,10 @@ package-root constants (`PROJECT_ROOT`, `DATA_DIR`, and so on), which `tests/tes
 by reading the source and by importing every shared module in a fresh interpreter. The skyscrapers-only modules live in `reentry_model/skyscrapers/` (`body`, `coupled`, `columns`, `mesh`, `movemesh`,
 `restart`, `skin`, `skinbody` and `spreading`, plus `elements/film.py`, the element model's runoff, `--surface-model
 elements`); their old paths (such as `reentry_model.skin`) are alias files too, so existing imports keep working, but states
-saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. `cli.py`,
+saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. A state saved
+under the composite viscosity law (fact 196) and resumed by a checkout from before that change (for example a Mac Studio checkout
+behind main, or the `kinked-dispersion` branch) silently flies the bridge law, because the old `SkinSettings` ignores the extra
+field and the old resume JSON does not record the law. `cli.py`,
 `__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `docs/model_assumptions.md`).
 
@@ -216,11 +226,28 @@ These modules sit in `reentry_model/skyscrapers/` since 2026-11-11 (the old path
 Physics shared with the other (level-set) architecture:
 
 - `lubrication` — melt-film lubrication flow (`lubrication()` and `deep_flux()`).
-- `spray` — Girin's gradient instability per patch and the droplet release bookkeeping.
-- `dispersion` — the numerical solution of Girin's dispersion relation.
+- `spray` — Girin's gradient instability per patch and the droplet release bookkeeping; on the profile path
+  (`SprayModel.dispersion` "profile") the choice between the gradient mode solved on the profile (branch 5) and the
+  gas-driven mode on the wall, and the records' layout (27 columns on `table`, 36 on `profile`: `record_columns`).
+- `dispersion` — the numerical solution of Girin's dispersion relation, and for the profile path the broken-line solver
+  (Girin's gradient mode on any profile of straight segments with a free surface and a wall) and the floor test that
+  places the wall.
+- `melt_profile` — the melt layer's speed profile fitted as straight segments on plain arrays (`LayerColumns`, which the
+  skins fill in `skinbody.layer_columns`), with the kinematic viscosity below each breakpoint and the layer's Couette
+  viscosity, for the broken-line solver and the floor test in `dispersion`; the release-run rule (`threshold_run`), the
+  mode inputs (`profile_modes`, `select_run`, `run_properties`), the records' appended columns (`profile_rows`) and the
+  history's summary (`summary`, `DISPERSION_COLUMNS`).
 - `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
-- `rheology` — the viscosity of liquid and slurry AA7075.
+- `rheology` — the viscosity of liquid and slurry AA7075: the composite law (default for melting skins) and the earlier bridge law, chosen by name through `law_viscosity`.
 - `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
+
+`run --dispersion table|profile` chooses the theory the skins' spraying solves (the kinked-profile dispersion design,
+`docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md`): `profile`, the default on a spraying skin run
+(`--surface-model skin --melt on --skin-flow on`; Asha, 2026-11-11), or `table`, Girin's theory as it stood before,
+bit for bit apart from the JSON's `dispersion` key (`analysis/skyscrapers_port/same_results.py`). It is refused (exit 2)
+on any other run, the element model is always on `table`, `resume --dispersion` switches a saved spraying skin flight,
+and a state saved before the option existed resumes on `table`. Its assumptions are `docs/model_assumptions.md`
+section 12.
 
 ### The droplet stage (`reentry_model/droplet_reentry/`)
 

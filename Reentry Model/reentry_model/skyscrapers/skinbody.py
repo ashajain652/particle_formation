@@ -111,7 +111,14 @@ node's enthalpy and the rest of its heat goes to that node through `pending` (`_
 the fault count keep the hand-down as it left each skin. The history's spreading columns are `SPREAD_COLUMNS`, with a limit
 only (`spread_stats`), and a limit that does not bind changes nothing to the last bit. A body pickled before this has none of
 these attributes on the instance, so they are class defaults too: the saved flights of 2026-11-06 resume with or without a
-limit."""
+limit.
+
+The profile path (the kinked-profile dispersion design, docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md;
+a spray model whose `dispersion` is "profile"): `girin_plan` reads the cells as `layer_columns` and the shared `melt_profile`
+fits each windward column's speed profile, places its wall and solves Girin's gradient mode on it, for the shared spray
+model's profile path; each column's release is heat-limited by its mode's threshold temperature (`skin.Cascade.T_run`), the
+records carry spray.PROFILE_COLUMNS after the 27 (`record_names`) and the history the summary's columns
+(`dispersion_stats`). Everything else is wiring: the physics is in `reentry_model/shared/`."""
 import copy
 import dataclasses
 import math
@@ -123,6 +130,7 @@ import numpy as np
 from . import columns as columns_mod
 from ..shared import lubrication
 from ..shared import material as material_mod
+from ..shared import melt_profile
 from . import movemesh
 from ..shared import rheology
 from . import skin as skin_mod
@@ -270,7 +278,14 @@ class SprayPlan:
     Task 2): `theta` [rad], `closure` (the surface flow's), `points` [m, (n, 3)] the top surface's corners, `state` the
     aero state and `props` the liquid's properties; and for the history and Register's release angle (Task 4), `area`
     [m2] the columns' top areas, `centre` [m, (3,)] the centroid of the volume the top surface enclosed and `v_hat` the
-    direction of flight."""
+    direction of flight.
+
+    On the profile path (the kinked-profile dispersion design, spec 6.6 and 6.8): `T_run` [K, (n,)] each column's
+    threshold for its mode's release run, which the cascade takes (`skin.Cascade.T_run`; NaN, today's liquid run, where
+    no profile mode sprays); `resolved` (bool, (n,)) the columns whose profile was resolved; `profile` (n, 9) the records'
+    appended columns (`melt_profile.profile_rows`, spray.PROFILE_COLUMNS); and `modes` and `record`, the plan's
+    `spray.ProfileModes` and `melt_profile.ProfileRecord`, for the history's summary. They are stored only when given,
+    so that a plan on the table path holds, and pickles, what it did before them; read there they are None."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     result: object
@@ -291,11 +306,20 @@ class SprayPlan:
     area: np.ndarray = None
     centre: np.ndarray = None
     v_hat: np.ndarray = None
+    T_run: dataclasses.InitVar[np.ndarray] = None
+    resolved: dataclasses.InitVar[np.ndarray] = None
+    profile: dataclasses.InitVar[np.ndarray] = None
+    modes: dataclasses.InitVar[object] = None
+    record: dataclasses.InitVar[object] = None
 
-    def __post_init__(self):
+    def __post_init__(self, T_run, resolved, profile, modes, record):
+        for name, value in (("T_run", T_run), ("resolved", resolved), ("profile", profile), ("modes", modes),
+                            ("record", record)):
+            if value is not None:
+                setattr(self, name, value)
         T = self.slurry["T"]
         self._cascade = skin_mod.Cascade(self.rate, self.rate_slurry, np.where(np.isfinite(T), T, np.inf),
-                                         histogram=self.histogram)
+                                         histogram=self.histogram, T_run=self.T_run)
         n = len(self.rate)
         self.mass, self.mass_slurry = np.zeros(n), np.zeros(n)
         self.number, self.number_slurry = np.zeros(n), np.zeros(n)
@@ -369,16 +393,24 @@ class SprayPlan:
         is at rest); We_d, Oh and the breakup flag at their radius, by their phase's density, viscosity and surface tension
         (the slurry's mixture density, viscosity at its sheared layer's rate and SLURRY_SIGMA, the 2026-10-07 design 8.4);
         their solid fraction and enthalpy per kilogram, mass-weighted over the cells released; and their column's release
-        angle (Task 4)."""
+        angle (Task 4). On the profile path each row ends with its column's `profile` columns (spray.PROFILE_COLUMNS, the
+        rows `record_columns(36)` wide; spec 6.8), the slurry's with no release depth and no growth rate, which are the
+        liquid's mode's [plan call 6]."""
         st, s = self.state, self.slurry
         flow = types.SimpleNamespace(closure=self.closure)
         angle = self.release_angle()
+        extra = extra_slurry = self.profile
+        if extra is not None:
+            extra_slurry = np.array(extra, dtype=float)
+            extra_slurry[:, [spray_mod.PROFILE_COLUMNS.index("release_depth_m"),
+                             spray_mod.PROFILE_COLUMNS.index("growth_rate_per_s")]] = np.nan
         blocks = []
-        for mass, H, solid, p, number, res, b, props in (
-                (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props),
+        for mass, H, solid, p, number, res, b, props, more in (
+                (self.mass, self.enthalpy, self.solid, self.momentum, self.number, self.result, self.flowing, self.props,
+                 extra),
                 (self.mass_slurry, self.enthalpy_slurry, self.solid_slurry, self.momentum_slurry, self.number_slurry,
                  types.SimpleNamespace(**{k: s[k] for k in ("branch", "r", "delta_m", "we_s", "h_floor", "gamma_tau")}),
-                 s["depth"], material_mod.LiquidProperties(s["rho"], s["mu"], SLURRY_SIGMA))):
+                 s["depth"], material_mod.LiquidProperties(s["rho"], s["mu"], SLURRY_SIGMA), extra_slurry)):
             speed = np.linalg.norm(p, axis=1)
             on = mass > 0.0
             per = lambda x: np.divide(x, mass, out=np.zeros_like(x), where=on)
@@ -386,7 +418,7 @@ class SprayPlan:
             rows = types.SimpleNamespace(branch=res.branch, r=res.r, delta_m=res.delta_m, we_s=res.we_s, h_floor=res.h_floor,
                                          gamma_tau=res.gamma_tau, dm=mass, dn=number, v_s=per(speed))
             blocks.append(spray_mod.source_block(t, st.h, st.V, self.theta, self.points, direction, flow, rows, b, props, st,
-                                                 solid_fraction=per(solid), h_kg=per(H), release_angle=angle))
+                                                 solid_fraction=per(solid), h_kg=per(H), release_angle=angle, extra=more))
         return np.concatenate(blocks, axis=0)
 
 
@@ -423,6 +455,29 @@ def sheared_depth(sk):
     top = speed[:, 0]
     flow = (speed * sk.dz()).sum(axis=1)
     return np.where(top > 0.0, 2.0 * flow / np.where(top > 0.0, top, 1.0), np.nan)
+
+
+def layer_columns(sk, tau):
+    """Every column's cells as plain arrays for the shared straight-segment fit (`melt_profile.LayerColumns`; the
+    kinked-profile dispersion design's section 6.4): the cells' centre depths and thicknesses, each cell's velocity
+    projected on the top cell's direction (zero where the top cell is at rest), temperatures, masses and densities
+    (`density(T)`), the viscosities `skin.cell_viscosity` at `skin.cell_shear_rates` under the gas shear |tau| [Pa, (n,)]
+    -- the shear rates the momentum step starts from -- the contiguous runs from the top of flowing cells and of fully
+    liquid ones (flowing and at or above the liquidus, as `skin.cascade_mass` reads the liquid), and the rigid front
+    `depth_above(T_rigid)`. Beyond each column's cells z, u, T and rho are NaN, dz and m 0 and mu inf."""
+    valid = sk.valid
+    mu = skin_mod.cell_viscosity(sk, skin_mod.cell_shear_rates(sk, tau))
+    dz = sk.dz()
+    top = sk.U[:, 0]
+    speed = np.linalg.norm(top, axis=1)
+    direction = np.divide(top, speed[:, None], out=np.zeros_like(top), where=speed[:, None] > 0.0)
+    u = np.einsum("ikj,ij->ik", sk.U, direction)
+    flowing = np.cumprod(valid & np.isfinite(mu), axis=1).astype(bool)
+    liquid = np.cumprod(flowing & (sk.T >= sk.material.T_liquidus), axis=1).astype(bool)
+    cells = lambda a: np.where(valid, a, np.nan)
+    return melt_profile.LayerColumns(z=cells(np.cumsum(dz, axis=1) - 0.5 * dz), dz=dz, u=cells(u), T=cells(sk.T),
+                                     m=np.where(valid, sk.m, 0.0), rho=cells(sk.density(sk.T)), mu=mu, flowing=flowing,
+                                     liquid=liquid, front=sk.depth_above(sk.material.T_rigid))
 
 
 def _no_step_spray():
@@ -467,7 +522,19 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     22 Task 5i, the plan of 2026-11-06 with Asha's change of 2026-11-10), at the nose radius `nose_radius` (default `radius`)
     the integrated shear was taken at: `b`, the regime layers, the Rayleigh-Taylor pool, the mass run and the cap stay as
     they are, so the liquid sprays on the flowing depth and a liquid on slurry is held only where delta_m is not finite. The
-    film transport reads Girin's delta_m as before."""
+    film transport reads Girin's delta_m as before.
+
+    With `model.dispersion` "profile" (the kinked-profile dispersion design, spec 6.4-6.8) the windward columns whose top
+    cell flows and moves are resolved: their cells are read as `layer_columns` under the gas shear |tau|, and the shared
+    `melt_profile.profile_modes` fits their profiles, places their walls and solves their gradient mode, for the spray
+    model's profile path (`model.evaluate(..., profile=)`). There the wave must fit in the contiguous region of windward
+    columns whose layer above the wall -- the flowing depth on the columns not resolved -- is at least spray.B_MIN deep,
+    and the Rayleigh-Taylor mode's in the liquid's region, as today; a column not resolved keeps today's path, its wave in
+    the liquid's region too. Each column's release run is fixed by the mode that sprays it (`melt_profile.select_run`,
+    a mode with no rate fixing none: today's liquid run), its droplets carry the run's cells' mass-weighted density and
+    viscosity (`melt_profile.run_properties`; the liquid's on the columns not resolved, and where the run is empty), and
+    the slurry's own mode reads the first flowing cell below that run. The plan keeps the thresholds, the resolved
+    columns, the records' appended columns and the modes and record for the history (`SprayPlan`)."""
     mat, liq = sk.material, model.liquid
     n = sk.n
     F, L = sk.depth_above(mat.T_rigid), sk.depth_above(mat.T_liquidus)
@@ -484,17 +551,35 @@ def girin_plan(sk, flow, state, model, theta, A_top, edges, radius, dt, slurry=F
     extent = region_extent(edges, L > 0.0, A_top)
     run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
     cap = F if slurry else L
-    res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
-                         b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
-                         cap_depth=cap)
+    if model.dispersion != "profile":
+        res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
+                             b_layer=F, extent=extent, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
+                             cap_depth=cap)
+        n_above, props, on_profile = n_liq, liq, {}
+    else:                                    # the profile path (kinked-profile dispersion spec 6.4-6.8): the physics shared
+        cols = layer_columns(sk, np.abs(flow.tau))
+        pm, rec = melt_profile.profile_modes(cols, windward, liq.sigma)
+        D = np.where(pm.resolved, pm.wall_depth, F)
+        waves = np.where(pm.resolved, region_extent(edges, windward & (D >= spray_mod.B_MIN), A_top), extent)
+        res = model.evaluate(flow, state, F, delta_m, v_s, windward, dt, A_top, (sk.m * run).sum(axis=1), radius,
+                             b_layer=F, extent=waves, deceleration_n=w_n, regime_layer=F, on_slurry=on_slurry, rt_layer=L,
+                             cap_depth=cap, profile=pm, rt_extent=extent)
+        T_run = melt_profile.select_run(np.where(res.mdot > 0.0, res.branch, -1), pm, rec)
+        mode = skin_mod.mode_run(sk, T_run)
+        n_above = mode.sum(axis=1)
+        rho_run, mu_run = melt_profile.run_properties(cols, mode)
+        own = pm.resolved & (n_above > 0)
+        props = material_mod.LiquidProperties(np.where(own, rho_run, liq.rho), np.where(own, mu_run, liq.mu), liq.sigma)
+        on_profile = dict(T_run=T_run, resolved=pm.resolved, profile=melt_profile.profile_rows(rec, delta_m, v_s),
+                          modes=pm, record=rec)
     if slurry:
-        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_liq, n_flow,
+        rate_s, modes = slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt, F, n_above, n_flow,
                                      theta=theta, nose_radius=nose_radius)
     else:
         rate_s, modes = np.zeros(n), _no_slurry(n)
     return SprayPlan(res.mdot, rate_s, res, modes, F, L, cap, on_slurry, theta=theta, closure=np.asarray(flow.closure),
-                     points=points, state=state, props=liq, area=np.asarray(A_top, dtype=float), centre=centre,
-                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float))
+                     points=points, state=state, props=props, area=np.asarray(A_top, dtype=float), centre=centre,
+                     v_hat=None if v_hat is None else np.asarray(v_hat, dtype=float), **on_profile)
 
 
 def _no_slurry(n):
@@ -509,11 +594,13 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     """The exposed slurry's own mode per column, the cascade of spec 8 (the 2026-10-07 design's 8.1-8.2; Asha, 2026-10-29,
     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
-    properties: Li et al.'s viscosity (`rheology.viscosity`, with the bridge to the liquid) at the cell's solid fraction
-    and the shear rate of the slurry's own sheared layer, V_s over delta_m or over the layer, found by fixed-point
-    iteration from rest (at most skin.SHEAR_PASSES passes, until no viscosity moves by skin.SHEAR_TOL, the rate held at
-    rheology.GAMMA_MAX); the cell's mixture density; SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the
-    regime test, the viscous film's floor and b are it. Girin's formulas are the shared model's with these properties
+    properties: the viscosity of the law the skins' settings select (`skin.viscosity_of`: Li et al.'s with the bridge to
+    the liquid, or the composite law) at the cell's solid fraction and the shear rate of the slurry's own sheared layer,
+    V_s over delta_m or over the layer, found by fixed-point iteration from rest (at most skin.SHEAR_PASSES passes, until
+    no viscosity moves by skin.SHEAR_TOL, the rate held at `rheology.rate_cap` of the law: GAMMA_MAX under the bridge law,
+    no cap under the composite law, whose viscosity does not depend on the rate); the cell's mixture density;
+    SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the regime test, the viscous film's floor and b are
+    it. Girin's formulas are the shared model's with these properties
     (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
     must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
     rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and
@@ -521,7 +608,6 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     angles `theta` given, the slurry's delta_m in the slip band is the momentum balance's, with the slurry's density and
     viscosity (`spray.spray_layer`, at `nose_radius`, default `radius`): `--slurry-spray on` lets the slurry spray in the band
     (Asha's decision 4 of 2026-11-06); with it off nothing here runs and the release stays capped at the liquid."""
-    mat = sk.material
     n = sk.n
     out = _no_slurry(n)
     rate = np.zeros(n)
@@ -534,9 +620,9 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     depth = F[rows] - (np.cumsum(dz, axis=1) - dz)[rows, k]
     f_s = 1.0 - sk.props.liquid_fraction(T)
     rho = sk.density(T)
-    f_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
     sub = _rows(flow, rows)
-    viscosity = lambda gamma: rheology.viscosity(T, f_s, gamma, mat.liquid.mu, f_bridge)
+    viscosity = lambda gamma: skin_mod.viscosity_of(sk, T, f_s, gamma)
+    cap = rheology.rate_cap(sk.settings.rheology)
 
     nose = radius if nose_radius is None else nose_radius
     theta_rows = None if theta is None else np.asarray(theta, dtype=float)[rows]
@@ -544,7 +630,7 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     def layer(mu):
         d = spray_mod.spray_layer(sub, material_mod.LiquidProperties(rho, mu, SLURRY_SIGMA), model.slip_band, theta_rows, nose)
         v, _, shear, _ = lubrication.lubrication(sub.tau, sub.G, depth, d, mu, b_layer=depth)
-        return d, v, np.minimum(shear, rheology.GAMMA_MAX)
+        return d, v, np.minimum(shear, cap)
 
     gamma = np.zeros(rows.size)
     mu = viscosity(gamma)
@@ -719,7 +805,8 @@ class SkinBody(ThermalBody):
         self.spray, self.spray_plan = spray, None            # Girin's model, and its plan of the last macro step (Task 1c)
         self.particles = bool(particles)                     # keep the droplet records' rows (Task 2)
         # one block of source-table rows per macro step (Task 2), in memory or, with `spool`, on disk (Task 4)
-        self.source_rows = spray_mod.SourceSpool(spool) if spool is not None and self.particles else []
+        self.source_rows = (spray_mod.SourceSpool(spool, self.record_names()) if spool is not None and self.particles
+                            else [])
         self.sprayed_mass, self.n_source_rows = 0.0, 0         # kg of droplet records, and their rows kept (Task 4)
         self.step_spray, self._released_step = _no_step_spray(), 0.0     # this macro step's droplet columns, release
         self.hist_n, self.hist_m = np.zeros(spray_mod.N_BINS), np.zeros(spray_mod.N_BINS)   # droplets, kg per size bin
@@ -954,7 +1041,7 @@ class SkinBody(ThermalBody):
         self._q_prev = q_end.copy()
         if self.spray is not None and self.flow_on:          # the macro step's droplets, from its accepted passes' mass
             p = self.spray_plan
-            p.count(self.spray.liquid.rho)
+            p.count(p.props.rho)                             # the liquid's on table; the run's cells' on profile (spec 6.6)
             self.droplet_number += float(p.number.sum() + p.number_slurry.sum())
             block = p.source_block(t)                        # its records' rows (Task 2), and the history's columns
             self.step_spray = self._step_columns(p, block)   # from them (Task 4)
@@ -1440,7 +1527,25 @@ class SkinBody(ThermalBody):
                 **self._depth_ratios(flowing),
                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
                 "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
-                **self.nose_stats(), **self.geometry_stats(), **self.spread_stats()}
+                **self.nose_stats(), **self.geometry_stats(), **self.spread_stats(), **self.dispersion_stats()}
+
+    def record_names(self):
+        """The droplet records' column names (spec 6.8): `spray.record_columns(36)` where the spray model is on `profile`,
+        whose rows carry its PROFILE_COLUMNS, and the 27 SOURCE_COLUMNS otherwise -- what the spool is made with and the
+        coupled writer writes, records or none."""
+        return spray_mod.record_columns(36 if getattr(self.spray, "dispersion", "table") == "profile" else 27)
+
+    def dispersion_stats(self):
+        """The history's profile-path columns (`melt_profile.DISPERSION_COLUMNS`, spec 6.8), last in `skin_stats`: the
+        summary of the last macro step's plan (`melt_profile.summary`), an empty step's before any plan was evaluated on the
+        profile path; none on `table` or without a spray model, so that those runs keep their column set. Read here alone,
+        as `spread_stats` is, so that a resume that changes the setting can add them to its saved row or drop them."""
+        if getattr(self.spray, "dispersion", "table") != "profile":
+            return {}
+        p = self.spray_plan
+        if p is None or p.modes is None:
+            return melt_profile.summary(None, None, None, None)
+        return melt_profile.summary(p.modes, p.record, p.result.branch, p.mass)
 
     def spread_stats(self):
         """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run

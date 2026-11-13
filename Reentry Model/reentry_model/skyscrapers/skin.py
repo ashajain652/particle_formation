@@ -36,7 +36,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
-from ..shared import rheology
+from ..shared import melt_profile, rheology
 from ..thermal import SIGMA_SB
 
 SKIN_PRESETS = {"production": 10.0e-6, "dev": 20.0e-6}   # m, the fine cell of each preset (spec section 6.2)
@@ -73,6 +73,17 @@ class SkinSettings:
                                            # False holds every cell at the solid's density, the setting levels 2 and 2b
                                            # verify with (Asha, 2026-10-14: their references hold one density, and the
                                            # swelling alone melts the exact hot plate 0.094 mm sooner by 1.0 s)
+    rheology: str = rheology.DEFAULT_LAW   # the viscosity law by name (`rheology.LAWS`), chosen in the shared module: the
+                                           # composite law by default, in the library as on the command line (Asha,
+                                           # 2026-11-12); a state pickled before this field existed flew the bridge law
+                                           # and keeps it on resume (`__setstate__`)
+
+    def __setstate__(self, state):
+        """Unpickle, giving a state saved before the `rheology` field existed the law it flew, "bridge" (no entry in its
+        __dict__), rather than the class default, so that resuming an old flight does not change its viscosity unasked
+        (`resume --rheology` switches it)."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("rheology", "bridge")
 
     def __post_init__(self):
         if not (self.min_thickness > 0.0 and self.fine_zone > 0.0 and self.cell > 0.0 and self.substep > 0.0):
@@ -81,6 +92,8 @@ class SkinSettings:
             raise ValueError("skin growth must be at least 1")
         if 2.0 * self.cell > min(self.min_thickness, self.fine_zone) * (1.0 + 1e-12):
             raise ValueError("a skin needs at least two fine cells: cell <= min(min_thickness, fine_zone) / 2")
+        if self.rheology not in rheology.LAWS:
+            raise ValueError(f"skin rheology must be one of {rheology.LAWS}, not {self.rheology!r}")
 
 
 def thomas(sub, diag, sup, rhs):
@@ -958,16 +971,25 @@ class SidewaysByHeight:
 
 
 # -- viscosity (sub-plan 21 Task 3) ------------------------------------------------------------------------------------
+def viscosity_of(sk, T, f_s, gamma):
+    """The viscosity [Pa s] of the skins' metal at temperature T [K], solid fraction f_s and shear rate gamma [1/s], by
+    the law the skins' settings name (`sk.settings.rheology`): a thin wrapper that passes the law's name, the state, the
+    liquid's viscosity and the bridge's solid fraction to `rheology.law_viscosity`. The choice between the laws and all of
+    their physics live in the shared module (Asha, 2026-11-12); nothing here is a formula or a law branch."""
+    mat = sk.material
+    return rheology.law_viscosity(sk.settings.rheology, T, f_s, gamma, mat.liquid.mu, rheology.bridge_solid_fraction(mat))
+
+
 def cell_viscosity(sk, gamma):
-    """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `rheology.viscosity` at
-    the cell's temperature and Scheil solid fraction; infinite in a rigid cell (half solid or more) and beyond each
-    column's cells, and everywhere for a material that does not melt."""
+    """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `viscosity_of` (the law
+    the settings select: the bridge law of Li et al. with its bridge to the liquid, or the composite law, which ignores
+    gamma) at the cell's temperature and Scheil solid fraction; infinite in a rigid cell (half solid or more) and beyond
+    each column's cells, and everywhere for a material that does not melt."""
     mat = sk.material
     if not mat.melts or mat.liquid is None:
         return np.full(sk.m.shape, np.inf)
     f_s = 1.0 - sk.props.liquid_fraction(sk.T)
-    f_s_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
-    eta = rheology.viscosity(sk.T, f_s, gamma, mat.liquid.mu, f_s_bridge)
+    eta = viscosity_of(sk, sk.T, f_s, gamma)
     return np.where(sk.valid, eta, np.inf)
 
 
@@ -991,6 +1013,55 @@ def interface_drag(sk, gamma):
     slurry, and a rate taken from the velocity difference between the two centres would give the slurry's half-cell the
     liquid's rate (found while writing Task 4)."""
     return series_drag(sk, cell_viscosity(sk, gamma))
+
+
+def cell_shear_rates(sk, tau):
+    """Every cell's shear rate [1/s], (n, K), from the cells' present velocities sk.U, by the rule each momentum sub-step
+    starts from (`_momentum_columns`, its `rates`; the kinked-profile dispersion's Task 3): a flowing cell's rate is the
+    mean over its two faces of the stress there, over its viscosity. The top face carries the gas shear |tau| [Pa, (n,)]
+    where the top cell moves; a face between two cells carries their `series_drag` times the size of the difference of
+    their velocities; a flowing bottom cell's bottom face carries the drag of the rigid 3D metal beneath the base over
+    its half-thickness, times its speed. The velocities are those of the moving cells -- the anchored rigid metal is at
+    rest -- and a floating crust's half-cells take CRUST_VISCOSITY, as in the sub-step. The viscosities are a fixed point
+    from rest: at most SHEAR_PASSES passes after the first, ending when no flowing cell's viscosity moves by more than
+    SHEAR_TOL, relatively; the rates returned are the last pass's. Zero in the cells that do not flow and beyond each
+    column's cells."""
+    n, K = sk.m.shape
+    rows = np.arange(n)
+    last = np.maximum(sk.count - 1, 0)
+    dz = sk.dz()
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    moving = sk.valid & ~anchored_cells(sk, flowing)
+    crust = moving & ~flowing
+    U = np.where(moving[..., None], sk.U, 0.0)
+    jump = np.linalg.norm(U[:, :-1] - U[:, 1:], axis=2)
+    top = np.where(moving[:, 0], np.abs(np.broadcast_to(np.asarray(tau, dtype=float), (n,))), 0.0)
+    bottom_flows = flowing[rows, last] & (sk.count > 0)
+    bottom_speed = np.linalg.norm(U[rows, last], axis=1)
+
+    def viscosities(gamma):
+        return np.where(crust, CRUST_VISCOSITY, cell_viscosity(sk, gamma))
+
+    def rates(eta):
+        Db = np.where(bottom_flows, eta[rows, last] / (0.5 * np.maximum(dz[rows, last], DZ_FLOOR)), 0.0)
+        stress = np.zeros((n, K + 1))                                     # at every face, the top face first
+        stress[:, 1:K] = series_drag(sk, eta) * jump
+        stress[:, 0] = top
+        stress[rows, last + 1] = np.where(np.isfinite(Db), Db, 0.0) * bottom_speed
+        face = 0.5 * (stress[:, :-1] + stress[:, 1:])
+        return np.where(flowing, np.divide(face, eta, out=np.zeros_like(face), where=np.isfinite(eta)), 0.0)
+
+    eta = viscosities(0.0)
+    gamma = rates(eta)
+    eta = viscosities(gamma)
+    for _ in range(SHEAR_PASSES):
+        gamma = rates(eta)
+        eta_new = viscosities(gamma)
+        change = np.abs(eta_new[flowing] - eta[flowing]) / eta[flowing]
+        if change.size == 0 or change.max() <= SHEAR_TOL:
+            break
+        eta = eta_new
+    return gamma
 
 
 # -- momentum through the depth (sub-plan 21 Task 4) --------------------------------------------------------------------
@@ -1941,7 +2012,12 @@ def flow_substeps(sk, flow, dt, cycles=None):
     found, and fact 29's split between the runoff and the stripping would be first order in the heat sub-step rather
     than in the flow's. Its cost: 0.05 s of processor time a release on the 100 mm
     sphere's 9 417 columns, against about 2 s for a 1 ms flow sub-step of its driven melting state (measured
-    2026-10-24)."""
+    2026-10-24).
+
+    A `Cascade` with thresholds (`T_run`; kinked-profile dispersion spec 6.6, decision 5) has its mode's run found in
+    every flow sub-step from the cells of that moment (`mode_run`'s cells, which the cascade and the release, both given
+    `T_run`, read from the same cells): the release stays heat-limited while the transport and the flow change the cells
+    within the macro step, and a column whose threshold is NaN is released and booked as today."""
     n = sk.n
     book = FlowBook.zero(n)
     adaptive = flow.cycles is None
@@ -1991,11 +2067,14 @@ def flow_substeps(sk, flow, dt, cycles=None):
                 rate = np.broadcast_to(np.asarray(given, dtype=float), (n,))
             if not np.all(np.isfinite(rate) & (rate >= 0.0)):
                 raise ValueError("a release rate must be finite and non-negative")
+            T_run = given.T_run if isinstance(given, Cascade) else None     # the mode's thresholds (kinked-profile Task 6)
             if isinstance(given, Cascade):
-                dm, step.released_slurry = cascade_mass(sk, rate[0], rate[1], flow.A_top, h, flow.slurry, given.T_slurry)
+                dm, step.released_slurry = cascade_mass(sk, rate[0], rate[1], flow.A_top, h, flow.slurry, given.T_slurry,
+                                                        T_run)
             else:
                 dm, step.released_slurry = rate * flow.A_top * h, np.zeros(n)
-            rb = release_top(sk, dm, flow.slurry)
+            # without thresholds the three-argument call of before, which a test monkeypatches with a wrapper of three
+            rb = release_top(sk, dm, flow.slurry) if T_run is None else release_top(sk, dm, flow.slurry, T_run)
             step.released, step.released_H = rb.mass, rb.enthalpy
             step.released_p, step.released_solid = rb.momentum, rb.solid
             ph = rb.by_phase                             # by the cells it came from, and binned by size (Task 2)
@@ -2022,11 +2101,12 @@ class ReleaseBook:
     enthalpy: np.ndarray     # J (n,), at the cells' own specific enthalpies
     momentum: np.ndarray     # kg m/s (n, 3), at the cells' own velocities: the droplets' momentum, fact 29's sink
     solid: np.ndarray        # kg (n,): the solid in it, by the cells' liquid fractions (the droplets' solid fraction)
-    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] fully liquid,
-                             # [1] the others (sub-plan 22 Task 2)
+    by_phase: object = None  # the same by the cells it came from, a ReleaseBook of (2, ...) arrays: [0] the cells at the
+                             # mode's rate (fully liquid without thresholds), [1] the others (sub-plan 22 Task 2;
+                             # kinked-profile dispersion Task 6)
 
 
-def release_top(sk, dm, slurry=False):
+def release_top(sk, dm, slurry=False, T_run=None):
     """Release dm [kg, (n,)] per column from its top cells (spec 8; sub-plan 21 Task 7, the placeholder for stage 4's
     spraying, whose rate sub-plan 22 supplies): liquid first -- the run of fully liquid cells from the top, at or above
     the liquidus -- and, with `slurry` (spec 8's `--slurry-spray on`), the exposed slurry too, every flowing cell down
@@ -2037,11 +2117,21 @@ def release_top(sk, dm, slurry=False):
     speed (spec 6.4), the speed of the metal they are made of, the top of the resolved profile -- fact 29's sink
     mdot V_s with V_s the sheared layer's surface speed -- so each column's mass, enthalpy and momentum fall by exactly
     what the book says left. Updates the cells; returns a ReleaseBook, with what came from the fully liquid cells and
-    what from the others in `by_phase` (sub-plan 22 Task 2: the liquid's mode's droplets and the slurry's)."""
+    what from the others in `by_phase` (sub-plan 22 Task 2: the liquid's mode's droplets and the slurry's).
+
+    With T_run [K, (n,)] (`Cascade.T_run`; kinked-profile dispersion spec 6.6) the release takes the mode's run
+    (`mode_run`), liquid or not, and with `slurry` every flowing cell, and `by_phase` splits it by the cells at the mode's
+    rate (`cascade_mass`): [0] the mode's run, [1] the others. Without the slurry it takes nothing beneath the run, so the
+    cascade's mass leaves from exactly the cells the cascade took, with no round-off reaching the colder cell beneath. A
+    column whose T_run is NaN is released and split as without T_run, to the last bit, whatever the other columns'."""
     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
     liquid = flowing & (sk.T >= sk.material.T_liquidus)
-    admit = flowing if slurry else liquid
-    mass, H, solid = sk.take_top_mass(dm, admit, phase=liquid)
+    if T_run is None:
+        admit, phase = (flowing if slurry else liquid), liquid
+    else:
+        run, phase = _mode_cells(sk, flowing, liquid, T_run)
+        admit = flowing if slurry else run
+    mass, H, solid = sk.take_top_mass(dm, admit, phase=phase)
     pm, pH, ps, pp = sk.phase_out
     return ReleaseBook(mass, H, sk.momentum_out.copy(), solid, ReleaseBook(pm, pH, pp, ps))
 
@@ -2053,14 +2143,39 @@ class Cascade:
     (n,)], the cell whose properties gave it -- a colder slurry cell, more solid and more viscous, ends the column's
     cascade -- or for every slurry cell where None. `histogram`, if given, bins each flow sub-step's droplets by size:
     a callable of the release by phase [kg, (2, n): the liquid's mode's, the slurry's] giving (droplets, mass [kg]) per
-    size bin (sub-plan 22 Task 2: `skinbody.SprayPlan.histogram`, at the macro step's radii)."""
+    size bin (sub-plan 22 Task 2: `skinbody.SprayPlan.histogram`, at the macro step's radii). `T_run` [K, (n,)], if
+    given, is each column's threshold for its mode's run (kinked-profile dispersion spec 6.6, decision 5; `mode_run`):
+    `rate` is then the mode's, taking the flowing cells from the top at least T_run warm, liquid or not, and
+    `rate_slurry` everything beneath them; a column whose T_run is NaN keeps today's cascade (`cascade_mass`). It is the
+    last field, so a Cascade pickled before it existed reads None, the default: no threshold, today's release."""
     rate: np.ndarray
     rate_slurry: np.ndarray
     T_slurry: np.ndarray = None
     histogram: object = None
+    T_run: np.ndarray = None
 
 
-def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):
+def mode_run(sk, T_run):
+    """The mode's release run in the skins' present cells (kinked-profile dispersion spec 6.6, decision 5), (n, K) bool:
+    `melt_profile.threshold_run` on the cells as the cascade reads them -- the flowing ones, and the liquid ones among
+    them at or above the liquidus -- with each column's threshold T_run [K, (n,)]: the flowing cells from the top at
+    least T_run warm, or where T_run is NaN the liquid run, today's."""
+    flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
+    liquid = flowing & (sk.T >= sk.material.T_liquidus)
+    return melt_profile.threshold_run(sk.T, flowing, liquid, T_run)
+
+
+def _mode_cells(sk, flowing, liquid, T_run):
+    """(run, fast), (n, K) bool, for `cascade_mass` and `release_top` given thresholds T_run [K, (n,)], from the flowing
+    and liquid cells they read: the mode's run (`mode_run`) and the cells at the mode's rate, booked as phase 0 -- the run
+    where T_run is a number, and where it is NaN today's, every liquid cell, liquid beneath a slurry cell too, so that
+    such a column is released and booked as without thresholds, to the last bit."""
+    T_run = np.broadcast_to(np.asarray(T_run, dtype=float), (sk.n,))
+    run = melt_profile.threshold_run(sk.T, flowing, liquid, T_run)
+    return run, np.where(np.isnan(T_run)[:, None], liquid, run)
+
+
+def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None, T_run=None):
     """The mass [kg, (n,)] the release takes from each column's top cells in dt [s] when each cell goes at its own phase's
     rate, and the part of it taken from slurry cells (spec 8's cascade, the 2026-10-07 design's 8.1; sub-plan 22 Task 1c):
     down the run of cells `release_top` may take -- the liquid cells from the top, at or above the liquidus, and with
@@ -2068,21 +2183,34 @@ def cascade_mass(sk, rate, rate_slurry, A_top, dt, slurry=False, T_slurry=None):
     `rate_slurry` [kg/(m2 s) of top area, (n,)] times the top area A_top [m2], until dt is spent: the liquid first where
     it covers the slurry, the slurry once nothing liquid covers it, then whatever lies beneath. A cell whose rate is zero
     ends the column's cascade, as rigid metal does, and so does a slurry cell colder than `T_slurry` [K, (n,)], if given
-    (`Cascade`). `release_top(sk, mass, slurry)` then takes exactly these cells."""
+    (`Cascade`). `release_top(sk, mass, slurry)` then takes exactly these cells.
+
+    With T_run [K, (n,)] (`Cascade.T_run`; kinked-profile dispersion spec 6.6, decision 5) the release is heat-limited:
+    the cells at `rate` are the mode's run (`mode_run`), the flowing cells from the top at least T_run warm, liquid or
+    not. Beneath them, with `slurry`, the flowing cells go at `rate_slurry`, those at least T_slurry warm where it is
+    given, the first colder one ending the column; without it the cascade ends at the mode's last cell. The part
+    returned second is then what went at `rate_slurry`, and `release_top(sk, mass, slurry, T_run)` takes exactly these
+    cells. A column whose T_run is NaN keeps today's cascade, to the last bit, whatever the other columns' thresholds:
+    its liquid cells at `rate`, liquid beneath a slurry cell too, and the rest at `rate_slurry`."""
     flowing = sk.valid & np.isfinite(cell_viscosity(sk, 0.0))
     liquid = flowing & (sk.T >= sk.material.T_liquidus)
-    run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
+    if T_run is None:
+        fast = liquid
+        run = np.cumprod(flowing if slurry else liquid, axis=1).astype(bool)
+    else:
+        mode, fast = _mode_cells(sk, flowing, liquid, T_run)
+        run = np.cumprod(flowing, axis=1).astype(bool) if slurry else mode
     rate_s = np.asarray(rate_slurry, dtype=float)[:, None]
     if T_slurry is not None:
         rate_s = np.where(sk.T >= np.asarray(T_slurry, dtype=float)[:, None], rate_s, 0.0)
-    r = np.where(liquid, np.asarray(rate, dtype=float)[:, None], rate_s)
+    r = np.where(fast, np.asarray(rate, dtype=float)[:, None], rate_s)
     r = r * np.asarray(A_top, dtype=float)[:, None]                           # kg/s from each cell while it is exposed
     with np.errstate(divide="ignore", invalid="ignore"):
         lasts = np.where(run & (r > 0.0), sk.m / np.where(r > 0.0, r, 1.0), np.inf)    # s to strip each cell
     starts = np.concatenate([np.zeros((sk.n, 1)), np.cumsum(lasts, axis=1)[:, :-1]], axis=1)
     spare = np.where(run & (starts < dt), dt - starts, 0.0)
     taken = np.where(run, np.minimum(spare * r, sk.m), 0.0)
-    return taken.sum(axis=1), (taken * ~liquid).sum(axis=1)
+    return taken.sum(axis=1), (taken * ~fast).sum(axis=1)
 
 
 def prescribed_release(rate):
