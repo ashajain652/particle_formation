@@ -14,6 +14,7 @@ compatibility rule (behind the centroid's plane)."""
 from collections import namedtuple
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from . import shadow as shadow_mod
 from ..shared import nose
@@ -22,6 +23,16 @@ from ..shared import nose
 LEEWARD_NAMES = ("shadow", "centroid")
 
 NoseFit = namedtuple("NoseFit", "fitted bound used n_points concave")
+
+
+def owners(markers, points):
+    """The marker that owns each point on phi (k, 3) [m]: the nearest marker. The one ownership of phi by the markers that
+    the gas loads (each marker the mean over the patches it owns, `by_patches`) and the volume's groups beneath them
+    (`skinbody.LevelSetSkinBody._beta_owners`) read, as the re-partition's surface samples do (stage 3 Task 11's fix,
+    items 1 and 2): the skin above a patch and the group below it are one marker by construction. Returns marker
+    indices (k,)."""
+    _, m = cKDTree(np.asarray(markers.x, dtype=float)).query(np.asarray(points, dtype=float))
+    return np.asarray(m, dtype=np.int64)
 
 
 def marker_angles(markers, v_hat):

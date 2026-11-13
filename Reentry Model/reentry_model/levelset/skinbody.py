@@ -13,8 +13,13 @@ markers sit on phi (Ruling 1), one skin each (a row of `Skins`), carrying their 
 the volume owns rho V(beta < 0), the skins their cells; nothing is counted twice.
 
 The interface (the skyscrapers' per-column law converted per area). Every patch of beta (the solve's boundary pieces)
-belongs to the marker whose base point is nearest its centroid, and a marker that no patch chose takes the patch nearest
-its base: marker m's group G_m. A marker's base law a_m + b_m T_b [W, W/K, from its trial pass] reaches its group's
+belongs to the marker that owns, on phi, the point above it (`_beta_owners`: the patch's centroid moved out along its
+normal by the skins' thickness there, as phi is built from beta; owned by the nearest marker, `loads.owners`, the
+ownership the gas loads read), so that the skin above a patch and the group below it are one marker: marker m's group
+G_m, the base area beneath its own cell (stage 3 Task 11's fix, item 1: by nearest base point the q6p box's face skins'
+groups were 0.55 to 0.82 of their areas, the side faces' bases nearer the rim of the face's base, and the face
+buckled). GROUP_AREA_RANGE stays as a guard: a group outside it is grown from the patches nearest its base
+(`patch_groups`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass] reaches its group's
 patches per area, q0 = sum a_m / A(G_m), q1 = sum b_m / A(G_m) over the markers whose group holds the patch, and its base
 temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
 receives exactly sum_m (a_m + b_m T_b,m) dt. (With one patch per marker this is the brief's q0 = sum a / A_patch.)
@@ -167,7 +172,8 @@ class StepBook:
     area of a marker's group of patches of beta over its skin's base area, over the step's parts (`patch_groups`), and
     `group_area_ratio_trimmed_max` the largest with the group's largest patch left out (a group formed again stops at
     the first patch that takes it past the base area, so only that one patch may carry it past the range; fix round
-    5). `pending_flux_max` the largest
+    5); `groups_guarded_max` the most groups that guard (GROUP_AREA_RANGE) replaced in any part (Task 11's fix, item 1).
+    `pending_flux_max` the largest
     flux [W/m2] the pending heat put on a patch of beta in any part, `surface_flux_max` the largest convective flux on
     a top. `mass_drawn`, `mass_handed` the exchange at the bases; `momentum_to_volume` the momentum the held
     volume took over the step (the trapped markers' skins, Ruling 4; `LevelSetSkinBody.momentum_to_volume` keeps the
@@ -246,6 +252,7 @@ class StepBook:
     residual_modes_J: float
     momentum_modes_normal: np.ndarray
     island_nodes: int = 0
+    groups_guarded_max: int = 0
     summary: dict = field(default_factory=dict)
 
     def row(self):
@@ -281,6 +288,7 @@ class _Tally:
         self.mode_handed = self.mode_absorbed = self.mode_H = self.mode_owed = 0.0
         self.mode_normal = np.zeros(3)
         self.islands = 0                               # nodes the base moves' islands took from the handed columns
+        self.guarded = 0                               # the most groups the guard replaced in a part
 
 
 @dataclass
@@ -354,19 +362,23 @@ def next_hint(counts):
     return min(max(1, min(estimate, used)), PARTS_MAX)
 
 
-def patch_groups(centroid, area, base, A_base):
+def patch_groups(centroid, area, base, A_base, owner=None, report=False):
     """Each marker's group of patches of beta and how its base law is spread over them (fix round 2 of Task 9): (S, A_group).
     S (n, P), sparse and row-stochastic, holds marker m's share A_p / A(G_m) of each patch p of its group G_m; A_group (n,)
-    [m2] the groups' areas. Every patch first goes to the marker whose base point (`base`, (n, 3)) is nearest its
-    `centroid` (P, 3); a group whose area is outside GROUP_AREA_RANGE times its marker's skin base area `A_base` (n,) [m2]
-    is replaced by the patches nearest that marker's base, taken in order of distance until their area first reaches
-    A_base (shared with other groups where they overlap). A patch a shrunk group gave up and no other group holds takes no
+    [m2] the groups' areas. Every patch first goes to its `owner` (P,), the row of the marker whose cell on phi lies above
+    it (`LevelSetSkinBody._beta_owners`; stage 3 Task 11's fix, item 1), or without one to the marker whose base point
+    (`base`, (n, 3)) is nearest its `centroid` (P, 3); a group whose area is outside GROUP_AREA_RANGE times its marker's
+    skin base area `A_base` (n,) [m2] (the guard) is replaced by the patches nearest that marker's base, taken in order of
+    distance until their area first reaches A_base (shared with other groups where they overlap). With `report`, the
+    number of groups the guard replaced is returned third. A patch a shrunk group gave up and no other group holds takes no
     law. The law stays exact whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over the patches is
     sum a and sum b, and a marker's base temperature S T_p is the area mean over its group. A zero A_base leaves the
     nearest-base groups (and a marker with none the patch nearest its base)."""
     n, npatch = len(base), len(area)
     A_base = np.broadcast_to(np.asarray(A_base, dtype=float), (n,))
-    _, owner = cKDTree(base).query(centroid)
+    if owner is None:
+        _, owner = cKDTree(base).query(centroid)
+    owner = np.asarray(owner, dtype=np.int64)
     A_near = np.bincount(owner, area, minlength=n)
     lo, hi = GROUP_AREA_RANGE
     ratio = np.divide(A_near, A_base, out=np.full(n, np.inf), where=A_base > 0.0)
@@ -393,7 +405,7 @@ def patch_groups(centroid, area, base, A_base):
     rows, cols = np.concatenate(rows), np.concatenate(cols)
     A_group = np.bincount(rows, area[cols], minlength=n)
     S = sp.csr_matrix((area[cols] / A_group[rows], (rows, cols)), shape=(n, npatch))
-    return S, A_group
+    return (S, A_group, len(redo)) if report else (S, A_group)
 
 
 _PLAN_BOOKS = ("mass", "mass_slurry", "number", "number_slurry", "enthalpy", "enthalpy_slurry", "solid",
@@ -553,12 +565,25 @@ class LevelSetSkinBody(StepEnd):
 
 
     # -- the interface ---------------------------------------------------------------------------------------------------
+    def _beta_owners(self, P, base):
+        """Each patch of beta's owner (P,), the skin row of the marker whose cell on phi lies above it (module docstring):
+        the patch's centroid moved out along its normal by the thickness of the skin whose base point is nearest (as
+        phi is beta moved out by the nodal thickness of the nearest base, `stepend.StepEnd._thickness_nodal`), owned by the
+        nearest marker (`loads.owners`). Along the patch's own normal rather than a marker's: the point then lies where phi
+        was built over the patch, whatever the markers' normals; at a rounded edge it lands on phi's rounding above it."""
+        H = self.skins.thickness()
+        _, near = cKDTree(base).query(P.centroid)
+        above = P.centroid + H[near][:, None] * P.normal
+        return self.markers.skin_index[loads_mod.owners(self.markers, above)]
+
     def _interface(self):
         """(S (n, P) sparse, row-stochastic: marker row m's share A_p / A(G_m) of each patch of its group; A(G) (n,) [m2];
-        the base points (n, 3); the base gradient dT/dn [K/m] per row) on the solve's present patches."""
+        the base points (n, 3); the base gradient dT/dn [K/m] per row) on the solve's present patches; the groups the
+        guard replaced in `last_guarded`."""
         P = self.solver.P
         base = self._bases()
-        S, A_group = patch_groups(P.centroid, P.area, base, self.skins.base_area())
+        S, A_group, self.last_guarded = patch_groups(P.centroid, P.area, base, self.skins.base_area(),
+                                                     owner=self._beta_owners(P, base), report=True)
         g_patch = np.einsum("pk,pk->p", cell_gradients(self.mesh, self.solver.T, P.cell), P.normal)
         return S, A_group, base, S @ g_patch
 
@@ -642,6 +667,7 @@ class LevelSetSkinBody(StepEnd):
         sk, solver = self.skins, self.solver
         self._cap()
         S, A_group, base, g0 = self._interface()
+        tally.guarded = max(tally.guarded, self.last_guarded)
         group_ratio = A_group / sk.base_area()
         tally.group_min = min(tally.group_min, float(group_ratio.min()))
         tally.group_max = max(tally.group_max, float(group_ratio.max()))
@@ -869,7 +895,8 @@ class LevelSetSkinBody(StepEnd):
             frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), n_top=int(mk.top.sum()),
             modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
             mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
-            momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands, summary=summary)
+            momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands,
+            groups_guarded_max=tally.guarded, summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

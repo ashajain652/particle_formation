@@ -373,6 +373,35 @@ def test_two_flow_on_steps_keep_their_part_count_bounded(sprayed):
 
 
 
+FACE_GROUP_MEDIAN = (0.9, 1.1)   # the test cube's +x face skins' groups over their base areas: the median within this
+FACE_GROUP_MIN = 0.7             # and none below this (measured once: 0.75 to 1.06, median 0.96, by the cell above;
+                                 # 0.57 to 1.05, median 0.77, by the nearest base point before Task 11's fix)
+
+
+def test_a_skin_s_group_is_the_base_beneath_its_own_cell():
+    """Task 11's fix, item 1: each patch of beta belongs to the marker that owns, on phi, the point above it, so a skin's
+    base heat enters the volume through the base beneath its own cell. By the nearest base point the q6p box's face
+    skins' groups were 0.55 to 0.82 of their areas (the side faces' bases are nearer the rim of the face's base) and the
+    face buckled. On the test cube the +x face skins' groups now have a median ratio within FACE_GROUP_MEDIAN and none
+    below FACE_GROUP_MIN (the rim's skins carry phi's rounding over the edge, which has no base beneath it), every patch
+    goes to the owner of the point above it (unless the guard replaced its group), and the law stays exact: the groups'
+    shares sum to one per marker."""
+    body = cube_body()
+    P, base, A = body.solver.P, body._bases(), body.skins.base_area()
+    owner = body._beta_owners(P, base)
+    S, A_group, base_, _ = body._interface()
+    mk = body.markers
+    face = mk.skin_index[mk.normal[:, 0] > 0.9]
+    ratio = A_group[face] / A[face]
+    print("face groups {} (guard replaced {})".format(np.round(np.sort(ratio), 2), body.last_guarded))
+    lo, hi = FACE_GROUP_MEDIAN
+    assert lo <= np.median(ratio) <= hi and ratio.min() >= FACE_GROUP_MIN
+    np.testing.assert_allclose(np.asarray(S.sum(axis=1)).ravel(), 1.0, rtol=1e-14)
+    coo = S.tocoo()
+    kept = np.isin(coo.row, face)
+    assert np.array_equal(coo.row[kept], owner[coo.col[kept]])         # the face's groups: their own patches only
+
+
 def test_a_marker_whose_nearest_patches_are_few_gets_a_grown_group_and_the_law_stays_exact():
     """Fix round 2 of Task 9 (the ruling on concern 1): a marker's base law is spread over a group of patches of beta
     whose area is within GROUP_AREA_RANGE of its skin's base area. Flat patches of 0.1 x 0.1 mm on a plane carry five
