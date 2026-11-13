@@ -1139,6 +1139,25 @@ def test_the_slurry_cascade_sprays_exposed_slurry_by_its_own_properties_only_wit
     np.testing.assert_array_equal(on.rate, off.rate)            # the liquid's own mode: the flag moves only its cap
 
 
+def test_slurry_modes_composite():
+    """The slurry's mode under the composite law: its viscosity is `composite_viscosity` of the exposed cell's solid
+    fraction to 1e-12, whatever the shear rate, and the recorded rate is not clipped at 367 1/s (the bridge law's
+    rate cap). The cascade test's five columns at a high gas shear."""
+    import dataclasses
+    from reentry_model import rheology, surface_flow
+    from test_reentry_model_skin import LIQUID, RIGID, SLURRY, stacked, strip_grid
+    col, _ = strip_grid(5, 2, h=20e-3)
+    tops = [902.0, 906.0, 907.0, 907.5, 907.9]
+    sk = stacked(col, [[LIQUID] + [T] + [SLURRY] * 48 + [RIGID] * 10 for T in tops] * 2)
+    sk.settings = dataclasses.replace(sk.settings, rheology="composite")
+    flow = girin_flow(col.n, [surface_flow.CLOSURE_GIRIN] * col.n, [2000.0] * col.n, [500.0] * col.n)
+    s = plan_on(sk, col, flow, slurry=True).slurry
+    mat = sk.material
+    f_s = 1.0 - sk.props.liquid_fraction(sk.T[:, 1])
+    np.testing.assert_allclose(s["mu"], rheology.composite_viscosity(f_s, mat.liquid.mu), rtol=1e-12)
+    assert (s["gamma"] > rheology.GAMMA_MAX).any()
+
+
 def test_a_skin_body_sprays_by_girin_from_its_top_cells_once_a_macro_step_and_keeps_its_books(coarse_sphere_mesh,
                                                                                               monkeypatch):
     """The skin body with the flow on and a spray model (sub-plan 22 Task 1c): at the start of every macro step Girin is

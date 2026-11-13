@@ -73,6 +73,10 @@ class SkinSettings:
                                            # False holds every cell at the solid's density, the setting levels 2 and 2b
                                            # verify with (Asha, 2026-10-14: their references hold one density, and the
                                            # swelling alone melts the exact hot plate 0.094 mm sooner by 1.0 s)
+    rheology: str = "bridge"               # the viscosity law by name (`rheology.LAWS`), chosen in the shared module. The
+                                           # class default is the present bridge law, so a state pickled before this field
+                                           # existed (no entry in its __dict__) reads "bridge", and the library's callers
+                                           # and tests keep today's numbers; the run command selects "composite" by default
 
     def __post_init__(self):
         if not (self.min_thickness > 0.0 and self.fine_zone > 0.0 and self.cell > 0.0 and self.substep > 0.0):
@@ -81,6 +85,8 @@ class SkinSettings:
             raise ValueError("skin growth must be at least 1")
         if 2.0 * self.cell > min(self.min_thickness, self.fine_zone) * (1.0 + 1e-12):
             raise ValueError("a skin needs at least two fine cells: cell <= min(min_thickness, fine_zone) / 2")
+        if self.rheology not in rheology.LAWS:
+            raise ValueError(f"skin rheology must be one of {rheology.LAWS}, not {self.rheology!r}")
 
 
 def thomas(sub, diag, sup, rhs):
@@ -958,16 +964,25 @@ class SidewaysByHeight:
 
 
 # -- viscosity (sub-plan 21 Task 3) ------------------------------------------------------------------------------------
+def viscosity_of(sk, T, f_s, gamma):
+    """The viscosity [Pa s] of the skins' metal at temperature T [K], solid fraction f_s and shear rate gamma [1/s], by
+    the law the skins' settings name (`sk.settings.rheology`): a thin wrapper that passes the law's name, the state, the
+    liquid's viscosity and the bridge's solid fraction to `rheology.law_viscosity`. The choice between the laws and all of
+    their physics live in the shared module (Asha, 2026-11-12); nothing here is a formula or a law branch."""
+    mat = sk.material
+    return rheology.law_viscosity(sk.settings.rheology, T, f_s, gamma, mat.liquid.mu, rheology.bridge_solid_fraction(mat))
+
+
 def cell_viscosity(sk, gamma):
-    """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `rheology.viscosity` at
-    the cell's temperature and Scheil solid fraction; infinite in a rigid cell (half solid or more) and beyond each
-    column's cells, and everywhere for a material that does not melt."""
+    """Every cell's viscosity [Pa s], (n, K), sheared at gamma [1/s] (per cell, or one for all): `viscosity_of` (the law
+    the settings select: the bridge law of Li et al. with its bridge to the liquid, or the composite law, which ignores
+    gamma) at the cell's temperature and Scheil solid fraction; infinite in a rigid cell (half solid or more) and beyond
+    each column's cells, and everywhere for a material that does not melt."""
     mat = sk.material
     if not mat.melts or mat.liquid is None:
         return np.full(sk.m.shape, np.inf)
     f_s = 1.0 - sk.props.liquid_fraction(sk.T)
-    f_s_bridge = 1.0 - float(mat.liquid_fraction(np.array([rheology.BRIDGE_LOW]))[0])
-    eta = rheology.viscosity(sk.T, f_s, gamma, mat.liquid.mu, f_s_bridge)
+    eta = viscosity_of(sk, sk.T, f_s, gamma)
     return np.where(sk.valid, eta, np.inf)
 
 

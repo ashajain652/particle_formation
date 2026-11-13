@@ -583,6 +583,54 @@ def test_a_flowing_cell_drags_on_the_rigid_cell_beneath_over_its_own_half_thickn
     assert D[1] == 0.0                                            # rigid on rigid: nothing moves
 
 
+def with_composite(sk):
+    """The same skins with the composite law selected (settings are replaced, not edited)."""
+    import dataclasses
+    sk.settings = dataclasses.replace(sk.settings, rheology="composite")
+    return sk
+
+
+def test_settings_carry_the_law():
+    """The library default is the present bridge law, validated against the shared module's names; a state saved before
+    the field existed has no `rheology` in its settings and reads the class default, `bridge`, never `composite`."""
+    import pickle
+    assert skin.SkinSettings().rheology == "bridge"
+    assert skin.SkinSettings(rheology="composite").rheology == "composite"
+    with pytest.raises(ValueError):
+        skin.SkinSettings(rheology="li")
+    old = skin.SkinSettings(rheology="composite")
+    del old.__dict__["rheology"]
+    assert pickle.loads(pickle.dumps(old)).rheology == "bridge"
+
+
+def test_cell_viscosity_follows_composite():
+    """Under the composite law the cells' viscosity does not depend on the shear rate and is the shared
+    `composite_viscosity` of the Scheil solid fraction on valid cells, infinite beyond each column's cells."""
+    sk = with_composite(column_at([950.0, 915.0, 905.0, 902.0, 900.0, 880.0]))
+    mu_l = sk.material.liquid.mu
+    eta0, eta1 = skin.cell_viscosity(sk, 0.0), skin.cell_viscosity(sk, 1e4)
+    np.testing.assert_array_equal(eta0, eta1)
+    f_s = 1.0 - sk.props.liquid_fraction(sk.T)
+    np.testing.assert_array_equal(eta0[sk.valid], rheology.composite_viscosity(f_s, mu_l)[sk.valid])
+    assert np.all(np.isinf(eta0[~sk.valid]))
+    mixed = skin.Skins(sk.material, np.array([4e-6, 4e-6]), sk.settings)
+    T = np.array([[950.0, 905.0, 902.0], [950.0, 905.0, 300.0]])
+    m = np.where(np.arange(3)[None, :] < np.array([3, 2])[:, None], sk.material.rho * 4e-6 * 1e-5, 0.0)
+    mixed._install(m, m * sk.material.enthalpy(T), np.array([3, 2]))
+    assert np.isinf(skin.cell_viscosity(mixed, 10.0)[1, 2]) and np.isfinite(skin.cell_viscosity(mixed, 10.0)[1, 1])
+
+
+def test_composite_momentum_single_pass():
+    """With a shear-rate-independent viscosity the momentum step's fixed point has nothing to iterate: one pass, and
+    the books close to round-off as under the bridge law."""
+    sk = with_composite(column_at([880.0] + [920.0] * 10 + [902.0] * 10 + [880.0] * 5))
+    sk.U = np.random.default_rng(3).normal(0.0, 0.05, sk.U.shape)
+    P0 = sk.column_momentum()
+    book = skin.momentum_step(sk, 1e-3, np.array([2e4, -1e4, 0.0]), np.array([3.0, 0.0, 0.0]), sk.area)
+    assert book.passes == 1
+    assert books_close(sk, P0, book)
+
+
 def test_metal_that_does_not_melt_never_flows():
     mat = material_mod.Material.from_drama_json("AA7075_nomelt")
     sk = column_at([1500.0, 1400.0], mat)
