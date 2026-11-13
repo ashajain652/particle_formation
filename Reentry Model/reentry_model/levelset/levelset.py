@@ -2,6 +2,7 @@
 under a prescribed velocity, connected pieces, and the exact volume correction per piece (design §6.2-§6.4; §20.3:
 the evolved level set is the skin base beta)."""
 import numpy as np
+from scipy.optimize import brentq
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
@@ -107,6 +108,8 @@ def piece_volumes(mesh, phi, label, n):
 
 
 SWEEPS_MAX = 20     # sweeps over the pieces at most in `correct_volumes`
+BRENT_XTOL = 1e-18  # m: Brent's method's tolerance on a piece's shift (`correct_volumes`), far below any cell
+BRENT_ITER = 200    # its iterations at most
 
 
 def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60):
@@ -121,7 +124,14 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
     twice and the total fell short by up to 3e-5; on the full-size cube's second step, with a 2e-9 m3 piece beside the
     body, a short 1e-14 m3 a move made the step's mass residual -9.4e-9.) One piece is corrected as before. A piece
     that does not converge raises with its target, the volume it held, its last shift and bracket, the iterations, its
-    claimed nodes and cells, and the miss before the correction (stage 3 Task 11's review, M6)."""
+    claimed nodes and cells, and the miss before the correction (stage 3 Task 11's review, M6).
+
+    Each piece's shift is found by Newton steps on the contour's area, kept within the bracket of shifts that held too
+    little and too much: bisection of the bracket where a Newton step leaves it, and Brent's method on it where a Newton
+    step fails to halve the step before the last (rtsafe's test; stage 3 Task 11's fix round 1). A speck a base move makes beside the body,
+    asked to grow some 1e5 times, first steps far beyond the nodes it may shift; there its volume no longer responds
+    while the cut cells at its claim's edge keep a patch area, and the bare Newton steps crawled for all 60 iterations
+    (the q6p box's step to 1.5 s and the shoulder's to 2.0 s stopped so)."""
     phi = phi.copy()
     targets = np.asarray(targets, float)
     if (targets <= 0).any():
@@ -148,6 +158,7 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
         for p, target in enumerate(targets):
             nodes, cells, base = sets[p]
             lo, hi, c = None, None, shift[p]
+            step_before = step = np.inf                    # the last two steps (the bisection safeguard below)
             for _ in range(max_iter):
                 phi[nodes] = base - c
                 V, c_held = inside_volumes(mesh, phi, cells).sum(), c
@@ -162,8 +173,17 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
                     hi = c
                 A = patches_area(mesh, phi, cells)
                 c_new = c + err / max(A, 1e-300)
+                bracketed = lo is not None and hi is not None
                 if (lo is not None and c_new <= lo) or (hi is not None and c_new >= hi):
-                    c_new = 0.5 * (lo + hi) if (lo is not None and hi is not None) else c + 2 * (c_new - c)
+                    c_new = 0.5 * (lo + hi) if bracketed else c + 2 * (c_new - c)
+                elif bracketed and abs(c_new - c) > 0.5 * abs(step_before):
+                    # Newton not halving the step before the last: the contour's area is not the volume's slope here
+                    # (cut cells at the claim's edge keep an area that does not respond), so Brent's method on the bracket
+                    def held(x, nodes=nodes, base=base, cells=cells, target=target):
+                        phi[nodes] = base - x
+                        return target - inside_volumes(mesh, phi, cells).sum()
+                    c_new = brentq(held, lo, hi, xtol=BRENT_XTOL, rtol=4.0 * np.finfo(float).eps, maxiter=BRENT_ITER)
+                step_before, step = step, c_new - c
                 c = c_new
             else:
                 raise RuntimeError("volume correction of piece {} did not converge: target {:.6e} m3, held {:.6e} m3 "

@@ -131,6 +131,28 @@ def test_a_volume_correction_that_does_not_converge_says_where_it_stood():
         correct_volumes(m, phi, label, [1.2 * 4 / 3 * np.pi * 1.1e-3 ** 3], max_iter=1)
 
 
+def test_a_speck_grown_to_its_target_converges_after_a_first_step_into_saturation():
+    """Stage 3 Task 11's fix round 1, the review's concern (b): a speck of metal a base move makes beside the body, with a
+    point's hand-down in it, must grow some 1e5 times. From its tiny patch area the first Newton step overshoots far
+    beyond the nodes it may shift, where the volume stops responding (every cell it claimed full) while the cut cells at
+    the claim's edge keep a patch area, so each Newton step from there moved the shift by only that area's share and the
+    correction crawled for 60 iterations without reaching the root (the q6p box at 1.0 to 1.5 s: a 2e-17 m3 speck asked
+    to hold 1.7e-12 m3; the shoulder at 1.5 to 2.0 s likewise). The Newton step now gives way to bisection whenever it
+    fails to halve the step before it, so the speck reaches its target to round-off and the body keeps its own."""
+    m = _sphere_mesh(0.125e-3)
+    phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 0.8e-3)
+    speck = np.argmin(np.linalg.norm(m.points - (C + [1.25e-3, 0.0, 0.0]), axis=1))
+    phi[speck] = -1e-6                                   # one node just inside: a speck of metal 0.45 mm off the body
+    label, n = pieces(m, phi)
+    assert n == 2
+    v = piece_volumes(m, phi, label, n)
+    targets = np.array([v[0], 1.0e-12])
+    print("speck: {:.2e} m3 asked to hold {:.2e} m3".format(v[1], targets[1]))
+    assert targets[1] > 1e5 * v[1]
+    phi2, _ = correct_volumes(m, phi, label, targets)
+    np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), targets, rtol=1e-12, atol=0.0)
+
+
 def test_a_zero_volume_target_is_refused():
     m = _sphere_mesh(0.25e-3)
     phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 1.1e-3)
