@@ -196,9 +196,11 @@ class StepBook:
     base moves made apart from the old metal, which took the handing columns' temperatures (`stepend.StepEnd._seed`,
     stage 3 Task 11, item 3). `mass_absorbed` [kg] what the full-depth skins absorbed of the volume's non-rigid metal
     and the stub below it, and `enthalpy_absorbed` [J] its enthalpy (`LevelSetSkinBody._absorb`, Task 11's fix, item 4;
-    in `mass_drawn` too). `move_corrections` each base move's miss of its volume target before the volume correction
-    made it up, the largest over its pieces as a share of the piece's target, in the order the moves were made (their
-    largest is `volume_correction_max`; stage 3 Task 11's review, I3: it shows when a step leans on the correction). The
+    in `mass_drawn` too). `move_corrections` every volume correction's miss before it, in the order made: per
+    base move (one entry per round of a move made in rounds) and for the remesh, an entry {"kind": "part", "modes",
+    "release" or "remesh", what made it; "worst": the largest miss over its pieces as a share of the piece's target};
+    their largest is `volume_correction_max` (stage 3 Task 11's review, I3: it shows when a step leans on the
+    correction; its re-review, minor item 1: the remesh's correction had no entry). The
     heat deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
@@ -306,8 +308,8 @@ class _Tally:
         self.guarded = 0                               # the most groups the guard replaced in a part
         self.absorbed = 0.0                            # kg the full-depth skins absorbed of the volume's non-rigid metal
         self.absorbed_H = 0.0                          # J its enthalpy
-        self.corrections = []                          # each base move's miss of its volume target before the volume
-                                                       # correction (`stepend.StepEnd._move_beta`)
+        self.corrections = []                          # every volume correction's miss before it, labelled
+                                                       # (`stepend.StepEnd._move_beta`, `_rebuild`)
 
 
 @dataclass

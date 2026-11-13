@@ -245,7 +245,7 @@ class StepEnd:
         keep = w > 0.0
         self.add_pending(points[keep], J * w[keep])
 
-    def _move_beta(self, points, dV, disp, tally, given=None):
+    def _move_beta(self, points, dV, disp, tally, given=None, kind="part"):
         """Move beta by the volume changes dV [m3] at the points [m] (k, 3), each displaced along its normal by disp [m]
         (outward positive), extended to the nodes within fine_margin of beta from the nearest point; reset, corrected per
         piece to the exact volume target, and `CutThermal.move`. `given` (normals (k, 3), base areas (k,) [m2], cells
@@ -258,11 +258,13 @@ class StepEnd:
         side face 0.35 mm, the nearest-point extension reaching nodes of the side face nearest the moved bases, and
         rounds from points carried with the base pulled the side faces 2 mm in). The largest share of its target by which
         the extension missed a piece's volume before the volume correction made it up is kept in `tally.correction` (the
-        step's largest) and, per move, in `tally.corrections` (stage 3 Task 11's review, I3). Returns the enthalpy the
-        move removed from the volume [J]."""
+        step's largest) and in `tally.corrections` as an entry {"kind": `kind`, "worst": that share}, one entry per round
+        of a move made in rounds (stage 3 Task 11's review, I3; `kind` "part", "modes" or "release", what made the move).
+        Returns the enthalpy the move removed from the volume [J]."""
         rounds = int(np.ceil(np.abs(disp).max(initial=0.0) / (MOVE_ROUND_SHARE * self.fine_margin) - 1e-12))
         if rounds > 1:
-            return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally, given) for _ in range(rounds))
+            return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally, given, kind)
+                             for _ in range(rounds))
         mesh, beta = self.mesh, self.beta
         new = beta.copy()
         if np.any(disp != 0.0):
@@ -289,7 +291,7 @@ class StepEnd:
         new, worst = correct_volumes(mesh, new, label, targets)
         tally.correction = max(tally.correction, worst)
         if hasattr(tally, "corrections"):                  # each move's miss before the correction (the review's I3)
-            tally.corrections.append(worst)
+            tally.corrections.append({"kind": kind, "worst": float(worst)})
         seed = None if given is None else (lambda nodes: self._seed(beta, new, points, given, nodes))
         removed = self.solver.move(new, seed=seed)
         tally.islands += getattr(self.solver, "seeded", 0)
@@ -356,6 +358,8 @@ class StepEnd:
                 targets = share * (v_old.sum() / share.sum())
             beta, worst = correct_volumes(new, beta, label, targets)
             tally.correction = max(tally.correction, worst)
+            if hasattr(tally, "corrections"):              # the remesh's own entry (Task 11's re-review, minor item 1)
+                tally.corrections.append({"kind": "remesh", "worst": float(worst)})
             E0 = self.solver.energy()
             self.solver.remesh(new, beta)
             self.mesh, self.beta = new, beta
@@ -412,7 +416,7 @@ class StepEnd:
         mk = self.markers
         x, mass, H, P = mk.release(idx)
         tally.to_volume += P.sum(axis=0)
-        removed = self._move_beta(x, mass / self.rho, np.zeros(len(x)), tally)
+        removed = self._move_beta(x, mass / self.rho, np.zeros(len(x)), tally, kind="release")
         owed = float(H.sum()) + removed
         tally.move += abs(owed)
         self._book_move(x, mass, owed)
@@ -570,7 +574,7 @@ class StepEnd:
         if not np.any(dV != 0.0):
             return
         E0, beta0 = self.solver.energy(), self.beta.copy()
-        self._move_beta(base, dV, dV / A_b, tally, given=(normal_rows, A_b, given))
+        self._move_beta(base, dV, dV / A_b, tally, given=(normal_rows, A_b, given), kind="modes")
         tally.fill_new, tally.fill_done = self._fill(beta0, base, normal_rows, A_b, given)
         owed = H + E0 - self.solver.energy()
         tally.move += abs(owed)
