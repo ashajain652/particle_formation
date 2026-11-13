@@ -1205,7 +1205,8 @@ def test_the_switch_back_is_named_and_every_skin_run_records_its_dispersion(tmp_
             == base + "_melt-girin_leeward-facing_dispersion-table_gates-before_seed-7")
     assert name(melt + ["--skin-flow", "off"]) == base + "_melt-instant_skinflow-off"           # the heat-only skins
     assert name(melt + ["--surface-model", "elements"]) == base + "_melt-girin_surface-elements"
-    assert name(THERMAL) == base
+    assert name(SKINS) == name(SKINS + ["--dispersion", "table"]) == base              # skins that do not melt: no mark
+    assert name(THERMAL) == name(THERMAL + ["--dispersion", "table"]) == base + "_surface-elements"   # nor the elements
     suffix = lambda **k: cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, **k)
     assert suffix() == suffix(dispersion="profile") == suffix(dispersion=None) == ""
     assert suffix(dispersion="table") == "_dispersion-table"
