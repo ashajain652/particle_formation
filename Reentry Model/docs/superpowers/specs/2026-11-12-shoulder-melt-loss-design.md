@@ -203,6 +203,11 @@ linear tables stop the collocation solver converging, and the cold wall needs a 
   1.32 times Holman and Boyd's labels, so their "Kn 0.05" case (Kn_body 0.067) falls on Daniels and Schwartzentruber.
 - Two edge states are built per step: equilibrium (wall Knudsen number, Girin's closure, as today) and unreacted
   (shear and heating).
+- The gas-load pressure (both sides, and the pressure the similarity solution's edge state expands to) is the model's
+  own pressure law (modified Newtonian + Prandtl-Meyer, joined to Daniels and Schwartzentruber on the lee) evaluated on
+  the UNREACTED stagnation pressure, as the reference calculation did (`similarity_heat.py`). The unreacted nose
+  pressure is about 2 % below the equilibrium one at Kn 0.002 (4837 against 4947 Pa); expanding unreacted gas to the
+  equilibrium law's pressure would put the nose above its own reservoir. (Plan-level call, 2026-11-13.)
 - The new loads become the default for sphere flights in both architectures; the current loads stay selectable by
   name so that states saved before this change can resume with the loads they were made with. The droplet stage keeps
   `PhysicsHeating` as it is (its reproduction test must still match to 1e-9; no droplet or wake sweep is re-run).
