@@ -124,6 +124,30 @@ def test_landed_metal_flows_on_at_its_arrival_velocity():
             assert np.array_equal(now[c, 1:sk.count[c]], then[c, :before[2][c]])
 
 
+def test_a_new_top_cell_that_receives_nothing_is_not_created():
+    """Stage 3 Task 11 (the q6p box's second step on the design's meshes): a new top cell whose arrival is exactly zero
+    in floating point -- there a new top fed only through a cycle's back-coupling, which the solve left at zero within
+    its tolerance, fed further new tops onward; here a flowing cell of 1e-300 kg moving at 1e-40 m/s onto a rigid top,
+    whose arrival underflows -- is not installed as a cell of no mass (its velocity was 0/0 and the next landing
+    conduction raised): the receiver keeps its cells exactly, nothing is booked as landed, and the books are unchanged."""
+    mk, ix, _ = grid_markers(3, 1)
+    sk = stacked(mk, [[RIGID] * 5, [RIGID] * 5, [RIGID] * 5])
+    m, H, count = sk.m.copy(), sk.H.copy(), sk.count.copy()
+    tiny = 1e-300                                        # kg, a liquid cell on top of the first marker
+    m = np.concatenate([np.zeros((3, 1)), m], axis=1)
+    H = np.concatenate([np.zeros((3, 1)), H], axis=1)
+    m[0, 0], H[0, 0] = tiny, tiny * float(sk.props.enthalpy(np.array([LIQUID]))[0])
+    m[1:, :-1], H[1:, :-1] = m[1:, 1:].copy(), H[1:, 1:].copy()
+    m[1:, -1] = H[1:, -1] = 0.0
+    sk.install(m, H, count + np.array([1, 0, 0]))
+    sk.U[0, 0] = [1e-40, 0.0, 0.0]                       # toward the second marker
+    before = [a.copy() for a in (sk.m, sk.H, sk.count)]
+    book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+    assert np.array_equal(sk.count, before[2]) and not book.landed.any()
+    assert np.array_equal(sk.m, before[0]) and np.array_equal(sk.H, before[1])
+    assert np.all(np.isfinite(sk.U)) and np.all(sk.m[sk.valid] > 0.0)
+
+
 def test_nothing_passes_through_anchored_metal():
     """Anchored rigid cells neither leave nor receive whatever velocity they hold: a liquid layer running at 1 m/s onto a
     marker that is rigid through its depth lands on top of it as a new top cell; the receiver's anchored cells, and the

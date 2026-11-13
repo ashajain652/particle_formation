@@ -668,7 +668,16 @@ def transport(skins, sheet, dt, faces=None):
     if trial:
         dH.ravel()[act[old]] = x[old, 2]
     count = skins.count.copy()
-    tops = act[~old] - n * K
+    tops, x_top, P_top = act[~old] - n * K, x[~old], P_new[~old]
+    empty = x_top[:, 0] <= 0.0
+    if empty.any():
+        # a new top cell that received exactly nothing is not created (stage 3 Task 11: on the q6p box's second step a
+        # new top cell fed only through a cycle's back-coupling held 1.5e-29 kg, which the solve left at zero within
+        # its tolerance, so the new tops it fed onward received exactly nothing and were installed as cells of no mass,
+        # their velocity 0/0); such a cell holds no enthalpy and no momentum either, so the books are unchanged
+        if np.any(x_top[empty, 1:] != 0.0) or np.any(P_top[empty] != 0.0):
+            raise RuntimeError("a new top cell received no mass but some enthalpy or momentum")
+        tops, x_top, P_top = tops[~empty], x_top[~empty], P_top[~empty]
     if len(tops):
         new = np.zeros(n, dtype=bool)
         new[tops] = True
@@ -679,10 +688,10 @@ def transport(skins, sheet, dt, faces=None):
             return np.take_along_axis(padded, src.reshape(src.shape + (1,) * (v.ndim - 2)), axis=1)
 
         m, H, U = down(m), down(H), down(U)
-        m[tops, 0], H[tops, 0], U[tops, 0] = x[~old, 0], x[~old, 1], P_new[~old] / x[~old, :1]
+        m[tops, 0], H[tops, 0], U[tops, 0] = x_top[:, 0], x_top[:, 1], P_top / x_top[:, :1]
         if trial:
             dH = down(dH)
-            dH[tops, 0] = x[~old, 2]
+            dH[tops, 0] = x_top[:, 2]
         count = count + new
         book.landed = new
     skins.m, skins.H, skins.U, skins.count = m, H, U, count
