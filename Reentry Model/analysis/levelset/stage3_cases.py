@@ -30,8 +30,8 @@ in the level set, with skins) fails the other way: its convex edges melt first (
 removed by 0.5 s and 1.90 by 1.0 s, against 0.79 for the one-dimensional reference). With one marker the tessellation is
 exact (its cell is the whole face) and the column is the one-dimensional problem. Judged: the cold plate (700 K,
 6 MW/m2) within RECESSION_TOL of REFERENCE_1D and of REFERENCE_1D_LIQUIDUS at 1.0, 1.5 and 2.0 s; the hot plate (880 K,
-2 MW/m2) within RECESSION_TOL of plate_hot_1d.json at 1.5 and 2.0 s (1.0 s reported) and its non-rigid depth (phi to
-psi) within NONRIGID_TOL at all three; every step's books within MASS_TOL and ENERGY_TOL. The recession is the face's
+2 MW/m2) within RECESSION_TOL of plate_hot_1d.json at 1.5 and 2.0 s (1.0 s reported), its non-rigid depth (phi to
+psi) within NONRIGID_TOL and the volume's top beneath the skin at most HOT_BASE_TOL_K above T_rigid at all three; every step's books within MASS_TOL and ENERGY_TOL. The recession is the face's
 solid top (beta's zero on the axis plus the skin's mass over the solid density and its area), as the skyscrapers' plate
 reads it; the recession by the removed mass is reported beside it.
 
@@ -127,7 +127,7 @@ SKYSCRAPERS_DEPOSIT_CENTROID_MM = 1.05                   # the pushed plate's de
                                                          # item 21: 1.84 mm without it)
 SKYSCRAPERS_DEPOSIT_FAR_SHARE = 0.030                    # its share landing 5-10 mm past the heat's end (9.9 % without)
 HOT_BASE_TOL_K = 1.0                                     # the skyscrapers' hot plate: base at most this above T_rigid
-                                                         # (skin_plate.HOT_BASE_TOL_K; reported here, not judged)
+                                                         # (skin_plate.HOT_BASE_TOL_K; judged since Task 11's fix, item 4)
 
 # -- tolerances (the brief's) ------------------------------------------------------------------------------------------
 RECESSION_TOL = 0.05
@@ -452,6 +452,10 @@ def step_row(body, book, wall, x_before, delta, watch):
            "mass_drawn_kg": book.mass_drawn, "mass_handed_kg": book.mass_handed,
            "mass_modes_handed_kg": book.mass_modes_handed, "mass_modes_absorbed_kg": book.mass_modes_absorbed,
            "n_pieces": book.n_pieces, "pieces_used_up": book.pieces_used_up,
+           # Task 11's fix: the islands a base move filled from the handed columns (item 3), the groups the area guard
+           # replaced (item 1), the non-rigid metal the full-depth skins absorbed (item 4)
+           "island_nodes": getattr(book, "island_nodes", 0), "groups_guarded_max": getattr(book, "groups_guarded_max", 0),
+           "mass_absorbed_kg": getattr(book, "mass_absorbed", 0.0),
            "pending_flux_max_Wm2": book.pending_flux_max, "surface_flux_max_Wm2": book.surface_flux_max}
     if delta is not None:
         row["cost_split_s"] = split_step(delta, wall)
@@ -658,7 +662,8 @@ def plate(case, preset="dev", every_second=False, steps=None, save=True):
                                "nonrigid_ref_mm": ref[t][1], "nonrigid_rel": rel_nr,
                                "skin_flowing_mm": at[t]["skin_flowing_mm"], "base_excess_K": at[t]["base_excess_K"],
                                "base_within_skyscrapers_tol": at[t]["base_excess_K"] <= HOT_BASE_TOL_K}
-            verdict.append((t < 1.25 or abs(rel) <= RECESSION_TOL) and abs(rel_nr) <= NONRIGID_TOL)
+            verdict.append((t < 1.25 or abs(rel) <= RECESSION_TOL) and abs(rel_nr) <= NONRIGID_TOL
+                           and at[t]["base_excess_K"] <= HOT_BASE_TOL_K)
     out = {"case": "plate-" + case, "preset": preset, "every_second": every_second, "T0_K": T0, "q_Wm2": q0,
            "dt_s": DT, "width_mm": PLATE_WIDTH * 1e3, "depth_mm": PLATE_DEPTH * 1e3, "markers": int(body.markers.n),
            "build_s": round(t_build, 2), "books_pass": books_pass(rows), "compare": compare,
@@ -735,7 +740,12 @@ def box(preset="dev", steps=None, save=True):
         mk = b.markers
         side = np.abs(mk.normal[:, 0]) < 0.5
         tilted = (mk.normal[:, 0] <= -0.5) & (mk.normal[:, 0] >= -FACE_NORMAL)
+        S, A_group, _, _ = b._interface()                   # the face skins' groups now (Task 11's fix, item 1)
+        face_rows = b.markers.skin_index[b.markers.normal[:, 0] < -FACE_NORMAL]
+        fr = A_group[face_rows] / b.skins.base_area()[face_rows]
         return {"recession_mm": (c - c0) * 1e3, "centre_marker_off_axis_mm": d * 1e3,
+                "face_group_ratio": [float(fr.min()), float(np.median(fr)), float(fr.max())] if len(fr) else None,
+                "face_flatness_mm": float(np.ptp(rec)) if len(rec) else None,
                 "face_recession_mm": {"within_2mm": float(np.median(rec[dist < 2e-3])) if (dist < 2e-3).any() else None,
                                       "2_to_4mm": float(np.median(rec[(dist >= 2e-3) & (dist < 4e-3)]))
                                       if ((dist >= 2e-3) & (dist < 4e-3)).any() else None,

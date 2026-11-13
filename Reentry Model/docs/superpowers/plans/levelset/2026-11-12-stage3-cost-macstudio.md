@@ -39,8 +39,10 @@ test runs, so the times are high by an unknown factor of up to about two): build
 minutes) and a peak of 2.4 GB, and gave 2 404 markers and 1 075 620 cells (118 767 active nodes); one 0.0625 s step from
 880 K (one part, before any metal reached the rigid temperature) took 197 s, of which the remesh took about 82 s, psi
 24 s, phi 14 s, the runoff 29 s, the cut-cell solves 14 s, the markers 11 s and the shadow test 6 s. A melting 0.5 s step
-has eight such parts, each with its base move on the 1.08 million cells and the runoff of liquid, and one step end;
-scaled from the q6p box's melting step (126 markers, 391 238 cells, 162 s) by markers and cells, it should take about 15
+has eight such parts, each with its base move on the 1.08 million cells and the runoff of liquid, and one step end.
+(The probe ran before Task 11's fix round, which added the loads by patches -- about 0.55 s more a step on this sphere,
+measured on its own -- and the absorption beneath full-depth skins; the estimate below allows for them.) Scaled from the
+q6p box's melting step (126 markers, 391 238 cells, 162 s) by markers and cells, it should take about 15
 to 30 minutes for `dev`, and up to about an hour if most skins turn top-zone as the 10 mm cube's did (Task 10: 3
 minutes a step before, 20 after). `production` cells double the skins' cells. So expect, per run, the build (10 to 20
 minutes) and two steps of 15 to 60 minutes, and peak memory of 2.5 to 4 GB.
@@ -72,14 +74,15 @@ git status --short          # must show no modified tracked files; if it does, s
 git fetch origin
 git switch levelset-stage3 || git switch -c levelset-stage3 --track origin/levelset-stage3
 git pull --ff-only
-git merge-base --is-ancestor 4156d4e HEAD && echo "code is at or after Task 11's runoff fix"
+git merge-base --is-ancestor bc5fa69 HEAD && echo "code is at or after Task 11's fixes"
 git log --oneline -1        # note this commit for the report
 cd "Reentry Model"
 ls analysis/levelset/stage3_cases.py tests/levelset/test_levelset_stage3_cases.py   # both must exist
 ```
 
-The `merge-base` line must print its message (`4156d4e` is the runoff fix Task 11 committed just before the script and
-this runbook; the `ls` line checks that those are there too). Every command below runs from `Reentry Model/`.
+The `merge-base` line must print its message (`bc5fa69` is the last of the fixes of Task 11's fix round, which these
+runs must include: the groups by the cell above, the loads by patches, the absorption beneath full-depth skins, the
+islands of a base move and the round-off arrivals; the `ls` line checks that the script and the test are there). Every command below runs from `Reentry Model/`.
 
 ## 4. The Python environment
 
@@ -104,7 +107,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests/levelset/test_levelset_stage3_ca
     -k "cold_plate and dev"
 ```
 
-Expected: `181 passed` (on the laptop, 7.4 minutes across four processes; pytest may also report 6 deselected), then `1 passed` for the cold plate (about a minute; it writes
+Expected: `188 passed` (on the laptop, about 7 to 10 minutes across four processes; pytest may also report 6 deselected), then `1 passed` for the cold plate (about a minute; it writes
 `output/levelset/stage3_plate_cold_dev.json`). Any failure: stop and report it with its output.
 
 ## 6. The two runs
