@@ -257,7 +257,8 @@ class Profile:
                 (stepend, "correct_volumes", self._within("volume correction")), (stepend, "pieces", self._within("pieces")),
                 (skinbody, "pieces", "summary"), (skinbody, "cut_patches", "summary"),
                 (skinbody, "flow_substeps", "runoff"), (skinbody, "spray_plan", "loads spray plan"),
-                (loads_mod, "leeward", "loads shadow"), (loads_mod, "fit_nose", "loads"),
+                (loads_mod, "leeward", "loads shadow"), (loads_mod, "leeward_patches", "loads shadow"),
+                (loads_mod, "by_patches", "loads"), (loads_mod, "fit_nose", "loads"),
                 (loads_mod, "marker_angles", "loads"), (loads_mod.GasLoads, "evaluate", "loads")):
             self._wrap(owner, name, label)
         return self
@@ -459,25 +460,17 @@ def step_row(body, book, wall, x_before, delta, watch):
 
 def projected_heat(body, q0, direction, where=None):
     """A flux q0 [W/m2] arriving along -`direction` (a beam from the side `direction` points to) by projection, given to
-    the markers by the patches of phi they stand for, as the skyscrapers' plate gives each column the projection of its
-    own dual cell (`projected_flux`): each marker takes q0 times the mean, over phi's patches nearest it, of their own
-    projection max(n_p . direction, 0) (area-weighted), on its own area; `where(centroids)` (bool) heats only some
-    patches. Returns q per marker [W/m2]. Each marker's own normal, q0 max(n . direction, 0), gave the q6p box's markers
-    73.6 mm2 of projected area against phi's 99.3 mm2 (measured once, after its first step): its edges, rounded to the
-    stub's 0.8 mm, lie between markers 2 mm apart and the patches there fall mostly to the side faces' markers, whose
-    normals face away. Giving each marker its nearest patches' projected area outright (rather than their mean on its own
-    area) set the shoulder's markers' fluxes from 1.2 to 17 MW/m2 under a uniform 6 MW/m2, where their tessellated areas
-    differ from the areas nearest them (at the segment's cut edges); the mean keeps a uniform beam uniform."""
-    mk = body.markers
+    the markers by the patches of phi they own, as the gas loads now are (`loads.patch_mean`, stage 3 Task 11's fix, item
+    2) and as the skyscrapers' plate gives each column the projection of its own dual cell (`projected_flux`): each marker
+    takes q0 times the area-weighted mean, over phi's patches nearest it, of their own projection max(n_p . direction, 0),
+    on its own area; `where(centroids)` (bool) heats only some patches. Returns q per marker [W/m2]. (Each marker's own
+    normal, q0 max(n . direction, 0), gave the q6p box's markers 73.6 mm2 of projected area against phi's 99.3 mm2,
+    measured once after its first step: its edges, rounded to the stub's 0.8 mm, lie between markers 2 mm apart.)"""
     P = patches(body.mesh, body.phi)
-    d = np.asarray(direction, float)
-    proj = P.area * np.maximum(P.normal @ d, 0.0)
+    proj = np.maximum(P.normal @ np.asarray(direction, float), 0.0)
     if where is not None:
         proj = np.where(where(P.centroid), proj, 0.0)
-    _, owner = cKDTree(mk.x).query(P.centroid)
-    own = np.bincount(owner, P.area, minlength=mk.n)
-    per = np.bincount(owner, proj, minlength=mk.n)
-    return q0 * np.divide(per, own, out=np.zeros(mk.n), where=own > 0.0)
+    return q0 * loads_mod.patch_mean(body.markers, P, proj)
 
 
 def heat_coverage(body, direction, q=None, q0=1.0, where=None):

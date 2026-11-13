@@ -24,8 +24,9 @@ patches per area, q0 = sum a_m / A(G_m), q1 = sum b_m / A(G_m) over the markers 
 temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
 receives exactly sum_m (a_m + b_m T_b,m) dt. (With one patch per marker this is the brief's q0 = sum a / A_patch.)
 
-One macro step (`advance`, design 10.1 with 20): the gas loads once per marker at the step's start (`loads.GasLoads`,
-the leeward test, the fitted nose), or a prescribed heating; the surface flow's forcing for the runoff (with an aero state
+One macro step (`advance`, design 10.1 with 20): the gas loads once per marker at the step's start (`loads.GasLoads`
+at phi's patches, each marker the mean over the patches it owns, `loads.by_patches`; the leeward test, the fitted
+nose), or a prescribed heating; the surface flow's forcing for the runoff (with an aero state
 or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a state); then the step as parts
 (Ruling 7: none longer than PART_MAX while any top is at or above T_rigid or about to be, and a part whose base moves
 exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most SPLIT_DEPTH_MAX levels). Each part:
@@ -799,11 +800,14 @@ class LevelSetSkinBody(StepEnd):
                 raise ValueError("an aero state needs the body's GasLoads (loads=...)")
             centroid = self.mass_centroid()
             theta = loads_mod.marker_angles(mk, self.v_hat)
-            lee = loads_mod.leeward(self.mesh, self.phi, cut_patches(self.mesh, self.phi), mk, self.v_hat, self.leeward,
-                                    centroid)
+            P_phi = cut_patches(self.mesh, self.phi)
+            lee_p = loads_mod.leeward_patches(self.mesh, self.phi, P_phi, self.v_hat, self.leeward, centroid)
+            lee = loads_mod.leeward(self.mesh, self.phi, P_phi, mk, self.v_hat, self.leeward, centroid, patch_lee=lee_p)
             ang = nose.load_angles(theta, ~lee)
             fit = loads_mod.fit_nose(mk, centroid, self.v_hat, "current", fallback=self._radius(centroid))
-            q, flow = self.loads.evaluate(state, mk, np.nan_to_num(T_top, nan=float(np.nanmean(T_top))), ang, fit)
+            ang_p = nose.load_angles(np.arccos(np.clip(P_phi.normal @ self.v_hat, -1.0, 1.0)), ~lee_p)
+            q, flow = loads_mod.by_patches(self.loads, state, mk, P_phi,
+                                           np.nan_to_num(T_top, nan=float(np.nanmean(T_top))), ang_p, fit, self.v_hat)
             ctx["q"][mk.skin_index] = q
             g = flow.deceleration * self.v_hat if decel_vec is None else np.asarray(decel_vec, float)
             ctx["forcing"] = Forcing.from_surface_flow(flow, g, self.v_hat, mat.liquid.sigma, mk.kappa.sum(axis=1))
