@@ -1,6 +1,6 @@
 # The skins' windward loads from one fitted sphere, with a shelter test: design
 
-**Status:** the rule was decided by Asha on 2026-11-13. This document awaits her approval. Branch `fitted-sphere-loads`,
+**Status:** the rule was decided by Asha on 2026-11-13, and she approved this document the same day. Branch `fitted-sphere-loads`,
 cut from main at 4e857e1.
 
 ## Why
