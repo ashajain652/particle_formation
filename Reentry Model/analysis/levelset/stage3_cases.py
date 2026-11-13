@@ -432,6 +432,7 @@ def step_row(body, book, wall, x_before, delta, watch):
            "cells_at_floor": int((body.mesh.size <= body.cell_floor * (1 + 1e-9)).sum()),
            "snap_fallback": book.snap_fallback, "snap_slide_max_m": book.snap_slide_max,
            "volume_correction_max": book.volume_correction_max,
+           "move_corrections": [float(v) for v in getattr(book, "move_corrections", [])],   # each base move's miss (I3)
            # carried 1: uneven patch groups
            "group_area_ratio_min": book.group_area_ratio_min, "group_area_ratio_max": book.group_area_ratio_max,
            "group_area_ratio_trimmed_max": book.group_area_ratio_trimmed_max,
