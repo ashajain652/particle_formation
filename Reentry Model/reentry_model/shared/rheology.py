@@ -3,8 +3,9 @@ ring-shedding.md; the layered-skin design section 6.4; the near-liquidus viscosi
 specs/2026-11-12-near-liquidus-viscosity-design.md). Shared physics: it imports neither architecture's modules, so that
 both architectures call the same law through `law_viscosity` (Asha, 2026-11-12).
 
-Two laws, chosen by name (LAWS). DEFAULT_LAW = "composite" is the run command's default; "bridge" is the library default
-of `SkinSettings` and the law every state saved before the composite law was added keeps.
+Two laws, chosen by name (LAWS). DEFAULT_LAW = "composite" is the default, of the run command and of `SkinSettings` in the
+library alike (Asha, 2026-11-12); "bridge" is the earlier law, which every state saved before the composite law was added
+keeps on resume.
 
 THE COMPOSITE LAW (`composite_viscosity`; the design's section 3), a function of the solid fraction f_s alone, with no
 shear rate and no history:
@@ -117,7 +118,7 @@ SUSPENSION_S = 3.0                 # Mori-Ototake's S for spheres (Moon)
 SUSPENSION_PHI_M = 0.55            # the suspension's packing fraction, in the envelope fraction
 INTERNAL_SOLID_FRACTION = 0.5      # ASSUMED for 7075 (the solidification models' default; no measurement)
 LAWS = ("composite", "bridge")
-DEFAULT_LAW = "composite"          # the run command's default; SkinSettings' library default is "bridge"
+DEFAULT_LAW = "composite"          # the default, on the command line and in the library (SkinSettings)
 
 
 def li_viscosity(f_s, gamma):

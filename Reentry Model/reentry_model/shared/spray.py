@@ -145,13 +145,26 @@ Eq. (2) hands over to the balance; the thin branch keeps its edge-state waveleng
 the flag accepts knowingly; the thick branch has no viscous gate, so a slurry layer at a Reynolds number near 3 can spray by
 inviscid theory with `--slurry-spray on`; the droplet constant k_r was calibrated on Ranger's depth, so the band's droplet
 sizes carry that; records still label the band's patches as Couette closure. Only the spraying reads the band's depth: the
-feed and the film's transport keep `melt_layer`."""
+feed and the film's transport keep `melt_layer`.
+
+The profile path (`SprayModel.dispersion` "profile"; the kinked-profile dispersion design of 2026-11-11, sections 6.5-6.8).
+Where the caller has resolved a column's own melt speed profile (`ProfileModes`, built for the layered skins by
+`melt_profile`), `evaluate` takes the column out of the thick, regime-2, thin and rarefied branches above and gives it two
+shear modes, only where delta_m is finite (decision 6: delta_m decides whether a column may shear-spray, the profile how):
+Girin's gradient mode solved on that profile above its wall, branch 5 (`BRANCH_PROFILE`): lambda = 2 pi / k, r = k_r
+lambda, growth time k_t / growth and his torus rate, active where the growth beats its own wave's viscous damping
+2 nu_eff k^2, with no critical Weber number; and the gas-driven mode, the thin (or rarefied) branch with the depth to the
+wall in place of b and nu_eff, the layer's Couette viscosity, in `viscous_film`. The shorter growth time takes the column.
+Its droplet's crest cap reads the depth of the run of the mode that took it, and its records carry nine more columns
+(`PROFILE_COLUMNS`), while `SOURCE_COLUMNS` stays the element model's 27."""
 import os
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from . import dispersion
+# by name, because SprayModel's `dispersion` setting shadows the module inside the class
+from .dispersion import DISPERSION_NAMES, WE_CRITICAL_THEORY, DispersionTable
 from .surface_flow import BRANCH_FREE_MOLECULAR, CLOSURE_GIRIN, KN_LOCAL_SLIP
 
 K_R, K_T = 0.17, 1.1
@@ -179,6 +192,43 @@ SOURCE_COLUMNS = ["time_s", "altitude_km", "velocity_kms", "theta_deg", "x_m", "
 BRANCH_THICK, BRANCH_THIN, BRANCH_RAREFIED, BRANCH_RT = 0, 1, 2, 3      # Girin thick / thin-film with the edge state /
 #                                                                        thin-film with the freestream / front-surface Rayleigh-Taylor
 BRANCH_REGIME2 = 4                 # deep film whose melt is the more viscous medium: Girin & Kopyt's step profile again
+BRANCH_PROFILE = 5                 # Girin's gradient mode solved on the column's own resolved profile (the profile path)
+# The profile path's record columns, appended after SOURCE_COLUMNS (spec 6.8): the depth to the wall [m], the wall's kind
+# (1 floor, 0 the rigid front), the floor Reynolds number at the wall, the first kink's depth [m] and temperature [K], the
+# gradient mode's release depth [m], its solved growth rate [1/s], and Girin's theoretical delta_m [m] and V_s [m/s]. No
+# name begins with `wall_`, the prefix of the wall-clock timers, which the comparisons of runs skip (the first two were
+# renamed on 2026-11-12, in the final review's fix round, before any flight wrote them).
+PROFILE_COLUMNS = ("depth_to_wall_m", "floor_like_wall", "floor_re", "kink_depth_m", "kink_T_K", "release_depth_m",
+                   "growth_rate_per_s", "girin_delta_m_m", "girin_v_s_ms")
+
+
+def record_columns(width):
+    """The record columns' names for a record `width` columns wide: SOURCE_COLUMNS for 27 (the table path and the element
+    model), SOURCE_COLUMNS followed by PROFILE_COLUMNS for 36 (the profile path); any other width is a ValueError."""
+    if width == len(SOURCE_COLUMNS):
+        return list(SOURCE_COLUMNS)
+    if width == len(SOURCE_COLUMNS) + len(PROFILE_COLUMNS):
+        return SOURCE_COLUMNS + list(PROFILE_COLUMNS)
+    raise ValueError("records are {} or {} columns wide, not {}".format(
+        len(SOURCE_COLUMNS), len(SOURCE_COLUMNS) + len(PROFILE_COLUMNS), width))
+
+
+@dataclass
+class ProfileModes:
+    """What the profile path needs per column (spec 6.5 and 6.6), all (n,) arrays: `resolved` (bool), the columns whose
+    profile the caller resolved; `growth` [1/s], the fastest wave's growth rate on the profile above the wall (0 where it
+    is stable or that layer is one straight segment); `k` [1/m], its wavenumber; `wall_depth` [m], the depth to the wall;
+    `nu_eff` [m2/s], the layer's Couette viscosity above the wall; `we_s`, the Weber number recorded for the column (spec
+    6.7: density times the square of the top segment's velocity jump times its depth, over surface tension); and
+    `cap_gradient` and `cap_driven` [m], the depth at the step's start of each mode's release run, for the crest cap."""
+    resolved: np.ndarray
+    growth: np.ndarray
+    k: np.ndarray
+    wall_depth: np.ndarray
+    nu_eff: np.ndarray
+    we_s: np.ndarray
+    cap_gradient: np.ndarray
+    cap_driven: np.ndarray
 
 
 def melt_layer(flow, liquid):
@@ -299,8 +349,11 @@ def thin_film_mode(mach, momentum_flux, liquid):
     return lam, tau
 
 
-def viscous_film(lam, tau, h, liquid):
+def viscous_film(lam, tau, h, liquid, nu=None):
     """The thin mode's wave on a viscous film of depth h over a rigid floor (2026-10-22): (gamma_tau, outside).
+
+    `nu` [m2/s], one value or one per patch, replaces the liquid's mu_l / rho_l where it is given: the profile path's
+    nu_eff, the Couette viscosity of the layer above the wall (spec 6.5). Without it the result is unchanged, bit for bit.
 
     gamma is the amplitude damping rate of a capillary wave of wavenumber k = 2 pi / lambda* on a layer of depth h,
         gamma = 2 nu k^2 + k sqrt(nu omega / 2) / sinh(2 k h),   omega^2 = (Sigma k^3 / rho_l) tanh(k h),
@@ -321,7 +374,7 @@ def viscous_film(lam, tau, h, liquid):
     the film thickness b, since the thin branch exists because the rigid core lies within delta_m of the surface.
     OPEN ASSUMPTION: mushy material more than half liquid counts as non-rigid there but is far more viscous than the
     liquid, so the effective floor may lie inside that layer, and the damping would then be larger than computed."""
-    nu = liquid.mu / liquid.rho
+    nu = liquid.mu / liquid.rho if nu is None else np.asarray(nu, dtype=float)
     lam, tau, h = (np.asarray(x, dtype=float) for x in (lam, tau, h))
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         k = 2.0 * np.pi / lam
@@ -367,6 +420,7 @@ class SprayResult:
     outside: np.ndarray = None  # bool, Girin & Kopyt's branches whose film is shallower than the floor's Stokes layer
     wavelength: np.ndarray = None   # m, the wavelength of the mode that sprays each patch (nan where none): the
     #                                 per-crest cap's lambda (2026-10-24)
+    cap_depth: np.ndarray = None    # m, the crest cap's depth per column on the profile path (spec 6.6); None off it
 
 
 SPRAY_GATES_NAMES = ("2026-11-10", "before")
@@ -389,23 +443,38 @@ class SprayModel:
     the Rayleigh-Taylor mode, a melt-side mode driven by the
     deceleration, is not gated. `before` keeps the thin branch spraying wherever it did. `slip_band` (class default False,
     so a model pickled before it existed has it off) says whether the callers read the band's depth: the model itself only
-    gates on the `delta_m` it is given, which the callers take from `spray_layer` with this flag."""
+    gates on the `delta_m` it is given, which the callers take from `spray_layer` with this flag.
+
+    `dispersion` (spec 6.1; one of `DISPERSION_NAMES`) says which theory the callers spray by: `table`, Girin's tabulated
+    dispersion with his delta_m and V_s, or `profile`, his gradient mode solved on the column's own resolved profile. The
+    class attribute and the constructor's default are both `table`, so a model pickled before the setting existed, or
+    built directly, keeps Girin's theory; the command line passes `profile` for spraying skin runs. Only a setting other
+    than the class's is stored on the instance, so a `table` model pickles to the same bytes as before the setting existed
+    (a stored "table" would be the very string object that names the `table` attribute, which pickle's memo then shares,
+    and a model loaded and pickled again would differ by those bytes). The model only carries the setting: `evaluate` does
+    not read it, and takes the profile path wherever it is given a `profile`."""
     spray_gates = "before"
     slip_band = False
+    dispersion = "table"
 
-    def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=dispersion.WE_CRITICAL_THEORY, table=None,
-                 rt_spray=True, spray_gates="before", slip_band=False):
+    def __init__(self, liquid, k_r=K_R, k_t=K_T, we_critical=WE_CRITICAL_THEORY, table=None,
+                 rt_spray=True, spray_gates="before", slip_band=False, dispersion="table"):
         if spray_gates not in SPRAY_GATES_NAMES:
             raise ValueError("spray_gates must be one of {}, got {!r}".format(SPRAY_GATES_NAMES, spray_gates))
+        if dispersion not in DISPERSION_NAMES:
+            raise ValueError("dispersion must be one of {}, got {!r}".format(DISPERSION_NAMES, dispersion))
         self.spray_gates, self.slip_band = spray_gates, bool(slip_band)
+        if dispersion != SprayModel.dispersion:      # the class default is not stored: a table model pickles as before
+            self.dispersion = dispersion
         if k_r <= 0.0 or k_t <= 0.0 or we_critical <= 0.0:
             raise ValueError("k_r, k_t and the critical Weber number must be > 0")
         self.liquid, self.k_r, self.k_t, self.we_critical = liquid, k_r, k_t, we_critical
         self.rt_spray = bool(rt_spray)               # apply the front-surface mode, or only report it
-        self.table = table or dispersion.DispersionTable()
+        self.table = table or DispersionTable()
 
     def evaluate(self, flow, state, b, delta_m, v_s, windward, dt, areas, m_f, radius=0.05, b_layer=None,
-                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None, cap_depth=None, rt_layer=None):
+                 extent=None, deceleration_n=None, regime_layer=None, on_slurry=None, cap_depth=None, rt_layer=None,
+                 profile=None, rt_extent=None):
         """Per-patch instability and release for the film thickness b, melt-layer thickness delta_m and film surface
         velocity v_s (from film.lubrication), over the step dt; m_f is the film mass available, radius the body's.
 
@@ -433,7 +502,19 @@ class SprayModel:
         criterion, its bounded growth and the depth it sheds within a growth time -- in place of the liquid layer (for the
         criteria) and the film b (for the rate): the layered skins' liquid depth, where b is the flowing depth and liquid
         lies on slurry (Asha, 2026-10-29, decision 1 of sub-plan 22 Task 1c, option B: the mode is a liquid pool's, as the
-        amendment of 2026-10-06 has it in the element model). Without it the mode reads them as before, bit for bit."""
+        amendment of 2026-10-06 has it in the element model). Without it the mode reads them as before, bit for bit.
+
+        `profile`, a `ProfileModes`, puts the columns it resolves on the profile path (the module docstring; spec 6.5 and
+        6.6): they leave the thick, regime-2, thin and rarefied branches, whose thick/thin gate is not used there, and
+        take the faster of the gradient mode solved on their profile and the gas-driven mode on their wall
+        (`_profile_shear`), only where they are windward, delta_m is finite and the layer above the wall is at least B_MIN
+        deep, whatever `spray_gates` says. Their crest cap reads `profile.cap_gradient` where the gradient mode took the
+        column and `profile.cap_driven` where the gas-driven mode did, and the result records the depth used,
+        `cap_depth`. Every other column takes today's code, and the caller's `cap_depth`, which the profile path needs.
+        `rt_extent`, if given, is the region the Rayleigh-Taylor mode's wave must fit in, in place of `extent` (the
+        skins' liquid pool, where `extent` is the region of the layer above the wall). With neither, nothing changes."""
+        if profile is not None and cap_depth is None:
+            raise ValueError("the profile path is the crest-limit path: a profile needs cap_depth")
         liq = self.liquid
         n = b.size
         layer = b if b_layer is None else np.maximum(np.asarray(b_layer, dtype=float), b)
@@ -476,6 +557,11 @@ class SprayModel:
             # (the Rayleigh-Taylor mode below is not gated)
             with_depth = np.isfinite(delta_m)
             rarefied, thin = rarefied & with_depth, thin & with_depth
+        if profile is not None:
+            # the resolved columns leave today's branches (`held` acts only through thin and rarefied); regime 2 is not
+            # evaluated on them, since the thick/thin gate is not used there (spec 6.7, the plan's call 4)
+            resolved = np.asarray(profile.resolved, dtype=bool)
+            thick, regime2, thin, rarefied = thick & ~resolved, regime2 & ~resolved, thin & ~resolved, rarefied & ~resolved
         # Girin's (2017) stability criterion, on the thick branch only (2026-10-22). His phi_cr comes from We_s > We_cr
         # with the sphere's own edge solution substituted in; evaluated locally instead of through that closed form it holds on an eroded
         # body too, which a single critical angle does not. The shear acts over the liquid it can reach, min(delta_m,
@@ -547,6 +633,15 @@ class SprayModel:
             r[mask], mdot[mask], branch[mask] = rr, rate, code
             growth[mask] = np.where(ok, tau, np.nan)
             wavelength[mask] = np.where(ok, lam, np.nan)
+        # the profile path's two shear modes (spec 6.5), on the resolved columns that may shear-spray (decision 6)
+        if profile is not None:
+            wall = np.asarray(profile.wall_depth, dtype=float)
+            on = resolved & np.asarray(windward, dtype=bool) & np.isfinite(delta_m) & (wall >= B_MIN)
+            if on.any():
+                code, r[on], mdot[on], growth[on], wavelength[on], gamma_tau[on], outside[on] = self._profile_shear(
+                    flow, state, profile, on, None if L is None else L[on])
+                branch[on], h_floor[on] = code, wall[on]
+                we_s[on] = np.where(code == BRANCH_PROFILE, np.asarray(profile.we_s, dtype=float)[on], we_s[on])
         # (iv) the front-surface Rayleigh-Taylor mode, now *applied* rather than only reported.
         #
         # Girin & Kopyt assign the front surface -- where the flow influence is negligible, V_0 -> 0 and sin Theta -> 1 --
@@ -575,7 +670,8 @@ class SprayModel:
         pool = layer if rt_layer is None else np.asarray(rt_layer, dtype=float)  # the liquid the mode reads (2026-10-29)
         if self.rt_spray:
             deep, _, _ = rayleigh_taylor(w_n, pool, liq)                # the threshold: h > lambda*/2 pi
-            rt_on, lam_rt, tau_rt = rayleigh_taylor_bounded(w_n, pool, np.full(n, np.inf) if L is None else L, liq)
+            L_rt = L if rt_extent is None else np.asarray(rt_extent, dtype=float)    # the liquid pool's region (spec 6.6)
+            rt_on, lam_rt, tau_rt = rayleigh_taylor_bounded(w_n, pool, np.full(n, np.inf) if L_rt is None else L_rt, liq)
             rt_on = np.asarray(rt_on) & np.asarray(deep) & has_film & np.isfinite(tau_rt)
             shed = b if rt_layer is None else pool                       # what one growth time shakes off
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -588,6 +684,10 @@ class SprayModel:
             wavelength = np.where(faster, lam_rt, wavelength)
         if cap_depth is not None:                # one crest gives nothing on no depth: nothing leaves (2026-10-24)
             h_cap = np.asarray(cap_depth, dtype=float)
+            if profile is not None:              # the depth at the step's start of the run of the mode that took the column
+                driven = resolved & np.isin(branch, (BRANCH_THIN, BRANCH_RAREFIED))
+                h_cap = np.where(branch == BRANCH_PROFILE, np.asarray(profile.cap_gradient, dtype=float),
+                                 np.where(driven, np.asarray(profile.cap_driven, dtype=float), h_cap))
             mdot = np.where(h_cap > 0.0, mdot, 0.0)
         unstable = mdot > 0.0
         dm = np.where(unstable, np.minimum(mdot * areas * dt, m_f), 0.0)
@@ -616,21 +716,58 @@ class SprayModel:
         gk = np.isin(branch, (BRANCH_THIN, BRANCH_RAREFIED, BRANCH_REGIME2))    # the Rayleigh-Taylor mode may have taken some
         h_floor, gamma_tau = np.where(gk, h_floor, np.nan), np.where(gk, gamma_tau, np.nan)
         return SprayResult(branch, we_s, unstable, r, mdot, dm, dn, bool(np.any(rt_active & has_film)), delta_m, v_s, growth,
-                           h_floor, gamma_tau, outside & gk, wavelength)
+                           h_floor, gamma_tau, outside & gk, wavelength, None if profile is None else h_cap)
+
+    def _profile_shear(self, flow, state, profile, on, L):
+        """The profile path's two shear modes on the columns `on` (spec 6.5 and 6.6), whose region extents are `L` (None
+        for no wave-fit test): (branch, r [m], mdot [kg/(m2 s)], growth time [s], wavelength [m], gamma_tau, outside), each
+        one per column of `on`.
+
+        The gradient mode solved on the profile above the wall: lambda = 2 pi / k, r = k_r lambda, a growth time k_t /
+        growth and Girin's torus rate rho pi r^2 / (lambda t), active where its growth beats its own wave's viscous
+        damping, growth > 2 nu_eff k^2, and the wave fits in its region, with no critical Weber number. The gas-driven mode:
+        Girin & Kopyt's thin branch with the edge state (the rarefied one, with the freestream, on the free-molecular
+        branch) on a film as deep as the wall, rho min(wall, lambda*/8) / tau*, with `viscous_film` on that depth and
+        nu_eff. The shorter growth time takes the column (the comparison the Rayleigh-Taylor mode already makes, the plan's
+        call 3); a tie, and a column neither mode sprays, go to the gas-driven mode, which keeps such a column with no rate
+        as today's thin branch keeps its patches, so that its viscous-film record and `outside` flag are kept."""
+        liq, n = self.liquid, on.size
+        k, rate, nu, wall = (np.asarray(x, dtype=float)[on] for x in (profile.k, profile.growth, profile.nu_eff,
+                                                                       profile.wall_depth))
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            lam_g = 2.0 * np.pi / k
+            grad = np.isfinite(lam_g) & (lam_g > 0.0) & (rate > 2.0 * nu * k ** 2) & wave_fits(lam_g, L)
+            t_g = np.where(grad, self.k_t / np.where(grad, rate, 1.0), np.inf)
+            r_g = self.k_r * lam_g
+            mdot_g = np.where(grad, liq.rho * np.pi * r_g * r_g / (lam_g * t_g), 0.0)
+        free = np.broadcast_to(flow.branch == BRANCH_FREE_MOLECULAR, (n,))[on]
+        mach = np.where(free, state.ma, flow.mach_e[on])
+        flux = np.where(free, state.freestream.rho * state.V ** 2, (flow.rho_e * flow.u_eff ** 2)[on])
+        lam, tau = thin_film_mode(mach, flux, liq)
+        gt, out = viscous_film(lam, tau, wall, liq, nu=nu)
+        ok = np.isfinite(lam) & (lam > 0.0) & (tau > 0.0) & (gt < 1.0) & ~out & wave_fits(lam, L)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            mdot_d = np.where(ok, liq.rho * np.minimum(wall, lam / 8.0) / np.where(ok, tau, 1.0), 0.0)
+        wins = grad & (t_g < np.where(ok, tau, np.inf))
+        code = np.where(wins, BRANCH_PROFILE, np.where(free, BRANCH_RAREFIED, BRANCH_THIN))
+        return (code, np.where(wins, r_g, np.where(ok, lam / 4.0, np.nan)), np.where(wins, mdot_g, mdot_d),
+                np.where(wins, t_g, np.where(ok, tau, np.nan)), np.where(wins, lam_g, np.where(ok, lam, np.nan)), gt, out)
 
 
 def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
-                 release_angle=None):
+                 release_angle=None, extra=None):
     """Source-table rows, an array (k, len(SOURCE_COLUMNS)), for the patches that released mass (`res.dm` > 0): `h` [m]
     and `V` [m/s] the altitude and speed, `theta` [rad], `centroids` (n, 3) [m] and `t_hat` (n, 3) per patch, `flow`'s
     `closure`, `res` a SprayResult (or anything with its per-patch `branch`, `delta_m`, `we_s`, `r`, `dn`, `dm`, `v_s`,
     `h_floor`, `gamma_tau`), `b` [m] the film thickness, `liquid` the droplets' properties -- each of its `rho`, `mu` and
     `sigma` one value or one per patch (a slurry droplet's are its slurry's: sub-plan 22 Task 2) -- for their Weber and
     Ohnesorge numbers at the freestream `state`, `solid_fraction` and `h_kg` [J/kg] per patch (0 and nan if not given),
-    and `release_angle` [deg] per patch, Register et al.'s (`register_angle`; nan if not given; sub-plan 22 Task 4)."""
+    and `release_angle` [deg] per patch, Register et al.'s (`register_angle`; nan if not given; sub-plan 22 Task 4).
+    `extra`, an (n, len(PROFILE_COLUMNS)) array, is appended to each released patch's row: the profile path's columns
+    (spec 6.8), so that its rows are `record_columns(36)` wide; without it the rows are SOURCE_COLUMNS, as before."""
     k = np.flatnonzero(res.dm > 0.0)
     if k.size == 0:
-        return np.zeros((0, len(SOURCE_COLUMNS)))
+        return np.zeros((0, len(SOURCE_COLUMNS) + (0 if extra is None else np.shape(extra)[1])))
     r = res.r[k]
     n = len(res.dm)
     rho, mu, sigma = (np.broadcast_to(np.asarray(x, dtype=float), (n,))[k] for x in (liquid.rho, liquid.mu, liquid.sigma))
@@ -643,7 +780,7 @@ def source_block(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, 
                             centroids[k, 0], centroids[k, 1], centroids[k, 2], flow.closure[k], res.branch[k], b[k],
                             res.delta_m[k], res.we_s[k], r, res.dn[k], res.dm[k], res.v_s[k], t_hat[k, 0], t_hat[k, 1],
                             t_hat[k, 2], we_d, oh, (we_d > WE_BREAKUP).astype(float), res.h_floor[k], res.gamma_tau[k],
-                            s_f, h_d, angle])
+                            s_f, h_d, angle] + ([] if extra is None else [np.asarray(extra, dtype=float)[k]]))
 
 
 def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, solid_fraction=None, h_kg=None,
@@ -655,13 +792,14 @@ def source_rows(t, h, V, theta, centroids, t_hat, flow, res, b, liquid, state, s
 
 
 def source_table(rows):
-    """A body's `source_rows` as one array (N, len(SOURCE_COLUMNS)): a list of rows (the element model's, one per
-    patch-step) or of blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about
-    0.9 kB a row against 0.2 kB in an array, and a flight at the continuum step makes of order ten million records), or a
-    `SourceSpool` on disk, read into memory."""
+    """A body's `source_rows` as one array (N, width): a list of rows (the element model's, one per patch-step) or of
+    blocks of rows (the layered skins', one array per macro step: a Python list of floats costs about 0.9 kB a row against
+    0.2 kB in an array, and a flight at the continuum step makes of order ten million records), or a `SourceSpool` on disk,
+    read into memory. The width is the rows' own, 27 or, on the profile path, 36 (`record_columns`), or the spool's names';
+    an empty list has 27 columns."""
     if isinstance(rows, SourceSpool):
         return np.column_stack([np.asarray(c) for c in rows.columns().values()]) if rows.n_rows \
-            else np.zeros((0, len(SOURCE_COLUMNS)))
+            else np.zeros((0, len(rows.names)))
     if not len(rows):
         return np.zeros((0, len(SOURCE_COLUMNS)))
     if isinstance(rows[0], np.ndarray) and rows[0].ndim == 2:
@@ -669,14 +807,18 @@ def source_table(rows):
     return np.array(rows, dtype=float)
 
 
-def source_columns(rows):
-    """A body's `source_rows` as {name: one-dimensional array} in SOURCE_COLUMNS order, what the coupled writer writes: a
-    list of rows or of blocks, the columns of `source_table`'s array; a `SourceSpool`, its files mapped from disk, so that
-    no flight's records need be in memory at once. The values are the same to the last bit either way."""
+def source_columns(rows, names=None):
+    """A body's `source_rows` as {name: one-dimensional array} in `record_columns` order for their width, what the coupled
+    writer writes: a list of rows or of blocks, the columns of `source_table`'s array; a `SourceSpool`, its files mapped
+    from disk under its own names, so that no flight's records need be in memory at once. The values are the same to the
+    last bit either way. `names`, if given, are the columns of a list with no rows yet (the body's own record names, a
+    profile-path skin body's 36, spec 6.8), which would otherwise read as the 27 SOURCE_COLUMNS."""
     if isinstance(rows, SourceSpool):
         return rows.columns()
     table = source_table(rows)
-    return {name: table[:, i] for i, name in enumerate(SOURCE_COLUMNS)}
+    if names is not None and not len(table):
+        table = np.zeros((0, len(names)))
+    return {name: table[:, i] for i, name in enumerate(record_columns(table.shape[1]))}
 
 
 class SourceSpool:
@@ -686,12 +828,15 @@ class SourceSpool:
     million rows of 27 columns, 7.6-15.2 GB as arrays and twice that while `source_table` joins them -- more than the
     laptop's 24 GB -- so the command line gives the skin body a spool in the run's directory and the coupled writer maps
     the columns back (`columns`), each read once, contiguous. `len` counts the blocks (macro steps that released), as the
-    in-memory list does; `n_rows` the rows."""
+    in-memory list does; `n_rows` the rows. `names` are its columns, SOURCE_COLUMNS unless it is given others (the profile
+    path's `record_columns(36)`, spec 6.8); a spool pickled before it had names has the class's, the 27 SOURCE_COLUMNS."""
+    names = tuple(SOURCE_COLUMNS)
 
-    def __init__(self, directory):
+    def __init__(self, directory, names=None):
         os.makedirs(directory, exist_ok=True)
         self.directory, self.n_rows, self.n_blocks = directory, 0, 0
-        for name in SOURCE_COLUMNS:
+        self.names = tuple(SOURCE_COLUMNS if names is None else names)
+        for name in self.names:
             open(self._path(name), "wb").close()
 
     def _path(self, name):
@@ -701,31 +846,50 @@ class SourceSpool:
         return self.n_blocks
 
     def append(self, block):
-        """Add a macro step's block of rows (k, len(SOURCE_COLUMNS)) to the end of every column's file."""
+        """Add a macro step's block of rows (k, len(names)) to the end of every column's file."""
         block = np.asarray(block, dtype=np.float64)
-        if block.ndim != 2 or block.shape[1] != len(SOURCE_COLUMNS):
-            raise ValueError("a block of source rows has {} columns, not {}".format(block.shape[-1], len(SOURCE_COLUMNS)))
+        if block.ndim != 2 or block.shape[1] != len(self.names):
+            raise ValueError("a block of source rows has {} columns, not {}".format(block.shape[-1], len(self.names)))
         if not len(block):
             return
-        for i, name in enumerate(SOURCE_COLUMNS):
+        for i, name in enumerate(self.names):
             with open(self._path(name), "ab") as fh:
                 fh.write(np.ascontiguousarray(block[:, i], dtype="<f8").tobytes())
         self.n_rows += len(block)
         self.n_blocks += 1
 
     def columns(self):
-        """{name: the column, read-only, mapped from its file} in SOURCE_COLUMNS order (empty arrays with no rows)."""
+        """{name: the column, read-only, mapped from its file} in `names` order (empty arrays with no rows)."""
         if not self.n_rows:
-            return {name: np.zeros(0) for name in SOURCE_COLUMNS}
-        return {name: np.memmap(self._path(name), dtype="<f8", mode="r", shape=(self.n_rows,)) for name in SOURCE_COLUMNS}
+            return {name: np.zeros(0) for name in self.names}
+        return {name: np.memmap(self._path(name), dtype="<f8", mode="r", shape=(self.n_rows,)) for name in self.names}
 
     def remove(self):
         """Delete the files and the directory, once what they hold has been written elsewhere."""
-        for name in SOURCE_COLUMNS:
+        for name in self.names:
             if os.path.exists(self._path(name)):
                 os.remove(self._path(name))
         if os.path.isdir(self.directory) and not os.listdir(self.directory):
             os.rmdir(self.directory)
+
+
+def fit_width(rows, width):
+    """In-memory records fitted to `width` columns, for a resume that changes `SprayModel.dispersion` (spec 6.8; Review
+    Focus 4): each block of a list cut to its first `width` columns (profile to table: the 27 SOURCE_COLUMNS) or padded on
+    the right with nan columns (table to profile: the nine PROFILE_COLUMNS unknown), the columns kept bit for bit, as a new
+    list. Any other form -- a `SourceSpool`, which a resume replaces, or an empty list -- comes back unchanged."""
+    if not isinstance(rows, list) or not rows:
+        return rows
+    fitted = []
+    for block in rows:
+        block = np.asarray(block, dtype=float)
+        have = block.shape[-1]
+        if have > width:
+            block = block[..., :width].copy()
+        elif have < width:
+            block = np.concatenate([block, np.full(block.shape[:-1] + (width - have,), np.nan)], axis=-1)
+        fitted.append(block)
+    return fitted
 
 
 def register_angle(points, centre, v_hat):

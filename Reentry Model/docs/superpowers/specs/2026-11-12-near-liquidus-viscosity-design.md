@@ -9,6 +9,15 @@ Built 2026-11-12 on that branch: commits 0f7cfff, cd56947, 136e9d8, 3e09ec6, 32c
 review fix commit; the shared-context fact is fact 196 (docs/superpowers/plans/melt-spraying-subplans/
 00-shared-context.md); the probe report is output/near_liquidus_viscosity/probe.md (git-ignored).
 
+Merged into main 2026-11-13 (Asha, 2026-11-12: "integrate the branch, and merge branch onto origin/main. Default should be this new
+law, not the old one. Let's wait to fly new long tests on the Mac Studio once more changes land on main from other
+agents."). Two amendments came with the merge. First, `SkinSettings.rheology` defaults to "composite" in the library as
+well as on the command line (section 6 and the first call of section 11 are amended); a state saved before the option
+existed still resumes on "bridge", the law it flew, through `SkinSettings.__setstate__`. Second, main's kinked-profile
+dispersion (merged there the same day) reads the cells' viscosity through `skin.cell_viscosity`, so its profile path
+follows the selected law too. Level 5 waits until more changes land on main. The model_assumptions section is section 13,
+since main's profile path took section 12.
+
 The literature behind it lives in `reports/` and `research_notes/` at the repository root (not committed):
 
 - the first check, `Near liquidus aluminium alloy viscosity.md`, and its full-text notes (`fulltext_*.md`);
@@ -308,6 +317,9 @@ Under `bridge`, everything is today's code path, unchanged.
 - `SkinSettings` gains `rheology`. Its dataclass default is "bridge", so that existing tests and states saved before
   this change keep the present law: an unpickled old settings object has no `rheology` and reads the class default. The
   run command's default is "composite" (`DEFAULT_LAW`).
+  *Amendment at the merge into main (2026-11-13; Asha, 2026-11-12):* the dataclass default is "composite" (`DEFAULT_LAW`) too; an
+  unpickled old settings object with no `rheology` is given "bridge" by `SkinSettings.__setstate__`, and the existing
+  tests whose values were set on the bridge law name it.
 - A thin skins wrapper passes `sk.settings.rheology`, the cell state and the material's values to
   `rheology.law_viscosity`, and holds no physics of its own. Both `cell_viscosity` and `slurry_modes` use it, so the
   slurry mode follows the law too. `slurry_modes` today calls `rheology.viscosity` directly.
@@ -417,7 +429,8 @@ Level 4, a probe of the skins alone on the laptop (Asha, 2026-11-12):
   cases.
 
 Level 5, resumed flights (only if Asha decides after level 4): resume the same state under both laws with
-`--slurry-spray on`, to 179.5 s, on the Mac Studio by a runbook.
+`--slurry-spray on`, to 179.5 s, on the Mac Studio by a runbook. *Asha, 2026-11-12:* wait until more changes from other
+agents land on main before flying long tests on the Mac Studio.
 
 ## 9. Documentation
 
@@ -449,7 +462,7 @@ Left to the builder:
 Calls in this design that Asha did not decide (she should check these):
 
 - **The dataclass default.** `SkinSettings.rheology` defaults to "bridge" in the library, and the run command defaults
-  to "composite" (section 6).
+  to "composite" (section 6). *Decided by Asha at the merge, 2026-11-12:* "composite" in the library too.
 - **The variable.** Solid fraction, not temperature, places Li et al.'s data (section 3.1).
 - **The validation limit.** An internal fraction at or below 0.1 / 0.55 is rejected (section 6).
 - **The default run name.** It is unmarked, and the JSON records the law and the internal fraction.

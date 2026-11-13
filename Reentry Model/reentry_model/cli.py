@@ -8,14 +8,14 @@
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
         --size-feedback current|initial --leeward-test facing|centroid --rheology composite|bridge
-        --spray-gates 2026-11-10|before --slip-band on|off ...]
+        --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile ...]
                                      (the layered skins, the default with --thermal fem and --melt on, their flow and
                                       spraying the default there; the element model with --surface-model elements, and
                                       the default of a thermal run that does not melt)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
-        --rheology composite|bridge --spray-gates 2026-11-10|before --slip-band on|off]
+        --rheology composite|bridge --spray-gates 2026-11-10|before --slip-band on|off --dispersion table|profile]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -30,6 +30,7 @@ import sys
 import numpy as np
 
 from . import __version__, aero, atmosphere, compare, dispersion, fap, heating, material, sesam_io, spray, surface_flow, thermal, viz
+from .shared import melt_profile
 from .shared import rheology as viscosity_laws        # the module's name is a parameter name below
 from .skyscrapers import body, coupled, mesh, movemesh, restart, skin, skinbody
 from . import trajectory as tj
@@ -186,6 +187,27 @@ def spray_name_suffix(spray_gates, slip_band, spraying=True):
     return ("_gates-before" if spray_gates == "before" else "") + ("_slipband-on" if slip_band else "")
 
 
+DISPERSION_NEEDS = "--dispersion needs the skins' spraying: --surface-model skin --melt on --skin-flow on"
+
+
+def spraying_skins_of(args):
+    """Whether a run of `run`'s arguments sprays from the layered skins: `--surface-model skin` (the default of a thermal
+    run) with --melt on and their flow on (the default with melting unless instant removal is given), the only runs whose
+    spray model reads a resolved melt profile (the kinked-profile dispersion design, spec 5)."""
+    return surface_model_of(args) == "skin" and args.melt == "on" and skin_flow_of(args) == "on"
+
+
+def dispersion_of(args):
+    """The theory the spraying solves (the kinked-profile dispersion design, spec 6.1): --dispersion if given, else
+    `profile` (dispersion.DEFAULT_DISPERSION: Girin's gradient mode on the skins' own speed profile, with a floor test and
+    the gas-driven mode on the wall it places; Asha's decision 9, 2026-11-11) on a spraying skin run, and `table`, Girin's
+    theory as it stood before, on every other run -- the element model has no resolved profile, and a run without a spray
+    model has nothing it concerns."""
+    if args.dispersion is not None:
+        return args.dispersion
+    return dispersion.DEFAULT_DISPERSION if spraying_skins_of(args) else "table"
+
+
 def spread_limit_of(args):
     """The fold angle [degrees] past which the skins spread what they hand down, or None for --spread-limit off."""
     return None if args.spread_limit == "off" else args.spread_limit
@@ -259,7 +281,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
                      hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
-                     leeward_test="centroid", rheology=viscosity_laws.DEFAULT_LAW):
+                     leeward_test="centroid", rheology=viscosity_laws.DEFAULT_LAW, dispersion="profile"):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -277,7 +299,9 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     windward by its normal alone, not by the mass centroid's plane as well (Task 5j; the default is `centroid`, unmarked);
     `_rheology-bridge` where the melting skins' viscosity is the earlier bridge law, not the composite default (Asha,
     2026-11-12; only with `melting_skins`, since the law concerns only the skins that melt);
-    empty for the defaults.
+    `_dispersion-table` where a spraying skin run switches back to Girin's theory (--dispersion table; the kinked-profile
+    dispersion design: `profile` is the default and unmarked, and None, for a run without the skins' spraying, which the
+    option does not concern, is unmarked too); empty for the defaults.
     `melting_skins` says the run is one of melting skins, whose defaults are `--hand-down off` and `--part-count-from
     melting` (Asha, 2026-11-10, Task 5h): the suffix then marks the values that differ from those, `_handdown-on` and
     `_parts-moves`, and `_handdown-off` and `_parts-melting` are the defaults and unmarked; every other run keeps `on` and
@@ -321,6 +345,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_leeward-{}".format(leeward_test)
     if melting_skins and rheology != viscosity_laws.DEFAULT_LAW:       # the law concerns only the skins that melt
         out += "_rheology-{}".format(rheology)
+    if dispersion == "table":
+        out += "_dispersion-table"
     return out
 
 
@@ -359,6 +385,11 @@ def resume_arguments(rs):
                     help="Girin's spraying also runs in the slip band, body Knudsen number 0.01 to 0.1 (default: the saved "
                          "flight's, off for one saved before the option existed); refused for a saved flight without a spray "
                          "model")
+    rs.add_argument("--dispersion", choices=dispersion.DISPERSION_NAMES, default=None,
+                    help="the theory the skins' spraying solves: profile, Girin's gradient mode on the skins' own speed "
+                         "profile and the gas-driven mode on the wall a floor test places, or table, Girin's theory as it "
+                         "stood before (default: the saved flight's, table for one saved before the option existed); "
+                         "refused for a saved flight without the skins' spraying")
     rs.add_argument("--size-feedback", choices=body.SIZE_FEEDBACK_NAMES, default=None,
                     help="where the skins' windward loads take their nose radius from: current, a sphere fitted to the tops of the "
                          "columns facing the flow, or initial, the mesh's own radius (default: the saved flight's, initial for "
@@ -509,6 +540,14 @@ def build_parser():
                          "off the release stays capped at the liquid; the edge state the thin branch reads there comes from a "
                          "shock-layer construction the merged branch treats as invalid, and the flag accepts that knowingly "
                          "(default off, named _slipband-on)")
+    me.add_argument("--dispersion", choices=dispersion.DISPERSION_NAMES, default=None,
+                    help="with the skins' spraying (--surface-model skin --melt on --skin-flow on): profile, Girin's "
+                         "gradient mode solved on each windward column's own speed profile, fitted as straight segments, "
+                         "above a wall a floor test places at the shallowest floor-like kink (else the rigid front), and "
+                         "Girin & Kopyt's gas-driven mode on that wall, the faster releasing the cells at least as warm as "
+                         "its threshold, liquid and slurry together (the kinked-profile dispersion design; Asha, "
+                         "2026-11-11; default, unmarked); table, Girin's theory as it stood before, with his theoretical "
+                         "layer depth and surface speed and --we-critical (named _dispersion-table); refused on any other run")
     me.add_argument("--sideways-heat", choices=skin.SIDEWAYS_PAIRINGS, default="depth",
                     help="with --surface-model skin: what pairs neighbouring columns' cells in the sideways conduction: depth "
                          "below the tops (spec 6.3), or height above the bases, so that heat passes between cells that touch "
@@ -670,6 +709,8 @@ def build_thermal(args, settings, mass, spool=None):
         info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
         info["skin"]["rheology"] = args.rheology                           # always: the default changed (Asha, 2026-11-12)
         info["skin"]["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # the composite law's assumed value
+        if flow:
+            info["skin"]["dispersion"] = dispersion_of(args)               # always: the default changed (kinked profile)
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -695,9 +736,11 @@ def build_thermal(args, settings, mass, spool=None):
 
 
 def spray_model_of(args, mat):
-    """The shared spray physics with the command line's constants, for either surface model."""
+    """The shared spray physics with the command line's constants, for either surface model, on its `dispersion_of`: the
+    skins' spraying's setting, and `table` for the element model (it has no resolved profile), whether or not the
+    arguments have been resolved yet."""
     return spray.SprayModel(mat.liquid, k_r=args.kr, k_t=args.kt, we_critical=args.we_critical, rt_spray=args.rt_spray == "on",
-                            spray_gates=args.spray_gates, slip_band=args.slip_band == "on")
+                            spray_gates=args.spray_gates, slip_band=args.slip_band == "on", dispersion=dispersion_of(args))
 
 
 def skin_settings(args):
@@ -728,7 +771,9 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     skin_size_feedback_of(args),
                                                                     melting_skins=melting_skins_of(args),
                                                                     leeward_test=skin_leeward_test_of(args),
-                                                                    rheology=args.rheology),
+                                                                    rheology=args.rheology,
+                                                                    dispersion=dispersion_of(args) if spraying_skins_of(args)
+                                                                    else None),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
                                                                       spraying_run(args)))
 
@@ -811,6 +856,8 @@ def cmd_run(args, parser):
     if args.slip_band == "on" and not spraying_run(args):
         parser.error("--slip-band on needs a spraying run: --melt on with the layered skins' flow on, or with --surface-model "
                      "elements and Girin removal; it sets the depth the spraying reads in the slip band")
+    if args.dispersion is not None and not spraying_skins_of(args):
+        parser.error(DISPERSION_NEEDS)
     if spread_limit_of(args) is not None and not (args.surface_model == "skin" and args.melt == "on"):
         parser.error("--spread-limit needs --surface-model skin and --melt on: it spreads the metal the skins hand down")
     if part_count_rule_of(args) != "moves" and not (args.surface_model == "skin" and args.melt == "on"):
@@ -840,8 +887,11 @@ def cmd_run(args, parser):
         parser.error("--prism-layers {} is refused with --surface-model skin: the moving mesh's rebuild cannot reproduce prism "
                      "layers (a skin run uses 0, the default)".format(args.prism_layers))
 
-    # the options whose defaults depend on the run are written into the arguments a saved state carries (Task 5h)
+    # the options whose defaults depend on the run are written into the arguments a saved state carries (Task 5h), the
+    # dispersion on the runs it concerns
     args.hand_down, args.part_count_from = "on" if hand_down_of(args) else "off", part_count_rule_of(args)
+    if spraying_skins_of(args):
+        args.dispersion = dispersion_of(args)
 
     initial = tj.InitialState(velocity=args.velocity * 1e3, altitude=args.altitude * 1e3,
                               flight_path=math.radians(args.flight_path_angle), heading=math.radians(args.heading),
@@ -1069,6 +1119,12 @@ def cmd_resume(args, parser):
             parser.error("--slip-band needs a saved flight with spraying (--melt on with Girin removal): it sets the depth "
                          "the spraying reads in the slip band")
         changed["--slip-band"] = args.slip_band
+    skin_spray = skins and getattr(run.body, "spray", None) is not None
+    if args.dispersion is not None:
+        if not skin_spray:
+            parser.error("--dispersion needs a saved flight with the skins' spraying (--surface-model skin --melt on "
+                         "--skin-flow on): it sets the theory their spraying solves")
+        changed["--dispersion"] = args.dispersion
     if args.size_feedback is not None:
         if not skins:
             parser.error("--size-feedback needs a saved flight of skins: it sets their windward loads' nose radius")
@@ -1138,6 +1194,16 @@ def cmd_resume(args, parser):
         run.body.spray.spray_gates = args.spray_gates
     if "--slip-band" in changed:
         run.body.spray.slip_band = args.slip_band == "on"
+    if "--dispersion" in changed:      # the kinked-profile dispersion design (spec 6.1 and 6.8; Review Focus 4)
+        if args.dispersion == "table":     # the class default, stored on no instance: the model pickles as one built on it
+            vars(run.body.spray).pop("dispersion", None)
+        else:
+            run.body.spray.dispersion = args.dispersion
+        for key in melt_profile.DISPERSION_COLUMNS:  # every row takes the saved row's columns, which have to say so
+            state["row"].pop(key, None)
+        state["row"].update(run.body.dispersion_stats())
+        # records held in memory cut to the 27 columns of `table` or padded with nan to the 36 of `profile`
+        run.body.source_rows = spray.fit_width(run.body.source_rows, len(run.body.record_names()))
     if skins:       # every row takes the saved row's columns: a state saved before the nose columns has none, and a row
         # of the flight after it would lose them (`coupled.CoupledRun.run`); the fit is made at the saved step's top surface
         # (Task 5k, review minor 2: under a changed --size-feedback or --leeward-test the saved row's own nose and leeward
@@ -1149,9 +1215,11 @@ def cmd_resume(args, parser):
         h = getattr(run.body, name, None)
         if h is not None and len(h) < spray.N_BINS:
             setattr(run.body, name, np.concatenate([h, np.zeros(spray.N_BINS - len(h))]))
-    # only the records after the resume are written; the element model's body that does not melt (`ThermalBody`) has none
+    # only the records after the resume are written, under the names of the body's records as it will make them (27
+    # columns on `table`, 36 on `profile`); the element model's body that does not melt (`ThermalBody`) has none
     if isinstance(getattr(run.body, "source_rows", None), spray.SourceSpool):
-        run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL))
+        run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL),
+                                                 run.body.record_names() if skins else None)
     if args.seed is not None:
         np.random.seed(args.seed)
     else:
@@ -1164,14 +1232,15 @@ def cmd_resume(args, parser):
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
                       ("rheology", "--rheology"),
-                      ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
+                      ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band"), ("dispersion", "--dispersion")):
         if flag in changed:
             setattr(saved, key, changed[flag])
     if state_path is not None:
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, rheology {}, spray gates {}, slip band {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, rheology {}, "
+          "spray gates {}, slip band {}, dispersion {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1185,6 +1254,7 @@ def cmd_resume(args, parser):
               run.body.settings.rheology if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
+              run.body.spray.dispersion if getattr(run.body, "spray", None) is not None else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
     history = run.run(resume=state)
@@ -1214,6 +1284,8 @@ def cmd_resume(args, parser):
     if getattr(run.body, "spray", None) is not None:
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state
+    if skin_spray:
+        thermal_info["dispersion"] = run.body.spray.dispersion      # always, as `run` records it; table for an older state
     resumed = {"state": os.path.abspath(args.state), "step": state["step"], "time_s": state["time_s"],
                "run_name": state["meta"]["name"], "changed": changed}
     os.makedirs(args.outdir, exist_ok=True)

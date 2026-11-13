@@ -1,0 +1,28 @@
+start 2026-11-12 14:28:17
+resuming /Users/ashajain/kinked-dispersion-flights/states/d050__handdown-off.state.pkl (saved at 178.5 s, step 357) to 179 s: dt_continuum 0.0125, seed saved random state, frames every 0, slurry spray off, spread limit off, part count from moves, hand-down off, sideways heat height, size feedback initial, leeward test facing, spray gates 2026-11-10, slip band on, dispersion profile, save state at no; files /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__profile
+d050__kd__profile (seed 12345): t_max at t = 179.0 s, final V 7.2713 km/s, Kn 0.0562 -> 0.0549, 9908 RHS evaluations in 3870.2 s
+  thermal: peak surface T 908 K at t = 179 s, peak mean T 845 K, integrated heat 1.16e+05 J, energy balance residual -6.7e-13, 481 macro steps, 2.8 Newton iterations/step
+  skins: 2367 columns, removed 0 kg, drawn 0.02273 kg, 3 rebuilds, 455 interface repeats, 0 base faults (0 by the bottom cell alone); wall time 21887 s in the skins, 581 s in the 3D solve
+  spraying: released 0 kg as 0 droplets in 0 source rows (particles.npz, particles_summary.csv, size_distribution.csv)
+  csv  -> /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__profile.csv
+  json -> /Users/ashajain/kinked-dispersion-flights/flights/d050__kd__profile.json
+     3871.79 real      2686.90 user      1094.67 sys
+          4001267712  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             4146487  page reclaims
+                  10  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   8  voluntary context switches
+              824665  involuntary context switches
+      32953577977200  instructions retired
+      11475588224196  cycles elapsed
+          1104842832  peak memory footprint
+exit 0
+end 2026-11-12 15:32:49

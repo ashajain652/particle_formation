@@ -38,10 +38,14 @@ only commits carrying the trailer, that `skyscrapers-prototype-end` is an ancest
 
 **`same_results.py`** runs short cases of the model and compares two result folders, to show that a port (or a
 refactor) computes what the code before it computed. `run --code <folder holding reentry_model> --out <dir> [--state
-<file>] --cases <list>` runs each named case (`step1`, `skins`, `element`, `resume`, `nomelt`, `nomelt_elements`; `step1` is a whole Step 1 flight, 100 mm at 7.5 km/s, with no `--thermal` and the default NRLMSISE atmosphere; the next three are 0.125 s smoke
+<file>] --cases <list> [--append "ARGS"]` runs each named case (`step1`, `skins`, `element`, `resume`, `nomelt`, `nomelt_elements`; `step1` is a whole Step 1 flight, 100 mm at 7.5 km/s, with no `--thermal` and the default NRLMSISE atmosphere; the next three are 0.125 s smoke
 flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight; `nomelt_elements` is the same with `--surface-model elements`, which exists because main's command line has no `--surface-model` and the port's default for `--thermal fem` was the skins, which failed without melting; since 2026-11-12 a run that does not melt runs the element model by default, so `nomelt` is the same flight under its own name) one after the other as
 `python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
 the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`. `run` refuses (exit 2, nothing run, nothing deleted) when a case's `<out>/<case>` folder already holds anything.
+`--append "ARGS"` adds the given arguments, split as a shell would split them, after every listed case's own and before
+`--outdir`, so that a case can be run with an option its baseline did not need: the kinked-profile dispersion's check
+runs the `skins` case with `--append "--dispersion table"` against a baseline made before the option existed (the quotes
+keep the value one argument; it must contain a space or be given as `--append=--flag`).
 `compare <dirA> <dirB> [--report]` compares every file of either folder by relative path (not `*.log`, `*.pkl`,
 `*.progress`, `*.vtu`, `*.vtp`, `*.pvd`): `.csv` cell by cell as text except `wall_*` and `runtime_s` columns; `.json` equal except the
 keys `provenance`, `files`, `runtime_s` (the run's elapsed time) and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name

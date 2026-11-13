@@ -1,12 +1,14 @@
 """Run cases of the reentry model and compare two result folders: the port against the prototype.
 
-    same_results.py run --code <folder holding reentry_model> --out <dir> [--state <file>] --cases <list>
+    same_results.py run --code <folder holding reentry_model> --out <dir> [--state <file>] --cases <list> [--append "ARGS"]
     same_results.py compare <dirA> <dirB> [--report]
 
 ``run`` refuses (exit 2, nothing run, nothing deleted) when a case's ``<out>/<case>`` folder already holds anything.
 ``run`` runs each case as ``python -B -m reentry_model <args> --outdir <out>/<case> --name <case>`` with the working
 directory ``--code`` and PYTHONDONTWRITEBYTECODE=1, one after the other, and writes ``<out>/<case>.log`` (the first line
-of ``pmset -g batt`` at the start and the end, the command's output, the exit code and the wall time).
+of ``pmset -g batt`` at the start and the end, the command's output, the exit code and the wall time).  ``--append "ARGS"``
+adds the arguments, split as a shell would split them, after every listed case's own (before ``--outdir``), so that a
+case can be run with an option its baseline did not need (the kinked-profile dispersion's ``--dispersion table``).
 
 ``compare`` compares every file of either folder by relative path, except ``*.log *.pkl *.progress *.vtu *.vtp *.pvd``:
 ``.csv`` the same header and the same text in every cell except columns whose name starts with ``wall_`` or is ``runtime_s``; ``.json`` equal
@@ -23,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -83,7 +86,8 @@ def run_case(code, out, name, args):
     return code_returned
 
 
-def run_cases(code, out, cases, state=None):
+def run_cases(code, out, cases, state=None, append=()):
+    """Run the named cases one after the other, each with `append` (a list of arguments) after its own."""
     table = case_arguments(state)
     for name in cases:                      # every refusal comes before anything runs; nothing is ever deleted
         if name not in table:
@@ -96,7 +100,7 @@ def run_cases(code, out, cases, state=None):
             return 2
     status = 0
     for name in cases:
-        returned = run_case(Path(code), out, name, table[name])
+        returned = run_case(Path(code), out, name, table[name] + list(append))
         print(f"{name}: exit {returned}", flush=True)
         status = status or returned
     return status
@@ -303,6 +307,9 @@ def main(argv=None):
     run.add_argument("--out", required=True)
     run.add_argument("--state", help="the saved state the resume case starts from")
     run.add_argument("--cases", required=True, help="comma-separated: skins, element, resume, nomelt, nomelt_elements")
+    run.add_argument("--append", default="", metavar="ARGS",
+                     help="arguments added after every listed case's own, split as a shell would split them "
+                          "(for example --append \"--dispersion table\")")
     cmp_ = sub.add_parser("compare", help="compare two result folders")
     cmp_.add_argument("dir_a")
     cmp_.add_argument("dir_b")
@@ -312,7 +319,7 @@ def main(argv=None):
     if args.command == "run":
         out = os.path.abspath(args.out)         # the child runs in --code: paths are the caller's, made absolute here
         state = os.path.abspath(args.state) if args.state else None
-        return run_cases(args.code, out, [c for c in args.cases.split(",") if c], state)
+        return run_cases(args.code, out, [c for c in args.cases.split(",") if c], state, shlex.split(args.append))
     for folder in (args.dir_a, args.dir_b):
         if not Path(folder).is_dir():
             print(f"refused: {folder} does not exist (or is not a folder)")

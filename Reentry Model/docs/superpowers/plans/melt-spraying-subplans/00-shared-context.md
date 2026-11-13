@@ -3339,9 +3339,9 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
 
 ## Amendment of 2026-11-12 — the composite near-liquidus viscosity, the run command's default for melting skins (fact 196)
 
-196. **The composite near-liquidus viscosity (2026-11-12, branch `near-liquidus-viscosity`, off `main` f1ab736, not
-     pushed; design `docs/superpowers/specs/2026-11-12-near-liquidus-viscosity-design.md`; the law and its sources in
-     `docs/model_assumptions.md` section 12 and in the docstring of `reentry_model/shared/rheology.py`).**
+196. **The composite near-liquidus viscosity (2026-11-12, branch `near-liquidus-viscosity`, off `main` f1ab736;
+     merged with main's kinked-profile dispersion and pushed to main on 2026-11-13; design `docs/superpowers/specs/2026-11-12-near-liquidus-viscosity-design.md`; the law and its sources in
+     `docs/model_assumptions.md` section 13 and in the docstring of `reentry_model/shared/rheology.py`).**
      *The change.* A melting skin's slurry now has a viscosity that depends on the solid fraction alone, not on the
      shear rate: the liquid's 1.3 mPa s at zero solid; below 10 % solid a Mori-Ototake suspension law
      (eta = mu_l [1 + 3 / (1/phi - 1/0.55)], phi = f_s / f_i) on the grains' envelope fraction, with the internal solid
@@ -3350,9 +3350,10 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      every rate (46.2 times the liquid at 10 % solid, 168 times at 50 %); infinite at half solid or more. *The option.*
      `run --rheology composite|bridge` (and `resume --rheology`): `composite` is the run command's default for melting
      skins; `bridge` is the earlier law (Li et al.'s averaged law held at 367 1/s with the 906.4-908 K log-linear bridge
-     to the liquid, which had no data). `SkinSettings.rheology` defaults to `"bridge"` in the library, so existing tests
-     and every state saved before the option existed keep the bridge law, and a resume with no `--rheology` keeps the
-     saved flight's law (an old state reads `"bridge"`). A melting skin run under the bridge is named with the suffix
+     to the liquid, which had no data). Since the merge into main on 2026-11-13, `SkinSettings.rheology` defaults to
+     `"composite"` in the library too (Asha: "Default should be this new law, not the old one"); a state saved before
+     the option existed flew the bridge law and keeps it (`SkinSettings.__setstate__` gives it `"bridge"`), and a resume
+     with no `--rheology` keeps the saved flight's law. A melting skin run under the bridge is named with the suffix
      `_rheology-bridge`; the composite default is unmarked; the run JSON records `skin.rheology` and
      `skin.internal_solid_fraction`. *Old checkouts:* a state saved under the composite law and resumed by a checkout
      from before this change (for example a Mac Studio checkout that is behind main, or the `kinked-dispersion`
@@ -3437,8 +3438,23 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      s (measured once per case, on a laptop with other sessions running).
      *What it leaves open.* The heat was off, so whether a heated flight keeps a near-liquid layer on the windward face
      is unknown: level 5 of the design (the same state resumed under both laws with `--slurry-spray on` to 179.5 s on
-     the Mac Studio, by runbook) awaits Asha's decision. **`--slurry-spray` stays off by default (Asha, 2026-11-12):**
+     the Mac Studio, by runbook) waits, by Asha's decision of 2026-11-12, until more changes from other agents land
+     on main. **`--slurry-spray` stays off by default (Asha, 2026-11-12):**
      the Girin session's new spraying law will set a new default spraying pattern in which the slurry can spray, and
      will take its viscosities from this law; the measurement of the closure artefact above is for that session, and the
      `kinked-dispersion` session is to be told that its kink at the 906.4 K isotherm lies 0.04 K above this law's jump
      (906.36 K).
+     *The merge with main (2026-11-13).* Main had gained the kinked-profile dispersion (08cca55), whose profile path
+     reads the cells' viscosity through `skin.cell_viscosity` and so follows the selected law; its history column
+     `depth_to_bridge_low_median_mm` still places the 906.4 K isotherm. Asha: "Default should be this new law, not
+     the old one", so `SkinSettings.rheology` defaults to "composite" in the library too, while a state saved before the
+     field existed keeps "bridge", the law it flew (`SkinSettings.__setstate__`). The regression was repeated against
+     main: the smoke flight of `CLAUDE.md`, with and without `--slurry-spray on`, on main at 08cca55 and on the merge
+     with `--rheology bridge` wrote identical files apart from the two new JSON keys; both sprayed on the profile path,
+     3.309 g and 3.496 g. Under the composite default the same two flights sprayed 1.329 g and 1.516 g, and drew
+     14.6 g into the flowing skins against 3.4 g (one short flight each). The unit tier on the merged model code: 950
+     passed and 14 failed, every failure a test whose values were set on the bridge law (6 of the skins' tests and 8 of
+     the skin body's, which now name the bridge law, as the cosine tests' lubrication regime and the prescribed-release tests' liquid tops
+     need it: under the composite law the hottest top cell of that test sphere reaches 905.25 K, not the liquidus, so a
+     release of liquid finds none); after the pins those tests and their two files pass. `model_assumptions.md` section
+     13 holds the law (section 12 is the profile path's).

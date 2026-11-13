@@ -1,0 +1,28 @@
+start 2026-11-12 14:28:10
+
+d100__kd__table (seed 12345): t_max at t = 30.0 s, final V 7.3481 km/s, Kn 0.0298 -> 0.0157, 8028 RHS evaluations in 12775.4 s
+  thermal: peak surface T 908 K at t = 25 s, peak mean T 580 K, integrated heat 4.06e+05 J, energy balance residual -8.4e-13, 557 macro steps, 2.9 Newton iterations/step
+  skins: 9417 columns, removed 0 kg, drawn 0.005347 kg, 0 rebuilds, 40 interface repeats, 0 base faults (0 by the bottom cell alone); wall time 9123 s in the skins, 1457 s in the 3D solve
+  spraying: released 0 kg as 0 droplets in 0 source rows (particles.npz, particles_summary.csv, size_distribution.csv)
+  csv  -> /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table.csv
+  json -> /Users/ashajain/kinked-dispersion-flights/flights/d100__kd__table.json
+    13452.54 real     10408.55 user      2403.81 sys
+          6289588224  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            26635138  page reclaims
+                 359  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                1561  voluntary context switches
+             6283799  involuntary context switches
+     131562902729255  instructions retired
+      44643975878208  cycles elapsed
+          2296141848  peak memory footprint
+exit 0
+end 2026-11-12 18:12:23

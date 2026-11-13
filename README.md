@@ -198,7 +198,7 @@ the flag.
 
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
-Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `surface_flow`, `spray`, `girin_case`), the
+Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `melt_profile`, `surface_flow`, `spray`, `girin_case`), the
 droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
@@ -312,7 +312,7 @@ REF="../DRAMA Sphere Experiments/data/reference_runs"            # run from Reen
 
 A `--thermal fem` run that does not melt runs the element model by default (Asha's decision of 2026-11-12), so `--surface-model elements` in the non-melting Step 2 commands above is no longer needed and gives the same run under the same name (`..._surface-elements`); `--surface-model skin` gives the non-melting layered skins (level 3 of their verification), and the skins stay the default with `--melt on`. Between the port of 2026-11-11 and that decision the skins were the default here too, and on the 100 mm, 77.5 km case with `--h-surface 4` they stopped after about 50 s with a moving-mesh "corner move" error: the default 0.7 mm fine band leaves flat elements under a 4 mm surface. Such a skin run now exits with code 2 at once, before the skins are built, and says what to give (`--fine-size 2`, `--fine-band 0` or `--surface-model elements`). The measured Step 2 numbers below predate the port and were measured on the old solver.
 
-`--rheology composite|bridge` chooses the slurry's viscosity law for a melting skin run (`--melt on` with the skins; accepted and ignored otherwise). Since 2026-11-12 the default is `composite`, a law of the solid fraction alone with no shear-rate dependence: a suspension law below 10 % solid (assumed, with an assumed internal solid fraction of 0.5; nothing is measured on aluminium there) and Li et al.'s (2014) fit at 489.88 1/s from 10 % to half solid (46.2 times the liquid's viscosity at 10 % solid, 168 times at 50 %). The jump between the two at 10 % solid (a factor of 24 at the default internal fraction) is unresolved. `--rheology bridge` is the earlier law, Li et al.'s averaged law held at 367 1/s with a log-linear bridge to the liquid between 906.4 K and 908 K; a melting skin run under it is named with the suffix `_rheology-bridge`, and a flight saved before the option existed keeps it when resumed unless `resume --rheology composite` is given. The run's JSON records `skin.rheology` and `skin.internal_solid_fraction`. `--slurry-spray` keeps its default, off. The sources, assumptions and uncertainties are in `Reentry Model/docs/model_assumptions.md` section 12.
+`--rheology composite|bridge` chooses the slurry's viscosity law for a melting skin run (`--melt on` with the skins; accepted and ignored otherwise). Since 2026-11-12 the default is `composite`, a law of the solid fraction alone with no shear-rate dependence: a suspension law below 10 % solid (assumed, with an assumed internal solid fraction of 0.5; nothing is measured on aluminium there) and Li et al.'s (2014) fit at 489.88 1/s from 10 % to half solid (46.2 times the liquid's viscosity at 10 % solid, 168 times at 50 %). The jump between the two at 10 % solid (a factor of 24 at the default internal fraction) is unresolved. `--rheology bridge` is the earlier law, Li et al.'s averaged law held at 367 1/s with a log-linear bridge to the liquid between 906.4 K and 908 K; a melting skin run under it is named with the suffix `_rheology-bridge`, and a flight saved before the option existed keeps it when resumed unless `resume --rheology composite` is given. The run's JSON records `skin.rheology` and `skin.internal_solid_fraction`. `--slurry-spray` keeps its default, off. The sources, assumptions and uncertainties are in `Reentry Model/docs/model_assumptions.md` section 13.
 
 Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
 matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1); `--material` (packaged
@@ -404,6 +404,61 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
   (and other model errors) and exits 1 with the message, rather than hanging or producing a silently wrong result.
 - The transonic tail is compressed isentropically without a shock because the shock fixed point stalls at Ma 1 —
   found by the first full physics-mode run (facts §16).
+
+## Physics model — `reentry_model` (Step 3: the layered skins' spraying, `--dispersion`)
+
+Step 3 (melting, the melt film and Girin's melt spraying) joined the package on 2026-11-11 (see
+`Reentry Model/CLAUDE.md`). This section describes only the setting that chooses which theory the layered skins' spraying
+solves; the assumptions and their verification are in `Reentry Model/docs/model_assumptions.md`, section 12, and the
+design in `Reentry Model/docs/superpowers/specs/2026-11-11-kinked-profile-dispersion-design.md`. Run from `Reentry Model/`.
+
+```bash
+# a spraying skin run (the skins, --melt on, their flow on by default) solves the profile path by default:
+"$PY" -m reentry_model run --diameter 100 --velocity 7.24 --altitude 65 --flight-path-angle -0.959331 --atmosphere us76 \
+    --thermal fem --heating physics --h-surface 4 --h-core 20 --melt on --temperature 893 --dt 0.025 --t-max 0.125 \
+    --skin-preset dev --fine-size 2 --frames-every 0
+# the same with Girin's theory as it stood before (the run's name ends in _dispersion-table):
+"$PY" -m reentry_model run ... --dispersion table
+# a saved flight resumed on the other setting (a state saved before the option existed resumes on table):
+"$PY" -m reentry_model resume <run>.state.pkl --outdir <dir> --name <name> --dispersion profile
+```
+
+- **`--dispersion profile`** (the default on spraying skin runs; Asha, 2026-11-11). Each windward column whose top cell
+  flows and moves has its cells' speeds fitted as straight segments; a floor test places a wall at the shallowest
+  kink below which the slurry acts as a floor (otherwise at the rigid front); Girin's gradient mode is solved on the
+  profile above that wall by a broken-line solver, and the faster of it and Girin & Kopyt's gas-driven mode on the wall
+  releases the column's cells from the top down while they are at least as warm as the mode's threshold temperature,
+  liquid and slurry together. No critical Weber number is applied to the gradient mode on the profile, which sprays where
+  its growth beats its own wave's viscous damping and its wave fits (the solver's own threshold is a surface Weber number
+  of 3.00 on Girin's profile). Only the columns the profile path does not resolve keep Girin's theory, `--we-critical`
+  included: the wet windward columns whose top cell does not flow, does not move, or has the rigid front at or above its
+  centre. A resolved column never falls back to it. One without a finite conjugate layer depth (delta_m), or whose layer
+  above its wall is shallower than `spray.B_MIN` (1 µm), takes no shear mode at all (decision 6): neither of the two
+  modes above, nor any of Girin's branches. Only the Rayleigh–Taylor mode, which no Weber number gates, can still take it.
+- **`--dispersion table`**, the switch back: Girin's theory as it stood before, with his theoretical layer depth and surface
+  speed and the critical Weber number `--we-critical` (3.08). The run's name ends in `_dispersion-table`; `profile` is
+  unmarked. The element model (`--surface-model elements`) is always on `table`, and `--dispersion` given to any run that
+  is not a spraying skin run is refused with exit code 2.
+- **Records.** Every spraying skin run's JSON records the setting (`settings.skin.dispersion`; a resume's
+  `settings.dispersion`). On `profile`, `particles.npz` has 36 columns, the 27 of `table` followed by nine
+  (`spray.PROFILE_COLUMNS`: `depth_to_wall_m`, `floor_like_wall`, `floor_re`, `kink_depth_m`, `kink_T_K`,
+  `release_depth_m`, `growth_rate_per_s`, `girin_delta_m_m`, `girin_v_s_ms`), and the history has nine more columns
+  (`melt_profile.DISPERSION_COLUMNS`: `floor_like_share`, `fluid_like_columns`, `depth_to_wall_median_mm`,
+  `depth_to_bridge_low_median_mm`, `T_at_wall_median_K`, `floor_re_median`, `we_s_profile_median`, `sprayed_gradient_kg`,
+  `sprayed_gas_driven_kg`); on `table` there are neither. The two after the wall's depth place the walls against the
+  906.4 K isotherm, the low end of the rheology's bridge (`rheology.BRIDGE_LOW`): over the same resolved columns, the
+  median depth of that isotherm below the surface (mm) and the median temperature at the wall's depth (K), each
+  interpolated between cell centres as the rigid front is, a column the isotherm does not cross left out. A resume that
+  changes the setting drops or adds the history columns from the saved row, cuts records held in memory to 27 columns or
+  pads them with NaN to 36, and writes the records after the resume under the new layout.
+- **Same results and cost.** With `--dispersion table` a spraying skin run is what it was before the option existed, to the
+  last bit, apart from the JSON's new key: the three cases of `Reentry Model/analysis/skyscrapers_port/same_results.py`
+  (a 0.125 s skin flight run with `--dispersion table`, the same flight on the element model, and a 22.6 s resume of a
+  100 mm flight state saved before the option existed) differed from their baseline only in that key (2026-11-12, and
+  again after the final review's fix round the same day). On the saved 50 mm flight state at 178.5 s the profile path
+  adds about 0.79 s to a macro step's spray plan (a median 0.815 s against 0.025 s on `table`, five calls each), about
+  0.023 % of that flight's median macro step of 3480 s of wall time, against the design's budget of 5 %
+  (`Reentry Model/analysis/kinked_dispersion/plan_cost.py`; measured once).
 
 ## Droplet stage — `reentry_model.droplet_reentry`
 
