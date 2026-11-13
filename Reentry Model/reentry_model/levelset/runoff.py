@@ -56,6 +56,10 @@ from .skin import Skins, above
 
 SLIVER = 1.0e-12          # a piece of a donor cell shorter than this share of it is a shared boundary's round-off, and a
                           # landing estimate below this share of the largest stays where it lands (skyscrapers' SLIVER)
+LANDED_SLIVER = 1.0e-6    # an arrival on a rigid top lighter than this share of the top cell joins that cell instead of
+                          # landing as a new one (20 picometres of a 20 um cell; stage 3 Task 11's fix: on the q6p box's
+                          # cold step 14 972 arrivals of at most 4e-12 of their cell, from velocities at round-off, landed
+                          # on 11 of its 13 face skins, and the landing conduction then held their fine zones adiabatic)
 LANDED_PASSES = 200       # passes at most of the landed metal's velocity estimate (skyscrapers' LANDED_PASSES)
 LANDED_TOL = 1.0e-6       # it stops once no estimate moves by more than this share of the fastest (skyscrapers')
 THICKNESS_PASSES = 8      # linearisations of the transport's fluxes in the thickness step at most (skyscrapers', plan)
@@ -515,7 +519,8 @@ def transport(skins, sheet, dt, faces=None):
     The arrival rule: a flowing donor cell's span of fractions of the donor's flowing depth joins the receiver's
     flowing layer (its top run of flowing cells) between the same fractions, each in proportion to the overlap; where
     the receiver's top is rigid (anchored or a crust) everything lands on top as a new top cell, and so does crust
-    metal wherever it goes; anchored metal neither leaves nor receives. Flowing metal landed on a rigid top flows on in
+    metal wherever it goes, unless it weighs less than LANDED_SLIVER of the top cell, when it joins that cell (round-off
+    from velocities at round-off; nothing then lands there); anchored metal neither leaves nor receives. Flowing metal landed on a rigid top flows on in
     the same solve at the velocity it arrived with (`_landed_velocity`), by fraction into a flowing receiver's whole
     flowing layer and on top of a rigid one. Arriving momentum is projected onto the receiver's tangent plane, two
     components per cell in its marker's frame; the normal parts removed are booked to the wall. Across a face between a
@@ -678,6 +683,16 @@ def transport(skins, sheet, dt, faces=None):
         if np.any(x_top[empty, 1:] != 0.0) or np.any(P_top[empty] != 0.0):
             raise RuntimeError("a new top cell received no mass but some enthalpy or momentum")
         tops, x_top, P_top = tops[~empty], x_top[~empty], P_top[~empty]
+    tiny = x_top[:, 0] <= LANDED_SLIVER * m[tops, 0]
+    if tiny.any():                                # round-off arrivals join the receiver's top cell (LANDED_SLIVER):
+        r = tops[tiny]                            # its mass, enthalpy and momentum add exactly, and nothing has landed
+        P0 = m[r, 0][:, None] * U[r, 0]
+        m[r, 0] += x_top[tiny, 0]
+        H[r, 0] += x_top[tiny, 1]
+        U[r, 0] = (P0 + P_top[tiny]) / m[r, 0][:, None]
+        if trial:
+            dH[r, 0] += x_top[tiny, 2]
+        tops, x_top, P_top = tops[~tiny], x_top[~tiny], P_top[~tiny]
     if len(tops):
         new = np.zeros(n, dtype=bool)
         new[tops] = True

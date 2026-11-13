@@ -148,6 +148,30 @@ def test_a_new_top_cell_that_receives_nothing_is_not_created():
     assert np.all(np.isfinite(sk.U)) and np.all(sk.m[sk.valid] > 0.0)
 
 
+def test_a_round_off_arrival_joins_the_top_cell_instead_of_landing():
+    """Stage 3 Task 11's fix: an arrival on a rigid top lighter than LANDED_SLIVER of the top cell -- on the q6p box's cold
+    step 14 972 of them, at most 4e-12 of their cell, from velocities at round-off, landed on 11 of its 13 face skins and
+    turned on the landing conduction, which held the skins' fine zones adiabatic each flow sub-step and flattened their
+    temperature profiles -- joins the receiver's top cell: no new cell, nothing booked as landed, the receiver's top cell
+    holding the arrival's mass, enthalpy and momentum exactly. A cell of liquid moving at 1e-9 m/s onto rigid metal sends
+    about 1e-9 of its mass in a 10 ms sub-step; at 1 m/s it lands as a new top cell, as before."""
+    for speed, lands in ((1e-9, False), (1.0, True)):
+        mk, ix, _ = grid_markers(3, 1)
+        sk = stacked(mk, [[LIQUID] + [RIGID] * 4, [RIGID] * 5, [RIGID] * 5])
+        sk.U[0, 0] = [speed, 0.0, 0.0]
+        before = [a.copy() for a in (sk.m, sk.H, sk.count)]
+        M0, E0, P0 = sk.m.sum(), sk.H.sum(), sk.totals()[2].sum(axis=0)
+        book = runoff.transport(sk, runoff.Sheet.of(mk), 0.01)
+        assert bool(book.landed[1]) == lands and (sk.count[1] > before[2][1]) == lands
+        assert sk.m.sum() == pytest.approx(M0, rel=1e-14) and sk.H.sum() == pytest.approx(E0, rel=1e-14)
+        P1 = sk.totals()[2].sum(axis=0)
+        assert np.linalg.norm(P1 - P0 - (book.momentum + book.wall).sum(axis=0)) <= 1e-12 * np.linalg.norm(P0)
+        if not lands:
+            got = sk.m[1, 0] - before[0][1, 0]
+            assert 0.0 < got <= runoff.LANDED_SLIVER * before[0][1, 0] and book.mass[1] == pytest.approx(got, rel=1e-12)
+            assert np.array_equal(sk.m[1, 1:sk.count[1]], before[0][1, 1:before[2][1]])
+
+
 def test_nothing_passes_through_anchored_metal():
     """Anchored rigid cells neither leave nor receive whatever velocity they hold: a liquid layer running at 1 m/s onto a
     marker that is rigid through its depth lands on top of it as a new top cell; the receiver's anchored cells, and the
