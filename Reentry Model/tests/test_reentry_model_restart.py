@@ -119,6 +119,8 @@ def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
     doc = json.load(open(str(tmp_path / "f.json")))
     assert doc["results"]["end_reason"] == "t_max" and doc["results"]["state_saved_at_s"] is None
     assert "no space left on device" in doc["results"]["state_save_error"] and "state" not in doc["files"]
+    assert "no space left on device" in doc["results"]["end_state_error"] and "end_state" not in doc["files"]
+    assert doc["results"]["end_state_saved_at_s"] is None
     assert len(rows_of(str(tmp_path / "f.csv"))) == 5
 
 
@@ -752,3 +754,58 @@ def test_a_resume_can_turn_the_stop_off_and_old_states_fly_with_it_on(flown, tmp
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--geometry-stop", "off"]) == 0
     doc = json.load(open(str(tmp_path / "off.json")))
     assert doc["results"]["end_reason"] == "t_max" and doc["resumed_from"]["changed"] == {"--geometry-stop": "off"}
+
+
+def test_every_normal_end_saves_its_state_beside_the_mid_flight_one(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "e", "--save-state-at", "0.05"]) == 0
+    doc = json.load(open(str(tmp_path / "e.json")))
+    assert doc["files"]["end_state"] == os.path.abspath(str(tmp_path / "e.end.state.pkl"))
+    assert restart.load(str(tmp_path / "e.end.state.pkl"))["end"] == "t_max"
+    assert restart.load(str(tmp_path / "e.state.pkl"))["end"] is None
+    assert doc["results"]["end_state_saved_at_s"] == pytest.approx(0.0625)
+
+
+def test_an_end_state_at_t_max_resumes_to_a_later_t_max_as_the_unbroken_flight(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    assert cli.main(["resume", str(tmp_path / "a.end.state.pkl"), "--t-max", "0.0875",
+                     "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert rows_of(str(tmp_path / "r.csv")) == rows_of(str(tmp_path / "u.csv"))[4:]
+
+
+@pytest.mark.parametrize("extra", [[], ["--t-max", "0.0625"]])
+def test_an_end_state_is_not_resumed_past_an_end_that_still_holds(tmp_path, extra):
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    if extra:
+        state = restart.load(path); state["end"] = "demise"; restart.save(path, state)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", path, "--outdir", str(tmp_path), "--name", "r"] + extra)
+    assert exc.value.code == 2
+
+
+def test_the_element_models_melting_flight_saves_an_end_state(tmp_path):
+    pytest.importorskip("cantera")
+    assert cli.main(MELTING_ELEMENTS + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "el"]) == 0
+    assert restart.load(str(tmp_path / "el.end.state.pkl"))["end"] == "t_max"
+
+
+def test_an_end_state_of_a_kind_a_later_task_adds_resumes_as_it_is(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    state = restart.load(path); state["end"] = "failed"; restart.save(path, state)
+    assert cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"]) == 0
+
+
+def test_a_geometry_end_state_resumes_with_the_stop_off(tmp_path):
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
+    path = str(tmp_path / "a.end.state.pkl")
+    state = restart.load(path)
+    state["end"] = "geometry"; state["run"].sim.end_reason = "geometry"
+    state["run"].geometry_stopped = ("core", 0.05, 1.0)
+    restart.save(path, state)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"])
+    assert exc.value.code == 2
+    assert cli.main(["resume", path, "--t-max", "0.0625", "--geometry-stop", "off", "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert json.load(open(str(tmp_path / "r.json")))["results"]["geometry_stop"] is None

@@ -71,6 +71,7 @@ SOURCE_SPOOL = "source_rows"
 # --save-state-at saves the whole coupled run once on its way to <outdir>/<name> + this (restart.py; sub-plan 22 Task 5a):
 # about 1.3 GB on the 100 mm sphere's production mesh, from which a convergence repeat resumes.
 STATE_SUFFIX = ".state.pkl"
+END_STATE_SUFFIX = ".end.state.pkl"     # the state every flight of run and resume saves when it ends (coupled.CoupledSettings.end_path)
 # The fine band under a skin run's surface (Asha, 2026-10-14, option 1): the 3D model's elements are finer to this depth
 # while the surface keeps its triangulation, so that the 3D model follows the temperature just below the rigid front
 # (on 2 mm elements throughout the plates melted 2-6 % late), and every rebuild makes the band again
@@ -862,7 +863,8 @@ def cmd_run(args, parser):
                                                          switch_on_melt=args.surface_model == "skin",
                                                          snap_to_t_max=args.surface_model == "skin",
                                                          save_at=args.save_state_at, save_path=state_path,
-                                                         save_meta={"name": name, "args": dict(vars(args))} if saving else None))
+                                                         end_path=os.path.join(args.outdir, name + END_STATE_SUFFIX),
+                                                         save_meta={"name": name, "args": dict(vars(args))}))
         history = run.run()
         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
         thermal_info["dt_continuum_s"] = dt_continuum
@@ -913,6 +915,8 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
         doc["resumed_from"] = resumed
     if history.results.get("state_saved_at_s") is not None:
         doc["files"]["state"] = os.path.abspath(state_path)
+    if history.results.get("end_state_saved_at_s") is not None:
+        doc["files"]["end_state"] = os.path.abspath(os.path.join(args.outdir, name + END_STATE_SUFFIX))
     melting = args.thermal == "fem" and args.melt == "on" and args.surface_model != "skin"
     # the skins' spraying flight (sub-plan 22 Tasks 3 and 4): the element model's droplet files, from the same writer --
     # the summary from the skin history's droplet columns -- the records read from their spool, which then goes
@@ -1088,6 +1092,17 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--geometry-stop needs a saved flight of skins: it ends a flight whose columns stop describing the metal")
         changed["--geometry-stop"] = args.geometry_stop
+    # a state saved at the end of a flight resumes only past an end that no longer holds; any other value of "end" (None for
+    # a state saved on the way, or an old state with no key, and the failed or stopped ends) resumes as it is
+    end = state.get("end")
+    if end in ("ground", "escape", "demise"):
+        parser.error("{} was saved at the end of a flight that ended at the {}: there is nothing to resume".format(args.state, end))
+    if end == "t_max" and args.t_max is None:
+        parser.error("{} was saved at the end of a flight that reached --t-max, {:.6g} s: resume it with a later --t-max".format(
+            args.state, state["time_s"]))
+    if end == "geometry" and not (args.geometry_stop == "off" if args.geometry_stop is not None else not run.body.geometry_stop):
+        parser.error("{} was saved at the end of a flight stopped by the geometry stop at {:.6g} s: resume it with "
+                     "--geometry-stop off".format(args.state, state["time_s"]))
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -1111,6 +1126,12 @@ def cmd_resume(args, parser):
         if run.switched_at is not None:            # latched: the step in use is the continuum step
             settings.dt = args.dt_continuum
     settings.save_at = settings.save_path = settings.save_meta = None
+    if end in ("t_max", "geometry"):               # the end no longer holds: the flight goes on
+        run.sim.end_reason = None
+        if end == "geometry":
+            run.geometry_stopped = None
+    settings.end_path = os.path.join(args.outdir, args.name + END_STATE_SUFFIX)
+    run.end_saved_at = run.end_save_error = None
     state_path = None
     if "--save-state-at" in changed:               # the original flight's save left these set; run() saves only while they are None
         state_path = os.path.join(args.outdir, args.name + STATE_SUFFIX)
@@ -1176,8 +1197,7 @@ def cmd_resume(args, parser):
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
         if flag in changed:
             setattr(saved, key, changed[flag])
-    if state_path is not None:
-        settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
+    settings.save_meta = {"name": args.name, "args": dict(vars(saved))}      # any flight can be resumed from its end state
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
           "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, geometry stop {}, spray gates {}, slip band {}, save state at {}; files {}".format(

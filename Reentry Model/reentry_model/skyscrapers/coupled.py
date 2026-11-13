@@ -99,6 +99,8 @@ class CoupledSettings:
                                       # step ending at or after it, to save_path (`restart.save`; sub-plan 22 Task 5a)
     save_path: str = None
     save_meta: dict = None            # kept with the state: what made the run (the command line's arguments and name)
+    end_path: str = None              # where the run saves its whole state when the flight ends, whatever the end (the state's
+                                      # "end" is `sim.end_reason`); None: no end state
 
     def __post_init__(self):
         if self.dt_continuum is not None and not 0.0 < self.dt_continuum <= self.dt:
@@ -119,6 +121,7 @@ class CoupledRun:
             raise ValueError("frames_every > 0 needs an output_dir")
         self.switched_at = self.switch_trigger = None              # the continuum switch: (t, Kn, altitude km), and why
         self.state_saved_at = self.state_save_error = None        # the save's flight time [s], or why it failed (Task 5a)
+        self.end_saved_at = self.end_save_error = None            # the same for the state saved at the flight's end
 
     def loads_at(self, t, y):
         a = self.sim.aero_state(t, y[:3], y[3:])
@@ -195,6 +198,9 @@ class CoupledRun:
                     and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
                 self._save(step, rows[-1])
         self._collection()
+        if s.end_path is not None:
+            self.end_saved_at = self.end_save_error = None
+            self._save(step, rows[-1], path=s.end_path, end=sim.end_reason)
         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
         history = tj.History(columns, np.array(states), sim.end_reason)
         history.results = sim.results(history, sim.nfev, time.perf_counter() - started)
@@ -211,20 +217,32 @@ class CoupledRun:
                 history.results["dt_switch_trigger"] = self.switch_trigger
         if s.save_at is not None:
             history.results.update({"state_saved_at_s": self.state_saved_at, "state_save_error": self.state_save_error})
+        if s.end_path is not None:
+            history.results.update({"end_state_saved_at_s": self.end_saved_at, "end_state_error": self.end_save_error})
         return history
 
-    def _save(self, step, row):
-        """Save the whole run once, at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a):
-        the run, the step, its row and flight time, numpy's global random state and `settings.save_meta`, by
-        `restart.save`, which alters nothing the run holds. A save that fails is recorded and the flight goes on: its
-        state is worth less than the flight."""
+    def _save(self, step, row, path=None, end=None):
+        """Save the whole run at the end of macro step `step`, whose history row is `row` (sub-plan 22 Task 5a): the run,
+        the step, its row and flight time, numpy's global random state, `settings.save_meta` and `end`, why the flight
+        ended (None for a state saved on its way), by `restart.save` to `path` (default `settings.save_path`), which
+        alters nothing the run holds. A save that fails is recorded (as the end state's, when `path` is given) and the
+        flight goes on: its state is worth less than the flight."""
         s = self.settings
+        ending = path is not None
         try:
-            restart.save(s.save_path, {"format": restart.FORMAT, "run": self, "step": step, "row": row,
-                                       "time_s": float(self.sim.t), "rng": np.random.get_state(), "meta": s.save_meta})
-            self.state_saved_at = float(self.sim.t)
+            restart.save(path if ending else s.save_path,
+                         {"format": restart.FORMAT, "run": self, "step": step, "row": row, "time_s": float(self.sim.t),
+                          "rng": np.random.get_state(), "meta": s.save_meta, "end": end})
+            if ending:
+                self.end_saved_at = float(self.sim.t)
+            else:
+                self.state_saved_at = float(self.sim.t)
         except Exception as exc:
-            self.state_save_error = "{}: {}".format(type(exc).__name__, exc)
+            message = "{}: {}".format(type(exc).__name__, exc)
+            if ending:
+                self.end_save_error = message
+            else:
+                self.state_save_error = message
 
     def _switch(self, t, a):
         """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was
