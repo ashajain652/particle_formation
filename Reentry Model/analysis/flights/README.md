@@ -8,13 +8,24 @@ the code in that folder's `code/` and stays there unedited as a record (ported 2
 `fly.py` runs the command line (`reentry_model run`, or `reentry_model resume`) in its own process with a hook on
 `reentry_model.skyscrapers.coupled.CoupledRun.row` that only reads each history row: it appends every row to
 `<outdir>/<name>.rows.csv` as it is made (every digit) and a progress line every 20 rows to `<outdir>/<name>.progress`.
-The model itself writes its history and results only when a flight ends, so a flight that stops early (a fold of the
-surface, a failed solve, an interrupt) keeps its rows to its last completed macro step; its droplet records are in
-`<outdir>/<name>/source_rows`. The exit code is the command line's, or 1 after the traceback on any other exception.
+The exit code is the command line's, or 1 after the traceback on any other exception.
 `launch.sh` runs `fly.py` from `Reentry Model/` with no bytecode written, under `caffeinate -i` (no idle sleep) and
 `/usr/bin/time -l` (wall time and peak memory at the end of the log), and logs the start, the end, the exit code and
 the power source (`pmset -g batt`) in `<logdir>/<label>.log`. `$PY` chooses the interpreter (default: the laptop's
 `drama_env`).
+
+The model writes its history and results when a flight ends, however it ends (since 2026-11-12). A flight that fails
+(any error raised in a macro step: a fold of the surface, a failed solve, a moving-mesh error) or is stopped by hand
+(SIGTERM sent to its Python process, as `kill <pid>` sends it, or Control-C) leaves `<outdir>/<name>.end.state.pkl`, its
+state at the end of its last completed macro step, which `resume` continues by repeating the failing step, and
+`<name>.csv`, `<name>.json` and the droplet files under `<name>/`, written from the completed steps with end reason
+`failed` or `stopped` (the JSON's `results.failure` gives the error and the time of that step). It exits with code 1 for
+a failure (after the traceback), 143 for SIGTERM and 130 for Control-C. The rows file can hold rows that `<name>.csv`
+does not: the hook keeps a step's row as soon as it is made, before that step's frame, its demise and geometry tests,
+its `--save-state-at` save and the copy of its state, so a failure or a stop in any of those leaves that step's row in
+the rows file while `<name>.csv` ends at the step before. A process killed without warning (`kill -9`, a crash of Python
+itself, a power cut) saves nothing: then the rows file holds the rows made so far and `<outdir>/<name>/source_rows` the
+droplet records.
 
 The two command forms, from `Reentry Model/` (relative folders are taken from where the command is run):
 

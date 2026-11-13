@@ -18,13 +18,18 @@
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
-Exit codes: 0 ok, 1 the flight escaped / integration failed, 2 bad input or a missing optional library
-(cantera for --heating physics, dolfinx for --thermal-solver fenicsx: create the fenicsx_env environment).
+Exit codes: 0 ok (the geometry stop included), 1 the flight escaped / integration failed, 2 bad input or a missing optional
+library (cantera for --heating physics, dolfinx for --thermal-solver fenicsx: create the fenicsx_env environment), 143 and
+130 a flight stopped by SIGTERM (as `kill` sends) or Control-C. A --thermal fem flight that fails or is stopped writes its
+results files with end reason `failed` or `stopped` and saves its last completed macro step as <name>.end.state.pkl.
 """
 import argparse
 import math
 import os
+import signal
 import sys
+import threading
+import traceback
 
 import numpy as np
 
@@ -865,7 +870,7 @@ def cmd_run(args, parser):
                                                          save_at=args.save_state_at, save_path=state_path,
                                                          end_path=os.path.join(args.outdir, name + END_STATE_SUFFIX),
                                                          save_meta={"name": name, "args": dict(vars(args))}))
-        history = run.run()
+        history = run_flight(run)
         thermal_info["macro_step_s"], thermal_info["frames_every"] = args.dt, frames_every
         thermal_info["dt_continuum_s"] = dt_continuum
         if saving:
@@ -881,14 +886,42 @@ def skin_geometry_stop_of(args):
     return args.geometry_stop != "off"
 
 
+def _stop_flight(signum, frame):
+    raise coupled.FlightStopped(signum)
+
+
+def run_flight(run, **kwargs):
+    """`run.run(**kwargs)` with SIGTERM, as `kill` sends it, raising `coupled.FlightStopped` in the flight, so that a
+    flight stopped by it saves its last completed step and writes its results as one stopped by Control-C does (Task 4 of
+    the geometry stop). The handler is installed only from the main thread, the only one Python lets set one (a caller in
+    another thread flies as before), and the one it replaced is put back after the flight."""
+    if threading.current_thread() is not threading.main_thread():
+        return run.run(**kwargs)
+    previous = signal.signal(signal.SIGTERM, _stop_flight)
+    try:
+        return run.run(**kwargs)
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL if previous is None else previous)
+
+
 def finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history, state_path,
                resumed=None):
     """Write a finished run's files and print its summary (cmd_run and cmd_resume share this, sub-plan 22 Task 5b):
     <outdir>/<name>.csv and .json, the droplet files and plots under <outdir>/<name>/. `resumed`, the resume command's
-    record of its state, goes into the JSON as "resumed_from". Returns the exit code."""
+    record of its state, goes into the JSON as "resumed_from". Returns the exit code.
+
+    A flight that failed or was stopped by hand (`results["failure"]`, Task 4) is written from the run of its last
+    completed step, `history.run`, whose body replaces `the_body`; its error is said first, with the traceback of a
+    failure, and the exit code is 1 for a failure, 128 plus the signal for a stop (143 for SIGTERM, 130 for Control-C)."""
     run_dir = os.path.join(args.outdir, name)
     csv_path = os.path.join(args.outdir, name + ".csv")
     json_path = os.path.join(args.outdir, name + ".json")
+    failure = history.results.get("failure")
+    if failure is not None:
+        the_body, exc = history.run.body, history.exception
+        if failure["kind"] == "failed":            # where it failed, as an error the command line did not handle showed it
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+        print("ERROR: {}".format(str(exc) or type(exc).__name__), file=sys.stderr, flush=True)
     tj.write_history_csv(history, csv_path)
     prov = provenance()
     # spec section 8: the reference file(s)' SHA-256 also live under provenance, alongside the copies
@@ -1006,6 +1039,10 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
         print("  csv  -> {}\n  json -> {}".format(os.path.abspath(csv_path), os.path.abspath(json_path)))
         if "end_state" in doc["files"]:
             print("  end state -> {}".format(doc["files"]["end_state"]))
+    if failure is not None:                        # as the shell reports a process stopped by the signal
+        if isinstance(history.exception, coupled.FlightStopped):
+            return 128 + history.exception.signum
+        return 128 + signal.SIGINT if isinstance(history.exception, KeyboardInterrupt) else 1
     # spec section 7: exit 1 when the flight escaped rather than reaching the ground or t_max;
     # the CSV/JSON are already written above so the escaped trajectory is still available.
     if history.end_reason == "escape":
@@ -1221,7 +1258,7 @@ def cmd_resume(args, parser):
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
               os.path.join(args.outdir, args.name)), flush=True)
-    history = run.run(resume=state)
+    history = run_flight(run, resume=state)
     atm, atm_name, atm_info = make_atmosphere(saved.atmosphere, saved.epoch, saved.wind)
     reference = sesam_io.load_reference(saved.reference) if saved.reference else None
     mass = body.sphere_mass(run.sim.settings.diameter, saved.material_density)
@@ -1314,3 +1351,6 @@ def main(argv=None):
     except RuntimeError as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)
         return 1
+    except coupled.FlightStopped as exc:          # a SIGTERM outside the flight's steps (before the first, or after the last)
+        print("ERROR: {}".format(exc), file=sys.stderr)
+        return 128 + exc.signum

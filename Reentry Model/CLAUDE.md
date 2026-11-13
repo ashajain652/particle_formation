@@ -127,8 +127,16 @@ From inside `Reentry Model/`:
 "$PY" analysis/reentry_model_thermal_verification.py  # Step 2 verification table
 ```
 
-Exit codes are part of the interface: 0 ok, 1 a model/integration failure (message printed, including
-a Newton non-convergence from either thermal backend), 2 bad arguments or a missing optional library.
+Exit codes are part of the interface: 0 ok (the geometry stop included), 1 a model/integration failure (message printed,
+including a Newton non-convergence from either thermal backend) or an escape, 2 bad arguments or a missing optional
+library, 143 and 130 a flight stopped by SIGTERM (as `kill` sends) or Control-C (128 plus the signal, as the shell
+reports it). Every `--thermal fem` flight of `run` and `resume` saves its whole state at its end as
+`<name>.end.state.pkl`. One that fails (any error raised in a macro step; its traceback is printed before the message)
+or is stopped by hand saves there its last completed macro step instead, so a resume of it repeats the failing step,
+and still writes its CSV, JSON and droplet files from the completed steps, with end reason `failed` or `stopped` and
+`results["failure"]` = kind, error, time (2026-11-12; before, it wrote nothing). An error raised before the first
+step, such as a `ValueError` from a bad option, keeps its old exit code; one raised inside a step is now a failure,
+exit 1.
 
 ## Two model architectures and the shared package
 
@@ -190,7 +198,7 @@ described from its own docstring. The layered-skin design (the "skyscrapers" arc
 
 - `skin` — a layered skin of cells on every corner column of the 3D mesh's surface (stage 2 heat only, then the flow).
 - `skinbody` — the body that couples the moving 3D mesh to those skins each macro step.
-  A skin flight ends itself normally (exit 0, end reason `geometry`, `results["geometry_stop"]` = test, time, value, and a printed line) when the core's front passes the sphere's original centre or the column tops enclose more than 1.25 times the metal's volume, whichever first (open item 4, 2026-11-12); `--geometry-stop off` turns it off (named `_geomstop-off`), on `run` and `resume`; the element model has no columns and refuses the option (exit 2). The other end reasons are `t_max`, `ground`, `demise` and `escape` (exit 1); any of them on the same step wins over `geometry`.
+  A skin flight ends itself normally (exit 0, end reason `geometry`, `results["geometry_stop"]` = test, time, value, and a printed line) when the core's front passes the sphere's original centre or the column tops enclose more than 1.25 times the metal's volume, whichever first (open item 4, 2026-11-12); `--geometry-stop off` turns it off (named `_geomstop-off`), on `run` and `resume`; the element model has no columns and refuses the option (exit 2). The other end reasons are `t_max`, `ground`, `demise` and `escape` (exit 1), any of which on the same step wins over `geometry`, and `failed` (exit 1) and `stopped` (exit 143 or 130) for a flight that raised or was stopped by hand.
 - `columns` — the corner columns, each owning the dual cell of one corner of the surface triangulation.
 - `movemesh` — the moving 3D mesh: surface corners move by the metal crossing the rigid front, nodes in a deforming
   zone beneath follow, and the temperature field is remapped with the energy books closed exactly.

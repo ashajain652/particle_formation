@@ -8,6 +8,7 @@ Mass is constant in Step 2; the loop already carries the body's mass and the mes
 `body` must be a ThermalBody: CoupledRun uses `theta`, `surface`, `radiated_power()`, `surface_stats()`,
 `nose_radius()` and `integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
 import os
+import signal
 import time
 from dataclasses import dataclass, field
 
@@ -76,6 +77,20 @@ SKINBODY_COLUMNS = ["skin_cells", "skin_thickness_max_mm", "skin_above_min", "fl
 # a resume that gives or drops a limit adds them to its saved row or takes them from it (cli.cmd_resume)
 END_SNAP = 1e-6                   # of the macro step: a step that would end this close short of t_max ends at it (below)
 PVD_TEMPLATE = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">\n<Collection>\n{}</Collection>\n</VTKFile>\n'
+
+
+class FlightStopped(BaseException):
+    """A flight stopped by the signal `signum`: the command line's SIGTERM handler raises it during `CoupledRun.run`, so that
+    `kill` stops a flight as Control-C does, saving its last completed macro step (Task 4 of the geometry stop, Asha
+    2026-11-12). A BaseException, as KeyboardInterrupt is, so that no `except Exception` on the way (a save's, a fallback's,
+    a wrapper that turns errors into its own) takes the stop for an error and flies on."""
+
+    def __init__(self, signum):
+        self.signum = int(signum)
+        super().__init__("stopped by signal {} ({})".format(self.signum, signal.Signals(self.signum).name))
+
+
+STOPS = (KeyboardInterrupt, FlightStopped)       # a stop by hand: Control-C, or a signal the command line turns into one
 
 
 @dataclass
@@ -156,7 +171,11 @@ class CoupledRun:
     def run(self, resume=None):
         """Fly to the end, from the start or, with `resume` -- a state this run saved (`settings.save_at`), read back by
         `restart.load` (sub-plan 22 Task 5a) -- from the end of the saved macro step: the history then starts with that
-        step's row, and the continuum switch, the frames' clock and the step count are the saved run's."""
+        step's row, and the continuum switch, the frames' clock and the step count are the saved run's.
+
+        With `settings.end_path` (Task 4 of the geometry stop, Asha 2026-11-12) the run keeps a copy of its state at the
+        end of the last completed step, and a step that raises, or a stop by hand (Control-C, or the command line's
+        SIGTERM), ends the flight there instead of escaping: see `_failed`. Without it an error escapes as before."""
         started = time.perf_counter()
         sim, body, s = self.sim, self.body, self.settings
         if resume is None:
@@ -176,31 +195,47 @@ class CoupledRun:
                 # and a direct resume both pass, and the saved row gets the column too
                 body.jump_faults_bottom_cell = body.jump_faults
                 rows[0].setdefault("jump_faults_bottom_cell", rows[0].get("jump_faults", body.jump_faults))
-        while sim.end_reason is None:
-            dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
-            a, loads = self.loads_at(sim.t, sim.y)
-            body.advance(sim.t, dt, loads, state=a)
-            step += 1
-            self._switch(sim.t, a)
-            if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+        # the copy of the last completed step (Task 4): a local, never an attribute of the run, so that no state pickled
+        # after it (the next copy, the state at save_at, the end state) carries it and grows with every step
+        last = self._copy(step, rows) if s.end_path is not None else None
+        try:
+            while sim.end_reason is None:
+                dt = sim.advance(s.dt, snap=END_SNAP * s.dt if s.snap_to_t_max else 0.0)
                 a, loads = self.loads_at(sim.t, sim.y)
-            rows.append(self.row(sim.t, sim.y, a, loads))
-            states.append(sim.y.copy())
-            self._frame(step, sim.t, loads)
-            if (self.melting or self.skins) and body.demised():
-                sim.end_reason = "demise"
-            if self.skins and sim.end_reason is None and body.geometry_stop:     # any other end on this step wins (open item 4)
-                breach = body.geometry_breach()
-                if breach is not None:
-                    sim.end_reason = "geometry"
-                    self.geometry_stopped = (breach[0], float(sim.t), float(breach[1]))
-            if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
-                    and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
-                self._save(step, rows[-1])
+                body.advance(sim.t, dt, loads, state=a)
+                step += 1
+                self._switch(sim.t, a)
+                if len(loads.q_conv) != body.surface.n_patches:       # elements died this step: loads on the new surface for the record
+                    a, loads = self.loads_at(sim.t, sim.y)
+                rows.append(self.row(sim.t, sim.y, a, loads))
+                states.append(sim.y.copy())
+                self._frame(step, sim.t, loads)
+                if (self.melting or self.skins) and body.demised():
+                    sim.end_reason = "demise"
+                if self.skins and sim.end_reason is None and body.geometry_stop:     # any other end on this step wins (open item 4)
+                    breach = body.geometry_breach()
+                    if breach is not None:
+                        sim.end_reason = "geometry"
+                        self.geometry_stopped = (breach[0], float(sim.t), float(breach[1]))
+                if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
+                        and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
+                    self._save(step, rows[-1])
+                if s.end_path is not None and sim.end_reason is None:     # the step is complete and the flight goes on
+                    last = self._copy(step, rows, last)
+        except (Exception,) + STOPS as exc:
+            if last is None:
+                raise
+            return self._failed(exc, last, rows, states, started)
         self._collection()
         if s.end_path is not None:
             self.end_saved_at = self.end_save_error = None
             self._save(step, rows[-1], path=s.end_path, end=sim.end_reason)
+        return self._history(rows, states, started)
+
+    def _history(self, rows, states, started):
+        """The flight's history from its rows and trajectory states, with its results: what `run` returns (Task 4: the end
+        of `run`, which a flight that failed also calls on the run of its last completed step)."""
+        sim, s = self.sim, self.settings
         columns = {k: np.array([r[k] for r in rows], dtype=float) for k in rows[0]}
         history = tj.History(columns, np.array(states), sim.end_reason)
         history.results = sim.results(history, sim.nfev, time.perf_counter() - started)
@@ -230,9 +265,7 @@ class CoupledRun:
         s = self.settings
         ending = path is not None
         try:
-            restart.save(path if ending else s.save_path,
-                         {"format": restart.FORMAT, "run": self, "step": step, "row": row, "time_s": float(self.sim.t),
-                          "rng": np.random.get_state(), "meta": s.save_meta, "end": end})
+            restart.save(path if ending else s.save_path, self._state(step, row, end))
             if ending:
                 self.end_saved_at = float(self.sim.t)
             else:
@@ -243,6 +276,48 @@ class CoupledRun:
                 self.end_save_error = message
             else:
                 self.state_save_error = message
+
+    def _state(self, step, row, end=None):
+        """The state `restart` saves of the run at the end of macro step `step`, whose history row is `row`."""
+        return {"format": restart.FORMAT, "run": self, "step": step, "row": row, "time_s": float(self.sim.t),
+                "rng": np.random.get_state(), "meta": self.settings.save_meta, "end": end}
+
+    def _copy(self, step, rows, last=None):
+        """(the run's state at the end of macro step `step`, pickled in memory as `restart.save` pickles it, with "end"
+        None; the number of history rows to that step), which a failure or a stop by hand writes as the end state (Task
+        4). A copy that cannot be made leaves `last`, the previous step's, as a save that fails never fails the flight; a
+        stop by hand during it leaves it too, since the new copy replaces the old only once it is complete."""
+        try:
+            return restart.dumps(self._state(step, rows[-1])), len(rows)
+        except Exception:
+            return last
+
+    def _failed(self, exc, last, rows, states, started):
+        """The end of a flight whose macro step raised `exc`, or that was stopped by hand (Task 4; Asha, 2026-11-12: "the
+        code should always produce a saved state when it terminates"). `last`, the copy of the last completed step, is
+        loaded back as a run of its own -- consistent, unlike this one, which the step left part way -- and saved to
+        `settings.end_path` with "end" `failed`, or `stopped` for Control-C or FlightStopped. The run is saved as it was,
+        its flight not ended (`sim.end_reason` None), so a resume flies on from it and repeats the failing step; only
+        then is its end reason set. A save that fails, a second Control-C included, is recorded and changes nothing
+        else. Returns that run's history of the completed steps, with `history.run` that run, `history.exception` `exc`,
+        and `results["failure"]` = {"kind", "error": "<Type>: <message>", "time_s": the last completed step's time}."""
+        kind = "stopped" if isinstance(exc, STOPS) else "failed"
+        data, n = last
+        state = restart.loads(data)
+        state["end"] = kind
+        run = state["run"]
+        run.end_saved_at = run.end_save_error = None
+        try:
+            restart.save(run.settings.end_path, state)
+            run.end_saved_at = state["time_s"]
+        except (Exception,) + STOPS as error:
+            run.end_save_error = "{}: {}".format(type(error).__name__, error)
+        run.sim.end_reason = kind
+        run._collection()
+        history = run._history(rows[:n], states[:n], started)
+        history.run, history.exception = run, exc
+        history.results["failure"] = {"kind": kind, "error": "{}: {}".format(type(exc).__name__, exc), "time_s": state["time_s"]}
+        return history
 
     def _switch(self, t, a):
         """The continuum step (amendment of 2026-10-07): from the first step whose aero state -- the one the body was

@@ -4,13 +4,14 @@ a saved flight resumes from it, in an object graph of its own, to the last bit."
 import csv
 import json
 import os
+import signal
 
 import numpy as np
 import pytest
 
 from reentry_model import cli, restart, spray
 from reentry_model import trajectory as tj
-from reentry_model.skyscrapers import skinbody
+from reentry_model.skyscrapers import coupled, skinbody
 
 # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
 # the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
@@ -793,11 +794,17 @@ def test_the_element_models_melting_flight_saves_an_end_state(tmp_path):
     assert restart.load(str(tmp_path / "el.end.state.pkl"))["end"] == "t_max"
 
 
-def test_an_end_state_of_a_kind_a_later_task_adds_resumes_as_it_is(tmp_path):
+def test_a_failed_end_state_resumes_as_it_is_and_flies_on(tmp_path):
+    """A `failed` (or `stopped`) end state holds the run of its last completed step, whose flight had not ended (Task 4: the
+    run is pickled with `sim.end_reason` None), so its resume is not refused and flies on, here one 12.5 ms step to the
+    later --t-max."""
     assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "a"]) == 0
     path = str(tmp_path / "a.end.state.pkl")
-    state = restart.load(path); state["end"] = "failed"; restart.save(path, state)
+    state = restart.load(path); state["end"] = "failed"; state["run"].sim.end_reason = None; restart.save(path, state)
     assert cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"]) == 0
+    res = json.load(open(str(tmp_path / "r.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["final_time_s"] == pytest.approx(0.0625)
+    assert len(rows_of(str(tmp_path / "r.csv"))) == 2
 
 
 def test_a_geometry_end_state_resumes_with_the_stop_off(tmp_path):
@@ -812,3 +819,105 @@ def test_a_geometry_end_state_resumes_with_the_stop_off(tmp_path):
     assert exc.value.code == 2
     assert cli.main(["resume", path, "--t-max", "0.0625", "--geometry-stop", "off", "--outdir", str(tmp_path), "--name", "r"]) == 0
     assert json.load(open(str(tmp_path / "r.json")))["results"]["geometry_stop"] is None
+
+
+# Task 4: a flight that fails, or is stopped by SIGTERM or Control-C, saves its last completed macro step as its end state,
+# writes its results files from the completed steps' rows with end reason `failed` or `stopped`, and exits 1, 143 or 130
+
+
+def fail_on_call(monkeypatch, n, exc):
+    real, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise exc
+        return real(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+
+
+def test_a_failure_saves_the_last_completed_step_and_writes_its_results(tmp_path, monkeypatch):
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    fail_on_call(monkeypatch, 3, RuntimeError("a corner move degrades the mesh"))
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    doc = json.load(open(str(tmp_path / "f.json")))
+    assert doc["results"]["end_reason"] == "failed" and "degrades the mesh" in doc["results"]["failure"]["error"]
+    assert rows_of(str(tmp_path / "f.csv")) == rows_of(str(tmp_path / "u.csv"))[:3]
+    state = restart.load(str(tmp_path / "f.end.state.pkl"))
+    assert state["end"] == "failed" and state["step"] == 2 and state["time_s"] == pytest.approx(0.0375)
+    monkeypatch.undo()
+    assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    assert rows_of(str(tmp_path / "r.csv")) == rows_of(str(tmp_path / "u.csv"))[2:]
+
+
+def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tmp_path, monkeypatch):
+    before = signal.getsignal(signal.SIGTERM)
+    real, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "s"]) == 143
+    assert json.load(open(str(tmp_path / "s.json")))["results"]["end_reason"] == "stopped"
+    assert restart.load(str(tmp_path / "s.end.state.pkl"))["step"] == 1
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_control_c_during_the_end_write_leaves_no_partial_state(tmp_path, monkeypatch):
+    fail_on_call(monkeypatch, 2, KeyboardInterrupt())
+    def interrupted(path, data):
+        with open(path + restart.PART, "wb") as fh:
+            fh.write(data[:10])
+        raise KeyboardInterrupt
+    monkeypatch.setattr(restart, "write_bytes", interrupted)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "k"]) == 130
+    assert not os.path.exists(str(tmp_path / "k.end.state.pkl"))
+    assert json.load(open(str(tmp_path / "k.json")))["results"]["end_state_error"]
+
+
+def test_a_failure_in_the_first_step_of_a_resume_saves_the_resumed_step(flown, tmp_path, monkeypatch):
+    out, flight, records, state_path = flown
+    fail_on_call(monkeypatch, 1, RuntimeError("boom"))
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "r"]) == 1
+    assert restart.load(str(tmp_path / "r.end.state.pkl"))["step"] == 14
+
+
+def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeating_them(tmp_path, monkeypatch):
+    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "u"]) == 0
+    real, calls = coupled.CoupledRun._frame, {"n": 0}
+    def frame(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 6:                        # the frame of step 5 (0.075 s), after its records were spooled
+            raise RuntimeError("frame writer failed")
+        return real(self, *a, **k)
+    monkeypatch.setattr(coupled.CoupledRun, "_frame", frame)
+    assert cli.main(FLIGHT + ["--t-max", "0.0875", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    monkeypatch.undo()
+    assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
+    whole = np.load(str(tmp_path / "u" / "particles.npz"))
+    got = np.load(str(tmp_path / "r" / "particles.npz"))
+    after = whole["time_s"] > restart.load(str(tmp_path / "f.end.state.pkl"))["time_s"] + 1e-9
+    assert all(np.array_equal(got[k], whole[k][after], equal_nan=True) for k in whole.files)
+    # the failed flight's own records (controller's ruling, Task 4): the failing step's, already spooled, are not among them,
+    # so the failed flight's and the resume's together are the unbroken flight's, none twice
+    end = restart.load(str(tmp_path / "f.end.state.pkl"))
+    assert end["end"] == "failed" and end["step"] == 4
+    failed = np.load(str(tmp_path / "f" / "particles.npz"))
+    assert (failed["time_s"] <= end["time_s"] + 1e-9).all()
+    assert after.any() and (~after).any()
+    assert all(np.array_equal(failed[k], whole[k][~after], equal_nan=True) for k in whole.files)
+
+
+def test_no_saved_state_carries_the_copy_of_the_last_completed_step(tmp_path):
+    """The copy of the last completed step that a failure writes is kept outside the run (controller's ruling, Task 4): were
+    it an attribute of the run, every state pickled after it -- the next copy, the state at --save-state-at, the end state --
+    would carry the copy before it inside it, and the states would grow with every step. The end state, saved at the end
+    of the 4th step, is the size of the state saved at the end of the 1st (1.02 times it, measured 2026-11-12; about 4 times
+    with the copy held by the run), and its run holds no pickled bytes."""
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "c", "--save-state-at", "0.025"]) == 0
+    first, end = str(tmp_path / "c.state.pkl"), str(tmp_path / "c.end.state.pkl")
+    assert restart.load(first)["step"] == 1 and restart.load(end)["step"] == 4
+    held = [x for v in vars(restart.load(end)["run"]).values() for x in (v if isinstance(v, (tuple, list)) else (v,))]
+    assert not any(isinstance(x, (bytes, bytearray)) for x in held)
+    assert os.path.getsize(end) < 1.2 * os.path.getsize(first)

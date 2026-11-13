@@ -4,6 +4,7 @@ row in <outdir>/<name>.rows.csv as it is made and a progress line every PROGRESS
 so a flight that stops early keeps its rows to its last completed macro step."""
 import csv
 import importlib.util
+import json
 import os
 
 import pytest
@@ -51,9 +52,10 @@ def test_a_flight_keeps_every_history_row_as_it_is_made_and_a_progress_line(fly,
 
 
 def test_a_flight_that_raises_part_way_returns_1_and_keeps_the_rows_made_before(fly, tmp_path, monkeypatch, capsys):
-    """An exception the command line does not handle (here the third macro step's heat solve) is printed with its
-    traceback and gives exit code 1; the command line wrote no history, but the rows file holds the three rows made
-    before the failure, and the hook is undone."""
+    """An exception raised in a macro step (here the third macro step's heat solve) is printed with its traceback and gives
+    exit code 1; the rows file holds the three rows made before the failure, and the hook is undone. Since Task 4 of the
+    geometry stop (2026-11-12) the command line also writes the history to the last completed step, the same three rows,
+    with end reason `failed`, and saves that step as the end state; before it, it wrote no history."""
     advance, calls = body.ThermalBody.advance, []
 
     def failing(self, *args, **kwargs):
@@ -66,5 +68,7 @@ def test_a_flight_that_raises_part_way_returns_1_and_keeps_the_rows_made_before(
     assert fly.main([str(tmp_path), "f"] + ARGS) == 1
     assert coupled.CoupledRun.row is original
     assert "ArithmeticError: a failed solve" in capsys.readouterr().err
-    assert not (tmp_path / "f.csv").exists()
     assert [float(r["time_s"]) for r in read(tmp_path / "f.rows.csv")] == [0.0, 0.5, 1.0]
+    assert [float(r["time_s"]) for r in read(tmp_path / "f.csv")] == [0.0, 0.5, 1.0]
+    assert json.load(open(str(tmp_path / "f.json")))["results"]["end_reason"] == "failed"
+    assert (tmp_path / "f.end.state.pkl").exists()

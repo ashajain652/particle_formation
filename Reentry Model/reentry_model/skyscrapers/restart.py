@@ -67,6 +67,11 @@ def dumps(state):
     return buf.getvalue()
 
 
+def loads(data):
+    """The state `dumps` made `data` of, as a new object graph."""
+    return pickle.loads(data)
+
+
 def write_bytes(path, data):
     """Write `data` to `path` through path + PART and a rename, so a write cut short leaves no file at `path` (and its
     part removed when the failure is Python's)."""
