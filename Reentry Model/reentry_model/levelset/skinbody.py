@@ -196,8 +196,10 @@ class StepBook:
     base moves made apart from the old metal, which took the handing columns' temperatures (`stepend.StepEnd._seed`,
     stage 3 Task 11, item 3). `mass_absorbed` [kg] what the full-depth skins absorbed of the volume's non-rigid metal
     and the stub below it, and `enthalpy_absorbed` [J] its enthalpy (`LevelSetSkinBody._absorb`, Task 11's fix, item 4;
-    in `mass_drawn` too). The heat
-    deferred to the volume over the step, by source, each
+    in `mass_drawn` too). `move_corrections` each base move's miss of its volume target before the volume correction
+    made it up, the largest over its pieces as a share of the piece's target, in the order the moves were made (their
+    largest is `volume_correction_max`; stage 3 Task 11's review, I3: it shows when a step leans on the correction). The
+    heat deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
     against what the skins took and gave), `residual_remesh_J` the remesh's; the interface mismatch is
@@ -265,6 +267,7 @@ class StepBook:
     groups_guarded_max: int = 0
     mass_absorbed: float = 0.0
     enthalpy_absorbed: float = 0.0
+    move_corrections: list = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 
     def row(self):
@@ -303,6 +306,8 @@ class _Tally:
         self.guarded = 0                               # the most groups the guard replaced in a part
         self.absorbed = 0.0                            # kg the full-depth skins absorbed of the volume's non-rigid metal
         self.absorbed_H = 0.0                          # J its enthalpy
+        self.corrections = []                          # each base move's miss of its volume target before the volume
+                                                       # correction (`stepend.StepEnd._move_beta`)
 
 
 @dataclass
@@ -996,7 +1001,7 @@ class LevelSetSkinBody(StepEnd):
             mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
             momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands,
             groups_guarded_max=tally.guarded, mass_absorbed=tally.absorbed,
-            enthalpy_absorbed=tally.absorbed_H, summary=summary)
+            enthalpy_absorbed=tally.absorbed_H, move_corrections=list(tally.corrections), summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

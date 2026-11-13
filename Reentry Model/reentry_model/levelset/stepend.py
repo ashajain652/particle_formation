@@ -256,8 +256,10 @@ class StepEnd:
         fine_margin would not follow a longer move, and the volume correction would make up the rest elsewhere: on the
         test cube a 3.2 mm inward move of one face's bases went 2.1 mm in one round, 3.2 mm in four; it still moved a
         side face 0.35 mm, the nearest-point extension reaching nodes of the side face nearest the moved bases, and
-        rounds from points carried with the base pulled the side faces 2 mm in). Returns the enthalpy the move removed
-        from the volume [J]."""
+        rounds from points carried with the base pulled the side faces 2 mm in). The largest share of its target by which
+        the extension missed a piece's volume before the volume correction made it up is kept in `tally.correction` (the
+        step's largest) and, per move, in `tally.corrections` (stage 3 Task 11's review, I3). Returns the enthalpy the
+        move removed from the volume [J]."""
         rounds = int(np.ceil(np.abs(disp).max(initial=0.0) / (MOVE_ROUND_SHARE * self.fine_margin) - 1e-12))
         if rounds > 1:
             return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally, given) for _ in range(rounds))
@@ -286,6 +288,8 @@ class StepEnd:
             raise RuntimeError("the draws ask {:.3e} m3 more than the skin base's largest piece holds".format(-targets[0]))
         new, worst = correct_volumes(mesh, new, label, targets)
         tally.correction = max(tally.correction, worst)
+        if hasattr(tally, "corrections"):                  # each move's miss before the correction (the review's I3)
+            tally.corrections.append(worst)
         removed = self.solver.move(new, seed=None if given is None else self._seed(beta, new, points, given))
         tally.islands += getattr(self.solver, "seeded", 0)
         self.beta = new

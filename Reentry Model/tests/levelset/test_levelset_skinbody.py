@@ -120,7 +120,9 @@ def test_a_macro_step_closes_mass_and_enthalpy(heated):
 def test_markers_follow_the_recession():
     """The cube's +x face at 6 MW/m2 for 0.5 s with the liquid removed as it forms (remove="feed"): the face recedes
     (metal leaves, the skins draw from the volume and the skin base beta moves inward), the books close, and after the
-    step every marker lies within 1e-9 m of phi = 0, the outer surface rebuilt from beta and the skins."""
+    step every marker lies within 1e-9 m of phi = 0, the outer surface rebuilt from beta and the skins. The step's book
+    lists each base move's miss of its volume before the volume correction (`move_corrections`, stage 3 Task 11's
+    review, I3), the largest being `volume_correction_max`."""
     body = cube_body(remove="feed")
     x0 = body.markers.x[body.markers.normal[:, 0] > 0.9, 0].mean()
     book = body.advance(0.5, q_prescribed=one_face(6e6))
@@ -128,9 +130,13 @@ def test_markers_follow_the_recession():
     face = mk.normal[:, 0] > 0.9
     off = np.abs(interpolate(body.mesh, body.phi, mk.x))
     print("receding face: removed {:.3e} kg, drawn {:.3e} kg; face moved {:.3f} mm; markers off phi at most {:.2e} m; "
-          "residuals mass {:.2e}, enthalpy {:.2e}".format(book.mass_removed, book.mass_drawn,
-                                                          (x0 - mk.x[face, 0].mean()) * 1e3, off.max(),
-                                                          book.mass_residual, book.enthalpy_residual))
+          "residuals mass {:.2e}, enthalpy {:.2e}; {} base moves missing their volume by {:.2e} at most (median {:.2e}) "
+          "of the body before the correction".format(
+              book.mass_removed, book.mass_drawn, (x0 - mk.x[face, 0].mean()) * 1e3, off.max(), book.mass_residual,
+              book.enthalpy_residual, len(book.move_corrections), max(book.move_corrections, default=np.nan),
+              np.median(book.move_corrections) if book.move_corrections else np.nan))
+    assert len(book.move_corrections) >= 2 and min(book.move_corrections) >= 0.0
+    assert max(book.move_corrections) == book.volume_correction_max
     assert book.mass_removed > 0.0 and book.mass_drawn > 0.0
     assert mk.x[face, 0].mean() < x0
     assert off.max() <= 1e-9
