@@ -107,6 +107,29 @@ def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_pa
     assert sorted(c.record()) == ["stamped"]
 
 
+def test_the_code_stamp_s_difference_check_covers_the_data_the_cases_read(monkeypatch):
+    """Task 11's re-review, minor item 4: a case's stamp says whether the code it ran on differed from its commit; the
+    check covered only `reentry_model` and `analysis/levelset`, so a changed material table or reference value (the cases
+    read `data/materials`, `data/reference_values`, and through the shared package the US76 table and the drag tables in
+    `data/`) would not have marked the run. The stamp's `git status` now covers `data` too, and a change there alone
+    marks the run as differing."""
+    import subprocess
+    c = _cases()
+    calls = []
+
+    def fake(args, **kw):
+        calls.append(list(args))
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, stdout="0" * 40 + "\n", stderr="")
+        changed = " M data/materials/AA7075_scheil.json" if "data" in args else ""
+        return subprocess.CompletedProcess(args, 0, stdout=changed, stderr="")
+    monkeypatch.setattr(c.subprocess, "run", fake)
+    stamp = c.code_stamp()
+    status = [a for a in calls if a[:2] == ["git", "status"]][0]
+    assert {"reentry_model", "analysis/levelset", "data"} <= set(status[status.index("--") + 1:])
+    assert stamp == {"commit": "0" * 40, "dirty": True}
+
+
 def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share():
     """The controller's ruling on the review's I2: the shoulder is judged on the metal deposited past the heat's end at
     2.0 s, at least DEPOSIT_RIGID_SHARE of it rigid and at most the skyscrapers' 3.0 % of it past DEPOSIT_FAR (5 mm);

@@ -501,13 +501,18 @@ def books_pass(rows):
     return all(abs(r["mass_residual"]) <= MASS_TOL and abs(r["enthalpy_residual"]) <= ENERGY_TOL for r in rows)
 
 
+STAMP_PATHS = ("reentry_model", "analysis/levelset", "data")   # what a run's code and inputs are (`code_stamp`)
+
+
 def code_stamp():
-    """The commit the case ran on and whether the level-set package or this script then differed from it (Task 11's
-    review, M5: the record mixed runs from before and after a fix round with nothing to tell them apart)."""
+    """The commit the case ran on and whether the package, this script or the data the cases read (STAMP_PATHS: the
+    material tables and reference values, and the US76 and drag tables the shared package reads) then differed from it
+    (Task 11's review, M5: the record mixed runs from before and after a fix round with nothing to tell them apart; its
+    re-review, minor item 4: a changed data file did not mark a run)."""
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
                               check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--", "reentry_model", "analysis/levelset"], cwd=REPO_ROOT,
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", *STAMP_PATHS], cwd=REPO_ROOT,
                                capture_output=True, text=True, check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return {"commit": None, "dirty": None}
