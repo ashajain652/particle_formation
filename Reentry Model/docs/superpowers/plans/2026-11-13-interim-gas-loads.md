@@ -26,7 +26,7 @@ Reference calculations, data and plots: `analysis/gas_loads/` (README there); te
   package-root constants; `tests/test_reentry_model_shared.py` must pass, with the three new modules added to its list.
 - Interpreter `PY=/Users/ashajain/miniforge3/envs/drama_env/bin/python`; run tests from `Reentry Model/` with
   `PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest ... -p no:cacheprovider`.
-- `--gas-loads classic` must reproduce `main` (08cca55) byte for byte: `analysis/skyscrapers_port/same_results.py
+- `--gas-loads classic` must reproduce `main` (4e857e1) byte for byte: `analysis/skyscrapers_port/same_results.py
   compare` exit 0 on the cases `step1 skins element nomelt` (Task 8).
 - The droplet stage is untouched: `droplet_reentry` keeps building `PhysicsHeating` itself; its reproduction test
   (`reentry_model/droplet_reentry/tests/test_droplet_reentry_model.py`, rel 1e-9) must still pass.
@@ -333,9 +333,9 @@ Reference calculations, data and plots: `analysis/gas_loads/` (README there); te
   `--heating physics` description under "Things that are easy to get wrong", and the shared-module list),
   `analysis/gas_loads/README.md`, the design's status line.
 
-- [ ] **Step 1: Classic is byte-identical to main.** Make a detached checkout of 08cca55 (`git worktree add --detach
-  "$SCRATCH/main-08cca55" 08cca55`), then from `Reentry Model/`:
-  `"$PY" analysis/skyscrapers_port/same_results.py run --code "$SCRATCH/main-08cca55/Reentry Model" --out "$SCRATCH/sr_main" --cases step1,skins,element,nomelt`
+- [ ] **Step 1: Classic is byte-identical to main.** Make a detached checkout of 4e857e1 (`git worktree add --detach
+  "$SCRATCH/main-4e857e1" 4e857e1`), then from `Reentry Model/`:
+  `"$PY" analysis/skyscrapers_port/same_results.py run --code "$SCRATCH/main-4e857e1/Reentry Model" --out "$SCRATCH/sr_main" --cases step1,skins,element,nomelt`
   `"$PY" analysis/skyscrapers_port/same_results.py run --code . --out "$SCRATCH/sr_classic" --cases step1,skins,element,nomelt --append "--gas-loads classic"`
   `"$PY" analysis/skyscrapers_port/same_results.py compare "$SCRATCH/sr_main" "$SCRATCH/sr_classic"` -> exit 0.
   (The run names differ by `_loads-classic`; if `compare` pairs files by name, rename the classic folder's files
