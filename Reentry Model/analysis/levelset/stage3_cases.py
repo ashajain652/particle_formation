@@ -81,6 +81,7 @@ import math
 import os
 import pickle
 import resource
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -498,9 +499,24 @@ def books_pass(rows):
     return all(abs(r["mass_residual"]) <= MASS_TOL and abs(r["enthalpy_residual"]) <= ENERGY_TOL for r in rows)
 
 
+def code_stamp():
+    """The commit the case ran on and whether the level-set package or this script then differed from it (Task 11's
+    review, M5: the record mixed runs from before and after a fix round with nothing to tell them apart)."""
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "reentry_model", "analysis/levelset"], cwd=REPO_ROOT,
+                               capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return {"commit": None, "dirty": None}
+    return {"commit": head, "dirty": bool(dirty)}
+
+
 def write(name, out):
+    """The case's summary to output/levelset/stage3_<name>.json, stamped with the code it ran on (`code_stamp`)."""
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, "stage3_{}.json".format(name))
+    out = {"code": code_stamp(), **out}
     with open(path, "w") as fh:
         json.dump(out, fh, indent=1, default=_json_default)
     print("wrote", path, flush=True)
@@ -1060,11 +1076,21 @@ def cost_skip(preset="dev", save=True):
 
 # -- the record --------------------------------------------------------------------------------------------------------
 def record():
-    """Gather output/levelset/stage3_*.json into analysis/levelset/stage3_recorded.json (each case's summary and steps)."""
-    out = {}
+    """Gather output/levelset/stage3_*.json into analysis/levelset/stage3_recorded.json (each case's summary and steps,
+    with the commit it ran on, `code`); the commits are printed, and a summary without a stamp is left out and named."""
+    out, left = {}, []
     for path in sorted(glob.glob(os.path.join(OUT, "stage3_*.json"))):
         with open(path) as fh:
-            out[os.path.basename(path)[len("stage3_"):-len(".json")]] = json.load(fh)
+            doc = json.load(fh)
+        name = os.path.basename(path)[len("stage3_"):-len(".json")]
+        if not (doc.get("code") or {}).get("commit"):
+            left.append(name)
+            continue
+        out[name] = doc
+    for name, doc in out.items():
+        print(name, doc["code"]["commit"][:7], "(differed from it)" if doc["code"]["dirty"] else "")
+    if left:
+        print("left out, with no code stamp:", left)
     with open(RECORD, "w") as fh:
         json.dump(out, fh, indent=1)
     print("recorded", sorted(out), "in", RECORD)

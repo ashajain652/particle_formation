@@ -84,6 +84,27 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
     assert kept.time == 1.5 and "_modes" not in kept.__dict__
 
 
+def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_path):
+    """Task 11's review, M5: each case's summary carries the commit it ran on and whether the level-set package or the
+    case script differed from it, so that the record cannot mix runs from different code unseen; `record` leaves out a
+    summary without a stamp."""
+    import json
+    import re
+    import subprocess
+    c = _cases()
+    monkeypatch.setattr(c, "OUT", str(tmp_path))
+    monkeypatch.setattr(c, "RECORD", str(tmp_path / "recorded.json"))
+    path = c.write("stamped", {"case": "a"})
+    with open(path) as fh:
+        doc = json.load(fh)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=c.REPO_ROOT, capture_output=True, text=True).stdout.strip()
+    assert re.fullmatch("[0-9a-f]{40}", doc["code"]["commit"]) and doc["code"]["commit"] == head
+    assert isinstance(doc["code"]["dirty"], bool)
+    with open(tmp_path / "stage3_old.json", "w") as fh:
+        json.dump({"case": "b"}, fh)
+    assert sorted(c.record()) == ["stamped"]
+
+
 def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share():
     """The controller's ruling on the review's I2: the shoulder is judged on the metal deposited past the heat's end at
     2.0 s, at least DEPOSIT_RIGID_SHARE of it rigid and at most the skyscrapers' 3.0 % of it past DEPOSIT_FAR (5 mm);
