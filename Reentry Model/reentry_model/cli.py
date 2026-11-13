@@ -960,6 +960,9 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
         else:
             print("geometry stop at {:.6g} s: the core's front is {:.3g} mm behind the sphere's original centre".format(
                 stop["time_s"], -stop["value"]), flush=True)
+    for key, what in (("state_save_error", "the state at --save-state-at"), ("end_state_error", "the end state")):
+        if history.results.get(key):                # a save that failed never changes the flight, but is said, even under --quiet
+            print("warning: saving {} failed: {}".format(what, history.results[key]), file=sys.stderr, flush=True)
     if not args.quiet:
         res = history.results
         print("{} (seed {}): {} at t = {:.1f} s, final V {:.4f} km/s, Kn {:.3g} -> {:.3g}, {} RHS evaluations in {:.1f} s".format(
@@ -1001,6 +1004,8 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
                           tm["Q_conv"]["max"], tm["Q_conv"]["continuum_rel_max"], tm["integrated_heat"]["rel_error_end_of_hypersonic"],
                           tm["integrated_heat"]["rel_error_end"], tm["temperature"]["dT_max_K"], tm["temperature"]["dT_rel_max"], tm["radiated"]["max"]))
         print("  csv  -> {}\n  json -> {}".format(os.path.abspath(csv_path), os.path.abspath(json_path)))
+        if "end_state" in doc["files"]:
+            print("  end state -> {}".format(doc["files"]["end_state"]))
     # spec section 7: exit 1 when the flight escaped rather than reaching the ground or t_max;
     # the CSV/JSON are already written above so the escaped trajectory is still available.
     if history.end_reason == "escape":

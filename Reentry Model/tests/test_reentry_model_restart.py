@@ -107,7 +107,7 @@ def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_l
     assert after.any() and all(np.array_equal(got[k], a[k][after], equal_nan=True) for k in a.files)
 
 
-def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
+def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch, capsys):
     """A save that fails (a full disk, say) is recorded and the flight goes on: the state is worth less than the flight."""
     pytest.importorskip("cantera")
 
@@ -122,6 +122,9 @@ def test_a_save_that_fails_leaves_the_flight_flying(tmp_path, monkeypatch):
     assert "no space left on device" in doc["results"]["end_state_error"] and "end_state" not in doc["files"]
     assert doc["results"]["end_state_saved_at_s"] is None
     assert len(rows_of(str(tmp_path / "f.csv"))) == 5
+    err = capsys.readouterr().err                                 # said on stderr even under --quiet, one line for each save
+    assert "saving the state at --save-state-at failed: OSError: no space left on device" in err
+    assert "saving the end state failed: OSError: no space left on device" in err
 
 
 @pytest.mark.parametrize("argv", [
