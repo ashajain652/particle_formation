@@ -131,7 +131,9 @@ def test_markers_follow_the_recession():
     labelled with what made it -- a part's base move ("part", one entry per round of a move made in rounds), the step
     end's mode changes ("modes"), a release ("release"), the remesh ("remesh"; its correction raised
     `volume_correction_max` without an entry before Task 11's fix round 2, the re-review's minor item 1) -- so that the
-    largest of the list is `volume_correction_max`. This step's mesh is rebuilt at its end."""
+    largest of the list is `volume_correction_max`; each entry gives beside the worst piece's miss the body's, the
+    largest piece's, which is what the correction spreads (a speck's miss can exceed its target; report concern 2 of fix
+    round 1). This step's mesh is rebuilt at its end."""
     body = cube_body(remove="feed")
     x0 = body.markers.x[body.markers.normal[:, 0] > 0.9, 0].mean()
     book = body.advance(0.5, q_prescribed=one_face(6e6))
@@ -149,6 +151,8 @@ def test_markers_follow_the_recession():
     assert set(kinds) <= {"part", "modes", "release", "remesh"}
     assert kinds.count("part") >= 2 and "remesh" in kinds and min(worst) >= 0.0
     assert max(worst) == book.volume_correction_max
+    body_miss = [e["body"] for e in book.move_corrections]
+    assert all(0.0 <= m <= w for m, w in zip(body_miss, worst)) and max(body_miss) > 0.0
     assert book.mass_removed > 0.0 and book.mass_drawn > 0.0
     assert mk.x[face, 0].mean() < x0
     assert off.max() <= 1e-9

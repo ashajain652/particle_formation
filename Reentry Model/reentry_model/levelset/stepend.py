@@ -258,8 +258,9 @@ class StepEnd:
         side face 0.35 mm, the nearest-point extension reaching nodes of the side face nearest the moved bases, and
         rounds from points carried with the base pulled the side faces 2 mm in). The largest share of its target by which
         the extension missed a piece's volume before the volume correction made it up is kept in `tally.correction` (the
-        step's largest) and in `tally.corrections` as an entry {"kind": `kind`, "worst": that share}, one entry per round
-        of a move made in rounds (stage 3 Task 11's review, I3; `kind` "part", "modes" or "release", what made the move).
+        step's largest) and in `tally.corrections` as an entry {"kind": `kind`, "worst": that share, "body": the body's,
+        the largest piece's, share}, one entry per round of a move made in rounds (stage 3 Task 11's review, I3; `kind`
+        "part", "modes" or "release", what made the move).
         Returns the enthalpy the move removed from the volume [J]."""
         rounds = int(np.ceil(np.abs(disp).max(initial=0.0) / (MOVE_ROUND_SHARE * self.fine_margin) - 1e-12))
         if rounds > 1:
@@ -288,10 +289,11 @@ class StepEnd:
             raise RuntimeError("pieces kept being used up by a move after {} rounds".format(PIECE_ROUNDS))
         if targets[0] <= 0.0:                              # no piece is left to give what the draws ask
             raise RuntimeError("the draws ask {:.3e} m3 more than the skin base's largest piece holds".format(-targets[0]))
-        new, worst = correct_volumes(mesh, new, label, targets)
+        misses = []
+        new, worst = correct_volumes(mesh, new, label, targets, misses=misses)
         tally.correction = max(tally.correction, worst)
         if hasattr(tally, "corrections"):                  # each move's miss before the correction (the review's I3)
-            tally.corrections.append({"kind": kind, "worst": float(worst)})
+            tally.corrections.append({"kind": kind, "worst": float(worst), "body": float(misses[0])})
         seed = None if given is None else (lambda nodes: self._seed(beta, new, points, given, nodes))
         removed = self.solver.move(new, seed=seed)
         tally.islands += getattr(self.solver, "seeded", 0)
@@ -356,10 +358,11 @@ class StepEnd:
                 v_new = inside_volumes(new, beta)
                 share = np.array([v_new[label == p].sum() for p in range(n)])
                 targets = share * (v_old.sum() / share.sum())
-            beta, worst = correct_volumes(new, beta, label, targets)
+            misses = []
+            beta, worst = correct_volumes(new, beta, label, targets, misses=misses)
             tally.correction = max(tally.correction, worst)
             if hasattr(tally, "corrections"):              # the remesh's own entry (Task 11's re-review, minor item 1)
-                tally.corrections.append({"kind": "remesh", "worst": float(worst)})
+                tally.corrections.append({"kind": "remesh", "worst": float(worst), "body": float(misses[0])})
             E0 = self.solver.energy()
             self.solver.remesh(new, beta)
             self.mesh, self.beta = new, beta

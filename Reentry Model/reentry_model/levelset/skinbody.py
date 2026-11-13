@@ -198,7 +198,8 @@ class StepBook:
     and the stub below it, and `enthalpy_absorbed` [J] its enthalpy (`LevelSetSkinBody._absorb`, Task 11's fix, item 4;
     in `mass_drawn` too). `move_corrections` every volume correction's miss before it, in the order made: per
     base move (one entry per round of a move made in rounds) and for the remesh, an entry {"kind": "part", "modes",
-    "release" or "remesh", what made it; "worst": the largest miss over its pieces as a share of the piece's target};
+    "release" or "remesh", what made it; "worst": the largest miss over its pieces as a share of the piece's target;
+    "body": the body's, the largest piece's, which is what the correction spreads (a speck's can exceed its target)};
     their largest is `volume_correction_max` (stage 3 Task 11's review, I3: it shows when a step leans on the
     correction; its re-review, minor item 1: the remesh's correction had no entry). The
     heat deferred to the volume over the step, by source, each

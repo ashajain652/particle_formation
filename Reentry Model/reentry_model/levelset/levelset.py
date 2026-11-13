@@ -112,9 +112,11 @@ BRENT_XTOL = 1e-18  # m: Brent's method's tolerance on a piece's shift (`correct
 BRENT_ITER = 200    # its iterations at most
 
 
-def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60):
+def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60, misses=None):
     """Shift phi uniformly over each piece (its cells' nodes, dilated by `rings` rings of cells) so that the
-    piece's volume equals targets[p] to round-off. Returns (phi, largest relative correction).
+    piece's volume equals targets[p] to round-off. Returns (phi, largest relative correction); with `misses` a list,
+    each piece's miss before the correction, as a share of its target, is appended to it in label order (stage 3 Task
+    11's fix round 2: the body's, piece 0's, beside the worst).
 
     Pieces whose dilations meet (Task 9, fix round 4): each node is shifted with the first piece (in label order) that
     reaches it, and each cell holding no metal before is counted with the first piece that reaches it, so no metal is
@@ -165,6 +167,8 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
                 err = target - V
                 if sweep == 0 and c == 0.0:
                     worst = max(worst, abs(err) / target)
+                    if misses is not None:
+                        misses.append(abs(err) / target)
                 if abs(err) <= rtol * target:
                     break
                 if err > 0:
