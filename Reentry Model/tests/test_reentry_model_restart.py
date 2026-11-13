@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import signal
+import weakref
 
 import numpy as np
 import pytest
@@ -67,6 +68,25 @@ def test_a_coarse_grid_solver_with_arguments_is_refused(tmp_path):
     with pytest.raises(TypeError, match="coarse"):
         restart.save(str(tmp_path / "s.pkl"), coarse_grid_solver(("pinv", {"rtol": 1e-6})))
     assert not os.path.exists(str(tmp_path / "s.pkl"))
+
+
+def test_dumps_holds_the_pickle_once_and_does_not_copy_it():
+    """`restart.dumps` makes every save and every copy of a completed step (on the 100 mm sphere 1.32 GB a macro step), so
+    it must hold the pickle once: the bytes it returns are the pickling buffer itself, not a copy of it (final fix wave,
+    item 1). Measured with tracemalloc from just before the call: at its peak `dumps` holds the pickle and its buffer's
+    growth margin (at most an eighth), 1.125 times the pickle here; a copy of the buffer would hold it twice, 2.13 times.
+    The pickle comes back as the state it was made of."""
+    import tracemalloc
+    state = {"T": np.arange(2_000_000, dtype=float), "n": 3}                     # a 16 MB field
+    tracemalloc.start()
+    try:
+        data = restart.dumps(state)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert len(data) > state["T"].nbytes and peak < 1.5 * len(data)
+    back = restart.loads(data)
+    assert back["n"] == 3 and np.array_equal(back["T"], state["T"])
 
 
 def test_a_flight_saved_on_its_way_is_unchanged_by_the_save_and_resumes_to_the_last_bit(tmp_path):
@@ -715,12 +735,14 @@ def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_with
     assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
 
 
-def test_the_volume_test_ends_a_skin_flight_normally(tmp_path, monkeypatch):
+def test_the_volume_test_ends_a_skin_flight_normally(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
     assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "g"]) == 0
     res = json.load(open(str(tmp_path / "g.json")))["results"]
     assert res["end_reason"] == "geometry" and res["geometry_stop"]["test"] == "volume"
     assert res["geometry_stop"]["time_s"] == pytest.approx(0.025) and len(rows_of(str(tmp_path / "g.csv"))) == 2
+    assert "geometry stop at 0.025 s: the column tops enclose {:.3g} times the metal's volume (limit 0.5)".format(
+        res["geometry_stop"]["value"]) in capsys.readouterr().out          # the printed line's volume wording (final fix wave)
 
 
 def test_the_centre_test_ends_a_skin_flight_and_says_so(tmp_path, monkeypatch, capsys):
@@ -741,6 +763,7 @@ def test_another_end_on_the_same_step_wins_over_the_geometry_stop(tmp_path, monk
     assert cli.main(FLIGHT + ["--t-max", "0.0375", "--outdir", str(tmp_path), "--name", "t"]) == 0
     res = json.load(open(str(tmp_path / "t.json")))["results"]
     assert res["end_reason"] == "t_max" and res["geometry_stop"] is None
+    assert calls["n"] == 1             # asked on step 1 only: on step 2, which would breach, t_max came first and it was not asked
 
 
 def test_the_stop_can_be_turned_off_and_is_then_named(tmp_path, monkeypatch):
@@ -758,6 +781,24 @@ def test_a_resume_can_turn_the_stop_off_and_old_states_fly_with_it_on(flown, tmp
     assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--geometry-stop", "off"]) == 0
     doc = json.load(open(str(tmp_path / "off.json")))
     assert doc["results"]["end_reason"] == "t_max" and doc["resumed_from"]["changed"] == {"--geometry-stop": "off"}
+
+
+def test_a_state_saved_before_the_geometry_stop_flies_with_it_on(flown, tmp_path, monkeypatch):
+    """A state pickled before the geometry stop existed has no `geometry_stop` on its body, which then reads the class
+    default, on (Task 2, parked; final fix wave item 5): the option deleted from the saved body (and the state's "end",
+    which such a state lacks too), saved again and resumed with the volume limit lowered, the flight ends at the geometry
+    stop and records the stop as on."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    del vars(state["run"].body)["geometry_stop"]
+    del state["end"]
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "o"]) == 0
+    doc = json.load(open(str(tmp_path / "o.json")))
+    assert doc["results"]["end_reason"] == "geometry" and doc["results"]["geometry_stop"]["test"] == "volume"
+    assert doc["settings"]["geometry_stop"] == "on" and doc["resumed_from"]["changed"] == {}
 
 
 def test_every_normal_end_saves_its_state_beside_the_mid_flight_one(tmp_path):
@@ -812,13 +853,25 @@ def test_a_geometry_end_state_resumes_with_the_stop_off(tmp_path):
     path = str(tmp_path / "a.end.state.pkl")
     state = restart.load(path)
     state["end"] = "geometry"; state["run"].sim.end_reason = "geometry"
-    state["run"].geometry_stopped = ("core", 0.05, 1.0)
+    state["run"].geometry_stopped = ("centre", 0.05, 1.0)
     restart.save(path, state)
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", path, "--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "r"])
     assert exc.value.code == 2
     assert cli.main(["resume", path, "--t-max", "0.0625", "--geometry-stop", "off", "--outdir", str(tmp_path), "--name", "r"]) == 0
-    assert json.load(open(str(tmp_path / "r.json")))["results"]["geometry_stop"] is None
+    res = json.load(open(str(tmp_path / "r.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["geometry_stop"] is None
+
+
+def test_the_resume_command_refuses_the_geometry_stop_on_a_state_without_skins(tmp_path, capsys):
+    pytest.importorskip("cantera")
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.025", "--outdir", str(tmp_path), "--name", "el"]) == 0
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.end.state.pkl"), "--t-max", "0.05", "--geometry-stop", "off",
+                  "--outdir", str(tmp_path / "o"), "--name", "r"])
+    assert exc.value.code == 2 and "--geometry-stop needs a saved flight of skins" in capsys.readouterr().err
 
 
 # Task 4: a flight that fails, or is stopped by SIGTERM or Control-C, saves its last completed macro step as its end state,
@@ -849,7 +902,60 @@ def test_a_failure_saves_the_last_completed_step_and_writes_its_results(tmp_path
     assert rows_of(str(tmp_path / "r.csv")) == rows_of(str(tmp_path / "u.csv"))[2:]
 
 
-def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tmp_path, monkeypatch):
+def histories_finished(monkeypatch):
+    """The histories `cli.finish_run` is given (its 10th argument), in a list, the real one writing them."""
+    real, seen = cli.finish_run, []
+    def finish(*a, **k):
+        seen.append(a[9])
+        return real(*a, **k)
+    monkeypatch.setattr(cli, "finish_run", finish)
+    return seen
+
+
+def holds_no_exception(history):
+    return not any(isinstance(v, BaseException) for v in vars(history).values())
+
+
+def test_a_failed_flights_history_keeps_its_error_as_text_and_says_it_as_before(tmp_path, monkeypatch, capsys):
+    """The history of a failed flight holds what `finish_run` says of the failure -- its traceback, formatted, and its
+    message -- as text, not the exception (final fix wave item 4): the exception's traceback held the failed run's frames
+    and with them the copy of the last completed step, about 1.3 GB on the 100 mm sphere, through `finish_run`'s writing
+    of the droplet files. The copies are watched here (as a bytearray subclass, since bytes cannot be weakly referenced):
+    none is alive when `finish_run` starts (one was, the last, before the fix). The failing step raises an exception made
+    as it raises, as the model's code does: one the test held (`fail_on_call`'s) would keep its traceback's frames, and
+    the copy, alive itself. What is said is unchanged: the traceback, then the message, and exit 1."""
+    class Copy(bytearray):
+        pass
+    copies, real_dumps = [], restart.dumps
+    def dumps(state):
+        data = Copy(real_dumps(state))
+        copies.append(weakref.ref(data))
+        return data
+    monkeypatch.setattr(restart, "dumps", dumps)
+    real_finish, seen = cli.finish_run, []
+    def finish(*a, **k):
+        seen.append((a[9], sum(c() is not None for c in copies)))
+        return real_finish(*a, **k)
+    monkeypatch.setattr(cli, "finish_run", finish)
+    real_advance, calls = skinbody.SkinBody.advance, {"n": 0}
+    def advance(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("a corner move degrades the mesh")
+        return real_advance(self, *a, **k)
+    monkeypatch.setattr(skinbody.SkinBody, "advance", advance)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    (history, alive), = seen
+    assert len(copies) == 4 and alive == 0           # the copies before step 1 and after steps 1 and 2, and the end state
+    err = capsys.readouterr().err
+    assert err.startswith("Traceback (most recent call last):\n") and "in advance\n    raise RuntimeError(" in err
+    assert err.endswith("RuntimeError: a corner move degrades the mesh\nERROR: a corner move degrades the mesh\n")
+    assert holds_no_exception(history) and history.failure_signum is None
+    assert err == history.failure_traceback + "ERROR: a corner move degrades the mesh\n"
+
+
+def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tmp_path, monkeypatch, capsys):
+    seen = histories_finished(monkeypatch)
     before = signal.getsignal(signal.SIGTERM)
     real, calls = skinbody.SkinBody.advance, {"n": 0}
     def advance(self, *a, **k):
@@ -862,6 +968,9 @@ def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tm
     assert json.load(open(str(tmp_path / "s.json")))["results"]["end_reason"] == "stopped"
     assert restart.load(str(tmp_path / "s.end.state.pkl"))["step"] == 1
     assert signal.getsignal(signal.SIGTERM) == before
+    assert capsys.readouterr().err == "ERROR: stopped by signal 15 (SIGTERM)\n"         # a stop: the message, no traceback
+    (history,) = seen
+    assert holds_no_exception(history) and history.failure_signum == signal.SIGTERM and history.failure_traceback is None
 
 
 def test_control_c_during_the_end_write_leaves_no_partial_state(tmp_path, monkeypatch):
@@ -905,6 +1014,7 @@ def test_a_failure_after_the_droplet_records_were_spooled_resumes_without_repeat
     monkeypatch.undo()
     assert cli.main(["resume", str(tmp_path / "f.end.state.pkl"), "--outdir", str(tmp_path), "--name", "r"]) == 0
     whole = np.load(str(tmp_path / "u" / "particles.npz"))
+    assert np.isclose(whole["time_s"], 0.075).any()       # the failing step sprayed: its records were spooled before it failed
     got = np.load(str(tmp_path / "r" / "particles.npz"))
     after = whole["time_s"] > restart.load(str(tmp_path / "f.end.state.pkl"))["time_s"] + 1e-9
     assert all(np.array_equal(got[k], whole[k][after], equal_nan=True) for k in whole.files)

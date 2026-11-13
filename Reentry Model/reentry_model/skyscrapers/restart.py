@@ -61,7 +61,12 @@ class _Pickler(pickle.Pickler):
 
 
 def dumps(state):
-    """`state` pickled (protocol 5), the coarse solvers as above, as bytes."""
+    """`state` pickled (protocol 5), the coarse solvers as above, as bytes. These are the pickling buffer itself, not a
+    copy: `BytesIO.getvalue` hands over the buffer it wrote into, trimmed to the pickle's length, when nothing else holds
+    it, as here. So a save or a copy of a completed step holds the pickle once (final fix wave of the geometry stop,
+    2026-11-12, measured with tracemalloc: at its peak 1.125 times the pickle, the buffer's growth margin, and the pickle
+    alone once returned; peak resident memory did not rise at the `getvalue` of an 800 MB pickle). `getbuffer` would keep
+    the growth margin, up to an eighth of the pickle, for as long as the bytes are held."""
     buf = io.BytesIO()
     _Pickler(buf, protocol=5).dump(state)
     return buf.getvalue()

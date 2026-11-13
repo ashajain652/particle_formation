@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -313,9 +314,14 @@ class CoupledRun:
         `settings.end_path` with "end" `failed`, or `stopped` for Control-C or FlightStopped. The run is saved as it was,
         its flight not ended (`sim.end_reason` None), so a resume flies on from it and repeats the failing step; only
         then is its end reason set. A save that fails, a second Control-C included, is recorded and changes nothing
-        else. Returns that run's history of the completed steps, with `history.run` that run, `history.exception` `exc`,
-        and `results["failure"]` = {"kind", "error": "<Type>: <message>", "time_s": the time of the step saved}, which
-        is the last completed step unless a copy could not be made (`copy_error`, carried over to the results)."""
+        else. Returns that run's history of the completed steps, with `history.run` that run, `results["failure"]` =
+        {"kind", "error": "<Type>: <message>", "time_s": the time of the step saved}, which is the last completed step
+        unless a copy could not be made (`copy_error`, carried over to the results), and what the command line says of the
+        end and exits with: `history.failure_traceback`, `exc`'s traceback formatted as Python prints it (None for a
+        stop), `history.failure_message`, its message (its type's name if it has none), and `history.failure_signum`, the
+        signal of a stop (FlightStopped's, or SIGINT for Control-C; None for a failure). Not `exc` itself (final fix
+        wave, item 4): its traceback holds `run`'s frame, and with it the copy's bytes, which would then stay alive
+        through the writing of the results."""
         kind = "stopped" if isinstance(exc, STOPS) else "failed"
         data, n = last
         state = restart.loads(data)
@@ -331,7 +337,12 @@ class CoupledRun:
         run.copy_error = self.copy_error              # this run's record: the copy restored may predate it
         run._collection()
         history = run._history(rows[:n], states[:n], started)
-        history.run, history.exception = run, exc
+        history.run = run
+        history.failure_traceback = ("".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                                     if kind == "failed" else None)
+        history.failure_message = str(exc) or type(exc).__name__
+        history.failure_signum = (exc.signum if isinstance(exc, FlightStopped)
+                                  else int(signal.SIGINT) if isinstance(exc, KeyboardInterrupt) else None)
         history.results["failure"] = {"kind": kind, "error": "{}: {}".format(type(exc).__name__, exc), "time_s": state["time_s"]}
         return history
 

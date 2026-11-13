@@ -29,7 +29,6 @@ import os
 import signal
 import sys
 import threading
-import traceback
 
 import numpy as np
 
@@ -912,16 +911,19 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
 
     A flight that failed or was stopped by hand (`results["failure"]`, Task 4) is written from the run of its last
     completed step, `history.run`, whose body replaces `the_body`; its error is said first, with the traceback of a
-    failure, and the exit code is 1 for a failure, 128 plus the signal for a stop (143 for SIGTERM, 130 for Control-C)."""
+    failure, and the exit code is 1 for a failure, 128 plus the signal for a stop (143 for SIGTERM, 130 for Control-C).
+    The history carries these as text and a number (`failure_traceback`, `failure_message`, `failure_signum`), not the
+    exception, whose frames would hold the copy of the last completed step through the writing below (final fix wave,
+    item 4)."""
     run_dir = os.path.join(args.outdir, name)
     csv_path = os.path.join(args.outdir, name + ".csv")
     json_path = os.path.join(args.outdir, name + ".json")
     failure = history.results.get("failure")
     if failure is not None:
-        the_body, exc = history.run.body, history.exception
+        the_body = history.run.body
         if failure["kind"] == "failed":            # where it failed, as an error the command line did not handle showed it
-            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
-        print("ERROR: {}".format(str(exc) or type(exc).__name__), file=sys.stderr, flush=True)
+            sys.stderr.write(history.failure_traceback)
+        print("ERROR: {}".format(history.failure_message), file=sys.stderr, flush=True)
     tj.write_history_csv(history, csv_path)
     prov = provenance()
     # spec section 8: the reference file(s)' SHA-256 also live under provenance, alongside the copies
@@ -1039,10 +1041,8 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
         print("  csv  -> {}\n  json -> {}".format(os.path.abspath(csv_path), os.path.abspath(json_path)))
         if "end_state" in doc["files"]:
             print("  end state -> {}".format(doc["files"]["end_state"]))
-    if failure is not None:                        # as the shell reports a process stopped by the signal
-        if isinstance(history.exception, coupled.FlightStopped):
-            return 128 + history.exception.signum
-        return 128 + signal.SIGINT if isinstance(history.exception, KeyboardInterrupt) else 1
+    if failure is not None:                        # a stop as the shell reports a process stopped by the signal
+        return 1 if history.failure_signum is None else 128 + history.failure_signum
     # spec section 7: exit 1 when the flight escaped rather than reaching the ground or t_max;
     # the CSV/JSON are already written above so the escaped trajectory is still available.
     if history.end_reason == "escape":

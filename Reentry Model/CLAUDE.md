@@ -136,7 +136,10 @@ or is stopped by hand saves there its last completed macro step instead, so a re
 and still writes its CSV, JSON and droplet files from the completed steps, with end reason `failed` or `stopped` and
 `results["failure"]` = kind, error, time (2026-11-12; before, it wrote nothing). An error raised before the first
 step, such as a `ValueError` from a bad option, keeps its old exit code; one raised inside a step is now a failure,
-exit 1.
+exit 1. Not caught are a stop after the last step (during the end save, the history, or `finish_run`, whose droplet-file
+write can take minutes on a 100 mm flight) and a second stop within a second or two of the first (while
+`CoupledRun._failed` loads the copy): such a stop leaves the end state, if it was already written, and the launcher's
+rows file (`analysis/flights/`), and no JSON.
 
 ## Two model architectures and the shared package
 

@@ -12,11 +12,14 @@ saved: its rows are those made after the saved step. A hook on each history row
 (`reentry_model.skyscrapers.coupled.CoupledRun.row`), which only reads it (as `watch` in
 analysis/reentry_model_thermal_verification.py does), appends every row to <outdir>/<name>.rows.csv as it is made and a
 progress line every PROGRESS_EVERY rows to <outdir>/<name>.progress, so the results are those of the command line to the
-last bit. The model writes its history and results only when a flight ends, and a Task 5 flight takes days and saves its
-state at most once, when asked (`--save-state-at`): one that stops early -- on a fold of the surface, a failed solve or an interrupt --
-keeps here its history to its last completed macro step, and its droplet records in <outdir>/<name>/source_rows
-(sub-plan 22 Task 4's spool, removed only once the particle files are written). Exit code: the command line's, or 1 after
-the traceback on any other exception.
+last bit. The model writes its history and results, and saves its state as <outdir>/<name>.end.state.pkl, when a flight
+ends, however it ends (since 2026-11-12): one that fails -- on a fold of the surface, a failed solve -- or is stopped by
+SIGTERM or Control-C saves its last completed macro step and writes its results from the completed steps (exit 1, 143 or
+130). The rows file is the record of a flight the model could not end so: one killed without warning (`kill -9`, a crash
+of Python itself), or stopped after its last step or twice within a second or two (README.md). It then holds the rows to
+the last one made, and <outdir>/<name>/source_rows the droplet records (sub-plan 22 Task 4's spool, removed only once the
+particle files are written). It can also hold a row that <name>.csv does not: that of a step that failed after its row
+was made. Exit code: the command line's, or 1 after the traceback on any other exception.
 """
 import csv
 import os

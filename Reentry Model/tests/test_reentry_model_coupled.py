@@ -87,6 +87,27 @@ def test_frames_need_an_output_dir(coarse_sphere_mesh):
                            heating.SesamEquivalentHeating(), coupled.CoupledSettings(frames_every=5))
 
 
+@pytest.mark.parametrize("raised", [ArithmeticError("a failed solve"), KeyboardInterrupt()], ids=["error", "control_c"])
+def test_a_library_run_without_an_end_path_lets_a_failing_step_raise_unchanged(coarse_sphere_mesh, raised):
+    """With `CoupledSettings.end_path` unset, the library default, a run behaves as it did before Task 4 of the geometry
+    stop (final fix wave item 7): an exception raised in its second macro step, or a Control-C, escapes `CoupledRun.run`
+    as the very object raised, with nothing chained to it, and no failure is recorded on the run."""
+    b = thermal_body(coarse_sphere_mesh)
+    advance, calls = b.advance, []
+
+    def failing(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise raised
+        return advance(*args, **kwargs)
+    b.advance = failing
+    run = coupled.CoupledRun(simulator(b, t_max=5.0), b, heating.SesamEquivalentHeating(), coupled.CoupledSettings(dt=0.5))
+    with pytest.raises(type(raised)) as exc:
+        run.run()
+    assert exc.value is raised and exc.value.__cause__ is None and exc.value.__context__ is None
+    assert len(calls) == 2 and run.sim.end_reason is None and run.copy_error is None
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Step 3: the melting run, its columns, results, VTK fields and particle files
 
