@@ -275,6 +275,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     (Task 5f); `_nose-initial` where the windward loads read the mesh's own radius, not the sphere fitted to the tops
     (Task 5g; the default changed to the fit, so the default's name is unchanged); `_leeward-facing` where a corner counts as
     windward by its normal alone, not by the mass centroid's plane as well (Task 5j; the default is `centroid`, unmarked);
+    `_rheology-bridge` where the melting skins' viscosity is the earlier bridge law, not the composite default (Asha,
+    2026-11-12; only with `melting_skins`, since the law concerns only the skins that melt);
     empty for the defaults.
     `melting_skins` says the run is one of melting skins, whose defaults are `--hand-down off` and `--part-count-from
     melting` (Asha, 2026-11-10, Task 5h): the suffix then marks the values that differ from those, `_handdown-on` and
@@ -317,7 +319,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_nose-{}".format(size_feedback)
     if leeward_test != "centroid":
         out += "_leeward-{}".format(leeward_test)
-    if rheology != viscosity_laws.DEFAULT_LAW:
+    if melting_skins and rheology != viscosity_laws.DEFAULT_LAW:       # the law concerns only the skins that melt
         out += "_rheology-{}".format(rheology)
     return out
 

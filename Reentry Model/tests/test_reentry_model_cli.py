@@ -1070,8 +1070,11 @@ def test_rheology_option():
         p.parse_args(melt + ["--rheology", "li"])
     assert exc.value.code == 2
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    # the option is accepted, and marks no name, with the element model and with skins that do not melt, even for the bridge
     for argv in (FEM, SKINS, FEM + ["--melt", "on", "--prism-layers", "0"]):
+        assert name(argv + ["--rheology", "bridge"]) == name(argv) and "rheology" not in name(argv + ["--rheology", "bridge"])
         assert name(argv + ["--rheology", "composite"]) == name(argv)
+    assert name(melt + ["--rheology", "bridge"]) == name(melt) + "_rheology-bridge"
 
 
 def test_rheology_run_names():
@@ -1081,13 +1084,21 @@ def test_rheology_run_names():
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="composite") == ""
-    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge") == "_rheology-bridge"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge") == ""      # not melting
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge",
+                                melting_skins=True, part_count_from="melting", hand_down=False) == "_rheology-bridge"
     melt = SKINS + ["--melt", "on", "--removal", "instant"]
     base = name(melt)
     assert base.endswith("_fem-sesam_melt-instant_skinflow-off") and "rheology" not in base
     assert name(melt + ["--rheology", "bridge"]) == base + "_rheology-bridge"
     assert (name(melt + ["--leeward-test", "facing", "--rheology", "bridge", "--seed", "7"])
             == base + "_leeward-facing_rheology-bridge_seed-7")
+    # the run command's defaults with --melt on (Girin removal, skin flow on): no mark, the same as with composite given,
+    # and the bridge adds its mark to that name
+    girin = SKINS + ["--melt", "on"]
+    assert "rheology" not in name(girin) and name(girin + ["--rheology", "composite"]) == name(girin)
+    assert name(girin + ["--rheology", "bridge"]) == name(girin) + "_rheology-bridge"
+    assert name(SKINS + ["--rheology", "bridge"]) == name(SKINS)           # skins that do not melt: no mark
 
 
 def test_rheology_json(tmp_path):
