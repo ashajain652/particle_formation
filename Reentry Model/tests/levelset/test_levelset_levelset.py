@@ -120,6 +120,17 @@ def test_two_pieces_whose_dilations_meet_hold_the_total_volume_exactly():
     np.testing.assert_allclose(_matched_volumes(m, phi2, label, n), targets, rtol=1e-12, atol=0.0)
 
 
+def test_a_volume_correction_that_does_not_converge_says_where_it_stood():
+    """Stage 3 Task 11's review, M6: a piece whose correction does not converge raises with what is needed to diagnose
+    it -- its target, the volume it held, its last shift and bracket, the iterations, its claimed nodes and cells."""
+    m = _sphere_mesh(0.25e-3)
+    phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 1.1e-3)
+    label, n = pieces(m, phi)
+    with pytest.raises(RuntimeError, match=r"piece 0 did not converge: target .* held .* bracket .* 1 iterations .* "
+                                           r"nodes and \d+ cells claimed"):
+        correct_volumes(m, phi, label, [1.2 * 4 / 3 * np.pi * 1.1e-3 ** 3], max_iter=1)
+
+
 def test_a_zero_volume_target_is_refused():
     m = _sphere_mesh(0.25e-3)
     phi = redistance(m, np.linalg.norm(m.points - C, axis=1) - 1.1e-3)

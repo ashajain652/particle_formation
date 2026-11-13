@@ -511,22 +511,42 @@ def _json_default(v):
     raise TypeError(type(v))
 
 
+def save_state(body, path):
+    """Pickle the body to `path` (large; never committed), the cases' own wrappers of its methods left out."""
+    over = {k: body.__dict__.pop(k) for k in ("_modes", "_psi", "_target", "_needs_rebuild") if k in body.__dict__}
+    try:
+        with open(path, "wb") as fh:
+            pickle.dump(body, fh)
+    finally:
+        body.__dict__.update(over)
+    return path
+
+
 def run_steps(body, advance, steps, label, extra=None, before_step=None):
     """`steps` macro steps of `advance(body)` under the profiler, a row each (`step_row`, plus extra(body, book) if given);
-    a step that raises ends the run and is recorded. Returns (rows, failure or None)."""
+    a step that raises ends the run and is recorded. With STAGE3_STATE_DIR set, the body is pickled there before each
+    step and kept, its path in the failure, when the step raises (Task 11's review, M6: a failing case left nothing to
+    diagnose), and after each step that succeeds. Returns (rows, failure or None)."""
     rows, failure = [], None
+    tag = label.replace(" ", "_")
+    states = os.environ.get("STAGE3_STATE_DIR")
     with Profile() as prof:
         watch = ModeWatch(body)                            # inside the profiler, so that it wraps the profiled _modes
         for k in range(steps):
             if before_step is not None:
                 before_step(k)
             x0 = body.markers.x.copy()
+            t_start = float(body.time)
+            before = save_state(body, os.path.join(states, "{}_before_step.pkl".format(tag))) if states else None
             snap = prof.snapshot()
             t0 = time.perf_counter()
             try:
                 book = advance(body)
             except Exception as err:                       # recorded, not hidden: the run stops here
-                failure = {"step": k + 1, "t_start": round(body.time, 9), "error": "{}: {}".format(type(err).__name__, err)}
+                failure = {"step": k + 1, "t_start": round(t_start, 9), "error": "{}: {}".format(type(err).__name__, err)}
+                if before is not None:                     # the body the failing step started from, kept
+                    failure["state"] = os.path.join(states, "{}_failed_from_t{:.2f}.pkl".format(tag, t_start))
+                    os.replace(before, failure["state"])
                 print(label, "FAILED:", failure, flush=True)
                 break
             wall = time.perf_counter() - t0
@@ -535,18 +555,10 @@ def run_steps(body, advance, steps, label, extra=None, before_step=None):
                 row.update(extra(body, book))
             rows.append(row)
             os.makedirs(OUT, exist_ok=True)                  # the steps so far, in case the run is stopped
-            with open(os.path.join(OUT, "partial_{}.json".format(label.replace(" ", "_"))), "w") as fh:
+            with open(os.path.join(OUT, "partial_{}.json".format(tag)), "w") as fh:
                 json.dump({"steps": rows, "failure": failure}, fh, indent=1, default=_json_default)
-            if os.environ.get("STAGE3_STATE_DIR"):           # each step's body kept for diagnosis (large; never committed)
-                path = os.path.join(os.environ["STAGE3_STATE_DIR"], "{}_t{:.2f}.pkl".format(label.replace(" ", "_"),
-                                                                                         row["t"]))
-                over = {k: body.__dict__.pop(k) for k in ("_modes", "_psi", "_target", "_needs_rebuild")
-                        if k in body.__dict__}               # the cases' own wrappers are not pickled
-                try:
-                    with open(path, "wb") as fh:
-                        pickle.dump(body, fh)
-                finally:
-                    body.__dict__.update(over)
+            if states:                                       # each step's body kept for diagnosis
+                save_state(body, os.path.join(states, "{}_t{:.2f}.pkl".format(tag, row["t"])))
             print("{} t={:.2f}s wall {:.1f}s parts {} mass {:.1e} energy {:.1e} {}".format(
                 label, row["t"], wall, row["parts"], row["mass_residual"], row["enthalpy_residual"],
                 {k: v for k, v in row.items() if k.endswith("_mm") or k in ("n_top", "n_markers")}), flush=True)

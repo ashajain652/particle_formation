@@ -119,7 +119,9 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
     holds its target at once, since a later piece's shift moves the contour in a cell an earlier piece counts. (Counted
     for both, the metal a shift grew in a cell between two pieces 0.25 to 0.4 mm apart on 0.125 mm cells was booked
     twice and the total fell short by up to 3e-5; on the full-size cube's second step, with a 2e-9 m3 piece beside the
-    body, a short 1e-14 m3 a move made the step's mass residual -9.4e-9.) One piece is corrected as before."""
+    body, a short 1e-14 m3 a move made the step's mass residual -9.4e-9.) One piece is corrected as before. A piece
+    that does not converge raises with its target, the volume it held, its last shift and bracket, the iterations, its
+    claimed nodes and cells, and the miss before the correction (stage 3 Task 11's review, M6)."""
     phi = phi.copy()
     targets = np.asarray(targets, float)
     if (targets <= 0).any():
@@ -148,7 +150,7 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
             lo, hi, c = None, None, shift[p]
             for _ in range(max_iter):
                 phi[nodes] = base - c
-                V = inside_volumes(mesh, phi, cells).sum()
+                V, c_held = inside_volumes(mesh, phi, cells).sum(), c
                 err = target - V
                 if sweep == 0 and c == 0.0:
                     worst = max(worst, abs(err) / target)
@@ -164,7 +166,12 @@ def correct_volumes(mesh, phi, label, targets, rings=2, rtol=1e-14, max_iter=60)
                     c_new = 0.5 * (lo + hi) if (lo is not None and hi is not None) else c + 2 * (c_new - c)
                 c = c_new
             else:
-                raise RuntimeError("volume correction of piece {} did not converge".format(p))
+                raise RuntimeError("volume correction of piece {} did not converge: target {:.6e} m3, held {:.6e} m3 "
+                                   "at the shift {:.6e} m, bracket [{}, {}] m, {} iterations (sweep {}), {} nodes "
+                                   "and {} cells claimed, the largest miss before the correction {:.3e}".format(
+                                       p, target, V, c_held, "none" if lo is None else "{:.6e}".format(lo),
+                                       "none" if hi is None else "{:.6e}".format(hi), max_iter, sweep, len(nodes),
+                                       len(cells), worst))
             shift[p] = c
         if len(targets) == 1 or all(abs(t - inside_volumes(mesh, phi, sets[p][1]).sum()) <= rtol * t
                                     for p, t in enumerate(targets)):

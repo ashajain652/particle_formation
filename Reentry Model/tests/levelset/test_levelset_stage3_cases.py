@@ -6,7 +6,10 @@ the unit tier. The measured numbers are recorded in `analysis/levelset/stage3_re
 import ast
 import importlib.util
 import os
+import pickle
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from helpers import PROJECT_ROOT
@@ -50,6 +53,35 @@ def test_the_cases_use_only_the_shared_physics_and_the_level_set():
     for src in ("from reentry_model.shared.material import Material", "from reentry_model.levelset import modes",
                 "from reentry_model import OUTPUT_DIR"):
         assert not _escapes(ast.parse(src).body[0]), src
+
+
+class _Stalled:
+    """A stand-in body for the case script's step loop whose step raises (Task 11's review, M6)."""
+
+    def __init__(self):
+        self.time = 1.5
+        self.markers = SimpleNamespace(x=np.zeros((2, 3)))
+
+    def _modes(self, tally, update=True, check_core=False):
+        return None
+
+
+def _stall(body):
+    raise RuntimeError("volume correction of piece 1 did not converge")
+
+
+def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
+    """Task 11's review, M6: with STAGE3_STATE_DIR set, the case script's step loop pickles the body before each step and,
+    when the step raises, keeps that state and names it in the failure, so that the failure can be diagnosed from the
+    body it started from (the q6p box's volume correction failure could not be)."""
+    c = _cases()
+    monkeypatch.setenv("STAGE3_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(c, "OUT", str(tmp_path))
+    rows, failure = c.run_steps(_Stalled(), _stall, 2, "stalled case")
+    assert rows == [] and failure["step"] == 1 and "did not converge" in failure["error"]
+    with open(failure["state"], "rb") as fh:
+        kept = pickle.load(fh)
+    assert kept.time == 1.5 and "_modes" not in kept.__dict__
 
 
 def _books(out):
