@@ -485,12 +485,13 @@ def test_resume_rheology(flown, tmp_path, capsys):
     assert "rheology bridge" in capsys.readouterr().out
     doc = json.load(open(str(tmp_path / "keep.json")))
     assert doc["settings"]["rheology"] == "bridge" and "--rheology" not in doc["resumed_from"]["changed"]
+    assert doc["settings"]["internal_solid_fraction"] == 0.5        # recorded beside the law, as `run` does
     assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "comp", "--rheology", "composite",
                      "--save-state-at", "0.2"]) == 0
     assert "rheology composite" in capsys.readouterr().out
     doc = json.load(open(str(tmp_path / "comp.json")))
     assert doc["resumed_from"]["changed"] == {"--rheology": "composite", "--save-state-at": 0.2}
-    assert doc["settings"]["rheology"] == "composite"
+    assert doc["settings"]["rheology"] == "composite" and doc["settings"]["internal_solid_fraction"] == 0.5
     assert restart.load(str(tmp_path / "comp.state.pkl"))["run"].body.settings.rheology == "composite"
     k = FLIGHT.index("--melt")
     elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]

@@ -501,12 +501,12 @@ def slurry_modes(sk, flow, state, model, windward, w_n, A_top, edges, radius, dt
     option i): (rate [kg/(m2 s)], the per-column dict of SprayPlan.slurry). Where a flowing cell that is not fully liquid
     lies beneath the liquid run on the windward face, its cell -- the slurry the release exposes first -- gives the
     properties: the viscosity of the law the skins' settings select (`skin.viscosity_of`: Li et al.'s with the bridge to
-    the liquid, or the composite law) at the cell's solid fraction
-    and the shear rate of the slurry's own sheared layer, V_s over delta_m or over the layer, found by fixed-point
-    iteration from rest (at most skin.SHEAR_PASSES passes, until no viscosity moves by skin.SHEAR_TOL, the rate held at
-    `rheology.rate_cap` of the law: GAMMA_MAX under the bridge law, no cap under the composite law, whose viscosity does
-    not depend on the rate); the cell's mixture density; SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the
-    regime test, the viscous film's floor and b are it. Girin's formulas are the shared model's with these properties
+    the liquid, or the composite law) at the cell's solid fraction and the shear rate of the slurry's own sheared layer,
+    V_s over delta_m or over the layer, found by fixed-point iteration from rest (at most skin.SHEAR_PASSES passes, until
+    no viscosity moves by skin.SHEAR_TOL, the rate held at `rheology.rate_cap` of the law: GAMMA_MAX under the bridge law,
+    no cap under the composite law, whose viscosity does not depend on the rate); the cell's mixture density;
+    SLURRY_SIGMA. The layer runs from the cell's top to T_rigid, and the regime test, the viscous film's floor and b are
+    it. Girin's formulas are the shared model's with these properties
     (its k_r, k_t, critical Weber number and dispersion table), the Rayleigh-Taylor mode left to the liquid; the wave
     must fit in the flowing region; the cap is the flowing depth. Evaluated once a macro step, as the liquid's mode: its
     rate holds for slurry cells at least as warm as the one whose properties gave it, and a colder cell, more solid and

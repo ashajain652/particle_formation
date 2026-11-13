@@ -3354,7 +3354,10 @@ Dependency direction (spec §4): `spray` → `surface_flow`, `dispersion`; `body
      and every state saved before the option existed keep the bridge law, and a resume with no `--rheology` keeps the
      saved flight's law (an old state reads `"bridge"`). A melting skin run under the bridge is named with the suffix
      `_rheology-bridge`; the composite default is unmarked; the run JSON records `skin.rheology` and
-     `skin.internal_solid_fraction`. The law and the choice between laws live in `shared/rheology.py` (`law_viscosity`,
+     `skin.internal_solid_fraction`. *Old checkouts:* a state saved under the composite law and resumed by a checkout
+     from before this change (for example a Mac Studio checkout that is behind main, or the `kinked-dispersion`
+     branch) silently flies the bridge law, because the old `SkinSettings` ignores the extra field and the old resume
+     JSON does not record the law. The law and the choice between laws live in `shared/rheology.py` (`law_viscosity`,
      `composite_viscosity`, `suspension_viscosity`), so the level-set architecture will call the same law; the
      skyscrapers code holds no viscosity formula. *The commits:* 0f7cfff (the law and `analysis/near_liquidus_viscosity.py`),
      cd56947 (the skins and the exposed slurry's mode follow the law), 136e9d8 and 3e09ec6 (the option, the run name,

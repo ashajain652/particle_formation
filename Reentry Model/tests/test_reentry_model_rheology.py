@@ -127,6 +127,16 @@ def test_law_viscosity_dispatch():
     assert R.LAWS == ("composite", "bridge") and R.DEFAULT_LAW == "composite"
 
 
+def test_law_viscosity_scalar_temperature_with_array_solid_fraction_and_rate_broadcasts_under_both_laws():
+    f_s = np.array([0.0, 0.05, 0.2, 0.4])
+    gamma = np.array([50.0, 100.0, 300.0, 600.0])
+    fb = R.bridge_solid_fraction(scheil())
+    bridge = R.law_viscosity("bridge", 905.0, f_s, gamma, MU, fb)
+    comp = R.law_viscosity("composite", 905.0, f_s, gamma, MU, fb)
+    assert bridge.shape == comp.shape == (4,)
+    np.testing.assert_array_equal(comp, R.composite_viscosity(f_s, MU))
+
+
 def test_bridge_solid_fraction():
     mat = scheil()
     assert R.bridge_solid_fraction(mat) == 1.0 - float(mat.liquid_fraction(np.array([906.4]))[0])

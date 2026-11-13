@@ -26,8 +26,8 @@ from reentry_model.shared import material as M, rheology as R  # noqa: E402
 
 MU_L = 1.3e-3                                   # Pa s, AA7075's liquid
 LI_RATES = np.array([61.24, 122.47, 244.94, 367.41, 489.88])        # 1/s, Li et al. 2014 Table 3
-LI_A = np.array([0.66711, 0.59623, 0.33326, 0.14323, 0.04346])      # Pa s
-LI_B = np.array([4.78, 3.52, 3.45, 3.66, 3.23])
+LI_TABLE3_A = np.array([0.66711, 0.59623, 0.33326, 0.14323, R.LI_BROKEN_A])      # Pa s; the 489.88 1/s entry is the law's own
+LI_TABLE3_B = np.array([4.78, 3.52, 3.45, 3.66, R.LI_BROKEN_B])
 LI_F = np.array([0.1, 0.2, 0.3, 0.4, 0.5])                          # their measured solid fractions
 INK, INK2, GRID, SURFACE, REF = "#0b0b0b", "#52514e", "#e6e5e1", "#fcfcfb", "#9a9893"
 BLUES = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
@@ -35,10 +35,17 @@ TABLE_F = [0.01, 0.025, 0.038, 0.057, 0.0975, 0.1 - 1e-9, 0.1, 0.2, 0.3, 0.4, 0.
 TABLE_FI = [(0.5, "f_i = 0.5 (the law)"), (1.0, "f_i = 1 (bracket)"), (0.25, "f_i = 0.25 (bracket)")]
 
 
+def assumptions_block():
+    """The module docstring's full statement of what is assumed and uncertain (spec 3.7, all 14 items), taken from it."""
+    doc = R.__doc__
+    start = doc.index("What is assumed and what is uncertain")
+    return doc[start:doc.index("THE BRIDGE LAW")].rstrip() + "\n"
+
+
 def tables():
     head = "viscosity / liquid's viscosity (1.3 mPa s), from rheology.composite_viscosity (spec 3.6)\n"
-    head += "{:<22s}".format("solid fraction") + "".join("{:>9s}".format("{:.4g}".format(f) if f < 0.0999999 or f >= 0.1 else "<0.1")
-                                                        for f in TABLE_F) + "\n"
+    labels = ["<0.1" if f < R.LI_SOLID_MIN and R.LI_SOLID_MIN - f < 1e-6 else "{:.4g}".format(f) for f in TABLE_F]
+    head += "{:<22s}".format("solid fraction") + "".join("{:>9s}".format(x) for x in labels) + "\n"
     rows = [head]
     for fi, name in TABLE_FI:
         rows.append("{:<22s}".format(name) + "".join("{:9.3f}".format(R.composite_viscosity(f, MU_L, fi) / MU_L)
@@ -47,10 +54,7 @@ def tables():
     rows.append(", ".join("{} to {:.1f} times the liquid (a factor of {:.1f})".format(
         "{:.2f}".format(R.composite_viscosity(0.1 - 1e-12, MU_L, fi) / MU_L), R.composite_viscosity(0.1, MU_L, fi) / MU_L,
         R.composite_viscosity(0.1, MU_L, fi) / R.composite_viscosity(0.1 - 1e-12, MU_L, fi)) for fi, _ in TABLE_FI) + "\n")
-    rows.append("\nAssumptions and uncertainties (spec 3.7): nothing below 10 % solid has been measured in aluminium; the "
-                "internal solid fraction is assumed (0.5), bracketed by 1 and 0.25; the structure in flight is assumed to be "
-                "Li et al.'s most broken-down one and the viscosity independent of rate; the jump at 10 % solid is "
-                "unresolved. See the module docstring of reentry_model/shared/rheology.py.\n")
+    rows.append("\n" + assumptions_block())
     return "".join(rows)
 
 
@@ -72,7 +76,7 @@ def figure(path):
     ax.plot([0.1, 0.1], [R.composite_viscosity(0.1 - 1e-12, MU_L) / MU_L, R.composite_viscosity(0.1, MU_L) / MU_L],
             color=INK, lw=1.0, ls=":")
     ax.annotate("jump unresolved", xy=(0.1, 9.0), xytext=(0.115, 3.0), fontsize=8.5, color=INK, arrowprops=dict(arrowstyle="-", color=INK2))
-    for k, (g, a, b) in enumerate(zip(LI_RATES, LI_A, LI_B)):
+    for k, (g, a, b) in enumerate(zip(LI_RATES, LI_TABLE3_A, LI_TABLE3_B)):
         ax.plot(LI_F, a * np.exp(b * LI_F) / MU_L, "o", ms=5, color=BLUES[k], mec=SURFACE, mew=1.2,
                 label="Li et al. 2014 fit at {:.0f} 1/s, at measured points".format(g))
     for g, c, ls in ((0.0, "#c4501f", "-"), (367.0, "#8f3a15", (0, (4, 2)))):

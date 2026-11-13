@@ -2,7 +2,12 @@
 
 Status: decided with Asha on 2026-11-12. This document was revised the same day after two literature reviews (section
 1.2) and replaces the version committed at f143e19, whose plan (3d0037d, d8ca92e) is withdrawn. It is to be planned
-again and built on the branch `near-liquidus-viscosity` (off `main` f1ab736). Nothing here has been built.
+again and built on the branch `near-liquidus-viscosity` (off `main` f1ab736). Nothing here had been built when it was
+written.
+
+Built 2026-11-12 on that branch: commits 0f7cfff, cd56947, 136e9d8, 3e09ec6, 32c37f3, b67866e, 2d45858 and the final
+review fix commit; the shared-context fact is fact 196 (docs/superpowers/plans/melt-spraying-subplans/
+00-shared-context.md); the probe report is output/near_liquidus_viscosity/probe.md (git-ignored).
 
 The literature behind it lives in `reports/` and `research_notes/` at the repository root (not committed):
 
@@ -119,7 +124,7 @@ Anti-goals:
 The law takes the cell's solid fraction f_s, from its temperature through the material's Scheil curve as now, and the
 liquid's viscosity mu_l (the material's `liquid.mu`, 1.3 mPa s for AA7075). It does not take the shear rate. Li et al.'s
 data are placed by solid fraction, not temperature. Their DSC puts 10 % solid at 903.45 K, and the model's Scheil curve
-puts it at 906.4 K.
+puts it at 906.36 K.
 
 ### 3.2 Below 10 % solid: the grains as a suspension, in their envelope fraction
 
@@ -251,7 +256,7 @@ branching/` and `research_notes/Aluminium viscosity below ten percent solid/`, w
 | Coherency | The limit of the suspension picture | Arnberg, Chai and Bäckerud 1993; Chai et al. 1995, MMTA 26, 965-970; Malekan and Shabestari 2009 (A319, 16-21 %); Ahmad, Naher and Brabazon 2013 (7075, 55-85 %, thermal) | Measured; abstract level |
 | The liquid, 1.3 mPa s | Unchanged | Assael et al. 2006, J. Phys. Chem. Ref. Data 35, 285-300, Eq. 19 (p. 295): 1.42 mPa s at 908 K, 14 % | Pure aluminium, extrapolated 25 K; read in full |
 | Rigid at half solid | Infinite | Unchanged from the layered-skin design (spec 6.4) | As before |
-| Solid fraction carries Li et al.'s data | Their 10 % at the model's 906.4 K | Li et al. 2014, Table 2 (pp. 80-81) | Builder's call |
+| Solid fraction carries Li et al.'s data | Their 10 % at the model's 906.36 K | Li et al. 2014, Table 2 (pp. 80-81) | Builder's call |
 
 ## 5. No history, and what that leaves of the solver (decision 1)
 
@@ -336,13 +341,13 @@ law depends on the rate, so its column shows the range over the rates the solver
 | 2.5 % solid (907.6 K) | 1.17 | 1.08 | 1.37 | 3.7-5.6 |
 | 5.7 % solid (907.1 K) | 1.43 | 1.19 | 2.17 | 18.5-48 |
 | 9.75 % solid | 1.91 | 1.36 | 5.02 | 180-964 |
-| 10 % solid and above | 46-168 | (same) | (same) | 180 and more |
+| 10 % solid and above | 46-168 | (same) | (same) | 181 and more |
 
 Under the median gas stress of 101 Pa, a cell at 10 % solid now shears at about 1700 per second.
 
 The new law makes the top cells near-liquid for any internal fraction tested, and the slurry from 10 % solid upward
-4 to 26 times runnier than the present law: 46 against 183-973 times at 10 % solid, and 168 against 815-4330 times at
-50 %. Faster layers raise the adaptive count of flow sub-steps, so a skin
+4 to 26 times runnier than the present law: 46 against 181-973 times at 10 % solid, and 168 against 806-4328 times at
+50 % (the present law's `li_viscosity` at 367 and at 0 per second). Faster layers raise the adaptive count of flow sub-steps, so a skin
 flight may cost more per macro step. The stress a cell carries is the gas shear plus the push on the metal above it.
 
 ## 8. Tests and acceptance

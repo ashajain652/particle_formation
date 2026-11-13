@@ -555,12 +555,13 @@ def build_parser():
                          "fitted to the tops of the columns facing the flow; initial: the mesh's own radius (Asha, 2026-11-10, sub-plan "
                          "22 Task 5g; default current)")
     me.add_argument("--rheology", choices=viscosity_laws.LAWS, default=viscosity_laws.DEFAULT_LAW,
-                    help="with --surface-model skin: the viscosity law of the skins' cells and of the exposed slurry's mode: "
-                         "composite, a Mori-Ototake suspension law below 10 %% solid and Li et al.'s fit from 10 %% to half "
-                         "solid, independent of the shear rate (assumptions and uncertainties in design 3.7 and the "
-                         "`shared/rheology.py` docstring), or bridge, the earlier law that bridges the liquid's viscosity to "
-                         "Li's fit between 0 and the bridge's solid fraction at the shear rate (named _rheology-bridge; default "
-                         "%(default)s)")
+                    help="with --surface-model skin and --melt on: the viscosity law of the skins' cells and of the exposed "
+                         "slurry's mode. composite: a Mori-Ototake suspension law on the envelope fraction below 10 %% solid and "
+                         "Li et al.'s 489.88 1/s fit from 10 %% solid to half solid, independent of the shear rate "
+                         "(assumptions and uncertainties in design 3.7 and the `shared/rheology.py` docstring). bridge: the "
+                         "earlier law, Li et al.'s averaged law with the shear rate held at no more than 367 1/s, with a "
+                         "log-linear bridge in temperature over 906.4-908 K to the liquid (a melting skin run under it is named "
+                         "_rheology-bridge; default %(default)s)")
     me.add_argument("--leeward-test", choices=skinbody.LEEWARD_TESTS, default=None,
                     help="with --surface-model skin: which top corners are windward for the heating, the surface flow and the "
                          "spraying (the Rayleigh-Taylor mode too): centroid, those whose normal faces the flow and that lie "
@@ -1209,6 +1210,7 @@ def cmd_resume(args, parser):
         thermal_info["leeward_test"] = "centroid"
     if skins:
         thermal_info["rheology"] = run.body.settings.rheology      # always, whether saved, given here or the old state's bridge
+        thermal_info["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # as `run` records it
     if getattr(run.body, "spray", None) is not None:
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state

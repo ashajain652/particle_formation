@@ -80,14 +80,15 @@ Each project is tested from inside its own folder; the three `tests/` folders ea
 so they cannot share one pytest session. In `Reentry Model`, `pytest tests` runs the package's own tests; the
 default `pytest` (from `pytest.ini`) also collects the droplet and wake-column tests. After the skyscrapers
 port the unit tier, `pytest tests -m "not drama and not reference" -n 4`, gave 702 passed and 1 skipped in about
-24 minutes across four processes (the skip is the FEniCSx module, which needs `dolfinx`). The port's own tools
+24 minutes across four processes; the same command on the `near-liquidus-viscosity` branch on 2026-11-12 gave 875 passed and
+1 skipped in 3930 s (about 65 minutes) on four processes on a loaded laptop (the skip is the FEniCSx module, which needs `dolfinx`). The port's own tools
 have their tests in `analysis/skyscrapers_port/`, run explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 702 passed, 1 skipped, ~24 min on four
-                                                          # processes (needs pytest-xdist)
+                                                          # the package's unit tier: 875 passed, 1 skipped, 3930 s (~65 min) on four
+                                                          # processes on a loaded laptop, 2026-11-12 (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
 "$PY" -m pytest tests/test_reentry_model_mesh.py -q -k prism   # one test
@@ -155,7 +156,10 @@ package-root constants (`PROJECT_ROOT`, `DATA_DIR`, and so on), which `tests/tes
 by reading the source and by importing every shared module in a fresh interpreter. The skyscrapers-only modules live in `reentry_model/skyscrapers/` (`body`, `coupled`, `columns`, `mesh`, `movemesh`,
 `restart`, `skin`, `skinbody` and `spreading`, plus `elements/film.py`, the element model's runoff, `--surface-model
 elements`); their old paths (such as `reentry_model.skin`) are alias files too, so existing imports keep working, but states
-saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. `cli.py`,
+saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. A state saved
+under the composite viscosity law (fact 196) and resumed by a checkout from before that change (for example a Mac Studio checkout
+behind main, or the `kinked-dispersion` branch) silently flies the bridge law, because the old `SkinSettings` ignores the extra
+field and the old resume JSON does not record the law. `cli.py`,
 `__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `docs/model_assumptions.md`).
 

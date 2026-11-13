@@ -20,20 +20,24 @@ shear rate and no history:
   Beckermann and Wang 1997 (JOM) and Wu and Ludwig 2009 (Acta Mater. 57, 5621-5631), the solidification models'
   construction; f_i = 0.5 from Zheng et al. 2018 (Leoben) and assumed for 7075, bracketed by 1 (compact grains) and 0.25
   in the design's tests. The nearest aluminium values, Hirai et al. 1993 (ISIJ Int. 33, Al-10Cu: 1.08, 1.22, 1.49 times
-  the liquid at 2, 5 and 10 % solid at 200 1/s), are inferred from fitted curves and not used in the law. The law gives
+  the liquid at 2, 5 and 10 % solid at 200 1/s, and 2.5, 5.1 and 10.3 times at 75 1/s), are inferred from fitted curves
+  and not used in the law. The law gives
   at most 1.94 times the liquid at f_s just below 0.1 (1.37 with f_i = 1, 5.4 with f_i = 0.25).
 - From LI_SOLID_MIN = 0.1 up to RIGID_SOLID_FRACTION = 0.5: Li Yageng et al. (2014, China Foundry 11, 79-84, Table 3,
   pp. 82-83), their fit at the highest rate, 489.88 1/s, where their slurry had its finest and roundest grains,
-  eta = LI_BROKEN_A exp(LI_BROKEN_B f_s) = 0.04346 exp(3.23 f_s) Pa s, taken at every shear rate. It is fitted to 7075 data
+  eta = LI_BROKEN_A exp(LI_BROKEN_B f_s) = 0.04346 exp(3.23 f_s) Pa s, taken at every shear rate (their method, pp. 79-81,
+  and the structures of their Fig. 11). It is fitted to 7075 data
   at 10, 20, 30, 40 and 50 % solid, read in full: 46.2 times the liquid at 10 % solid and 168 times at 50 %. That the
   structure in flight is the most broken-down one rests on Yurko and Flemings (A357), via Kirkwood and Ward 2004, and Liu
   et al. 2003 (Sn-15Pb), for the breakdown, and Florides et al. 2024 (A356, about 520 s) for the rebuild: assumed for
   7075, measured on other alloys, abstract level except Kirkwood and Ward. That the viscosity at a fixed structure does
   not depend on the rate rests on Kirkwood and Ward 2004, Atkinson and Favier 2016 and Koke and Modigell 2003: assumed,
   abstract level except Koke and Modigell. Dropping the history and the falling branch of the flow curve rests on
-  Divoux et al. 2016, Coussot et al. 2002 and Moller, Mewis and Bonn 2006: a consensus in soft matter, with no semi-solid
-  metal measurement of it. Li et al.'s data are placed by solid fraction, their 10 % solid (903.45 K by their DSC) being
-  the model's 906.4 K on its Scheil curve: the builder's call.
+  Divoux et al. 2016 (the falling branch "not found in experiment"), Yerushalmi, Katz and Shinnar 1970 (the instability,
+  via Divoux et al.), Coussot et al. 2002 and Moller, Mewis and Bonn 2006, and on Li et al.'s method, one slurry per
+  rate: a consensus in soft matter, with no semi-solid metal measurement of it. Li et al.'s data are placed by solid
+  fraction, not temperature (their Table 2, pp. 80-81), their 10 % solid (903.45 K by their DSC) being the model's
+  906.36 K on its Scheil curve (906.4 K, BRIDGE_LOW, is where that curve stands at 9.75 % solid): the builder's call.
 - Rigid, at or above RIGID_SOLID_FRACTION = 0.5: infinite, as before.
 - THE JUMP AT 10 % SOLID IS UNRESOLVED. The law jumps from the suspension value to Li et al.'s: from 1.94 to 46.2 times
   the liquid with f_i = 0.5 (a factor of 24), from 1.37 with f_i = 1 (34), from 5.40 with f_i = 0.25 (8.6). No data say
@@ -62,7 +66,8 @@ Below 10 % solid (no aluminium measurement exists):
      found; the nearest are fitted curves and analogue systems.
   2. The internal solid fraction is unmeasured for 7075. 0.5 is the solidification models' default. The only measured
      values, 0.1 to 0.55, are for a transparent analogue, succinonitrile-acetone (Badillo, Ceynar and Beckermann). The
-     review infers about 1 for remelting wrought grains and 0.2 to 0.3 for re-frozen deposit.
+     review infers about 1 for remelting wrought grains and 0.2 to 0.3 for re-frozen deposit. The bracket rows of
+     section 3.6 show the effect.
   3. No rate dependence is assumed. Hirai et al.'s aluminium-10 % copper fits are strongly rate dependent for branched
      crystals: 5.1 times the liquid at 75 1/s against 1.22 times at 200 1/s, at 5 % solid (values inferred from fitted
      curves, not data points). At the gas's rates, of order 10^3 1/s and above, the sheared values are the relevant ones.
@@ -165,12 +170,12 @@ def composite_viscosity(f_s, mu_liquid, internal_fraction=None):
 
 def law_viscosity(law, T, f_s, gamma, mu_liquid, f_s_bridge):
     """The viscosity [Pa s] under the named law (LAWS): "bridge" is `viscosity`, unchanged; "composite" is
-    `composite_viscosity` of f_s, broadcast to the shape of T, and ignores gamma."""
+    `composite_viscosity` of f_s, broadcast over the shapes of T, f_s and gamma (as "bridge" is), and ignores gamma."""
     if law == "bridge":
         return viscosity(T, f_s, gamma, mu_liquid, f_s_bridge)
     if law == "composite":
         eta = composite_viscosity(f_s, mu_liquid)
-        return np.array(np.broadcast_to(eta, np.shape(T)), dtype=float)
+        return np.array(np.broadcast_to(eta, np.broadcast_shapes(np.shape(T), np.shape(f_s), np.shape(gamma))), dtype=float)
     raise ValueError("unknown viscosity law {!r}; expected one of {}".format(law, LAWS))
 
 
