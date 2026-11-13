@@ -188,8 +188,10 @@ def test_a_cold_body_is_unchanged_by_the_skins():
 def test_pending_load_reaches_the_volume():
     """A deferred load of 5 J at a point under the +x face is delivered to the volume, at the patch of beta nearest the
     point, in the next part (a 0.05 s step): the body's stored enthalpy rises by the 5 J less the load still deferred
-    (to 1e-9), the volume keeps most of it and the skins above the warmed base take the rest through their base (they
-    have no other source here), the load still deferred is small, and the volume's hottest node lies near the point."""
+    (to 1e-9), the volume receives most of it -- what it keeps, plus what the full-depth skins above absorb with the
+    metal the load heats past T_rigid (Task 11's fix, item 4: at 850 K the 5 J heats the base's metal past T_rigid, and
+    the skins then take it, 0.15 J less than the volume began with remaining there) -- and the skins above the warmed
+    base take the rest, the load still deferred is small, and the volume's hottest node lies near the point."""
     body = cube_body()
     point = np.array([HALF + OFF - 1.0e-3, OFF, OFF])
     body.add_pending(point, 5.0)
@@ -199,10 +201,10 @@ def test_pending_load_reaches_the_volume():
     print("pending load: volume gained {:.6f} J, skins {:.6f} J, still deferred {:.3e} J".format(
         book.enthalpy_volume - before["enthalpy_volume"], book.enthalpy_skins - before["enthalpy_skins"], book.pending_J))
     assert gained + book.pending_J == pytest.approx(5.0, rel=1e-9)
-    assert book.enthalpy_volume - before["enthalpy_volume"] > 2.5
+    assert book.enthalpy_volume - before["enthalpy_volume"] + book.enthalpy_absorbed > 2.5
     assert book.enthalpy_skins - before["enthalpy_skins"] >= 0.0
-    assert abs(book.pending_J) < 0.05
-    T = body.solver.T
+    assert abs(book.pending_J) < 0.3     # 0.05 before Task 11's fix; now the absorption's base move owes 0.27 J (measured
+    T = body.solver.T                    # once): the absorbed cells take the volume's field at their middles, steep here
     hot = np.argmax(np.where(body.solver.active, T, -np.inf))
     assert np.linalg.norm(body.mesh.points[hot] - point) < 3e-3
 
@@ -1232,3 +1234,32 @@ def test_a_mode_change_over_melt_moves_phi_by_the_density_ratio():
         else:
             assert fall == pytest.approx(want, rel=PHI_MOVE_RTOL)
             assert want / depth == pytest.approx(ratio, rel=0.05)
+
+
+BASE_EXCESS_K = 1.0     # a full-depth skin's base at most this above T_rigid (the skyscrapers' hot plate, HOT_BASE_TOL_K)
+
+
+def test_a_full_depth_skin_runs_down_through_the_molten_layer_to_a_rigid_stub():
+    """Task 11's fix, item 4 (design 20.6, binding): a full-depth skin runs from the gas down through the molten layer to
+    a stub of rigid metal below psi. The hot plate's column (8 mm of AA7075 at 880 K, 5.6 mm square, its walls the mesh
+    box's faces, one marker, 2 MW/m2, no radiation, swell off, the liquid leaving at T_feed) for two 0.5 s steps: the
+    skin had held only its 0.8 mm minimum, all of it non-rigid, and the volume beneath stood 1.3 and 4.7 K above T_rigid
+    after the two steps; now the skin absorbs the volume's non-rigid metal and a rigid stub below it each part, so the
+    volume's top beneath it stands at most BASE_EXCESS_K above T_rigid, the skin is thicker than its minimum by about the
+    non-rigid metal it took, and the books close (mass to 1e-12, enthalpy to 1e-8)."""
+    mat = aa7075()
+    st = SkinSettings(cell=SKIN_PRESETS["dev"], swell=False)
+    w = 5.6e-3
+    base = BoxBase.around((-w / 2, -w / 2, -8e-3), (w / 2, w / 2, 3.2e-3), 2.8e-3)
+    body = skinbody.LevelSetSkinBody(mat, base, lambda x: x[:, 2] + st.stub, 880.0, st, remove="feed", spacing=w)
+    assert body.markers.n == 1
+    for _ in range(2):
+        book = body.advance(0.5, q_prescribed=lambda mk: np.full(mk.n, 2e6))
+        assert abs(book.mass_residual) <= 1e-12 and abs(book.enthalpy_residual) <= 1e-8
+    P = body.solver.P
+    excess = float((body.solver.patch_T() * P.area).sum() / P.area.sum() - mat.T_rigid)
+    thick = float(body.skins.thickness()[0])
+    print("hot column at 1.0 s: base {:+.2f} K from T_rigid, skin {:.3f} mm ({:.3f} mm non-rigid), absorbed {:.3e} kg "
+          "in the step".format(excess, thick * 1e3, body.skins.depth_above(mat.T_rigid)[0] * 1e3, book.mass_absorbed))
+    assert excess <= BASE_EXCESS_K
+    assert book.mass_absorbed > 0.0 and thick > st.stub * 1.5

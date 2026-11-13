@@ -46,7 +46,9 @@ exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most
    shortfall below DRAW_SLACK of the minimum is round-off and not drawn) and its books; what the volume still owes -- each
    marker's mismatch, and the solve's own residual (the heat its law applied less its stored enthalpy's change, the
    Newton iteration's error), shared by the markers in proportion to their base heat -- is the next part's pending load,
-   so the enthalpy closes exactly;
+   so the enthalpy closes exactly; and each full-depth skin's absorption of the volume's non-rigid metal beneath it down
+   to a rigid stub (`_absorb`, design 20.6; stage 3 Task 11's fix, item 4), booked as a draw at the volume's own
+   temperature;
 6. beta moved by the part's draws and hand-downs: each marker's volume change (handed - drawn) / rho as a displacement
    along the normal over its group's area, extended to the nodes from the nearest base point, beta - delta, reset to a
    distance and corrected per piece to the exact volume target (`levelset.correct_volumes`); `CutThermal.move`, the
@@ -108,6 +110,7 @@ from .cutcell import cell_gradients, inside_volumes
 from .cutcell import patches as cut_patches
 from .cutthermal import CutThermal
 from .levelset import pieces, redistance
+from .transfer import interpolate
 from .markers import Markers
 from .modes import ModeSettings
 from .runoff import FlowBook, Forcing, flow_substeps
@@ -130,6 +133,8 @@ PENDING_TIME_MIN = 0.010          # s: the pending heat is delivered at its amou
                                   # over less than this (the heat sub-step); what the step's last parts leave stays owed
                                   # into the next step (fix round 3: a whole deferral within a 2 ns part was 1e14 W/m2)
 PARTS_MAX = 1000                  # a macro step never starts with more parts: the next step's hint is capped here
+ABSORB_STEP = 0.05e-3             # m: the volume's field is sampled this far apart beneath a full-depth skin's base for
+                                  # where its metal turns rigid (`_absorb`; a fourteenth of the design's 0.7 mm cells)
 # the interface's damped repetition (the skyscrapers' "damped" rule, their skinbody.py and skin.py)
 INTERFACE_TOLERANCE = 1e-3        # of sum |E_top| + |E_base|: the total relative mismatch that ends the repetition
 DAMPED_MAX_PASSES = 12            # passes of a part at most (the last pass's mismatch is deferred)
@@ -187,7 +192,9 @@ class StepBook:
     scales with what was handed, not with the step's heat in), `momentum_modes_normal` the normal part of the momentum
     the step end handed the volume (in `momentum_to_volume` with the rest). `island_nodes` the volume's nodes the step's
     base moves made apart from the old metal, which took the handing columns' temperatures (`stepend.StepEnd._seed`,
-    stage 3 Task 11, item 3). The heat
+    stage 3 Task 11, item 3). `mass_absorbed` [kg] what the full-depth skins absorbed of the volume's non-rigid metal
+    and the stub below it, and `enthalpy_absorbed` [J] its enthalpy (`LevelSetSkinBody._absorb`, Task 11's fix, item 4;
+    in `mass_drawn` too). The heat
     deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
@@ -254,6 +261,8 @@ class StepBook:
     momentum_modes_normal: np.ndarray
     island_nodes: int = 0
     groups_guarded_max: int = 0
+    mass_absorbed: float = 0.0
+    enthalpy_absorbed: float = 0.0
     summary: dict = field(default_factory=dict)
 
     def row(self):
@@ -290,6 +299,8 @@ class _Tally:
         self.mode_normal = np.zeros(3)
         self.islands = 0                               # nodes the base moves' islands took from the handed columns
         self.guarded = 0                               # the most groups the guard replaced in a part
+        self.absorbed = 0.0                            # kg the full-depth skins absorbed of the volume's non-rigid metal
+        self.absorbed_H = 0.0                          # J its enthalpy
 
 
 @dataclass
@@ -708,6 +719,9 @@ class LevelSetSkinBody(StepEnd):
                 T_lin, r_prev = T_lin + omega * r, r
             passes = attempt + 1
             handed, handed_H, handed_P, given = modes.hand_down(sk, ctx["top"], self.settings.stub, cells=True)
+            moving = np.abs(book.drawn - handed) / (self.rho * sk.base_area())
+            book.absorbed, book.absorbed_H = self._absorb(ctx["top"], moving)
+            book.drawn, book.drawn_H = book.drawn + book.absorbed, book.drawn_H + book.absorbed_H
         except Exception as err:                            # the part failed: back to where it started
             self._restore(saved, ctx)
             err.part_restored = True                        # `advance` may then ask whether rigid metal is left
@@ -719,6 +733,62 @@ class LevelSetSkinBody(StepEnd):
         return ratio, lambda: self._accept(dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base,
                                            mismatch, Q, E_vol0, share, base, ctx["top"], tally), \
             lambda: self._restore(saved, ctx)
+
+    def _absorb(self, top, moving):
+        """A full-depth skin runs from the gas down through the molten layer to a stub of rigid metal below psi (design
+        20.6, binding; stage 3 Task 11's fix, item 4): beneath every full-depth row whose base stands on metal above
+        T_rigid, the volume's metal from the base down to where it turns rigid (found within fine_margin below the base,
+        in the metal: a melt deeper than that, or with no rigid metal beneath, is thick melt, the thin test's to turn the
+        skin top-zone), plus the stub below that, joins the skin as new cells (`modes.to_thin`, as a mode change to full-depth absorbs), each at the volume's own temperature at
+        its middle, so that the books stay exact (beta then steps in by it with the part's draws). The base is beta's zero
+        along the row's marker's normal (from the marker, by two steps of beta's distance: the markers stay where the
+        step began while the skins and beta move within it); the volume's field is read from there every ABSORB_STEP down
+        to fine_margin. What a part absorbs is held within the part's move allowance (MOVE_SHARE of the target spacing)
+        less what its draws and hand-downs already move (`moving` [m] per row; the skyscrapers' absorption is held the
+        same way); the rest waits for the next part. Returns (mass [kg], enthalpy [J]) per row, as draws. (On the hot
+        plate the skin had held only its 0.8 mm minimum, all of it non-rigid, and the volume beneath stood 4.7 to 5.2 K
+        above T_rigid.)"""
+        sk, mat, mk = self.skins, self.material, self.markers
+        mass, H = np.zeros(sk.n), np.zeros(sk.n)
+        rows = np.flatnonzero(~np.asarray(top, bool))
+        if not np.isfinite(mat.T_rigid) or not len(rows):
+            return mass, H
+        m = self._row_marker()[rows]
+        x, normal = mk.x[m], mk.normal[m]
+        s_b = sk.thickness()[rows]
+        for _ in range(2):                                  # beta's zero along the normal (beta a distance near it)
+            s_b = s_b + interpolate(self.mesh, self.beta, x - s_b[:, None] * normal)
+        base = x - s_b[:, None] * normal
+        z = np.r_[ABSORB_STEP * 1e-3, ABSORB_STEP * np.arange(1, int(np.ceil(self.fine_margin / ABSORB_STEP)) + 1)]
+        hot = interpolate(self.mesh, self.solver.T, base - z[0] * normal) > mat.T_rigid
+        rows, base, normal = rows[hot], base[hot], normal[hot]
+        if not len(rows):
+            return mass, H
+        pts = (base[:, None, :] - z[None, :, None] * normal[:, None, :]).reshape(-1, 3)
+        T = interpolate(self.mesh, self.solver.T, pts).reshape(len(rows), len(z))
+        metal = interpolate(self.mesh, self.beta, pts).reshape(len(rows), len(z)) < 0.0
+        T = np.where(metal, T, -np.inf)                     # where the metal ends nothing more is absorbed
+        cold = T <= mat.T_rigid
+        found = cold.any(axis=1) & np.isfinite(T[np.arange(len(rows)), np.argmax(cold, axis=1)])
+        k = np.maximum(np.argmax(cold, axis=1), 1)          # a row whose melt is deeper than fine_margin, or reaches
+        i = np.arange(len(rows))                            # the metal's end, has no rigid metal to reach: thick melt is
+        T_hi, T_lo = T[i, k - 1], T[i, k]                   # the thin test's (it turns such a skin top-zone)
+        with np.errstate(invalid="ignore"):
+            f = np.where(np.isfinite(T_lo) & (T_hi > T_lo), (T_hi - mat.T_rigid) / np.where(T_hi > T_lo, T_hi - T_lo,
+                                                                                               1.0), 1.0)
+        rigid_at = z[k - 1] + np.clip(f, 0.0, 1.0) * (z[k] - z[k - 1])
+        room = np.maximum(MOVE_SHARE * self.spacing - np.asarray(moving, float)[rows], 0.0)
+        depth = np.minimum(rigid_at + self.settings.stub, room)
+        go = found & (depth > ABSORB_STEP * 1e-3)
+        rows, depth, base, normal = rows[go], depth[go], base[go], normal[go]
+        if not len(rows):
+            return mass, H
+
+        def temperature(k_, s_):                            # the volume's field along each row's normal from its base
+            return interpolate(self.mesh, self.solver.T, base[k_] - s_[:, None] * normal[k_])
+        ho = modes.to_thin(sk, rows, depth, temperature, self.rho, kappa_share=KAPPA_DEPTH_SHARE)
+        mass[rows], H[rows] = -ho.mass, -ho.enthalpy
+        return mass, H
 
     def _accept(self, dt, dt_macro, ratio, passes, book, handed, handed_H, handed_P, given, A_base, mismatch, Q, E_vol0,
                 share, base, top, tally):
@@ -738,6 +808,8 @@ class LevelSetSkinBody(StepEnd):
         tally.removed_H += float(book.removed_H.sum())
         tally.removed_p += book.removed_p.sum(axis=0)
         tally.drawn += float(book.drawn.sum())
+        tally.absorbed += float(np.sum(getattr(book, "absorbed", 0.0)))
+        tally.absorbed_H += float(np.sum(getattr(book, "absorbed_H", 0.0)))
         tally.handed += float(handed.sum())
         fb = book.flow
         tally.sprayed += float(fb.released.sum())
@@ -900,7 +972,8 @@ class LevelSetSkinBody(StepEnd):
             modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
             mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
             momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands,
-            groups_guarded_max=tally.guarded, summary=summary)
+            groups_guarded_max=tally.guarded, mass_absorbed=tally.absorbed,
+            enthalpy_absorbed=tally.absorbed_H, summary=summary)
         return self.last_step
 
     def _radius(self, centroid):
