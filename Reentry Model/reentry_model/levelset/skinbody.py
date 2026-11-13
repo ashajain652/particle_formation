@@ -778,7 +778,8 @@ class LevelSetSkinBody(StepEnd):
                                                                                                1.0), 1.0)
         rigid_at = z[k - 1] + np.clip(f, 0.0, 1.0) * (z[k] - z[k - 1])
         room = np.maximum(MOVE_SHARE * self.spacing - np.asarray(moving, float)[rows], 0.0)
-        depth = np.minimum(rigid_at + self.settings.stub, room)
+        ends = np.where(metal.all(axis=1), z[-1], z[np.argmax(~metal, axis=1)] - ABSORB_STEP)   # the metal's end below
+        depth = np.minimum(np.minimum(rigid_at + self.settings.stub, room), ends)              # (an edge, a thin part)
         go = found & (depth > ABSORB_STEP * 1e-3)
         rows, depth, base, normal = rows[go], depth[go], base[go], normal[go]
         if not len(rows):
@@ -786,6 +787,11 @@ class LevelSetSkinBody(StepEnd):
 
         def temperature(k_, s_):                            # the volume's field along each row's normal from its base
             return interpolate(self.mesh, self.solver.T, base[k_] - s_[:, None] * normal[k_])
+        mid = 0.5 * depth[:, None] * np.array([[0.0, 0.5, 1.0]])      # the field must be the metal's along the span
+        ok = np.all(np.isfinite(temperature(np.repeat(np.arange(len(rows)), 3), mid.ravel()).reshape(-1, 3)), axis=1)
+        rows, depth, base, normal = rows[ok], depth[ok], base[ok], normal[ok]
+        if not len(rows):
+            return mass, H
         ho = modes.to_thin(sk, rows, depth, temperature, self.rho, kappa_share=KAPPA_DEPTH_SHARE)
         mass[rows], H[rows] = -ho.mass, -ho.enthalpy
         return mass, H
