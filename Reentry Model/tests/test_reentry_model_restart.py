@@ -468,6 +468,40 @@ def test_resuming_with_size_feedback_current_fits_the_cap_and_records_it(flown, 
     assert exc.value.code == 2 and "--size-feedback needs a saved flight of skins" in capsys.readouterr().err
 
 
+def test_resume_rheology(flown, tmp_path, capsys):
+    """`--rheology` on a resume (Asha, 2026-11-12). A state saved before the option has no `rheology` on its skins' settings,
+    so it reads the class default, the bridge law: with no option the resume keeps the bridge, names it and records it; with
+    `--rheology composite` it switches, which is recorded in what was changed, in the settings and in the saved state.
+    The element model's saved flight refuses it (exit 2)."""
+    out, flight, records, state_path = flown
+    state = restart.load(state_path)
+    settings = state["run"].body.settings
+    assert settings is state["run"].body.skins.settings
+    del vars(settings)["rheology"]                                  # a state saved before the option
+    old = str(tmp_path / "old.state.pkl")
+    restart.save(old, state)
+    assert restart.load(old)["run"].body.settings.rheology == "bridge"
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "keep"]) == 0
+    assert "rheology bridge" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "keep.json")))
+    assert doc["settings"]["rheology"] == "bridge" and "--rheology" not in doc["resumed_from"]["changed"]
+    assert cli.main(["resume", old, "--outdir", str(tmp_path), "--name", "comp", "--rheology", "composite",
+                     "--save-state-at", "0.2"]) == 0
+    assert "rheology composite" in capsys.readouterr().out
+    doc = json.load(open(str(tmp_path / "comp.json")))
+    assert doc["resumed_from"]["changed"] == {"--rheology": "composite", "--save-state-at": 0.2}
+    assert doc["settings"]["rheology"] == "composite"
+    assert restart.load(str(tmp_path / "comp.state.pkl"))["run"].body.settings.rheology == "composite"
+    k = FLIGHT.index("--melt")
+    elements = FLIGHT[:k] + FLIGHT[k + 2:-3] + ["--surface-model", "elements", "--quiet"]
+    assert cli.main(elements + ["--t-max", "0.075", "--outdir", str(tmp_path), "--name", "el", "--save-state-at", "0.05"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["resume", str(tmp_path / "el.state.pkl"), "--outdir", str(tmp_path / "o"), "--name", "r",
+                  "--rheology", "bridge"])
+    assert exc.value.code == 2 and "--rheology needs a saved flight of skins" in capsys.readouterr().err
+
+
 def test_resuming_with_a_leeward_test_keeps_the_saved_one_changes_it_and_reads_an_old_state_as_facing(flown, tmp_path, capsys):
     """`--leeward-test` on a resume (sub-plan 22 Task 5j, Asha 2026-11-10). The test flight is `centroid` by default; a resume
     keeps it, names it in the line before the flight and records it in the settings, and `facing` asked of it is recorded in

@@ -7,14 +7,15 @@
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
-        --size-feedback current|initial --leeward-test facing|centroid --spray-gates 2026-11-10|before --slip-band on|off ...]
+        --size-feedback current|initial --leeward-test facing|centroid --rheology composite|bridge
+        --spray-gates 2026-11-10|before --slip-band on|off ...]
                                      (the layered skins, the default with --thermal fem and --melt on, their flow and
                                       spraying the default there; the element model with --surface-model elements, and
                                       the default of a thermal run that does not melt)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
-        --spray-gates 2026-11-10|before --slip-band on|off]
+        --rheology composite|bridge --spray-gates 2026-11-10|before --slip-band on|off]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -29,6 +30,7 @@ import sys
 import numpy as np
 
 from . import __version__, aero, atmosphere, compare, dispersion, fap, heating, material, sesam_io, spray, surface_flow, thermal, viz
+from .shared import rheology as viscosity_laws        # the module's name is a parameter name below
 from .skyscrapers import body, coupled, mesh, movemesh, restart, skin, skinbody
 from . import trajectory as tj
 from .earth import GRAVITY_MODELS
@@ -257,7 +259,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
                      hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
-                     leeward_test="centroid"):
+                     leeward_test="centroid", rheology=viscosity_laws.DEFAULT_LAW):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -315,6 +317,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_nose-{}".format(size_feedback)
     if leeward_test != "centroid":
         out += "_leeward-{}".format(leeward_test)
+    if rheology != viscosity_laws.DEFAULT_LAW:
+        out += "_rheology-{}".format(rheology)
     return out
 
 
@@ -361,6 +365,9 @@ def resume_arguments(rs):
                     help="which top corners are windward for the skins' heating, surface flow and spraying: facing, those whose "
                          "normal faces the flow, or centroid, those that also lie ahead of the plane through the body's mass "
                          "centroid at right angles to the flight direction (default: the saved flight's, facing for one saved "
+                         "before the option existed)")
+    rs.add_argument("--rheology", choices=viscosity_laws.LAWS, default=None,
+                    help="the skins' viscosity law, composite or bridge (default: the saved flight's, bridge for one saved "
                          "before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
@@ -470,7 +477,8 @@ def build_parser():
     me.add_argument("--slurry-spray", choices=("on", "off"), default="off",
                     help="with --skin-flow on: on, the exposed slurry sprays too, once no liquid covers it, by its own mode "
                          "(the cascade of the layered-skin design, section 8); it sprays only within about a kelvin of the "
-                         "liquidus, on a viscosity law with no data there (default off)")
+                         "liquidus, at the viscosity --rheology selects (the composite law's suspension part below 10 %% solid is "
+                         "assumed, design 3.7) (default off)")
     me.add_argument("--spread-limit", type=parse_spread_limit, default="off",
                     help="with --surface-model skin and --melt on: where the base as it would stand folds past this angle "
                          "[deg, within (0, 180)], metal being handed down goes to lower neighbouring corners instead, and "
@@ -544,6 +552,13 @@ def build_parser():
                          "--removal instant). With --surface-model skin: current: the windward loads' nose radius is that of a sphere "
                          "fitted to the tops of the columns facing the flow; initial: the mesh's own radius (Asha, 2026-11-10, sub-plan "
                          "22 Task 5g; default current)")
+    me.add_argument("--rheology", choices=viscosity_laws.LAWS, default=viscosity_laws.DEFAULT_LAW,
+                    help="with --surface-model skin: the viscosity law of the skins' cells and of the exposed slurry's mode: "
+                         "composite, a Mori-Ototake suspension law below 10 %% solid and Li et al.'s fit from 10 %% to half "
+                         "solid, independent of the shear rate (assumptions and uncertainties in design 3.7 and the "
+                         "`shared/rheology.py` docstring), or bridge, the earlier law that bridges the liquid's viscosity to "
+                         "Li's fit between 0 and the bridge's solid fraction at the shear rate (named _rheology-bridge; default "
+                         "%(default)s)")
     me.add_argument("--leeward-test", choices=skinbody.LEEWARD_TESTS, default=None,
                     help="with --surface-model skin: which top corners are windward for the heating, the surface flow and the "
                          "spraying (the Rayleigh-Taylor mode too): centroid, those whose normal faces the flow and that lie "
@@ -650,6 +665,8 @@ def build_thermal(args, settings, mass, spool=None):
             info["skin"]["sideways_heat"] = args.sideways_heat
         info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
         info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
+        info["skin"]["rheology"] = args.rheology                           # always: the default changed (Asha, 2026-11-12)
+        info["skin"]["internal_solid_fraction"] = viscosity_laws.INTERNAL_SOLID_FRACTION      # the composite law's assumed value
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -685,7 +702,7 @@ def skin_settings(args):
     cell = args.skin_cell * 1e-6 if args.skin_cell is not None else skin.SKIN_PRESETS[args.skin_preset]
     return skin.SkinSettings(min_thickness=args.skin_min_thickness * 1e-3, cell=cell, growth=args.skin_growth,
                              substep=args.skin_substep * 1e-3, swell=args.skin_swell == "on",
-                             fine_zone=args.skin_fine_zone * 1e-3)
+                             fine_zone=args.skin_fine_zone * 1e-3, rheology=args.rheology)
 
 
 def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_continuum):
@@ -707,7 +724,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     hand_down_of(args), args.sideways_heat,
                                                                     skin_size_feedback_of(args),
                                                                     melting_skins=melting_skins_of(args),
-                                                                    leeward_test=skin_leeward_test_of(args)),
+                                                                    leeward_test=skin_leeward_test_of(args),
+                                                                    rheology=args.rheology),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
                                                                       spraying_run(args)))
 
@@ -1056,6 +1074,10 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--leeward-test needs a saved flight of skins: it says which of their top corners are windward")
         changed["--leeward-test"] = args.leeward_test
+    if args.rheology is not None:
+        if not skins:
+            parser.error("--rheology needs a saved flight of skins: it sets the viscosity of their cells")
+        changed["--rheology"] = args.rheology
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -1107,6 +1129,8 @@ def cmd_resume(args, parser):
     if "--leeward-test" in changed and skins:
         run.body.leeward_test = args.leeward_test
         run.body._leeward_raw = run.body._nose_raw = None      # the saved step's surface read again under the new test
+    if "--rheology" in changed and skins:
+        run.body.settings.rheology = args.rheology      # the same object as run.body.skins.settings
     if "--spray-gates" in changed:
         run.body.spray.spray_gates = args.spray_gates
     if "--slip-band" in changed:
@@ -1136,6 +1160,7 @@ def cmd_resume(args, parser):
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
+                      ("rheology", "--rheology"),
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
         if flag in changed:
             setattr(saved, key, changed[flag])
@@ -1143,7 +1168,7 @@ def cmd_resume(args, parser):
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, spray gates {}, slip band {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, rheology {}, spray gates {}, slip band {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1154,6 +1179,7 @@ def cmd_resume(args, parser):
               run.body.sideways_pairing if skins else "depth",
               run.body.size_feedback if skins else "n/a",
               run.body.leeward_test if skins else "n/a",
+              run.body.settings.rheology if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
@@ -1179,6 +1205,8 @@ def cmd_resume(args, parser):
         thermal_info["size_feedback"] = "current"
     if skins and run.body.leeward_test == "centroid":
         thermal_info["leeward_test"] = "centroid"
+    if skins:
+        thermal_info["rheology"] = run.body.settings.rheology      # always, whether saved, given here or the old state's bridge
     if getattr(run.body, "spray", None) is not None:
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state

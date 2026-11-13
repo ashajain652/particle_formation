@@ -397,6 +397,7 @@ def test_a_skin_run_writes_its_columns_frames_and_settings(tmp_path):
                          "swell": True, "flow": "off", "flow_cycles": "adaptive", "slurry_spray": "off",
                          "size_feedback": "current",                  # always recorded: the default changed (Task 5g)
                          "leeward_test": "centroid",                  # always recorded: new, centroid by default (Task 5j)
+                         "rheology": "composite", "internal_solid_fraction": 0.5,       # always recorded (Asha, 2026-11-12)
                          "part_count_from": "melting", "hand_down": "off"}   # and these, whose defaults changed (Task 5h)
     assert r["skin_columns"] == s["n_patches"] and abs(r["energy_balance_residual"]) < 1e-8
     assert r["held_mass_max_kg"] >= 0.0 and r["held_depth_max_mm"] >= 0.0       # what the fault tolerance held (Task 9)
@@ -482,11 +483,11 @@ def test_a_skin_run_with_flow_sprays_from_its_top_cells_and_writes_the_droplet_f
     from reentry_model import spray
     argv = MELT + ["--heating", "physics", "--altitude", "65", "--velocity", "7.24", "--temperature", "893", "--dt", "0.025",
                    "--t-max", "0.0625", "--surface-model", "skin", "--skin-preset", "dev", "--frames-every", "1",
-                   "--fine-size", "2", "--skin-flow-cycles", "2", "--outdir", str(tmp_path)]
+                   "--fine-size", "2", "--skin-flow-cycles", "2", "--rheology", "bridge", "--outdir", str(tmp_path)]
     assert cli.main(argv) == 0
     (path,) = glob.glob(str(tmp_path / "*.json"))
     doc = json.load(open(path))
-    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2")
+    assert doc["run_name"].endswith("_fem-physics_melt-girin_skin-dev_fine4x2mm_flowcycles2_rheology-bridge")
     s, r, f = doc["settings"], doc["results"], doc["files"]
     assert s["surface_model"] == "skin" and s["removal"] == "girin" and s["skin"]["flow"] == "on"
     assert s["skin"]["flow_cycles"] == 2 and s["skin"]["slurry_spray"] == "off" and s["particles"] is True
@@ -1056,6 +1057,59 @@ def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, leeward_test="facing") == "_leeward-facing"
 
 
+def test_rheology_option():
+    """`--rheology` (Asha, 2026-11-12) is the composite law by default, reaches the skins' settings, is refused (exit 2)
+    for an unknown law, and is accepted without skins or without melting (it then marks no name)."""
+    from reentry_model.shared import rheology
+    p = cli.build_parser()
+    melt = SKINS + ["--melt", "on"]
+    assert p.parse_args(melt).rheology == rheology.DEFAULT_LAW == "composite"
+    assert cli.skin_settings(p.parse_args(melt)).rheology == "composite"
+    assert cli.skin_settings(p.parse_args(melt + ["--rheology", "bridge"])).rheology == "bridge"
+    with pytest.raises(SystemExit) as exc:
+        p.parse_args(melt + ["--rheology", "li"])
+    assert exc.value.code == 2
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    for argv in (FEM, SKINS, FEM + ["--melt", "on", "--prism-layers", "0"]):
+        assert name(argv + ["--rheology", "composite"]) == name(argv)
+
+
+def test_rheology_run_names():
+    """Only the bridge marks a run's name, `_rheology-bridge`, after the leeward test's mark and before the seed's; a default
+    melting run's name is what it was before the option."""
+    p = cli.build_parser()
+    name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="composite") == ""
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, rheology="bridge") == "_rheology-bridge"
+    melt = SKINS + ["--melt", "on", "--removal", "instant"]
+    base = name(melt)
+    assert base.endswith("_fem-sesam_melt-instant_skinflow-off") and "rheology" not in base
+    assert name(melt + ["--rheology", "bridge"]) == base + "_rheology-bridge"
+    assert (name(melt + ["--leeward-test", "facing", "--rheology", "bridge", "--seed", "7"])
+            == base + "_leeward-facing_rheology-bridge_seed-7")
+
+
+def test_rheology_json(tmp_path):
+    """A skin run's JSON always records `settings.skin.rheology` and the composite law's assumed internal solid fraction, 0.5."""
+    for law, name in (("composite", "c"), ("bridge", "b")):
+        argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+                        "--outdir", str(tmp_path), "--name", name] + (["--rheology", "bridge"] if law == "bridge" else [])
+        assert cli.main(argv) == 0
+        skin = json.load(open(tmp_path / (name + ".json")))["settings"]["skin"]
+        assert skin["rheology"] == law and skin["internal_solid_fraction"] == 0.5
+
+
+def test_slurry_spray_help_names_the_law():
+    """The `run --slurry-spray` help names the viscosity law in use and no longer says the law has no data there."""
+    help_text = " ".join(next(a for a in _run_parser_early()._actions if "--slurry-spray" in a.option_strings).help.split())
+    assert "no data" not in help_text and "--rheology" in help_text
+
+
+def _run_parser_early():
+    return cli.build_parser()._subparsers._group_actions[0].choices["run"]
+
+
 def test_the_spray_gates_help_says_the_thin_and_rarefied_branches_need_a_conjugate_depth():
     """Review of Task 5i, Minor 1: the `run` help for --spray-gates names the thin branch's gate and the depths that pass it."""
     help_text = " ".join(next(a for a in cli.build_parser()._subparsers._group_actions[0].choices["run"]._actions
@@ -1110,7 +1164,7 @@ def test_the_spray_rules_mark_a_spraying_run_s_name_only_where_they_differ_from_
 
 # --- the --architecture flag (Task 6 of the combined refactor) ---
 
-BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--leeward-test', '--particles', '--no-particles']
+BASE_RUN_OPTION_STRINGS = ['-h', '--help', '--diameter', '--velocity', '--altitude', '--flight-path-angle', '--heading', '--lat', '--lon', '--epoch', '--material-density', '--temperature', '--atmosphere', '--wind', '--bridging', '--gravity', '--rtol', '--cadence', '--t-max', '--reference', '--outdir', '--name', '--seed', '--quiet', '--thermal', '--heating', '--stagnation', '--bridging-heat', '--matting-n', '--accommodation', '--catalycity', '--material', '--emissivity', '--k-scale', '--t-ambient', '--mesh-size', '--h-surface', '--h-core', '--thermal-solver', '--linear-solver', '--consistent-mass', '--dt', '--frames-every', '--save-state-at', '--animate', '--stills', '--melt', '--removal', '--runoff', '--deep-runoff', '--molten-cascade', '--rigid-substrate', '--surface-model', '--skin-min-thickness', '--skin-fine-zone', '--skin-cell', '--skin-growth', '--skin-substep', '--fine-band', '--fine-size', '--skin-swell', '--skin-flow', '--slurry-spray', '--spread-limit', '--part-count-from', '--hand-down', '--spray-gates', '--slip-band', '--sideways-heat', '--skin-flow-cycles', '--skin-preset', '--deform-depth', '--rt-spray', '--rarefied-shear', '--gamma-pm', '--dt-continuum', '--kn-body-shock', '--we-critical', '--kr', '--kt', '--prism-layers', '--layer-thickness', '--demise-fraction', '--size-feedback', '--rheology', '--leeward-test', '--particles', '--no-particles']
 
 
 def _run_parser():
