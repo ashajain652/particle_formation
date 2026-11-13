@@ -96,7 +96,7 @@ def test_on_a_sphere_shadow_and_facing_agree():
     assert (np.abs(theta[~lee]) <= 0.5 * math.pi + 0.2).all()
 
 
-# -- the loads by the patches each marker owns (Task 11's fix, item 2) ---------------------------------------------------
+# -- the loads by the area of phi each marker owns (Task 11's fix, item 2, and its round 1, C1) ------------------------
 BEAM = np.array([0.0, 0.0, 1.0])     # a beam arriving along -z: each patch's projection max(n . BEAM, 0)
 COVERAGE_MIN = 0.95                  # the heat the markers take, at least this share of what phi's projected area receives
 
@@ -120,12 +120,11 @@ def _box_surface(half=(5e-3, 5e-3, 4e-3), edge=0.8e-3, fine=0.7e-3):
 
 
 def test_a_uniform_beam_on_a_flat_face_gives_every_face_marker_the_same_flux():
-    """A beam along -z on a box's flat top face: every marker whose patches all lie on the face takes exactly the beam's
-    flux by its patches, and so does the shared heating's flux at the patches of a face facing the flow."""
+    """A beam along -z on a box's flat top face: every marker whose part of phi lies wholly on the face takes exactly the
+    beam's flux by its pieces, and so does the shared heating's flux at the pieces of a face facing the flow."""
     mesh, phi, mk, off, half = _box_surface()
     P = patches(mesh, phi)
-    owner = loads.owners(mk, P.centroid)
-    on_face = np.bincount(owner, P.normal[:, 2] < 1.0 - 1e-9, minlength=mk.n) == 0
+    on_face = loads.owned(mk, P) @ (P.normal[:, 2] < 1.0 - 1e-9).astype(float) == 0.0
     q = loads.patch_mean(mk, P, np.maximum(P.normal @ BEAM, 0.0))
     face = on_face & (mk.normal[:, 2] > 0.99)
     assert face.sum() >= 4

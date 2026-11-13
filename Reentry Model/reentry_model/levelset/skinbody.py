@@ -13,20 +13,21 @@ markers sit on phi (Ruling 1), one skin each (a row of `Skins`), carrying their 
 the volume owns rho V(beta < 0), the skins their cells; nothing is counted twice.
 
 The interface (the skyscrapers' per-column law converted per area). Every patch of beta (the solve's boundary pieces)
-belongs to the marker that owns, on phi, the point above it (`_beta_owners`: the patch's centroid moved out along its
-normal by the skins' thickness there, as phi is built from beta; owned by the nearest marker, `loads.owners`, the
-ownership the gas loads read), so that the skin above a patch and the group below it are one marker: marker m's group
-G_m, the base area beneath its own cell (stage 3 Task 11's fix, item 1: by nearest base point the q6p box's face skins'
-groups were 0.55 to 0.82 of their areas, the side faces' bases nearer the rim of the face's base, and the face
-buckled). GROUP_AREA_RANGE stays as a guard: a group outside it is grown from the patches nearest its base
-(`patch_groups`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass] reaches its group's
-patches per area, q0 = sum a_m / A(G_m), q1 = sum b_m / A(G_m) over the markers whose group holds the patch, and its base
-temperature T_b is the area mean over its group of the patch temperatures the solve applies its law at -- so the volume
-receives exactly sum_m (a_m + b_m T_b,m) dt. (With one patch per marker this is the brief's q0 = sum a / A_patch.)
+belongs to the markers that own, on phi, the part above it (`_beta_owners`: the patch moved out along its normal by the
+skins' thickness there, as phi is built from beta, and divided by the one partition of phi the markers' areas and the
+gas loads read, `markers.ownership`; stage 3 Task 11's fix round 1, C1), so that the skin above a piece of the base and
+the group below it are one marker: marker m's group G_m, the base beneath its own part of phi (stage 3 Task 11's fix,
+item 1: by nearest base point the q6p box's face skins' groups were 0.55 to 0.82 of their areas, the side faces' bases
+nearer the rim of the face's base, and the face buckled). GROUP_AREA_RANGE stays as a guard: a group outside it is grown
+from the patches nearest its base (`patch_groups`). A marker's base law a_m + b_m T_b [W, W/K, from its trial pass]
+reaches each patch p of its group by the area W_mp of p it holds, q0 = sum_m a_m W_mp / (A(G_m) A_p), q1 likewise with
+b_m, and its base temperature T_b is the area mean over its group of the patch temperatures the solve applies its law
+at -- so the volume receives exactly sum_m (a_m + b_m T_b,m) dt. (With one patch per marker this is the brief's q0 =
+sum a / A_patch.)
 
 One macro step (`advance`, design 10.1 with 20): the gas loads once per marker at the step's start (`loads.GasLoads`
-at phi's patches, each marker the mean over the patches it owns, `loads.by_patches`; the leeward test, the fitted
-nose), or a prescribed heating; the surface flow's forcing for the runoff (with an aero state
+at the pieces of phi's patches each marker owns, each marker the mean over its own, `loads.by_patches`; the leeward
+test, the fitted nose), or a prescribed heating; the surface flow's forcing for the runoff (with an aero state
 or a deceleration); Girin's plan once (`spraying.spray_plan`, with a spray model and a state); then the step as parts
 (Ruling 7: none longer than PART_MAX while any top is at or above T_rigid or about to be, and a part whose base moves
 exceed MOVE_SHARE of the markers' target spacing rerun as shorter parts, at most SPLIT_DEPTH_MAX levels). Each part:
@@ -104,6 +105,7 @@ from ..shared import nose
 from ..shared import spray as spray_mod
 from ..shared.droplets import SKIN_SUMMARY_COLUMNS
 from . import loads as loads_mod
+from . import markers as markers_mod
 from . import modes
 from .boxmesh import build
 from .cutcell import cell_gradients, inside_volumes
@@ -376,27 +378,34 @@ def next_hint(counts):
 
 def patch_groups(centroid, area, base, A_base, owner=None, report=False):
     """Each marker's group of patches of beta and how its base law is spread over them (fix round 2 of Task 9): (S, A_group).
-    S (n, P), sparse and row-stochastic, holds marker m's share A_p / A(G_m) of each patch p of its group G_m; A_group (n,)
-    [m2] the groups' areas. Every patch first goes to its `owner` (P,), the row of the marker whose cell on phi lies above
-    it (`LevelSetSkinBody._beta_owners`; stage 3 Task 11's fix, item 1), or without one to the marker whose base point
-    (`base`, (n, 3)) is nearest its `centroid` (P, 3); a group whose area is outside GROUP_AREA_RANGE times its marker's
-    skin base area `A_base` (n,) [m2] (the guard) is replaced by the patches nearest that marker's base, taken in order of
-    distance until their area first reaches A_base (shared with other groups where they overlap). With `report`, the
-    number of groups the guard replaced is returned third. A patch a shrunk group gave up and no other group holds takes no
-    law. The law stays exact whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over the patches is
-    sum a and sum b, and a marker's base temperature S T_p is the area mean over its group. A zero A_base leaves the
-    nearest-base groups (and a marker with none the patch nearest its base)."""
+    S (n, P), sparse and row-stochastic, holds marker m's share of each patch p of its group G_m, the area of p it holds
+    over A(G_m); A_group (n,) [m2] the groups' areas. `owner` gives each row the patches beneath its part of phi
+    (`LevelSetSkinBody._beta_owners`: a sparse (n, P) of the area of each patch each row holds, stage 3 Task 11's fix round
+    1, C1; or (P,) one row per whole patch, Task 11's fix, item 1); without it every patch goes to the marker whose base
+    point (`base`, (n, 3)) is nearest its `centroid` (P, 3). A group whose area is outside GROUP_AREA_RANGE times its
+    marker's skin base area `A_base` (n,) [m2] (the guard) is replaced by the patches nearest that marker's base, whole,
+    taken in order of distance until their area first reaches A_base (shared with other groups where they overlap). With
+    `report`, the number of groups the guard replaced is returned third. A patch a shrunk group gave up and no other group
+    holds takes no law. The law stays exact whatever the groups: with q0 = S^T a / A_p, q1 = S^T b / A_p, sum q A over
+    the patches is sum a and sum b, and a marker's base temperature S T_p is the area mean over its group. A zero A_base
+    leaves the nearest-base groups (and a marker with none the patch nearest its base)."""
     n, npatch = len(base), len(area)
     A_base = np.broadcast_to(np.asarray(A_base, dtype=float), (n,))
     if owner is None:
         _, owner = cKDTree(base).query(centroid)
-    owner = np.asarray(owner, dtype=np.int64)
-    A_near = np.bincount(owner, area, minlength=n)
+    if sp.issparse(owner):
+        G = sp.csr_matrix(owner, shape=(n, npatch))
+    else:
+        owner = np.asarray(owner, dtype=np.int64)
+        G = sp.csr_matrix((area, (owner, np.arange(npatch))), shape=(n, npatch))
+    A_near = np.asarray(G.sum(axis=1)).ravel()
     lo, hi = GROUP_AREA_RANGE
     ratio = np.divide(A_near, A_base, out=np.full(n, np.inf), where=A_base > 0.0)
     redo = np.flatnonzero(((ratio < lo) | (ratio > hi)) & (A_base > 0.0) | (A_near == 0.0))
-    keep = ~np.isin(owner, redo)
-    rows, cols = [owner[keep]], [np.flatnonzero(keep)]
+    keep = np.ones(n)
+    keep[redo] = 0.0
+    G = (sp.diags(keep) @ G).tocoo()
+    rows, cols, vals = [G.row], [G.col], [G.data]
     if len(redo):
         tree = cKDTree(centroid)
         k = min(GROUP_CANDIDATES, npatch)
@@ -414,9 +423,12 @@ def patch_groups(centroid, area, base, A_base, owner=None, report=False):
         sel = np.arange(k)[None, :] <= take[:, None]
         rows.append(np.broadcast_to(redo[:, None], idx.shape)[sel])
         cols.append(idx[sel])
-    rows, cols = np.concatenate(rows), np.concatenate(cols)
-    A_group = np.bincount(rows, area[cols], minlength=n)
-    S = sp.csr_matrix((area[cols] / A_group[rows], (rows, cols)), shape=(n, npatch))
+        vals.append(area[idx[sel]])
+    rows, cols, vals = np.concatenate(rows), np.concatenate(cols), np.concatenate(vals)
+    live = vals > 0.0
+    rows, cols, vals = rows[live], cols[live], vals[live]
+    A_group = np.bincount(rows, vals, minlength=n)
+    S = sp.csr_matrix((vals / A_group[rows], (rows, cols)), shape=(n, npatch))
     return (S, A_group, len(redo)) if report else (S, A_group)
 
 
@@ -578,15 +590,20 @@ class LevelSetSkinBody(StepEnd):
 
     # -- the interface ---------------------------------------------------------------------------------------------------
     def _beta_owners(self, P, base):
-        """Each patch of beta's owner (P,), the skin row of the marker whose cell on phi lies above it (module docstring):
-        the patch's centroid moved out along its normal by the thickness of the skin whose base point is nearest (as
-        phi is beta moved out by the nodal thickness of the nearest base, `stepend.StepEnd._thickness_nodal`), owned by the
-        nearest marker (`loads.owners`). Along the patch's own normal rather than a marker's: the point then lies where phi
-        was built over the patch, whatever the markers' normals; at a rounded edge it lands on phi's rounding above it."""
+        """The area of each patch of beta each skin row owns, (rows, P) csr [m2]: the row of the marker whose part of phi
+        lies above it (module docstring). Each patch's triangles moved out along its normal by the thickness of the skin
+        whose base point is nearest its centroid (as phi is beta moved out by the nodal thickness of the nearest base,
+        `stepend.StepEnd._thickness_nodal`), divided among the markers as phi is (`markers.ownership`, the one partition
+        of phi; stage 3 Task 11's fix round 1, C1). Along the patch's own normal rather than a marker's: the patch then
+        lies where phi was built over it, whatever the markers' normals; at a rounded edge it lands on phi's rounding above
+        it. The columns sum to the patches' areas to round-off."""
+        mk = self.markers
         H = self.skins.thickness()
         _, near = cKDTree(base).query(P.centroid)
-        above = P.centroid + H[near][:, None] * P.normal
-        return self.markers.skin_index[loads_mod.owners(self.markers, above)]
+        lift = (H[near][:, None] * P.normal)[P.tri_patch]
+        W = markers_mod.ownership(mk.x, P.tris + lift[:, None, :], P.tri_patch, len(P.area),
+                                  markers_mod.OWN_SHARE * mk.spacing).tocoo()
+        return sp.csr_matrix((W.data, (mk.skin_index[W.row], W.col)), shape=(self.skins.n, len(P.area)))
 
     def _interface(self):
         """(S (n, P) sparse, row-stochastic: marker row m's share A_p / A(G_m) of each patch of its group; A(G) (n,) [m2];

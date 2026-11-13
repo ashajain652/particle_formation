@@ -15,7 +15,7 @@ from reentry_model.shared import atmosphere, trajectory as tj
 DESIGN_SPACING = 2e-3      # m: the body's marker spacing (skinbody.MARKER_SPACING)
 DESIGN_FINE = 0.7e-3       # m: the body's fine cells (its default fine_size)
 CAPPED_SHARE = 0.01        # of the cells: at most this many bounded by the cap on a continuous surface (Task 9b ruling)
-OWNERSHIP_FACTOR = 1.5     # a static tessellation's area within this factor of the area nearest the marker (the same)
+OWNERSHIP_FACTOR = 1.5     # a static tessellation's cell's area within this factor of the area nearest the marker
 DEV_SETTINGS = SkinSettings(cell=SKIN_PRESETS["dev"])   # the development preset's skins (20 um cells)
 
 
@@ -39,12 +39,14 @@ def seeded(mesh, phi, spacing, lo, material=None, settings=DEV_SETTINGS):
 
 
 def nearest_ratio(mk, mesh, phi):
-    """Each marker's tessellated area over the area of phi nearer to it than to any other marker (surface samples a
-    sixteenth of the spacing across), the two scaled to the same total."""
+    """Each marker's tangent-plane cell's area (`Markers.cell_area`, the cells its faces bound; its area itself is the
+    area of phi it owns since Task 11's fix round 1, C1) over the area of phi nearer to it than to any other marker
+    (surface samples a sixteenth of the spacing across), the two scaled to the same total: how well the tessellation
+    found the true neighbours."""
     y, w = surface_samples(mesh, phi, mk.spacing / 16.0)
     _, j = cKDTree(mk.x).query(y)
     near = np.bincount(j, w, minlength=mk.n)
-    return mk.area / near * near.sum() / mk.area.sum()
+    return mk.cell_area / near * near.sum() / mk.cell_area.sum()
 
 
 def refined(base, level, fine):

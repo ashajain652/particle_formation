@@ -111,7 +111,8 @@ def test_rigid_motion_leaves_skins_unchanged():
         assert np.array_equal(a, b)
     assert np.abs(mk.area / A0 - 1.0).max() < 1e-10
     assert (mk.splits, mk.merges, mk.trapped) == (0, 0, 0)
-    # a rotation about the centre (phi unchanged): a Kuhn mesh is not rotation-symmetric, so 1 % on the areas
+    # a rotation about the centre (phi unchanged): a Kuhn mesh is not rotation-symmetric, so 1 % on the areas (the areas
+    # of phi each marker owns, Task 11's fix round 1, C1: 0.50 % at most measured once, 0.31 % for the tangent-plane cells)
     c = shift
     from scipy.spatial.transform import Rotation
     rot = Rotation.from_rotvec([0.1, 0.2, 0.25]).as_matrix()
@@ -121,6 +122,80 @@ def test_rigid_motion_leaves_skins_unchanged():
     for a, b in zip(skins0, _arrays(mk.skins)):
         assert np.array_equal(a, b)
     assert np.abs(mk.area / A0 - 1.0).max() < 0.01
+
+
+OWNED_EXACT = 1e-12        # each marker's area against its Voronoi cell's on a plane, relative
+OWNED_ROTATION = 5e-3      # the largest change of a marker's area under a rigid rotation at the body's spacing
+
+
+def test_each_marker_s_area_is_the_area_of_phi_nearest_it():
+    """Task 11's fix round 1, C1 (the controller's ruling): one partition of phi, each marker's area the area of phi
+    nearer it than any other marker. On a plane tilted across a 0.25 mm mesh, 150 markers scattered on it: the area of
+    every marker whose Voronoi cell in the plane (scipy's) lies 1 mm or more inside the mesh is that cell's area to
+    OWNED_EXACT, and the areas sum to phi's to round-off."""
+    from scipy.spatial import Voronoi
+    nrm = np.array([0.3, -0.2, 1.0])
+    nrm /= np.linalg.norm(nrm)
+    e1 = np.cross(nrm, [1.0, 0.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(nrm, e1)
+    c = np.array([0.11e-3, -0.07e-3, 0.05e-3])
+    mesh = build(BoxBase.around((-5e-3,) * 3, (5e-3,) * 3, 0.25e-3))
+    phi = (mesh.points - c) @ nrm
+    rng = np.random.default_rng(5)
+    uv = rng.uniform(-4.5e-3, 4.5e-3, (150, 2))
+    x = c + uv[:, :1] * e1 + uv[:, 1:] * e2
+    mk = Markers(x, np.tile(nrm, (len(x), 1)), np.zeros(len(x)), np.zeros((len(x), 2)), np.arange(len(x)),
+                 np.zeros(len(x), np.int64), 0.8e-3)
+    mk.tessellate(mesh, phi)
+    P = patches(mesh, phi)
+    vor = Voronoi(uv)
+    inner = []
+    for i, r in enumerate(vor.point_region):
+        reg = vor.regions[r]
+        if not reg or -1 in reg:
+            continue
+        poly = vor.vertices[reg]
+        X = c + poly[:, :1] * e1 + poly[:, 1:] * e2
+        if np.all(np.abs(X) <= 4e-3):
+            ctr = poly.mean(axis=0)
+            ang = np.argsort(np.arctan2(*(poly - ctr).T[::-1]))
+            q = poly[ang]
+            inner.append((i, 0.5 * abs(np.dot(q[:, 0], np.roll(q[:, 1], -1)) - np.dot(q[:, 1], np.roll(q[:, 0], -1)))))
+    idx = np.array([i for i, _ in inner])
+    want = np.array([v for _, v in inner])
+    err = np.abs(mk.area[idx] / want - 1.0)
+    print("owned areas on a plane: {} of {} markers checked, within {:.1e} of their Voronoi cells".format(
+        len(idx), mk.n, err.max()))
+    assert len(idx) >= 50
+    assert err.max() <= OWNED_EXACT
+    assert mk.area.sum() == pytest.approx(P.area.sum(), rel=1e-12)
+
+
+def test_a_turned_sphere_s_markers_keep_their_areas_at_the_body_s_spacing():
+    """Task 11's fix round 1, C1: a 10 mm sphere on the body's design cells (0.7 mm near the surface), markers seeded as
+    the body seeds them, 2 mm apart, turned rigidly about its centre (phi unchanged, the markers carried and snapped): no
+    marker's area, the area of phi it owns, changes by more than OWNED_ROTATION. The change is the faceted surface's own,
+    the cut-cell patches meeting the turned markers differently. (Measured once: median 0.023 per cent, 95th percentile
+    0.071, largest 0.21; Task 6 measured 0.31 per cent at most for the tangent-plane cells on a 25 mm sphere with one
+    marker per patch, where the owned areas now change by 0.50 per cent at most, `test_rigid_motion_leaves_skins_
+    unchanged`.)"""
+    from scipy.spatial.transform import Rotation
+    Rs = 10e-3
+    base = BoxBase.around((-Rs - 5.6e-3,) * 3, (Rs + 5.6e-3,) * 3, 2.8e-3)
+    mesh = refined(base, lambda x: np.linalg.norm(x, axis=1) - Rs, DESIGN_FINE)
+    phi = redistance(mesh, np.linalg.norm(mesh.points, axis=1) - Rs, band=4e-3)
+    mk = seeded(mesh, phi, DESIGN_SPACING, base.lo)
+    mk.tessellate(mesh, phi)
+    A0 = mk.area.copy()
+    rot = Rotation.from_rotvec([0.1, 0.2, 0.25]).as_matrix()
+    mk.carry(lambda x: x @ rot.T - x, 1.0)
+    mk.snap(mesh, phi)
+    mk.tessellate(mesh, phi)
+    turned = np.abs(mk.area / A0 - 1.0)
+    print("turned: {} markers, area change median {:.2e}, 95th {:.2e}, largest {:.2e}".format(
+        mk.n, np.median(turned), np.percentile(turned, 95), turned.max()))
+    assert turned.max() <= OWNED_ROTATION
 
 
 def test_uniform_stretching_thins_skins_and_draws_the_implied_metal():

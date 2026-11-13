@@ -381,16 +381,17 @@ FACE_GROUP_MIN = 0.7             # and none below this (measured once: 0.75 to 1
 
 
 def test_a_skin_s_group_is_the_base_beneath_its_own_cell():
-    """Task 11's fix, item 1: each patch of beta belongs to the marker that owns, on phi, the point above it, so a skin's
-    base heat enters the volume through the base beneath its own cell. By the nearest base point the q6p box's face
-    skins' groups were 0.55 to 0.82 of their areas (the side faces' bases are nearer the rim of the face's base) and the
-    face buckled. On the test cube the +x face skins' groups now have a median ratio within FACE_GROUP_MEDIAN and none
-    below FACE_GROUP_MIN (the rim's skins carry phi's rounding over the edge, which has no base beneath it), every patch
-    goes to the owner of the point above it (unless the guard replaced its group), and the law stays exact: the groups'
-    shares sum to one per marker."""
+    """Task 11's fix, item 1, and its round 1, C1: each patch of beta belongs to the markers that own, on phi, the part
+    above it, so a skin's base heat enters the volume through the base beneath its own part of phi. By the nearest base
+    point the q6p box's face skins' groups were 0.55 to 0.82 of their areas (the side faces' bases are nearer the rim of
+    the face's base) and the face buckled. On the test cube the +x face skins' groups now have a median ratio within
+    FACE_GROUP_MEDIAN and none below FACE_GROUP_MIN (the rim's skins carry phi's rounding over the edge, which has no base
+    beneath it), each holds the area of each patch beneath its part of phi in proportion (unless the guard replaced its
+    group), beta's patches are divided whole, and the law stays exact: the groups' shares sum to one per marker."""
     body = cube_body()
     P, base, A = body.solver.P, body._bases(), body.skins.base_area()
-    owner = body._beta_owners(P, base)
+    G = body._beta_owners(P, base)
+    np.testing.assert_allclose(np.asarray(G.sum(axis=0)).ravel(), P.area, rtol=1e-12)
     S, A_group, base_, _ = body._interface()
     mk = body.markers
     face = mk.skin_index[mk.normal[:, 0] > 0.9]
@@ -399,9 +400,36 @@ def test_a_skin_s_group_is_the_base_beneath_its_own_cell():
     lo, hi = FACE_GROUP_MEDIAN
     assert lo <= np.median(ratio) <= hi and ratio.min() >= FACE_GROUP_MIN
     np.testing.assert_allclose(np.asarray(S.sum(axis=1)).ravel(), 1.0, rtol=1e-14)
-    coo = S.tocoo()
-    kept = np.isin(coo.row, face)
-    assert np.array_equal(coo.row[kept], owner[coo.col[kept]])         # the face's groups: their own patches only
+    held = np.asarray(G.sum(axis=1)).ravel()
+    g_lo, g_hi = skinbody.GROUP_AREA_RANGE
+    own = face[(held[face] >= g_lo * A[face]) & (held[face] <= g_hi * A[face])]     # groups the guard left
+    assert len(own) >= 0.8 * len(face)
+    want = (G[own].multiply(1.0 / held[own][:, None])).toarray()
+    np.testing.assert_allclose(S[own].toarray(), want, rtol=0.0, atol=1e-12)        # their own patches, in proportion
+
+
+BEAM_Z = np.array([0.0, 0.0, 1.0])   # a beam arriving along -z
+
+
+def test_the_skins_take_a_beam_over_the_area_of_phi_they_own():
+    """Task 11's fix round 1, C1 (the controller's ruling): one partition of phi. Each marker's area is the area of phi
+    nearer it than any other marker, the area the gas loads average over and the groups below it are built from, so that
+    on the test cube under a beam along -z (each patch's projection max(n . BEAM_Z, 0) as its flux) the heat the skins
+    take, each its own flux times its own area, is the beam times phi's projected area to round-off, and the skins' areas
+    sum to phi's. With the tangent-plane cells' areas the q6p box's markers took 0.961 of a beam's projected heat at the
+    start and 0.640 after its first melting step."""
+    from reentry_model.levelset import loads
+    from reentry_model.levelset.cutcell import patches
+    body = cube_body()
+    mk, sk = body.markers, body.skins
+    P = patches(body.mesh, body.phi)
+    proj = np.maximum(P.normal @ BEAM_Z, 0.0)
+    taken = (sk.area[mk.skin_index] * loads.patch_mean(mk, P, proj)).sum()
+    want = (P.area * proj).sum()
+    print("the skins take {:.15f} of the beam's projected heat; their areas {:.15f} of phi's".format(
+        taken / want, sk.area.sum() / P.area.sum()))
+    assert taken == pytest.approx(want, rel=1e-12)
+    assert sk.area.sum() == pytest.approx(P.area.sum(), rel=1e-12)
 
 
 def test_a_marker_whose_nearest_patches_are_few_gets_a_grown_group_and_the_law_stays_exact():
@@ -766,7 +794,8 @@ def _through_base(host):
 def test_a_repartition_moves_no_metal_through_the_base():
     """Task 9b: liquid skins of one to three stubs' mass on a closed flat box, the 16 markers in the middle of its top
     face shifted along it by up to 0.4 mm each, the surface unchanged: the step end's tessellation re-partitions the area
-    (the shifted cells' areas change by 0.6 to 1.13 times) and each column's metal follows its area by the hand-over
+    (the shifted markers' areas change by 0.82 to 1.16 times, the area of phi each owns; 0.6 to 1.13 by the tangent-plane
+    cells before Task 11's fix round 1, C1) and each column's metal follows its area by the hand-over
     rule. A third of the shifted markers' skins (flat columns) start exactly at their minimum mass, the others above it. The skins' mass
     and enthalpy close to 1e-14 and their momentum to round-off; no column ends below its minimum mass, so the next
     part's draws and hand-downs move no metal through the base (at most 1e-14 of beta's volume); every new column's
@@ -800,7 +829,7 @@ def test_a_repartition_moves_no_metal_through_the_base():
           "through the base {:.1e} of beta's volume; least mass over minimum {:.15f}".format(
               ratio.min(), ratio.max(), M1 / M0 - 1, E1 / E0 - 1, np.abs(P1 - P0).max() / P_size, moved / V,
               (sk.m.sum(axis=1) / sk.minimum_mass()).min()))
-    assert ratio.min() < 0.8 and ratio.max() > 1.1
+    assert ratio.min() < 0.85 and ratio.max() > 1.1                    # the shift does re-partition the area
     assert np.all(sk.m.sum(axis=1) >= sk.minimum_mass() * (1.0 - 1e-13))
     assert moved <= 1e-14 * V
     assert abs(M1 / M0 - 1) <= BOOKS_RTOL and abs(E1 / E0 - 1) <= BOOKS_RTOL
