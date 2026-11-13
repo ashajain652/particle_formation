@@ -106,11 +106,17 @@ class SimilaritySolver:
         self._sol = None
 
     def solve(self, beta, H_e, u_e, T_w):
-        if self._sol is None:
-            T_e = float(self.props.T_of_h(H_e - 0.5 * u_e * u_e))
-            for t in np.geomspace(0.8 * T_e, T_w, HOMOTOPY_STEPS)[:-1]:
-                self._solve(beta, H_e, u_e, float(t))
-        return self._solve(beta, H_e, u_e, T_w)
+        """A failed solve (including a failed homotopy step) clears the warm start, so the next solve begins from the
+        homotopy again rather than from an intermediate hot-wall solution."""
+        try:
+            if self._sol is None:
+                T_e = float(self.props.T_of_h(H_e - 0.5 * u_e * u_e))
+                for t in np.geomspace(0.8 * T_e, T_w, HOMOTOPY_STEPS)[:-1]:
+                    self._solve(beta, H_e, u_e, float(t))
+            return self._solve(beta, H_e, u_e, T_w)
+        except SimilarityError:
+            self._sol = None
+            raise
 
     def _solve(self, beta, He, ue, Tw_):
         tab, PR = self.props, self.pr
@@ -167,8 +173,11 @@ def march(theta_deg, radius, p_w, u_e, H_e, T_w, rho_w_mu_w, solver):
     """Continuum wall shear and heat flux along the meridian bins theta_deg [deg from the stagnation point]; xi is
     integrated on a 20-times refined grid, beta = 2 xi (du_e/ds) / (rho_w mu_w u_e^2 r_body^2), the stagnation point
     uses beta = 1/2 with u_e r / sqrt(2 xi) -> sqrt(2 beta0 / (rho_w mu_w)). The last bin is not marched (as in the
-    reference); the first bin with f''(0) <= 0.005 or a failed solve is the separation angle."""
+    reference); the first bin with f''(0) <= 0.005 or a failed solve is the separation angle. The solver is reset at
+    the start, so every march begins from the homotopy and does not depend on earlier marches; a failure of the
+    stagnation-point solve itself propagates as SimilarityError."""
     th = np.asarray(theta_deg, dtype=float)
+    solver.reset()
     n = len(th)
     s = radius * np.radians(th)
     r = radius * np.sin(np.radians(th))

@@ -79,7 +79,6 @@ def test_failed_solve_is_separation(props, monkeypatch):
     real = similarity.SimilaritySolver.solve
     args = (th, RADIUS, p_w, u_e, 2.0e7, T_W, p_w / (R_AIR * T_W) * 5e-5)
     ref = similarity.march(*args, solver)
-    assert solver._sol is not None
     # now force failure from the bin at 100 degrees on
     n = {"i": 0}
 
@@ -101,3 +100,51 @@ def test_failed_solve_is_separation(props, monkeypatch):
     again = similarity.march(*args, solver)
     assert again.separation_deg == ref.separation_deg
     np.testing.assert_allclose(again.q_c, ref.q_c, rtol=1e-9)
+
+
+def _toy_march_args():
+    th = np.arange(0.0, 181.0)
+    p_w = 1000.0 * (1.0 + 0.1 * np.cos(np.radians(th)))
+    u_e = 3000.0 * np.sin(np.radians(th)) + 1.0
+    u_e[0] = 0.0
+    return th, RADIUS, p_w, u_e, 2.0e7, T_W, p_w / (R_AIR * T_W) * 5e-5
+
+
+def test_march_after_failed_march_equals_fresh(props, monkeypatch):
+    args = _toy_march_args()
+    fresh = similarity.march(*args, similarity.SimilaritySolver(props))
+    solver = similarity.SimilaritySolver(props)
+    real = similarity.SimilaritySolver.solve
+    n = {"i": 0}
+
+    def failing(self, beta, H_e, u, T_w):
+        n["i"] += 1
+        if n["i"] > 60:
+            raise similarity.SimilarityError("forced")
+        return real(self, beta, H_e, u, T_w)
+    monkeypatch.setattr(similarity.SimilaritySolver, "solve", failing)
+    assert similarity.march(*args, solver).separation_deg == 60.0
+    monkeypatch.setattr(similarity.SimilaritySolver, "solve", real)
+    again = similarity.march(*args, solver)          # no manual reset
+    np.testing.assert_array_equal(again.q_c, fresh.q_c)
+    np.testing.assert_array_equal(again.tau_c, fresh.tau_c)
+
+
+def test_failed_homotopy_step_restarts_from_homotopy(props, monkeypatch):
+    solver = similarity.SimilaritySolver(props)
+    real = similarity.SimilaritySolver._solve
+    n = {"i": 0}
+
+    def failing(self, *a):
+        n["i"] += 1
+        if n["i"] == 5:
+            raise similarity.SimilarityError("forced")
+        return real(self, *a)
+    monkeypatch.setattr(similarity.SimilaritySolver, "_solve", failing)
+    with pytest.raises(similarity.SimilarityError):
+        solver.solve(0.5, 25162715.7, 0.0, 1500.0)
+    assert solver._sol is None
+    monkeypatch.setattr(similarity.SimilaritySolver, "_solve", real)
+    pt = solver.solve(0.5, 25162715.7, 0.0, 1500.0)
+    fresh = similarity.SimilaritySolver(props).solve(0.5, 25162715.7, 0.0, 1500.0)
+    assert pt == fresh
