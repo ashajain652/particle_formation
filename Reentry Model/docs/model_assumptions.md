@@ -928,8 +928,9 @@ the 908 K liquidus.
   (3.7 times; that variant's speed, 3.32 m/s, is within 2 % of the momentum step's). Over the windward face the total
   is 0.506 against 0.091 kg/s (5.5 times). The 3.7 and 5.5 times ratios come from the thin branch's supply term (the
   layer depth) and the viscous-damping gate, not from the whole-layer viscosity alone. Under the recent rules the total
-  is 0.212 against 0.086 kg/s (about 2.5 times, which is not small), mostly from columns that the shallower layer moves
-  to the thin branch.
+  is 0.212 against 0.086 kg/s (about 2.5 times, which is not small); the variant sprays on more columns (158 against
+  77), because its shallower layer moves some columns to the thin branch, but at a much lower median rate (50 against 456
+  kg/(m^2 s)).
 - *Cost.* Run one after another on a laptop with other sessions running, 0.1 s of flow took 32 flow sub-steps at 0.90 s
   each (28.9 s) under the bridge law and 40 at 0.62 s each (24.8 s) under the composite law, because the momentum step's
   shear-rate fixed point ends after one pass.
