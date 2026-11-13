@@ -189,14 +189,14 @@ def test_hot_plate_at_half_second_steps(preset):
     assert out["passes"]
 
 
-BOX_FAILS = ("measured 2026-11-12 after Task 11's fix round, diagnosed in its report (section 10.7): the face stays flat "
-             "through the cold step (its skins' solid tops within 4e-11 m, their groups 0.70 to 0.99 of their areas, "
-             "their tops within 6.8 K), but at 1.0 s the face centre recedes 0.936 mm against 0.789 (18.6 % ahead; "
-             "40.5 % before the fixes) and at 1.5 s 2.921 mm against 2.712 (7.7 %): the edges and the rim melt first, "
-             "26 then 43 markers turn top-zone (7 on the face by 1.5 s), their melt goes to the volume, which in stage 3 "
-             "holds it without removal (0.83 mm of the face removed by 1.5 s against the reference's 2.71), and the face "
-             "buckles (2.4 mm between its face markers' solid tops at 1.5 s); the step to 2.0 s then stops in a base "
-             "move ('volume correction of piece 1 did not converge')")
+BOX_FAILS = ("measured 2026-11-13 after Task 11's fix round 1 (e129c95): the markers take the projected beam over phi "
+             "to round-off and the face stays even through 1.0 s (its solid tops within 0.156 mm), but the face centre "
+             "recedes 0.667 mm at 1.0 s against 0.789 (15.4 % behind), with every marker full-depth in that step: the "
+             "parts' base moves missed the body's volume by up to 0.9 % each, 23 mm3 net, which the volume "
+             "correction took from the whole of beta (the review's I3, not settled); at 1.5 s it recedes "
+             "3.006 mm against 2.712 (10.8 % ahead), the face's solid tops 2.15 mm apart; at 2.0 s beta is in nine "
+             "pieces (115, 83, 15, 14 and 7 mm3 and four specks) and the centre measure reads 0.452 mm from the slab of "
+             "metal left on the axis. The books close every step and no marker is trapped")
 
 
 @pytest.mark.reference
@@ -206,7 +206,8 @@ def test_q6p_box():
     design's meshes, the volume flow held and the skins' runoff on under the flight's deceleration, the liquid leaving at
     T_feed): the face centre's recession within 5 % of the cold plate's one-dimensional reference (T_feed) at 1.0, 1.5
     and 2.0 s, the books every step, and no marker trapped; the edges are recorded (their recession along the bisector,
-    the top-zone markers). It fails (BOX_FAILS): the brief's tolerance is kept and the failure marked strict."""
+    the top-zone markers). It fails (BOX_FAILS): the brief's tolerance is kept and the failure marked strict. Since
+    Task 11's fix round 1 the run reaches 2.0 s (the volume correction of a speck no longer stalls)."""
     c = _cases()
     out = c.box("dev")
     assert out["failure"] is None
@@ -218,12 +219,15 @@ def test_q6p_box():
     assert out["passes"]
 
 
-SHOULDER_FAILS = ("measured 2026-11-12 after Task 11's fix round, partly diagnosed in its report (section 10.7): at 2.0 s "
-                  "the skins hold 25 mg of metal above T_rigid out to 4.30 mm past the heat's end (the third marker), "
-                  "past FREEZE_REACH; the full-depth skins now absorb the volume's non-rigid metal (item 4), so metal "
-                  "the volume held there before, heated from the cap, is now counted in the skins (2.7 mg within "
-                  "2.3 mm before the fixes); whether it is runoff that has not frozen or base metal heated past "
-                  "T_rigid is not separated. The books close, a deposit of 20 mg forms 1.84 mm past the heat's end")
+SHOULDER_FAILS = ("measured 2026-11-13 after Task 11's fix round 1 (e129c95), judged as the controller's ruling on the "
+                  "review's I2 asks: the books close and at 2.0 s a deposit of 14.2 mg lies past the heat's end, none "
+                  "of it past 5 mm (the pushed plate: 3.0 %), but only 0.586 of it is rigid against 0.9: 8.4 mg of "
+                  "metal above T_rigid lies in the skins within 1.83 mm past the heat's end. At 1.5 s the deposit was "
+                  "40.5 mg and 0.972 rigid; in the step to 2.0 s the base moves left the body (246 mm3) holding, net, "
+                  "100 mm3 more than their targets before the volume correction (the review's I3, not settled), which "
+                  "took it back from all of beta (244 mm2, about 0.4 mm), phi over the never-heated metal 4 to 6 mm past "
+                  "the heat's end fell by about 0.1 to 0.6 mm and the deposit read from phi's rise fell to 14.2 mg, so "
+                  "the deposit cannot be judged while the base moves lean on the correction")
 
 
 @pytest.mark.reference
@@ -232,13 +236,12 @@ def test_shoulder_runoff_freezes_a_deposit():
     """Runoff over a shoulder: a segment of the 50 mm sphere about its 45 degree station at the skyscrapers' pushed
     plate's loads (dp/ds -3.424e5 Pa/m and 80.29 Pa of shear down the meridian, 29.77 m/s2 of deceleration along the
     flight direction), 700 K, 6 MW/m2 by projection on the windward cap upstream of the station and nothing behind, the
-    liquid kept, dev cells: the books close every step, a deposit forms past the heat's end, and beyond FREEZE_REACH
-    (4 mm, two marker spacings) of the heat's end no skin holds metal above T_rigid. The deposit's centroid past the
-    heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. Measured 2026-11-12 before Task 11's fix
-    round: at 2.0 s a deposit of 40.7 mg, its centroid 1.88 mm past the heat's end, 2.7 mg of non-rigid metal within
-    2.3 mm of it (passed). After the fixes it fails (SHOULDER_FAILS): a deposit of 20.1 mg, its centroid 1.84 mm past the
-    heat's end, reaching 3.99 mm, none 5 to 10 mm past it (the pushed plate: 3.0 %), but 25 mg of non-rigid metal in the
-    skins out to 4.30 mm; books at most 9.2e-15 (mass) and 2.5e-16 (enthalpy)."""
+    liquid kept, dev cells: the books close every step, a deposit forms past the heat's end, at least
+    DEPOSIT_RIGID_SHARE of it is rigid at 2.0 s and at most the pushed plate's 3.0 % of it lies past DEPOSIT_FAR (the
+    controller's ruling on the review's I2; the farthest reach of non-rigid metal is reported, not judged). The
+    deposit's centroid past the heat's end is recorded against the skyscrapers' pushed plate's 1.05 mm. Measured
+    2026-11-13 on e129c95: it fails (SHOULDER_FAILS): a deposit of 14.2 mg, its centroid 1.27 mm past the heat's end,
+    0.586 of it rigid; books at most 1.0e-14 (mass) and 6.5e-16 (enthalpy)."""
     c = _cases()
     out = c.shoulder("dev")
     assert out["failure"] is None

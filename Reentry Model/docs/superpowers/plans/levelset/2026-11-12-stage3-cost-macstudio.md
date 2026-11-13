@@ -74,15 +74,16 @@ git status --short          # must show no modified tracked files; if it does, s
 git fetch origin
 git switch levelset-stage3 || git switch -c levelset-stage3 --track origin/levelset-stage3
 git pull --ff-only
-git merge-base --is-ancestor bc5fa69 HEAD && echo "code is at or after Task 11's fixes"
+git merge-base --is-ancestor 4eef4a2 HEAD && echo "code is at or after Task 11's fix round 1"
 git log --oneline -1        # note this commit for the report
 cd "Reentry Model"
 ls analysis/levelset/stage3_cases.py tests/levelset/test_levelset_stage3_cases.py   # both must exist
 ```
 
-The `merge-base` line must print its message (`bc5fa69` is the last of the fixes of Task 11's fix round, which these
-runs must include: the groups by the cell above, the loads by patches, the absorption beneath full-depth skins, the
-islands of a base move and the round-off arrivals; the `ls` line checks that the script and the test are there). Every command below runs from `Reentry Model/`.
+The `merge-base` line must print its message (`4eef4a2` is the last model fix of Task 11's fix round 1, which these
+runs must include, with the fixes before it: the groups by the cell above, the loads by patches, the absorption beneath
+full-depth skins, the islands of a base move, the round-off arrivals, one partition of phi for the markers' areas, the
+loads and the groups (`fbe82b8`), the seeded volume solve (`d9ddb41`) and the volume correction of a speck (`4eef4a2`); the `ls` line checks that the script and the test are there). Every command below runs from `Reentry Model/`.
 
 ## 4. The Python environment
 
@@ -107,7 +108,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests/levelset/test_levelset_stage3_ca
     -k "cold_plate and dev"
 ```
 
-Expected: `188 passed` (on the laptop, about 7 to 10 minutes across four processes; pytest may also report 6 deselected), then `1 passed` for the cold plate (about a minute; it writes
+Expected: `199 passed` (on the laptop, about 7 to 10 minutes across four processes; pytest may also report 6 deselected), then `1 passed` for the cold plate (about a minute; it writes
 `output/levelset/stage3_plate_cold_dev.json`). Any failure: stop and report it with its output.
 
 ## 6. The two runs
