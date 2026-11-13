@@ -49,6 +49,7 @@ from reentry_model.shared.thermal import SIGMA_SB
 _A, _B = 0.5854101966249685, 0.1381966011250105
 _QP = np.array([[_A, _B, _B, _B], [_B, _A, _B, _B], [_B, _B, _A, _B], [_B, _B, _B, _A]])
 _FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])     # face i of a tetrahedron is opposite vertex i
+EXTEND_RINGS = 50          # rings at most of the extension that fills a move's new nodes from the metal's own (`move`)
 
 
 class _Pattern:
@@ -239,15 +240,11 @@ class CutThermal:
         return x
 
     # --- moving surface -----------------------------------------------------------------------------------------
-    def _extend(self, donors, targets, rings=50, strict=True):
-        """Return a copy of T in which each target node without a value (not a donor) takes the mean of its valued
-        neighbours, ring by ring (nodes sharing a cell), the donors being valued from the start; at most `rings`. With
-        `strict`, targets still unvalued after the rings raise RuntimeError instead of keeping stale values."""
-        T = self.T.copy()
+    def _rings(self, T, valid, todo, rings):
+        """Value the nodes `todo` ring by ring (nodes sharing a cell), each the mean of its valued neighbours, at most
+        `rings` rings; `valid` (updated in place) marks the valued nodes. Returns (T, the nodes left without a value)."""
         tets = self.mesh.tets
         nc = self.mesh.node_cells()
-        valid = donors.copy()
-        todo = np.flatnonzero(targets & ~valid)
         for _ in range(rings):
             if not len(todo):
                 break
@@ -261,18 +258,32 @@ class CutThermal:
             T[todo[ok]] = s[ok] / c[ok]
             valid[todo[ok]] = True
             todo = todo[~ok]
+        return T, todo
+
+    def _extend(self, donors, targets, rings=EXTEND_RINGS, strict=True):
+        """Return a copy of T in which each target node without a value (not a donor) takes the mean of its valued
+        neighbours, ring by ring (nodes sharing a cell), the donors being valued from the start; at most `rings`. With
+        `strict`, targets still unvalued after the rings raise RuntimeError instead of keeping stale values."""
+        valid = donors.copy()
+        T, todo = self._rings(self.T.copy(), valid, np.flatnonzero(targets & ~valid), rings)
         if strict and len(todo):
             raise RuntimeError("_extend: {} target nodes still have no value after {} rings".format(len(todo), rings))
         return T
 
-    def move(self, phi_new):
+    def move(self, phi_new, seed=None):
         """Move the surface on the same mesh; returns the enthalpy the move removed from the metal [J] (negative
         when metal is added). The nodes that become active, and the nodes that come inside the metal from outside it,
-        are filled from the old metal's own nodes by `_extend` (the mean of their valued neighbours, ring by ring): a
+        are filled from the old metal's own nodes by extension (the mean of their valued neighbours, ring by ring): a
         node of a cut cell outside the metal holds no metal temperature (stage 3 Task 9, fix round 3: under a stiff skin
         law such nodes swung to +-1e5 K and, carried inside by a growing surface, broke the volume's Newton iteration);
-        the enthalpy the refill changes is in what this returns. Active nodes that stay outside keep their values. If
-        the move raises, the solver is left exactly as it was before the call."""
+        the enthalpy the refill changes is in what this returns. Active nodes that stay outside keep their values.
+
+        `seed` (nodes,) [K], nan where it gives none: the temperatures of the metal a caller hands the volume
+        (`stepend.StepEnd._move_beta`, the handing columns' profiles). Refilled nodes the old metal's extension cannot
+        reach -- an island of new metal apart from the old, which a base move can make (stage 3 Task 11, the q6p box at
+        1.5 s: 24 nodes 1.1 mm from the old metal) -- take their seed, and the extension goes on from them; `seeded`
+        then counts them. A node still without a value raises RuntimeError. If the move raises, the solver is left
+        exactly as it was before the call."""
         E0 = self.energy()
         was_active, was_inside = self.active.copy(), self.phi < 0
         donors = was_active & was_inside                # only the metal's own nodes hold metal temperatures
@@ -280,7 +291,20 @@ class CutThermal:
         try:
             self.setup(self.mesh, phi_new)
             refill = self.active & (~was_active | ((self.phi < 0) & ~was_inside))
-            self.T = self._extend(donors & ~refill, refill)
+            valid = donors & ~refill
+            T, left = self._rings(self.T.copy(), valid, np.flatnonzero(refill & ~valid), EXTEND_RINGS)
+            seeded = 0
+            if len(left) and seed is not None:          # an island the old metal does not reach: the handed metal's
+                s = np.asarray(seed, dtype=float)[left]  # temperatures, then the extension on from them
+                ok = np.isfinite(s)
+                T[left[ok]] = s[ok]
+                valid[left[ok]] = True
+                seeded = int(ok.sum())
+                T, left = self._rings(T, valid, left[~ok], EXTEND_RINGS)
+            if len(left):
+                raise RuntimeError("_extend: {} target nodes still have no value after {} rings".format(
+                    len(left), EXTEND_RINGS))
+            self.T, self.seeded = T, seeded
         except Exception:
             self.__dict__.clear(); self.__dict__.update(saved)
             raise

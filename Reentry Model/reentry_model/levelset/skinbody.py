@@ -178,7 +178,9 @@ class StepBook:
     them) and `mass_modes_absorbed` [kg] what the skins turning full-depth took from it, `enthalpy_modes_J` the enthalpy
     that passed either way and `residual_modes_J` the heat that left owed to the volume (in `residual_move_J` too; it
     scales with what was handed, not with the step's heat in), `momentum_modes_normal` the normal part of the momentum
-    the step end handed the volume (in `momentum_to_volume` with the rest). The heat
+    the step end handed the volume (in `momentum_to_volume` with the rest). `island_nodes` the volume's nodes the step's
+    base moves made apart from the old metal, which took the handing columns' temperatures (`stepend.StepEnd._seed`,
+    stage 3 Task 11, item 3). The heat
     deferred to the volume over the step, by source, each
     the sum of the absolute values of its bookings [J]: `residual_newton_J` the volume solve's own residual (the
     heat its law applied less its stored enthalpy's change), `residual_move_J` the base moves' (their enthalpy
@@ -243,6 +245,7 @@ class StepBook:
     enthalpy_modes_J: float
     residual_modes_J: float
     momentum_modes_normal: np.ndarray
+    island_nodes: int = 0
     summary: dict = field(default_factory=dict)
 
     def row(self):
@@ -277,6 +280,7 @@ class _Tally:
         self.fill_new = self.fill_done = 0             # the step end's move: nodes brought inside, those filled
         self.mode_handed = self.mode_absorbed = self.mode_H = self.mode_owed = 0.0
         self.mode_normal = np.zeros(3)
+        self.islands = 0                               # nodes the base moves' islands took from the handed columns
 
 
 @dataclass
@@ -733,7 +737,10 @@ class LevelSetSkinBody(StepEnd):
         if np.any(dV != 0.0):
             expected = float(handed_H.sum() - book.drawn_H.sum())
             E0, beta0 = solver.energy(), self.beta.copy()
-            self._move_beta(base, dV, dV / A_base, tally)
+            seed = [np.array(g, dtype=float, copy=True) for g in given]       # the move's seed: the top-zone skins'
+            whole = (seed[0].sum(axis=1) <= 0.0) & (handed > 0.0)            # cells in place, a full-depth skin's
+            seed[0][whole, -1], seed[1][whole, -1] = handed[whole], handed_H[whole]     # hand-down as one cell
+            self._move_beta(base, dV, dV / A_base, tally, given=(self._row_normals(), A_base, seed))
             if np.any(given[0] > 0.0):
                 self._fill(beta0, base, self._row_normals(), A_base, given)
             owed = expected + E0 - solver.energy()
@@ -862,7 +869,7 @@ class LevelSetSkinBody(StepEnd):
             frontal_area_m2=float((P.area * np.maximum(P.normal @ self.v_hat, 0.0)).sum()), n_top=int(mk.top.sum()),
             modes_to_top=tally.to_top, modes_to_full=tally.to_full, mass_modes_handed=tally.mode_handed,
             mass_modes_absorbed=tally.mode_absorbed, enthalpy_modes_J=tally.mode_H, residual_modes_J=tally.mode_owed,
-            momentum_modes_normal=tally.mode_normal, summary=summary)
+            momentum_modes_normal=tally.mode_normal, island_nodes=tally.islands, summary=summary)
         return self.last_step
 
     def _radius(self, centroid):

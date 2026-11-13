@@ -133,6 +133,34 @@ def cap_curvature(skins, kappa, depth=None):
     return np.clip(kappa, -limit[:, None], limit[:, None])
 
 
+def handed_profile(props, rho, x, base, normal, A_b, m_c, H_c, slack=0.0, clamp=False):
+    """The temperature [K] at the points x (k, 3) of a column of cells handed to the volume (Task 10's fill, shared with
+    the seed of Task 11's item 3): each point's own column, given per point -- its base point `base` (k, 3), unit `normal`
+    (k, 3), base area `A_b` (k,) [m2], cells (mass, enthalpy) `m_c`, `H_c` (k, K) in place -- fills the span from its base
+    out along its normal of its mass over `rho` and A_b, deepest cell first; a point takes the cell holding the share of
+    the column's mass below its distance out along the normal. Returns (T (k,), whether each point lies within `slack`
+    [m] of its span); with `clamp` every point with handed metal takes the span's nearest end (and counts as within).
+    Uses the skins' property table `props` (its `temperature_from_enthalpy`)."""
+    total = m_c.sum(axis=1)
+    span = np.divide(total, rho * A_b, out=np.zeros_like(total), where=A_b > 0.0)
+    s = np.einsum("ij,ij->i", x - base, normal)
+    if clamp:
+        s = np.clip(s, 0.0, span)
+    take = (total > 0.0) & (s >= -slack) & (s <= span + slack)
+    T = np.full(len(x), np.nan)
+    i = np.flatnonzero(take)
+    if not len(i):
+        return T, take
+    f = np.clip(s[i] / span[i], 1e-12, 1.0 - 1e-12)          # the share of the handed mass below the point
+    up = np.cumsum(m_c[i][:, ::-1], axis=1) / total[i][:, None]     # from the deepest cell up
+    j = np.minimum((up < f[:, None]).sum(axis=1), m_c.shape[1] - 1)
+    col = m_c.shape[1] - 1 - j
+    empty = m_c[i, col] <= 0.0                                # rounding past the shallowest handed cell: that cell
+    col[empty] = np.argmax(m_c[i[empty]] > 0.0, axis=1)
+    T[i] = props.temperature_from_enthalpy(H_c[i, col] / m_c[i, col])
+    return T, take
+
+
 class StepEnd:
     """The step's end of `LevelSetSkinBody` (module docstring). Every method that defers heat to the volume adds its
     size to the step's tally (`tally.move` for the moves, `tally.remesh` for the remesh), and a release adds the released
@@ -217,10 +245,13 @@ class StepEnd:
         keep = w > 0.0
         self.add_pending(points[keep], J * w[keep])
 
-    def _move_beta(self, points, dV, disp, tally):
+    def _move_beta(self, points, dV, disp, tally, given=None):
         """Move beta by the volume changes dV [m3] at the points [m] (k, 3), each displaced along its normal by disp [m]
         (outward positive), extended to the nodes within fine_margin of beta from the nearest point; reset, corrected per
-        piece to the exact volume target, and `CutThermal.move`. A move whose largest displacement exceeds
+        piece to the exact volume target, and `CutThermal.move`. `given` (normals (k, 3), base areas (k,) [m2], cells
+        (mass, enthalpy) (k, K) in place): the metal the points' columns hand the volume, whose profile seeds the
+        volume's move where its new nodes form an island the old metal does not reach (`_seed`; stage 3 Task 11, item 3;
+        `tally.islands` counts the nodes so seeded). A move whose largest displacement exceeds
         MOVE_ROUND_SHARE of fine_margin is made in that many equal rounds from the same points (a node beyond
         fine_margin would not follow a longer move, and the volume correction would make up the rest elsewhere: on the
         test cube a 3.2 mm inward move of one face's bases went 2.1 mm in one round, 3.2 mm in four; it still moved a
@@ -229,7 +260,7 @@ class StepEnd:
         from the volume [J]."""
         rounds = int(np.ceil(np.abs(disp).max(initial=0.0) / (MOVE_ROUND_SHARE * self.fine_margin) - 1e-12))
         if rounds > 1:
-            return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally) for _ in range(rounds))
+            return math.fsum(self._move_beta(points, dV / rounds, disp / rounds, tally, given) for _ in range(rounds))
         mesh, beta = self.mesh, self.beta
         new = beta.copy()
         if np.any(disp != 0.0):
@@ -255,9 +286,28 @@ class StepEnd:
             raise RuntimeError("the draws ask {:.3e} m3 more than the skin base's largest piece holds".format(-targets[0]))
         new, worst = correct_volumes(mesh, new, label, targets)
         tally.correction = max(tally.correction, worst)
-        removed = self.solver.move(new)
+        removed = self.solver.move(new, seed=None if given is None else self._seed(beta, new, points, given))
+        tally.islands += getattr(self.solver, "seeded", 0)
         self.beta = new
         return removed
+
+    def _seed(self, old, new, points, given):
+        """The temperatures [K] a move's new nodes take where the old metal's extension does not reach them (an island,
+        `CutThermal.move`'s `seed`; nan elsewhere): the nodes outside the old metal and within fine_margin of the new,
+        each the profile of the handing column (`given`, as `_move_beta`'s) whose point is nearest among those that hand
+        metal, at the node's distance out from it along its normal, held within the column's span (`handed_profile`)."""
+        normal, A_b, (m_c, H_c) = given
+        seed = np.full(len(new), np.nan)
+        rows = np.flatnonzero(m_c.sum(axis=1) > 0.0)
+        nodes = np.flatnonzero((old >= 0.0) & (new < self.fine_margin))
+        if not len(rows) or not len(nodes):
+            return seed
+        x = self.mesh.points[nodes]
+        _, k = cKDTree(points[rows]).query(x)
+        r = rows[k]
+        T, _ = handed_profile(self.skins.props, self.rho, x, points[r], normal[r], A_b[r], m_c[r], H_c[r], clamp=True)
+        seed[nodes] = T
+        return seed
 
     def _piece_targets(self, old, new, label, n, points, dV):
         """The exact volume of each piece of `new` [m3]: the old metal in its cells (the old metal left in no piece goes
@@ -455,23 +505,14 @@ class StepEnd:
         if not len(new) or not np.any(total > 0.0):
             return len(new), 0
         _, near = cKDTree(base).query(self.mesh.points[new])
-        span = np.divide(total, self.rho * A_b, out=np.zeros_like(total), where=A_b > 0.0)
-        s = np.einsum("ij,ij->i", self.mesh.points[new] - base[near], normal[near])
-        slack = FILL_SLACK * self.fine_size
-        take = (total[near] > 0.0) & (s >= -slack) & (s <= span[near] + slack)
-        node, row, s = new[take], near[take], s[take]
-        if not len(node):
+        T_new, take = handed_profile(self.skins.props, self.rho, self.mesh.points[new], base[near], normal[near],
+                                     A_b[near], m_c[near], H_c[near], slack=FILL_SLACK * self.fine_size)
+        if not take.any():
             return len(new), 0
-        f = np.clip(s / span[row], 1e-12, 1.0 - 1e-12)       # the share of the handed mass below the node
-        up = np.cumsum(m_c[row][:, ::-1], axis=1) / total[row][:, None]       # from the deepest cell up
-        j = np.minimum((up < f[:, None]).sum(axis=1), m_c.shape[1] - 1)
-        col = m_c.shape[1] - 1 - j
-        empty = m_c[row, col] <= 0.0                         # rounding past the shallowest handed cell: that cell
-        col[empty] = np.argmax(m_c[row[empty]] > 0.0, axis=1)
         T = solver.T.copy()
-        T[node] = self.skins.props.temperature_from_enthalpy(H_c[row, col] / m_c[row, col])
+        T[new[take]] = T_new[take]
         solver.T = T
-        return len(new), len(node)
+        return len(new), int(take.sum())
 
     def _modes(self, tally, update=True, check_core=False):
         """The thin test and the mode changes at the step end (module docstring); with update=False no test, only every
@@ -521,7 +562,7 @@ class StepEnd:
         if not np.any(dV != 0.0):
             return
         E0, beta0 = self.solver.energy(), self.beta.copy()
-        self._move_beta(base, dV, dV / A_b, tally)
+        self._move_beta(base, dV, dV / A_b, tally, given=(normal_rows, A_b, given))
         tally.fill_new, tally.fill_done = self._fill(beta0, base, normal_rows, A_b, given)
         owed = H + E0 - self.solver.energy()
         tally.move += abs(owed)

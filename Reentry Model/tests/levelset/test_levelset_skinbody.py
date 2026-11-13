@@ -520,6 +520,54 @@ def test_a_piece_the_draws_use_up_leaves_and_the_largest_piece_gives_the_rest():
     assert removed == pytest.approx(E0 - host.solver.energy(), rel=1e-12)
 
 
+def test_a_base_move_that_makes_an_island_fills_it_from_the_handed_column():
+    """Task 11's fix, item 3 (the q6p box at 1.5 s: a mode change's base move made 24 nodes of metal 1.1 mm from the old
+    metal, and `CutThermal.move`, which fills new nodes only by extension from the old metal, raised). Beta a 1 mm
+    sphere at 500 K; a column handing 1.5 mm3 of metal at 800 K from a base 0.7 mm outside the sphere along +x, moved
+    0.9 mm out, beside a point on the sphere that moves nothing: the nodes nearer the handing base form a lens of new
+    metal apart from the sphere. The move keeps the island as a piece, raises nothing, gives the island's unreachable
+    nodes the handed column's 800 K, and its volume and enthalpy books close (the volume to the old plus the handed,
+    the enthalpy removed being what the stored enthalpy lost)."""
+    from types import SimpleNamespace
+
+    from materials import ConstMaterial
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutcell import inside_volumes
+    from reentry_model.levelset.cutthermal import CutThermal
+    from reentry_model.levelset.levelset import pieces, redistance
+    from reentry_model.levelset.properties import PropertyTable
+    from reentry_model.levelset.stepend import StepEnd
+
+    class Host(StepEnd):
+        pass
+    mat = ConstMaterial()
+    mesh = build(BoxBase.around((0.0, 0.0, 0.0), (4e-3, 3e-3, 3e-3), 0.125e-3))
+    c, R = np.array([1.4e-3, 1.5e-3, 1.5e-3]), 1.0e-3
+    beta = redistance(mesh, np.linalg.norm(mesh.points - c, axis=1) - R)
+    host = Host()
+    host.mesh, host.beta, host.band, host.fine_margin, host.rho = mesh, beta, 2e-3, 2e-3, mat.rho
+    host.skins = SimpleNamespace(props=PropertyTable(mat))
+    host.solver = CutThermal(mat)
+    host.solver.setup(mesh, beta)
+    host.solver.set_temperature(500.0)
+    points = np.array([c + [R + 0.7e-3, 0.0, 0.0], c + [R, 0.0, 0.0]])        # the handing base, a still point
+    dV, disp = np.array([1.5e-9, 0.0]), np.array([0.9e-3, 0.0])
+    m = mat.rho * dV[0]
+    cells = (np.array([[m], [0.0]]), np.array([[m * float(mat.enthalpy(800.0))], [0.0]]))
+    given = (np.tile([1.0, 0.0, 0.0], (2, 1)), np.full(2, 1e-6), cells)
+    tally = skinbody._Tally(0)
+    E0, V0 = host.solver.energy(), inside_volumes(mesh, beta).sum()
+    removed = host._move_beta(points, dV, disp, tally, given=given)
+    after = inside_volumes(mesh, host.beta)
+    print("island: {} nodes seeded from the handed column; pieces {}".format(tally.islands, pieces(mesh, host.beta)[1]))
+    assert pieces(mesh, host.beta)[1] == 2 and tally.islands > 0 and host.solver.seeded == tally.islands
+    assert after.sum() == pytest.approx(V0 + dV.sum(), rel=1e-12, abs=0.0)
+    assert removed == pytest.approx(E0 - host.solver.energy(), rel=1e-12)
+    far = host.solver.active & (np.linalg.norm(mesh.points - c, axis=1) > R + 0.5e-3)    # the island's nodes
+    assert far.any() and np.all(np.isfinite(host.solver.T[host.solver.active]))
+    assert np.abs(host.solver.T[far] - 800.0).max() < 1e-9
+
+
 def test_draws_asking_more_than_the_largest_piece_holds_raise():
     """Task 9b (minor, left from Task 9): draws at a point inside the only piece of beta, a 1.2 mm sphere, asking twice
     its volume: no piece is left to give the rest, so the move raises, naming the largest piece, and leaves beta as it

@@ -237,7 +237,7 @@ def test_a_failed_move_leaves_the_solver_as_it_was(monkeypatch):
 
     def fail(*args, **kw):
         raise RuntimeError("_extend: forced")
-    monkeypatch.setattr(s, "_extend", fail)
+    monkeypatch.setattr(s, "_rings", fail)          # the move's extension (Task 11's fix: `move` extends by `_rings`)
     with pytest.raises(RuntimeError):
         s.move(np.linalg.norm(m.points, axis=1) - 10.4e-3)
     _assert_unchanged(s, snap)
