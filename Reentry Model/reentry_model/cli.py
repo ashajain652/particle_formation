@@ -9,8 +9,9 @@
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
         --size-feedback current|initial --leeward-test facing|centroid --spray-gates 2026-11-10|before --slip-band on|off
         --dispersion table|profile ...]
-                                     (the layered skins, the default with --thermal fem, their flow and spraying the
-                                      default with --melt on; the element model with --surface-model elements)
+                                     (the layered skins, the default with --thermal fem and --melt on, their flow and
+                                      spraying the default there; the element model with --surface-model elements, and
+                                      the default of a thermal run that does not melt)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
@@ -57,9 +58,12 @@ DEFAULT_SEED = 12345
 # six times fewer droplets. Before the switch the default step serves.
 DEFAULT_DT_CONTINUUM = 0.0125
 # The surface models a run can choose (sub-plan 20): the layered skins on the corners of a moving mesh
-# (skinbody.SkinBody), the default of a thermal run since sub-plan 22 Task 3 gave them Girin's spraying (spec 10.1), or
-# the element model, kept unchanged for comparison (spec 9 and 11.1 level 3), whose runs end in `_surface-elements`.
-# Sub-plan 18's one-dimensional skins are retired (sub-plan 22 Task 3).
+# (skinbody.SkinBody), the default of a melting thermal run since sub-plan 22 Task 3 gave them Girin's spraying (spec
+# 10.1), or the element model, kept unchanged for comparison (spec 9 and 11.1 level 3), whose runs end in
+# `_surface-elements` and which is the default of a thermal run that does not melt (Asha, 2026-11-12: there the skins add
+# no physics -- nothing crosses the rigid front -- at about 300 times the cost on the tests' coarse mesh, measured
+# 2026-11-11, and Step 2's SESAM verification is the element model's; give --surface-model skin for level 3). Sub-plan
+# 18's one-dimensional skins are retired.
 SURFACE_MODELS = ("skin", "elements")
 DEFAULT_SURFACE_MODEL = "skin"
 # A spraying skin run writes its droplet records to this directory inside the run's own as they come (spray.SourceSpool;
@@ -76,6 +80,15 @@ STATE_SUFFIX = ".state.pkl"
 # elements throughout on both plates' onset, 1 mm asked gets about half way (measured 2026-10-15); on the 100 mm sphere
 # it takes the 3D model from 177 000 to 1.21 million elements and a 3D step from 0.16 to 1.17 s.
 FINE_BAND_MM, FINE_SIZE_MM = 4.0, 0.7
+# A fine band too fine for its surface (Asha, 2026-11-12): under a 4 mm surface the 0.7 mm band leaves 42 flat elements on
+# the surface triangles (radius ratio down to 1.6e-5, against the moving mesh's floor movemesh.RATIO_MIN = 0.05; measured
+# 2026-11-11), so the skins' first move -- their 0.8 mm minimum taken from the 3D model at time zero -- is refused, and
+# the rebuild, made to the same sizes, makes them again: the run stopped with exit 1 after about 50 s. It is refused at
+# once instead, after the band is built. The production mesh (2 mm surface, the default band) passes with 0.176.
+FINE_BAND_SLIVERS = ("the fine band ({:g} mm deep at {:g} mm) under a {:g} mm surface leaves elements below the moving mesh's "
+                     "radius-ratio floor at the surface ({:.2g} < {:g}): the skins' first move would be refused even after a "
+                     "rebuild. Give a coarser --fine-size (for example --fine-size 2 with --h-surface 4), --fine-band 0, or "
+                     "--surface-model elements")
 
 
 def parse_seed(text):
@@ -209,11 +222,14 @@ def continuum_step(args):
 
 
 def surface_model_of(args):
-    """The run's surface model: --surface-model if given, else the layered skins for a thermal run (spec 10.1; sub-plan
-    22 Task 3); None without a thermal model, which has no surface to model."""
+    """The run's surface model: --surface-model if given, else the layered skins for a melting thermal run (spec 10.1;
+    sub-plan 22 Task 3) and the element model for a thermal run that does not melt (SURFACE_MODELS' note); None without
+    a thermal model, which has no surface to model."""
     if args.surface_model is not None:
         return args.surface_model
-    return DEFAULT_SURFACE_MODEL if args.thermal == "fem" else None
+    if args.thermal != "fem":
+        return None
+    return DEFAULT_SURFACE_MODEL if args.melt == "on" else "elements"
 
 
 def skin_flow_of(args):
@@ -607,6 +623,10 @@ def build_thermal(args, settings, mass, spool=None):
                                band=band)
     if skins and args.fine_band > 0.0:                  # the fine band (FINE_BAND_MM), made again at every rebuild
         the_mesh = movemesh.refined_mesh(the_mesh, args.fine_band * 1e-3, min(args.fine_size * 1e-3, h_surface))
+        worst = movemesh.zone_ratio_min(the_mesh, args.deform_depth * 1e-3)
+        if worst < movemesh.RATIO_MIN:                  # ValueError: exit 2, before the skins are built
+            raise ValueError(FINE_BAND_SLIVERS.format(args.fine_band, min(args.fine_size, h_surface * 1e3), h_surface * 1e3,
+                                                      worst, movemesh.RATIO_MIN))
     # the melting default is Scheil's curve (decided 2026-09-27, made the default on 2026-10-07); the linear range stays
     # selectable by name
     material_name = args.material or ("AA7075_scheil" if melting else "AA7075_nomelt")
@@ -1169,8 +1189,9 @@ def cmd_resume(args, parser):
         h = getattr(run.body, name, None)
         if h is not None and len(h) < spray.N_BINS:
             setattr(run.body, name, np.concatenate([h, np.zeros(spray.N_BINS - len(h))]))
-    if isinstance(run.body.source_rows, spray.SourceSpool):      # only the records after the resume are written, under
-        # the names of the body's records as it will make them (27 columns on `table`, 36 on `profile`)
+    # only the records after the resume are written, under the names of the body's records as it will make them (27
+    # columns on `table`, 36 on `profile`); the element model's body that does not melt (`ThermalBody`) has none
+    if isinstance(getattr(run.body, "source_rows", None), spray.SourceSpool):
         run.body.source_rows = spray.SourceSpool(os.path.join(run_dir, SOURCE_SPOOL),
                                                  run.body.record_names() if skins else None)
     if args.seed is not None:

@@ -99,10 +99,14 @@ def test_start_above_escape_altitude_exits_2(tmp_path):
 
 
 US76_100 = os.path.join(sesam_io.REFERENCE_DIR, "sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv")
-# a thermal run, with the layered skins, the default surface model since sub-plan 22 Task 3; FEM is the element model, named,
-# and the skins' tests below that start from it give --surface-model skin after it, which overrides it
+# a thermal run: the element model while it does not melt (the default of such a run since 2026-11-12), the layered skins
+# with --melt on (the default of a melting run since sub-plan 22 Task 3); FEM names the element model, and the skins' tests
+# below that start from it give --surface-model skin after it, which overrides it
 THERMAL = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "sesam", "--h-surface", "4", "--h-core", "20", "--quiet"]
 FEM = THERMAL + ["--surface-model", "elements"]
+# a thermal run that does not melt runs the element model unless the skins are named (2026-11-12): SKINS names them, for the
+# tests of the skins that do not melt (level 3's set-up)
+SKINS = THERMAL + ["--surface-model", "skin"]
 
 
 def test_run_name_with_heating():
@@ -557,7 +561,8 @@ def test_the_skins_are_the_default_and_girin_s_removal_follows_their_flow():
                                         cli.continuum_step(a)))(p.parse_args(argv))
     assert cli.DEFAULT_SURFACE_MODEL == "skin" and p.parse_args(THERMAL).surface_model is None
     assert resolved(BASE) == (None, "off", "girin", None)                        # no thermal model, no surface model
-    assert resolved(THERMAL) == ("skin", "off", "instant", None)                 # nothing melts: flow and removal unused
+    assert resolved(THERMAL) == ("elements", "off", "girin", None)               # nothing melts: the element model
+    assert resolved(SKINS) == ("skin", "off", "instant", None)                   # the skins named: flow and removal unused
     assert resolved(melt) == ("skin", "on", "girin", 0.0125)                     # the spraying skins, the default
     assert resolved(melt + ["--skin-flow", "on"]) == resolved(melt)
     assert resolved(melt + ["--skin-flow", "off"]) == ("skin", "off", "instant", None)    # the heat-only skins
@@ -576,7 +581,8 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
     melt = THERMAL + ["--melt", "on"]
     assert name(BASE) == base
-    assert name(THERMAL) == base + "_fem-sesam"
+    assert name(THERMAL) == name(FEM) == base + "_fem-sesam_surface-elements"     # nothing melts: the element model
+    assert name(SKINS) == base + "_fem-sesam"
     assert name(FEM) == base + "_fem-sesam_surface-elements"
     assert name(melt) == name(melt + ["--skin-flow", "on"]) == base + "_fem-sesam_melt-girin"    # the flow, Task 3b's default
     assert name(melt + ["--skin-preset", "dev"]) == base + "_fem-sesam_melt-girin_skin-dev"
@@ -586,7 +592,7 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     assert name(melt + ["--dt-continuum", "off"]) == base + "_fem-sesam_melt-girin_dtcontinuum-off"
     assert (name(melt + ["--skin-flow", "off"]) == name(melt + ["--removal", "instant"])
             == base + "_fem-sesam_melt-instant_skinflow-off")                     # the heat-only skins
-    assert name(THERMAL + ["--skin-flow", "off"]) == name(THERMAL)               # no melting: the flow does not apply
+    assert name(SKINS + ["--skin-flow", "off"]) == name(SKINS)                   # no melting: the flow does not apply
     elements = melt + ["--surface-model", "elements"]
     assert name(elements) == base + "_fem-sesam_melt-girin_surface-elements"
     assert name(elements + ["--removal", "instant"]) == base + "_fem-sesam_melt-instant_surface-elements"
@@ -595,6 +601,21 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     assert name(elements + ["--skin-preset", "dev"]) == name(elements)          # the skins' settings name skin runs only
     assert name(melt + ["--name", "mine"]) == "mine"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, slurry_spray=True) == "_slurryspray-on"
+
+
+def test_a_thermal_run_that_does_not_melt_runs_the_element_model_unless_the_skins_are_named(tmp_path):
+    """Defect 3 of the 2026-11-11 handoff: with no --surface-model a run that does not melt is the element model (it was the
+    skins, whose 0.8 mm fill at time zero the fine band's slivers under the 4 mm surface refused, exit 1 after about 50 s);
+    a melting run is still the skins. The handoff's 20 s case, which runs in about 2 s."""
+    argv = BASE + ["--atmosphere", "us76", "--thermal", "fem", "--heating", "physics", "--h-surface", "4", "--h-core", "20"]
+    p = cli.build_parser()
+    assert cli.surface_model_of(p.parse_args(argv)) == "elements"
+    assert cli.surface_model_of(p.parse_args(argv + ["--melt", "on"])) == "skin"
+    assert cli.surface_model_of(p.parse_args(argv + ["--surface-model", "skin"])) == "skin"
+    assert cli.main(argv + ["--t-max", "20", "--outdir", str(tmp_path), "--name", "dry", "--quiet"]) == 0
+    doc = json.load(open(tmp_path / "dry.json"))
+    assert doc["settings"]["surface_model"] == "elements" and doc["settings"]["material"] == "AA7075_nomelt"
+    assert doc["results"]["n_macro_steps"] == 40
 
 
 @pytest.mark.parametrize("argv", [
@@ -609,7 +630,7 @@ def test_the_run_names_mark_the_element_model_and_the_skins_non_default_settings
     THERMAL + ["--melt", "on", "--molten-cascade", "off"],
     THERMAL + ["--melt", "on", "--skin-flow", "on", "--rigid-substrate", "off"],
     THERMAL + ["--melt", "on", "--size-feedback", "shrinking"],                       # no such source of the nose radius
-    THERMAL + ["--stills"],                                                            # the element model's frames
+    SKINS + ["--stills"],                                                              # the element model's frames
 ])
 def test_contradictory_skin_settings_exit_2(argv, tmp_path):
     with pytest.raises(SystemExit) as exc:                    # 1 s of flight, were a setting accepted
@@ -767,13 +788,13 @@ def test_the_part_count_rule_reads_moves_or_melting_and_marks_the_run_s_name_onl
     melt = THERMAL + ["--melt", "on"]
     assert p.parse_args(melt).part_count_from is None and cli.part_count_rule_of(p.parse_args(melt)) == "melting"
     assert cli.part_count_rule_of(p.parse_args(melt + ["--part-count-from", "moves"])) == "moves"
-    assert cli.part_count_rule_of(p.parse_args(THERMAL)) == "moves"                       # skins that do not melt
+    assert cli.part_count_rule_of(p.parse_args(SKINS)) == "moves"                         # skins that do not melt
     assert cli.part_count_rule_of(p.parse_args(FEM + ["--melt", "on"])) == "moves"        # the element model
     assert name(melt) == name(melt + ["--part-count-from", "melting"]) == base + "_melt-girin"
     assert name(melt + ["--part-count-from", "moves"]) == base + "_melt-girin_parts-moves"
     assert (name(melt + ["--spread-limit", "60", "--hand-down", "on", "--part-count-from", "moves", "--seed", "7"])
             == base + "_melt-girin_spread-60_parts-moves_handdown-on_seed-7")
-    assert name(THERMAL) == base
+    assert name(SKINS) == base
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting") == "_parts-melting"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, part_count_from="melting",
                                 melting_skins=True) == "_handdown-on"
@@ -805,10 +826,27 @@ def test_the_command_line_gives_the_skins_their_part_count_rule(tmp_path, monkey
     for argv, rule in ((melt, "melting"), (melt + ["--part-count-from", "moves"], "moves"),
                        (melt + ["--part-count-from", "melting"], "melting"),
                        (melt + ["--skin-flow", "off", "--part-count-from", "moves"], "moves"),
-                       (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], "moves")):
+                       (SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], "moves")):
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["part_count_from"] == rule
+
+
+def test_a_fine_band_too_fine_for_its_surface_exits_2_before_the_skins_are_built(tmp_path, capsys, monkeypatch):
+    """Under the CLI tests' 4 mm surface the default fine band (0.7 mm asked) leaves elements on the surface triangles below
+    the moving mesh's radius-ratio floor (movemesh.RATIO_MIN), so the skins' 0.8 mm fill at time zero would be refused even
+    after a rebuild (exit 1 after about 50 s): the run exits 2 at once, melting or not, saying what to give; --fine-size 2,
+    the skin tests' band, passes the check and builds the skins. The body is not built: its arguments are."""
+    from reentry_model import skinbody
+
+    def built(*args, **kwargs):
+        raise _Built(kwargs)
+    monkeypatch.setattr(skinbody, "SkinBody", built)
+    argv = THERMAL + ["--surface-model", "skin", "--t-max", "1", "--outdir", str(tmp_path)]
+    assert cli.main(argv) == 2 and "--fine-size" in capsys.readouterr().err
+    assert cli.main(argv + ["--melt", "on"]) == 2
+    with pytest.raises(_Built):
+        cli.main(argv + ["--fine-size", "2"])
 
 
 def test_the_hand_down_switch_reads_on_or_off_and_marks_the_run_s_name_only_where_it_differs_from_the_default():
@@ -862,7 +900,7 @@ def test_the_command_line_gives_the_skins_their_hand_down_switch(tmp_path, monke
     melt = THERMAL + ["--melt", "on", "--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
     for argv, on in ((melt, False), (melt + ["--hand-down", "on"], True), (melt + ["--hand-down", "off"], False),
                      (melt + ["--skin-flow", "off", "--hand-down", "off"], False),
-                     (THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], True)):
+                     (SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)], True)):
         with pytest.raises(_Built) as got:
             cli.main(argv)
         assert got.value.args[0]["hand_down"] is on
@@ -877,8 +915,8 @@ def test_the_sideways_heat_reads_depth_or_height_and_marks_the_run_s_name_only_f
     melt = THERMAL + ["--melt", "on"]
     assert p.parse_args(THERMAL).sideways_heat == "depth" == p.parse_args(melt).sideways_heat
     assert p.parse_args(THERMAL + ["--sideways-heat", "height"]).sideways_heat == "height"
-    assert name(THERMAL) == name(THERMAL + ["--sideways-heat", "depth"]) == base
-    assert name(THERMAL + ["--sideways-heat", "height"]) == base + "_side-height"
+    assert name(SKINS) == name(SKINS + ["--sideways-heat", "depth"]) == base
+    assert name(SKINS + ["--sideways-heat", "height"]) == base + "_side-height"
     assert (name(melt + ["--hand-down", "on", "--sideways-heat", "height", "--seed", "7"])
             == base + "_melt-girin_handdown-on_side-height_seed-7")
     assert name(melt + ["--sideways-heat", "height"]) == base + "_melt-girin_side-height"
@@ -908,7 +946,7 @@ def test_the_command_line_gives_the_skins_their_sideways_pairing(tmp_path, monke
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
-    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
     melt = dry + ["--melt", "on"]
     for argv, pairing in ((dry, "depth"), (dry + ["--sideways-heat", "height"], "height"), (melt, "depth"),
                           (melt + ["--sideways-heat", "height"], "height")):
@@ -927,7 +965,7 @@ def test_the_size_feedback_is_current_by_default_for_the_skins_and_reaches_the_b
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
-    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
     melt = dry + ["--melt", "on"]
     for argv, source in ((dry, "current"), (dry + ["--size-feedback", "initial"], "initial"), (melt, "current"),
                          (melt + ["--size-feedback", "initial"], "initial"), (melt + ["--size-feedback", "current"], "current")):
@@ -941,7 +979,7 @@ def test_the_skins_record_their_size_feedback_and_the_nose_columns(tmp_path):
     and its history has the five nose columns with either setting, the radius used the fitted one under `current` and the
     mesh's 50 mm under `initial` (sub-plan 22 Task 5g)."""
     for source, name in (("current", "cur"), ("initial", "ini")):
-        argv = THERMAL + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+        argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
                           "--outdir", str(tmp_path), "--name", name]
         if source == "initial":
             argv += ["--size-feedback", "initial"]
@@ -961,9 +999,9 @@ def test_the_size_feedback_marks_the_run_s_name_only_for_initial():
     p = cli.build_parser()
     base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
-    assert name(THERMAL) == name(THERMAL + ["--size-feedback", "current"]) == base
-    assert name(THERMAL + ["--size-feedback", "initial"]) == base + "_nose-initial"
-    assert (name(THERMAL + ["--sideways-heat", "height", "--size-feedback", "initial", "--seed", "7"])
+    assert name(SKINS) == name(SKINS + ["--size-feedback", "current"]) == base
+    assert name(SKINS + ["--size-feedback", "initial"]) == base + "_nose-initial"
+    assert (name(SKINS + ["--sideways-heat", "height", "--size-feedback", "initial", "--seed", "7"])
             == base + "_side-height_nose-initial_seed-7")
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, size_feedback="initial") == "_nose-initial"
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True) == ""
@@ -979,7 +1017,7 @@ def test_the_leeward_test_is_centroid_by_default_reaches_the_body_and_is_refused
     def built(*args, **kwargs):
         raise _Built(kwargs)
     monkeypatch.setattr(skinbody, "SkinBody", built)
-    dry = THERMAL + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
+    dry = SKINS + ["--fine-band", "0", "--t-max", "1", "--outdir", str(tmp_path)]
     melt = dry + ["--melt", "on"]
     for argv, how in ((dry, "centroid"), (dry + ["--leeward-test", "facing"], "facing"), (melt, "centroid"),
                       (melt + ["--leeward-test", "facing"], "facing"), (melt + ["--leeward-test", "centroid"], "centroid")):
@@ -996,7 +1034,7 @@ def test_the_skins_record_their_leeward_test_and_the_two_history_columns(tmp_pat
     """A skin run's JSON always records `settings.skin.leeward_test`, and its history has `centroid_offset_mm` and
     `leeward_corners` with either setting, a few tenths of a millimetre and none on the unmelted sphere."""
     for how, name in (("centroid", "cen"), ("facing", "fac")):
-        argv = THERMAL + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
+        argv = SKINS + ["--fine-band", "0", "--skin-preset", "dev", "--t-max", "0.05", "--dt", "0.025", "--quiet",
                           "--outdir", str(tmp_path), "--name", name]
         if how == "facing":
             argv += ["--leeward-test", "facing"]
@@ -1013,9 +1051,9 @@ def test_the_leeward_test_marks_the_run_s_name_only_for_facing():
     p = cli.build_parser()
     base = "model_d100.00mm_v07.50000kms_h077.500km_us76_sesam-table_none_fem-sesam"
     name = lambda argv: cli.run_name_of(p.parse_args(argv), 0.1, 7500.0, 77500.133, "us76", cli.continuum_step(p.parse_args(argv)))
-    assert name(THERMAL) == name(THERMAL + ["--leeward-test", "centroid"]) == base
-    assert name(THERMAL + ["--leeward-test", "facing"]) == base + "_leeward-facing"
-    assert (name(THERMAL + ["--size-feedback", "initial", "--leeward-test", "facing", "--seed", "7"])
+    assert name(SKINS) == name(SKINS + ["--leeward-test", "centroid"]) == base
+    assert name(SKINS + ["--leeward-test", "facing"]) == base + "_leeward-facing"
+    assert (name(SKINS + ["--size-feedback", "initial", "--leeward-test", "facing", "--seed", "7"])
             == base + "_nose-initial_leeward-facing_seed-7")
     assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, flow=True, leeward_test="facing") == "_leeward-facing"
 

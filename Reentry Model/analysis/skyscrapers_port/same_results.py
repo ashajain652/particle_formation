@@ -59,8 +59,9 @@ def case_arguments(state=None):
         "element": ["run"] + COMMON + ["--surface-model", "elements"],
         "resume": ["resume", str(state)] + RESUME,
         "nomelt": ["run"] + NOMELT,
-        # main's command line has no --surface-model, and the port's default for --thermal fem is the skins (which fail
-        # without melting): this case is the nearest to main's non-melting run
+        # main's command line has no --surface-model, and the port's default for --thermal fem was the skins (which failed
+        # without melting): this case is the nearest to main's non-melting run. Since 2026-11-12 a run that does not melt
+        # runs the element model by default, so `nomelt` is the same flight under its own name
         "nomelt_elements": ["run"] + NOMELT + ["--surface-model", "elements"],
     }
 

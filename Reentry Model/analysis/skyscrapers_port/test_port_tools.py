@@ -350,3 +350,53 @@ def test_append_adds_arguments_to_every_listed_case(tmp_path, monkeypatch):
     assert same_results.main(["run", "--code", str(code), "--out", str(tmp_path / "without"), "--state", "/state.pkl",
                               "--cases", "element,resume"]) == 0
     assert [c[4:c.index("--outdir")] for c in calls] == [cases["element"], cases["resume"]]
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# checks.py --base: the ref that merge1 and outside compare against (MAIN0 unless given)
+
+import checks
+
+
+def test_merge1_and_outside_take_a_base_that_defaults_to_main0(monkeypatch):
+    seen = []
+    monkeypatch.setattr(checks, "check_merge1", lambda ref, base: seen.append(("merge1", ref, base)) or 0)
+    monkeypatch.setattr(checks, "check_outside", lambda ref, allow, base: seen.append(("outside", ref, allow, base)) or 0)
+    assert checks.MAIN0 == MAIN0
+    assert checks.main(["checks.py", "merge1", "--ref", "T"]) == 0
+    assert checks.main(["checks.py", "merge1", "--ref", "T", "--base", "main"]) == 0
+    assert checks.main(["checks.py", "outside", "T", "--allow", "README.md"]) == 0
+    assert checks.main(["checks.py", "outside", "T", "--base", "main", "--allow", "README.md"]) == 0
+    assert seen == [("merge1", "T", MAIN0), ("merge1", "T", "main"),
+                    ("outside", "T", ["README.md"], MAIN0), ("outside", "T", ["README.md"], "main")]
+
+
+def test_outside_with_the_default_base_still_compares_against_main0():
+    done = subprocess.run([sys.executable, str(TOOLS / "checks.py"), "outside", MAIN0], cwd=TOOLS,
+                          capture_output=True, text=True)
+    assert done.returncode == 0 and "differ: 0" in done.stdout, done.stdout + done.stderr
+
+
+def test_outside_compares_against_the_base_it_is_given(tmp_path):
+    env = dict(os.environ, GIT_AUTHOR_NAME="A U", GIT_AUTHOR_EMAIL="a@example.org", GIT_COMMITTER_NAME="C O",
+               GIT_COMMITTER_EMAIL="c@example.org")
+    git("init", "-q", "-b", "main", cwd=tmp_path, env=env)
+    (tmp_path / "notes.md").write_text("one\n")
+    (tmp_path / "Reentry Model").mkdir()
+    (tmp_path / "Reentry Model" / "x.py").write_text("x = 1\n")
+    git("add", "-A", cwd=tmp_path, env=env)
+    git("commit", "-q", "-m", "first", cwd=tmp_path, env=env)
+    (tmp_path / "notes.md").write_text("two\n")
+    (tmp_path / "Reentry Model" / "x.py").write_text("x = 2\n")              # inside Reentry Model/: not checked
+    git("commit", "-q", "-a", "-m", "second", cwd=tmp_path, env=env)
+
+    def outside(*args):
+        return subprocess.run([sys.executable, str(TOOLS / "checks.py"), "outside", "HEAD", *args], cwd=tmp_path,
+                              capture_output=True, text=True)
+
+    changed = outside("--base", "HEAD~1")
+    assert changed.returncode == 1 and "notes.md" in changed.stdout and "x.py" not in changed.stdout
+    assert "changed from HEAD~1 and not allowed" in changed.stdout
+    assert outside("--base", "HEAD~1", "--allow", "notes.md").returncode == 0
+    assert outside("--base", "HEAD").returncode == 0
+    assert outside("--base", git("rev-parse", "HEAD~1^{tree}", cwd=tmp_path).decode().strip()).returncode == 1   # a bare tree

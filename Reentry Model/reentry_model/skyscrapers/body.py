@@ -8,6 +8,7 @@ import numpy as np
 
 from ..shared.body import Body, ConstantBody, sphere_mass  # noqa: F401  (moved to shared; re-exported here)
 from ..shared.spray import RELEASE_ANGLE_COLUMNS
+from .elements import film       # at module level: a module held by the body itself could not be pickled (a saved state)
 
 
 class ThermalBody:
@@ -200,12 +201,10 @@ class MeltingBody(ThermalBody):
         if not material.melts or material.liquid is None:
             raise ValueError("MeltingBody needs a material with a latent heat and liquid properties (AA7075, AA7075_range or AA7075_scheil)")
         super().__init__(mesh, material, solver, mass_kg, T0, emissivity, T_ambient, v_hat)
-        from .elements import film as film_mod
         from ..shared import spray as spray_mod, surface_flow
         self.settings = settings or MeltSettings()
         self.flow = flow or surface_flow.SurfaceFlow()
         self.spray = spray_model or spray_mod.SprayModel(material.liquid)
-        self._film_mod = film_mod
         self.v_hat = np.asarray(v_hat, dtype=float) / np.linalg.norm(v_hat)
         self.liquid = material.liquid
         self.element_mass = material.rho * mesh.element_volumes()          # kg at phi = 1
@@ -241,7 +240,7 @@ class MeltingBody(ThermalBody):
         self.t_hat = self.surface.tangent_from(self.v_hat)
         self.windward = self.theta <= 0.5 * np.pi
         self.i_stag, self.i_back = self.surface.patch_toward(self.v_hat), self.surface.patch_toward(-self.v_hat)
-        self.runoff = self._film_mod.Runoff(self.surface, self.mesh.points, self.windward) if self.settings.runoff else None
+        self.runoff = film.Runoff(self.surface, self.mesh.points, self.windward) if self.settings.runoff else None
         owners = self.surface.owner
         self.owner_area = np.bincount(owners, self.surface.areas, self.mesh.n_elements)      # patch area per owner element
         from scipy.spatial import cKDTree
@@ -630,7 +629,7 @@ class MeltingBody(ThermalBody):
         if self.runoff is not None and seen > 0.0:
             b = self.m_f / (liq.rho * areas)
             G = np.where(girin, flow.G, 0.0)
-            D_new, _, _ = self.runoff.transport(D, lambda hd: self._film_mod.deep_flux(G, b, b + hd, liq.mu),
+            D_new, _, _ = self.runoff.transport(D, lambda hd: film.deep_flux(G, b, b + hd, liq.mu),
                                                     self.t_hat, liq.rho, areas, dt)
             change = D_new - D
             gain, loss = np.maximum(change, 0.0), np.maximum(-change, 0.0)
@@ -717,7 +716,7 @@ class MeltingBody(ThermalBody):
         # (ii) lubrication and runoff
         n_sub, moved = 0, 0.0
         if self.runoff is not None:
-            q_of_b = lambda bb: self._film_mod.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + under + deep)[1]
+            q_of_b = lambda bb: film.lubrication(flow.tau, flow.G, bb, delta_m, liq.mu, b_layer=bb + under + deep)[1]
             before = self.m_f
             self.m_f, n_sub, moved = self.runoff.transport(self.m_f, q_of_b, self.t_hat, liq.rho, areas, dt)
             self.runoff_mass += moved                                              # mass that arrived on another patch
@@ -729,14 +728,14 @@ class MeltingBody(ThermalBody):
         b = self.m_f / (liq.rho * areas)
         layer = b + molten + deep
         regime_layer = layer if nonrigid is None else b + nonrigid + deep
-        v_s, q, _, thick = self._film_mod.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=regime_layer)
+        v_s, q, _, thick = film.lubrication(flow.tau, flow.G, b, delta_m, liq.mu, b_layer=regime_layer)
         # the slip band's depth (sub-plan 22 Task 5i; the plan of 2026-11-06, Asha 2026-11-10): the spraying alone reads the
         # momentum balance's delta_m on the merged branch's patches inside both Knudsen limits, with the film surface velocity
         # it gives; the feed, the runoff above and the records of the conjugate depth keep Girin's delta_m, and with the band
         # off or no patch in it every number is the one before
         if getattr(self.spray, "slip_band", False):
             spray_delta = spray_mod.spray_layer(flow, liq, True, self.theta, self.nose_radius())
-            v_spray = self._film_mod.lubrication(flow.tau, flow.G, b, spray_delta, liq.mu, b_layer=regime_layer)[0]
+            v_spray = film.lubrication(flow.tau, flow.G, b, spray_delta, liq.mu, b_layer=regime_layer)[0]
         else:
             spray_delta, v_spray = delta_m, v_s
         # the molten surface: the area over which a wave could form at all, either wetted by the film or molten in its

@@ -21,13 +21,16 @@ theirs)` is the same merge on bytes, returning the merged bytes and whether it w
 
 **`checks.py`** holds the checks of each stage, each printing a report and exiting 0 only on a pass. A `<tree-ish>` may
 be a commit, a branch, a tag or a bare tree id (for example `$(git write-tree)`).
-`merge1 --ref <tree-ish>` checks that every path the prototype branch added, modified or renamed since `MERGE_BASE` is
+`merge1 --ref <tree-ish> [--base <ref>]` checks that every path the prototype branch added, modified or renamed since `MERGE_BASE` is
 present at its place after merge 1, equal to the branch's unless `main` also changed it (then listed as combined), and
 that every path it deleted is absent. `rewrite <original repo> <rewritten repo>` checks that the rewritten history has
 the same commits in the same order with the same parents, authors, dates and messages (plus the
 `Build-repository-commit` trailer) and a tree equal to the original's with every path mapped. `outside <tree-ish>
-[--allow PATH]...` fails on any difference from `MAIN0` outside `Reentry Model/`, or under `droplet_reentry/` or
-`wake_column/`, that is not allowed. `same-code <build-ref> <port tree-ish> <main-ref>` classifies each file of the build
+[--allow PATH]... [--base <ref>]` fails on any difference from `MAIN0` outside `Reentry Model/`, or under `droplet_reentry/` or
+`wake_column/`, that is not allowed. `--base` (both commands, added 2026-11-12) names the state of `main` to compare against
+in place of `MAIN0` (`8ed75cf`, `main` when the port began), which stays the default so that the port's recorded commands
+reproduce: since `main` has moved on, `outside` against `MAIN0` also reports `main`'s own later changes, so to check a
+merge in progress give the commit it merges into (`--base HEAD` with `"$(git write-tree)"` as the tree-ish). `same-code <build-ref> <port tree-ish> <main-ref>` classifies each file of the build
 as same, main's change reapplied, main's copy kept, removed or fix-up (the fix-ups are printed as diffs), and fails only
 on a file missing from the port. `history <ref>` checks that blame of `Reentry Model/reentry_model/skinbody.py` reaches
 only commits carrying the trailer, that `skyscrapers-prototype-end` is an ancestor of the ref, and that the tag
@@ -36,7 +39,7 @@ only commits carrying the trailer, that `skyscrapers-prototype-end` is an ancest
 **`same_results.py`** runs short cases of the model and compares two result folders, to show that a port (or a
 refactor) computes what the code before it computed. `run --code <folder holding reentry_model> --out <dir> [--state
 <file>] --cases <list> [--append "ARGS"]` runs each named case (`step1`, `skins`, `element`, `resume`, `nomelt`, `nomelt_elements`; `step1` is a whole Step 1 flight, 100 mm at 7.5 km/s, with no `--thermal` and the default NRLMSISE atmosphere; the next three are 0.125 s smoke
-flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight; `nomelt_elements` is the same with `--surface-model elements`, which exists because main's command line has no `--surface-model` and the port's default for `--thermal fem` is the skins, which fail without melting) one after the other as
+flights and the 22.6 s resume check of the runbook, the fourth is a 20 s non-melting flight; `nomelt_elements` is the same with `--surface-model elements`, which exists because main's command line has no `--surface-model` and the port's default for `--thermal fem` was the skins, which failed without melting; since 2026-11-12 a run that does not melt runs the element model by default, so `nomelt` is the same flight under its own name) one after the other as
 `python -B -m reentry_model <args> --outdir <out>/<case> --name <case>` in `--code`, and writes `<out>/<case>.log` with
 the first line of `pmset -g batt` at the start and the end, the exit code and the wall time. `resume` needs `--state`. `run` refuses (exit 2, nothing run, nothing deleted) when a case's `<out>/<case>` folder already holds anything.
 `--append "ARGS"` adds the given arguments, split as a shell would split them, after every listed case's own and before
@@ -48,5 +51,5 @@ keep the value one argument; it must contain a space or be given as `--append=--
 keys `provenance`, `files`, `runtime_s` (the run's elapsed time) and `wall_*`, with `settings.mesh_file` and `settings.material_file` compared by file name
 and SHA-256 of the file, and `resumed_from.state` compared by file name only (the state is 1.4 GB: no checksum); `.npz` element for element (NaN equal NaN); any other kind byte for byte. Exit 0 when identical; exit 2 with a message when either folder does not exist or holds no compared file (so a mistyped folder or a run that wrote nothing cannot pass);
 with `--report` it lists each differing column or field with its largest absolute and relative difference and exits 0.
-It uses only the standard library and numpy and can be imported without running anything. Tests: the last tests of
-`test_port_tools.py`.
+It uses only the standard library and numpy and can be imported without running anything. Tests: the `same_results.py` section of
+`test_port_tools.py` (the section after it tests `checks.py --base`).
