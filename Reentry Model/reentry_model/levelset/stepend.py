@@ -290,27 +290,31 @@ class StepEnd:
         tally.correction = max(tally.correction, worst)
         if hasattr(tally, "corrections"):                  # each move's miss before the correction (the review's I3)
             tally.corrections.append(worst)
-        removed = self.solver.move(new, seed=None if given is None else self._seed(beta, new, points, given))
+        seed = None if given is None else (lambda nodes: self._seed(beta, new, points, given, nodes))
+        removed = self.solver.move(new, seed=seed)
         tally.islands += getattr(self.solver, "seeded", 0)
         self.beta = new
         return removed
 
-    def _seed(self, old, new, points, given):
-        """The temperatures [K] a move's new nodes take where the old metal's extension does not reach them (an island,
-        `CutThermal.move`'s `seed`; nan elsewhere): the nodes outside the old metal and within fine_margin of the new,
-        each the profile of the handing column (`given`, as `_move_beta`'s) whose point is nearest among those that hand
-        metal, at the node's distance out from it along its normal, held within the column's span (`handed_profile`)."""
+    def _seed(self, old, new, points, given, nodes):
+        """The temperatures [K] (len(nodes),) a move's new `nodes` take where the old metal's extension does not reach
+        them (an island; `CutThermal.move` calls it with those nodes only, so that it is evaluated for no others: stage 3
+        Task 11's review, M7), nan where it gives none: each node outside the old metal and within fine_margin of the
+        new takes the profile of the handing column (`given`, as `_move_beta`'s) whose point is nearest among those that
+        hand metal, at the node's distance out from it along its normal, held within the column's span
+        (`handed_profile`)."""
         normal, A_b, (m_c, H_c) = given
-        seed = np.full(len(new), np.nan)
+        nodes = np.asarray(nodes, dtype=np.int64)
+        seed = np.full(len(nodes), np.nan)
         rows = np.flatnonzero(m_c.sum(axis=1) > 0.0)
-        nodes = np.flatnonzero((old >= 0.0) & (new < self.fine_margin))
-        if not len(rows) or not len(nodes):
+        at = np.flatnonzero((old[nodes] >= 0.0) & (new[nodes] < self.fine_margin))
+        if not len(rows) or not len(at):
             return seed
-        x = self.mesh.points[nodes]
+        x = self.mesh.points[nodes[at]]
         _, k = cKDTree(points[rows]).query(x)
         r = rows[k]
         T, _ = handed_profile(self.skins.props, self.rho, x, points[r], normal[r], A_b[r], m_c[r], H_c[r], clamp=True)
-        seed[nodes] = T
+        seed[at] = T
         return seed
 
     def _piece_targets(self, old, new, label, n, points, dV):

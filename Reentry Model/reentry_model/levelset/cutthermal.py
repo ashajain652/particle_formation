@@ -288,9 +288,10 @@ class CutThermal:
         law such nodes swung to +-1e5 K and, carried inside by a growing surface, broke the volume's Newton iteration);
         the enthalpy the refill changes is in what this returns. Active nodes that stay outside keep their values.
 
-        `seed` (nodes,) [K], nan where it gives none: the temperatures of the metal a caller hands the volume
-        (`stepend.StepEnd._move_beta`, the handing columns' profiles). Refilled nodes the old metal's extension cannot
-        reach -- an island of new metal apart from the old, which a base move can make (stage 3 Task 11, the q6p box at
+        `seed`, a function of the refilled nodes the old metal's extension cannot reach giving their temperatures [K]
+        (nan where it gives none), or those temperatures on every node: the temperatures of the metal a caller hands
+        the volume (`stepend.StepEnd._move_beta`, the handing columns' profiles, evaluated only at those nodes: stage 3
+        Task 11's review, M7). Refilled nodes the old metal's extension cannot reach -- an island of new metal apart from the old, which a base move can make (stage 3 Task 11, the q6p box at
         1.5 s: 24 nodes 1.1 mm from the old metal) -- take their seed, and the extension goes on from them; `seeded`
         then counts them. A node still without a value raises RuntimeError. If the move raises, the solver is left
         exactly as it was before the call."""
@@ -305,7 +306,7 @@ class CutThermal:
             T, left = self._rings(self.T.copy(), valid, np.flatnonzero(refill & ~valid), EXTEND_RINGS)
             seeded = 0
             if len(left) and seed is not None:          # an island the old metal does not reach: the handed metal's
-                s = np.asarray(seed, dtype=float)[left]  # temperatures, then the extension on from them
+                s = np.asarray(seed(left) if callable(seed) else np.asarray(seed, dtype=float)[left], dtype=float)
                 ok = np.isfinite(s)
                 T[left[ok]] = s[ok]
                 valid[left[ok]] = True

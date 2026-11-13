@@ -642,6 +642,54 @@ def test_a_base_move_that_makes_an_island_fills_it_from_the_handed_column():
     assert np.abs(host.solver.T[far] - 800.0).max() < 1e-9
 
 
+def test_the_island_seed_is_evaluated_only_where_the_extension_cannot_reach(monkeypatch):
+    """Stage 3 Task 11's review, M7: the handed columns' profile that seeds an island (`StepEnd._seed`) is evaluated
+    only at the nodes the old metal's extension cannot reach, not at every node outside the old metal within the fine
+    margin of the new (base moves were 48 per cent of the q6p box's step to 1.5 s). The island move of
+    `test_a_base_move_that_makes_an_island_fills_it_from_the_handed_column`: the profile is evaluated at as many nodes as
+    the move seeds, and none on a move that makes no island."""
+    from types import SimpleNamespace
+
+    from materials import ConstMaterial
+    from reentry_model.levelset import stepend
+    from reentry_model.levelset.boxmesh import build
+    from reentry_model.levelset.cutthermal import CutThermal
+    from reentry_model.levelset.levelset import redistance
+    from reentry_model.levelset.properties import PropertyTable
+
+    class Host(stepend.StepEnd):
+        pass
+    evaluated = []
+    real = stepend.handed_profile
+
+    def counting(props, rho, x, *args, **kw):
+        evaluated.append(len(x))
+        return real(props, rho, x, *args, **kw)
+    monkeypatch.setattr(stepend, "handed_profile", counting)
+    mat = ConstMaterial()
+    mesh = build(BoxBase.around((0.0, 0.0, 0.0), (4e-3, 3e-3, 3e-3), 0.125e-3))
+    c, R = np.array([1.4e-3, 1.5e-3, 1.5e-3]), 1.0e-3
+    host = Host()
+    host.mesh, host.band, host.fine_margin, host.rho = mesh, 2e-3, 2e-3, mat.rho
+    host.skins = SimpleNamespace(props=PropertyTable(mat))
+    m = mat.rho * 1.5e-9
+    cells = (np.array([[m], [0.0]]), np.array([[m * float(mat.enthalpy(800.0))], [0.0]]))
+    given = (np.tile([1.0, 0.0, 0.0], (2, 1)), np.full(2, 1e-6), cells)
+    points = np.array([c + [R + 0.7e-3, 0.0, 0.0], c + [R, 0.0, 0.0]])
+    for disp, island in ((np.array([0.9e-3, 0.0]), True), (np.array([0.05e-3, 0.0]), False)):
+        host.beta = redistance(mesh, np.linalg.norm(mesh.points - c, axis=1) - R)
+        host.solver = CutThermal(mat)
+        host.solver.setup(mesh, host.beta)
+        host.solver.set_temperature(500.0)
+        evaluated.clear()
+        tally = skinbody._Tally(0)
+        host._move_beta(points if island else points[1:] + [0.0, 0.0, 0.0], np.array([1.5e-9, 0.0]) if island else
+                        np.array([1.5e-11]), disp if island else disp[:1], tally,
+                        given=given if island else (given[0][1:], given[1][1:], (cells[0][:1], cells[1][:1])))
+        print("island {}: the profile evaluated at {} nodes, {} seeded".format(island, sum(evaluated), tally.islands))
+        assert sum(evaluated) == tally.islands and (tally.islands > 0) == island
+
+
 def test_draws_asking_more_than_the_largest_piece_holds_raise():
     """Task 9b (minor, left from Task 9): draws at a point inside the only piece of beta, a 1.2 mm sphere, asking twice
     its volume: no piece is left to give the rest, so the move raises, naming the largest piece, and leaves beta as it
