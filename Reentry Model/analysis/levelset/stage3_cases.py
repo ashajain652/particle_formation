@@ -512,11 +512,15 @@ def code_stamp():
     return {"commit": head, "dirty": bool(dirty)}
 
 
+CODE = code_stamp()                  # the code this run loaded, taken when the script starts (a run outlives commits)
+
+
 def write(name, out):
-    """The case's summary to output/levelset/stage3_<name>.json, stamped with the code it ran on (`code_stamp`)."""
+    """The case's summary to output/levelset/stage3_<name>.json, stamped with the code it ran on (CODE, taken when the
+    script started: a stamp taken at the end named a commit made while the box ran)."""
     os.makedirs(OUT, exist_ok=True)
     path = os.path.join(OUT, "stage3_{}.json".format(name))
-    out = {"code": code_stamp(), **out}
+    out = {"code": CODE, **out}
     with open(path, "w") as fh:
         json.dump(out, fh, indent=1, default=_json_default)
     print("wrote", path, flush=True)

@@ -86,14 +86,16 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
 
 def test_a_case_s_summary_is_stamped_with_the_code_it_ran_on(monkeypatch, tmp_path):
     """Task 11's review, M5: each case's summary carries the commit it ran on and whether the level-set package or the
-    case script differed from it, so that the record cannot mix runs from different code unseen; `record` leaves out a
-    summary without a stamp."""
+    case script differed from it, so that the record cannot mix runs from different code unseen; the stamp is taken when
+    the script starts, not when the summary is written (a box run outlives commits made meanwhile); `record` leaves out
+    a summary without a stamp."""
     import json
     import re
     import subprocess
     c = _cases()
     monkeypatch.setattr(c, "OUT", str(tmp_path))
     monkeypatch.setattr(c, "RECORD", str(tmp_path / "recorded.json"))
+    monkeypatch.setattr(c, "code_stamp", lambda: {"commit": "0" * 40, "dirty": True})    # a commit made since the start
     path = c.write("stamped", {"case": "a"})
     with open(path) as fh:
         doc = json.load(fh)
