@@ -84,6 +84,35 @@ def test_a_failing_step_keeps_the_body_it_started_from(monkeypatch, tmp_path):
     assert kept.time == 1.5 and "_modes" not in kept.__dict__
 
 
+def test_the_shoulder_s_deposit_is_judged_by_its_rigid_share_and_its_far_share():
+    """The controller's ruling on the review's I2: the shoulder is judged on the metal deposited past the heat's end at
+    2.0 s, at least DEPOSIT_RIGID_SHARE of it rigid and at most the skyscrapers' 3.0 % of it past DEPOSIT_FAR (5 mm);
+    the instantaneous reach of non-rigid metal is reported, not judged. Three markers past the heat's end on the
+    sphere, 1, 3 and 6 mm along the meridian, each with 0.1 mm of deposit on 4 mm2; the first holds 2 mg above T_rigid
+    (more than its deposit's 0.97 mg, so its whole deposit counts as non-rigid), the second 0.5 mg: the rigid share is
+    1 - (0.97 + 0.5) / 2.9 of the deposit, a third of it lies past 5 mm, and the reach of non-rigid metal is 3 mm."""
+    c = _cases()
+    rho, R = 2420.0, c.SHOULDER_R
+    s = np.array([1e-3, 3e-3, 6e-3])
+    ang = s / R
+    rhat = np.column_stack([np.sin(ang), np.zeros(3), np.cos(ang)])
+    rise = 0.1e-3
+    x = c.SHOULDER_CENTRE + (R + rise) * rhat
+    area = np.full(3, 4e-6)
+    hot = np.array([2e-6, 0.5e-6, 0.0])
+    m = np.column_stack([hot, np.full(3, 1e-5)])
+    T = np.column_stack([np.full(3, 950.0), np.full(3, 700.0)])
+    mk = SimpleNamespace(x=x, normal=rhat, area=area, skin_index=np.arange(3))
+    sk = SimpleNamespace(T=lambda: T, valid=np.ones((3, 2), bool), m=m, depth_above=lambda t: np.zeros(3))
+    mat = SimpleNamespace(rho=rho, T_rigid=895.0, T_liquidus=908.0)
+    d = c.deposit(SimpleNamespace(markers=mk, skins=sk, material=mat))
+    dm = rise * area * rho
+    assert d["mass_kg"] == pytest.approx(dm.sum(), rel=1e-12)
+    assert d["rigid_share"] == pytest.approx(1.0 - (dm[0] + 0.5e-6) / dm.sum(), rel=1e-12)
+    assert d["share_past_5mm"] == pytest.approx(1.0 / 3.0, rel=1e-12)
+    assert d["hot_reach_past_mm"] == pytest.approx(3.0, rel=1e-9)
+
+
 def _books(out):
     c = _cases()
     for row in out["steps"]:
@@ -193,5 +222,6 @@ def test_shoulder_runoff_freezes_a_deposit():
     _books(out)
     last = out["steps"][-1]["deposit"]
     assert out["deposit_formed"] and last["mass_kg"] > 0.0
-    assert last["hot_reach_past_mm"] <= c.FREEZE_REACH * 1e3
+    assert last["rigid_share"] >= c.DEPOSIT_RIGID_SHARE                # the controller's ruling on the review's I2
+    assert last["share_past_5mm"] <= c.SKYSCRAPERS_DEPOSIT_FAR_SHARE
     assert out["passes"]

@@ -53,7 +53,9 @@ liquid kept, dev cells, fine cells to the design's margin but no curvature floor
 edges are not the case; the sphere's own curvature asks for none). The deposit is the solid height gained past the
 heat's end (swell off: phi's radial rise over the sphere), by marker; its centroid past the heat's end is set against
 the skyscrapers' pushed plate's 1.05 mm (SKYSCRAPERS_DEPOSIT_CENTROID_MM). Judged by its test: the books, a deposit
-formed past the heat's end and rigid beyond FREEZE_REACH of it.
+formed past the heat's end, at least DEPOSIT_RIGID_SHARE of it rigid at 2.0 s and at most the pushed plate's
+3.0 per cent of it past DEPOSIT_FAR (5 mm) (the controller's ruling on the review's I2); the farthest reach of non-rigid
+metal is reported, not judged.
 
 The cost (Step 4): the 50 mm sphere at a melting state (880 K, the continuum gas state of the body tests, the shared
 heating, surface flow and Girin's spray), dev and production cells, each macro step's wall time split by the profiler
@@ -150,7 +152,9 @@ SHOULDER_HALF_X, SHOULDER_HALF_Y, SHOULDER_DEPTH = 7e-3, 3e-3, 6e-3   # m: the s
                                                                     # station at the origin, normal +z, meridian +x)
 SHOULDER_Q = 6.0e6                 # W/m2, upstream of the station (x < 0)
 CURVED_FACE = 0.5                  # a marker whose normal's dot with the radial direction exceeds this is on the sphere
-FREEZE_REACH = 4e-3                # m: past this distance from the heat's end the deposit must be rigid (two spacings)
+DEPOSIT_RIGID_SHARE = 0.9          # of the metal deposited past the heat's end at 2.0 s, at least this share rigid
+DEPOSIT_FAR = 5e-3                 # m: of the deposit, at most SKYSCRAPERS_DEPOSIT_FAR_SHARE past this from the heat's end
+                                   # (the controller's ruling on the review's I2, 2026-11-13)
 SPHERE_R = 25e-3                   # m: the cost case's 50 mm sphere
 SPHERE_T0 = 880.0                  # K: just below T_rigid (895.1 K), so that the windward cap melts within the first step
 CONTINUUM = dict(rho=1e-4, kn=1e-3)   # the body tests' continuum gas state (tests/levelset/test_levelset_skinbody.py)
@@ -871,8 +875,11 @@ def shoulder_heat(body):
 def deposit(body):
     """The deposit past the heat's end: per marker on the sphere downstream of the station, the solid height gained
     (phi's radial rise over the sphere, the skins at the solid's density) times its area and the solid density [kg];
-    its mass, centroid past the heat's end [mm], farthest reach [mm], share 5-10 mm past, the mass of non-rigid cells in
-    the deposit's skins and the largest distance past the heat's end at which a skin holds metal above T_rigid [mm]."""
+    its mass, centroid past the heat's end [mm], farthest reach [mm], share 5-10 mm past and share past DEPOSIT_FAR; its
+    rigid share, the deposit less the non-rigid metal it holds (each marker's skin cells above T_rigid, at most its
+    deposit) over the deposit (the ruling on the review's I2); the mass of non-rigid cells in the skins past the heat's
+    end, and the largest distance past the heat's end at which a skin holds metal above T_rigid [mm] (the instantaneous
+    reach of non-rigid metal, reported, not judged)."""
     mk, sk, mat = body.markers, body.skins, body.material
     on, s = curved(mk)
     rise = np.linalg.norm(mk.x - SHOULDER_CENTRE, axis=1) - SHOULDER_R
@@ -882,7 +889,10 @@ def deposit(body):
     hot_past = on & (s > 0.0) & (hot_mass > 0.0)
     M = float(dm.sum())
     up = on & (s < 0.0)
+    soft = float(np.minimum(hot_mass, dm).sum())
     return {"mass_kg": M,
+            "rigid_share": float(1.0 - soft / M) if M > 0 else None,
+            "share_past_5mm": float(dm[s >= DEPOSIT_FAR].sum() / M) if M > 0 else None,
             "centroid_past_heat_mm": float((s * dm).sum() / M * 1e3) if M > 0 else None,
             "reach_mm": float(s[dm > 0].max() * 1e3) if M > 0 else None,
             "share_5_to_10mm": float(dm[(s >= 5e-3) & (s < 10e-3)].sum() / M) if M > 0 else None,
@@ -914,19 +924,21 @@ def shoulder(preset="dev", steps=None, save=True):
 
     n = int(round(T_END / DT)) if steps is None else steps
     rows, failure = run_steps(body, advance, n, "shoulder " + preset, extra)
-    last = rows[-1]["deposit"] if rows else {}
+    last = rows[-1]["deposit"] if rows and abs(rows[-1]["t"] - T_END) < 1e-9 else {}
     formed = bool(last) and last["mass_kg"] > 0.0
-    frozen = bool(last) and last["hot_reach_past_mm"] <= FREEZE_REACH * 1e3
+    rigid = formed and last["rigid_share"] >= DEPOSIT_RIGID_SHARE
+    near = formed and last["share_past_5mm"] <= SKYSCRAPERS_DEPOSIT_FAR_SHARE
     out = {"case": "shoulder", "preset": preset, "T0_K": COLD_T0, "q_Wm2": SHOULDER_Q, "dt_s": DT,
            "sphere_radius_mm": SHOULDER_R * 1e3,
            "segment_mm": [2 * SHOULDER_HALF_X * 1e3, 2 * SHOULDER_HALF_Y * 1e3, SHOULDER_DEPTH * 1e3],
            "push": {"alpha_deg": PUSH_ALPHA, "dp_ds_Pa_m": PUSH_DP_DS, "tau_Pa": PUSH_TAU, "decel_ms2": PUSH_DECEL},
            "markers_at_start": markers0, "build_s": round(t_build, 2),
-           "books_pass": books_pass(rows), "deposit_formed": formed, "deposit_frozen_past_reach": frozen,
-           "freeze_reach_mm": FREEZE_REACH * 1e3,
+           "books_pass": books_pass(rows), "deposit_formed": formed, "deposit_rigid": rigid, "deposit_near": near,
+           "deposit_rigid_share_min": DEPOSIT_RIGID_SHARE, "deposit_far_mm": DEPOSIT_FAR * 1e3,
            "skyscrapers_pushed_plate": {"centroid_past_heat_mm": SKYSCRAPERS_DEPOSIT_CENTROID_MM,
                                         "share_5_to_10mm": SKYSCRAPERS_DEPOSIT_FAR_SHARE},
-           "passes": books_pass(rows) and formed and frozen and failure is None, "failure": failure, "steps": rows}
+           "passes": books_pass(rows) and formed and rigid and near and failure is None, "failure": failure,
+           "steps": rows}
     if save:
         write("shoulder_" + preset, out)
     return out
