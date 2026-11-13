@@ -865,15 +865,24 @@ def test_a_sigterm_stops_the_flight_with_the_last_completed_step_and_exit_143(tm
 
 
 def test_control_c_during_the_end_write_leaves_no_partial_state(tmp_path, monkeypatch):
+    """A second Control-C while the end state is written (Review Focus 2; fix round 1): the real `restart.write_bytes`
+    writes the whole part file and is interrupted as it renames it into place, the end state's rename alone (any other
+    file the flight renames goes through); neither the end state nor its part file is left, the save's error is recorded
+    and the exit code is still 130."""
     fail_on_call(monkeypatch, 2, KeyboardInterrupt())
-    def interrupted(path, data):
-        with open(path + restart.PART, "wb") as fh:
-            fh.write(data[:10])
-        raise KeyboardInterrupt
-    monkeypatch.setattr(restart, "write_bytes", interrupted)
+    real_replace, renamed = os.replace, []
+
+    def interrupted(src, dst, *a, **k):
+        if os.path.basename(str(dst)) == "k.end.state.pkl":
+            renamed.append(os.path.getsize(src))                 # the part file, written whole
+            raise KeyboardInterrupt
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(restart.os, "replace", interrupted)
     assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "k"]) == 130
+    assert len(renamed) == 1 and renamed[0] > 0
     assert not os.path.exists(str(tmp_path / "k.end.state.pkl"))
-    assert json.load(open(str(tmp_path / "k.json")))["results"]["end_state_error"]
+    assert not os.path.exists(str(tmp_path / "k.end.state.pkl") + restart.PART)
+    assert json.load(open(str(tmp_path / "k.json")))["results"]["end_state_error"].startswith("KeyboardInterrupt")
 
 
 def test_a_failure_in_the_first_step_of_a_resume_saves_the_resumed_step(flown, tmp_path, monkeypatch):
@@ -921,3 +930,37 @@ def test_no_saved_state_carries_the_copy_of_the_last_completed_step(tmp_path):
     held = [x for v in vars(restart.load(end)["run"]).values() for x in (v if isinstance(v, (tuple, list)) else (v,))]
     assert not any(isinstance(x, (bytes, bytearray)) for x in held)
     assert os.path.getsize(end) < 1.2 * os.path.getsize(first)
+
+
+def fail_dumps_on_call(monkeypatch, n):
+    real, calls = restart.dumps, {"n": 0}
+    def dumps(state):
+        calls["n"] += 1
+        if calls["n"] == n:
+            raise MemoryError("no room for the copy")
+        return real(state)
+    monkeypatch.setattr(restart, "dumps", dumps)
+
+
+def test_a_copy_that_cannot_be_made_is_said_at_once_and_recorded(tmp_path, monkeypatch, capsys):
+    """The copy of a completed step that cannot be made (a MemoryError here; fix round 1) never fails the flight, but is
+    said on standard error when it happens, even under --quiet, and the results record the first such error and its flight
+    time, on a normal end and on a failure. `restart.dumps` makes the copies (the one before the first step is its 1st
+    call, step k's its (k+1)th) and the end state. A flight whose copy of step 1 fails ends normally with the record. A
+    flight whose copy of step 2 fails and whose 3rd step then raises saves step 1, the last step copied, not step 2."""
+    fail_dumps_on_call(monkeypatch, 2)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "n"]) == 0
+    assert "warning: copying the state at 0.025 s, which a failure or a stop by hand would save, failed: MemoryError: " \
+           "no room for the copy" in capsys.readouterr().err
+    res = json.load(open(str(tmp_path / "n.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["end_state_error"] is None
+    assert res["copy_error"] == "MemoryError: no room for the copy" and res["copy_error_time_s"] == pytest.approx(0.025)
+    monkeypatch.undo()
+    fail_dumps_on_call(monkeypatch, 3)
+    fail_on_call(monkeypatch, 3, RuntimeError("boom"))
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "f"]) == 1
+    assert "warning: copying the state at 0.0375 s" in capsys.readouterr().err
+    res = json.load(open(str(tmp_path / "f.json")))["results"]
+    assert res["end_reason"] == "failed" and res["failure"]["time_s"] == pytest.approx(0.025)
+    assert res["copy_error"] == "MemoryError: no room for the copy" and res["copy_error_time_s"] == pytest.approx(0.0375)
+    assert len(rows_of(str(tmp_path / "f.csv"))) == 2 and restart.load(str(tmp_path / "f.end.state.pkl"))["step"] == 1

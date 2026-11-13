@@ -9,6 +9,7 @@ Mass is constant in Step 2; the loop already carries the body's mass and the mes
 `nose_radius()` and `integrated_heat`, beyond what the `Body` protocol declares. `ConstantBody` is for `Simulator.run()` only."""
 import os
 import signal
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -196,7 +197,9 @@ class CoupledRun:
                 body.jump_faults_bottom_cell = body.jump_faults
                 rows[0].setdefault("jump_faults_bottom_cell", rows[0].get("jump_faults", body.jump_faults))
         # the copy of the last completed step (Task 4): a local, never an attribute of the run, so that no state pickled
-        # after it (the next copy, the state at save_at, the end state) carries it and grows with every step
+        # after it (the next copy, the state at save_at, the end state) carries it and grows with every step. The first
+        # copy that cannot be made is recorded (its message and flight time, a resumed run's record cleared here)
+        self.copy_error = None
         last = self._copy(step, rows) if s.end_path is not None else None
         try:
             while sim.end_reason is None:
@@ -254,6 +257,8 @@ class CoupledRun:
             history.results.update({"state_saved_at_s": self.state_saved_at, "state_save_error": self.state_save_error})
         if s.end_path is not None:
             history.results.update({"end_state_saved_at_s": self.end_saved_at, "end_state_error": self.end_save_error})
+            error, at = self.copy_error or (None, None)             # the first copy of a step that could not be made
+            history.results.update({"copy_error": error, "copy_error_time_s": at})
         return history
 
     def _save(self, step, row, path=None, end=None):
@@ -286,10 +291,19 @@ class CoupledRun:
         """(the run's state at the end of macro step `step`, pickled in memory as `restart.save` pickles it, with "end"
         None; the number of history rows to that step), which a failure or a stop by hand writes as the end state (Task
         4). A copy that cannot be made leaves `last`, the previous step's, as a save that fails never fails the flight; a
-        stop by hand during it leaves it too, since the new copy replaces the old only once it is complete."""
+        stop by hand during it leaves it too, since the new copy replaces the old only once it is complete. The first
+        copy that cannot be made is said at once on standard error, whatever the command line's --quiet, and recorded as
+        `copy_error` = (message, flight time), which the results carry: from then on a failure saves an earlier step's
+        state than the last completed one, or none if no copy was ever made."""
         try:
             return restart.dumps(self._state(step, rows[-1])), len(rows)
-        except Exception:
+        except Exception as exc:
+            if self.copy_error is None:
+                self.copy_error = ("{}: {}".format(type(exc).__name__, exc), float(self.sim.t))
+                print("warning: copying the state at {:.6g} s, which a failure or a stop by hand would save, failed: {}; "
+                      "such an end would now save an earlier step's state, or none".format(self.copy_error[1],
+                                                                                           self.copy_error[0]),
+                      file=sys.stderr, flush=True)
             return last
 
     def _failed(self, exc, last, rows, states, started):
@@ -300,7 +314,8 @@ class CoupledRun:
         its flight not ended (`sim.end_reason` None), so a resume flies on from it and repeats the failing step; only
         then is its end reason set. A save that fails, a second Control-C included, is recorded and changes nothing
         else. Returns that run's history of the completed steps, with `history.run` that run, `history.exception` `exc`,
-        and `results["failure"]` = {"kind", "error": "<Type>: <message>", "time_s": the last completed step's time}."""
+        and `results["failure"]` = {"kind", "error": "<Type>: <message>", "time_s": the time of the step saved}, which
+        is the last completed step unless a copy could not be made (`copy_error`, carried over to the results)."""
         kind = "stopped" if isinstance(exc, STOPS) else "failed"
         data, n = last
         state = restart.loads(data)
@@ -313,6 +328,7 @@ class CoupledRun:
         except (Exception,) + STOPS as error:
             run.end_save_error = "{}: {}".format(type(error).__name__, error)
         run.sim.end_reason = kind
+        run.copy_error = self.copy_error              # this run's record: the copy restored may predate it
         run._collection()
         history = run._history(rows[:n], states[:n], started)
         history.run, history.exception = run, exc
