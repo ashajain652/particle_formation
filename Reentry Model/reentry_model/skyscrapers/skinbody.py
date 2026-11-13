@@ -209,6 +209,15 @@ LEEWARD_TESTS = ("facing", "centroid")
 # plane through it
 LEEWARD_COLUMNS = ("centroid_offset_mm", "leeward_corners")
 
+# The geometry measures (open item 4; Asha, 2026-11-12): the skin columns stop describing the metal once the 3D core has been
+# eaten back past the sphere's original centre, or once the column tops enclose more space than the metal fills (tall columns
+# keep their base area and fan apart). On the 50 mm slip-band-on flight the volume ratio was 1.03 at 179 s, 1.17 at 183 s and
+# 1.42 at 185.5 s. `geometry_breach` reads these at call time. Columns: the core's front along the flight direction [mm, from
+# the original centre, the mesh's mean point at time zero] and the tops' enclosed volume over the metal's volume.
+GEOMETRY_COLUMNS = ("core_front_mm", "tops_volume_ratio")
+GEOMETRY_VOLUME_RATIO = 1.25
+GEOMETRY_FRONT_LIMIT_MM = 0.0
+
 
 @dataclasses.dataclass
 class NoseFit:
@@ -1318,6 +1327,37 @@ class SkinBody(ThermalBody):
         out["leeward_corners"] = int(((self.theta <= 0.5 * np.pi) & ~ahead).sum())
         return out
 
+    def geometry_stats(self):
+        """The history's two geometry columns (`GEOMETRY_COLUMNS`), after the nose ones (open item 4, Asha 2026-11-12).
+        `core_front_mm`: the 3D core's most forward point along the flight direction [mm, relative to the origin of the
+        mesh's coordinates, the sphere's original centre]; the base corners are the core's surface. `tops_volume_ratio`: the
+        volume the top surface encloses (absolute, by signed tetrahedra from the points' mean as `spray.enclosed_centroid`
+        builds them, so the triangles' winding does not matter) over the metal's volume, the 3D model's (cached as `mass`
+        caches it) plus the skins' columns (thickness times base area). Near 1 while the columns describe the metal; the
+        slip-band-on 50 mm flight read 1.03 at 179 s, 1.17 at 183 s and 1.42 at 185.5 s."""
+        if self._volume is None:
+            self._volume = self.mesh.volume()
+        sk = self.skins
+        metal = self._volume + float((sk.dz() * sk.area[:, None]).sum())
+        pts, faces = self.surface.points, np.asarray(self.surface.faces, dtype=np.int64)
+        o = pts[np.unique(faces)].mean(axis=0)
+        a, b, c = (pts[faces[:, i]] - o for i in range(3))
+        enclosed = abs(float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum()) / 6.0)
+        return {"core_front_mm": float((self.columns.points @ self.v_hat).max() * 1e3),
+                "tops_volume_ratio": enclosed / metal}
+
+    def geometry_breach(self):
+        """None while the skins describe the metal; else the first test failed and its value: ("volume", ratio) when the
+        tops enclose more than `GEOMETRY_VOLUME_RATIO` times the metal's volume, else ("centre", core_front_mm) when the
+        core's front lies below `GEOMETRY_FRONT_LIMIT_MM` (behind the original centre). The module constants are read at
+        call time."""
+        g = self.geometry_stats()
+        if g["tops_volume_ratio"] > GEOMETRY_VOLUME_RATIO:
+            return ("volume", g["tops_volume_ratio"])
+        if g["core_front_mm"] < GEOMETRY_FRONT_LIMIT_MM:
+            return ("centre", g["core_front_mm"])
+        return None
+
     def transverse_radius(self):
         """The top surface's largest distance from the axis through the 3D mesh's mean point along the flight direction
         [m]: the body radius whose quarter caps a droplet (spec 8; the element model's transverse radius)."""
@@ -1398,7 +1438,7 @@ class SkinBody(ThermalBody):
                 **self._depth_ratios(flowing),
                 "rebuild_mass_residual_kg": mm.rebuild_mass_residual_total,
                 "rebuild_mass_residual_last_kg": mm.last_rebuild.mass_residual if mm.last_rebuild is not None else 0.0,
-                **self.nose_stats(), **self.spread_stats()}
+                **self.nose_stats(), **self.geometry_stats(), **self.spread_stats()}
 
     def spread_stats(self):
         """The history's spreading columns (SPREAD_COLUMNS), last in `skin_stats`; none without a limit, so that every run

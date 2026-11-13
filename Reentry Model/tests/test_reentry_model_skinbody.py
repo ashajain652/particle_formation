@@ -1,5 +1,7 @@
 """The skin body (layered-skin design sections 6.6 and 7, sub-plan 20 Task 7): skins on every corner from time zero, the
 trial and real passes around the 3D step, the base moving the 3D mesh, and the books."""
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -2613,3 +2615,29 @@ def test_a_spraying_body_in_the_slip_band_keeps_the_three_books(coarse_sphere_me
     s = b.skin_stats()
     assert b.mass() + b.released_mass == pytest.approx(M0, rel=1e-12)
     assert abs(b.energy_balance_residual()) < 1e-8 and s["momentum_residual"] < 1e-12 and b.impulse_size > 0.0
+
+
+def test_an_undeformed_body_has_its_front_at_the_radius_and_tops_enclosing_its_metal(coarse_sphere_mesh):
+    b = make(coarse_sphere_mesh)
+    g = b.geometry_stats()
+    # the core's surface lies one minimum skin (0.8 mm) under the sphere's, so its front is 49.2 mm on this 50 mm sphere
+    assert g["core_front_mm"] == pytest.approx(coarse_sphere_mesh.params["radius_m"] * 1e3, rel=2e-2)
+    assert abs(g["tops_volume_ratio"] - 1.0) < 0.01
+    assert b.geometry_breach() is None
+    assert set(skinbody.GEOMETRY_COLUMNS) <= set(b.skin_stats())
+
+
+def test_the_breach_names_the_volume_test_first_then_the_centre(coarse_sphere_mesh, monkeypatch):
+    b = make(coarse_sphere_mesh)
+    monkeypatch.setattr(skinbody, "GEOMETRY_FRONT_LIMIT_MM", 1e3)
+    assert b.geometry_breach()[0] == "centre"
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    test, value = b.geometry_breach()
+    assert test == "volume" and value == pytest.approx(b.geometry_stats()["tops_volume_ratio"])
+
+
+def test_the_enclosed_volume_does_not_depend_on_the_winding_of_the_top_triangles(coarse_sphere_mesh):
+    b = make(coarse_sphere_mesh)
+    before = b.geometry_stats()["tops_volume_ratio"]
+    b.surface = dataclasses.replace(b.surface, faces=b.surface.faces[:, ::-1].copy())
+    assert b.geometry_stats()["tops_volume_ratio"] == pytest.approx(before, rel=1e-12)
