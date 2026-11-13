@@ -36,6 +36,12 @@ MODES_OWED_SHARE = 0.1      # the heat a step end's mode changes leave owed, at 
                             # the fill off, by the mean and by the profile); not counted in OWED_SHARE, whose scale, the
                             # step's heat in, it does not share
 PENDING_FLUX_SHARE = 10.0   # the pending heat's flux on a patch at most this times the largest surface flux (fix round 3)
+ABSORBED_OWED_SHARE = 0.1   # the heat a full-depth skin's absorption leaves owed to the volume, at most this share of the
+                            # enthalpy it absorbed (stage 3 Task 11's review, M2: the absorbed cells take the volume's field
+                            # along one column, at each cell's middle, while the base move removes the region beneath at
+                            # the volume's own temperatures, and the difference is booked as owed, as a mode change's is
+                            # against what it hands, MODES_OWED_SHARE; measured once, 0.081 J of 2.684 J absorbed, 3.0 %,
+                            # on the pending-load test's steep local hot spot; 0.3 J absolute before)
 
 
 def owed(body, book):
@@ -197,20 +203,23 @@ def test_pending_load_reaches_the_volume():
     (to 1e-9), the volume receives most of it -- what it keeps, plus what the full-depth skins above absorb with the
     metal the load heats past T_rigid (Task 11's fix, item 4: at 850 K the 5 J heats the base's metal past T_rigid, and
     the skins then take it, 0.15 J less than the volume began with remaining there) -- and the skins above the warmed
-    base take the rest, the load still deferred is small, and the volume's hottest node lies near the point."""
+    base take the rest, the load still deferred is at most ABSORBED_OWED_SHARE of the enthalpy the skins absorbed, and
+    the volume's hottest node lies near the point."""
     body = cube_body()
     point = np.array([HALF + OFF - 1.0e-3, OFF, OFF])
     body.add_pending(point, 5.0)
     before = body.books()
     book = body.advance(0.05)
     gained = book.enthalpy_volume + book.enthalpy_skins - before["enthalpy_volume"] - before["enthalpy_skins"]
-    print("pending load: volume gained {:.6f} J, skins {:.6f} J, still deferred {:.3e} J".format(
-        book.enthalpy_volume - before["enthalpy_volume"], book.enthalpy_skins - before["enthalpy_skins"], book.pending_J))
+    print("pending load: volume gained {:.6f} J, skins {:.6f} J, still deferred {:.3e} J, absorbed {:.4f} J ({:.3f} of "
+          "it)".format(book.enthalpy_volume - before["enthalpy_volume"], book.enthalpy_skins - before["enthalpy_skins"],
+                       book.pending_J, book.enthalpy_absorbed, abs(book.pending_J) / book.enthalpy_absorbed))
     assert gained + book.pending_J == pytest.approx(5.0, rel=1e-9)
     assert book.enthalpy_volume - before["enthalpy_volume"] + book.enthalpy_absorbed > 2.5
     assert book.enthalpy_skins - before["enthalpy_skins"] >= 0.0
-    assert abs(book.pending_J) < 0.3     # 0.05 before Task 11's fix; now the absorption's base move owes 0.27 J (measured
-    T = body.solver.T                    # once): the absorbed cells take the volume's field at their middles, steep here
+    assert book.enthalpy_absorbed > 0.0
+    assert abs(book.pending_J) <= ABSORBED_OWED_SHARE * book.enthalpy_absorbed    # what the absorption's move owes
+    T = body.solver.T
     hot = np.argmax(np.where(body.solver.active, T, -np.inf))
     assert np.linalg.norm(body.mesh.points[hot] - point) < 3e-3
 
