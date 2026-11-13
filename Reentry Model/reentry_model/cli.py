@@ -7,14 +7,14 @@
         [--melt on --material AA7075_scheil --removal girin|instant ...] (Step 3: melting, film, spraying)
         [--surface-model skin|elements --skin-flow on|off --slurry-spray on|off --spread-limit DEG|off
         --part-count-from moves|melting --hand-down on|off --sideways-heat depth|height
-        --size-feedback current|initial --leeward-test facing|centroid --spray-gates 2026-11-10|before --slip-band on|off ...]
+        --size-feedback current|initial --leeward-test facing|centroid --geometry-stop on|off --spray-gates 2026-11-10|before --slip-band on|off ...]
                                      (the layered skins, the default with --thermal fem and --melt on, their flow and
                                       spraying the default there; the element model with --surface-model elements, and
                                       the default of a thermal run that does not melt)
     python -m reentry_model resume <state> --outdir ... --name ... [--t-max S --dt-continuum S --seed N --frames-every N
         --slurry-spray on|off --spread-limit DEG|off --part-count-from moves|melting
         --hand-down on|off --sideways-heat depth|height --size-feedback current|initial --leeward-test facing|centroid
-        --spray-gates 2026-11-10|before --slip-band on|off]
+        --geometry-stop on|off --spray-gates 2026-11-10|before --slip-band on|off]
                                      (a flight saved with --save-state-at, continued; sub-plan 22 Task 5b)
     python -m reentry_model compare --model <model.csv> --reference <sesam.csv> [--outdir ...]
 
@@ -257,7 +257,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
                      fine_band_mm=FINE_BAND_MM, fine_size_mm=FINE_SIZE_MM, fine_zone_mm=0.4, flow=True, flow_cycles=None,
                      slurry_spray=False, spread_limit=None, part_count_from="moves",
                      hand_down=True, sideways_pairing="depth", size_feedback="current", melting_skins=False,
-                     leeward_test="centroid"):
+                     leeward_test="centroid", geometry_stop=True):
     """The run-name suffix of a skin run's non-default settings (layered-skin design section 10.1): `_skin-dev` for the
     dev preset, `_skinmin<mm>mm` for another minimum thickness, `_skinfine<mm>mm` for another fine zone (both changed by
     option B', 2026-10-16: 0.8 and 0.4 mm), `_cell<um>um` for an explicit cell other than the
@@ -273,6 +273,7 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
     (Task 5f); `_nose-initial` where the windward loads read the mesh's own radius, not the sphere fitted to the tops
     (Task 5g; the default changed to the fit, so the default's name is unchanged); `_leeward-facing` where a corner counts as
     windward by its normal alone, not by the mass centroid's plane as well (Task 5j; the default is `centroid`, unmarked);
+    `_geomstop-off` where the flight does not end itself at a geometry breach (open item 4; the default is on, unmarked);
     empty for the defaults.
     `melting_skins` says the run is one of melting skins, whose defaults are `--hand-down off` and `--part-count-from
     melting` (Asha, 2026-11-10, Task 5h): the suffix then marks the values that differ from those, `_handdown-on` and
@@ -315,6 +316,8 @@ def skin_name_suffix(min_thickness_mm, cell_um, growth, substep_ms, preset, defo
         out += "_nose-{}".format(size_feedback)
     if leeward_test != "centroid":
         out += "_leeward-{}".format(leeward_test)
+    if not geometry_stop:
+        out += "_geomstop-off"
     return out
 
 
@@ -362,6 +365,9 @@ def resume_arguments(rs):
                          "normal faces the flow, or centroid, those that also lie ahead of the plane through the body's mass "
                          "centroid at right angles to the flight direction (default: the saved flight's, facing for one saved "
                          "before the option existed)")
+    rs.add_argument("--geometry-stop", choices=("on", "off"), default=None,
+                    help="whether the skins' flight ends itself at a geometry breach (default: the saved flight's, on for one "
+                         "saved before the option existed)")
     rs.add_argument("--save-state-at", type=float, default=None,
                     help="[s] of flight: save the resumed flight's whole state once, at the end of the first macro step ending at "
                          "or after it, as <outdir>/<name>{}; after the saved time and before --t-max (final review, 2026-11-07)".format(STATE_SUFFIX))
@@ -550,6 +556,11 @@ def build_parser():
                          "ahead of the plane through the body's mass centroid at right angles to the flight direction, so a "
                          "pool at the back that faces forward is leeward; facing, the normal alone (Asha, 2026-11-10, sub-plan "
                          "22 Task 5j; default centroid, facing named _leeward-facing)")
+    me.add_argument("--geometry-stop", choices=("on", "off"), default=None,
+                    help="with --surface-model skin: end the flight normally (end reason geometry, exit 0) once the columns stop "
+                         "describing the metal: the core's front lies past the sphere's original centre, or the column tops "
+                         "enclose more than 1.25 times the metal's volume, whichever comes first (Asha, 2026-11-12, open item 4; "
+                         "default on, off named _geomstop-off)")
     me.add_argument("--particles", dest="particles", action="store_true", default=True,
                     help="write the particle source table and the size distribution of a spraying run (default)")
     me.add_argument("--no-particles", dest="particles", action="store_false")
@@ -609,7 +620,7 @@ def build_thermal(args, settings, mass, spool=None):
                                      spool=spool if flow else None, spread_limit=spread_limit_of(args),
                                      part_count_from=part_count_rule_of(args), hand_down=hand_down_of(args),
                                      sideways_pairing=args.sideways_heat, size_feedback=skin_size_feedback_of(args),
-                                     leeward_test=skin_leeward_test_of(args))
+                                     leeward_test=skin_leeward_test_of(args), geometry_stop=skin_geometry_stop_of(args))
     elif melting:
         flow = surface_flow.SurfaceFlow(rarefied_shear=args.rarefied_shear, gamma_pm=args.gamma_pm, kn_body_shock=args.kn_body_shock)
         spray_model = spray_model_of(args, mat)
@@ -650,6 +661,7 @@ def build_thermal(args, settings, mass, spool=None):
             info["skin"]["sideways_heat"] = args.sideways_heat
         info["skin"]["size_feedback"] = skin_size_feedback_of(args)        # always: the default changed (Task 5g)
         info["skin"]["leeward_test"] = skin_leeward_test_of(args)          # always: it is new, and centroid by default (Task 5j)
+        info["geometry_stop"] = "on" if skin_geometry_stop_of(args) else "off"       # top level, as `cmd_resume` records it
     if args.heating == "physics":
         info.update({"stagnation": args.stagnation, "bridging_heat": args.bridging_heat, "matting_n": args.matting_n,
                      "accommodation": args.accommodation, "catalycity": args.catalycity})
@@ -707,7 +719,8 @@ def run_name_of(args, diameter_m, velocity_ms, altitude_m, atmosphere_name, dt_c
                                                                     hand_down_of(args), args.sideways_heat,
                                                                     skin_size_feedback_of(args),
                                                                     melting_skins=melting_skins_of(args),
-                                                                    leeward_test=skin_leeward_test_of(args)),
+                                                                    leeward_test=skin_leeward_test_of(args),
+                                                                    geometry_stop=skin_geometry_stop_of(args)),
                                        spray_suffix=spray_name_suffix(args.spray_gates, args.slip_band == "on",
                                                                       spraying_run(args)))
 
@@ -805,6 +818,8 @@ def cmd_run(args, parser):
         parser.error("--sideways-heat height needs --surface-model skin: it pairs the skins' cells")
     if args.leeward_test is not None and args.surface_model != "skin":
         parser.error("--leeward-test needs --surface-model skin: it says which of the skins' top corners are windward")
+    if args.geometry_stop is not None and args.surface_model != "skin":
+        parser.error("--geometry-stop needs --surface-model skin: it ends a flight whose skin columns stop describing the metal")
     if args.surface_model == "skin":
         for flag, given in (("--runoff off", args.runoff == "off"), ("--deep-runoff off", args.deep_runoff == "off"),
                             ("--molten-cascade off", args.molten_cascade == "off"),
@@ -857,6 +872,11 @@ def cmd_run(args, parser):
         history = sim.run(extra_times=reference.time if reference is not None else None)
     return finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history,
                       state_path if args.thermal == "fem" else None)
+
+
+def skin_geometry_stop_of(args):
+    """Whether a skin run ends itself at a geometry breach (open item 4; Asha, 2026-11-12): on unless --geometry-stop off."""
+    return args.geometry_stop != "off"
 
 
 def finish_run(args, name, settings, mass, atm_name, atm_info, reference, thermal_info, the_body, history, state_path,
@@ -928,6 +948,14 @@ def finish_run(args, name, settings, mass, atm_name, atm_info, reference, therma
     if args.thermal == "fem":
         doc["files"]["vtk_dir"] = os.path.abspath(os.path.join(run_dir, "vtk")) if history.results.get("n_frames") else None
     tj.write_run_json(json_path, doc)
+    stop = history.results.get("geometry_stop")
+    if stop is not None:                            # a normal end that says why it came, even under --quiet (open item 4)
+        if stop["test"] == "volume":
+            print("geometry stop at {:.6g} s: the column tops enclose {:.3g} times the metal's volume (limit {:g})".format(
+                stop["time_s"], stop["value"], skinbody.GEOMETRY_VOLUME_RATIO), flush=True)
+        else:
+            print("geometry stop at {:.6g} s: the core's front is {:.3g} mm behind the sphere's original centre".format(
+                stop["time_s"], -stop["value"]), flush=True)
     if not args.quiet:
         res = history.results
         print("{} (seed {}): {} at t = {:.1f} s, final V {:.4f} km/s, Kn {:.3g} -> {:.3g}, {} RHS evaluations in {:.1f} s".format(
@@ -1056,6 +1084,10 @@ def cmd_resume(args, parser):
         if not skins:
             parser.error("--leeward-test needs a saved flight of skins: it says which of their top corners are windward")
         changed["--leeward-test"] = args.leeward_test
+    if args.geometry_stop is not None:
+        if not skins:
+            parser.error("--geometry-stop needs a saved flight of skins: it ends a flight whose columns stop describing the metal")
+        changed["--geometry-stop"] = args.geometry_stop
     # the spread limit and the hand-down as they will stand, each as given here or else the saved flight's
     if skins:
         will_spread = spread_limit_of(args) if args.spread_limit is not None else run.body.spread_limit
@@ -1107,6 +1139,8 @@ def cmd_resume(args, parser):
     if "--leeward-test" in changed and skins:
         run.body.leeward_test = args.leeward_test
         run.body._leeward_raw = run.body._nose_raw = None      # the saved step's surface read again under the new test
+    if "--geometry-stop" in changed and skins:
+        run.body.geometry_stop = args.geometry_stop == "on"
     if "--spray-gates" in changed:
         run.body.spray.spray_gates = args.spray_gates
     if "--slip-band" in changed:
@@ -1118,6 +1152,8 @@ def cmd_resume(args, parser):
         # recomputed here, as the saved step's surface reads under the new setting)
         redo = "--size-feedback" in changed or "--leeward-test" in changed
         state["row"].update({k: v for k, v in run.body.nose_stats().items() if redo or k not in state["row"]})
+        # likewise a state saved before the geometry columns: the geometry at the saved step, as the nose columns are
+        state["row"].update({k: v for k, v in run.body.geometry_stats().items() if k not in state["row"]})
     for name in ("hist_n", "hist_m"):    # a body saved with 40 size bins (before Task 5j) gets the 50: its first 40 edges are unchanged, so zeros are exact
         h = getattr(run.body, name, None)
         if h is not None and len(h) < spray.N_BINS:
@@ -1136,6 +1172,7 @@ def cmd_resume(args, parser):
                       ("frames_every", "--frames-every"), ("slurry_spray", "--slurry-spray"), ("spread_limit", "--spread-limit"),
                       ("part_count_from", "--part-count-from"), ("hand_down", "--hand-down"),
                       ("sideways_heat", "--sideways-heat"), ("size_feedback", "--size-feedback"), ("leeward_test", "--leeward-test"),
+                      ("geometry_stop", "--geometry-stop"),
                       ("spray_gates", "--spray-gates"), ("slip_band", "--slip-band")):
         if flag in changed:
             setattr(saved, key, changed[flag])
@@ -1143,7 +1180,7 @@ def cmd_resume(args, parser):
         settings.save_meta = {"name": args.name, "args": dict(vars(saved))}
     limit = run.body.spread_limit if skins else None
     print("resuming {} (saved at {:.6g} s, step {}) to {:.6g} s: dt_continuum {}, seed {}, frames every {}, slurry spray {}, "
-          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, spray gates {}, slip band {}, save state at {}; files {}".format(
+          "spread limit {}, part count from {}, hand-down {}, sideways heat {}, size feedback {}, leeward test {}, geometry stop {}, spray gates {}, slip band {}, save state at {}; files {}".format(
               os.path.abspath(args.state), state["time_s"], state["step"], run.sim.settings.t_max,
               settings.dt_continuum if settings.dt_continuum is not None else "none",
               args.seed if args.seed is not None else "saved random state", settings.frames_every,
@@ -1154,6 +1191,7 @@ def cmd_resume(args, parser):
               run.body.sideways_pairing if skins else "depth",
               run.body.size_feedback if skins else "n/a",
               run.body.leeward_test if skins else "n/a",
+              ("on" if run.body.geometry_stop else "off") if skins else "n/a",
               run.body.spray.spray_gates if getattr(run.body, "spray", None) is not None else "n/a",
               ("on" if run.body.spray.slip_band else "off") if getattr(run.body, "spray", None) is not None else "n/a",
               "{:g} s".format(args.save_state_at) if args.save_state_at is not None else "no",
@@ -1179,6 +1217,8 @@ def cmd_resume(args, parser):
         thermal_info["size_feedback"] = "current"
     if skins and run.body.leeward_test == "centroid":
         thermal_info["leeward_test"] = "centroid"
+    if skins:
+        thermal_info["geometry_stop"] = "on" if run.body.geometry_stop else "off"
     if getattr(run.body, "spray", None) is not None:
         thermal_info["spray_gates"] = run.body.spray.spray_gates      # always, as `run` records it (Task 5k, review minor 1)
         thermal_info["slip_band"] = "on" if run.body.spray.slip_band else "off"      # as `run` records it; off for an older state

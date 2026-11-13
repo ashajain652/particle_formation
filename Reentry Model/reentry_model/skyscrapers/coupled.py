@@ -108,6 +108,8 @@ class CoupledSettings:
 
 
 class CoupledRun:
+    geometry_stopped = None            # (test, time s, value) where a skin flight ended at a geometry breach; old states have none
+
     def __init__(self, sim, body, heating_model, settings=None):
         """`body` must be a ThermalBody (uses `theta`, `surface`, `radiated_power()`, `surface_stats()` and
         `integrated_heat`, beyond the `Body` protocol); `ConstantBody` is for `Simulator.run()` only."""
@@ -184,6 +186,11 @@ class CoupledRun:
             self._frame(step, sim.t, loads)
             if (self.melting or self.skins) and body.demised():
                 sim.end_reason = "demise"
+            if self.skins and sim.end_reason is None and body.geometry_stop:     # any other end on this step wins (open item 4)
+                breach = body.geometry_breach()
+                if breach is not None:
+                    sim.end_reason = "geometry"
+                    self.geometry_stopped = (breach[0], float(sim.t), float(breach[1]))
             if (s.save_at is not None and sim.end_reason is None and self.state_saved_at is None
                     and self.state_save_error is None and sim.t >= s.save_at - END_SNAP * s.dt):
                 self._save(step, rows[-1])
@@ -283,6 +290,8 @@ class CoupledRun:
                                                   "handed_mass_kg", "rebuild_residual_J", "wall_skins_s", "wall_3d_s",
                                                   "wall_move_s", "wall_rebuild_s", "wall_flow_s", "rebuild_mass_residual_kg")})
         out.update({k: int(last[k][-1]) for k in ("rebuilds", "jump_faults", "jump_faults_bottom_cell", "absorb_capped", "interface_repeats")})
+        stop = self.geometry_stopped                                            # what ended the flight at a geometry breach, or None
+        out["geometry_stop"] = None if stop is None else {"test": stop[0], "time_s": stop[1], "value": stop[2]}
         if body.spread_limit is not None:                                       # the deposit's spreading (sub-plan 22 Task 5c)
             out.update({"spread_limit_deg": body.spread_limit, "spread_mass_kg": body.spread_mass})
         return out

@@ -668,6 +668,7 @@ class SkinBody(ThermalBody):
     _nose_raw = None                     # the fit of the tops, made at the first read after `_refresh_geometry`; old states have none
     leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
     _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
+    geometry_stop = True                 # the run ends at a geometry breach (open item 4): the states saved before it fly on with it on
     _moment3d = None                     # the 3D model's (mass, mass moment) since the last move, made at the first read
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
@@ -678,7 +679,8 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current", leeward_test="facing"):
+                 size_feedback="current", leeward_test="facing", geometry_stop=True):
+        self.geometry_stop = bool(geometry_stop)
         if leeward_test not in LEEWARD_TESTS:
             raise ValueError("leeward_test must be one of {}, got {!r}".format(LEEWARD_TESTS, leeward_test))
         self.leeward_test = leeward_test

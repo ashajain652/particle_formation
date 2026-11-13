@@ -10,6 +10,7 @@ import pytest
 
 from reentry_model import cli, restart, spray
 from reentry_model import trajectory as tj
+from reentry_model.skyscrapers import skinbody
 
 # the spraying skin flight of the command line's test (sub-plan 22 Task 3): 65 km, a body at 893 K under physics heating,
 # the dev skins on the 4 mm mesh; a 25 ms first step, then 12.5 ms ones, the tops spraying from the step ending 0.0625 s.
@@ -706,3 +707,48 @@ def test_resuming_with_the_slip_band_sets_it_on_the_spray_model_and_a_state_with
     with pytest.raises(SystemExit) as exc:
         cli.main(["resume", str(tmp_path / "dry.state.pkl"), "--outdir", str(tmp_path / "o2"), "--name", "r", "--slip-band", "on"])
     assert exc.value.code == 2 and "--slip-band needs a saved flight with spraying" in capsys.readouterr().err
+
+
+def test_the_volume_test_ends_a_skin_flight_normally(tmp_path, monkeypatch):
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "g"]) == 0
+    res = json.load(open(str(tmp_path / "g.json")))["results"]
+    assert res["end_reason"] == "geometry" and res["geometry_stop"]["test"] == "volume"
+    assert res["geometry_stop"]["time_s"] == pytest.approx(0.025) and len(rows_of(str(tmp_path / "g.csv"))) == 2
+
+
+def test_the_centre_test_ends_a_skin_flight_and_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(skinbody, "GEOMETRY_FRONT_LIMIT_MM", 1e3)
+    assert cli.main(FLIGHT + ["--t-max", "0.0625", "--outdir", str(tmp_path), "--name", "c"]) == 0
+    assert json.load(open(str(tmp_path / "c.json")))["results"]["geometry_stop"]["test"] == "centre"
+    assert "geometry stop at 0.025 s: the core's front is" in capsys.readouterr().out
+
+
+def test_another_end_on_the_same_step_wins_over_the_geometry_stop(tmp_path, monkeypatch):
+    calls = {"n": 0}
+    real = skinbody.SkinBody.geometry_breach
+
+    def late(self):
+        calls["n"] += 1
+        return ("volume", 9.0) if calls["n"] >= 2 else real(self)
+    monkeypatch.setattr(skinbody.SkinBody, "geometry_breach", late)
+    assert cli.main(FLIGHT + ["--t-max", "0.0375", "--outdir", str(tmp_path), "--name", "t"]) == 0
+    res = json.load(open(str(tmp_path / "t.json")))["results"]
+    assert res["end_reason"] == "t_max" and res["geometry_stop"] is None
+
+
+def test_the_stop_can_be_turned_off_and_is_then_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(FLIGHT + ["--t-max", "0.05", "--outdir", str(tmp_path), "--name", "o", "--geometry-stop", "off"]) == 0
+    assert json.load(open(str(tmp_path / "o.json")))["results"]["end_reason"] == "t_max"
+    assert cli.skin_name_suffix(0.8, None, 1.10, 10.0, "production", 15.0, geometry_stop=False) == "_geomstop-off"
+
+
+def test_a_resume_can_turn_the_stop_off_and_old_states_fly_with_it_on(flown, tmp_path, monkeypatch):
+    out, flight, records, state_path = flown
+    monkeypatch.setattr(skinbody, "GEOMETRY_VOLUME_RATIO", 0.5)
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "on"]) == 0
+    assert json.load(open(str(tmp_path / "on.json")))["results"]["end_reason"] == "geometry"
+    assert cli.main(["resume", state_path, "--outdir", str(tmp_path), "--name", "off", "--geometry-stop", "off"]) == 0
+    doc = json.load(open(str(tmp_path / "off.json")))
+    assert doc["results"]["end_reason"] == "t_max" and doc["resumed_from"]["changed"] == {"--geometry-stop": "off"}
