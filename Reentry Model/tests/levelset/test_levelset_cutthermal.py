@@ -274,3 +274,27 @@ def test_psi_tracks_a_one_phase_stefan_front_within_one_fine_cell():
             errs[t] = depth - 2 * lam * sqrt(alpha * t)
     msg = ", ".join("t = {:.2f} s: {:+.3f} mm".format(t, e * 1e3) for t, e in errs.items())
     assert all(abs(e) < h for e in errs.values()), msg
+
+
+def test_the_volume_solve_is_reproducible_run_to_run():
+    """Stage 3 Task 11's review, M1: the AMG preconditioner's hierarchy draws a random start vector from numpy's global
+    generator, so that unseeded the same system gave a different solution run to run (within the CG tolerance). The
+    same 3D Poisson system solved twice, the generator in different states, gives the same solution to the last bit, and
+    the solve leaves the generator's state as it found it."""
+    from types import SimpleNamespace
+    import scipy.sparse as sps
+    n = 24
+    I = sps.identity(n)
+    D = sps.diags([-np.ones(n - 1), 2.0 * np.ones(n), -np.ones(n - 1)], [-1, 0, 1])
+    A = (sps.kron(sps.kron(D, I), I) + sps.kron(sps.kron(I, D), I) + sps.kron(sps.kron(I, I), D)
+         + 1e-3 * sps.identity(n ** 3)).tocsr()
+    b = np.random.default_rng(1).random(n ** 3)
+    solver = SimpleNamespace(linear_solver="amg", cg_tol=1e-10)
+    np.random.seed(3)
+    x1 = CutThermal._solve(solver, A, b, np.zeros(n ** 3))
+    np.random.seed(4)
+    before = np.random.get_state()[1].copy()
+    x2 = CutThermal._solve(solver, A, b, np.zeros(n ** 3))
+    assert np.array_equal(np.random.get_state()[1], before)
+    print("two solves differ by {:.2e} at most".format(np.abs(x1 - x2).max() / np.abs(x1).max()))
+    assert np.array_equal(x1, x2)

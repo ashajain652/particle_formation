@@ -50,6 +50,7 @@ _A, _B = 0.5854101966249685, 0.1381966011250105
 _QP = np.array([[_A, _B, _B, _B], [_B, _A, _B, _B], [_B, _B, _A, _B], [_B, _B, _B, _A]])
 _FACES = np.array([[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]])     # face i of a tetrahedron is opposite vertex i
 EXTEND_RINGS = 50          # rings at most of the extension that fills a move's new nodes from the metal's own (`move`)
+AMG_SEED = 20261112        # the seed of the random start vector the preconditioner's hierarchy draws (`_solve`)
 
 
 class _Pattern:
@@ -230,10 +231,19 @@ class CutThermal:
         return float((self.P.area * qp).sum() * dt)
 
     def _solve(self, A, b, x0):
+        """The linear solve: direct, or conjugate gradients preconditioned by smoothed-aggregation AMG. The hierarchy's
+        build draws a random start vector from numpy's global generator (pyamg's spectral-radius estimate for the
+        prolongation smoother), so that unseeded the same system gave a different solution, within the CG tolerance, run
+        to run (stage 3 Task 11's review, M1): it is drawn under AMG_SEED and the generator's state put back."""
         if self.linear_solver == "direct":
             return spla.spsolve(A.tocsc(), b)
         import pyamg
-        ml = pyamg.smoothed_aggregation_solver(A, symmetry="symmetric")
+        state = np.random.get_state()
+        np.random.seed(AMG_SEED)
+        try:
+            ml = pyamg.smoothed_aggregation_solver(A, symmetry="symmetric")
+        finally:
+            np.random.set_state(state)
         x, info = spla.cg(A, b, x0=x0, rtol=self.cg_tol, maxiter=1000, M=ml.aspreconditioner(cycle="V"))
         if info != 0:
             raise RuntimeError("CG did not converge (info {})".format(info))
