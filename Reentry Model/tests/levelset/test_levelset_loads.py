@@ -98,18 +98,22 @@ def test_on_a_sphere_shadow_and_facing_agree():
 
 # -- the loads by the area of phi each marker owns (Task 11's fix, item 2, and its round 1, C1) ------------------------
 BEAM = np.array([0.0, 0.0, 1.0])     # a beam arriving along -z: each patch's projection max(n . BEAM, 0)
-COVERAGE_MIN = 0.95                  # the heat the markers take, at least this share of what phi's projected area receives
+COVERAGE_EXACT = 1e-9                # the heat the markers take against the flux over phi's patches, relative (C1)
+TILT = np.array([0.3, -0.2, 0.15])   # rad: the tilted box's rotation vector
 
 
-def _box_surface(half=(5e-3, 5e-3, 4e-3), edge=0.8e-3, fine=0.7e-3):
+def _box_surface(half=(5e-3, 5e-3, 4e-3), edge=0.8e-3, fine=0.7e-3, tilt=None):
     """phi of a box with its edges rounded to `edge` [m] (the body's phi over a box shrunk by its stub), on a 2.8 mm base
-    refined to `fine` near it, its centre off the grid, with markers seeded one per 2 mm voxel and tessellated."""
+    refined to `fine` near it, its centre off the grid, turned by the rotation vector `tilt` [rad] if given, with
+    markers seeded one per 2 mm voxel and tessellated."""
+    from scipy.spatial.transform import Rotation
     from cases import refined, seeded
     off = np.array([0.13e-3, 0.21e-3, 0.17e-3])
     half = np.asarray(half)
+    rot = np.eye(3) if tilt is None else Rotation.from_rotvec(tilt).as_matrix()
 
     def level(x):
-        q = np.abs(x - off) - (half - edge)
+        q = np.abs((x - off) @ rot) - (half - edge)
         return np.linalg.norm(np.maximum(q, 0.0), axis=1) + np.minimum(q.max(axis=1), 0.0) - edge
     lo, hi = -half - 2.8e-3, half + 2.8e-3
     mesh = refined(BoxBase.around(lo, hi, 2.8e-3), level, fine)
@@ -136,19 +140,23 @@ def test_a_uniform_beam_on_a_flat_face_gives_every_face_marker_the_same_flux():
     assert np.ptp(qg[face]) <= 1e-12 * qg[face].max() and qg[face].min() > 0.0
 
 
-def test_the_box_s_markers_catch_its_projected_heat_by_their_patches():
-    """The q6p box's shape (8 x 10 x 10 mm, edges rounded to the stub's 0.8 mm) under a beam on its 10 x 10 face: by the
-    patches each owns, the markers take within COVERAGE_MIN to 1/COVERAGE_MIN of the heat phi's projected area receives,
-    whatever their own normals (here, seeded and not yet settled by a body, they take 1.06 of it by their own normals;
-    the q6p box's settled markers took 0.74, its rounded edges falling mostly to the side faces' markers)."""
-    mesh, phi, mk, off, half = _box_surface(half=(5e-3, 5e-3, 4e-3))
+@pytest.mark.parametrize("tilt", [None, TILT])
+def test_the_box_s_markers_take_its_projected_heat_exactly(tilt):
+    """The q6p box's shape (8 x 10 x 10 mm, edges rounded to the stub's 0.8 mm) under a beam along -z, upright and turned
+    so that no face is aligned with the beam or the grid: the markers, each its mean over the area of phi it owns on
+    that area (Task 11's fix round 1, C1: one partition of phi), take the beam over phi's patches, each patch's flux
+    times its area, to COVERAGE_EXACT (the review's M3: by the tangent-plane cells' areas the upright box's markers took
+    1.013 of it, within a band of 0.95 to 1.053 that could not see the error)."""
+    mesh, phi, mk, off, half = _box_surface(half=(5e-3, 5e-3, 4e-3), tilt=tilt)
     P = patches(mesh, phi)
-    want = (P.area * np.maximum(P.normal @ BEAM, 0.0)).sum()
+    proj = np.maximum(P.normal @ BEAM, 0.0)
+    want = (P.area * proj).sum()
     own = (mk.area * np.maximum(mk.normal @ BEAM, 0.0)).sum() / want
-    by_patch = (mk.area * loads.patch_mean(mk, P, np.maximum(P.normal @ BEAM, 0.0))).sum() / want
-    print("box: the markers take {:.3f} of the projected heat by their own normals, {:.3f} by their patches".format(
-        own, by_patch))
-    assert COVERAGE_MIN <= by_patch <= 1.0 / COVERAGE_MIN
+    by_patch = (mk.area * loads.patch_mean(mk, P, proj)).sum() / want
+    print("box ({}): the markers take {:.3f} of the projected heat by their own normals, {:.15f} by what they "
+          "own".format("tilted" if tilt is not None else "upright", own, by_patch))
+    assert abs(by_patch - 1.0) <= COVERAGE_EXACT
+    assert mk.area.sum() == pytest.approx(P.area.sum(), rel=1e-12)
 
 
 SPHERE_MEDIAN, SPHERE_TOTAL = 0.01, 0.005   # the patch loads against the own-normal loads on a smooth sphere: the median
