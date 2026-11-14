@@ -40,7 +40,8 @@ subpackage landed on main (655d1a2). Built from the post-refactor open-items inv
    test showed puts the rigid front 17-64 % too far. Fixed by fine cells at a skin's base (`--skin-base-cell`, 0.2 mm,
    within about 1 % on that test; `docs/model_assumptions.md` section 14); the jump-fault test and Task 5k's rule stay.
    Still open: a flight with the base cells (the 50 mm flight from 178.5 s, on the Mac Studio) to see the faults go and
-   measure the cost.
+   measure the cost; its runbook is `2026-11-14-skin-base-cells-flights-macstudio.md` (two flights side by side, the base
+   cell off and at 0.2 mm, from the same state to 186.5 s).
 8. Facts 163(b) and 168(a)-(e) from `we-critical-308`: the thin branch's threshold, the spray within 10 degrees of
    stagnation, the momentum-balance record, the droplet population, the subsonic patches.
 9. Why the 75 deposit columns sit at about 0.7 of their steady state; whether the melt-speed result holds at other times
