@@ -199,6 +199,7 @@ the flag.
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
 Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `melt_profile`, `surface_flow`, `spray`, `girin_case`), the
+interim gas loads (`gas_loads`, the provider, with `similarity` and `daniels_schwartzentruber`), the
 droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
@@ -304,7 +305,8 @@ REF="../DRAMA Sphere Experiments/data/reference_runs"            # run from Reen
 # verification mode: SESAM's own heat input, uniform over the surface (NOT physical, see below), vs the US76 SESAM reference
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --surface-model elements --heating sesam --reference "$REF"/sphere_d100.00mm_T0300.0K_v07.50000kms_h077.500km_mAA7075_nomelt_nowind.csv
-# physics mode: Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution, with the surface-temperature animation
+# physics mode, with the surface-temperature animation: since 2026-11-13 the similarity heating on the interim gas loads (below);
+# --gas-loads classic gives the earlier Fay-Riddell (Cantera equilibrium air) + Matting bridging + Lees distribution
 "$PY" -m reentry_model run --diameter 100 --velocity 7.5 --altitude 77.500133 --flight-path-angle -0.959331 --atmosphere us76 \
     --thermal fem --surface-model elements --heating physics --animate
 "$PY" analysis/reentry_model_thermal_verification.py     # both spheres x both modes -> output/verification_thermal/summary.md
@@ -314,10 +316,29 @@ A `--thermal fem` run that does not melt runs the element model by default (Asha
 
 A skin flight ends itself normally, with end reason `geometry`, exit code 0 and a printed line, once the core's front passes the sphere's original centre or the column tops enclose more than 1.25 times the metal's volume (open item 4, 2026-11-12); `--geometry-stop off` keeps it flying (run name `_geomstop-off`), and the option is also on `resume`. Every `--thermal fem` flight of `run` and `resume` saves its whole state when it ends, as `<name>.end.state.pkl` beside its CSV and JSON (a `--save-state-at` state keeps its own name, `<name>.state.pkl`). A flight that fails (any error raised in a macro step, such as a Newton non-convergence or a moving-mesh error) or is stopped by hand (SIGTERM, as `kill` sends, or Control-C) saves instead the state at the end of its last completed macro step, so that resuming it repeats the failing step; writes its CSV, JSON and droplet files from the completed steps, with end reason `failed` or `stopped` and the JSON's `results.failure` giving the error and that step's time; prints the error (with its traceback for a failure); and exits with code 1 for a failure, 143 for SIGTERM and 130 for Control-C. The flight keeps that state as an in-memory copy of each completed step; a copy that cannot be made (for example for lack of memory) never stops the flight, but is printed on standard error when it happens and recorded in the JSON's `results.copy_error` and `copy_error_time_s`, since a failure after it saves an earlier step's state. Before 2026-11-12 such a flight wrote no results and saved no state at its end. Two late stops are not caught: a stop after the flight's last step (while its end state is saved or its history and results files are written; the droplet files of a 100 mm flight can take minutes to write) and a second stop within a second or two of the first (while the last completed step is read back from its copy). Such a stop leaves the end state, if it was already written, and the rows file of the flight launcher (`Reentry Model/analysis/flights/`), and no JSON. A process killed without warning (`kill -9`, a crash of Python itself, a power cut) still saves nothing.
 
+`--gas-loads similarity|classic` chooses the surface gas loads of a `--thermal fem` run (the interim gas loads, built
+2026-11-13 from Part A of `Reentry Model/docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`). `similarity`,
+the default, is one provider (`reentry_model/shared/gas_loads.py`) solved once a macro step and read by the surface flow
+and, with `--heating physics`, by the heating: the wall pressure round the whole body (the model's windward law,
+continued past 90 degrees until it meets Daniels and Schwartzentruber's lee pressure), the shear and heat flux of a Lees
+similarity boundary layer on chemically frozen post-shock air to the angle where it separates (about 150 degrees), with
+Daniels and Schwartzentruber's shear from a body Knudsen number of 0.05; the skins' corners that the centroid test
+shelters are read in the separated wake. It replaces a continuum shear that was five to six times below DSMC and the
+zero shear and heating behind 90 degrees. `classic` is the loads as they were (Fay-Riddell and Lees heating, freestream
+pressure and no shear or heating on the lee), named `_loads-classic`, and reproduces main bit for bit (the JSON gains
+`settings.gas_loads`). The similarity heating does not read `--stagnation` or `--catalycity` (the JSON lists them under
+`heating_unused`) and refuses `--bridging-heat sesam-table`. `resume` keeps the loads the state was saved with (a state
+saved before the option resumes on `classic`). On the 65 km smoke flights the default added about 1 s to every macro step
+(skins 4.98 s against 3.92 s, element model 1.22 s against 0.29 s), lowered the stagnation heating by about 2 %, raised
+the total convective heat by 16 % (6.2 % of it now lands behind 90 degrees), and raised the peak shear 4.3 times and
+the shoulder shear 6.1 times. The equations, rulings, measurements and the accuracy against Holman and Boyd's DSMC are in
+`Reentry Model/docs/model_assumptions.md` section 14.
+
 `--rheology composite|bridge` chooses the slurry's viscosity law for a melting skin run (`--melt on` with the skins; accepted and ignored otherwise). Since 2026-11-12 the default is `composite`, a law of the solid fraction alone with no shear-rate dependence: a suspension law below 10 % solid (assumed, with an assumed internal solid fraction of 0.5; nothing is measured on aluminium there) and Li et al.'s (2014) fit at 489.88 1/s from 10 % to half solid (46.2 times the liquid's viscosity at 10 % solid, 168 times at 50 %). The jump between the two at 10 % solid (a factor of 24 at the default internal fraction) is unresolved. `--rheology bridge` is the earlier law, Li et al.'s averaged law held at 367 1/s with a log-linear bridge to the liquid between 906.4 K and 908 K; a melting skin run under it is named with the suffix `_rheology-bridge`, and a flight saved before the option existed keeps it when resumed unless `resume --rheology composite` is given. The run's JSON records `skin.rheology` and `skin.internal_solid_fraction`. `--slurry-spray` keeps its default, off. The sources, assumptions and uncertainties are in `Reentry Model/docs/model_assumptions.md` section 13.
 
-Options (`--thermal fem`): `--heating physics|sesam`; `--stagnation fay-riddell|sutton-graves|dkr`; `--bridging-heat
-matting|sesam-table`; `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1); `--material` (packaged
+Options (`--thermal fem`): `--heating physics|sesam`; `--gas-loads similarity|classic` (above); `--stagnation
+fay-riddell|sutton-graves|dkr` (classic loads only); `--bridging-heat matting|sesam-table` (sesam-table on the classic
+loads only); `--matting-n` (1); `--accommodation` (0.8); `--catalycity` (1, classic loads only); `--material` (packaged
 `AA7075_nomelt`), `--emissivity` (material's 0.40), `--t-ambient` (0 K, SESAM's; 200 K optional); `--h-surface 2`,
 `--h-core 8` (mm; 18.9 k nodes on the 100 mm sphere), `--mesh-size` (multiplier); `--thermal-solver skfem|fenicsx`,
 `--linear-solver amg|direct`, `--consistent-mass` (the nodal-enthalpy lumped capacity is the default; this selects the old consistent capacity matrix, skfem only, for analytic checks); `--dt 0.5`; `--frames-every`, `--animate`, `--stills`. Outputs:
@@ -331,7 +352,8 @@ under the SESAM table; w = 1 when the hot-wall clamp zeroes q_c)); `<run>/vtk/` 
 for both), `frames/`, `frames_section/`, `stills/` (surface and `section_*` stills at the start, peak heating, peak surface
 temperature and the end); with `--reference`, three more plots (`heating_time`, `temperature_time`, `integrated_heat`) and
 `comparison.thermal_metrics` in the JSON. A 100 mm flight takes ~2.5 min (SESAM-equivalent) / ~3 min (182 s with the
-animation). The FEniCSx backend (`--thermal-solver fenicsx`) runs from the separate conda environment `fenicsx_env`
+animation) in physics mode on the classic loads, and about 18 min (1068 s, without the animation, on a loaded machine) on
+the interim gas loads, whose similarity solve adds 1.4 s a macro step at these states. The FEniCSx backend (`--thermal-solver fenicsx`) runs from the separate conda environment `fenicsx_env`
 (conda-forge `fenics-dolfinx` 0.11 + this repo's pip dependencies); selecting it in `drama_env` exits 2. It is verified:
 the seven conformance tests (the analytic cases and a 0.1 % cross-check against the skfem backend) pass, and a 100 s
 coupled flight gives the same temperatures, heat totals and energy balance as the skfem backend to every printed
@@ -352,8 +374,10 @@ FI_PROVIDER=tcp CC=/Users/ashajain/miniforge3/envs/fenicsx_env/bin/clang "$FX" -
 **`--heating sesam` is a verification device, not a physical model.** It applies SESAM's surface-averaged heat input —
 0.27471 × q_DKR × F_h(Kn) × hot-wall factor — uniformly to every patch, front and back, so that the conduction,
 time stepping, material curves and coupling can be compared with SESAM's lumped temperature and heat totals with no
-distribution question in between. Real heating is concentrated on the windward face (`--heating physics`: Lees'
-laminar distribution integrates to 0.196 of the stagnation flux over the sphere, zero leeward).
+distribution question in between. Real heating is concentrated on the windward face (`--heating physics`: on the
+classic loads Lees' laminar distribution integrates to 0.196 of the stagnation flux over the sphere, zero leeward; the
+similarity heating of the interim gas loads, the default since 2026-11-13, reaches round the shoulder to separation and
+integrated to 0.2345 of the stagnation flux on the 65 km element-model smoke flight, 6.2 % of it behind 90 degrees).
 
 ### Verification (`analysis/reentry_model_thermal_verification.py`, `tests/test_reentry_model_reference_thermal.py`)
 
@@ -366,8 +390,10 @@ of peak); `T_eq` is the energy-equivalent mean temperature vs SESAM's lumped tem
 |---|---|---|---|---|---|---|---|---|
 | d100.00mm_h077.500km | sesam | 0.46 % | 2.24 % | +0.31 % / +0.30 % | 24.5 K (1.20 %) | 6.65 % | 2089 K at 139 s (SESAM lumped peak 2104 K at 143 s) | 158 s, 732 steps |
 | d050.00mm_h115.000km | sesam | 0.37 % | 2.36 % | +0.03 % / +0.02 % | 28.0 K (1.22 %) | 3.40 % | 2442 K at 245 s (SESAM lumped peak 2458 K at 245 s) | 47 s, 1117 steps |
-| d100.00mm_h077.500km | physics | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 182 s incl. animation, 732 steps |
-| d050.00mm_h115.000km | physics | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 54 s, 1117 steps |
+| d100.00mm_h077.500km | physics, classic loads | — | — | ratio to SESAM 0.744 | — | — | 2319 K stagnation at 118 s, mean 1717 K at 150 s | 182 s incl. animation, 732 steps |
+| d050.00mm_h115.000km | physics, classic loads | — | — | ratio to SESAM 0.770 | — | — | 2493 K stagnation at 239 s, mean 2151 K at 250 s | 54 s, 1117 steps |
+| d100.00mm_h077.500km | physics, interim gas loads | — | — | ratio to SESAM 0.862 | — | — | 2433 K stagnation at 118.5 s, mean 1881 K at 145.5 s | 1068 s, 733 steps (loaded machine) |
+| d050.00mm_h115.000km | physics, interim gas loads | — | — | ratio to SESAM 0.882 | — | — | 2626 K stagnation at 238.5 s, mean 2295 K at 247 s | 1684 s, 1118 steps (loaded machine) |
 
 Both physics-mode runs now reach the ground (`end_reason == "ground"`, same 732 / 1117 steps as their sesam-mode
 counterparts — the trajectory is heating-mode-independent). The Q_conv/point-wise/ΔT_eq/radiated columns are "—"
@@ -375,6 +401,18 @@ for physics mode because those thresholds are SESAM-equivalent-mode-specific (sp
 raw heat distribution and timing are deliberately different from SESAM's surface average (windward-concentrated
 vs. uniform; for a sphere the ATDB factor is the same for any attitude, see docs/model_assumptions.md §8), so a point-wise or peak-power comparison against SESAM isn't meaningful there — only the
 integrated-heat ratio is reported, per spec section 10.
+
+The two "classic loads" rows are the physics heating as it was before the interim gas loads (`PhysicsHeating`:
+Fay–Riddell, Matting bridging, Lees distribution, zero leeward), which `tests/test_reentry_model_reference_thermal.py`
+builds directly and `--gas-loads classic` flies. The Step 2 reference tier, rerun on the interim-gas-loads branch on
+2026-11-14 (`pytest tests/test_reentry_model_reference_thermal.py -m reference`: 5 passed in 548 s), gives the same
+values on the current code: ratios 0.7437 and 0.7702, peak stagnation temperatures 2319 K at 118 s and 2494 K at 239 s,
+peak mean temperatures 1717 K at 149.5 s and 2151 K at 250 s. The two "interim gas loads" rows are the run command's default since 2026-11-13 (similarity heating round the shoulder
+to separation, `Reentry Model/docs/model_assumptions.md` section 14), measured once each on 2026-11-14 with
+`analysis/reentry_model_thermal_verification.py --modes physics`, which runs the command line: the integrated heat is
+16 % and 14 % higher than on the classic heating (the heat now reaching round the shoulder), both inside the reported
+band 0.4 to 1.1, both flights reach the ground with the energy books closed to 1e-8, and no similarity solve at the
+stagnation point failed down to the subsonic end of the flight. No reference test flies the interim gas loads.
 
 Thresholds (`tests/test_reentry_model_reference_thermal.py`): Q_conv 3 % of peak and 3 % point-wise, integrated heat
 3 %, T_eq 2 %, radiated power 8 % (= 4 × the temperature margin: the resolved surface radiates at its own, hotter
@@ -400,8 +438,9 @@ Findings recorded while building this step (details in `sesam_verified_facts.md`
   enthalpy is dissociation at 1.5 kPa; Sutton–Graves is a Le = 1 fit), 1.14 × with the Lewis-number term off
   (independently re-measured this task: q_FR = 2.22e6 W/m², q_SG = 1.72e6 W/m²); `airNASA9.yaml` has no
   transport data, so viscosity comes from Blottner fits with Wilke mixing.
-- Physics mode delivers 0.74–0.77 × SESAM's integrated heat (0.196/0.2747 × Fay–Riddell/DKR × hot wall) with a
-  600 K stagnation-to-mean temperature difference at peak heating — the reason Step 3 needs the resolved field.
+- The classic physics heating delivers 0.74–0.77 × SESAM's integrated heat (0.196/0.2747 × Fay–Riddell/DKR × hot wall) with a
+  600 K stagnation-to-mean temperature difference at peak heating — the reason Step 3 needs the resolved field. The
+  similarity heating of the interim gas loads (2026-11-13) delivers 0.86–0.88 ×.
 - Both thermal backends raise `RuntimeError` when their Newton iteration fails to converge; the CLI catches this
   (and other model errors) and exits 1 with the message, rather than hanging or producing a silently wrong result
   (since 2026-11-12 after writing the results of the completed macro steps and saving the last one's state).

@@ -84,18 +84,20 @@ reference" -n 4`, has 965 tests: 964 pass and 1 module is skipped (the FEniCSx m
 tier ran once on the merged model code in 71 minutes across four processes, with other runs on the machine (950 passed;
 the 14 tests whose values were set on the bridge law failed under the new composite default and now name the bridge law,
 after which they and their two test files were run again and pass). Main's figure before the merge was 937 tests in
-about 35 minutes on a quiet machine. The port's own tools have their tests in `analysis/skyscrapers_port/`, run
+about 35 minutes on a quiet machine. With the interim gas loads (branch `interim-gas-loads`, 2026-11-14) the unit tier has
+1056 tests: 1055 pass and 1 is skipped (the FEniCSx module), in 61 minutes on four processes with other runs on the machine;
+the droplet tests, `pytest reentry_model/droplet_reentry/tests`, are 35 and pass (74 s). The port's own tools have their tests in `analysis/skyscrapers_port/`, run
 explicitly (see `analysis/skyscrapers_port/README.md`).
 
 ```bash
 cd "Reentry Model"
 PYTHONDONTWRITEBYTECODE=1 "$PY" -m pytest tests -m "not drama and not reference" -q -p no:cacheprovider -n 4
-                                                          # the package's unit tier: 965 tests, 1 skipped, ~35-71 min on four
+                                                          # the package's unit tier: 1056 tests, 1 skipped, ~35-71 min on four
                                                           # processes (needs pytest-xdist)
 "$PY" -m pytest -m "not reference" -q                     # the default collection, which adds the droplet and wake tests: longer (not timed)
 "$PY" -m pytest tests/test_reentry_model_heating.py -q   # one module
 "$PY" -m pytest tests/test_reentry_model_mesh.py -q -k prism   # one test
-"$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~35 min (Step 2); the Step 3 reference tests (below) are
+"$PY" -m pytest -m reference -q                          # SESAM reference flights: ~15 min (Step 1) + ~9-35 min (Step 2); the Step 3 reference tests (below) are
                                                           # collected too but have not yet been run on the port (run time not measured)
 
 cd "DRAMA Sphere Experiments"
@@ -132,6 +134,17 @@ From inside `Reentry Model/`:
 "$PY" analysis/reentry_model_thermal_verification.py  # Step 2 verification table
 ```
 
+The surface gas loads of a `--thermal fem` run are chosen by `--gas-loads similarity|classic` (`run` only). Since
+2026-11-13 the default is `similarity`, the interim gas loads (`shared/gas_loads.py`; Part A of
+`docs/superpowers/specs/2026-11-12-shoulder-melt-loss-design.md`): one provider per flight, read by the surface flow
+and, with `--heating physics`, by `heating.SimilarityHeating`, with the skins' sheltered corners read in the separated wake.
+`classic` is the loads as they were, named `_loads-classic`, bit for bit main's results apart from the JSON's
+`settings.gas_loads` (`analysis/skyscrapers_port/same_results.py`, 2026-11-14). `resume` has no option: a state keeps the
+loads it was saved with, and a state saved before the option resumes on `classic`. The provider solves its similarity
+boundary layer once a macro step (about 0.5 to 3 s a solve), which on the 65 km smoke flights added about 1 s a macro step
+and made the non-melting Step 2 flights to the ground 19 and 80 times slower (1068 s and 1684 s against 57 s and 21 s).
+Read `docs/model_assumptions.md` section 14 before quoting a result under either loads.
+
 The melting skins' slurry viscosity is chosen by `--rheology composite|bridge` (`run` and `resume`). Since 2026-11-12 the default for a melting skin run is `composite` (`shared/rheology.py`: a function of the solid fraction alone; a suspension law below 10 % solid, assumed, then Li et al.'s fit at 489.88 1/s up to half solid; the jump at 10 % solid is unresolved). `--rheology bridge` is the earlier law and marks the run name with `_rheology-bridge`; `SkinSettings.rheology` defaults to `"composite"` in the library too; a state saved before the option existed flew the bridge law and keeps it on resume (`SkinSettings.__setstate__`). `--slurry-spray` stays off by default. Read `docs/model_assumptions.md` section 13 for the law's sources and what is assumed before quoting a result under it.
 
 Exit codes are part of the interface: 0 ok (the geometry stop included), 1 a model/integration failure (message printed,
@@ -159,7 +172,7 @@ the flag.
 Code that both architectures use lives in `reentry_model/shared/`: the Step 1 and Step 2 modules (`trajectory`,
 `earth`, `atmosphere`, `fap`, `aero`, `gas`, `constants`, `heating`, `material`, `sesam_io`, `compare`, `viz`), the
 Step 3 physics that does not depend on a mesh (`rheology`, `dispersion`, `melt_profile`, `surface_flow`, `spray`,
-`girin_case`), the droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
+`girin_case`), the interim gas loads (`gas_loads`, `similarity`, `daniels_schwartzentruber`), the droplet writer (`droplets`), the melt-film lubrication formulas (`lubrication`), the body seam (`body`), the thermal protocol (`thermal`) and the run command's common
 arguments (`cli_common`). The old paths of the 17 wholly moved modules (such as `reentry_model.aero`) are alias files that make
 the old name the same module object as the shared one. `skyscrapers/body.py`, `skyscrapers/coupled.py`, `thermal/__init__.py` and `cli.py`
 keep their skyscrapers-only code and only re-export the moved shared names, so patching a shared name there (for example
@@ -237,7 +250,15 @@ Physics shared with the other (level-set) architecture:
   viscosity, for the broken-line solver and the floor test in `dispersion`; the release-run rule (`threshold_run`), the
   mode inputs (`profile_modes`, `select_run`, `run_properties`), the records' appended columns (`profile_rows`) and the
   history's summary (`summary`, `DISPERSION_COLUMNS`).
-- `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient.
+- `surface_flow` — the flow-regime gate, wall pressure, boundary-layer edge state, wall shear and the film's driving gradient;
+  with a gas-loads provider (`gas_loads=`) its pressure, gradient and shear come from the provider on both sides.
+- `gas_loads` — the interim gas loads' provider (`GasLoads`, 2026-11-13; `docs/model_assumptions.md` section 14): pressure
+  round the whole body (the model's windward law joined past 90 degrees to Daniels and Schwartzentruber's lee pressure),
+  similarity shear and heat flux to separation, their shear from Kn_body 0.05, solved once a macro step and cached so the
+  surface flow and `heating.SimilarityHeating` share it; the replaceable interface a coupled CFD solution will later
+  serve (design A5).
+- `similarity` — the Lees local-similarity boundary layer on chemically frozen air (`SimilaritySolver`, `march`).
+- `daniels_schwartzentruber` — Daniels and Schwartzentruber's (2026) sphere pressure and shear, continuum to free-molecular.
 - `rheology` — the viscosity of liquid and slurry AA7075: the composite law (default for melting skins) and the earlier bridge law, chosen by name through `law_viscosity`.
 - `girin_case` — Girin's published spraying cases run with his own simplifications, as a validation.
 
@@ -329,8 +350,13 @@ physics or quoting a result.
 - **`--heating sesam` is a verification device, not physics.** It spreads SESAM's surface-averaged
   heat input uniformly over every patch, front and back, so the conduction and coupling can be
   compared with SESAM's lumped temperature with no distribution question in between. Never quote its
-  results as a physical prediction; `--heating physics` (Fay–Riddell + Matting bridging + Lees
-  distribution) is the model proper.
+  results as a physical prediction; `--heating physics` is the model proper. Since 2026-11-13 `--heating physics`
+  on the default `--gas-loads similarity` is `heating.SimilarityHeating` (the similarity stagnation flux and shape from
+  the gas-loads provider, Matting bridging, heat round the shoulder to separation); `--gas-loads classic` gives the
+  earlier `PhysicsHeating` (Fay–Riddell + Matting bridging + Lees distribution, zero leeward), which is also what the
+  Step 2 reference test, `test_reentry_model_coupled.py`, `test_reentry_model_melting.py` and the droplet stage build
+  directly. A number quoted for "physics mode" must say which loads it was measured on (`docs/model_assumptions.md`
+  sections 2 and 14).
 - **Some agreement is in-sample by construction.** The Knudsen drag bridging `aero.SesamTable`, the
   heat factor `aero.SesamHeatTable` and the hot-wall c_p were all fitted to SESAM output that
   includes the four committed references. The independent content of the verification is the

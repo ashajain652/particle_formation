@@ -38,6 +38,9 @@ SURFACE_MODELS = ("elements", "skin")
 # them (a test keeps the two equal); physics mode is reported, bounded only by its integrated heat at the end over SESAM's
 THRESHOLDS = {"Q_conv_peak_rel_max": 0.03, "Q_conv_continuum_rel_max": 0.03, "integrated_heat_rel_hypersonic": 0.03,
               "dT_rel_max": 0.02, "radiated_peak_rel_max": 0.08}
+# physics mode runs the command line, so since 2026-11-13 it flies the default interim gas loads (similarity heating):
+# measured ratios 0.862 (d100) and 0.882 (d050) on 2026-11-14, against 0.744 and 0.770 on the classic heating, which the
+# reference test builds directly (README Step 2 table; docs/model_assumptions.md sections 6 and 14.7)
 PHYSICS_RATIO = (0.4, 1.1)
 PROGRESS_EVERY = 20
 COLUMNS = ["case", "mode", "Q_conv max (of peak)", "Q_conv max (continuum, point-wise)", "integrated heat (end of hypersonic)",

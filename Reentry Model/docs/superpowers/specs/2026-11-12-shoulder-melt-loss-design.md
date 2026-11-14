@@ -2,7 +2,11 @@
 
 Status, 2026-11-12: Part A (interim gas loads) is decided, through the builder check, and approved by Asha for
 building now. Part B (shoulder melt loss) is still being designed: it records what is decided so far and lists the
-decisions still open.
+decisions still open. Status, 2026-11-14: Part A is built on the branch `interim-gas-loads` (plan
+`docs/superpowers/plans/2026-11-13-interim-gas-loads.md`) and is the default of every `--thermal fem` flight
+(`--gas-loads classic` keeps the earlier loads, bit for bit); its assumptions, measurements and accuracy are
+`docs/model_assumptions.md` section 14, and the model's own loads against DSMC are
+`figures/2026-11-12-shoulder-melt-loss/model_vs_dsmc.png`. A-5 stays deferred; Part B is not built.
 
 Evidence behind this design: the literature report `reports/Film separation at a convex shoulder.md` and its notes in
 `research_notes/Film separation at a convex shoulder/` (both at the research root, one level above `Reentry Model/`,
