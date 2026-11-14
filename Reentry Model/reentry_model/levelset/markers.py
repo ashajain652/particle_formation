@@ -97,7 +97,9 @@ NEIGHBOUR_PATH = 2.0       # the path along phi's patch graph between neighbours
                            # (Task 9b; see the docstring)
 PATH_CHUNK = 64            # sources of one Dijkstra in `patch_paths` at most
 OPPOSED_NORMALS = -0.5     # two markers whose normals' dot product is below this, each in front of the other, face
-                           # each other across gas and are never neighbours (Task 9b, fix round 1; see the docstring)
+                           # each other across gas and are never neighbours (Task 9b, fix round 1; see the docstring);
+                           # and a marker whose normal's dot product with the surface's is below it never owns that
+                           # surface (`ownership`'s same-side rule, design section 21.5)
 CAP_SIDES = 16             # sides of the polygon a Voronoi cell is clipped from
 SNAP_PASSES = 2            # the snap applied once and iterated once (section 9.1)
 NEWTON_ROUNDS = 8          # cell-gradient Newton steps after them at most (`_cell_newton`; Task 9, fix round 4)
@@ -112,6 +114,8 @@ TRAP_CANDIDATES = 8        # nearest patch triangles (by centroid) searched firs
 OWN_SHARE = 1.0 / 64.0     # of the target spacing: a piece of phi at most this across is divided among its nearest
                            # markers whatever else lies near (`ownership`)
 OWN_CANDIDATES = 4         # markers a piece of phi is divided among at most (`ownership`)
+ALLOWED_FIRST = 16         # markers searched first for the nearest that may own a point under the same-side rule
+                           # (`_nearest`; four times as many again where too few of them may)
 
 Faces = namedtuple("Faces", "i j length normal")
 
@@ -202,7 +206,96 @@ def _divide(t, a, x, cand, live):
     return out
 
 
-def ownership(x, tris, tri_patch, n_patch, size):
+def _dividing(t, x, cand, live, s):
+    """The segments dividing the triangles `t` (q, 3, 3) among their first `live` (q,) candidate markers `cand` (q, m),
+    as `_divide` divides them: for each pair (u, w) of a triangle's candidates, the triangle's cut by the plane halfway
+    between them, kept where no other candidate is nearer (where u is nearer than each other v, the function `_halfway`
+    of (u, v), linear along the cut, is not positive). A segment is measured on `s` (q, 3, 3), triangles matching `t`
+    corner for corner, carried there by the affine map between the two (`s` = `t` measures it where it lies). The cut's
+    ends follow `_below`'s sides (negative on u's), so a cut along an edge of two triangles counts in one of them; where a
+    corner is exactly as near two markers, which of the triangles beside it is whole and which divided depends on the
+    nearest-marker query's choice, and such a cut may count in neither or both (of measure zero away from symmetric
+    set-ups). Returns (marker i, marker j, length [m]) of each piece, i < j."""
+    out_i, out_j, out_l = [], [], []
+    for L in np.unique(live).tolist():
+        if L < 2:
+            continue
+        sel = np.flatnonzero(live == L)
+        T, S, C = t[sel], s[sel], cand[sel]
+        r = np.arange(len(sel))
+        for u in range(L):
+            for w in range(u + 1, L):
+                xu, xw = x[C[:, u]], x[C[:, w]]
+                f = _halfway(T, xu, xw)
+                neg = f < 0.0
+                count = neg.sum(axis=1)
+                cut = (count == 1) | (count == 2)
+                if not cut.any():
+                    continue
+                v = np.where(count == 1, np.argmax(neg, axis=1), np.argmax(~neg, axis=1))    # the corner alone
+                va, vb = (v + 1) % 3, (v + 2) % 3
+                ends = []
+                for e in (va, vb):
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        tau = np.where(cut, f[r, v] / (f[r, v] - f[r, e]), 0.0)
+                    lam = np.zeros((len(sel), 3))
+                    lam[r, v] = 1.0 - tau
+                    lam[r, e] += tau
+                    ends.append(lam)
+                lo, hi = np.zeros(len(sel)), np.ones(len(sel))
+                p0, p1 = (np.einsum("ki,kid->kd", lam, T) for lam in ends)
+                for o in range(L):
+                    if o in (u, w):
+                        continue
+                    xo = x[C[:, o]]
+                    g0, g1 = (_halfway(p[:, None, :], xu, xo)[:, 0] for p in (p0, p1))
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        at = g0 / (g0 - g1)
+                    lo = np.where((g0 > 0.0) & (g1 <= 0.0), np.maximum(lo, at), lo)
+                    hi = np.where((g0 <= 0.0) & (g1 > 0.0), np.minimum(hi, at), hi)
+                    hi = np.where((g0 > 0.0) & (g1 > 0.0), 0.0, hi)
+                q0, q1 = (np.einsum("ki,kid->kd", lam, S) for lam in ends)
+                length = np.linalg.norm(q1 - q0, axis=1) * np.clip(hi - lo, 0.0, 1.0)
+                keep = cut & (length > 0.0)
+                out_i.append(np.minimum(C[keep, u], C[keep, w]))
+                out_j.append(np.maximum(C[keep, u], C[keep, w]))
+                out_l.append(length[keep])
+    if not out_i:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0)
+    return np.concatenate(out_i), np.concatenate(out_j), np.concatenate(out_l)
+
+
+def _nearest(tree, points, k, normals=None, point_normal=None):
+    """The k markers of `tree` (a cKDTree of the markers' positions) nearest each of `points` (N, 3): (distances (N, k)
+    [m], indices (N, k)), nearest first. With `normals` (n, 3), the markers' normals, and `point_normal` (N, 3), the
+    surface's normal at each point, only the markers that may own the point by the same-side rule, normals[m] .
+    point_normal > OPPOSED_NORMALS (design section 21.5: ownership never crosses gas; a normal shorter than one loosens
+    the rule, and one shorter than -OPPOSED_NORMALS lifts it), searched among the ALLOWED_FIRST nearest and then four
+    times as many again until k are found or every marker is searched; a row with fewer is padded with distance inf and
+    index n."""
+    pts = np.asarray(points, dtype=float).reshape(-1, 3)
+    if normals is None:
+        d, i = tree.query(pts, k=k)
+        return np.asarray(d, dtype=float).reshape(len(pts), -1), np.asarray(i, dtype=np.int64).reshape(len(pts), -1)
+    n, N = tree.n, len(pts)
+    pn = np.asarray(point_normal, dtype=float).reshape(-1, 3)
+    dist, idx = np.full((N, k), np.inf), np.full((N, k), n, dtype=np.int64)
+    todo, kq = np.arange(N), min(n, max(k, ALLOWED_FIRST))
+    while len(todo):
+        d, i = tree.query(pts[todo], k=kq)
+        d, i = np.asarray(d, dtype=float).reshape(len(todo), kq), np.asarray(i, dtype=np.int64).reshape(len(todo), kq)
+        ok = np.einsum("tqd,td->tq", normals[i], pn[todo]) > OPPOSED_NORMALS
+        order = np.argsort(~ok, axis=1, kind="stable")[:, :k]                # the allowed first, nearest first
+        kk = order.shape[1]
+        allowed = np.take_along_axis(ok, order, axis=1)
+        dist[todo, :kk] = np.where(allowed, np.take_along_axis(d, order, axis=1), np.inf)
+        idx[todo, :kk] = np.where(allowed, np.take_along_axis(i, order, axis=1), n)
+        todo = todo[(ok.sum(axis=1) < k) & (kq < n)]
+        kq = min(n, 4 * kq)
+    return dist, idx
+
+
+def ownership(x, tris, tri_patch, n_patch, size, normals=None, tri_normal=None, boundaries=False, measure=None):
     """The one partition of phi by the markers at `x` (n, 3) (stage 3 Task 11's fix round 1, C1): every point of phi
     belongs to its nearest marker, so that a marker owns the part of phi inside its Voronoi cell in space. Each marker's
     area is the area it owns (`Markers.tessellate`), the gas loads give it the mean over what it owns
@@ -216,53 +309,91 @@ def ownership(x, tris, tri_patch, n_patch, size):
     again; a piece at most `size` [m] across (the square root of twice its area) is divided among the OWN_CANDIDATES
     markers nearest its centroid whatever else lies near, which could leave it inexact by a part of it another marker's
     cell reaches into. Returns W (n, n_patch), csr [m2]: W[i, p] the area of patch p owned by marker i; its columns sum
-    to the patches' areas (the sums of their triangles' areas) to round-off."""
+    to the patches' areas (the sums of their triangles' areas) to round-off.
+
+    The same-side rule (design section 21.5; plan 03b Task 1): with the markers' `normals` (n, 3) and each triangle's
+    unit normal `tri_normal` (Q, 3), marker m may own triangle q only if normals[m] . tri_normal[q] > OPPOSED_NORMALS,
+    so that ownership never crosses gas (the facing walls of a slot narrower than the spacing); "nearest" above is then
+    nearest among the markers allowed (`_nearest`), and the argument for exactness stands with them. A triangle no
+    marker may own is owned by none. With `boundaries`, also the segments dividing the triangles (`_dividing`), measured
+    on `measure` (Q, 3, 3), triangles matching `tris` corner for corner (by default `tris` themselves; the division of
+    the layer measures on the level surface what it divides on phi, `division.divide`): returns (W, (i, j, length)),
+    each pair of markers i < j sharing a boundary once, with its segments' lengths summed [m]. Without normals and
+    boundaries the result is the one before these options, bit for bit."""
     x = np.asarray(x, dtype=float).reshape(-1, 3)
     n = len(x)
     t = np.asarray(tris, dtype=float).reshape(-1, 3, 3)
     tp = np.asarray(tri_patch, dtype=np.int64)
     if not n or not len(t):
-        return csr_matrix((n, n_patch))
+        W = csr_matrix((n, n_patch))
+        return (W, (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0))) if boundaries else W
     tree = cKDTree(x)
     m = min(OWN_CANDIDATES, n)
     a = 0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
-    _, o = tree.query(t.reshape(-1, 3))
-    o = np.asarray(o, dtype=np.int64).reshape(-1, 3)
+    q = np.arange(len(t))                                       # each piece's triangle, for its normal
+    nn = None if normals is None else np.asarray(normals, dtype=float).reshape(-1, 3)
+    tn = None if normals is None else np.asarray(tri_normal, dtype=float).reshape(-1, 3)
+    s = (t if measure is None else np.asarray(measure, dtype=float).reshape(-1, 3, 3)) if boundaries else None
+    near = lambda points, k, tri: _nearest(tree, points, k, nn, None if tn is None else tn[tri])
+    _, o = near(t.reshape(-1, 3), 1, np.repeat(q, 3))
+    o = o.reshape(-1, 3)
+    if nn is not None:
+        mine = o[:, 0] < n                                      # a triangle no marker may own stays unowned
+        t, tp, o, a, q = t[mine], tp[mine], o[mine], a[mine], q[mine]
+        s = None if s is None else s[mine]
     rows, cols, vals = [], [], []
+    pairs = []
     while len(t):
         same = (o[:, 0] == o[:, 1]) & (o[:, 0] == o[:, 2])
         rows.append(o[same, 0]), cols.append(tp[same]), vals.append(a[same])
-        t, tp, o, a = t[~same], tp[~same], o[~same], a[~same]
+        t, tp, o, a, q = t[~same], tp[~same], o[~same], a[~same], q[~same]
+        s = None if s is None else s[~same]
         if not len(t):
             break
         c = t.mean(axis=1)
         r = np.linalg.norm(t - c[:, None, :], axis=2).max(axis=1)
-        d, k = tree.query(c, k=min(m + 1, n))
-        d, k = d.reshape(len(t), -1), np.asarray(k, dtype=np.int64).reshape(len(t), -1)
+        d, k = near(c, min(m + 1, n) if nn is None else m + 1, q)
         reach = d[:, 0] + 2.0 * r
         live = (d[:, :m] <= reach[:, None]).sum(axis=1)       # the markers within reach, nearest first
         last = np.sqrt(2.0 * a) <= size
         done = last | (d.shape[1] == m) | (d[:, -1] > reach)
         if done.any():
-            share = _divide(t[done], a[done], x, k[done, :m], np.where(last[done], m, live[done]))
+            divided = np.where(last[done], np.isfinite(d[done, :m]).sum(axis=1), live[done])
+            share = _divide(t[done], a[done], x, k[done, :m], divided)
             keep = share > 0.0
             rows.append(k[done, :m][keep]), cols.append(np.broadcast_to(tp[done][:, None], share.shape)[keep])
             vals.append(share[keep])
-        t, tp, o, a = t[~done], tp[~done], o[~done], a[~done]
+            if boundaries:
+                pairs.append(_dividing(t[done], x, k[done, :m], divided, s[done]))
+        t, tp, o, a, q = t[~done], tp[~done], o[~done], a[~done], q[~done]
+        s = None if s is None else s[~done]
         if not len(t):
             break
         A, B, C = t[:, 0], t[:, 1], t[:, 2]
         AB, BC, CA = 0.5 * (A + B), 0.5 * (B + C), 0.5 * (C + A)
-        _, om = tree.query(np.concatenate([AB, BC, CA]))
-        oAB, oBC, oCA = np.asarray(om, dtype=np.int64).reshape(3, -1)
+        _, om = near(np.concatenate([AB, BC, CA]), 1, np.tile(q, 3))
+        oAB, oBC, oCA = om.reshape(3, -1)
         oA, oB, oC = o[:, 0], o[:, 1], o[:, 2]
         t = np.concatenate([np.stack(v, axis=1) for v in ((A, AB, CA), (AB, B, BC), (CA, BC, C), (AB, BC, CA))])
         o = np.concatenate([np.stack(v, axis=1) for v in ((oA, oAB, oCA), (oAB, oB, oBC), (oCA, oBC, oC),
                                                           (oAB, oBC, oCA))])
-        tp, a = np.tile(tp, 4), np.tile(0.25 * a, 4)
-    W = coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n_patch)).tocsr()
+        tp, a, q = np.tile(tp, 4), np.tile(0.25 * a, 4), np.tile(q, 4)
+        if s is not None:
+            A, B, C = s[:, 0], s[:, 1], s[:, 2]
+            AB, BC, CA = 0.5 * (A + B), 0.5 * (B + C), 0.5 * (C + A)
+            s = np.concatenate([np.stack(v, axis=1) for v in ((A, AB, CA), (AB, B, BC), (CA, BC, C), (AB, BC, CA))])
+    rows = np.concatenate(rows) if rows else np.zeros(0, dtype=np.int64)
+    W = coo_matrix((np.concatenate(vals) if vals else np.zeros(0), (rows, np.concatenate(cols) if cols else rows)),
+                   shape=(n, n_patch)).tocsr()
     W.sum_duplicates()
-    return W
+    if not boundaries:
+        return W
+    if not pairs:
+        return W, (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0))
+    i, j, length = (np.concatenate(v) for v in zip(*pairs))
+    key, at = np.unique(i * n + j, return_inverse=True)
+    total = np.bincount(at.ravel(), length, minlength=len(key))
+    return W, (key // n, key % n, total)
 
 
 def owned(x, P, size):

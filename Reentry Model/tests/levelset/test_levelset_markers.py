@@ -7,6 +7,7 @@ import pytest
 from reentry_model.levelset.boxmesh import BoxBase, build
 from reentry_model.levelset.cutcell import patches
 from reentry_model.levelset.levelset import redistance
+from reentry_model.levelset import markers as markers_mod
 from reentry_model.levelset.markers import Markers
 from reentry_model.levelset.skin import Skins, SkinSettings
 
@@ -170,6 +171,78 @@ def test_each_marker_s_area_is_the_area_of_phi_nearest_it():
     assert len(idx) >= 50
     assert err.max() <= OWNED_EXACT
     assert mk.area.sum() == pytest.approx(P.area.sum(), rel=1e-12)
+
+
+def _ownership_at_ffae441(x, tris, tri_patch, n_patch, size):
+    """`markers.ownership` as it stood at ffae441, before the same-side rule and the shared boundaries (plan 03b Task 1),
+    copied unchanged: the reference its default call must reproduce bit for bit."""
+    from scipy.sparse import coo_matrix, csr_matrix
+    from scipy.spatial import cKDTree
+    x = np.asarray(x, dtype=float).reshape(-1, 3)
+    n = len(x)
+    t = np.asarray(tris, dtype=float).reshape(-1, 3, 3)
+    tp = np.asarray(tri_patch, dtype=np.int64)
+    if not n or not len(t):
+        return csr_matrix((n, n_patch))
+    tree = cKDTree(x)
+    m = min(markers_mod.OWN_CANDIDATES, n)
+    a = 0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+    _, o = tree.query(t.reshape(-1, 3))
+    o = np.asarray(o, dtype=np.int64).reshape(-1, 3)
+    rows, cols, vals = [], [], []
+    while len(t):
+        same = (o[:, 0] == o[:, 1]) & (o[:, 0] == o[:, 2])
+        rows.append(o[same, 0]), cols.append(tp[same]), vals.append(a[same])
+        t, tp, o, a = t[~same], tp[~same], o[~same], a[~same]
+        if not len(t):
+            break
+        c = t.mean(axis=1)
+        r = np.linalg.norm(t - c[:, None, :], axis=2).max(axis=1)
+        d, k = tree.query(c, k=min(m + 1, n))
+        d, k = d.reshape(len(t), -1), np.asarray(k, dtype=np.int64).reshape(len(t), -1)
+        reach = d[:, 0] + 2.0 * r
+        live = (d[:, :m] <= reach[:, None]).sum(axis=1)
+        last = np.sqrt(2.0 * a) <= size
+        done = last | (d.shape[1] == m) | (d[:, -1] > reach)
+        if done.any():
+            share = markers_mod._divide(t[done], a[done], x, k[done, :m], np.where(last[done], m, live[done]))
+            keep = share > 0.0
+            rows.append(k[done, :m][keep]), cols.append(np.broadcast_to(tp[done][:, None], share.shape)[keep])
+            vals.append(share[keep])
+        t, tp, o, a = t[~done], tp[~done], o[~done], a[~done]
+        if not len(t):
+            break
+        A, B, C = t[:, 0], t[:, 1], t[:, 2]
+        AB, BC, CA = 0.5 * (A + B), 0.5 * (B + C), 0.5 * (C + A)
+        _, om = tree.query(np.concatenate([AB, BC, CA]))
+        oAB, oBC, oCA = np.asarray(om, dtype=np.int64).reshape(3, -1)
+        oA, oB, oC = o[:, 0], o[:, 1], o[:, 2]
+        t = np.concatenate([np.stack(v, axis=1) for v in ((A, AB, CA), (AB, B, BC), (CA, BC, C), (AB, BC, CA))])
+        o = np.concatenate([np.stack(v, axis=1) for v in ((oA, oAB, oCA), (oAB, oB, oBC), (oCA, oBC, oC),
+                                                          (oAB, oBC, oCA))])
+        tp, a = np.tile(tp, 4), np.tile(0.25 * a, 4)
+    W = coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n_patch)).tocsr()
+    W.sum_duplicates()
+    return W
+
+
+def test_ownership_with_no_normals_is_unchanged():
+    """Plan 03b Task 1: `ownership` without normals and without boundaries is today's (ffae441's), bit for bit, on the
+    test sphere with markers seeded 2 mm apart; asking for the boundaries leaves the areas as they were."""
+    mesh = _mesh()
+    phi = _sphere(mesh)
+    P = patches(mesh, phi)
+    mk = seeded(mesh, phi, DESIGN_SPACING, mesh.base.lo)
+    size = markers_mod.OWN_SHARE * DESIGN_SPACING
+    old = _ownership_at_ffae441(mk.x, P.tris, P.tri_patch, len(P.area), size)
+    new = markers_mod.ownership(mk.x, P.tris, P.tri_patch, len(P.area), size)
+    both, (i, j, length) = markers_mod.ownership(mk.x, P.tris, P.tri_patch, len(P.area), size, boundaries=True)
+    assert old.nnz > len(P.area)                                           # some patches are divided
+    for W in (new, both):
+        assert W.shape == old.shape
+        for name in ("indptr", "indices", "data"):
+            assert np.array_equal(getattr(W, name), getattr(old, name))
+    assert len(i) > mk.n and np.all(i < j) and np.all(length > 0.0)
 
 
 def test_a_turned_sphere_s_markers_keep_their_areas_at_the_body_s_spacing():
