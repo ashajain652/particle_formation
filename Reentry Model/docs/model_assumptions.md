@@ -1101,10 +1101,11 @@ of the shape set their own loads. The rule now is (Asha, 2026-11-13):
    behind the plane did before.
 7. **Who reads it.** Every consumer reads it through `load_angles` and `nose_radius`, whose interfaces are unchanged.
 
-The two decisions that depend on the rule are the builder's calls, not Asha's, and are recorded as such: the shelter test
-against the tops rather than against the fitted sphere (the sphere runs through the middle of the corners, so the design
-expected it to shelter most of the face), and the direction of the push (14.3). The ray offset of a twentieth of a cell is the
-level-set design's offset (section 20.8 there), taken over.
+The shelter test is tested against the tops, not against the fitted sphere (Asha, 2026-11-13: the ray is tested against the
+tops, the interpolated surface through the corners, not the fitted sphere); the design's reason is that the sphere runs
+through the middle of the corners, so a test against it would shelter most of the face. The direction of the push (14.3) is
+the builder's call, not Asha's. The ray offset of a twentieth of a cell is the level-set design's offset (section 20.8
+there), taken over.
 
 **(verified)** On an untouched coarse sphere (4 mm surface elements, 1,125 candidates) no candidate is sheltered, the fit is
 50.05 mm against the mesh radius of 50 mm (within 0.1 %), the fitted centre is within 0.02 micrometres of the origin, and
@@ -1170,9 +1171,10 @@ of the comparison flights of 2026-11-09 (the times are as the design records the
 
 Neither fit reaches the bound, so on both bodies the radius the loads read is the fitted one; the cap does not limit the
 heating here. The centre is measured along the flight direction from the mesh's coordinate origin, as `skinbody.py` does,
-which is not the body's first centre once the metal has moved; the 31.59 mm of the 50 mm body therefore shows how far its
-front has receded from the first shape. A misfit of 2.579 mm on the 100 mm body, against 0.736 mm on the 50 mm body, means
-its exposed corners lie further from one sphere, which is what a rim and a flattened face do to a fit. The heat input of each
+which is not the body's first centre once the metal has moved. **(assumed)** that the 31.59 mm of the 50 mm body shows how
+far its front has receded from the first shape; Task 5 measured only the centre's position. A misfit of 2.579 mm on the
+100 mm body, against 0.736 mm on the 50 mm body, means its exposed corners lie further from one sphere; **(assumed)** that
+a rim and a flattened face cause this, which was not tested. The heat input of each
 body under the new rule against the old one, and the direction gaps on these bodies, were measured in the investigation
 (`output/shape_feedback/report.md` of the main checkout, git-ignored) and are not repeated here, because the task reports
 of this build do not carry them.
