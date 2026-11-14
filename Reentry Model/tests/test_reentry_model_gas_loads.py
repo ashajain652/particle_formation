@@ -64,10 +64,13 @@ def test_meridian_matches_reference_on_fine_bins(fine_loads):
     q3, q2 = 0.5 * rho * V**3, 0.5 * rho * V**2
     for i, r in enumerate(rows):
         if r["Cq_continuum"] == "":
-            assert fine_loads.q_c[i] == 0.0 and fine_loads.tau[i] == 0.0 or i == 180
+            # blank fixture rows are the separated region (and the last bin, which is not marched)
+            assert i >= fine_loads.separation_deg, i
+            assert fine_loads.q_c[i] == 0.0 and fine_loads.tau[i] == 0.0, i
             continue
-        assert fine_loads.q_c[i] / q3 == pytest.approx(float(r["Cq_continuum"]), rel=1e-5)
-        assert fine_loads.tau[i] / q2 == pytest.approx(float(r["Ctau_continuum"]), rel=1e-5, abs=1e-12)
+        tol = 1e-6 if i < fine_loads.meet_deg else 1e-5     # R5: 1e-5 only downstream of the D&S lee pressure
+        assert fine_loads.q_c[i] / q3 == pytest.approx(float(r["Cq_continuum"]), rel=tol), i
+        assert fine_loads.tau[i] / q2 == pytest.approx(float(r["Ctau_continuum"]), rel=tol, abs=1e-12), i
     assert fine_loads.q_c0 == fine_loads.q_c[0]
     assert fine_loads.separation_deg == 151.0
     assert fine_loads.meet_deg == 150.0
