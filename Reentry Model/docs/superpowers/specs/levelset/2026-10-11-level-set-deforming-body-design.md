@@ -869,7 +869,7 @@ volume region about to form".
 
 ### 20.8 Gas loads: the ray-cast shadow test (decided 2026-11-10)
 
-The loads, the windward fitted nose sphere (skyscrapers Task 5g) and the leeward values come from the shared physics
+The loads, the windward fitted nose sphere (skyscrapers Task 5g, as amended below) and the leeward values come from the shared physics
 (§4.2), so that the two architectures use the same laws. Which patches are leeward is decided by the level set: from
 each patch's centroid, offset outward by a twentieth of its cell (steps of φ but at least a quarter of the smallest cell; a whole-cell offset carried leeward rays near a sphere's outline outside the body, so they missed it), a ray is marched upstream (along the direction of motion) through φ by
 sphere tracing (steps equal to φ); if it re-enters metal before leaving the box, the patch is **shadowed** and takes the
@@ -883,8 +883,12 @@ sphere fitted by least squares to the windward patches, at the angle of the ray 
 transverse radius, kept by Asha). The shadow ray is the one above, so the two architectures share one windward rule; the
 skyscrapers' version is built on branch `fitted-sphere-loads` (not yet merged into main), and the level set builds this in
 its own stage 3 work. Before the amendment, patches facing away from the flow were leeward by the angle law. On a convex
-body no ray re-enters metal, so the test changes nothing there; it differs only on overhangs, pockets and detached pieces, where the
-skyscrapers' mass-centroid test (Task 5j) cannot see. Separated flow behind a ridge is not computed; §17 item 3's CFD
+body the test still changes nothing: a patch facing the flow casts a ray that re-enters no metal, and a patch ahead of the
+mass-centroid plane that faces away from the flow, which the amended candidates include where that plane lies behind the
+body's widest section, casts a ray into the body's own front and is shadowed by the body itself, so it is leeward as the
+angle law made it (the skyscrapers' test sphere with its tops moved 5 mm forward of its centroid's plane has 5 such
+corners). The test differs only on overhangs, pockets and detached pieces, where the skyscrapers' mass-centroid test
+(Task 5j) cannot see. Separated flow behind a ridge is not computed; §17 item 3's CFD
 hook stays the remedy. Cost: a few dozen lookups per ray (*estimated*).
 
 ### 20.9 Step 2: the first leeward mass-loss mechanisms (decided 2026-11-10)

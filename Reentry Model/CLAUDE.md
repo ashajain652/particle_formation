@@ -174,7 +174,9 @@ elements`); their old paths (such as `reentry_model.skin`) are alias files too, 
 saved after this change pickle `reentry_model.skyscrapers.*` and cannot be loaded by a checkout from before it. A state saved
 under the composite viscosity law (fact 196) and resumed by a checkout from before that change (for example a Mac Studio checkout
 behind main, or the `kinked-dispersion` branch) silently flies the bridge law, because the old `SkinSettings` ignores the extra
-field and the old resume JSON does not record the law. `cli.py`,
+field and the old resume JSON does not record the law. A state saved under `--windward-loads sphere` pickles the body's
+`skinbody.SphereFit` (its fit of the saved step's tops), a class that a checkout from before the fitted-sphere loads (for
+example a Mac Studio checkout behind main) does not have, so that checkout fails to load the state at all. `cli.py`,
 `__main__.py` and `thermal/` stay at the top level. The skins and the backends are never shared between the architectures. The refactor changed no model behaviour (see
 `docs/model_assumptions.md`).
 
