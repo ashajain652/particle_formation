@@ -118,7 +118,15 @@ a spray model whose `dispersion` is "profile"): `girin_plan` reads the cells as 
 fits each windward column's speed profile, places its wall and solves Girin's gradient mode on it, for the shared spray
 model's profile path; each column's release is heat-limited by its mode's threshold temperature (`skin.Cascade.T_run`), the
 records carry spray.PROFILE_COLUMNS after the 27 (`record_names`) and the history the summary's columns
-(`dispersion_stats`). Everything else is wiring: the physics is in `reentry_model/shared/`."""
+(`dispersion_stats`). Everything else is wiring: the physics is in `reentry_model/shared/`.
+
+The windward loads (the fitted-sphere loads design, docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md; Asha,
+2026-11-13; `windward_loads`, `sphere` by default): the heating, the surface flow, the spray plan and the wet statistics read
+each top corner's angle to the flow and one nose radius (`load_angles`, `nose_radius`, `windward_corners`). Under `sphere` the
+corners ahead of the plane through the mass centroid cast a ray up the flow; those whose ray crosses the tops are sheltered
+(`shelter.upstream_hits`), one sphere is fitted to the rest (`sphere_fit`), each of them reads the angle of the ray from its
+centre, and the radius is the fit capped at the flat-face bound; sheltered corners and those behind the plane are leeward.
+`normals`, the class's default for states saved before it, is the rule of sub-plan 22 Tasks 5g and 5j unchanged."""
 import copy
 import dataclasses
 import math
@@ -133,6 +141,7 @@ from ..shared import material as material_mod
 from ..shared import melt_profile
 from . import movemesh
 from ..shared import rheology
+from . import shelter
 from . import skin as skin_mod
 from ..shared import spray as spray_mod
 from . import spreading
@@ -217,6 +226,19 @@ LEEWARD_TESTS = ("facing", "centroid")
 # plane through it
 LEEWARD_COLUMNS = ("centroid_offset_mm", "leeward_corners")
 
+# The windward loads' rule (the fitted-sphere loads design, docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md;
+# Asha, 2026-11-13). `sphere`: the candidates are the top corners ahead of the plane through the mass centroid; a candidate
+# whose ray up the flow crosses the tops is sheltered (`shelter.upstream_hits`), the rest are exposed; one sphere is fitted to
+# the exposed corners and each reads the angle of the ray from its centre through the corner, the radius the loads read being
+# the fit capped at the flat-face bound; sheltered corners and corners behind the plane are leeward. `normals`: the rule as it
+# was (sub-plan 22 Tasks 5g and 5j), each corner at its own normal's angle and the radius from the 30-degree cap, with
+# `leeward_test` and `size_feedback` as they were. The constructor's default is `sphere`, the class's `normals`.
+WINDWARD_LOADS = ("sphere", "normals")
+# the history's three sphere columns under `sphere` (`SkinBody.nose_stats`), after the leeward ones: the sheltered corners, the
+# fitted centre's position along the flight direction from the mesh's coordinate origin (the sphere's original centre) [mm] and
+# the root-mean-square distance of the exposed corners from the fitted sphere [mm] (both nan where there is no valid sphere)
+SPHERE_COLUMNS = ("sheltered_corners", "sphere_centre_mm", "sphere_fit_rms_mm")
+
 # The geometry measures (open item 4; Asha, 2026-11-12): the skin columns stop describing the metal once the 3D core has been
 # eaten back past the sphere's original centre, or once the column tops enclose more space than the metal fills (tall columns
 # keep their base area and fan apart). On the 50 mm slip-band-on flight the volume ratio was 1.03 at 179 s, 1.17 at 183 s and
@@ -240,6 +262,28 @@ class NoseFit:
     points: int
     concave: bool
     used: float
+
+
+@dataclasses.dataclass
+class SphereFit:
+    """The sphere rule's fit of the skins' tops (`SkinBody.sphere_fit`; the fitted-sphere loads design, Asha 2026-11-13):
+    `centre` [m, (3,)] and `fitted` [m] the sphere fitted unweighted to the exposed corners (`body.fit_sphere`), `bound` [m]
+    the flat-face bound (`body.NOSE_CAP_FACTOR` times the windward transverse radius over the corners ahead of the centroid's
+    plane whose base normals face the flow), `used` [m] the radius the loads read, `exposed` and `sheltered` (bool, (n,)) the
+    candidates (the corners ahead of the plane) whose ray up the flow crosses no top and the ones whose ray does, `points` the
+    exposed corners counted, `concave` True where there is no valid sphere (fewer than 4 exposed corners, a radius not finite
+    and positive, exposed corners coplanar to rounding, or a centre on the flow side of their mean point) and `rms` [m] the
+    root-mean-square distance of the exposed corners from the sphere. `centre`, `fitted` and `rms` are nan where there is no
+    valid sphere."""
+    centre: np.ndarray
+    fitted: float
+    bound: float
+    used: float
+    exposed: np.ndarray
+    sheltered: np.ndarray
+    points: int
+    concave: bool
+    rms: float
 
 
 @dataclasses.dataclass
@@ -744,7 +788,12 @@ class SkinBody(ThermalBody):
     `centroid` (`LEEWARD_TESTS`; the command line's default): which top corners are windward for every consumer of the angle
     to the flow -- the heating, the surface flow, the spray plan (its shear modes and its Rayleigh-Taylor mode) and the
     windward sphere fit (`load_angles`, `windward_corners`; sub-plan 22 Task 5j, Asha, 2026-11-10). `theta` itself, the frames and the
-    release angle (`spray.enclosed_centroid`) do not change."""
+    release angle (`spray.enclosed_centroid`) do not change.
+    `windward_loads`: `sphere` (the constructor's default) or `normals` (the class's, so a state saved before the rule existed
+    flies as it was; `WINDWARD_LOADS`): under `sphere` the windward loads read one sphere fitted to the exposed tops
+    (`sphere_fit`), each exposed corner at the angle of the ray from its centre, sheltered corners and corners behind the
+    centroid's plane leeward (the fitted-sphere loads design, Asha 2026-11-13); `leeward_test` and `size_feedback` are read
+    only under `normals`, which is the rule above, unchanged."""
     # class defaults as well as the instance's: the flights saved on 2026-11-06 were pickled before spreading existed
     spread_limit = None                  # deg
     part_count_from = "moves"            # the part count's rule (sub-plan 22 Task 5d): the states saved before it have none
@@ -755,6 +804,8 @@ class SkinBody(ThermalBody):
     leeward_test = "facing"              # which corners are windward (Task 5j): the states saved before it flew on `theta` alone
     _leeward_raw = None                  # (the centroid, the corners ahead of its plane) of the surface, made at the first read
     geometry_stop = True                 # the run ends at a geometry breach (open item 4): the states saved before it fly on with it on
+    windward_loads = "normals"           # the loads' rule (fitted-sphere loads, 2026-11-13): the states saved before it fly on `normals`
+    _sphere_raw = None                   # the sphere rule's fit of the tops (`SphereFit`), made at the first read after a refresh
     _moment3d = None                     # the 3D model's (mass, mass moment) since the last move, made at the first read
     spread_mass = spread_unplaced = 0.0  # kg: moved between columns since time zero; still wanting to move at the last move
     spread_over = 0                      # edges over the limit on the last move's first estimate
@@ -765,8 +816,11 @@ class SkinBody(ThermalBody):
                  repeat_rule=DEFAULT_REPEAT_RULE, part_max=PART_MAX, flow=FLOW_DEFAULT, flow_cycles=None,
                  surface_flow=None, release=None, slurry_spray=False, spray=None, particles=True, spool=None,
                  spread_limit=None, part_count_from="moves", hand_down=True, sideways_pairing="depth",
-                 size_feedback="current", leeward_test="facing", geometry_stop=True):
+                 size_feedback="current", leeward_test="facing", geometry_stop=True, windward_loads="sphere"):
         self.geometry_stop = bool(geometry_stop)
+        if windward_loads not in WINDWARD_LOADS:
+            raise ValueError("windward_loads must be one of {}, got {!r}".format(WINDWARD_LOADS, windward_loads))
+        self.windward_loads = windward_loads
         if leeward_test not in LEEWARD_TESTS:
             raise ValueError("leeward_test must be one of {}, got {!r}".format(LEEWARD_TESTS, leeward_test))
         self.leeward_test = leeward_test
@@ -887,6 +941,7 @@ class SkinBody(ThermalBody):
         self._leeward_raw = None                         # the centroid and what is ahead of it, made at the first read, as `_volume` is
         self._moment3d = None
         self._nose_raw = None                            # the fit of this surface, made at the first read (`nose_fit`), as `_volume` is
+        self._sphere_raw = None                          # the sphere rule's fit of this surface, made at the first read (`sphere_fit`)
 
     def mass_centroid(self):
         """The mass-weighted centre of the body's metal [m, (3,)] (sub-plan 22 Task 5j): the 3D model's active elements (their
@@ -914,21 +969,100 @@ class SkinBody(ThermalBody):
         return self._leeward_raw
 
     def windward_corners(self):
-        """Which top corners are windward, bool (n,): their normal within 90 degrees of the direction of motion, and under
-        `leeward_test` `centroid` also ahead of the plane through the mass centroid (sub-plan 22 Task 5j)."""
+        """Which top corners are windward, bool (n,). Under `windward_loads` `sphere`: the exposed corners (`sphere_fit`) whose
+        load angle is at most 90 degrees (the fitted-sphere loads design, Asha 2026-11-13). Under `normals`: their normal within
+        90 degrees of the direction of motion, and under `leeward_test` `centroid` also ahead of the plane through the mass
+        centroid (sub-plan 22 Task 5j)."""
+        if self.windward_loads == "sphere":
+            return self.sphere_fit.exposed & (self.load_angles() <= 0.5 * np.pi)
         facing = self.theta <= 0.5 * np.pi
         return facing & self._leeward()[1] if self.leeward_test == "centroid" else facing
 
     def load_angles(self):
         """The angles to the flow [rad, (n,)] every windward consumer reads -- the heating (`CoupledRun.loads_at`), the surface
         flow (`flow_forcing`) and the spray plan (`girin_plan`: its shear modes, and through its `windward` and `w_n` the
-        Rayleigh-Taylor mode) -- (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear,
-        no spray and no Rayleigh-Taylor mode, whichever way its normal faces). `theta` itself under `facing`, bit for bit;
-        under `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not. `theta`
-        itself, the frames and the release angle do not change."""
+        Rayleigh-Taylor mode).
+
+        Under `windward_loads` `sphere` (the fitted-sphere loads design, Asha 2026-11-13): an exposed corner (`sphere_fit`)
+        reads the angle between the direction of motion and the unit ray from the fitted centre through it, or its own
+        `theta` where there is no valid sphere; every other corner -- sheltered, or behind the centroid's plane -- reads the
+        larger of `theta` and 90 degrees plus a microradian, so it takes no heating, shear or spraying.
+
+        Under `normals` (sub-plan 22 Task 5j; Asha, 2026-11-10: a corner behind the centroid's plane gets no shear, no spray
+        and no Rayleigh-Taylor mode, whichever way its normal faces): `theta` itself under `facing`, bit for bit; under
+        `centroid` `theta` where `windward_corners` and the larger of `theta` and 90 degrees plus a microradian where not.
+        `theta` itself, the frames' geometry and the release angle do not change under either rule."""
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            lee = np.maximum(self.theta, 0.5 * np.pi + 1e-6)
+            if sf.concave:
+                return np.where(sf.exposed, self.theta, lee)
+            return np.where(sf.exposed, self._ray_angles(sf.centre), lee)
         if self.leeward_test != "centroid":
             return self.theta
         return np.where(self.windward_corners(), self.theta, np.maximum(self.theta, 0.5 * np.pi + 1e-6))
+
+    def _ray_angles(self, centre):
+        """The angle [rad, (n,)] between the direction of motion and the unit ray from `centre` [m, (3,)] through each top
+        corner."""
+        u = self.surface.points - centre
+        u = u / np.linalg.norm(u, axis=1)[:, None]
+        return np.arccos(np.clip(u @ self.v_hat, -1.0, 1.0))
+
+    def _windward_bound(self, ahead=None):
+        """The flat-face bound [m, nan where no corner qualifies]: `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
+        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
+        through the 3D mesh's mean point along the flight direction of the tops of the columns whose base normals are at most
+        90 degrees from it, and that lie ahead of the centroid's plane where `ahead` (bool, (n,)) is given. Both rules read
+        it: `_fit_nose` (with `ahead` under `leeward_test` `centroid` only, as Task 5j built it) and `_fit_sphere`."""
+        pts, v = self.surface.points, self.v_hat
+        X = pts - self.mesh.points.mean(axis=0)
+        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
+        wind = self.columns.normal @ v >= 0.0
+        if ahead is not None:
+            wind = wind & ahead
+        return float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
+
+    def _fit_sphere(self):
+        """The sphere rule's fit of the top surface at the last refresh (`SphereFit`; the fitted-sphere loads design, Asha
+        2026-11-13). The candidates are the corners ahead of the plane through the mass centroid (`_leeward`); a candidate whose
+        ray up the flow crosses any triangle of the tops is sheltered (`shelter.upstream_hits`), the others are exposed. The
+        sphere is `body.fit_sphere` on the exposed corners, unweighted; it is not valid with fewer than 4 of them, with a radius
+        not finite and positive, with the corners coplanar to rounding (the smallest singular value of the centred corners
+        below 1e-9 of the largest, as `_fit_nose` tests it) or with its centre on the flow side of their mean point. The radius
+        used is the fit capped at the flat-face bound (`_windward_bound` over the corners ahead of the plane; Asha: keep the
+        cap), or, with no valid sphere, the bound, or the mesh's radius where there is no bound."""
+        s, v = self.surface, self.v_hat
+        ahead = self._leeward()[1]
+        sheltered = shelter.upstream_hits(s.points, s.faces, s.normals, s.areas, v, candidates=ahead)
+        exposed = ahead & ~sheltered
+        bound = self._windward_bound(ahead)
+        pts = s.points[exposed]
+        n = len(pts)
+        centre, fitted, rms, valid = np.full(3, np.nan), float("nan"), float("nan"), False
+        if n >= 4:
+            mean = pts.mean(axis=0)
+            sv = np.linalg.svd(pts - mean, compute_uv=False)
+            c, r = fit_sphere(pts)
+            flat = sv[0] == 0.0 or sv[-1] < 1e-9 * sv[0]      # coplanar to rounding: a flat face, which no sphere describes
+            valid = bool(not flat and np.isfinite(r) and r > 0.0 and not ((c - mean) @ v > 0.0))
+            if valid:
+                centre, fitted = c, r
+                rms = float(np.sqrt(np.mean((np.linalg.norm(pts - c, axis=1) - r) ** 2)))
+        bounded = np.isfinite(bound) and bound > 0.0
+        if valid:
+            used = min(fitted, bound) if bounded else fitted
+        else:
+            used = bound if bounded else float(self.mesh.params.get("radius_m", 0.05))
+        return SphereFit(centre, fitted, bound, float(used), exposed, sheltered, n, not valid, rms)
+
+    @property
+    def sphere_fit(self):
+        """The sphere rule's fit (`SphereFit`) of the top surface at the last refresh, made at the first read after it
+        (`_sphere_raw`); a body saved before the rule existed makes it from its surface at the first ask."""
+        if self._sphere_raw is None:
+            self._sphere_raw = self._fit_sphere()
+        return self._sphere_raw
 
     def _fit_nose(self):
         """The sphere through the tops' windward cap (sub-plan 22 Task 5g; Asha, 2026-11-10: fit the gas-molten interface, the
@@ -936,24 +1070,22 @@ class SkinBody(ThermalBody):
         concave). The cap is the top corners whose normals are within `NOSE_CAP_ANGLE` of the direction of motion, fitted
         unweighted as the element model fits its patch centroids (`body.fit_sphere`); fewer than 4 corners, or a radius
         not finite and positive, is no fit. Concave: the fitted centre lies on the flow side of the cap's mean point, so no
-        sphere of positive curvature describes it. The bound is `NOSE_CAP_FACTOR` (a flat face of radius R heats like a
-        sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance from the axis
-        through the 3D mesh's mean point along the flight direction of the tops of the columns whose base normals are at
-        most 90 degrees from it (the rigid surface's direction, which a pool lying on top cannot tilt: selecting by the
-        tops' own angles let a pool reaching the equator tilt its step corners forward and move the bound by 1.7 times
-        its depth; review of 2026-11-10). A cap whose centred corners are coplanar to rounding (smallest singular value
-        below 1e-9 of the largest) is a flat face: concave, no fitted radius. Measured on the comparison flights' frames (2026-11-10): the cap's
-        radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about 30 s, 24.7 mm at 171.0 s on the 50 mm sphere
-        and 83 mm at 176.0 s."""
+        sphere of positive curvature describes it. The bound is `_windward_bound`: `NOSE_CAP_FACTOR` (a flat face of radius
+        R heats like a sphere of 1.67 R, Boison and Curtiss 1959) times the windward transverse radius, the largest distance
+        from the axis through the 3D mesh's mean point along the flight direction of the tops of the columns whose base
+        normals are at most 90 degrees from it (the rigid surface's direction, which a pool lying on top cannot tilt:
+        selecting by the tops' own angles let a pool reaching the equator tilt its step corners forward and move the bound
+        by 1.7 times its depth; review of 2026-11-10). A cap whose centred corners are coplanar to rounding (smallest
+        singular value below 1e-9 of the largest) is a flat face: concave, no fitted radius. Measured on the comparison
+        flights' frames (2026-11-10): the cap's radius is 49.7 mm at 22.5 s on the 100 mm sphere and 95-107 mm from about
+        30 s, 24.7 mm at 171.0 s on the 50 mm sphere and 83 mm at 176.0 s. The `normals` rule's fit (`windward_loads`)."""
         pts, v = self.surface.points, self.v_hat
-        X = pts - self.mesh.points.mean(axis=0)
-        r_tw = np.sqrt(np.maximum(np.einsum("ij,ij->i", X, X) - (X @ v) ** 2, 0.0))
-        wind = self.columns.normal @ v >= 0.0
         capped = self.theta <= np.radians(NOSE_CAP_ANGLE)
+        ahead = None
         if self.leeward_test == "centroid":              # Task 5j: only corners ahead of the centroid's plane are windward
             ahead = self._leeward()[1]
-            wind, capped = wind & ahead, capped & ahead
-        bound = float(NOSE_CAP_FACTOR * r_tw[wind].max()) if wind.any() else float("nan")
+            capped = capped & ahead
+        bound = self._windward_bound(ahead)
         cap = pts[capped]
         n, fitted, concave = len(cap), float("nan"), False
         if n >= 4:
@@ -969,7 +1101,13 @@ class SkinBody(ThermalBody):
     @property
     def nose_fit(self):
         """The windward cap's fit and the radius the loads read (`NoseFit`), from the top surface at the last refresh; a body
-        saved before the fit existed makes it from its surface at the first ask."""
+        saved before the fit existed makes it from its surface at the first ask. Under `windward_loads` `sphere` it is the
+        sphere rule's fit (`sphere_fit`: its radius, bound, exposed corners counted, no valid sphere as `concave`, and the
+        radius used), so `nose_radius()` and the history's nose columns carry it; `size_feedback` is read only under
+        `normals`."""
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            return NoseFit(sf.fitted, sf.bound, sf.points, sf.concave, sf.used)
         if self._nose_raw is None:
             self._nose_raw = self._fit_nose()
         fitted, bound, n, concave = self._nose_raw
@@ -1403,17 +1541,23 @@ class SkinBody(ThermalBody):
     def nose_radius(self):
         """The nose radius the windward loads read [m] (`CoupledRun.loads_at`, the surface flow): `nose_fit.used`, the radius
         of the sphere fitted to the tops' cap under `size_feedback` `current`, the mesh's own under `initial` or where there
-        is no fit (sub-plan 22 Task 5g)."""
+        is no fit (sub-plan 22 Task 5g); under `windward_loads` `sphere` the sphere rule's radius used (`sphere_fit`)."""
         return self.nose_fit.used
 
     def nose_stats(self):
         """The history's nose columns (`NOSE_COLUMNS`) and then the two leeward ones (`LEEWARD_COLUMNS`), after the other skin
-        columns and before the spreading ones."""
+        columns and before the spreading ones; under `windward_loads` `sphere` the nose columns carry the sphere rule's fit and
+        the three `SPHERE_COLUMNS` follow the leeward ones (the fitted-sphere loads design, Asha 2026-11-13)."""
         f = self.nose_fit
         c, ahead = self._leeward()
         out = dict(zip(NOSE_COLUMNS, (f.used * 1e3, f.fitted * 1e3, f.bound * 1e3, f.points, float(f.concave))))
         out["centroid_offset_mm"] = float((c - self.mesh.points.mean(axis=0)) @ self.v_hat * 1e3)
         out["leeward_corners"] = int(((self.theta <= 0.5 * np.pi) & ~ahead).sum())
+        if self.windward_loads == "sphere":
+            sf = self.sphere_fit
+            out["sheltered_corners"] = int(sf.sheltered.sum())
+            out["sphere_centre_mm"] = float(sf.centre @ self.v_hat * 1e3)      # from the mesh's origin, the original centre
+            out["sphere_fit_rms_mm"] = sf.rms * 1e3
         return out
 
     def geometry_stats(self):
@@ -1557,7 +1701,8 @@ class SkinBody(ThermalBody):
 
     def _depth_ratios(self, flowing):
         """Spec 10.2's b over delta_m and resolved sheared depth over delta_m (medians) on the wet windward columns: on
-        the windward face (`windward_corners`: theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
+        the windward face (`windward_corners`: under `windward_loads` `sphere` the exposed corners whose load angle is at most
+        90 degrees; under `normals` theta <= 90 degrees, and under `leeward_test` `centroid` ahead of the centroid's plane),
         with flowing metal (b, the flowing depth, above zero) and a conjugate depth delta_m (finite and above zero); the
         sheared depth `sheared_depth`, on those whose top moves. nan where there are none, or without the flow.
         The depth is the one the step's spraying read where the step has a plan and the band is on (`spray_plan.result.

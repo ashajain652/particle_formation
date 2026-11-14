@@ -777,11 +777,13 @@ def test_the_flow_is_driven_by_the_surface_flow_on_the_corners_taken_at_each_par
     """Every macro step the skin body evaluates the surface flow on its corners, as the heating is, from the step's aero
     state and the tops' temperatures: the pressure gradient along the meridian, the gas shear along it on the top cells,
     and the deceleration, which the metal feels along the flight direction. Each part takes them interpolated linearly
-    between the last macro step's and this one's at its middle, as it takes the heating."""
+    between the last macro step's and this one's at its middle, as it takes the heating. The expected flow is evaluated at
+    each corner's own normal's angle (`theta`) and the shear laid along each base normal's meridian, the earlier rule's
+    loads, so the body names `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13)."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import surface_flow
-    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False)
+    b = make(coarse_sphere_mesh, T0=600.0, flow=True, remove=False, windward_loads="normals")
     seen = []
     advance = skin.advance
 
@@ -1319,7 +1321,11 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     since time zero, the radius median and largest over the step's rows, the smallest angle and the area of the
     columns whose plan sprays, the release angle's mean by mass -- the mean recomputed from the step's rows -- least and
     largest, and b and the resolved sheared depth over delta_m on the wet windward columns; and from those columns the
-    coupled writer writes the summary, whose released mass is the step's rows'."""
+    coupled writer writes the summary, whose released mass is the step's rows'.
+
+    Its values were set on the earlier windward loads, each corner at its own normal's angle (the wet windward columns
+    recomputed here are those with `theta` at most 90 degrees, and the release angles were measured on them), so the
+    body names `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13)."""
     pytest.importorskip("cantera")
     from test_reentry_model_surface_flow import aero_state_at
     from reentry_model import coupled, spray
@@ -1327,7 +1333,8 @@ def test_a_spraying_skin_body_s_records_close_on_its_books_and_the_coupled_write
     mat = material.Material.from_drama_json("AA7075_scheil")
     np.random.seed(12345)              # pyamg's draws, as a run seeds them: the histograms' round-off is the path's
     b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=spray.SprayModel(mat.liquid),
-             slurry_spray=True, spool=str(tmp_path / "spool"), settings=DEV_BRIDGE)  # values set on the bridge law
+             slurry_spray=True, spool=str(tmp_path / "spool"), settings=DEV_BRIDGE,  # values set on the bridge law
+             windward_loads="normals")                                               # and on the normals' angles
     plans, books, spooled = [], [], []
     girin, book, append = skinbody.girin_plan, skinbody.SprayPlan.book, spray.SourceSpool.append
 
@@ -2061,6 +2068,8 @@ def test_a_body_saved_without_the_sideways_pairing_flies_on(coarse_sphere_mesh, 
 
 
 # -- the windward loads from a sphere fitted to the skins' tops (sub-plan 22 Task 5g, Asha 2026-11-10) --------------------
+# Since the fitted-sphere loads design (2026-11-13) this is the earlier rule, `windward_loads="normals"`: the tests of its
+# 30-degree cap and of `size_feedback` name it, as the bridge-law tests name the bridge; the bound is both rules'
 
 
 def with_tops(b, points=None, theta=None):
@@ -2071,6 +2080,7 @@ def with_tops(b, points=None, theta=None):
     b.surface = columns_mod.CornerSurface.from_points(pts, b.columns.faces)
     b.theta = b.surface.angles_to(b.v_hat) if theta is None else theta
     b._leeward_raw = None                           # the centroid test of the new surface, made at the first read
+    b._sphere_raw = None                            # the sphere rule's fit of the new surface, made at the first read
     b._nose_raw = b._fit_nose()
     return b
 
@@ -2094,7 +2104,7 @@ def test_the_fitted_nose_radius_of_an_untouched_sphere_is_its_own_radius(coarse_
     """The 4 mm sphere's tops are the bases moved out by the 0.8 mm skins: the cap within 30 degrees of the flow (about 140
     corners) fits a sphere within 2 % of the mesh's 50 mm radius, which `nose_radius()` returns under the default
     `current`; the bound is 1.67 times the windward transverse radius and the cap is convex (sub-plan 22 Task 5g)."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     R, f = 0.05, b.nose_fit
     assert f.points >= 50 and not f.concave and abs(f.fitted / R - 1.0) < 0.02
     assert b.size_feedback == "current" and b.nose_radius() == f.used == f.fitted
@@ -2105,7 +2115,7 @@ def test_a_flattened_windward_cap_gives_the_radius_of_the_flattened_cap(coarse_s
     """Tops on a sphere of twice the radius over the cap (100 mm against 50): the fit is within 5 % of it, and
     `nose_radius()` returns the mesh's 50 mm under `initial`. At twice the radius the fit (100 mm) is flatter than the bound
     (83.5 mm), so under `current` the bound is used (Asha, 2026-11-10, option B); at 1.5 times (75 mm) the fit itself is."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     pts, R2 = flatten_front(b)
     with_tops(b, pts)
     assert abs(b.nose_fit.fitted / R2 - 1.0) < 0.05 and not b.nose_fit.concave
@@ -2122,7 +2132,7 @@ def test_a_cap_flatter_than_the_bound_uses_the_bound_and_reports_both(coarse_sph
     """A cap flatter than the flat-face value (the 2R sphere's 100 mm against 1.67 times the 50 mm transverse radius, 83.5 mm)
     is used at the bound, a flat face heating like a sphere of 1.67 times its radius (Asha, 2026-11-10, option B), while the
     fitted radius is still reported above it; a sharper cap has no lower bound."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     with_tops(b, flatten_front(b)[0])
     f = b.nose_fit
     assert f.fitted > f.bound and f.used == f.bound == b.nose_radius()
@@ -2138,7 +2148,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
     `CoupledRun.loads_at` and the surface flow through `flow_forcing`."""
     from types import SimpleNamespace
     from reentry_model import coupled
-    b = make(coarse_sphere_mesh, flow=True)
+    b = make(coarse_sphere_mesh, windward_loads="normals", flow=True)
     with_tops(b, flatten_front(b, factor=1.5)[0])
     seen = {}
     ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
@@ -2156,7 +2166,7 @@ def test_the_heating_and_the_surface_flow_both_receive_the_fitted_radius(coarse_
 def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(coarse_sphere_mesh):
     """Three corners within 30 degrees of the flow cannot fix a sphere: no fit (not-a-number), the mesh's 50 mm used, the
     cap's three corners counted, the row says so and the bound is still reported."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     theta = np.full(b.columns.n, 1.0)
     theta[:3] = 0.1
     with_tops(b, theta=theta)
@@ -2170,7 +2180,7 @@ def test_a_cap_with_fewer_than_four_corners_falls_back_to_the_original_radius(co
 def test_a_concave_cap_uses_the_flat_face_bound_and_says_so(coarse_sphere_mesh):
     """Tops dished toward the flow (the cap's edge nearer the flow than its middle): the fitted centre is on the flow side, no
     sphere of positive curvature describes it, so the radius used is the bound and the row records a concave cap."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     R = 0.05
     c0, v = b.mesh.points.mean(axis=0), b.v_hat
     pts = b.surface.points.copy()
@@ -2205,7 +2215,7 @@ def test_a_pool_behind_the_body_does_not_move_the_bound(coarse_sphere_mesh):
 def test_a_cap_coplanar_to_rounding_is_a_flat_face_and_reads_the_bound(coarse_sphere_mesh):
     """Cap corners set exactly in a plane have no sphere (the least-squares system is rank-deficient and its minimum-norm answer
     depends on where the plane sits): they are read as concave, no fitted radius, the bound used (review of 2026-11-10)."""
-    b = make(coarse_sphere_mesh)
+    b = make(coarse_sphere_mesh, windward_loads="normals")
     c0, v = b.mesh.points.mean(axis=0), b.v_hat
     pts = b.surface.points.copy()
     X = pts - c0
@@ -2232,7 +2242,7 @@ def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mes
             skinbody.SkinBody.nose_radius = lambda self: float(self.mesh.params.get("radius_m", 0.05))
         try:
             kw = {"size_feedback": "initial"} if how == "initial" else {"size_feedback": "current"} if how == "current" else {}
-            b = make(coarse_sphere_mesh, T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
+            b = make(coarse_sphere_mesh, windward_loads="normals", T0=893.0, flow=True, remove=False, flow_cycles=1, **kw)
             if how == "default":
                 del vars(b)["size_feedback"]                     # as a state saved before Task 5g
                 assert b.size_feedback == "initial"
@@ -2257,14 +2267,14 @@ def test_size_feedback_initial_changes_nothing_to_the_last_bit(coarse_sphere_mes
     assert runs[0][0].energy() == runs[1][0].energy() == runs[2][0].energy()
     assert skinbody.SkinBody.size_feedback == "initial" and all(np.isfinite(r["fitted_nose_radius_mm"]) for _, r in runs[0][1])
     with pytest.raises(ValueError, match="size_feedback"):
-        make(coarse_sphere_mesh, size_feedback="shrinking")
+        make(coarse_sphere_mesh, windward_loads="normals", size_feedback="shrinking")
 
 
 def test_a_body_saved_without_size_feedback_flies_on_as_initial(coarse_sphere_mesh):
     """The states saved before Task 5g have neither `size_feedback` nor a fit on the instance: the class's default gives them
     the mesh's radius and they advance as before, the fit made at the first ask; a resume can give them `current`, which
     reads the fit of the top surface as it stands."""
-    b = make(coarse_sphere_mesh, T0=700.0)
+    b = make(coarse_sphere_mesh, windward_loads="normals", T0=700.0)
     b.emissivity = 0.0
     del vars(b)["size_feedback"], vars(b)["_nose_raw"]
     assert "size_feedback" not in vars(b) and b.size_feedback == "initial" and b._nose_raw is None
@@ -2419,6 +2429,8 @@ def test_the_skins_hand_girin_plan_their_nose_radius(coarse_sphere_mesh, monkeyp
 
 
 # -- the leeward test by the body's centroid (sub-plan 22 Task 5j; Asha, 2026-11-10) ----------------------------------------
+# `leeward_test` is read only under the earlier rule, `windward_loads="normals"` (the fitted-sphere loads design, 2026-11-13):
+# the tests of what it does to the angles and the fit name that rule; the centroid and the leeward columns are both rules'
 def centroid_body(m, **kw):
     return make(m, leeward_test="centroid", **kw)
 
@@ -2474,7 +2486,7 @@ def test_the_effective_angle_leaves_a_corner_ahead_of_the_plane_as_it_is_and_tur
     the effective angle is theta where it is and the larger of theta and 90 degrees plus a microradian where not. `facing`
     returns `theta` itself. The count of corners that face the flow from behind the plane is the history's `leeward_corners`,
     with either setting."""
-    b = centroid_body(coarse_sphere_mesh)
+    b = centroid_body(coarse_sphere_mesh, windward_loads="normals")
     moved = b.load_angles() != b.theta                                       # only an equator corner or two, a hair behind the plane
     assert moved.sum() < 10 and (b.theta[moved] > 1.5).all()
     k = put_behind(b)
@@ -2489,7 +2501,7 @@ def test_the_effective_angle_leaves_a_corner_ahead_of_the_plane_as_it_is_and_tur
     with_tops(b, theta=theta)
     assert b.load_angles()[away] == 2.0 and b.load_angles()[k] == 0.5 * np.pi + 1e-6
     assert b.skin_stats()["leeward_corners"] >= 1
-    f = make(coarse_sphere_mesh, leeward_test="facing")
+    f = make(coarse_sphere_mesh, windward_loads="normals", leeward_test="facing")
     put_behind(f)
     assert f.load_angles() is f.theta and f.skin_stats()["leeward_corners"] >= 1
 
@@ -2516,8 +2528,8 @@ def test_a_corner_behind_the_centroid_that_faces_the_flow_gets_no_shear_no_spray
             seen["flow_theta"] = np.array(theta)
             seen["result"] = super().evaluate(state, theta, *a, **k)
             return seen["result"]
-    b = centroid_body(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=Model(mat.liquid),
-                      surface_flow=Flow())
+    b = centroid_body(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                      spray=Model(mat.liquid), surface_flow=Flow())
     k = put_behind(b)
     away = int([i for i in np.flatnonzero(b.columns.normal @ b.v_hat > 0.5) if i != k][3])
     theta = b.theta.copy()
@@ -2542,7 +2554,7 @@ def test_the_heating_reads_the_effective_angle(coarse_sphere_mesh):
     from reentry_model import coupled
     got = {}
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", leeward_test=how)
         k = put_behind(b)
         ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
                               heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: got.setdefault(how, np.array(theta))))
@@ -2573,7 +2585,8 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
         try:
             kw = {"leeward_test": "facing"} if how == "legacy" else {}
             model = spray.SprayModel(mat.liquid, spray_gates="2026-11-10", slip_band=True)
-            b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, spray=model, **kw)
+            b = make(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1,
+                     spray=model, **kw)
             if how == "default":
                 del vars(b)["leeward_test"]                 # as a state saved before Task 5j
                 assert b.leeward_test == "facing"
@@ -2602,7 +2615,7 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
     # (`flow_forcing`, the routine `advance` calls), with no macro step run and no spray model
     forcing = {}
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", T0=890.0, flow=True, remove=False, flow_cycles=1, leeward_test=how)
         k = put_behind(b)
         forcing[how] = b.flow_forcing(aero_state_at(93.0))
     assert forcing["centroid"].tau[k] == 0.0 and forcing["centroid"].dp_ds[k] == 0.0
@@ -2610,7 +2623,7 @@ def test_the_leeward_test_facing_changes_nothing_to_the_last_bit(coarse_sphere_m
     assert (forcing["centroid"].tau != 0.0).any()                       # the flow is not zero everywhere for another reason
     assert skinbody.SkinBody.leeward_test == "facing" and skinbody.LEEWARD_TESTS == ("facing", "centroid")
     with pytest.raises(ValueError, match="leeward_test"):
-        make(coarse_sphere_mesh, leeward_test="behind")
+        make(coarse_sphere_mesh, windward_loads="normals", leeward_test="behind")
 
 
 def test_the_fit_takes_only_windward_corners_within_the_cap(coarse_sphere_mesh):
@@ -2619,7 +2632,7 @@ def test_the_fit_takes_only_windward_corners_within_the_cap(coarse_sphere_mesh):
     of the fit (the count falls by ten) and a faraway corner behind it, with a base normal facing the flow, leaves the bound as
     it was; under `facing` Task 5g's selection is unchanged (the count stays, the faraway corner raises the bound)."""
     for how in ("centroid", "facing"):
-        b = make(coarse_sphere_mesh, leeward_test=how)
+        b = make(coarse_sphere_mesh, windward_loads="normals", leeward_test=how)
         n0, bound0 = b.nose_fit.points, b.nose_fit.bound
         c = b.mass_centroid()
         cap = np.flatnonzero(b.theta <= np.radians(30.0))
@@ -3044,3 +3057,194 @@ def test_a_table_skin_body_has_no_dispersion_columns(coarse_sphere_mesh, tmp_pat
     assert b.source_rows.names == tuple(spray.record_columns(36))
     D = skinbody.melt_profile.DISPERSION_COLUMNS
     assert tuple(b.skin_stats())[-len(D):] == D and {"depth_to_bridge_low_median_mm", "T_at_wall_median_K"} <= set(D)
+
+
+# -- the windward loads from one sphere fitted to the exposed tops (fitted-sphere loads design, Asha 2026-11-13) -----------
+# The design: docs/superpowers/specs/2026-11-13-fitted-sphere-loads-design.md. Under `windward_loads="sphere"` (the library's
+# default) the candidates are the tops ahead of the plane through the mass centroid, a candidate whose upstream ray crosses the
+# tops is sheltered, the sphere is fitted to the rest (the exposed corners) and each exposed corner reads the angle of the ray
+# from the fitted centre through it; every other corner is leeward.
+RING_RAISE = 6e-3              # m: the raised ring of the shelter test (tests/test_reentry_model_shelter.py), 6 mm so that a crest
+                               # corner faces away from the flow on this 4 mm surface mesh
+# rad: the most an exposed corner's ray angle from the fitted centre differs from its own normal's angle on the untouched 4 mm
+# sphere. Measured 2026-11-13: 0.0517 rad (2.96 degrees), at one corner 87.6 degrees from the flow whose top normal is 4.7
+# degrees off the radial line (the coarse mesh at its equator); within 80 degrees of the flow at most 0.0105 rad (0.60 degrees)
+SPHERE_ANGLE_TOL = 0.06
+SPHERE_ANGLE_TOL_80 = 0.012
+
+
+def ray_angles(b, centre):
+    """The angle [rad, (n,)] between the flight direction and the unit ray from `centre` through each top corner."""
+    u = b.surface.points - centre
+    u = u / np.linalg.norm(u, axis=1)[:, None]
+    return np.arccos(np.clip(u @ b.v_hat, -1.0, 1.0))
+
+
+def ringed(b):
+    """The raised ring of the shelter test on the body's tops: the corners whose base normal is 45 to 52 degrees from the flight
+    direction moved out RING_RAISE along it, the tops refreshed (`with_tops`); returns the ring's mask."""
+    n = b.columns.normal
+    ang = np.degrees(np.arccos(np.clip(n @ b.v_hat, -1.0, 1.0)))
+    ring = (ang >= 45.0) & (ang <= 52.0)
+    pts = b.surface.points.copy()
+    pts[ring] += RING_RAISE * n[ring]
+    with_tops(b, pts)
+    return ring
+
+
+def test_an_untouched_sphere_fits_its_own_sphere_and_reads_its_normals_angles(coarse_sphere_mesh):
+    """The library's default is the sphere rule. On the untouched 4 mm sphere nothing is sheltered, the exposed corners (every
+    corner ahead of the centroid's plane) fit the 50 mm sphere about the origin -- the tops lie where the mesh's surface was,
+    the bases having moved in by the 0.8 mm skins -- and every exposed corner's ray angle is its own normal's to within the
+    mesh's facets (SPHERE_ANGLE_TOL, measured)."""
+    b = make(coarse_sphere_mesh)
+    sf = b.sphere_fit
+    assert b.windward_loads == "sphere" and not sf.concave and not sf.sheltered.any()
+    assert np.array_equal(sf.exposed, b._leeward()[1]) and sf.points == sf.exposed.sum() > 1000
+    assert abs(sf.fitted / 0.05 - 1) < 0.01 and np.linalg.norm(sf.centre) < 0.01 * 0.05
+    assert np.abs(b.load_angles()[sf.exposed] - b.theta[sf.exposed]).max() < SPHERE_ANGLE_TOL
+    near = sf.exposed & (b.theta < np.radians(80.0))
+    assert np.abs(b.load_angles()[near] - b.theta[near]).max() < SPHERE_ANGLE_TOL_80
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    assert sf.used == sf.fitted == b.nose_radius() < sf.bound and sf.rms < 2e-6              # measured 0.56 um
+
+
+def test_moved_tops_move_the_sphere_s_centre_and_scaled_tops_scale_its_radius(coarse_sphere_mesh):
+    """The tops translated 5 mm along the flight direction move the fitted centre 5 mm with them and keep its radius; the tops
+    scaled 1.2 times about the origin (the sphere's original centre) scale its radius 1.2 times and keep its centre. The
+    history's `sphere_centre_mm` is the centre's position along the flight direction from the origin. Translated, the
+    corners just behind the old equator come ahead of the centroid's plane (which the tops do not move), and their rays up
+    the flow cross the sphere's own front: they are sheltered, and every one of them faces away from the flow."""
+    b = make(coarse_sphere_mesh)
+    pts, sf0 = b.surface.points, b.sphere_fit
+    c0, r0 = sf0.centre.copy(), sf0.fitted
+    sf = with_tops(b, pts + 5e-3 * b.v_hat).sphere_fit
+    assert not sf.concave and sf.sheltered.any() and (b.theta[sf.sheltered] > 0.5 * np.pi).all()
+    np.testing.assert_allclose(sf.centre - c0, 5e-3 * b.v_hat, rtol=0.0, atol=1e-6)
+    assert sf.fitted == pytest.approx(r0, rel=1e-3)
+    assert b.skin_stats()["sphere_centre_mm"] == pytest.approx(5.0 + c0 @ b.v_hat * 1e3, abs=1e-2)
+    sf = with_tops(b, 1.2 * pts).sphere_fit
+    assert not sf.concave and sf.fitted == pytest.approx(1.2 * r0, rel=1e-3)
+    np.testing.assert_allclose(sf.centre, 1.2 * c0, rtol=0.0, atol=1e-6)
+
+
+def test_a_sheltered_corner_is_leeward_and_a_crest_facing_away_reads_its_ray_angle(coarse_sphere_mesh):
+    """The raised ring of the shelter test (6 mm on the corners 45 to 52 degrees from the flow): the band behind it is sheltered
+    and reads the larger of its angle and 90 degrees plus a microradian, as the corners behind the centroid's plane do; a crest
+    corner of the ring whose own normal faces away from the flow is exposed, reads its ray angle from the fitted centre (less
+    than 90 degrees) and is windward (Asha, 2026-11-13: "Yes, heat them")."""
+    b = make(coarse_sphere_mesh)
+    ring = ringed(b)
+    sf, eff = b.sphere_fit, b.load_angles()
+    lee = np.maximum(b.theta, 0.5 * np.pi + 1e-6)
+    assert sf.sheltered.any() and not sf.concave and not (sf.sheltered & sf.exposed).any()
+    assert np.array_equal(sf.exposed | sf.sheltered, b._leeward()[1])
+    np.testing.assert_array_equal(eff[sf.sheltered], lee[sf.sheltered])
+    np.testing.assert_array_equal(eff[~b._leeward()[1]], lee[~b._leeward()[1]])
+    crest = ring & sf.exposed & (b.theta > 0.5 * np.pi)
+    assert crest.any()
+    np.testing.assert_array_equal(eff[crest], ray_angles(b, sf.centre)[crest])
+    assert (eff[crest] < 0.5 * np.pi).all() and b.windward_corners()[crest].all()
+    assert not b.windward_corners()[sf.sheltered].any()
+    np.testing.assert_array_equal(b.windward_corners(), sf.exposed & (eff <= 0.5 * np.pi))
+    assert b.skin_stats()["sheltered_corners"] == sf.sheltered.sum() > 0
+
+
+def test_the_radius_used_is_the_fit_capped_at_the_flat_face_bound(coarse_sphere_mesh):
+    """The whole front's tops on a sphere of twice the radius (100 mm) touching the nose: the fit is that sphere, flatter
+    than the bound (1.67 times the 50 mm windward transverse radius, 83.5 mm), so the radius the loads read is the bound
+    (Asha, 2026-11-13: keep the cap) while the angles are still the rays' from the fitted centre. `size_feedback`, read only
+    under `normals`, changes nothing. `rho_max` is 1.1, not 1.0: the tops at the equator stand up to 0.06 mm outside the
+    50 mm radius, so 1.0 leaves 41 of the front's corners where they were, and the fit then reads 60.0 mm with a misfit of
+    3.6 mm (measured 2026-11-13); at 1.1 every front corner moves and the fit is the 100 mm sphere to rounding. The heating
+    (through `CoupledRun.loads_at`) and the surface flow (through `flow_forcing`) are called with these angles and this
+    radius."""
+    from types import SimpleNamespace
+    b = make(coarse_sphere_mesh, flow=True)
+    pts, R2 = flatten_front(b, factor=2.0, rho_max=1.1)
+    with_tops(b, pts)
+    sf = b.sphere_fit
+    assert not sf.concave and sf.fitted == pytest.approx(R2, rel=1e-9) and sf.fitted > sf.bound
+    assert sf.bound == pytest.approx(1.67 * 0.05, rel=0.03)
+    assert b.nose_radius() == sf.used == sf.bound == b.nose_fit.used and b.nose_fit.fitted == sf.fitted
+    np.testing.assert_array_equal(b.load_angles()[sf.exposed], ray_angles(b, sf.centre)[sf.exposed])
+    s = b.skin_stats()
+    assert s["nose_radius_mm"] == sf.bound * 1e3 and s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    assert s["nose_bound_mm"] == sf.bound * 1e3 and s["nose_cap_points"] == sf.points and s["nose_cap_concave"] == 0.0
+    seen = {}
+    ran = SimpleNamespace(sim=SimpleNamespace(aero_state=lambda t, r, v: "state"), body=b,
+                          heating=SimpleNamespace(evaluate=lambda a, theta, T, R, T_mean=None: seen.setdefault("heating", (theta, R))))
+    coupled.CoupledRun.loads_at(ran, 0.0, np.zeros(6))
+
+    def flow_evaluate(state, theta, R, rho_l, T):
+        seen["flow"] = (theta, R)
+        return SimpleNamespace(dp_ds=np.zeros(len(theta)), tau=np.zeros(len(theta)), deceleration=0.0)
+    b.surface_flow = SimpleNamespace(evaluate=flow_evaluate)
+    b.flow_forcing("state")
+    for theta, R in (seen["heating"], seen["flow"]):
+        assert R == sf.bound
+        np.testing.assert_array_equal(theta, b.load_angles())
+    b.size_feedback = "initial"
+    assert b.nose_radius() == sf.bound
+
+
+def test_a_flat_exposed_face_falls_back_to_normal_angles_at_the_bound(coarse_sphere_mesh):
+    """Every exposed top projected onto one plane across the flight direction (a pancake): no sphere describes it, so each
+    exposed corner reads its own normal's angle, the radius is the flat-face bound and the row marks the step in
+    `nose_cap_concave`, with no fitted radius, centre or misfit. A front dished toward the flow (its centre on the flow side)
+    falls back the same way; with no bound the radius is the mesh's."""
+    b = make(coarse_sphere_mesh)
+    ahead = b._leeward()[1]
+    X = b.surface.points - b.mesh.points.mean(axis=0)
+    ax = X @ b.v_hat
+    rho = np.sqrt(np.maximum((X * X).sum(axis=1) - ax ** 2, 0.0))
+    tops = b.surface.points.copy()
+    for shape in ("flat", "dished"):
+        pts = tops.copy()
+        target = 0.02 + (0.0 if shape == "flat" else rho[ahead] ** 2 / 0.1)
+        pts[ahead] += np.outer(target - ax[ahead], b.v_hat)
+        with_tops(b, pts)
+        sf = b.sphere_fit
+        assert np.array_equal(sf.exposed, ahead) and sf.points == ahead.sum()
+        assert sf.concave and np.isnan(sf.fitted) and np.isnan(sf.centre).all() and np.isnan(sf.rms)
+        np.testing.assert_array_equal(b.load_angles()[sf.exposed], b.theta[sf.exposed])
+        assert np.isfinite(sf.bound) and b.nose_radius() == sf.used == sf.bound
+        np.testing.assert_array_equal(b.windward_corners(), sf.exposed & (b.theta <= 0.5 * np.pi))
+        s = b.skin_stats()
+        assert s["nose_cap_concave"] == 1.0 and s["nose_radius_mm"] == sf.bound * 1e3
+        assert np.isnan(s["fitted_nose_radius_mm"]) and np.isnan(s["sphere_centre_mm"]) and np.isnan(s["sphere_fit_rms_mm"])
+    b._windward_bound = lambda ahead=None: float("nan")
+    b._sphere_raw = None
+    assert b.sphere_fit.concave and b.nose_radius() == 0.05
+
+
+def test_the_history_has_the_sphere_columns_only_under_sphere(coarse_sphere_mesh):
+    """Under `sphere` the three SPHERE_COLUMNS follow the two leeward ones, and the nose columns carry the new fit; under
+    `normals` the nose and leeward columns are today's and there are no sphere columns."""
+    m = coarse_sphere_mesh
+    b = make(m)
+    s = b.skin_stats()
+    assert set(skinbody.SPHERE_COLUMNS) <= set(s)
+    keys = tuple(s)
+    i = keys.index("leeward_corners")
+    assert keys[i + 1:i + 4] == skinbody.SPHERE_COLUMNS == ("sheltered_corners", "sphere_centre_mm", "sphere_fit_rms_mm")
+    sf = b.sphere_fit
+    assert s["sheltered_corners"] == 0 and abs(s["sphere_centre_mm"]) < 0.05 and s["sphere_fit_rms_mm"] == sf.rms * 1e3
+    assert s["nose_cap_points"] == sf.exposed.sum() and s["nose_radius_mm"] == s["fitted_nose_radius_mm"] == sf.fitted * 1e3
+    n = make(m, windward_loads="normals")
+    assert not set(skinbody.SPHERE_COLUMNS) & set(n.skin_stats())
+    assert tuple(n.nose_stats()) == skinbody.NOSE_COLUMNS + skinbody.LEEWARD_COLUMNS
+    assert n.nose_stats()["nose_cap_points"] < 200                       # the 30-degree cap, about 140 corners
+
+
+def test_a_state_without_the_attribute_flies_normals(coarse_sphere_mesh):
+    """A body pickled before the sphere rule has no `windward_loads` and no `_sphere_raw` on the instance: the class's defaults
+    give it `normals` (today's angles, bit for bit) and a fit made at the first ask. An unknown rule is refused."""
+    b = make(coarse_sphere_mesh)
+    assert skinbody.SkinBody.windward_loads == "normals" and skinbody.WINDWARD_LOADS == ("sphere", "normals")
+    del b.__dict__["windward_loads"], b.__dict__["_sphere_raw"]
+    assert b.windward_loads == "normals" and b._sphere_raw is None
+    assert b.load_angles() is b.theta and b.nose_radius() == b._fit_nose()[0]
+    assert b.sphere_fit is b.sphere_fit and not b.sphere_fit.concave
+    with pytest.raises(ValueError, match="windward_loads"):
+        make(coarse_sphere_mesh, windward_loads="rays")

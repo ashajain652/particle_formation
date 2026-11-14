@@ -513,8 +513,9 @@ def write_vtk_frame(output_dir, k, body, loads):
 def write_skin_frame(output_dir, k, body, loads):
     """A frame of the layered-skin body (sub-plan 20, spec 10.2): field_<k>.vtu, the 3D model's nodal T on its current
     (moving) mesh; surface_<k>.vtp, the top surface with per-corner point data -- top temperature, convective flux,
-    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh) and the top
-    cell's speed (sub-plan 21 Task 6c)."""
+    liquid and flowing depths, skin thickness and cells, the base's position (the corner on the 3D mesh), the top
+    cell's speed (sub-plan 21 Task 6c), the angle the windward loads read [deg] and, under the sphere rule, whether the
+    corner is sheltered (the fitted-sphere loads design, Asha 2026-11-13)."""
     import pyvista as pv
     mesh, sk, mat = body.mesh, body.skins, body.material
     cells = np.hstack([np.full((mesh.n_elements, 1), 4), mesh.tets]).ravel()
@@ -531,4 +532,9 @@ def write_skin_frame(output_dir, k, body, loads):
     poly.point_data["flowing_depth"] = sk.depth_above(mat.T_rigid) if mat.melts else np.zeros(sk.n)
     poly.point_data["base_position"] = body.columns.points
     poly.point_data["top_speed"] = np.where(sk.count > 0, np.linalg.norm(sk.U[:, 0], axis=1), 0.0)
+    # the angle each corner's windward loads read [deg] (`load_angles`), and under the sphere rule whether the corner is
+    # sheltered (1) or not (0), so that the shelter test can be inspected in ParaView
+    poly.point_data["load_angle_deg"] = np.degrees(body.load_angles())
+    if body.windward_loads == "sphere":
+        poly.point_data["sheltered"] = body.sphere_fit.sheltered.astype(float)
     poly.save(os.path.join(output_dir, "surface_{}.vtp".format(k)))
